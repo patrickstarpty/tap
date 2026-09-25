@@ -54,6 +54,11 @@ from tap.contracts.http import (
 from tap.contracts.http import SourceFamily as HttpSourceFamily
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.knowledge.application.answer_templates import get_template
+from tap.modules.knowledge.application.planned_answer import (
+    AuthorizedAnswerExecution,
+    AuthorizedAnswerQuery,
+)
 from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
 from tap.modules.knowledge.domain.models import (
@@ -84,6 +89,9 @@ from tap.modules.knowledge.ports.search import (
 )
 
 __all__ = [
+    "AuthorizedAnswerExecution",
+    "AuthorizedAnswerQuery",
+    "get_template",
     "AnswerRequest",
     "AnswerResponse",
     "KnowledgeAPI",
@@ -134,16 +142,31 @@ class KnowledgeAPI:
         return await self._retrieval.answer(request, policy)
 
     async def answer_frozen(
-        self, request, policy, *, governance, graph_context=(), model_alias=None
+        self,
+        request,
+        policy,
+        *,
+        governance,
+        graph_context=(),
+        model_alias=None,
+        answer_execution=None,
+        authorize=None,
     ):
-        return await self._retrieval.answer(
-            request,
-            policy,
-            frozen_policy=True,
-            governance=governance,
-            graph_context=graph_context,
-            model_alias=model_alias,
-        )
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.answer(
+                request,
+                policy,
+                frozen_policy=True,
+                governance=governance,
+                graph_context=graph_context,
+                model_alias=model_alias,
+                answer_execution=answer_execution,
+                authorize=authorize,
+            )
 
 
 def search_request_from_http(request: HttpSearchRequest) -> SearchRequest:

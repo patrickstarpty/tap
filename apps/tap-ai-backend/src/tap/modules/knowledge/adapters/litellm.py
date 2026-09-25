@@ -19,6 +19,7 @@ from tap.modules.ai.domain.models import (
 )
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.knowledge.adapters.grounded_output import parse_grounded_answer_payload
+from tap.modules.knowledge.application.answer_templates import AssembledAnswer
 from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import EmbeddingArtifact
 from tap.modules.knowledge.ports.errors import AnswerUnavailable, ModelUnavailable
@@ -146,6 +147,7 @@ class KnowledgeModelGateway:
         *,
         model_alias: str,
         governance: GenerationGovernance | None = None,
+        answer_plan_id: str | None = None,
     ) -> AnswerGeneration:
         """Generate a model-only answer when the user selected no Knowledge corpus."""
 
@@ -188,7 +190,7 @@ class KnowledgeModelGateway:
                 text_digest(prompt),
                 context,
                 self.timeout_seconds,
-                str(uuid4()),
+                str(uuid4()) if answer_plan_id is None else f"{answer_plan_id}:generation",
                 schema,
                 schema_value,
                 tools,
@@ -279,6 +281,7 @@ class KnowledgeModelGateway:
         governance: GenerationGovernance | None = None,
         graph_context=(),
         model_alias: str | None = None,
+        answer_input: AssembledAnswer | None = None,
     ) -> AnswerGeneration:
         if (
             profile_id not in {"quick-hybrid-v1", "deep-hybrid-v1", "audit-hybrid-v1"}
@@ -290,7 +293,7 @@ class KnowledgeModelGateway:
             raise AnswerUnavailable("model-unavailable")
         alternate = self.alternate_answers.get(alias)
         if alternate is not None:
-            if governance is not None:
+            if governance is not None or answer_input is not None:
                 raise AnswerUnavailable("model-unavailable")
             generation = await alternate.answer(query, evidence, profile_id)
             return replace(generation, model_id=alias)
@@ -308,6 +311,10 @@ class KnowledgeModelGateway:
                 for item in evidence
             ],
         }
+        if answer_input is not None:
+            context_value["answerPlan"] = json.loads(
+                await self._redact(json.dumps(answer_input.context, ensure_ascii=False))
+            )
         if graph_context:
             context_value["knowledgeGraph"] = [
                 {
@@ -345,6 +352,11 @@ class KnowledgeModelGateway:
                 alias = governance.model_alias
                 tools = governance.tool_allowlist
                 governance_digests = governance.revision_digests
+            if answer_input is not None:
+                prompt = "\n\n".join((prompt, answer_input.platform_instruction))
+                schema = answer_input.schema
+                governance_digests += (text_digest(answer_input.platform_instruction),)
+            plan_id = None if answer_input is None else answer_input.context.get("planId")
             result = await self.gateway.generate_structured(
                 ModelRequest(
                     self.scope,
@@ -354,7 +366,7 @@ class KnowledgeModelGateway:
                     text_digest(prompt),
                     context,
                     self.timeout_seconds,
-                    str(uuid4()),
+                    str(uuid4()) if plan_id is None else f"{plan_id}:generation",
                     schema,
                     schema_digest(schema),
                     tools,

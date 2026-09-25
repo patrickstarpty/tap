@@ -48,6 +48,7 @@ class ModelRequest:
     schema_digest: str | None = None
     tool_allowlist: frozenset[str] = frozenset()
     governance_digests: tuple[str, ...] = ()
+    allow_retries: bool = True
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -1007,6 +1007,15 @@ async def _redact_model_context(text: str) -> str:
     return await PatternEgressRedactor(max_chars=262144).redact_text(text)
 
 
+def _answer_planner(models: KnowledgeModelGateway):
+    from tap.modules.chat.adapters.model_gateway_planner import ModelGatewayPlanner
+    from tap.modules.chat.application.plan_answer import AnswerPlanner
+
+    return AnswerPlanner(
+        ModelGatewayPlanner(models.gateway, scope=models.scope, redact=_redact_model_context)
+    )
+
+
 def _create_embeddings(
     settings: TapperSettings,
     *,
@@ -1612,6 +1621,7 @@ def _assemble_http_services(
             corpus_version=corpus_version,
             graph_enricher=graph_enricher,
             models=embeddings,
+            answer_planner=_answer_planner(embeddings),
         ),
         readiness=readiness,
         scope_provider=scope_provider,

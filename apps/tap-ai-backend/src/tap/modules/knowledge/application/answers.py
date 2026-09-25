@@ -150,6 +150,8 @@ class AnswerService:
         governance: GenerationGovernance | None,
         graph_context=(),
         model_alias: str | None = None,
+        answer_execution=None,
+        authorize=None,
     ) -> AnswerResponse:
         if (
             not revisions
@@ -172,7 +174,25 @@ class AnswerService:
         }:
             raise DocumentStateChanged("accepted retrieval authority is invalid")
         frozen_answer = getattr(self._knowledge, "answer_frozen", None)
-        if frozen_answer is None:
+        if answer_execution is not None:
+            if frozen_answer is None:
+                raise ValueError("planned answers require the authorized Knowledge boundary")
+
+            async def reauthorize():
+                await self._revalidate_publication(publication)
+                if authorize is not None:
+                    await authorize()
+
+            response = await frozen_answer(
+                trusted,
+                policy,
+                governance=governance,
+                graph_context=graph_context,
+                model_alias=model_alias,
+                answer_execution=answer_execution,
+                authorize=reauthorize,
+            )
+        elif frozen_answer is None:
             response = await self._knowledge.answer(trusted, policy)
         elif model_alias is None:
             response = await frozen_answer(
@@ -208,6 +228,11 @@ class AnswerService:
             raise AnswerSnapshotUnavailable("answer snapshot commit failed") from error
         await self._revalidate_publication(publication)
         return response
+
+    async def authorize_frozen_selection(
+        self, revisions: tuple[ReadyDocumentRevision, ...]
+    ) -> None:
+        await self._authorize_selection(revisions)
 
     async def resolve_conversation_selection(
         self, revision_ids: tuple[str, ...]

@@ -66,6 +66,7 @@ def configured_gateway(handler, **changes):
         embedding_model=ProviderModelMapping("dashscope", "text-embedding-v4"),
         embedding_dimension=2,
     )
+
     for field in ("chat_model", "embedding_model"):
         if field in changes and isinstance(changes[field], str):
             changes[field] = ProviderModelMapping.from_route(changes[field])
@@ -77,6 +78,23 @@ def configured_gateway(handler, **changes):
             base_url="https://litellm.example", transport=httpx.MockTransport(handler)
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_planning_call_can_disable_transport_retries():
+    from tap.modules.ai.domain.models import ModelGatewayUnavailable
+
+    assert "allow_retries" in ModelRequest.__dataclass_fields__, "planner cannot disable retries"
+    calls = []
+
+    def fail(incoming):
+        calls.append(incoming)
+        return httpx.Response(503)
+
+    gateway = configured_gateway(fail)
+    with pytest.raises(ModelGatewayUnavailable):
+        await gateway.chat(replace(request(), allow_retries=False))
+    assert len(calls) == 1
 
 
 def success(incoming):

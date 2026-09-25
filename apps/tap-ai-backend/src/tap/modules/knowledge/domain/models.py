@@ -310,6 +310,7 @@ class QueryPlan:
     redaction_version: str
     embedding_model_id: str
     embedding_dimension: int
+    answer_plan_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in (

@@ -22,6 +22,7 @@ class ProviderResult:
     retrieval_summary: RetrievalSummary = RetrievalSummary("completed")
     citations: tuple[CitationEvidence, ...] = ()
     abstained: bool = False
+    answer_plan_id: str | None = None
 
     def __post_init__(self):
         if (self.graph_context_status is GraphContextStatus.APPLIED) != bool(
@@ -52,6 +53,8 @@ class TurnProcessor:
         )
         try:
             result = await self.provider(snapshot)
+            if result.answer_plan_id is not None:
+                diagnostics += (f"answer-plan:{result.answer_plan_id}",)
             outcome = "abstained" if result.abstained else "completed"
             evidence = AnswerEvidence(
                 result.answer,

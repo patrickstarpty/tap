@@ -16,7 +16,9 @@ from tap.contracts.http import ResourceMode, ResourceRef, RetrievalAnswerRequest
 from tap.contracts.problems import build_problem
 from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.chat.application.conversations import ConversationConflict
+from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
+from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     CitationEvidence,
@@ -92,6 +94,8 @@ class GenerationWorker:
         claimed = await self.conversations.repository.claim_queued(limit=limit)
         for conversation_id, turn in claimed:
             answer_response = None
+            active_plan = None
+            planner = getattr(self.knowledge, "answer_planner", None)
             renew = getattr(self.conversations.repository, "renew_processing_lease", None)
 
             async def provider(_snapshot, value=turn.input_snapshot.value):
@@ -110,7 +114,15 @@ class GenerationWorker:
                 )
                 answer_boundary = getattr(self.knowledge, "answer_conversation", None)
                 answer = (
-                    await answer_boundary(request, value)
+                    await answer_boundary(
+                        request,
+                        value,
+                        **(
+                            {"answer_plan": active_plan, "authorize": require_authorized}
+                            if active_plan is not None
+                            else {}
+                        ),
+                    )
                     if answer_boundary is not None
                     else await self.knowledge.answer(request)
                 )
@@ -135,6 +147,7 @@ class GenerationWorker:
                     ),
                     citations=citations,
                     abstained=answer.abstained,
+                    answer_plan_id=None if active_plan is None else active_plan.plan_id,
                 )
 
             async def complete(evidence, chat=conversation_id, identity=turn.turn_id):
@@ -183,12 +196,30 @@ class GenerationWorker:
             try:
 
                 async def classify(_state):
-                    return {"reasoning_mode": "direct"}
+                    if planner is None:
+                        return {"reasoning_mode": "direct"}
+                    authorize_planning = getattr(self.knowledge, "authorize_planning", None)
+                    if authorize_planning is not None:
+                        await authorize_planning(turn.input_snapshot)
+                    load = getattr(self.conversations, "load", None)
+                    history = (
+                        ()
+                        if load is None
+                        else tuple(
+                            item.input_snapshot for item in (await load(conversation_id)).turns
+                        )
+                    )
+                    plan = await planner.plan(planning_input(turn.input_snapshot, history=history))
+                    return {"reasoning_mode": "direct", "answer_plan": plan.to_dict()}
 
                 async def admit(_state):
                     return {"admitted": True}
 
                 async def execute(_state):
+                    nonlocal active_plan
+                    if planner is not None:
+                        active_plan = AnswerPlan.from_dict(_state["answer_plan"])
+                        active_plan.validate_binding(planning_input(turn.input_snapshot))
                     evidence = await TurnProcessor(provider=provider, complete=complete).process(
                         turn.input_snapshot
                     )
@@ -233,6 +264,10 @@ class GenerationWorker:
                     except ConversationConflict:
                         return False
                     return True
+
+                async def require_authorized():
+                    if not await authorized():
+                        raise PermissionError("answer plan authorization changed")
 
                 checkpointer_factory = getattr(
                     self.conversations.repository, "graph_checkpointer", None

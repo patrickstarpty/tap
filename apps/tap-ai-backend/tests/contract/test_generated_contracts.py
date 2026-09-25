@@ -180,6 +180,10 @@ def test_exporter_emits_closed_retrieval_intent_and_complete_chat_event_union(
         "turn.degraded",
         "turn.canceled",
         "turn.failed",
+        "test-plan.generation.waiting",
+        "test-plan.generation.result_ready",
+        "test-plan.generation.failed",
+        "test-plan.generation.canceled",
     }
     answer_claim = event_schema["$defs"]["AnswerClaim"]
     assert set(answer_claim["required"]) == {

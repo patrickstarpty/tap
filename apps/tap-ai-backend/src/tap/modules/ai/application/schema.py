@@ -45,8 +45,19 @@ def check_schema(schema: object, depth: int = 0) -> None:
         for child in properties.values():
             check_schema(child, depth + 1)
     elif kind == "array":
-        allowed |= {"items"}
+        allowed |= {"items", "maxItems"}
+        if "maxItems" in schema and (
+            type(schema["maxItems"]) is not int or not 0 <= schema["maxItems"] <= 10000
+        ):
+            raise ValueError("invalid array bound")
         check_schema(schema.get("items"), depth + 1)
+    elif kind in {"number", "integer"}:
+        allowed |= {"minimum", "maximum"}
+        for bound in ("minimum", "maximum"):
+            if bound in schema and (
+                type(schema[bound]) not in {int, float} or not math.isfinite(schema[bound])
+            ):
+                raise ValueError("invalid numeric bound")
     if set(schema) - allowed:
         raise ValueError("unsupported locked schema keyword")
     if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
@@ -65,7 +76,9 @@ def validate_output(schema: dict[str, object], value: object) -> None:
     elif kind == "array":
         items = schema["items"]
         assert isinstance(items, dict)
-        if not isinstance(value, list) or len(value) > 10000:
+        maximum = schema.get("maxItems", 10000)
+        assert isinstance(maximum, int)
+        if not isinstance(value, list) or len(value) > maximum:
             raise ValueError("structured output is not a bounded array")
         for item in value:
             validate_output(items, item)
@@ -87,3 +100,11 @@ def validate_output(schema: dict[str, object], value: object) -> None:
         assert isinstance(choices, list)
         if not any(_json_equal(value, choice) for choice in choices):
             raise ValueError("structured output does not match locked enum")
+    if kind in {"number", "integer"}:
+        assert isinstance(value, (int, float))
+        for bound, exceeds in (("minimum", False), ("maximum", True)):
+            limit = schema.get(bound)
+            if isinstance(limit, (int, float)) and (
+                (value > limit) if exceeds else (value < limit)
+            ):
+                raise ValueError("structured output exceeds numeric bound")

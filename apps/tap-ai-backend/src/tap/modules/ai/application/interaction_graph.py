@@ -23,6 +23,7 @@ class InteractionGraphState(TypedDict, total=False):
     admitted: bool
     result: dict[str, object]
     waiting_reason: str | None
+    answer_plan: dict[str, Any]
 
 
 GraphNode = Callable[[InteractionGraphState], Awaitable[dict[str, Any]]]
