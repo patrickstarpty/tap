@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import shutil
 import struct
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -104,8 +107,6 @@ def test_e2e_manifest_preserves_restart_and_security_journeys():
 
 
 def test_parser_build_verify_fails_closed_without_receipt(tmp_path):
-    import subprocess
-
     root = Path(__file__).resolve().parents[4]
     script = root / "scripts/build-tapper-parser.sh"
     assert script.is_file(), "pinned minimal parser image builder is missing"
@@ -116,6 +117,35 @@ def test_parser_build_verify_fails_closed_without_receipt(tmp_path):
     )
     assert result.returncode != 0
     assert "receipt" in result.stderr.lower()
+
+
+def test_parser_build_inputs_start_worker_protocol_from_staged_sources(tmp_path):
+    root = Path(__file__).resolve().parents[4]
+    inputs = json.loads((root / "deploy/parser/build-inputs.json").read_text())
+    staged = tmp_path / "src"
+    for name in inputs["sources"]:
+        destination = staged / Path(name).relative_to("apps/tap-ai-backend/src")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(root / name, destination)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "from tap.modules.knowledge.adapters import parser_protocol; "
+            "print(parser_protocol.PARSER_VERSION)",
+            str(staged),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == PARSER_VERSION
 
 
 def test_e2e_manifest_rejects_missing_spec_and_native_skip(tmp_path):

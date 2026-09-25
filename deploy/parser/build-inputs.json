@@ -12,6 +12,7 @@
     "apps/tap-ai-backend/src/tap/__init__.py",
     "apps/tap-ai-backend/src/tap/modules/access/domain/context.py",
     "apps/tap-ai-backend/src/tap/modules/knowledge/domain/documents.py",
+    "apps/tap-ai-backend/src/tap/modules/knowledge/domain/parse_inventory.py",
     "apps/tap-ai-backend/src/tap/modules/knowledge/ports/documents.py",
     "apps/tap-ai-backend/src/tap/modules/knowledge/ports/errors.py",
     "apps/tap-ai-backend/src/tap/modules/knowledge/adapters/document_parsers.py",
