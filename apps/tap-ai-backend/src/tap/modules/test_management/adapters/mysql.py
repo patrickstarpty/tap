@@ -31,7 +31,7 @@ from sqlalchemy.dialects.mysql import DATETIME, JSON
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.events import ProjectEventEnvelope
-from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.ai.adapters.mysql import ai_agent_revision, skill_revision
 from tap.modules.ai.domain.assets import AssetRevisionStatus
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
@@ -48,6 +48,16 @@ from tap.modules.governance.domain.audit import (
     AuditOutcome,
     AuditResource,
     SafeAuditMetadata,
+)
+from tap.modules.knowledge.adapters.mysql_documents import (
+    knowledge_citation_snapshot,
+    knowledge_document_revision,
+    knowledge_parse_inventory,
+)
+from tap.modules.knowledge.adapters.mysql_review import (
+    _current_pointer_id,
+    knowledge_current_publication,
+    knowledge_publication,
 )
 from tap.modules.test_management.domain.models import (
     BddKeyword,
@@ -262,6 +272,7 @@ test_plan_citation = _child(
     Column("content_digest", String(71), nullable=False),
     Column("claim_text", Text, nullable=False),
     Column("origin", String(32), nullable=False),
+    Column("anchor_json", JSON),
 )
 test_plan_assumption = _child(
     "test_plan_assumption",
@@ -290,6 +301,8 @@ test_plan_generation_job = _scoped(
     Column("approved_knowledge_revision_ids", JSON, nullable=False),
     Column("model_alias", String(128), nullable=False),
     Column("model_revision_id", String(128)),
+    Column("strict_review_required", Boolean, nullable=False, server_default="0"),
+    Column("row_version", Integer, nullable=False, server_default="1"),
     Column("retry_idempotency_key", String(128)),
     Column("agent_revision_id", String(128), nullable=False),
     Column("skill_revision_ids", JSON, nullable=False),
@@ -362,6 +375,22 @@ test_plan_source_impact = _scoped(
             ("revision_id",),
             "fk_test_plan_source_impact_revision",
         ),
+    ),
+)
+test_plan_write_command = _scoped(
+    "test_plan_write_command",
+    Column("command_id", String(128), primary_key=True),
+    Column("operation", String(32), nullable=False),
+    Column("target_id", String(128), nullable=False),
+    Column("idempotency_key", String(128), nullable=False),
+    Column("request_digest", String(71), nullable=False),
+    Column("result_kind", String(16), nullable=False),
+    Column("result_id", String(128), nullable=False),
+    Column("result_version", Integer, nullable=False),
+    Column("created_at", DATETIME(fsp=6), nullable=False),
+    uniques=(
+        (("command_id",), "uq_test_plan_write_command_project_pk"),
+        (("idempotency_key",), "uq_test_plan_write_command_idempotency"),
     ),
 )
 test_design_model_call = _scoped(
@@ -570,6 +599,72 @@ class MysqlTestPlanRepository:
         self._sessions = sessions
         self.scope = require_project_scope(scope)
 
+    @staticmethod
+    def _write_digest(
+        operation: str, target_id: str, expected_version: int, payload: object
+    ) -> str:
+        material = json.dumps(
+            {
+                "operation": operation,
+                "targetId": target_id,
+                "expectedVersion": expected_version,
+                "payload": payload,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        return "sha256:" + hashlib.sha256(material.encode()).hexdigest()
+
+    async def _write_replay(
+        self, session: AsyncSession, scope: ProjectScopeContext, key: str, digest: str
+    ):
+        row = (
+            (
+                await session.execute(
+                    select(test_plan_write_command).where(
+                        *scope_predicates(test_plan_write_command, scope),
+                        test_plan_write_command.c.idempotency_key == key,
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is not None and row["request_digest"] != digest:
+            raise RevisionConflict("write idempotency conflict")
+        return row
+
+    async def _record_write(
+        self,
+        session: AsyncSession,
+        scope: ProjectScopeContext,
+        *,
+        operation: str,
+        target_id: str,
+        key: str,
+        digest: str,
+        result_kind: str,
+        result_id: str,
+        result_version: int,
+        now: datetime,
+    ) -> None:
+        await session.execute(
+            insert(test_plan_write_command).values(
+                **scope_values(scope),
+                command_id="tpwc_"
+                + hashlib.sha256(f"{scope.project_id}:{key}".encode()).hexdigest()[:32],
+                operation=operation,
+                target_id=target_id,
+                idempotency_key=key,
+                request_digest=digest,
+                result_kind=result_kind,
+                result_id=result_id,
+                result_version=result_version,
+                created_at=_naive(now),
+            )
+        )
+
     def graph_checkpointer(self, claim: ClaimedTestDesignJob):
         from tap.modules.ai.adapters.mysql_checkpointer import GraphFence, MysqlGraphCheckpointer
 
@@ -701,18 +796,82 @@ class MysqlTestPlanRepository:
             raise LookupError("test plan revision not found")
         return revision
 
+    async def get_evidence_preview(
+        self,
+        scope: ProjectScopeContext,
+        test_plan_id: str,
+        revision_id: str,
+        citation_id: str,
+    ) -> dict[str, object]:
+        scope = self._matching_scope(scope)
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(
+                            test_plan_citation.c.source_revision_id,
+                            test_plan_citation.c.document_revision_id,
+                            test_plan_citation.c.chunk_id,
+                            test_plan_citation.c.content_digest,
+                            test_plan_citation.c.claim_text,
+                            test_plan_citation.c.anchor_json,
+                        )
+                        .select_from(
+                            test_plan_citation.join(
+                                test_plan_revision,
+                                (test_plan_revision.c.project_id == test_plan_citation.c.project_id)
+                                & (
+                                    test_plan_revision.c.revision_id
+                                    == test_plan_citation.c.revision_id
+                                ),
+                            )
+                        )
+                        .where(
+                            *scope_predicates(test_plan_citation, scope),
+                            *scope_predicates(test_plan_revision, scope),
+                            test_plan_revision.c.test_plan_id == test_plan_id,
+                            test_plan_revision.c.revision_id == revision_id,
+                            test_plan_citation.c.citation_id == citation_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            raise LookupError("historical citation evidence was not found")
+        return {
+            "citation_id": citation_id,
+            "source_revision_id": row["source_revision_id"],
+            "document_revision_id": row["document_revision_id"],
+            "chunk_id": row["chunk_id"],
+            "content_digest": row["content_digest"],
+            "claim_text": row["claim_text"],
+            "anchor": row["anchor_json"] or {},
+        }
+
     async def replace_draft(
         self,
         scope: ProjectScopeContext,
         revision: TestPlanRevision,
         expected_version: int,
         *,
+        idempotency_key: str,
         now: datetime,
     ) -> TestPlanRevision:
         scope = self._matching_scope(scope)
         if revision.status is not RevisionStatus.DRAFT:
             raise RevisionImmutable("only Draft revisions can be edited")
+        digest = self._write_digest(
+            "edit", revision.revision_id, expected_version, revision.content_digest
+        )
         async with self._sessions() as session, session.begin():
+            replay = await self._write_replay(session, scope, idempotency_key, digest)
+            if replay is not None:
+                existing = await self._load_revision(session, replay["result_id"])
+                if existing is None:
+                    raise RevisionConflict("edit replay result no longer exists")
+                return existing
             row = (
                 (
                     await session.execute(
@@ -781,7 +940,81 @@ class MysqlTestPlanRepository:
             )
             updated = await self._load_revision(session, revision.revision_id)
             assert updated is not None
+            await self._record_write(
+                session,
+                scope,
+                operation="edit",
+                target_id=revision.revision_id,
+                key=idempotency_key,
+                digest=digest,
+                result_kind="revision",
+                result_id=revision.revision_id,
+                result_version=updated.row_version,
+                now=now,
+            )
             return updated
+
+    async def fork_revision(
+        self,
+        scope: ProjectScopeContext,
+        test_plan_id: str,
+        source_revision_id: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+        now: datetime,
+    ) -> TestPlanRevision:
+        scope = self._matching_scope(scope)
+        digest = self._write_digest("fork", source_revision_id, expected_version, test_plan_id)
+        async with self._sessions() as session, session.begin():
+            replay = await self._write_replay(session, scope, idempotency_key, digest)
+            if replay is not None:
+                existing = await self._load_revision(session, replay["result_id"])
+                if existing is None:
+                    raise RevisionConflict("fork replay result no longer exists")
+                return existing
+            row = (
+                (
+                    await session.execute(
+                        select(test_plan_revision)
+                        .where(
+                            *scope_predicates(test_plan_revision, scope),
+                            test_plan_revision.c.test_plan_id == test_plan_id,
+                            test_plan_revision.c.revision_id == source_revision_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("test plan revision not found")
+            if row["row_version"] != expected_version:
+                raise RevisionConflict("revision version changed")
+            source = await self._load_revision(session, source_revision_id)
+            assert source is not None
+            suffix = hashlib.sha256(
+                f"{scope.project_id}:{test_plan_id}:{idempotency_key}".encode()
+            ).hexdigest()[:32]
+            draft = replace(
+                source.fork(f"tpr_{suffix}", source.version + 1),
+                author_actor_id=scope.actor_id,
+            )
+            await self._insert_revision(session, draft, now=_naive(now))
+            await self._record_write(
+                session,
+                scope,
+                operation="fork",
+                target_id=source_revision_id,
+                key=idempotency_key,
+                digest=digest,
+                result_kind="revision",
+                result_id=draft.revision_id,
+                result_version=draft.row_version,
+                now=now,
+            )
+            return replace(draft, created_at=_naive(now))
 
     async def publish_revision(
         self,
@@ -789,12 +1022,20 @@ class MysqlTestPlanRepository:
         revision_id: str,
         expected_version: int,
         validation_digest: str,
+        idempotency_key: str,
     ) -> TestPlanRevision:
         scope = require_project_scope(scope)
         if scope != self.scope:
             raise ValueError("repository is bound to a different Project")
         now = datetime.now(timezone.utc).replace(tzinfo=None)
+        digest = self._write_digest("publish", revision_id, expected_version, validation_digest)
         async with self._sessions() as session, session.begin():
+            replay = await self._write_replay(session, scope, idempotency_key, digest)
+            if replay is not None:
+                existing = await self._load_revision(session, replay["result_id"])
+                if existing is None:
+                    raise RevisionConflict("publish replay result no longer exists")
+                return existing
             row = (
                 (
                     await session.execute(
@@ -815,6 +1056,9 @@ class MysqlTestPlanRepository:
                 raise RevisionImmutable("published and superseded revisions are immutable")
             if row["row_version"] != expected_version:
                 raise RevisionConflict("revision version changed")
+            locked_revision = await self._load_revision(session, revision_id)
+            assert locked_revision is not None
+            await self._assert_publish_authority(session, scope, locked_revision, now)
             plan_id = row["test_plan_id"]
             previous = await session.scalar(
                 select(test_plan.c.active_published_revision_id)
@@ -896,7 +1140,195 @@ class MysqlTestPlanRepository:
             )
             published = await self._load_revision(session, revision_id)
             assert published is not None
+            await self._record_write(
+                session,
+                scope,
+                operation="publish",
+                target_id=revision_id,
+                key=idempotency_key,
+                digest=digest,
+                result_kind="revision",
+                result_id=revision_id,
+                result_version=published.row_version,
+                now=now.replace(tzinfo=timezone.utc),
+            )
             return published
+
+    async def _assert_publish_authority(
+        self,
+        session: AsyncSession,
+        scope: ProjectScopeContext,
+        revision: TestPlanRevision,
+        now: datetime,
+    ) -> None:
+        if (
+            revision.requirement_scope_id is None
+            or revision.requirement_scope_version is None
+            or revision.requirement_scope_digest is None
+            or not revision.requirement_ids
+            or not revision.approved_knowledge_revision_ids
+            or revision.model_revision_id is None
+            or revision.agent_revision_id is None
+            or not revision.skill_revision_ids
+        ):
+            # Legacy hand-authored plans keep the existing application gate.
+            return
+        pointer = (
+            (
+                await session.execute(
+                    select(
+                        knowledge_current_publication.c.publication_id,
+                        knowledge_publication.c.version,
+                        knowledge_publication.c.status,
+                        knowledge_publication.c.expires_at,
+                        knowledge_publication.c.source_revision_ids,
+                        knowledge_publication.c.approved_item_ids,
+                    )
+                    .select_from(
+                        knowledge_current_publication.join(
+                            knowledge_publication,
+                            knowledge_publication.c.publication_id
+                            == knowledge_current_publication.c.publication_id,
+                        )
+                    )
+                    .where(
+                        *scope_predicates(knowledge_current_publication, scope),
+                        *scope_predicates(knowledge_publication, scope),
+                        knowledge_current_publication.c.pointer_id == _current_pointer_id(scope),
+                    )
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if (
+            pointer is None
+            or pointer["publication_id"] != revision.requirement_scope_id
+            or pointer["version"] != revision.requirement_scope_version
+            or pointer["status"] != "published"
+            or pointer["expires_at"] <= now
+        ):
+            raise ValueError("test plan requirement scope is no longer current")
+        approved_versions = set(revision.approved_knowledge_revision_ids)
+        if not approved_versions <= set(pointer["source_revision_ids"]):
+            raise ValueError("test plan knowledge versions are no longer current")
+        inventory = (
+            (
+                await session.execute(
+                    select(
+                        knowledge_parse_inventory.c.item_id,
+                        knowledge_parse_inventory.c.source_revision_id,
+                        knowledge_parse_inventory.c.locator,
+                    )
+                    .select_from(
+                        knowledge_parse_inventory.join(
+                            knowledge_document_revision,
+                            knowledge_document_revision.c.revision_id
+                            == knowledge_parse_inventory.c.source_revision_id,
+                        )
+                    )
+                    .where(
+                        *scope_predicates(knowledge_parse_inventory, scope),
+                        *scope_predicates(knowledge_document_revision, scope),
+                        knowledge_parse_inventory.c.source_revision_id.in_(approved_versions),
+                        knowledge_parse_inventory.c.attempt
+                        == knowledge_document_revision.c.parse_inventory_attempt,
+                        knowledge_parse_inventory.c.status == "parsed",
+                    )
+                    .order_by(
+                        knowledge_parse_inventory.c.source_revision_id,
+                        knowledge_parse_inventory.c.ordinal,
+                    )
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .all()
+        )
+        approved_items = set(pointer["approved_item_ids"])
+        current_scope = RequirementScopeSnapshot.create(
+            scope_id=pointer["publication_id"],
+            version=pointer["version"],
+            requirements=tuple(
+                RequirementScopeItem(row["item_id"], row["source_revision_id"], row["locator"])
+                for row in inventory
+                if row["item_id"] in approved_items
+            ),
+        )
+        if (
+            current_scope.content_digest != revision.requirement_scope_digest
+            or tuple(item.requirement_id for item in current_scope.requirements)
+            != revision.requirement_ids
+        ):
+            raise ValueError("test plan requirement scope is no longer current")
+        for citation in revision.citations:
+            evidence = (
+                (
+                    await session.execute(
+                        select(
+                            knowledge_citation_snapshot.c.revision_id,
+                            knowledge_citation_snapshot.c.chunk_id,
+                            knowledge_citation_snapshot.c.chunk_content_hash,
+                        )
+                        .where(
+                            *scope_predicates(knowledge_citation_snapshot, scope),
+                            knowledge_citation_snapshot.c.citation_id == citation.citation_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                evidence is None
+                or evidence["revision_id"] != citation.source_revision_id
+                or evidence["revision_id"] != citation.document_revision_id
+                or evidence["chunk_id"] != citation.chunk_id
+                or evidence["chunk_content_hash"] != citation.content_digest
+                or evidence["revision_id"] not in approved_versions
+            ):
+                raise ValueError("test plan citation is not currently authorized")
+        agent_rows = tuple(
+            await session.scalars(
+                select(ai_agent_revision.c.revision_id)
+                .where(
+                    *scope_predicates(ai_agent_revision, scope),
+                    ai_agent_revision.c.revision_id == revision.agent_revision_id,
+                    ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                )
+                .with_for_update()
+            )
+        )
+        skill_rows = tuple(
+            await session.scalars(
+                select(skill_revision.c.revision_id)
+                .where(
+                    *scope_predicates(skill_revision, scope),
+                    skill_revision.c.revision_id.in_(revision.skill_revision_ids),
+                    skill_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                )
+                .with_for_update()
+            )
+        )
+        model_rows = tuple(
+            await session.scalars(
+                select(test_plan_generation_job.c.job_id)
+                .where(
+                    *scope_predicates(test_plan_generation_job, scope),
+                    test_plan_generation_job.c.revision_id == revision.revision_id,
+                    test_plan_generation_job.c.model_revision_id == revision.model_revision_id,
+                )
+                .with_for_update()
+            )
+        )
+        if (
+            len(agent_rows) != 1
+            or set(skill_rows) != set(revision.skill_revision_ids)
+            or len(model_rows) != 1
+        ):
+            raise ValueError("test plan generation versions are no longer current")
 
     async def record_review(
         self,
@@ -971,6 +1403,10 @@ class MysqlTestPlanRepository:
                 raise RevisionImmutable("only Draft revisions can be reviewed")
             if row["row_version"] != expected_version:
                 raise RevisionConflict("revision version changed")
+            if row["strict_review_required"] and (
+                row["author_actor_id"] is None or row["author_actor_id"] == scope.actor_id
+            ):
+                raise ValueError("strict Test Plans require non-author business review")
             unchanged = row["content_digest"] == row["generated_content_digest"]
             if disposition is ReviewDisposition.ACCEPTED_UNCHANGED and not unchanged:
                 raise ValueError("edited generated content requires modified acceptance")
@@ -1096,6 +1532,190 @@ class MysqlTestPlanRepository:
                         )
                     )
         return revision_ids
+
+    async def request_generation_from_turn(
+        self,
+        scope: ProjectScopeContext,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        objective: str,
+        idempotency_key: str,
+        now: datetime,
+    ) -> TestPlanGenerationJob:
+        """Resolve every governance version from server-owned immutable facts.
+
+        The browser identifies the completed Turn only.  It cannot choose the
+        Requirement Scope, publication, model revision, Agent, Skills, or
+        strict-review policy that will be frozen into the generation job.
+        """
+        scope = self._matching_scope(scope)
+        async with self._sessions() as session:
+            snapshot = (
+                (
+                    await session.execute(
+                        select(
+                            chat_turn.c.state,
+                            turn_input_snapshot.c.snapshot_digest.label("input_digest"),
+                            turn_input_snapshot.c.snapshot.label("input_snapshot"),
+                            turn_answer_evidence_snapshot.c.snapshot_digest.label("answer_digest"),
+                            turn_answer_evidence_snapshot.c.input_snapshot_digest.label(
+                                "answer_input_digest"
+                            ),
+                        )
+                        .select_from(chat_turn)
+                        .join(
+                            conversation,
+                            (conversation.c.project_id == chat_turn.c.project_id)
+                            & (conversation.c.conversation_id == chat_turn.c.chat_id),
+                        )
+                        .join(
+                            turn_input_snapshot,
+                            (turn_input_snapshot.c.project_id == chat_turn.c.project_id)
+                            & (turn_input_snapshot.c.turn_id == chat_turn.c.turn_id),
+                        )
+                        .join(
+                            turn_answer_evidence_snapshot,
+                            (turn_answer_evidence_snapshot.c.project_id == chat_turn.c.project_id)
+                            & (turn_answer_evidence_snapshot.c.turn_id == chat_turn.c.turn_id),
+                        )
+                        .where(
+                            *scope_predicates(chat_turn, scope),
+                            *scope_predicates(conversation, scope),
+                            chat_turn.c.turn_id == turn_id,
+                            chat_turn.c.chat_id == conversation_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if snapshot is None or snapshot["state"] not in {"completed", "abstained"}:
+                raise ValueError("completed Turn snapshot binding was not found")
+            if snapshot["answer_input_digest"] != snapshot["input_digest"]:
+                raise ValueError("completed Turn snapshot binding is invalid")
+            frozen_input = snapshot["input_snapshot"]
+            if not isinstance(frozen_input, dict):
+                raise ValueError("frozen Turn input is malformed")
+            publication = (
+                (
+                    await session.execute(
+                        select(knowledge_publication)
+                        .select_from(
+                            knowledge_current_publication.join(
+                                knowledge_publication,
+                                knowledge_publication.c.publication_id
+                                == knowledge_current_publication.c.publication_id,
+                            )
+                        )
+                        .where(
+                            *scope_predicates(knowledge_current_publication, scope),
+                            *scope_predicates(knowledge_publication, scope),
+                            knowledge_current_publication.c.pointer_id
+                            == _current_pointer_id(scope),
+                            knowledge_publication.c.status == "published",
+                            knowledge_publication.c.expires_at > func.utc_timestamp(6),
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if publication is None:
+                raise ValueError("generation requires a current approved knowledge publication")
+            resources = frozen_input.get("resolved_resources", [])
+            selected_versions = {
+                item.get("revision_id")
+                for item in resources
+                if isinstance(item, dict) and isinstance(item.get("revision_id"), str)
+            }
+            approved_versions = tuple(
+                item for item in publication["source_revision_ids"] if item in selected_versions
+            )
+            if not approved_versions:
+                raise ValueError("Turn resources are outside the current publication")
+            approved_item_ids = set(publication["approved_item_ids"])
+            inventory = (
+                (
+                    await session.execute(
+                        select(
+                            knowledge_parse_inventory.c.item_id,
+                            knowledge_parse_inventory.c.source_revision_id,
+                            knowledge_parse_inventory.c.locator,
+                        )
+                        .select_from(
+                            knowledge_parse_inventory.join(
+                                knowledge_document_revision,
+                                knowledge_document_revision.c.revision_id
+                                == knowledge_parse_inventory.c.source_revision_id,
+                            )
+                        )
+                        .where(
+                            *scope_predicates(knowledge_parse_inventory, scope),
+                            *scope_predicates(knowledge_document_revision, scope),
+                            knowledge_parse_inventory.c.source_revision_id.in_(approved_versions),
+                            knowledge_parse_inventory.c.attempt
+                            == knowledge_document_revision.c.parse_inventory_attempt,
+                            knowledge_parse_inventory.c.status == "parsed",
+                        )
+                        .order_by(
+                            knowledge_parse_inventory.c.source_revision_id,
+                            knowledge_parse_inventory.c.ordinal,
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            requirements = tuple(
+                RequirementScopeItem(row["item_id"], row["source_revision_id"], row["locator"])
+                for row in inventory
+                if row["item_id"] in approved_item_ids
+            )
+            if not requirements:
+                raise ValueError("current publication has no approved requirements for this Turn")
+            requirement_scope = RequirementScopeSnapshot.create(
+                scope_id=publication["publication_id"],
+                version=publication["version"],
+                requirements=requirements,
+            )
+            model_alias = frozen_input.get("model_alias")
+            agent_revision_id = frozen_input.get("agent_revision_id")
+            skill_revision_ids = frozen_input.get("skill_revision_ids")
+            if (
+                not isinstance(model_alias, str)
+                or not isinstance(agent_revision_id, str)
+                or not isinstance(skill_revision_ids, list)
+                or not skill_revision_ids
+                or not all(isinstance(item, str) for item in skill_revision_ids)
+            ):
+                raise ValueError("frozen Turn execution versions are incomplete")
+            model_material = json.dumps(
+                {
+                    "modelAlias": model_alias,
+                    "serverModelProfile": "test-design-model-profile-v1",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            model_revision_id = "tmr_" + hashlib.sha256(model_material.encode()).hexdigest()
+        request = TestPlanGenerationRequest.create(
+            project_id=scope.project_id,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            input_snapshot_digest=snapshot["input_digest"],
+            answer_evidence_snapshot_digest=snapshot["answer_digest"],
+            model_alias=model_alias,
+            agent_revision_id=agent_revision_id,
+            skill_revision_ids=tuple(skill_revision_ids),
+            objective=objective,
+            idempotency_key=idempotency_key,
+            requirement_scope=requirement_scope,
+            approved_knowledge_revision_ids=approved_versions,
+            model_revision_id=model_revision_id,
+            strict_review_required=scope.identity_mode is IdentityMode.PRODUCT,
+        )
+        return await self.request_generation(scope, request, now=now)
 
     async def request_generation(
         self,
@@ -1252,6 +1872,8 @@ class MysqlTestPlanRepository:
                     approved_knowledge_revision_ids=list(request.approved_knowledge_revision_ids),
                     model_alias=request.model_alias,
                     model_revision_id=request.model_revision_id,
+                    strict_review_required=request.strict_review_required,
+                    row_version=1,
                     agent_revision_id=request.agent_revision_id,
                     skill_revision_ids=list(request.skill_revision_ids),
                     objective=request.objective,
@@ -1369,10 +1991,17 @@ class MysqlTestPlanRepository:
         return self._job(row)
 
     async def cancel_generation(
-        self, scope: ProjectScopeContext, job_id: str, *, now: datetime
+        self,
+        scope: ProjectScopeContext,
+        job_id: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+        now: datetime,
     ) -> TestPlanGenerationJob:
         scope = self._matching_scope(scope)
         instant = _naive(now)
+        digest = self._write_digest("cancel", job_id, expected_version, "cancel")
         async with self._sessions() as session, session.begin():
             row = (
                 (
@@ -1390,6 +2019,11 @@ class MysqlTestPlanRepository:
             )
             if row is None:
                 raise LookupError("test design generation job not found")
+            replay = await self._write_replay(session, scope, idempotency_key, digest)
+            if replay is not None:
+                return self._job(row)
+            if row["row_version"] != expected_version:
+                raise RevisionConflict("generation job version changed")
             if row["status"] in {
                 GenerationJobStatus.DRAFT_READY.value,
                 GenerationJobStatus.FAILED.value,
@@ -1409,6 +2043,7 @@ class MysqlTestPlanRepository:
                     lease_token=None,
                     lease_expires_at=None,
                     updated_at=instant,
+                    row_version=expected_version + 1,
                 )
             )
             await self._generation_stream_event(
@@ -1475,6 +2110,19 @@ class MysqlTestPlanRepository:
                 lease_token=None,
                 lease_expires_at=None,
                 updated_at=instant,
+                row_version=expected_version + 1,
+            )
+            await self._record_write(
+                session,
+                scope,
+                operation="cancel",
+                target_id=job_id,
+                key=idempotency_key,
+                digest=digest,
+                result_kind="job",
+                result_id=job_id,
+                result_version=expected_version + 1,
+                now=now,
             )
             return self._job(canceled)
 
@@ -1483,11 +2131,13 @@ class MysqlTestPlanRepository:
         scope: ProjectScopeContext,
         job_id: str,
         *,
+        expected_version: int,
         idempotency_key: str,
         now: datetime,
     ) -> TestPlanGenerationJob:
         scope = self._matching_scope(scope)
         instant = _naive(now)
+        digest = self._write_digest("retry", job_id, expected_version, "retry")
         async with self._sessions() as session, session.begin():
             row = (
                 (
@@ -1505,8 +2155,13 @@ class MysqlTestPlanRepository:
             )
             if row is None:
                 raise LookupError("test design generation job not found")
+            replay = await self._write_replay(session, scope, idempotency_key, digest)
+            if replay is not None:
+                return self._job(row)
             if row["retry_idempotency_key"] == idempotency_key:
                 return self._job(row)
+            if row["row_version"] != expected_version:
+                raise RevisionConflict("generation job version changed")
             if row["status"] != GenerationJobStatus.FAILED.value:
                 raise ValueError("only failed generation jobs can be retried")
             await session.execute(
@@ -1521,6 +2176,7 @@ class MysqlTestPlanRepository:
                     failure_code=None,
                     retry_idempotency_key=idempotency_key,
                     updated_at=instant,
+                    row_version=expected_version + 1,
                 )
             )
             retried = dict(row)
@@ -1529,6 +2185,19 @@ class MysqlTestPlanRepository:
                 failure_code=None,
                 retry_idempotency_key=idempotency_key,
                 updated_at=instant,
+                row_version=expected_version + 1,
+            )
+            await self._record_write(
+                session,
+                scope,
+                operation="retry",
+                target_id=job_id,
+                key=idempotency_key,
+                digest=digest,
+                result_kind="job",
+                result_id=job_id,
+                result_version=expected_version + 1,
+                now=now,
             )
             return self._job(retried)
 
@@ -1742,7 +2411,8 @@ class MysqlTestPlanRepository:
                         (
                             await session.execute(
                                 text(
-                                    "SELECT source_id,revision_id,chunk_id,chunk_content_hash "
+                                    "SELECT source_id,document_id,revision_id,chunk_id,"
+                                    "chunk_content_hash,anchor_json "
                                     "FROM knowledge_citation_snapshot "
                                     "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
                                     "AND citation_id=:citation_id"
@@ -1758,6 +2428,12 @@ class MysqlTestPlanRepository:
                         .one_or_none()
                     )
                     if evidence is not None:
+                        raw_anchor = evidence["anchor_json"]
+                        anchor = (
+                            json.loads(raw_anchor) if isinstance(raw_anchor, str) else raw_anchor
+                        )
+                        if not isinstance(anchor, dict):
+                            raise RevisionConflict("citation snapshot anchor is invalid")
                         authorized_evidence.append(
                             {
                                 "citationSnapshotId": citation_id,
@@ -1765,6 +2441,9 @@ class MysqlTestPlanRepository:
                                 "documentRevisionId": evidence["revision_id"],
                                 "chunkId": evidence["chunk_id"],
                                 "contentDigest": evidence["chunk_content_hash"],
+                                "claimText": str(answer_snapshot.get("answer", "")),
+                                "origin": CitationOrigin.SOURCE.value,
+                                "anchor": anchor,
                             }
                         )
         answer_snapshot["authorizedEvidence"] = authorized_evidence
@@ -2234,6 +2913,7 @@ class MysqlTestPlanRepository:
                     content_digest=citation.content_digest,
                     claim_text=citation.claim_text,
                     origin=citation.origin.value,
+                    anchor_json=citation.anchor,
                 )
             )
         for assumption in revision.assumptions:
@@ -2388,6 +3068,7 @@ class MysqlTestPlanRepository:
                 item["content_digest"],
                 item["claim_text"],
                 CitationOrigin(item["origin"]),
+                item["anchor_json"],
             )
             for item in await rows(test_plan_citation)
         )
@@ -2479,6 +3160,7 @@ class MysqlTestPlanRepository:
             _requirement_scope(row["requirement_scope"]),
             tuple(row["approved_knowledge_revision_ids"]),
             row["model_revision_id"],
+            bool(row["strict_review_required"]),
         )
         return TestPlanGenerationJob(
             request,
@@ -2490,4 +3172,5 @@ class MysqlTestPlanRepository:
             row["lease_token"],
             row["lease_expires_at"],
             row["failure_code"],
+            row["row_version"],
         )

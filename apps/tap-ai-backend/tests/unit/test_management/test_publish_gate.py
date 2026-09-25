@@ -27,7 +27,10 @@ class Repository:
         assert revision_id == self.revision.revision_id
         return self.revision
 
-    async def publish_revision(self, scope, revision_id, expected_version, validation_digest):
+    async def publish_revision(
+        self, scope, revision_id, expected_version, validation_digest, idempotency_key
+    ):
+        assert idempotency_key
         if expected_version != self.revision.version:
             raise RevisionConflict("revision version changed")
         self.revision = replace(self.revision, status=RevisionStatus.PUBLISHED)
@@ -81,14 +84,22 @@ async def test_publish_requires_authorized_citations_and_expected_version() -> N
 
     with pytest.raises(RevisionConflict):
         await publisher.execute(
-            VALIDATION_SCOPE, "tp_checkout", "tpr_checkout_v1", expected_version=2
+            VALIDATION_SCOPE,
+            "tp_checkout",
+            "tpr_checkout_v1",
+            expected_version=2,
+            idempotency_key="publish-wrong-version",
         )
 
     repository = Repository()
     _reviewed(repository)
     with pytest.raises(ValueError, match="authorized"):
         await PublishTestPlan(repository, Citations(False)).execute(
-            VALIDATION_SCOPE, "tp_checkout", "tpr_checkout_v1", expected_version=1
+            VALIDATION_SCOPE,
+            "tp_checkout",
+            "tpr_checkout_v1",
+            expected_version=1,
+            idempotency_key="publish-unauthorized",
         )
     assert repository.published == []
 
@@ -100,14 +111,22 @@ async def test_publish_is_explicit_and_published_revision_is_immutable() -> None
     publisher = PublishTestPlan(repository, Citations())
 
     published = await publisher.execute(
-        VALIDATION_SCOPE, "tp_checkout", "tpr_checkout_v1", expected_version=1
+        VALIDATION_SCOPE,
+        "tp_checkout",
+        "tpr_checkout_v1",
+        expected_version=1,
+        idempotency_key="publish-checkout",
     )
     assert published.status is RevisionStatus.PUBLISHED
     assert repository.published[0][2].startswith("sha256:")
 
     with pytest.raises(RevisionImmutable):
         await publisher.execute(
-            VALIDATION_SCOPE, "tp_checkout", "tpr_checkout_v1", expected_version=1
+            VALIDATION_SCOPE,
+            "tp_checkout",
+            "tpr_checkout_v1",
+            expected_version=1,
+            idempotency_key="publish-again",
         )
 
 
@@ -116,17 +135,29 @@ async def test_publish_rechecks_review_requirement_scope_and_knowledge_versions(
     repository = Repository()
     with pytest.raises(ValueError, match="human review"):
         await PublishTestPlan(repository, Citations()).execute(
-            VALIDATION_SCOPE, "tp_checkout", "tpr_checkout_v1", expected_version=1
+            VALIDATION_SCOPE,
+            "tp_checkout",
+            "tpr_checkout_v1",
+            expected_version=1,
+            idempotency_key="publish-without-review",
         )
 
     _reviewed(repository)
     with pytest.raises(ValueError, match="requirement scope"):
         await PublishTestPlan(repository, Citations(requirement_scope_current=False)).execute(
-            VALIDATION_SCOPE, "tp_checkout", "tpr_checkout_v1", expected_version=1
+            VALIDATION_SCOPE,
+            "tp_checkout",
+            "tpr_checkout_v1",
+            expected_version=1,
+            idempotency_key="publish-stale-scope",
         )
     with pytest.raises(ValueError, match="knowledge"):
         await PublishTestPlan(repository, Citations(knowledge_versions_current=False)).execute(
-            VALIDATION_SCOPE, "tp_checkout", "tpr_checkout_v1", expected_version=1
+            VALIDATION_SCOPE,
+            "tp_checkout",
+            "tpr_checkout_v1",
+            expected_version=1,
+            idempotency_key="publish-stale-knowledge",
         )
 
 
@@ -138,5 +169,9 @@ async def test_strict_project_requires_non_author_business_review() -> None:
 
     with pytest.raises(ValueError, match="non-author"):
         await PublishTestPlan(repository, Citations()).execute(
-            VALIDATION_SCOPE, "tp_checkout", "tpr_checkout_v1", expected_version=1
+            VALIDATION_SCOPE,
+            "tp_checkout",
+            "tpr_checkout_v1",
+            expected_version=1,
+            idempotency_key="publish-self-review",
         )

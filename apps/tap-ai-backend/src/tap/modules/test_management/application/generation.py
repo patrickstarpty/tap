@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -31,6 +32,8 @@ from tap.modules.test_management.ports.generation import (
     TestDesignJobStore,
 )
 from tap.platform.db.project_scope import require_project_scope
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +121,7 @@ def _revision_from_checkpoint(value: object) -> TestPlanRevision:
             item["contentDigest"],
             item["claimText"],
             CitationOrigin(item["origin"]),
+            item.get("anchor"),
         )
         for item in content["citations"]
     )
@@ -317,6 +321,10 @@ class TestDesignWorker:
                 if graph_ready:
                     lease_lost += 1
                     continue
+                logger.exception(
+                    "test-design generation failed",
+                    extra={"job_id": claim.job.request.job_id},
+                )
                 try:
                     await self._jobs.fail_generation(
                         self._scope,

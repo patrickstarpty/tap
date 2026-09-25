@@ -30,13 +30,14 @@ class DeterministicTestDesign:
             item = cast(dict[str, object], evidence[0])
             citations = (
                 TestPlanCitation(
-                    "citation_grounded",
+                    str(item["citationSnapshotId"]),
                     str(item["sourceRevisionId"]),
                     str(item["documentRevisionId"]),
                     str(item["chunkId"]),
                     str(item["contentDigest"]),
-                    "The selected evidence supports this test objective.",
-                    CitationOrigin.SOURCE,
+                    str(item["claimText"]),
+                    CitationOrigin(str(item["origin"])),
+                    cast(dict[str, object], item.get("anchor", {})),
                 ),
             )
         else:
@@ -129,7 +130,5 @@ class DeterministicTestDesign:
             agent_revision_id=context.request.agent_revision_id,
             skill_revision_ids=context.request.skill_revision_ids,
             author_actor_id=context.scope.actor_id,
-            strict_review_required=bool(
-                context.input_snapshot.get("strict_test_design_review", False)
-            ),
+            strict_review_required=context.request.strict_review_required,
         )

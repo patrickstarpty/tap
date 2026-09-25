@@ -30,6 +30,7 @@ class PublishTestPlan:
         test_plan_id: str,
         draft_revision_id: str,
         expected_version: int,
+        idempotency_key: str,
     ) -> TestPlanRevision:
         scope = require_project_scope(scope)
         revision = await self._repository.get_revision(scope, test_plan_id, draft_revision_id)
@@ -47,10 +48,8 @@ class PublishTestPlan:
             or decision.reviewed_content_digest != revision.content_digest
         ):
             raise ValueError("current content requires an explicit human review")
-        if (
-            revision.strict_review_required
-            and revision.author_actor_id is not None
-            and decision.actor_id == revision.author_actor_id
+        if revision.strict_review_required and (
+            revision.author_actor_id is None or decision.actor_id == revision.author_actor_id
         ):
             raise ValueError("strict Test Plans require non-author business review")
         if revision.needs_review:
@@ -67,5 +66,9 @@ class PublishTestPlan:
         if not await self._citation_authority.are_knowledge_versions_current(scope, revision):
             raise ValueError("test plan knowledge versions are no longer current")
         return await self._repository.publish_revision(
-            scope, draft_revision_id, expected_version, validation_digest
+            scope,
+            draft_revision_id,
+            expected_version,
+            validation_digest,
+            idempotency_key,
         )

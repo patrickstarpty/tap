@@ -179,8 +179,13 @@ describe("TestPlanReview", () => {
     expect(screen.getByText(/Cards are accepted/)).toBeVisible();
     fireEvent.click(screen.getByText("查看证据标识"));
     expect(screen.getByText(/source_checkout/)).toBeVisible();
-    expect(screen.getByText("The payment provider is available")).toBeVisible();
-    expect(screen.getByText("Whether retry is supported")).toBeVisible();
+    expect(
+      screen.getAllByText("The payment provider is available").at(-1),
+    ).toBeVisible();
+    expect(
+      screen.getAllByText("Whether retry is supported").at(-1),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "标记已解决" }));
     expect(screen.getByText(/The refund policy is missing/)).toBeVisible();
     fireEvent.change(screen.getByLabelText("计划目标"), {
       target: { value: "Verify checkout and review failures" },

@@ -85,6 +85,7 @@ def _context() -> DesignContext:
         {
             "citations": [
                 {
+                    "citationSnapshotId": "citation_checkout",
                     "sourceRevisionId": "source_revision_checkout",
                     "documentRevisionId": "document_revision_checkout",
                     "chunkId": "chunk_checkout",
@@ -157,13 +158,7 @@ def _output() -> dict[str, object]:
         ],
         "citations": [
             {
-                "id": "citation_checkout",
-                "sourceRevisionId": "source_revision_checkout",
-                "documentRevisionId": "document_revision_checkout",
-                "chunkId": "chunk_checkout",
-                "contentDigest": "sha256:" + "a" * 64,
-                "claimText": "Checkout creates an order",
-                "origin": "SOURCE",
+                "citationSnapshotId": "citation_checkout",
             }
         ],
         "assumptions": [],
@@ -202,7 +197,7 @@ async def test_malformed_ungrounded_or_privileged_model_output_fails_closed(muta
     if mutation == "status":
         output["status"] = "PUBLISHED"
     elif mutation == "citation":
-        output["citations"][0]["chunkId"] = "chunk_other"  # type: ignore[index]
+        output["citations"][0]["citationSnapshotId"] = "citation_other"  # type: ignore[index]
     else:
         output["cases"][0]["scenarios"][0]["steps"][0]["keyword"] = "When"  # type: ignore[index]
 
@@ -216,6 +211,7 @@ async def test_citation_fields_cannot_be_composed_from_different_evidence_rows()
     evidence = [
         *context.answer_evidence_snapshot["citations"],  # type: ignore[misc]
         {
+            "citationSnapshotId": "citation_other",
             "sourceRevisionId": "source_revision_other",
             "documentRevisionId": "document_revision_other",
             "chunkId": "chunk_other",
@@ -225,7 +221,10 @@ async def test_citation_fields_cannot_be_composed_from_different_evidence_rows()
         },
     ]
     composite = deepcopy(_output())
-    composite["citations"][0]["chunkId"] = "chunk_other"  # type: ignore[index]
+    composite["citations"][0]["citationSnapshotId"] = "citation_other"  # type: ignore[index]
+    composite["cases"][0]["scenarios"][0]["steps"][2]["citationIds"] = [  # type: ignore[index]
+        "citation_other"
+    ]
     mixed_context = DesignContext(
         context.scope,
         context.request,
@@ -233,16 +232,19 @@ async def test_citation_fields_cannot_be_composed_from_different_evidence_rows()
         {"citations": evidence},
     )
 
-    with pytest.raises(ValueError, match="outside frozen evidence"):
-        await ModelGatewayTestDesign(Gateway(composite)).generate(mixed_context)
+    draft = await ModelGatewayTestDesign(Gateway(composite)).generate(mixed_context)
+
+    assert draft.citations[0].source_revision_id == "source_revision_other"
+    assert draft.citations[0].chunk_id == "chunk_other"
+    assert draft.citations[0].claim_text == "A different authorized claim"
 
 
 @pytest.mark.asyncio
-async def test_citation_claim_cannot_be_spliced_onto_an_authorized_evidence_identity() -> None:
+async def test_model_cannot_submit_mutable_citation_claim_fields() -> None:
     composite = deepcopy(_output())
     composite["citations"][0]["claimText"] = "A claim not present in that evidence row"  # type: ignore[index]
 
-    with pytest.raises(ValueError, match="outside frozen evidence"):
+    with pytest.raises(ValueError, match="malformed"):
         await ModelGatewayTestDesign(Gateway(composite)).generate(_context())
 
 

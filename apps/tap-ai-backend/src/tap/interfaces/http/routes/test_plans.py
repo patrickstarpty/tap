@@ -12,6 +12,7 @@ from tap.contracts.http import (
     TestPlanCaseView,
     TestPlanCitationView,
     TestPlanCoverageGapView,
+    TestPlanEvidencePreview,
     TestPlanGenerationAccepted,
     TestPlanGenerationRequestBody,
     TestPlanReviewDecisionView,
@@ -32,8 +33,6 @@ from tap.modules.test_management.domain.models import (
     CitationOrigin,
     GapSeverity,
     GenerationJobStatus,
-    RequirementScopeItem,
-    RequirementScopeSnapshot,
     ReviewDisposition,
     TestCase,
     TestPlanAssumption,
@@ -43,9 +42,6 @@ from tap.modules.test_management.domain.models import (
     TestPlanStep,
     TestPlanUnknown,
     TestScenario,
-)
-from tap.modules.test_management.domain.models import (
-    TestPlanGenerationRequest as DomainGenerationRequest,
 )
 
 router = APIRouter(prefix="/test-plans", tags=["test-management"])
@@ -72,10 +68,11 @@ def _generation_view(job) -> TestPlanGenerationAccepted:
         deep_link=(
             f"/test-management/{job.request.test_plan_id}/revisions/{job.request.revision_id}"
         ),
+        row_version=job.row_version,
     )
 
 
-def _view(revision) -> TestPlanRevisionView:
+def _view(revision, project_id: str) -> TestPlanRevisionView:
     return TestPlanRevisionView(
         test_plan_id=revision.test_plan_id,
         revision_id=revision.revision_id,
@@ -132,6 +129,11 @@ def _view(revision) -> TestPlanRevisionView:
                 content_digest=item.content_digest,
                 claim_text=item.claim_text,
                 origin=item.origin.value,
+                evidence_preview_url=(
+                    f"/api/v1/projects/{project_id}/test-plans/{revision.test_plan_id}"
+                    f"/revisions/{revision.revision_id}/evidence/{item.citation_id}"
+                ),
+                anchor=item.anchor,
             )
             for item in revision.citations
         ],
@@ -195,7 +197,9 @@ def _view(revision) -> TestPlanRevisionView:
 )
 async def list_revisions(request: Request) -> TestPlanRevisionPage:
     revisions = await test_plan_service(request).list_revisions(request.state.project_scope)
-    return TestPlanRevisionPage(items=[_view(item) for item in revisions])
+    return TestPlanRevisionPage(
+        items=[_view(item, request.state.project_scope.project_id) for item in revisions]
+    )
 
 
 @router.get(
@@ -210,7 +214,33 @@ async def get_revision(
     revision = await test_plan_service(request).get_revision(
         request.state.project_scope, test_plan_id, revision_id
     )
-    return _view(revision)
+    return _view(revision, request.state.project_scope.project_id)
+
+
+@router.get(
+    "/{test_plan_id}/revisions/{revision_id}/evidence/{citation_id}",
+    operation_id="test_plan_get_evidence_preview",
+    response_model=TestPlanEvidencePreview,
+    dependencies=[Depends(project_authorization("test-plans.read"))],
+)
+async def get_evidence_preview(
+    request: Request,
+    test_plan_id: str,
+    revision_id: str,
+    citation_id: str,
+) -> TestPlanEvidencePreview:
+    value = await test_plan_service(request).get_evidence_preview(
+        request.state.project_scope, test_plan_id, revision_id, citation_id
+    )
+    return TestPlanEvidencePreview(
+        citation_id=str(value["citation_id"]),
+        source_revision_id=str(value["source_revision_id"]),
+        document_revision_id=str(value["document_revision_id"]),
+        chunk_id=str(value["chunk_id"]),
+        content_digest=str(value["content_digest"]),
+        claim_text=str(value["claim_text"]),
+        anchor=value["anchor"] if isinstance(value["anchor"], dict) else {},
+    )
 
 
 @router.patch(
@@ -225,10 +255,25 @@ async def replace_draft(
     revision_id: str,
     body: TestPlanRevisionUpdate,
     if_match: Annotated[int, Header(alias="If-Match", ge=1)],
-    _key: str = Depends(source_command_key),
+    key: str = Depends(source_command_key),
 ) -> TestPlanRevisionView:
     service = test_plan_service(request)
     current = await service.get_revision(request.state.project_scope, test_plan_id, revision_id)
+    submitted_citations = tuple(
+        TestPlanCitation(
+            item.citation_id,
+            item.source_revision_id,
+            item.document_revision_id,
+            item.chunk_id,
+            item.content_digest,
+            item.claim_text,
+            CitationOrigin(item.origin),
+            item.anchor,
+        )
+        for item in body.citations
+    )
+    if submitted_citations != current.citations:
+        raise ValueError("frozen evidence citations cannot be edited")
     replacement = TestPlanRevision.create(
         test_plan_id=test_plan_id,
         revision_id=revision_id,
@@ -270,18 +315,7 @@ async def replace_draft(
             )
             for case in body.cases
         ),
-        citations=tuple(
-            TestPlanCitation(
-                item.citation_id,
-                item.source_revision_id,
-                item.document_revision_id,
-                item.chunk_id,
-                item.content_digest,
-                item.claim_text,
-                CitationOrigin(item.origin),
-            )
-            for item in body.citations
-        ),
+        citations=current.citations,
         assumptions=tuple(
             TestPlanAssumption(item.fact_id, item.text, item.graph_edge_id)
             for item in body.assumptions
@@ -318,9 +352,10 @@ async def replace_draft(
         request.state.project_scope,
         replacement,
         if_match,
+        idempotency_key=key,
         now=datetime.now(timezone.utc),
     )
-    return _view(updated)
+    return _view(updated, request.state.project_scope.project_id)
 
 
 @router.post(
@@ -337,35 +372,13 @@ async def request_generation(
     key: str = Depends(source_command_key),
 ) -> TestPlanGenerationAccepted:
     scope = request.state.project_scope
-    requirement_scope = RequirementScopeSnapshot.create(
-        scope_id=body.requirement_scope.scope_id,
-        version=body.requirement_scope.version,
-        requirements=tuple(
-            RequirementScopeItem(
-                item.requirement_id,
-                item.source_revision_id,
-                item.locator,
-            )
-            for item in body.requirement_scope.requirements
-        ),
-    )
-    generation = DomainGenerationRequest.create(
-        project_id=scope.project_id,
+    job = await test_plan_service(request).request_generation_from_turn(
+        scope,
         conversation_id=body.conversation_id,
         turn_id=body.turn_id,
-        input_snapshot_digest=body.input_snapshot_digest,
-        answer_evidence_snapshot_digest=body.answer_evidence_snapshot_digest,
-        requirement_scope=requirement_scope,
-        approved_knowledge_revision_ids=tuple(body.approved_knowledge_revision_ids),
-        model_alias=body.model_alias,
-        model_revision_id=body.model_revision_id,
-        agent_revision_id=body.agent_revision_id,
-        skill_revision_ids=tuple(body.skill_revision_ids),
         objective=body.objective,
         idempotency_key=key,
-    )
-    job = await test_plan_service(request).request_generation(
-        scope, generation, now=datetime.now(timezone.utc)
+        now=datetime.now(timezone.utc),
     )
     return _generation_view(job)
 
@@ -387,10 +400,17 @@ async def get_generation(request: Request, job_id: str) -> TestPlanGenerationAcc
     response_model=TestPlanGenerationAccepted,
     dependencies=[Depends(project_authorization("test-plans.write"))],
 )
-async def cancel_generation(request: Request, job_id: str) -> TestPlanGenerationAccepted:
+async def cancel_generation(
+    request: Request,
+    job_id: str,
+    if_match: Annotated[int, Header(alias="If-Match", ge=1)],
+    key: str = Depends(source_command_key),
+) -> TestPlanGenerationAccepted:
     job = await test_plan_service(request).cancel_generation(
         request.state.project_scope,
         job_id,
+        expected_version=if_match,
+        idempotency_key=key,
         now=datetime.now(timezone.utc),
     )
     return _generation_view(job)
@@ -405,11 +425,13 @@ async def cancel_generation(request: Request, job_id: str) -> TestPlanGeneration
 async def retry_generation(
     request: Request,
     job_id: str,
+    if_match: Annotated[int, Header(alias="If-Match", ge=1)],
     key: str = Depends(source_command_key),
 ) -> TestPlanGenerationAccepted:
     job = await test_plan_service(request).retry_generation(
         request.state.project_scope,
         job_id,
+        expected_version=if_match,
         idempotency_key=key,
         now=datetime.now(timezone.utc),
     )
@@ -458,7 +480,7 @@ async def review_revision(
         idempotency_key=key,
         now=datetime.now(timezone.utc),
     )
-    return _view(revision)
+    return _view(revision, request.state.project_scope.project_id)
 
 
 @router.post(
@@ -471,16 +493,18 @@ async def fork_revision(
     request: Request,
     test_plan_id: str,
     revision_id: str,
+    if_match: Annotated[int, Header(alias="If-Match", ge=1)],
     key: str = Depends(source_command_key),
 ) -> TestPlanRevisionView:
     revision = await test_plan_service(request).fork_revision(
         request.state.project_scope,
         test_plan_id,
         revision_id,
+        expected_version=if_match,
         idempotency_key=key,
         now=datetime.now(timezone.utc),
     )
-    return _view(revision)
+    return _view(revision, request.state.project_scope.project_id)
 
 
 @router.post(
@@ -494,12 +518,13 @@ async def publish_revision(
     test_plan_id: str,
     revision_id: str,
     if_match: Annotated[int, Header(alias="If-Match", ge=1)],
-    _key: str = Depends(source_command_key),
+    key: str = Depends(source_command_key),
 ) -> TestPlanRevisionView:
     revision = await test_plan_service(request).publish(
         request.state.project_scope,
         test_plan_id,
         revision_id,
         if_match,
+        key,
     )
-    return _view(revision)
+    return _view(revision, request.state.project_scope.project_id)

@@ -245,7 +245,9 @@ async def test_published_revision_is_forked_as_a_new_draft() -> None:
             assert scope == VALIDATION_SCOPE
             return replace(revision, created_at=now)
 
-        async def publish_revision(self, scope, revision_id, expected_version, validation_digest):
+        async def publish_revision(
+            self, scope, revision_id, expected_version, validation_digest, idempotency_key
+        ):
             raise AssertionError("publication is not part of forking")
 
     created = await PlanService(Repository()).fork_revision(

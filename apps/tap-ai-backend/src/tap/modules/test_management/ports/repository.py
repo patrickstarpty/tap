@@ -33,6 +33,7 @@ class TestPlanRepository(Protocol):
         revision: TestPlanRevision,
         expected_version: int,
         *,
+        idempotency_key: str,
         now: datetime,
     ) -> TestPlanRevision: ...
 
@@ -42,6 +43,7 @@ class TestPlanRepository(Protocol):
         revision_id: str,
         expected_version: int,
         validation_digest: str,
+        idempotency_key: str,
     ) -> TestPlanRevision: ...
 
     async def record_review(

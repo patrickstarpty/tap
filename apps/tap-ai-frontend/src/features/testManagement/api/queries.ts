@@ -32,7 +32,8 @@ export function useTestPlanGeneration(projectId: string, jobId: string | null) {
     enabled: jobId !== null,
     refetchInterval: (query) =>
       query.state.data?.status === "DRAFT_READY" ||
-      query.state.data?.status === "FAILED"
+      query.state.data?.status === "FAILED" ||
+      query.state.data?.status === "CANCELED"
         ? false
         : 2000,
   });
@@ -68,8 +69,15 @@ export function useRetryTestPlanGeneration(projectId: string) {
   const client = useMemo(() => createTestPlanClient(projectId), [projectId]);
   const cache = useQueryClient();
   return useMutation({
-    mutationFn: ({ jobId, key }: { jobId: string; key: string }) =>
-      client.retry(jobId, key),
+    mutationFn: ({
+      jobId,
+      rowVersion,
+      key,
+    }: {
+      jobId: string;
+      rowVersion: number;
+      key: string;
+    }) => client.retry(jobId, rowVersion, key),
     onSuccess: (job) => {
       cache.setQueryData(testPlanKeys.generation(projectId, job.jobId), job);
     },

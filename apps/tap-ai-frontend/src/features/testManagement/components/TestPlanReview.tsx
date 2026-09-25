@@ -1,4 +1,4 @@
-import { Alert, Button, Input, Spin } from "antd";
+import { Alert, Button, Input, Select, Spin } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
 import { TestPlanApiError, type TestPlanRevision } from "../api/client";
@@ -18,7 +18,11 @@ function validateDraft(plan: TestPlanRevision, locale: "en" | "zh") {
   for (const testCase of plan.cases) {
     for (const scenario of testCase.scenarios) {
       const order = scenario.steps.map((step) => step.keyword).join(",");
-      if (!/^Given(?:,And)*,When(?:,And)*,Then(?:,And)*$/u.test(order)) {
+      if (
+        !/^Given(?:,(?:And|But))*,When(?:,(?:And|But))*,Then(?:,(?:And|But))*$/u.test(
+          order,
+        )
+      ) {
         errors.push(
           locale === "zh"
             ? `场景“${scenario.title}”必须按 Given、When、Then 排列。`
@@ -74,6 +78,8 @@ function ReviewWorkspace({
   const canPublish =
     draft.status === "DRAFT" &&
     !draft.needsReview &&
+    draft.unknowns.length === 0 &&
+    !draft.coverageGaps.some((gap) => gap.severity === "CRITICAL") &&
     currentReview?.reviewedContentDigest === draft.contentDigest &&
     (currentReview.disposition === "ACCEPTED_UNCHANGED" ||
       currentReview.disposition === "ACCEPTED_MODIFIED");
@@ -246,6 +252,91 @@ function ReviewWorkspace({
               ),
             ),
           )}
+          {draft.assumptions.map((assumption, index) => (
+            <label key={assumption.factId}>
+              <span>{locale === "zh" ? "假设" : "Assumption"}</span>
+              <Input.TextArea
+                aria-label={`${locale === "zh" ? "假设" : "Assumption"} ${assumption.factId}`}
+                value={assumption.text}
+                onChange={(event) =>
+                  setDraft((current) => {
+                    const assumptions = structuredClone(current.assumptions);
+                    assumptions[index]!.text = event.target.value;
+                    return { ...current, assumptions };
+                  })
+                }
+              />
+            </label>
+          ))}
+          {draft.unknowns.map((unknown) => (
+            <div className="tap-plan-blocker-editor" key={unknown.factId}>
+              <span>{unknown.text}</span>
+              <Button
+                onClick={() =>
+                  setDraft((current) => ({
+                    ...current,
+                    unknowns: current.unknowns.filter(
+                      (item) => item.factId !== unknown.factId,
+                    ),
+                    cases: current.cases.map((testCase) => ({
+                      ...testCase,
+                      scenarios: testCase.scenarios.map((scenario) => ({
+                        ...scenario,
+                        steps: scenario.steps.map((step) => ({
+                          ...step,
+                          unknownIds: (step.unknownIds ?? []).filter(
+                            (item) => item !== unknown.factId,
+                          ),
+                        })),
+                      })),
+                    })),
+                  }))
+                }
+              >
+                {locale === "zh" ? "标记已解决" : "Mark resolved"}
+              </Button>
+            </div>
+          ))}
+          {draft.coverageGaps.map((gap, index) => (
+            <label key={gap.gapId}>
+              <span>
+                {locale === "zh" ? "覆盖缺口处置" : "Coverage gap disposition"}:{" "}
+                {gap.requirementRef}
+              </span>
+              <Select
+                aria-label={`${locale === "zh" ? "覆盖缺口处置" : "Coverage gap disposition"} ${gap.gapId}`}
+                value={gap.severity}
+                options={[
+                  {
+                    value: "LOW",
+                    label:
+                      locale === "zh" ? "已接受低风险" : "Accepted low risk",
+                  },
+                  {
+                    value: "MEDIUM",
+                    label:
+                      locale === "zh" ? "已接受中风险" : "Accepted medium risk",
+                  },
+                  {
+                    value: "HIGH",
+                    label:
+                      locale === "zh" ? "待跟进高风险" : "High risk follow-up",
+                  },
+                  {
+                    value: "CRITICAL",
+                    label: locale === "zh" ? "阻断" : "Blocking",
+                  },
+                ]}
+                onChange={(severity) =>
+                  setDraft((current) => {
+                    const coverageGaps = structuredClone(current.coverageGaps);
+                    coverageGaps[index]!.severity = severity;
+                    return { ...current, coverageGaps };
+                  })
+                }
+              />
+            </label>
+          ))}
           {validationErrors.map((error) => (
             <p role="alert" key={error}>
               {error}

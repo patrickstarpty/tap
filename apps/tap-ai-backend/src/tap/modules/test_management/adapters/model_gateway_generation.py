@@ -116,27 +116,8 @@ TEST_DESIGN_SCHEMA: dict[str, object] = _object(
         "citations": {
             "type": "array",
             "items": _object(
-                [
-                    "id",
-                    "sourceRevisionId",
-                    "documentRevisionId",
-                    "chunkId",
-                    "contentDigest",
-                    "claimText",
-                    "origin",
-                ],
-                {
-                    "id": _STRING,
-                    "sourceRevisionId": _STRING,
-                    "documentRevisionId": _STRING,
-                    "chunkId": _STRING,
-                    "contentDigest": _STRING,
-                    "claimText": _STRING,
-                    "origin": {
-                        "type": "string",
-                        "enum": ["SOURCE", "GRAPH_EXTRACTED"],
-                    },
-                },
+                ["citationSnapshotId"],
+                {"citationSnapshotId": _STRING},
             ),
         },
         "assumptions": {
@@ -179,9 +160,9 @@ TEST_DESIGN_PROMPT = (
     "Every "
     "scenario must start with Given, contain When, and contain Then. Every Then must include a "
     "nonblank expectedResult; mark critical outcomes explicitly and bind every critical Then to "
-    "authorized citation IDs. Never turn an unresolved unknown into a definite Then. Copy citation "
-    "source revision, "
-    "document revision, chunk, digest, and claim only from authorized evidence in the snapshot. "
+    "authorized citationSnapshotIds. Never turn an unresolved unknown into a definite Then. "
+    "Return citationSnapshotId only; the server reconstructs every evidence field from the "
+    "authorized immutable snapshot. "
     "Never present inferred graph context as fact: record it under assumptions. Record missing "
     "information under unknowns and uncovered requirements under coverageGaps. Use only IDs from "
     "the frozen RequirementScopeSnapshot and keep uncovered requirements in Coverage Gaps. "
@@ -293,17 +274,47 @@ def _revision(context: TestDesignContext, raw: dict[str, object]) -> TestPlanRev
             )
             for case_index, case in enumerate(_objects(raw, "cases"), 1)
         )
+        raw_authorized = context.answer_evidence_snapshot.get(
+            "authorizedEvidence", context.answer_evidence_snapshot.get("citations", [])
+        )
+        if not isinstance(raw_authorized, list):
+            raise ValueError("frozen evidence citations are malformed")
+        authorized_evidence = {
+            item.get("citationSnapshotId"): item
+            for item in raw_authorized
+            if isinstance(item, dict) and isinstance(item.get("citationSnapshotId"), str)
+        }
+        raw_citations = _objects(raw, "citations")
+        if any(set(item) != {"citationSnapshotId"} for item in raw_citations):
+            raise ValueError("test design citation is malformed")
         citations = tuple(
             TestPlanCitation(
-                _string(item, "id"),
-                _string(item, "sourceRevisionId"),
-                _string(item, "documentRevisionId"),
-                _string(item, "chunkId"),
-                _string(item, "contentDigest"),
-                _string(item, "claimText"),
-                CitationOrigin(_string(item, "origin")),
+                _string(item, "citationSnapshotId"),
+                _string(
+                    authorized_evidence[_string(item, "citationSnapshotId")], "sourceRevisionId"
+                ),
+                _string(
+                    authorized_evidence[_string(item, "citationSnapshotId")],
+                    "documentRevisionId",
+                ),
+                _string(authorized_evidence[_string(item, "citationSnapshotId")], "chunkId"),
+                _string(authorized_evidence[_string(item, "citationSnapshotId")], "contentDigest"),
+                _string(authorized_evidence[_string(item, "citationSnapshotId")], "claimText"),
+                CitationOrigin(
+                    _string(authorized_evidence[_string(item, "citationSnapshotId")], "origin")
+                ),
+                (
+                    authorized_evidence.get(_string(item, "citationSnapshotId"), {}).get("anchor")
+                    if isinstance(
+                        authorized_evidence.get(_string(item, "citationSnapshotId"), {}).get(
+                            "anchor"
+                        ),
+                        dict,
+                    )
+                    else None
+                ),
             )
-            for item in _objects(raw, "citations")
+            for item in raw_citations
         )
         assumptions = tuple(
             TestPlanAssumption(
@@ -347,9 +358,7 @@ def _revision(context: TestDesignContext, raw: dict[str, object]) -> TestPlanRev
             agent_revision_id=context.request.agent_revision_id,
             skill_revision_ids=context.request.skill_revision_ids,
             author_actor_id=context.scope.actor_id,
-            strict_review_required=bool(
-                context.input_snapshot.get("strict_test_design_review", False)
-            ),
+            strict_review_required=context.request.strict_review_required,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("test design output is malformed") from error
@@ -368,6 +377,7 @@ def _validate_citations(
         raise ValueError("frozen evidence citations are malformed")
     authorized = {
         (
+            item.get("citationSnapshotId"),
             item.get("sourceRevisionId"),
             item.get("documentRevisionId"),
             item.get("chunkId"),
@@ -380,6 +390,7 @@ def _validate_citations(
     }
     for citation in citations:
         identity = (
+            citation.citation_id,
             citation.source_revision_id,
             citation.document_revision_id,
             citation.chunk_id,

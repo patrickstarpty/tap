@@ -1079,29 +1079,9 @@ class GraphPathRequest(ContractModel):
     node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
 
 
-class RequirementScopeItemBody(ContractModel):
-    requirement_id: Annotated[str, Field(strict=True, min_length=3, max_length=128)]
-    source_revision_id: Annotated[str, Field(strict=True, min_length=3, max_length=128)]
-    locator: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
-
-
-class RequirementScopeSnapshotBody(ContractModel):
-    scope_id: Annotated[str, Field(strict=True, min_length=3, max_length=128)]
-    version: Annotated[StrictInt, Field(ge=1)]
-    requirements: Annotated[list[RequirementScopeItemBody], Field(min_length=1, max_length=1000)]
-
-
 class TestPlanGenerationRequestBody(ContractModel):
     conversation_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     turn_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
-    input_snapshot_digest: CanonicalSha256
-    answer_evidence_snapshot_digest: CanonicalSha256
-    requirement_scope: RequirementScopeSnapshotBody
-    approved_knowledge_revision_ids: Annotated[list[str], Field(min_length=1, max_length=100)]
-    model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
-    model_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
-    agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
-    skill_revision_ids: Annotated[list[str], Field(min_length=1, max_length=16)]
     objective: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
 
 
@@ -1113,6 +1093,7 @@ class TestPlanGenerationAccepted(ContractModel):
     progress: Literal["queued", "running", "waiting", "completed", "failed", "canceled"]
     failure_code: str | None = None
     deep_link: str
+    row_version: StrictInt
 
 
 class TestPlanStepView(ContractModel):
@@ -1151,6 +1132,18 @@ class TestPlanCitationView(ContractModel):
     content_digest: CanonicalSha256
     claim_text: str
     origin: Literal["SOURCE", "GRAPH_EXTRACTED"]
+    evidence_preview_url: str | None = None
+    anchor: dict[str, object] | None = None
+
+
+class TestPlanEvidencePreview(ContractModel):
+    citation_id: str
+    source_revision_id: str
+    document_revision_id: str
+    chunk_id: str
+    content_digest: CanonicalSha256
+    claim_text: str
+    anchor: dict[str, object]
 
 
 class TestPlanTextFactView(ContractModel):

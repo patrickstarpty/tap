@@ -858,6 +858,23 @@ export interface paths {
         patch: operations["test_plan_replace_draft"];
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}/evidence/{citation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Evidence Preview */
+        get: operations["test_plan_get_evidence_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}/fork": {
         parameters: {
             query?: never;
@@ -2750,24 +2767,6 @@ export interface components {
              */
             status: "ready" | "unready";
         };
-        /** RequirementScopeItemBody */
-        RequirementScopeItemBody: {
-            /** Locator */
-            locator: string;
-            /** Requirementid */
-            requirementId: string;
-            /** Sourcerevisionid */
-            sourceRevisionId: string;
-        };
-        /** RequirementScopeSnapshotBody */
-        RequirementScopeSnapshotBody: {
-            /** Requirements */
-            requirements: components["schemas"]["RequirementScopeItemBody"][];
-            /** Scopeid */
-            scopeId: string;
-            /** Version */
-            version: number;
-        };
         /** RerankCompletedEvent */
         RerankCompletedEvent: {
             payload: components["schemas"]["RerankCompletedPayload"];
@@ -3326,6 +3325,10 @@ export interface components {
         };
         /** TestPlanCitationView */
         TestPlanCitationView: {
+            /** Anchor */
+            anchor?: {
+                [key: string]: unknown;
+            } | null;
             /** Chunkid */
             chunkId: string;
             /** Citationid */
@@ -3336,6 +3339,8 @@ export interface components {
             contentDigest: string;
             /** Documentrevisionid */
             documentRevisionId: string;
+            /** Evidencepreviewurl */
+            evidencePreviewUrl?: string | null;
             /**
              * Origin
              * @enum {string}
@@ -3358,6 +3363,25 @@ export interface components {
              */
             severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
         };
+        /** TestPlanEvidencePreview */
+        TestPlanEvidencePreview: {
+            /** Anchor */
+            anchor: {
+                [key: string]: unknown;
+            };
+            /** Chunkid */
+            chunkId: string;
+            /** Citationid */
+            citationId: string;
+            /** Claimtext */
+            claimText: string;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Documentrevisionid */
+            documentRevisionId: string;
+            /** Sourcerevisionid */
+            sourceRevisionId: string;
+        };
         /** TestPlanGenerationAccepted */
         TestPlanGenerationAccepted: {
             /** Deeplink */
@@ -3373,6 +3397,8 @@ export interface components {
             progress: "queued" | "running" | "waiting" | "completed" | "failed" | "canceled";
             /** Revisionid */
             revisionId: string;
+            /** Rowversion */
+            rowVersion: number;
             /**
              * Status
              * @enum {string}
@@ -3415,25 +3441,10 @@ export interface components {
         };
         /** TestPlanGenerationRequestBody */
         TestPlanGenerationRequestBody: {
-            /** Agentrevisionid */
-            agentRevisionId: string;
-            /** Answerevidencesnapshotdigest */
-            answerEvidenceSnapshotDigest: string;
-            /** Approvedknowledgerevisionids */
-            approvedKnowledgeRevisionIds: string[];
             /** Conversationid */
             conversationId: string;
-            /** Inputsnapshotdigest */
-            inputSnapshotDigest: string;
-            /** Modelalias */
-            modelAlias: string;
-            /** Modelrevisionid */
-            modelRevisionId: string;
             /** Objective */
             objective: string;
-            requirementScope: components["schemas"]["RequirementScopeSnapshotBody"];
-            /** Skillrevisionids */
-            skillRevisionIds: string[];
             /** Turnid */
             turnId: string;
         };
@@ -7320,7 +7331,10 @@ export interface operations {
     test_plan_cancel_generation: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "If-Match": number;
+                "idempotency-key": string;
+            };
             path: {
                 job_id: string;
                 project_id: string;
@@ -7362,6 +7376,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                "If-Match": number;
                 "idempotency-key": string;
             };
             path: {
@@ -7532,10 +7547,54 @@ export interface operations {
             };
         };
     };
+    test_plan_get_evidence_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                test_plan_id: string;
+                revision_id: string;
+                citation_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanEvidencePreview"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     test_plan_fork_revision: {
         parameters: {
             query?: never;
             header: {
+                "If-Match": number;
                 "idempotency-key": string;
             };
             path: {

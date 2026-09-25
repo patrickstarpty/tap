@@ -148,6 +148,7 @@ export function TestPlanLibrary({
                 ? undefined
                 : retry.mutate({
                     jobId: generationJobId,
+                    rowVersion: generation.data!.rowVersion,
                     key: `retry-${crypto.randomUUID()}`,
                   })
             }

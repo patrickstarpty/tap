@@ -219,6 +219,7 @@ class TestPlanCitation:
     content_digest: str
     claim_text: str
     origin: CitationOrigin
+    anchor: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -233,6 +234,8 @@ class TestPlanCitation:
         _text("citation claim", self.claim_text)
         if not isinstance(self.origin, CitationOrigin):
             raise TypeError("citation origin must be explicit")
+        if self.anchor is not None and not isinstance(self.anchor, dict):
+            raise TypeError("citation anchor must be an object")
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +331,7 @@ class TestPlanGenerationRequest:
     requirement_scope: RequirementScopeSnapshot | None = None
     approved_knowledge_revision_ids: tuple[str, ...] = ()
     model_revision_id: str | None = None
+    strict_review_required: bool = False
 
     @classmethod
     def create(
@@ -346,6 +350,7 @@ class TestPlanGenerationRequest:
         requirement_scope: RequirementScopeSnapshot | None = None,
         approved_knowledge_revision_ids: tuple[str, ...] = (),
         model_revision_id: str | None = None,
+        strict_review_required: bool = False,
     ) -> TestPlanGenerationRequest:
         for name, value in (
             ("project_id", project_id),
@@ -378,6 +383,8 @@ class TestPlanGenerationRequest:
             _identifier("approved knowledge revision", value)
         if model_revision_id is not None:
             _identifier("model_revision_id", model_revision_id)
+        if not isinstance(strict_review_required, bool):
+            raise TypeError("strict review requirement must be boolean")
         _text("generation objective", objective)
         material = json.dumps(
             {
@@ -396,6 +403,7 @@ class TestPlanGenerationRequest:
                 ),
                 "approvedKnowledgeRevisionIds": list(approved_knowledge_revision_ids),
                 "modelRevisionId": model_revision_id,
+                "strictReviewRequired": strict_review_required,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -420,6 +428,7 @@ class TestPlanGenerationRequest:
             requirement_scope=requirement_scope,
             approved_knowledge_revision_ids=approved_knowledge_revision_ids,
             model_revision_id=model_revision_id,
+            strict_review_required=strict_review_required,
         )
 
 
@@ -434,12 +443,15 @@ class TestPlanGenerationJob:
     lease_token: str | None = None
     lease_expires_at: datetime | None = None
     failure_code: str | None = None
+    row_version: int = 1
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, GenerationJobStatus):
             raise TypeError("generation status must be explicit")
         if self.attempt_count < 0:
             raise ValueError("generation attempt count cannot be negative")
+        if type(self.row_version) is not int or self.row_version < 1:
+            raise ValueError("generation row version must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -662,6 +674,7 @@ class TestPlanRevision:
                     "contentDigest": item.content_digest,
                     "claimText": item.claim_text,
                     "origin": item.origin.value,
+                    "anchor": item.anchor,
                 }
                 for item in self.citations
             ],

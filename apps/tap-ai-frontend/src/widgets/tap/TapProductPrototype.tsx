@@ -1369,14 +1369,6 @@ export function TapProductPrototype({
       turn.skillRevisionIds === undefined
     )
       return;
-    const approvedKnowledgeRevisionIds = [
-      ...new Set(
-        turn.response.citations.map((citation) => citation.source.revision),
-      ),
-    ];
-    const sourceRevisionId = approvedKnowledgeRevisionIds[0];
-    if (sourceRevisionId === undefined) return;
-    const stableTurn = turn.id.replace(/[^a-zA-Z0-9_-]/gu, "-");
     const api = createTestPlanClient(projectId);
     setGenerationJobId(null);
     window.sessionStorage.removeItem(`tap:test-plan-generation:${projectId}`);
@@ -1386,24 +1378,6 @@ export function TapProductPrototype({
         {
           conversationId: conversation.id,
           turnId: turn.id,
-          inputSnapshotDigest: turn.inputSnapshotDigest,
-          answerEvidenceSnapshotDigest: turn.answerEvidenceSnapshotDigest,
-          requirementScope: {
-            scopeId: `scope-${stableTurn}`,
-            version: 1,
-            requirements: [
-              {
-                requirementId: `requirement-${stableTurn}`,
-                sourceRevisionId,
-                locator: `turn:${turn.id}`,
-              },
-            ],
-          },
-          approvedKnowledgeRevisionIds,
-          modelAlias: turn.modelId,
-          modelRevisionId: turn.modelId,
-          agentRevisionId: turn.agentRevisionId,
-          skillRevisionIds: [...turn.skillRevisionIds],
           objective: `为“${turn.prompt}”设计测试计划`,
         },
         crypto.randomUUID(),

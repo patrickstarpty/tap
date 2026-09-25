@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -70,16 +68,32 @@ class TestPlanApplication:
             require_project_scope(scope), test_plan_id, revision_id
         )
 
+    async def get_evidence_preview(
+        self,
+        scope: ProjectScopeContext,
+        test_plan_id: str,
+        revision_id: str,
+        citation_id: str,
+    ) -> dict[str, object]:
+        return await self._repository.get_evidence_preview(
+            require_project_scope(scope), test_plan_id, revision_id, citation_id
+        )
+
     async def replace_draft(
         self,
         scope: ProjectScopeContext,
         revision: TestPlanRevision,
         expected_version: int,
         *,
+        idempotency_key: str,
         now: datetime,
     ) -> TestPlanRevision:
         return await self._repository.replace_draft(
-            require_project_scope(scope), revision, expected_version, now=now
+            require_project_scope(scope),
+            revision,
+            expected_version,
+            idempotency_key=idempotency_key,
+            now=now,
         )
 
     async def request_generation(
@@ -93,16 +107,45 @@ class TestPlanApplication:
             require_project_scope(scope), request, now=now
         )
 
+    async def request_generation_from_turn(
+        self,
+        scope: ProjectScopeContext,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        objective: str,
+        idempotency_key: str,
+        now: datetime,
+    ) -> TestPlanGenerationJob:
+        return await self._repository.request_generation_from_turn(
+            require_project_scope(scope),
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            objective=objective,
+            idempotency_key=idempotency_key,
+            now=now,
+        )
+
     async def get_generation_job(
         self, scope: ProjectScopeContext, job_id: str
     ) -> TestPlanGenerationJob:
         return await self._repository.get_generation_job(require_project_scope(scope), job_id)
 
     async def cancel_generation(
-        self, scope: ProjectScopeContext, job_id: str, *, now: datetime
+        self,
+        scope: ProjectScopeContext,
+        job_id: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+        now: datetime,
     ) -> TestPlanGenerationJob:
         return await self._repository.cancel_generation(
-            require_project_scope(scope), job_id, now=now
+            require_project_scope(scope),
+            job_id,
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+            now=now,
         )
 
     async def retry_generation(
@@ -110,12 +153,14 @@ class TestPlanApplication:
         scope: ProjectScopeContext,
         job_id: str,
         *,
+        expected_version: int,
         idempotency_key: str,
         now: datetime,
     ) -> TestPlanGenerationJob:
         return await self._repository.retry_generation(
             require_project_scope(scope),
             job_id,
+            expected_version=expected_version,
             idempotency_key=idempotency_key,
             now=now,
         )
@@ -126,12 +171,14 @@ class TestPlanApplication:
         test_plan_id: str,
         revision_id: str,
         expected_version: int,
+        idempotency_key: str,
     ) -> TestPlanRevision:
         return await PublishTestPlan(self._repository, self._repository).execute(
             require_project_scope(scope),
             test_plan_id,
             revision_id,
             expected_version,
+            idempotency_key,
         )
 
     async def fork_revision(
@@ -140,17 +187,18 @@ class TestPlanApplication:
         test_plan_id: str,
         source_revision_id: str,
         *,
+        expected_version: int,
         idempotency_key: str,
         now: datetime,
     ) -> TestPlanRevision:
-        scope = require_project_scope(scope)
-        source = await self._repository.get_revision(scope, test_plan_id, source_revision_id)
-        suffix = hashlib.sha256(
-            f"{scope.project_id}:{test_plan_id}:{idempotency_key}".encode()
-        ).hexdigest()[:32]
-        draft = source.fork(f"tpr_{suffix}", source.version + 1)
-        draft = replace(draft, author_actor_id=scope.actor_id)
-        return await self._repository.create_draft(scope, draft, now=now)
+        return await self._repository.fork_revision(
+            require_project_scope(scope),
+            test_plan_id,
+            source_revision_id,
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+            now=now,
+        )
 
     async def review(
         self,

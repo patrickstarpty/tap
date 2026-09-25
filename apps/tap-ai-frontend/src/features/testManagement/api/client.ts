@@ -32,7 +32,11 @@ export interface TestPlanClient {
     key: string,
   ): Promise<TestPlanGeneration>;
   generation(jobId: string, signal?: AbortSignal): Promise<TestPlanGeneration>;
-  retry(jobId: string, key: string): Promise<TestPlanGeneration>;
+  retry(
+    jobId: string,
+    rowVersion: number,
+    key: string,
+  ): Promise<TestPlanGeneration>;
   update(plan: TestPlanRevision, key: string): Promise<TestPlanRevision>;
   review(
     plan: TestPlanRevision,
@@ -129,13 +133,13 @@ export function createTestPlanClient(
         result.error,
       );
     },
-    async retry(jobId, key) {
+    async retry(jobId, rowVersion, key) {
       const result = await http.POST(
         "/api/v1/projects/{project_id}/test-plans/generations/{job_id}/retry",
         {
           params: {
             path: { ...pathProject, job_id: jobId },
-            header: { "idempotency-key": key },
+            header: { "If-Match": rowVersion, "idempotency-key": key },
           },
         },
       );
@@ -227,7 +231,10 @@ export function createTestPlanClient(
               test_plan_id: plan.testPlanId,
               revision_id: plan.revisionId,
             },
-            header: { "idempotency-key": key },
+            header: {
+              "If-Match": plan.rowVersion,
+              "idempotency-key": key,
+            },
           },
         },
       );

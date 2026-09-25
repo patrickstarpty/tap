@@ -196,6 +196,17 @@ export function TestPlanDetail({
                     {citation.sourceRevisionId} · {citation.documentRevisionId}{" "}
                     · {citation.chunkId}
                   </code>
+                  {citation.evidencePreviewUrl ? (
+                    <a
+                      href={citation.evidencePreviewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {locale === "zh"
+                        ? "定位历史证据"
+                        : "Locate historical evidence"}
+                    </a>
+                  ) : null}
                 </details>
               </div>
             </article>

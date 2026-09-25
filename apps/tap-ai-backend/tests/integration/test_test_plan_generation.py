@@ -345,6 +345,8 @@ async def test_running_generation_can_be_cancelled_and_not_reclaimed(
         canceled = await repository.cancel_generation(
             VALIDATION_SCOPE,
             request.job_id,
+            expected_version=1,
+            idempotency_key="cancel-waiting-generation",
             now=now + timedelta(seconds=2),
         )
 

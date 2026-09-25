@@ -138,6 +138,7 @@ async def test_mysql_publish_is_atomic_immutable_and_emits_closed_event(
             draft.test_plan_id,
             draft.revision_id,
             expected_version=reviewed.row_version,
+            idempotency_key="publish-checkout-v1",
         )
         assert published.status.value == "PUBLISHED"
         assert published.validation_digest is not None
@@ -232,6 +233,7 @@ async def test_review_disposition_summary_excludes_pending_and_source_change_pre
             draft.test_plan_id,
             draft.revision_id,
             expected_version=accepted.row_version,
+            idempotency_key="publish-checkout-reviewed-v1",
         )
         impacted = await repository.mark_source_changed(
             VALIDATION_SCOPE,
