@@ -197,6 +197,178 @@ export function createKnowledgeClient(
 
   return {
     projectId,
+    async listReviews({ sourceRevisionId, afterReviewId, limit = 50, signal }) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/reviews",
+        {
+          params: {
+            path: { project_id: projectId },
+            query: { sourceRevisionId, afterReviewId, limit },
+          },
+          signal,
+        },
+      );
+      return result.data!;
+    },
+    async getReview(reviewId, signal) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}",
+        {
+          params: { path: { project_id: projectId, review_id: reviewId } },
+          signal,
+        },
+      );
+      return result.data!;
+    },
+    async listReviewInventory(reviewId, afterItemId) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/inventory",
+        {
+          params: {
+            path: { project_id: projectId, review_id: reviewId },
+            query: { afterItemId, limit: 100 },
+          },
+        },
+      );
+      return result.data!;
+    },
+    async listReviewDecisionHistory(reviewId, afterVersion) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/decision-history",
+        {
+          params: {
+            path: { project_id: projectId, review_id: reviewId },
+            query: { afterVersion, limit: 100 },
+          },
+        },
+      );
+      return result.data!;
+    },
+    async listReviewHistory(reviewId, afterVersion) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/history",
+        {
+          params: {
+            path: { project_id: projectId, review_id: reviewId },
+            query: { afterVersion, limit: 100 },
+          },
+        },
+      );
+      return result.data!;
+    },
+    async listReviewPublications(reviewId, afterPublicationId) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/publications",
+        {
+          params: {
+            path: { project_id: projectId, review_id: reviewId },
+            query: { afterPublicationId, limit: 100 },
+          },
+        },
+      );
+      return result.data!;
+    },
+    async compareReviewItem(reviewId, itemId) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/comparison",
+        {
+          params: {
+            path: {
+              project_id: projectId,
+              review_id: reviewId,
+              item_id: itemId,
+            },
+          },
+        },
+      );
+      return result.data!;
+    },
+    async decideReviewItem(reviewId, itemId, version, body) {
+      const result = await http.PUT(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/decision",
+        {
+          params: {
+            path: {
+              project_id: projectId,
+              review_id: reviewId,
+              item_id: itemId,
+            },
+            header: { "if-match": `"${version}"` },
+          },
+          body,
+        },
+      );
+      return result.data!;
+    },
+    async transitionReview(reviewId, action, version) {
+      const params = {
+        path: { project_id: projectId, review_id: reviewId },
+        header: { "if-match": `"${version}"` },
+      };
+      if (action === "submit") {
+        const result = await http.POST(
+          "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/submit",
+          { params },
+        );
+        return result.data!;
+      }
+      if (action === "return") {
+        const result = await http.POST(
+          "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/return",
+          { params },
+        );
+        return result.data!;
+      }
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/approve",
+        { params },
+      );
+      return result.data!;
+    },
+    async publishReview(
+      reviewId,
+      version,
+      generation,
+      key = crypto.randomUUID(),
+    ) {
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/publish",
+        {
+          params: {
+            path: { project_id: projectId, review_id: reviewId },
+            header: { "if-match": `"${version}"`, "idempotency-key": key },
+          },
+          body: { generation },
+        },
+      );
+      return result.data!;
+    },
+    async withdrawPublication(
+      publicationId,
+      version,
+      key = crypto.randomUUID(),
+    ) {
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/publications/{publication_id}/withdraw",
+        {
+          params: {
+            path: { project_id: projectId, publication_id: publicationId },
+            header: { "if-match": `"${version}"`, "idempotency-key": key },
+          },
+        },
+      );
+      return result.data!;
+    },
+    async listPublishedSources(signal) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/published-sources",
+        {
+          params: { path: { project_id: projectId } },
+          signal,
+        },
+      );
+      return result.data!;
+    },
     async listSources({ cursor, limit, signal }) {
       const result = await http.GET(SOURCE_PATH, {
         params: { path: { project_id: projectId }, query: { cursor, limit } },

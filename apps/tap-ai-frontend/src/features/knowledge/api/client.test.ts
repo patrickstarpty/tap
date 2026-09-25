@@ -52,6 +52,77 @@ class TestUploadRequest {
 }
 
 describe("KnowledgeClient", () => {
+  it("sends governed review writes with the loaded version and server target", async () => {
+    const requests: Request[] = [];
+    const client = createKnowledgeClient({
+      projectId: "project/a",
+      fetch: async (request) => {
+        requests.push(request);
+        return Response.json({});
+      },
+    });
+    await client.decideReviewItem("review/a", "item/a", 7, {
+      checkKind: "exception",
+      status: "blocked",
+      note: "Missing condition",
+    });
+    await client.transitionReview("review/a", "submit", 8);
+    await client.transitionReview("review/a", "return", 9);
+    await client.transitionReview("review/a", "approve", 10);
+    await client.publishReview(
+      "review/a",
+      11,
+      "generation-2",
+      "publish-intent",
+    );
+    await client.withdrawPublication("publication/a", 3, "withdraw-intent");
+    expect(
+      requests.map((request) => [
+        request.method,
+        new URL(request.url).pathname,
+        request.headers.get("If-Match"),
+      ]),
+    ).toEqual([
+      [
+        "PUT",
+        "/api/v1/projects/project%2Fa/knowledge/reviews/review%2Fa/items/item%2Fa/decision",
+        '"7"',
+      ],
+      [
+        "POST",
+        "/api/v1/projects/project%2Fa/knowledge/reviews/review%2Fa/submit",
+        '"8"',
+      ],
+      [
+        "POST",
+        "/api/v1/projects/project%2Fa/knowledge/reviews/review%2Fa/return",
+        '"9"',
+      ],
+      [
+        "POST",
+        "/api/v1/projects/project%2Fa/knowledge/reviews/review%2Fa/approve",
+        '"10"',
+      ],
+      [
+        "POST",
+        "/api/v1/projects/project%2Fa/knowledge/reviews/review%2Fa/publish",
+        '"11"',
+      ],
+      [
+        "POST",
+        "/api/v1/projects/project%2Fa/knowledge/publications/publication%2Fa/withdraw",
+        '"3"',
+      ],
+    ]);
+    expect(await requests[0]!.json()).toEqual({
+      checkKind: "exception",
+      status: "blocked",
+      note: "Missing condition",
+    });
+    expect(await requests[4]!.json()).toEqual({ generation: "generation-2" });
+    expect(requests[4]!.headers.get("Idempotency-Key")).toBe("publish-intent");
+    expect(requests[5]!.headers.get("Idempotency-Key")).toBe("withdraw-intent");
+  });
   it("retains the supplied idempotency key on the Document upload facade", async () => {
     const request = new TestUploadRequest();
     const client = createKnowledgeClient({

@@ -16,6 +16,7 @@ import type {
   IngestionStage,
 } from "../api/types";
 import { COPY, STAGE_STATE_COPY, STAGE_TITLES, safeProblemCopy } from "../copy";
+import { KnowledgeReview } from "./KnowledgeReview";
 
 const INGESTION_STAGES: IngestionStage[] = [
   "stored",
@@ -67,7 +68,7 @@ export function DocumentDetail({
     <Drawer
       open={documentId !== null}
       title={COPY.detailTitle(filename)}
-      size="min(520px, 100vw)"
+      size="min(920px, 100vw)"
       closable={false}
       focusable={{ focusTriggerAfterClose: false }}
       destroyOnHidden
@@ -137,6 +138,7 @@ export function DocumentDetail({
               {detailQuery.data.normalizedPreview ?? COPY.previewUnavailable}
             </pre>
           </section>
+          <KnowledgeReview sourceRevisionId={detailQuery.data.revisionId} />
         </div>
       ) : null}
     </Drawer>

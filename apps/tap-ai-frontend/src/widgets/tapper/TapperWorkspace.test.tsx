@@ -776,7 +776,9 @@ describe("TapperWorkspace claim and citation integrity", () => {
     });
 
     expect(
-      await screen.findByText("引用已失效，来源可能已经变化，请重新提交问题。"),
+      await screen.findByText(
+        "引用已失效：来源可能已撤回或版本已变化，请重新提交问题。",
+      ),
     ).toBeVisible();
     const citationRegion = screen.getByRole("region", { name: "原文" });
     expect(

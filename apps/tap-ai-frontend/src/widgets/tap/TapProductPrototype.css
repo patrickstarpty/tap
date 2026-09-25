@@ -3671,3 +3671,9 @@
     margin-left: 0;
   }
 }
+/* Keep the governed review readable inside the existing Library dialog. */
+.tap-review-dialog {
+  width: min(920px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+}

@@ -110,7 +110,14 @@ export interface CatalogItem {
 }
 
 export interface LibrarySource {
-  reviewState?: "processing" | "failed" | "review" | "published";
+  reviewState?:
+    | "processing"
+    | "failed"
+    | "review"
+    | "reviewing"
+    | "approved"
+    | "published"
+    | "withdrawn";
   isExample?: boolean;
   downloadUrl?: string;
   preview?: { imageUrl?: string; text?: string };

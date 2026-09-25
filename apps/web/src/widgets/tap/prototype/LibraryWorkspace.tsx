@@ -127,6 +127,14 @@ export function LibraryWorkspace({
       return copy.navigation.library === "Library" ? "Needs review" : "待核对";
     if (source.reviewState === "published")
       return copy.navigation.library === "Library" ? "Published" : "已发布";
+    if (source.reviewState === "reviewing")
+      return copy.navigation.library === "Library"
+        ? "Awaiting review"
+        : "待独立复核";
+    if (source.reviewState === "approved")
+      return copy.navigation.library === "Library" ? "Approved" : "已批准";
+    if (source.reviewState === "withdrawn")
+      return copy.navigation.library === "Library" ? "Withdrawn" : "已撤回";
     if (source.status === "ready") return copy.library.ready;
     if (source.status === "failed") return copy.library.failed;
     return copy.library.processing;

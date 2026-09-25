@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useDocumentListQuery,
   useSourceListQuery,
+  usePublishedSourcesQuery,
   useUploadSourceMutation,
   useSourceDetailQuery,
   useRetrySourceMutation,
@@ -51,6 +52,7 @@ import {
 } from "../../features/conversations/model/stream";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
+import { KnowledgeReview } from "../../features/knowledge/components/KnowledgeReview";
 import {
   appendTurn,
   createConversation,
@@ -492,6 +494,7 @@ function ProjectLibraryWorkspace({
   const upload = useUploadSourceMutation(projectId);
   const uploadIntents = useRef(new WeakMap<File, string>());
   const [inspected, setInspected] = useState<string | null>(null);
+  const [reviewDocumentId, setReviewDocumentId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
   const detail = useSourceDetailQuery(projectId, inspected);
@@ -508,6 +511,7 @@ function ProjectLibraryWorkspace({
   const close = () => {
     if (!busy) {
       setInspected(null);
+      setReviewDocumentId(null);
       setConfirmDelete(false);
       retry.reset();
       deletion.reset();
@@ -545,7 +549,7 @@ function ProjectLibraryWorkspace({
             sources.find((source) => source.id === inspected)?.name ??
             copy.sources.heading
           }
-          className="tap-add-source-dialog"
+          className="tap-add-source-dialog tap-review-dialog"
           opener={opener.current}
           onClose={close}
         >
@@ -587,6 +591,20 @@ function ProjectLibraryWorkspace({
                       {item.status} · {item.stage}
                     </p>
                     <small>{item.revisionId}</small>
+                    <Button
+                      aria-label={`Review ${item.filename}`}
+                      aria-expanded={reviewDocumentId === item.documentId}
+                      onClick={() =>
+                        setReviewDocumentId((current) =>
+                          current === item.documentId ? null : item.documentId,
+                        )
+                      }
+                    >
+                      审核记录
+                    </Button>
+                    {reviewDocumentId === item.documentId ? (
+                      <KnowledgeReview sourceRevisionId={item.revisionId} />
+                    ) : null}
                     {item.errorCode != null && <p>{item.errorCode}</p>}
                     {item.status === "failed" && (
                       <Button
@@ -673,6 +691,9 @@ export function TapProductPrototype({
   const durable = conversationSource === "api";
   const knowledgeClient = useOptionalKnowledgeClient();
   const sourcesQuery = useSourceListQuery(projectId);
+  const publishedSourcesQuery = usePublishedSourcesQuery(
+    durable ? projectId : null,
+  );
   const documentsQuery = useDocumentListQuery(durable ? null : projectId);
   const [initialSnapshot] = useState(() =>
     typeof window === "undefined"
@@ -709,13 +730,14 @@ export function TapProductPrototype({
   );
   const selectionProject = useRef(projectId);
   useEffect(() => {
+    if (!durable) return;
     const changedProject = selectionProject.current !== projectId;
     selectionProject.current = projectId;
-    if (!changedProject && !sourcesQuery.isSuccess) return;
+    if (!changedProject && !publishedSourcesQuery.isSuccess) return;
     const readyIds = new Set(
-      (sourcesQuery.data?.items ?? [])
-        .filter((source) => source.readyCount > 0)
-        .map((source) => source.sourceId),
+      (publishedSourcesQuery.data?.items ?? []).map(
+        (source) => source.sourceId,
+      ),
     );
     setConversations((current) => {
       let changed = false;
@@ -730,7 +752,12 @@ export function TapProductPrototype({
       });
       return changed ? next : current;
     });
-  }, [projectId, sourcesQuery.data, sourcesQuery.isSuccess]);
+  }, [
+    durable,
+    projectId,
+    publishedSourcesQuery.data,
+    publishedSourcesQuery.isSuccess,
+  ]);
   const [activeConversationId, setActiveConversationId] = useState(
     () =>
       initialSnapshot?.activeConversationId ?? (durable ? "draft" : "chat-1"),
@@ -833,6 +860,7 @@ export function TapProductPrototype({
   );
   const sendInFlight = useRef(false);
   const [sendPending, setSendPending] = useState(false);
+  const citationTrigger = useRef<HTMLElement | null>(null);
   const [activeCitation, setActiveCitation] = useState<{
     citation: NonNullable<AssistantTurn["response"]>["citations"][number];
     conversationId: string | null;
@@ -1234,6 +1262,18 @@ export function TapProductPrototype({
       sourcesQuery.data?.items,
     ],
   );
+  const publishedItems = useMemo<readonly LibrarySource[]>(
+    () =>
+      (publishedSourcesQuery.data?.items ?? []).map((source) => ({
+        id: source.sourceId,
+        name: source.sourceName,
+        origin: "knowledge-base",
+        type: source.filename.split(".").pop()?.toUpperCase() ?? "FILE",
+        status: "ready",
+        description: source.partial ? "已发布 · 部分范围可用" : "已发布",
+      })),
+    [publishedSourcesQuery.data?.items],
+  );
   const documentSources = useMemo<readonly LibrarySource[]>(
     () =>
       (documentsQuery.data?.items ?? []).map((document) => ({
@@ -1286,6 +1326,7 @@ export function TapProductPrototype({
       sourceItems,
     ],
   );
+  const answerSources = durable ? publishedItems : sources;
   const activeConversation =
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
@@ -1381,7 +1422,7 @@ export function TapProductPrototype({
     )
       return false;
     const intent = detectIntent(prompt);
-    const sourceReferences = sources
+    const sourceReferences = answerSources
       .filter((source) =>
         activeConversation.selectedSourceIds.includes(source.id),
       )
@@ -1392,27 +1433,28 @@ export function TapProductPrototype({
       try {
         if (knowledgeClient === null) return false;
         const api = knowledgeClient;
+        const currentPublished = await api.listPublishedSources();
         const readySourceIds = new Set(
-          sourceItems
-            .filter((item) => item.status === "ready")
-            .map((item) => item.id),
+          currentPublished.items.map((item) => item.sourceId),
         );
         const allowedAgentIds = new Set(agents.map((item) => item.id));
         const allowedSkillIds = new Set(skills.map((item) => item.id));
         const futureSourceIds = activeConversation.selectedSourceIds.filter(
           (id) => readySourceIds.has(id),
         );
-        const selectedDetails = await Promise.all(
-          futureSourceIds.map((id) => api.getSource(id)),
-        );
+        const currentSourceReferences = currentPublished.items
+          .filter((item) => futureSourceIds.includes(item.sourceId))
+          .map((item) => ({
+            id: item.sourceId,
+            name: item.sourceName,
+            origin: "knowledge-base" as const,
+          }));
         const input = {
           message: prompt,
           modelAlias: activeConversation.modelId,
-          sourceRevisionIds: selectedDetails.flatMap((detail) =>
-            detail.documents.items
-              .filter((item) => item.status === "ready")
-              .map((item) => item.revisionId),
-          ),
+          sourceRevisionIds: currentPublished.items
+            .filter((item) => futureSourceIds.includes(item.sourceId))
+            .map((item) => item.revisionId),
           documentRevisionIds: [],
           agentRevisionId:
             activeConversation.selectedAgentIds.find((id) =>
@@ -1446,9 +1488,9 @@ export function TapProductPrototype({
             locale,
             modelId: activeConversation.modelId,
             prompt,
-            sourceReferences,
+            sourceReferences: currentSourceReferences,
             contextLabels: [
-              ...sourceReferences.map((item) => item.name),
+              ...currentSourceReferences.map((item) => item.name),
               ...agents
                 .filter((item) =>
                   activeConversation.selectedAgentIds.includes(item.id),
@@ -1687,11 +1729,12 @@ export function TapProductPrototype({
                         )
                       : []
                   }
-                  onOpenCitation={(citationId) => {
+                  onOpenCitation={(citationId, trigger) => {
                     const citation = turn.response?.citations.find(
                       (item) => item.citationId === citationId,
                     );
                     if (citation !== undefined) {
+                      citationTrigger.current = trigger;
                       setSourcesCollapsed(false);
                       setActiveCitation((current) => ({
                         citation,
@@ -1780,15 +1823,26 @@ export function TapProductPrototype({
                   historicalQuery={
                     durable ? historicalCitationQuery : undefined
                   }
+                  returnFocusTo={citationTrigger.current}
                   onClose={() => setActiveCitation(null)}
                 />
               ) : (
                 <KnowledgeSourcesPanel
                   copy={copy}
-                  isLoading={projectId !== null && sourcesQuery.isPending}
-                  isError={sourcesQuery.isError}
+                  isLoading={
+                    durable
+                      ? publishedSourcesQuery.isPending
+                      : projectId !== null && sourcesQuery.isPending
+                  }
+                  isError={
+                    durable
+                      ? publishedSourcesQuery.isError
+                      : sourcesQuery.isError
+                  }
                   onRetry={() => {
-                    void sourcesQuery.refetch();
+                    void (
+                      durable ? publishedSourcesQuery : sourcesQuery
+                    ).refetch();
                   }}
                   onCollapse={dismissKnowledgeSources}
                   onToggleSource={(sourceId) =>
@@ -1801,7 +1855,7 @@ export function TapProductPrototype({
                     }))
                   }
                   selectedSourceIds={activeConversation.selectedSourceIds}
-                  sources={sources}
+                  sources={answerSources}
                 />
               )}
             </div>

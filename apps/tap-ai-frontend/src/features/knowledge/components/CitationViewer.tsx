@@ -110,6 +110,7 @@ export function CitationViewer({
   active,
   historicalQuery,
   onClose,
+  returnFocusTo,
   locale = "zh",
 }: {
   active: {
@@ -125,6 +126,7 @@ export function CitationViewer({
     refetch: () => Promise<unknown>;
   };
   onClose: () => void;
+  returnFocusTo?: HTMLElement | null;
   locale?: "en" | "zh";
 }) {
   const text = locale === "zh" ? COPY : CITATION_EN;
@@ -163,7 +165,13 @@ export function CitationViewer({
           {text.citationTitle}
         </Typography.Title>
         {active !== null ? (
-          <Button onClick={onClose} aria-label={text.closeCitation}>
+          <Button
+            onClick={() => {
+              onClose();
+              queueMicrotask(() => returnFocusTo?.focus());
+            }}
+            aria-label={text.closeCitation}
+          >
             {text.close}
           </Button>
         ) : null}
