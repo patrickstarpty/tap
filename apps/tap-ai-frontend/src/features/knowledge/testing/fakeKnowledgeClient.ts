@@ -202,12 +202,18 @@ function pendingOperation<T>(ignoreAbort = false): PendingOperation<T> {
 
 export interface FakeKnowledgeClient extends KnowledgeClient {
   withReviews(items: KnowledgeReviewDetail[]): FakeKnowledgeClient;
+  withOpenReview(item: KnowledgeReviewDetail): FakeKnowledgeClient;
   withComparison(item: KnowledgeReviewItemComparison): FakeKnowledgeClient;
   withPublishedSources(page: PublishedKnowledgeSourcePage): FakeKnowledgeClient;
   withPublicationHistory(
     items: KnowledgePublicationDetail[],
   ): FakeKnowledgeClient;
   reviewCommands: Array<{ action: string; version: number; itemId?: string }>;
+  openReviewCalls: Array<{
+    documentId: string;
+    sourceRevisionId: string;
+    key: string;
+  }>;
   listCalls: number;
   listInputs: Array<{ cursor?: string; limit: number }>;
   listSignals: Array<AbortSignal | undefined>;
@@ -255,6 +261,7 @@ export function fakeKnowledgeClient(
 ): FakeKnowledgeClient {
   let documents: DocumentSummary[] = [];
   let reviews: KnowledgeReviewDetail[] = [];
+  let openReviewResult: KnowledgeReviewDetail | null = null;
   let publishedSources: PublishedKnowledgeSourcePage = { items: [] };
   let publicationHistory: KnowledgePublicationDetail[] = [];
   const comparisons = new Map<string, KnowledgeReviewItemComparison>();
@@ -280,9 +287,21 @@ export function fakeKnowledgeClient(
   const api: FakeKnowledgeClient = {
     projectId,
     reviewCommands: [],
+    openReviewCalls: [],
     withReviews(items) {
       reviews = items;
       return api;
+    },
+    withOpenReview(item) {
+      openReviewResult = item;
+      return api;
+    },
+    async openDocumentReview(documentId, sourceRevisionId, key) {
+      api.openReviewCalls.push({ documentId, sourceRevisionId, key });
+      if (openReviewResult === null)
+        throw new Error("Unknown fixture open review");
+      reviews = [openReviewResult];
+      return openReviewResult;
     },
     withComparison(item) {
       comparisons.set(item.itemId, item);

@@ -138,7 +138,10 @@ export function DocumentDetail({
               {detailQuery.data.normalizedPreview ?? COPY.previewUnavailable}
             </pre>
           </section>
-          <KnowledgeReview sourceRevisionId={detailQuery.data.revisionId} />
+          <KnowledgeReview
+            documentId={detailQuery.data.documentId}
+            sourceRevisionId={detailQuery.data.revisionId}
+          />
         </div>
       ) : null}
     </Drawer>

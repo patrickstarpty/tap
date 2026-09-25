@@ -603,7 +603,10 @@ function ProjectLibraryWorkspace({
                       审核记录
                     </Button>
                     {reviewDocumentId === item.documentId ? (
-                      <KnowledgeReview sourceRevisionId={item.revisionId} />
+                      <KnowledgeReview
+                        documentId={item.documentId}
+                        sourceRevisionId={item.revisionId}
+                      />
                     ) : null}
                     {item.errorCode != null && <p>{item.errorCode}</p>}
                     {item.status === "failed" && (

@@ -51,6 +51,13 @@ export interface ConversationJourneyState {
   turnId: string;
 }
 
+export interface ReviewJourneyState {
+  reviewId: string;
+  revisionId: string;
+  documentId: string;
+  sourceId: string;
+}
+
 export interface TapperFixtures {
   baselineDocx: E2EFilePayload;
   baselineMarkdown: E2EFilePayload;
@@ -388,6 +395,47 @@ function statePath(): string {
 
 function conversationStatePath(): string {
   return `${statePath()}.conversation.json`;
+}
+
+function reviewStatePath(): string {
+  return `${statePath()}.review.json`;
+}
+
+function validateReviewState(value: unknown): value is ReviewJourneyState {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !exactKeys(value, ["reviewId", "revisionId", "documentId", "sourceId"])
+  )
+    return false;
+  const state = value as ReviewJourneyState;
+  return [
+    state.reviewId,
+    state.revisionId,
+    state.documentId,
+    state.sourceId,
+  ].every(
+    (item) =>
+      typeof item === "string" &&
+      /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(item),
+  );
+}
+
+export async function writeReviewState(
+  state: ReviewJourneyState,
+): Promise<void> {
+  if (!validateReviewState(state)) throw new Error("unsafe Review E2E state");
+  await writeFile(reviewStatePath(), `${JSON.stringify(state)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+    flag: "wx",
+  });
+}
+
+export async function readReviewState(): Promise<ReviewJourneyState> {
+  const value: unknown = JSON.parse(await readFile(reviewStatePath(), "utf8"));
+  if (!validateReviewState(value)) throw new Error("invalid Review E2E state");
+  return value;
 }
 
 function validateConversationState(

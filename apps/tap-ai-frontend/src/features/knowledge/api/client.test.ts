@@ -52,6 +52,23 @@ class TestUploadRequest {
 }
 
 describe("KnowledgeClient", () => {
+  it("opens a review for an authoritative document revision with one caller intent", async () => {
+    const requests: Request[] = [];
+    const client = createKnowledgeClient({
+      projectId: "project/a",
+      fetch: async (request) => {
+        requests.push(request);
+        return Response.json({ reviewId: "krv_1" });
+      },
+    });
+    await client.openDocumentReview("document/a", "rev_1", "open-intent");
+    expect(requests[0]?.method).toBe("POST");
+    expect(new URL(requests[0]!.url).pathname).toBe(
+      "/api/v1/projects/project%2Fa/knowledge/documents/document%2Fa/review",
+    );
+    expect(requests[0]?.headers.get("Idempotency-Key")).toBe("open-intent");
+    expect(await requests[0]!.json()).toEqual({ sourceRevisionId: "rev_1" });
+  });
   it("sends governed review writes with the loaded version and server target", async () => {
     const requests: Request[] = [];
     const client = createKnowledgeClient({

@@ -33,12 +33,11 @@ from tap.modules.knowledge.adapters.mysql_projection import (
 from tap.modules.knowledge.adapters.mysql_review import (
     MysqlApprovedProjectionVerifier,
     MysqlKnowledgeReviewRepository,
+    _parse_inventory_item,
 )
 from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.modules.knowledge.application.review import KnowledgeReviewApplication
 from tap.modules.knowledge.domain.parse_inventory import (
-    ParseInventoryItem,
-    ParseInventoryKind,
     ParseInventoryStatus,
     parse_inventory_digest,
 )
@@ -47,6 +46,7 @@ from tap.modules.knowledge.domain.review import (
     KnowledgeReviewRevision,
     ReviewStatus,
     canonical_digest,
+    review_dependency_digest,
 )
 from tap.modules.knowledge.domain.sources import (
     chunk_manifest_digest,
@@ -178,6 +178,50 @@ async def prepare(revision_ids: tuple[str, ...]) -> dict[str, object]:
         await lock_engine.dispose()
 
 
+async def approve_existing(review_id: str, revision_id: str) -> dict[str, object]:
+    """Exercise independent approval of an HTTP-created review in owned E2E only."""
+    if (
+        os.environ.get("TAP_DEMO_MODE") != "e2e"
+        or os.environ.get("TAP_TAPPER_COMPOSE_PROJECT") != "tap-tapper-e2e"
+        or not review_id.startswith("krv_")
+        or not revision_id.startswith("rev_")
+    ):
+        raise ValueError("approval fixture requires an owned review and revision")
+    settings = TapperSettings.from_mapping(dict(os.environ))
+    if settings.project_id != VALIDATION_SCOPE.project_id:
+        raise ValueError("approval fixture requires the validation project")
+    _require_owned_database(settings.database_url)
+    engine, sessions = create_engine_and_session_factory(settings.database_url)
+    repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+    application = KnowledgeReviewApplication(
+        repository, MysqlApprovedProjectionVerifier(sessions, scope=VALIDATION_SCOPE)
+    )
+    try:
+        current = await repository.get_review(review_id)
+        if (
+            current is None
+            or current.status is not ReviewStatus.REVIEWING
+            or current.source_revision_ids != (revision_id,)
+            or VALIDATION_SCOPE.actor_id not in current.editor_actor_ids
+            or REVIEWER in current.editor_actor_ids
+        ):
+            raise ValueError("review is not an eligible HTTP-created E2E handoff")
+        approved = await application.approve_review(
+            review_id,
+            actor_id=REVIEWER,
+            expected_version=current.version,
+            now=datetime.now(UTC),
+        )
+        return {
+            "reviewId": approved.review_id,
+            "reviewerActorId": approved.reviewer_actor_id,
+            "status": approved.status.value,
+            "version": approved.version,
+        }
+    finally:
+        await engine.dispose()
+
+
 async def _prepare_locked(
     revision_ids: tuple[str, ...], settings: TapperSettings
 ) -> dict[str, object]:
@@ -197,6 +241,8 @@ async def _prepare_locked(
                         select(
                             knowledge_document_revision.c.revision_id,
                             knowledge_document.c.chunk_count,
+                            knowledge_document_revision.c.source_content_hash,
+                            knowledge_document_revision.c.parser_config_digest,
                             knowledge_document_revision.c.parse_inventory_attempt,
                             knowledge_document_revision.c.parse_inventory_digest,
                             knowledge_document_revision.c.chunk_manifest_digest,
@@ -242,9 +288,6 @@ async def _prepare_locked(
             )
             if not generation:
                 raise ValueError("owned projection is not active")
-            inventory_facts: list[dict[str, str]] = []
-            manifest_facts: list[dict[str, str]] = []
-            projection_facts: list[dict[str, str]] = []
             approved_items: list[str] = []
             for revision_id in sorted(by_id):
                 row = by_id[revision_id]
@@ -280,17 +323,7 @@ async def _prepare_locked(
                     .all()
                 )
                 inventory = tuple(
-                    ParseInventoryItem(
-                        source_revision_id=revision_id,
-                        item_id=item["item_id"],
-                        kind=ParseInventoryKind(item["item_kind"]),
-                        locator=item["locator"],
-                        status=ParseInventoryStatus(item["status"]),
-                        artifact_digest=item["artifact_digest"],
-                        reason=item["reason"],
-                        decision_actor_id=item["decision_actor_id"],
-                    )
-                    for item in inventory_rows
+                    _parse_inventory_item(item) for item in inventory_rows
                 )
                 if (
                     not inventory
@@ -350,24 +383,45 @@ async def _prepare_locked(
                     raise ValueError(
                         "durable projection facts differ from revision receipt"
                     )
-                inventory_facts.append(
-                    {"revisionId": revision_id, "digest": row["parse_inventory_digest"]}
-                )
-                manifest_facts.append(
-                    {"revisionId": revision_id, "digest": row["chunk_manifest_digest"]}
-                )
-                projection_facts.append(
-                    {"revisionId": revision_id, "digest": row["projection_digest"]}
-                )
         if not approved_items:
             raise ValueError("publication requires parsed inventory items")
         now = datetime.now(UTC)
         source_revision_ids = tuple(sorted(by_id))
-        inventory_digest = canonical_digest(inventory_facts)
-        manifest_digest = canonical_digest(manifest_facts)
+        inventory_digest = (
+            by_id[source_revision_ids[0]]["parse_inventory_digest"]
+            if len(source_revision_ids) == 1
+            else canonical_digest(
+                {
+                    "sourceRevisionInventoryDigests": tuple(
+                        (revision_id, by_id[revision_id]["parse_inventory_digest"])
+                        for revision_id in source_revision_ids
+                    )
+                }
+            )
+        )
+        manifest_digest = (
+            by_id[source_revision_ids[0]]["chunk_manifest_digest"]
+            if len(source_revision_ids) == 1
+            else canonical_digest(
+                {
+                    "sourceRevisionChunkDigests": tuple(
+                        (revision_id, by_id[revision_id]["chunk_manifest_digest"])
+                        for revision_id in source_revision_ids
+                    )
+                }
+            )
+        )
         annotation_digest = canonical_digest({"annotations": []})
-        dependency_digest = canonical_digest(
-            {"generation": generation, "projectionDigests": projection_facts}
+        dependency_digest = review_dependency_digest(
+            tuple(
+                (
+                    revision_id,
+                    by_id[revision_id]["source_content_hash"],
+                    by_id[revision_id]["parser_config_digest"],
+                    by_id[revision_id]["projection_digest"],
+                )
+                for revision_id in source_revision_ids
+            )
         )
         review = KnowledgeReviewRevision(
             review_id="krv_"
@@ -444,6 +498,7 @@ async def _prepare_locked(
             generation=generation,
             idempotency_key=f"e2e-publish-{review.review_id}",
             actor_id=PUBLISHER,
+            expected_version=review.version,
             now=now,
         )
         return await _verified_result(repository, projection, publication, revision_ids)
@@ -486,6 +541,13 @@ async def _verified_result(
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
+    if len(sys.argv) == 4 and sys.argv[1] == "--approve-existing":
+        print(
+            json.dumps(
+                asyncio.run(approve_existing(sys.argv[2], sys.argv[3])), sort_keys=True
+            )
+        )
+    elif len(sys.argv) < 2:
         raise SystemExit("selected revision IDs are required")
-    print(json.dumps(asyncio.run(prepare(tuple(sys.argv[1:]))), sort_keys=True))
+    else:
+        print(json.dumps(asyncio.run(prepare(tuple(sys.argv[1:]))), sort_keys=True))

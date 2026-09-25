@@ -74,9 +74,11 @@ function Preview({
 }
 
 export function KnowledgeReview({
+  documentId,
   sourceRevisionId,
   onPublicationChange,
 }: {
+  documentId?: string;
   sourceRevisionId: string;
   onPublicationChange?: () => void;
 }) {
@@ -116,6 +118,27 @@ export function KnowledgeReview({
   const itemTrigger = useRef<HTMLElement | null>(null);
   const selectedReview = useRef<string | null>(null);
   const comparisonRequest = useRef(0);
+  const openIntent = useRef<string | null>(null);
+  const mutationIntents = useRef(new Map<string, string>());
+  const openRequest = useRef(0);
+  const scope = `${documentId ?? ""}\u0000${sourceRevisionId}`;
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+  const comparisonHeading = useRef<HTMLElement | null>(null);
+
+  const intentFor = (
+    action: "publish" | "withdraw",
+    id: string,
+    version: number,
+    generation?: string,
+  ): string => {
+    const scope = JSON.stringify([action, id, version, generation ?? null]);
+    const prior = mutationIntents.current.get(scope);
+    if (prior) return prior;
+    const intent = `${action}:${crypto.randomUUID()}`;
+    mutationIntents.current.set(scope, intent);
+    return intent;
+  };
 
   const adopt = useCallback((value: KnowledgeReviewDetail) => {
     setReview(value);
@@ -155,6 +178,14 @@ export function KnowledgeReview({
     comparisonRequest.current += 1;
     setReview(null);
     setSelectedId(null);
+    setSelectedItemId(null);
+    setComparison(null);
+    setNote("");
+    setCheckKind("scope");
+    setDecisionStatus("accepted");
+    openIntent.current = null;
+    openRequest.current += 1;
+    setPending(false);
     void client
       .listReviews({ sourceRevisionId, limit: 50 })
       .then((page) => {
@@ -176,8 +207,74 @@ export function KnowledgeReview({
       });
     return () => {
       active = false;
+      openRequest.current += 1;
     };
-  }, [adopt, client, sourceRevisionId]);
+  }, [adopt, client, documentId, sourceRevisionId]);
+
+  const reloadEmpty = async () => {
+    const expectedScope = scope;
+    const page = await client.listReviews({ sourceRevisionId, limit: 50 });
+    if (currentScope.current !== expectedScope) return;
+    setReviews(page.items);
+    setReviewCursor(page.nextCursor ?? null);
+    const first = page.items[0];
+    if (first) {
+      selectedReview.current = first.reviewId;
+      setSelectedId(first.reviewId);
+      adopt(first);
+    }
+  };
+
+  const openReview = async () => {
+    if (!documentId || loading || pending || review) return;
+    setPending(true);
+    setError(null);
+    const expectedScope = scope;
+    const request = ++openRequest.current;
+    const intent = openIntent.current ?? `open-review:${crypto.randomUUID()}`;
+    openIntent.current = intent;
+    try {
+      const opened = await client.openDocumentReview(
+        documentId,
+        sourceRevisionId,
+        intent,
+      );
+      if (
+        currentScope.current !== expectedScope ||
+        openRequest.current !== request
+      )
+        return;
+      openIntent.current = null;
+      selectedReview.current = opened.reviewId;
+      setSelectedId(opened.reviewId);
+      setReviews([opened]);
+      adopt(opened);
+    } catch (failure) {
+      if (
+        currentScope.current !== expectedScope ||
+        openRequest.current !== request
+      )
+        return;
+      if (failure instanceof KnowledgeClientError && failure.status === 409) {
+        try {
+          await reloadEmpty();
+        } catch {
+          /* Retain conflict notice and offer a manual reload. */
+        }
+      }
+      setError(errorMessage(failure));
+    } finally {
+      if (
+        currentScope.current === expectedScope &&
+        openRequest.current === request
+      )
+        setPending(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedItemId !== null) comparisonHeading.current?.focus();
+  }, [selectedItemId]);
 
   useEffect(() => {
     if (selectedId === null) return;
@@ -240,6 +337,11 @@ export function KnowledgeReview({
     const request = ++comparisonRequest.current;
     const reviewId = review.reviewId;
     itemTrigger.current = trigger;
+    if (selectedItemId !== itemId) {
+      setNote("");
+      setCheckKind("scope");
+      setDecisionStatus("accepted");
+    }
     setSelectedItemId(itemId);
     setComparison(null);
     setError(null);
@@ -370,14 +472,40 @@ export function KnowledgeReview({
               >
                 重新加载
               </Button>
-            ) : undefined
+            ) : (
+              <Button
+                size="small"
+                loading={pending}
+                onClick={() =>
+                  void reloadEmpty()
+                    .then(() => setError(null))
+                    .catch((failure: unknown) =>
+                      setError(errorMessage(failure)),
+                    )
+                }
+              >
+                重新加载
+              </Button>
+            )
           }
         />
       ) : null}
-      {!loading && !error && reviews.length === 0 ? (
-        <p>
-          <strong>未关联审核记录</strong>。上传或解析就绪不代表已通过业务审核。
-        </p>
+      {!loading && reviews.length === 0 ? (
+        <div>
+          <p>
+            <strong>未关联审核记录</strong>
+            。上传或解析就绪不代表已通过业务审核。
+          </p>
+          {documentId ? (
+            <Button
+              type="primary"
+              loading={pending}
+              onClick={() => void openReview()}
+            >
+              开始业务审核
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       {reviews.length > 1 ? (
         <Select
@@ -389,6 +517,9 @@ export function KnowledgeReview({
             comparisonRequest.current += 1;
             setSelectedItemId(null);
             setComparison(null);
+            setNote("");
+            setCheckKind("scope");
+            setDecisionStatus("accepted");
             setReview(null);
             setSelectedId(id);
           }}
@@ -433,10 +564,16 @@ export function KnowledgeReview({
                 <p>尚无清单数据，不能提交审核。</p>
               ) : null}
               <ul className="tapper-review-list">
+                {!review.allowedActions.includes("read_original") ? (
+                  <li>当前账号无权查看原件与提取对照。</li>
+                ) : null}
                 {inventory.items.map((item) => (
                   <li key={item.itemId}>
                     <Button
                       type="link"
+                      disabled={
+                        !review.allowedActions.includes("read_original")
+                      }
                       onClick={(event) =>
                         void openItem(item.itemId, event.currentTarget)
                       }
@@ -469,11 +606,23 @@ export function KnowledgeReview({
               className="tapper-review-comparison"
             >
               <Space className="tapper-review-heading">
-                <Typography.Title level={5} id="review-comparison-heading">
+                <Typography.Title
+                  level={5}
+                  id="review-comparison-heading"
+                  tabIndex={-1}
+                  ref={comparisonHeading}
+                >
                   原件与提取对照
                 </Typography.Title>
                 <Button onClick={closeItem}>关闭对照</Button>
               </Space>
+              <p role="status">
+                {comparison
+                  ? "对照已加载。"
+                  : error
+                    ? "对照读取失败。"
+                    : "正在读取对照…"}
+              </p>
               {!comparison ? (
                 <Skeleton active paragraph={{ rows: 3 }} />
               ) : (
@@ -615,6 +764,12 @@ export function KnowledgeReview({
                           value.reviewId,
                           value.version,
                           value.publicationTarget.generation!,
+                          intentFor(
+                            "publish",
+                            value.reviewId,
+                            value.version,
+                            value.publicationTarget.generation!,
+                          ),
                         ),
                       true,
                     )
@@ -636,6 +791,11 @@ export function KnowledgeReview({
                         client.withdrawPublication(
                           value.currentPublication!.publicationId,
                           value.currentPublication!.version,
+                          intentFor(
+                            "withdraw",
+                            value.currentPublication!.publicationId,
+                            value.currentPublication!.version,
+                          ),
                         ),
                       true,
                     )

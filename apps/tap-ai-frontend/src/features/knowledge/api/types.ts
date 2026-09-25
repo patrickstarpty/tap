@@ -56,6 +56,11 @@ export interface KnowledgeClient {
     limit?: number;
     signal?: AbortSignal;
   }): Promise<KnowledgeReviewPage>;
+  openDocumentReview(
+    documentId: string,
+    sourceRevisionId: string,
+    idempotencyKey: string,
+  ): Promise<KnowledgeReviewDetail>;
   getReview(
     reviewId: string,
     signal?: AbortSignal,

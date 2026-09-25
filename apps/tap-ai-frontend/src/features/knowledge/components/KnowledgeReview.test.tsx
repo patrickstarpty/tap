@@ -83,6 +83,244 @@ function review(
 }
 
 describe("KnowledgeReview", () => {
+  it("opens the server review from an empty revision and restores it after remount", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient().withOpenReview(review({ version: 1 }));
+    const view = renderKnowledgeApp(
+      <KnowledgeReview documentId="doc_1" sourceRevisionId={REVISION} />,
+      { api },
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "开始业务审核" }),
+    );
+    expect(api.openReviewCalls).toHaveLength(1);
+    expect(api.openReviewCalls[0]).toMatchObject({
+      documentId: "doc_1",
+      sourceRevisionId: REVISION,
+    });
+    expect(api.openReviewCalls[0]?.key).toMatch(/^open-review:/u);
+    expect(await screen.findByText("审核版本 1")).toBeVisible();
+    view.unmount();
+    renderKnowledgeApp(
+      <KnowledgeReview documentId="doc_1" sourceRevisionId={REVISION} />,
+      { api },
+    );
+    expect(await screen.findByText("审核版本 1")).toBeVisible();
+  });
+
+  it("keeps an empty review on permission denial", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient();
+    api.openDocumentReview = async () => {
+      throw new KnowledgeClientError({
+        type: "https://tap.example/problems/authorization-denied",
+        title: "Authorization denied",
+        status: 403,
+        detail: "The current actor and scope do not allow this operation.",
+        correlationId: "denied-open",
+        retryable: false,
+      });
+    };
+    renderKnowledgeApp(
+      <KnowledgeReview documentId="doc_1" sourceRevisionId={REVISION} />,
+      { api },
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "开始业务审核" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("无权执行");
+    expect(screen.queryByText(/审核版本/u)).not.toBeInTheDocument();
+  });
+
+  it("retries an uncertain open with the same idempotency key", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient().withOpenReview(review({ version: 1 }));
+    const open = api.openDocumentReview;
+    let attempts = 0;
+    api.openDocumentReview = async (...args) => {
+      attempts += 1;
+      if (attempts === 1) {
+        api.openReviewCalls.push({
+          documentId: args[0],
+          sourceRevisionId: args[1],
+          key: args[2],
+        });
+        throw new Error("network interrupted");
+      }
+      return open(...args);
+    };
+    renderKnowledgeApp(
+      <KnowledgeReview documentId="doc_1" sourceRevisionId={REVISION} />,
+      { api },
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "开始业务审核" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("操作未完成");
+    await user.click(screen.getByRole("button", { name: "开始业务审核" }));
+    expect(await screen.findByText("审核版本 1")).toBeVisible();
+    expect(api.openReviewCalls[0]?.key).toBe(api.openReviewCalls[1]?.key);
+  });
+
+  it("states an unsupported original without substituting extraction text", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient()
+      .withReviews([review()])
+      .withComparison({
+        reviewId: "krv_1",
+        itemId: ITEM,
+        original: {
+          availability: "unsupported",
+          excerpt: null,
+          reason: "pdf-compressed-stream",
+        },
+        extracted: {
+          availability: "available",
+          excerpt: "Extracted policy",
+          reason: null,
+        },
+      });
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: /page:4:paragraph:2/u }),
+    );
+    expect(await screen.findByText("pdf-compressed-stream")).toBeVisible();
+    expect(screen.getByText("Extracted policy")).toBeVisible();
+    expect(screen.queryAllByText("Extracted policy")).toHaveLength(1);
+  });
+
+  it("reloads an existing review after an open conflict", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient();
+    api.openDocumentReview = async () => {
+      api.withReviews([review({ version: 4 })]);
+      throw new KnowledgeClientError({
+        type: "https://tap.example/problems/revision-conflict",
+        title: "Revision conflict",
+        status: 409,
+        detail: "The requested revision conflicts with the current revision.",
+        correlationId: "conflict-open",
+        retryable: false,
+      });
+    };
+    renderKnowledgeApp(
+      <KnowledgeReview documentId="doc_1" sourceRevisionId={REVISION} />,
+      { api },
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "开始业务审核" }),
+    );
+    expect(await screen.findByText("审核版本 4")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("已重新加载");
+  });
+
+  it("ignores an open response for a document that is no longer selected", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient();
+    let finish!: (value: KnowledgeReviewDetail) => void;
+    api.openDocumentReview = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    const view = renderKnowledgeApp(
+      <KnowledgeReview documentId="doc_1" sourceRevisionId={REVISION} />,
+      { api },
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "开始业务审核" }),
+    );
+    view.rerender(
+      <KnowledgeReview documentId="doc_2" sourceRevisionId="rev_2" />,
+    );
+    await act(async () => finish(review({ version: 4 })));
+    expect(screen.queryByText("审核版本 4")).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "开始业务审核" }),
+    ).toBeEnabled();
+  });
+
+  it("clears a draft note when switching item and focuses the opened comparison", async () => {
+    const user = userEvent.setup();
+    const first = review();
+    const otherItem = {
+      ...first.inventory.items[0]!,
+      itemId: "pi_other",
+      locator: "page:5:paragraph:1",
+    };
+    const api = fakeKnowledgeClient().withReviews([
+      review({
+        inventory: {
+          ...first.inventory,
+          items: [...first.inventory.items, otherItem],
+          totalCount: 2,
+        },
+      }),
+    ]);
+    for (const item of [first.inventory.items[0]!, otherItem]) {
+      api.withComparison({
+        reviewId: "krv_1",
+        itemId: item.itemId,
+        original: {
+          availability: "available",
+          excerpt: "Original policy",
+          reason: null,
+        },
+        extracted: {
+          availability: "available",
+          excerpt: "Extracted policy",
+          reason: null,
+        },
+      });
+    }
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: /page:4:paragraph:2/u }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "原件与提取对照" }),
+    ).toHaveFocus();
+    await user.type(
+      screen.getByRole("textbox", { name: "核对说明" }),
+      "Note for first item",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /page:5:paragraph:1/u }),
+    );
+    expect(screen.getByRole("textbox", { name: "核对说明" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "保存核对" })).toBeDisabled();
+  });
+
+  it("shows item-aligned original and extraction together when both are available", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient()
+      .withReviews([review()])
+      .withComparison({
+        reviewId: "krv_1",
+        itemId: ITEM,
+        original: {
+          availability: "available",
+          excerpt: "Original policy",
+          reason: null,
+        },
+        extracted: {
+          availability: "available",
+          excerpt: "Extracted policy",
+          reason: null,
+        },
+      });
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: /page:4:paragraph:2/u }),
+    );
+    expect(await screen.findByText("Original policy")).toBeVisible();
+    expect(screen.getByText("Extracted policy")).toBeVisible();
+  });
   it("locates an inventory issue and compares exact extracted content with original availability", async () => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient()
@@ -117,8 +355,7 @@ describe("KnowledgeReview", () => {
     expect(screen.getByText("Amount is 15%. Exclusions apply.")).toBeVisible();
   });
 
-  it("does not expose original text when the server omits read_original", async () => {
-    const user = userEvent.setup();
+  it("does not offer comparison when the server omits read_original", async () => {
     const api = fakeKnowledgeClient()
       .withReviews([review({ allowedActions: ["edit"] })])
       .withComparison({
@@ -138,13 +375,15 @@ describe("KnowledgeReview", () => {
     renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
       api,
     });
-    await user.click(
-      await screen.findByRole("button", { name: /page:4:paragraph:2/u }),
-    );
-    expect(await screen.findByText("Extracted terms")).toBeVisible();
+    const item = await screen.findByRole("button", {
+      name: /page:4:paragraph:2/u,
+    });
+    expect(item).toBeDisabled();
+    expect(screen.getByText("当前账号无权查看原件与提取对照。")).toBeVisible();
     expect(
       screen.queryByText("Private original terms"),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText("Extracted terms")).not.toBeInTheDocument();
   });
 
   it("records an exception decision with the loaded review version", async () => {
@@ -252,6 +491,52 @@ describe("KnowledgeReview", () => {
         version: 1,
       }),
     );
+  });
+
+  it("reuses publication intent keys after uncertain publish and withdraw responses", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient().withReviews([
+      review({
+        status: "approved",
+        allowedActions: ["publish", "withdraw"],
+        publicationTarget: {
+          status: "ready",
+          generation: "generation-7",
+          reason: null,
+        },
+      }),
+    ]);
+    const publish = api.publishReview;
+    const publishKeys: Array<string | undefined> = [];
+    api.publishReview = async (...args) => {
+      publishKeys.push(args[3]);
+      if (publishKeys.length === 1) throw new Error("response lost");
+      return publish(...args);
+    };
+    const withdraw = api.withdrawPublication;
+    const withdrawKeys: Array<string | undefined> = [];
+    api.withdrawPublication = async (...args) => {
+      withdrawKeys.push(args[2]);
+      if (withdrawKeys.length === 1) throw new Error("response lost");
+      return withdraw(...args);
+    };
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    await user.click(await screen.findByRole("button", { name: /发\s*布/u }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("操作未完成");
+    await user.click(screen.getByRole("button", { name: /发\s*布/u }));
+    expect(await screen.findByText(/发布状态：已发布/u)).toBeVisible();
+    expect(publishKeys[0]).toMatch(/^publish:/u);
+    expect(publishKeys[0]).toBe(publishKeys[1]);
+    await user.click(screen.getByRole("button", { name: "撤回发布" }));
+    await user.click(screen.getByRole("button", { name: "确认撤回" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("操作未完成");
+    await user.click(screen.getByRole("button", { name: "撤回发布" }));
+    await user.click(screen.getByRole("button", { name: "确认撤回" }));
+    expect(await screen.findByText(/发布状态：未发布/u)).toBeVisible();
+    expect(withdrawKeys[0]).toMatch(/^withdraw:/u);
+    expect(withdrawKeys[0]).toBe(withdrawKeys[1]);
   });
 
   it("treats a committed publication as committed even when follow-up reload fails", async () => {

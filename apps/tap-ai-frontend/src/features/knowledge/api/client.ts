@@ -197,6 +197,19 @@ export function createKnowledgeClient(
 
   return {
     projectId,
+    async openDocumentReview(documentId, sourceRevisionId, idempotencyKey) {
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/review",
+        {
+          params: {
+            path: { project_id: projectId, document_id: documentId },
+            header: { "idempotency-key": idempotencyKey },
+          },
+          body: { sourceRevisionId },
+        },
+      );
+      return result.data!;
+    },
     async listReviews({ sourceRevisionId, afterReviewId, limit = 50, signal }) {
       const result = await http.GET(
         "/api/v1/projects/{project_id}/knowledge/reviews",

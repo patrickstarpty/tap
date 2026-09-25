@@ -9,6 +9,7 @@ import {
   canonicalTextHash,
   policyQuestion,
   readConversationState,
+  readReviewState,
   readState,
   type SafeDocumentState,
 } from "./fixtureBuilder";
@@ -150,6 +151,45 @@ test("Tapper durable state survives the selected restart boundary", async ({
 
   await page.goto("/");
   const conversationState = await readConversationState();
+  const reviewState = await readReviewState();
+  const persistedReviewResponse = await page.request.get(
+    `${knowledgePath}/reviews/${reviewState.reviewId}`,
+  );
+  expect(persistedReviewResponse.status()).toBe(200);
+  const persistedReview = (await persistedReviewResponse.json()) as {
+    status: string;
+    sourceRevisionIds: string[];
+    history: Array<{ action: string; actorId: string }>;
+  };
+  expect(persistedReview.status).toBe("withdrawn");
+  expect(persistedReview.sourceRevisionIds).toContain(reviewState.revisionId);
+  expect(persistedReview.history.map((item) => item.action)).toEqual(
+    expect.arrayContaining([
+      "created",
+      "item_decided",
+      "submitted",
+      "approved",
+      "published",
+      "withdrawn",
+    ]),
+  );
+  expect(
+    persistedReview.history.some(
+      (item) =>
+        item.action === "approved" &&
+        item.actorId === "tapper-e2e-fixture-reviewer",
+    ),
+  ).toBe(true);
+  const publishedAfterRestart = await page.request.get(
+    `${knowledgePath}/published-sources`,
+  );
+  expect(publishedAfterRestart.status()).toBe(200);
+  const publishedPage = (await publishedAfterRestart.json()) as {
+    items: Array<{ sourceId: string }>;
+  };
+  expect(
+    publishedPage.items.some((item) => item.sourceId === reviewState.sourceId),
+  ).toBe(false);
   const modelsResponse = await page.request.get(
     `/api/v1/projects/${encodeURIComponent(runtime.projectId)}/ai/models`,
   );

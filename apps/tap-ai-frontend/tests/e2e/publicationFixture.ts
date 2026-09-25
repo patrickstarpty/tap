@@ -14,7 +14,9 @@ interface PublicationFixture {
   status: string;
 }
 
-export function preparePublishedFixture(revisionIds: string[]): PublicationFixture {
+export function preparePublishedFixture(
+  revisionIds: string[],
+): PublicationFixture {
   expect(revisionIds.length).toBeGreaterThan(0);
   const root = resolve(process.cwd(), "../..");
   const output = execFileSync(
@@ -41,4 +43,35 @@ export function preparePublishedFixture(revisionIds: string[]): PublicationFixtu
   expect(publication.reviewerActorId).toBe("tapper-e2e-fixture-reviewer");
   expect(publication.publishedBy).toBe("tapper-e2e-fixture-publisher");
   return publication;
+}
+
+export function approveExistingReviewFixture(
+  reviewId: string,
+  revisionId: string,
+): void {
+  const root = resolve(process.cwd(), "../..");
+  const output = execFileSync(
+    "uv",
+    [
+      "run",
+      "--project",
+      "apps/tap-ai-backend",
+      "python",
+      "scripts/prepare-tapper-e2e-publication.py",
+      "--approve-existing",
+      reviewId,
+      revisionId,
+    ],
+    { cwd: root, encoding: "utf8", timeout: 30_000 },
+  );
+  const approved = JSON.parse(output) as {
+    reviewId: string;
+    reviewerActorId: string;
+    status: string;
+  };
+  expect(approved).toMatchObject({
+    reviewId,
+    reviewerActorId: "tapper-e2e-fixture-reviewer",
+    status: "approved",
+  });
 }
