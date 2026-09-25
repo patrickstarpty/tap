@@ -1,8 +1,14 @@
 """Loopback validation composition; fixed identity is not personal authentication."""
 
+import asyncio
+
 from tap.modules.access.application.ports import IdentityRegistry
 from tap.modules.access.application.scope import RequestFacts
-from tap.modules.access.domain.authorization import AuthorizationDecision, ResourceRef
+from tap.modules.access.domain.authorization import (
+    ActorPrincipal,
+    AuthorizationDecision,
+    ResourceRef,
+)
 from tap.modules.access.domain.context import IdentityContext, IdentityMode, ProjectScopeContext
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
 
@@ -50,6 +56,11 @@ class ValidationAuthorizationPolicy:
     def __init__(self, registry: IdentityRegistry) -> None:
         self._registry = registry
 
+    def for_request(self) -> "ValidationAuthorizationPolicy":
+        """Return an isolated policy that reads each request principal at most once."""
+
+        return ValidationAuthorizationPolicy(_RequestIdentityRegistry(self._registry))
+
     async def authorize(
         self, scope: IdentityContext, action: str, resource: ResourceRef
     ) -> AuthorizationDecision:
@@ -77,3 +88,21 @@ class ValidationAuthorizationPolicy:
         if not principal.enabled:
             return AuthorizationDecision(False, "principal-disabled")
         return AuthorizationDecision(True, "validation-allowed")
+
+
+class _RequestIdentityRegistry:
+    def __init__(self, registry: IdentityRegistry) -> None:
+        self._registry = registry
+        self._principals: dict[tuple[str, str, str], ActorPrincipal | None] = {}
+        self._lock = asyncio.Lock()
+
+    async def get_principal(
+        self, enterprise_id: str, project_id: str, actor_id: str
+    ) -> ActorPrincipal | None:
+        key = (enterprise_id, project_id, actor_id)
+        if key in self._principals:
+            return self._principals[key]
+        async with self._lock:
+            if key not in self._principals:
+                self._principals[key] = await self._registry.get_principal(*key)
+        return self._principals[key]

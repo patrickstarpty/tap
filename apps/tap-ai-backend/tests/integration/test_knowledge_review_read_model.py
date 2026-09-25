@@ -7,7 +7,8 @@ import pytest
 from sqlalchemy import event, insert, update
 
 from tap.interfaces.http.knowledge_review_service import KnowledgeReviewHttpService
-from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.access.adapters.mysql import MysqlIdentityRegistry
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationAuthorizationPolicy
 from tap.modules.access.domain.authorization import AuthorizationDecision
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document,
@@ -1109,11 +1110,14 @@ async def test_review_list_batches_one_hundred_details_with_a_fixed_query_budget
             )
 
         query_count = 0
+        authorization_queries: list[str] = []
 
         def count_queries(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
-            del conn, cursor, statement, parameters, context, executemany
+            del conn, cursor, parameters, context, executemany
             nonlocal query_count
             query_count += 1
+            if "from actor_principal" in statement.lower():
+                authorization_queries.append(statement)
 
         service = KnowledgeReviewHttpService(
             KnowledgeReviewApplication(
@@ -1121,7 +1125,7 @@ async def test_review_list_batches_one_hundred_details_with_a_fixed_query_budget
                 MysqlApprovedProjectionVerifier(sessions, scope=VALIDATION_SCOPE),
             ),
             scope=VALIDATION_SCOPE,
-            authorization_policy=AllowPolicy(),
+            authorization_policy=ValidationAuthorizationPolicy(MysqlIdentityRegistry(sessions)),
             clock=lambda: NOW,
         )
         event.listen(engine.sync_engine, "before_cursor_execute", count_queries)
@@ -1132,5 +1136,85 @@ async def test_review_list_batches_one_hundred_details_with_a_fixed_query_budget
 
         assert len(page.items) == 100
         assert query_count <= 20
+        assert len(authorization_queries) == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_batched_inventory_first_page_matches_child_cursor_order_beyond_501(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        parsed, failed = await _seed_revision(sessions)
+        repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        await repository.create_review(
+            KnowledgeReviewRevision(
+                review_id="krv_inventory_order",
+                project_id=VALIDATION_SCOPE.project_id,
+                source_revision_ids=("rev_mysql_001",),
+                inventory_digest=parse_inventory_digest((parsed, failed)),
+                chunk_manifest_digest=DIGEST_B,
+                annotation_digest=DIGEST_C,
+                dependency_digest=AUTHORITY_DEPENDENCY_DIGEST,
+                editor_actor_ids=("synthetic-editor-01",),
+                reviewer_actor_id=None,
+                expires_at=NOW + timedelta(days=30),
+                status=ReviewStatus.CHECKING,
+                version=1,
+                blocking_item_ids=(),
+                approved_item_ids=(parsed.item_id,),
+            )
+        )
+        async with sessions() as session, session.begin():
+            await session.execute(
+                insert(knowledge_parse_inventory),
+                [
+                    {
+                        **scope_values(VALIDATION_SCOPE),
+                        "inventory_row_id": f"inventory-order-{ordinal:04d}",
+                        "source_revision_id": "rev_mysql_001",
+                        "attempt": 2,
+                        "item_id": f"pi_sort_{601 - ordinal:04d}",
+                        "ordinal": ordinal,
+                        "item_kind": ParseInventoryKind.PARAGRAPH.value,
+                        "locator": f"paragraph:{ordinal}",
+                        "status": ParseInventoryStatus.PARSED.value,
+                        "reason": None,
+                        "artifact_digest": DIGEST_A,
+                        "decision_actor_id": None,
+                        "created_at": NOW.replace(tzinfo=None),
+                    }
+                    for ordinal in range(2, 602)
+                ],
+            )
+
+        service = KnowledgeReviewHttpService(
+            KnowledgeReviewApplication(
+                repository,
+                MysqlApprovedProjectionVerifier(sessions, scope=VALIDATION_SCOPE),
+            ),
+            scope=VALIDATION_SCOPE,
+            authorization_policy=ValidationAuthorizationPolicy(MysqlIdentityRegistry(sessions)),
+            clock=lambda: NOW,
+        )
+        detail = (await service.list_reviews(None, limit=50)).items[0]
+        first_child_page = await service.get_review_inventory("krv_inventory_order", limit=100)
+
+        assert [item.item_id for item in detail.inventory.items] == [
+            item.item_id for item in first_child_page.items
+        ]
+        traversed = [item.item_id for item in first_child_page.items]
+        cursor = first_child_page.next_cursor
+        while cursor is not None:
+            page = await service.get_review_inventory(
+                "krv_inventory_order", limit=100, after_item_id=cursor
+            )
+            traversed.extend(item.item_id for item in page.items)
+            cursor = page.next_cursor
+        assert len(traversed) == 602
+        assert len(set(traversed)) == 602
+        assert "pi_sort_0001" in traversed
     finally:
         await engine.dispose()

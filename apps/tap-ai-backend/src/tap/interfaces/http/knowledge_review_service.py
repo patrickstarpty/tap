@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import cast
 
 from tap.contracts.http import (
     KnowledgePublicationDetail,
@@ -78,15 +79,22 @@ class KnowledgeReviewHttpService:
             limit=limit + 1,
             after_review_id=after_review_id,
         )
+        authorization_policy = self._request_authorization_policy()
         return KnowledgeReviewPage(
-            items=[await self._batched_review_detail(item) for item in values[:limit]],
+            items=[
+                await self._batched_review_detail(item, authorization_policy=authorization_policy)
+                for item in values[:limit]
+            ],
             next_cursor=(
                 values[limit - 1].review.revision.review_id if len(values) > limit else None
             ),
         )
 
     async def get_review(self, review_id: str) -> KnowledgeReviewDetail:
-        return await self._review_detail(await self._application.get_review(review_id))
+        return await self._review_detail(
+            await self._application.get_review(review_id),
+            authorization_policy=self._request_authorization_policy(),
+        )
 
     async def get_review_inventory(
         self, review_id: str, limit: int = 100, after_item_id: str | None = None
@@ -254,7 +262,12 @@ class KnowledgeReviewHttpService:
         )
         return _publication_detail(publication)
 
-    async def _review_detail(self, value: KnowledgeReviewRead) -> KnowledgeReviewDetail:
+    async def _review_detail(
+        self,
+        value: KnowledgeReviewRead,
+        *,
+        authorization_policy: AuthorizationPolicy,
+    ) -> KnowledgeReviewDetail:
         revision = value.revision
         inventory = await self._application.inventory_page(
             revision.review_id, limit=100, after_item_id=None
@@ -270,7 +283,12 @@ class KnowledgeReviewHttpService:
         )
         current = await self._application.current_publication_for_review(revision)
         generation = await self._application.publication_generation(revision)
-        allowed = await self._allowed_actions(revision, current, generation)
+        allowed = await self._allowed_actions(
+            revision,
+            current,
+            generation,
+            authorization_policy=authorization_policy,
+        )
         return _review_detail_from_parts(
             value,
             inventory=inventory,
@@ -283,7 +301,10 @@ class KnowledgeReviewHttpService:
         )
 
     async def _batched_review_detail(
-        self, value: KnowledgeReviewListItemRead
+        self,
+        value: KnowledgeReviewListItemRead,
+        *,
+        authorization_policy: AuthorizationPolicy,
     ) -> KnowledgeReviewDetail:
         revision = value.review.revision
         allowed = await self._allowed_actions(
@@ -291,6 +312,7 @@ class KnowledgeReviewHttpService:
             value.current_publication,
             value.generation,
             authoritative=value.authoritative,
+            authorization_policy=authorization_policy,
         )
         return _review_detail_from_parts(
             value.review,
@@ -310,6 +332,7 @@ class KnowledgeReviewHttpService:
         generation: str | None,
         *,
         authoritative: bool | None = None,
+        authorization_policy: AuthorizationPolicy | None = None,
     ) -> list[KnowledgeReviewAction]:
         applicable = await self._application.review_capabilities(
             revision,
@@ -368,7 +391,7 @@ class KnowledgeReviewHttpService:
             if public.value not in applicable:
                 continue
             try:
-                decision = await self._authorization_policy.authorize(
+                decision = await (authorization_policy or self._authorization_policy).authorize(
                     self._scope,
                     action,
                     ResourceRef(
@@ -383,6 +406,12 @@ class KnowledgeReviewHttpService:
             if decision.allowed:
                 allowed.append(public)
         return allowed
+
+    def _request_authorization_policy(self) -> AuthorizationPolicy:
+        factory = getattr(self._authorization_policy, "for_request", None)
+        if factory is None:
+            return self._authorization_policy
+        return cast(AuthorizationPolicy, factory())
 
 
 def _review_detail_from_parts(

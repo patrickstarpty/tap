@@ -433,7 +433,7 @@ class MysqlKnowledgeReviewRepository:
             .where(current_decisions.c.decision_rank == 1)
             .subquery()
         )
-        inventory_pages = (
+        authority_inventory_pages = (
             select(
                 *knowledge_parse_inventory.c,
                 func.row_number()
@@ -454,6 +454,41 @@ class MysqlKnowledgeReviewRepository:
                 *scope_predicates(knowledge_parse_inventory, self._scope),
                 *scope_predicates(knowledge_document_revision, self._scope),
                 knowledge_parse_inventory.c.source_revision_id.in_(source_revision_ids),
+                knowledge_parse_inventory.c.attempt
+                == knowledge_document_revision.c.parse_inventory_attempt,
+            )
+            .subquery()
+        )
+        review_inventory_pages = (
+            select(
+                knowledge_review_revision.c.review_id.label("batch_review_id"),
+                *knowledge_parse_inventory.c,
+                func.row_number()
+                .over(
+                    partition_by=knowledge_review_revision.c.review_id,
+                    order_by=knowledge_parse_inventory.c.item_id,
+                )
+                .label("page_rank"),
+            )
+            .select_from(
+                knowledge_review_revision.join(
+                    knowledge_parse_inventory,
+                    func.json_contains(
+                        knowledge_review_revision.c.source_revision_ids,
+                        func.json_quote(knowledge_parse_inventory.c.source_revision_id),
+                    )
+                    == 1,
+                ).join(
+                    knowledge_document_revision,
+                    knowledge_document_revision.c.revision_id
+                    == knowledge_parse_inventory.c.source_revision_id,
+                )
+            )
+            .where(
+                *scope_predicates(knowledge_review_revision, self._scope),
+                *scope_predicates(knowledge_parse_inventory, self._scope),
+                *scope_predicates(knowledge_document_revision, self._scope),
+                knowledge_review_revision.c.review_id.in_(review_ids),
                 knowledge_parse_inventory.c.attempt
                 == knowledge_document_revision.c.parse_inventory_attempt,
             )
@@ -538,13 +573,28 @@ class MysqlKnowledgeReviewRepository:
             inventory_rows = (
                 (
                     await session.execute(
-                        select(inventory_pages)
-                        .where(inventory_pages.c.source_rank <= 501)
+                        select(authority_inventory_pages)
+                        .where(authority_inventory_pages.c.source_rank <= 501)
                         .order_by(
-                            inventory_pages.c.source_revision_id,
-                            inventory_pages.c.ordinal,
+                            authority_inventory_pages.c.source_revision_id,
+                            authority_inventory_pages.c.ordinal,
                         )
                         .limit(len(source_revision_ids) * 501)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            inventory_page_rows = (
+                (
+                    await session.execute(
+                        select(review_inventory_pages)
+                        .where(review_inventory_pages.c.page_rank <= child_limit + 1)
+                        .order_by(
+                            review_inventory_pages.c.batch_review_id,
+                            review_inventory_pages.c.item_id,
+                        )
+                        .limit(len(review_ids) * (child_limit + 1))
                     )
                 )
                 .mappings()
@@ -677,7 +727,9 @@ class MysqlKnowledgeReviewRepository:
                 for row in inventory_rows
                 if row["source_revision_id"] in revision.source_revision_ids
             )
-            inventory_by_item = tuple(sorted(inventory, key=lambda row: row["item_id"]))
+            inventory_by_item = tuple(
+                row for row in inventory_page_rows if row["batch_review_id"] == revision.review_id
+            )
             inventory_items = tuple(
                 _inventory_record(row) for row in inventory_by_item[:child_limit]
             )
