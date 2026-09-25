@@ -85,7 +85,13 @@ def _pdf_with_streams(*streams: bytes, dictionary_prefix: bytes = b"") -> bytes:
 
 def _pdf_with_inline_image_decoy_and_form() -> bytes:
     visible = b"BT /F1 12 Tf 72 720 Td (Visible clause) Tj ET"
-    page_stream = b"q BI /W 1 /H 1 /CS /G /BPC 8 ID " + visible + b" EI Q /Fm1 Do"
+    page_stream = (
+        b"q % inline image follows\rBI /W "
+        + str(len(visible)).encode()
+        + b" /H 1 /CS /G /BPC 8 ID "
+        + visible
+        + b" EI Q /Fm1 Do"
+    )
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
@@ -426,13 +432,23 @@ def test_pdf_provenance_lexer_stops_before_inline_image_payload() -> None:
 
     class PayloadGuard(bytes):
         def __getitem__(self, key):  # type: ignore[no-untyped-def]
-            if isinstance(key, int) and key > 2:
+            if isinstance(key, int) and key > 5:
                 raise AssertionError("inline image payload was scanned")
             return super().__getitem__(key)
 
-    content = PayloadGuard(b"BI attacker-controlled payload with (Visible clause) Tj")
+    content = PayloadGuard(b"%c\rBI attacker-controlled payload with (Visible clause) Tj")
 
     assert document_parsers._pdf_tokens(content) is None
+
+
+@pytest.mark.parametrize("line_end", [b"\r", b"\n", b"\r\n"])
+def test_pdf_provenance_comment_termination_exposes_inline_image_operator(
+    line_end: bytes,
+) -> None:
+    """Every PDF comment line ending must resume lexing at a following BI operator."""
+    from tap.modules.knowledge.adapters import document_parsers
+
+    assert document_parsers._pdf_tokens(b"% comment" + line_end + b"BI payload") is None
 
 
 def test_pdf_provenance_remains_available_without_inline_image() -> None:

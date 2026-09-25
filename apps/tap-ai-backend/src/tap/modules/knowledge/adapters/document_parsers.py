@@ -905,8 +905,7 @@ def _pdf_tokens(content: bytes) -> tuple[_PdfToken, ...] | None:
             index += 1
             continue
         if value == ord("%"):
-            newline = content.find(b"\n", index + 1)
-            index = len(content) if newline < 0 else newline + 1
+            index = _pdf_skip_comment(content, index, len(content))
             continue
         if value == ord("("):
             start = index + 1
