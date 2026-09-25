@@ -812,6 +812,9 @@ case " $* " in
     printf 'context|inspect\n' >> "$TAPPER_E2E_STUB_LOG"
     printf 'unix:///tmp/docker.sock\n'
     ;;
+  *" ps --no-trunc --filter "*"com.docker.compose.service=mysql"*)
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+    ;;
   *" ps --filter "*) printf 'owned-object-container\n' ;;
   *" compose "*)
     [ "$TAP_TAPPER_COMPOSE_PROJECT" = tap-tapper-e2e ] || exit 81

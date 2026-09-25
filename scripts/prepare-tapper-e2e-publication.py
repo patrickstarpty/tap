@@ -6,7 +6,9 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import stat
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -58,6 +60,57 @@ REVIEWER = "tapper-e2e-fixture-reviewer"
 PUBLISHER = "tapper-e2e-fixture-publisher"
 
 
+def _docker_output(arguments: list[str]) -> str:
+    try:
+        result = subprocess.run(
+            ["docker", *arguments],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError("owned Compose MySQL cannot be verified") from error
+    if result.returncode != 0 or len(result.stdout) > 65536:
+        raise ValueError("owned Compose MySQL cannot be verified")
+    return result.stdout
+
+
+def _require_compose_mysql(receipt: dict[str, object], port: int) -> None:
+    context = receipt.get("dockerContext")
+    container_id = receipt.get("mysqlContainerId")
+    if (
+        not isinstance(context, str)
+        or re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", context) is None
+        or not isinstance(container_id, str)
+        or re.fullmatch(r"[0-9a-f]{64}", container_id) is None
+        or _docker_output(["context", "show"]).strip() != context
+    ):
+        raise ValueError("owned Compose MySQL identity is invalid")
+    try:
+        contexts = json.loads(_docker_output(["context", "inspect", context]))
+        endpoint = contexts[0]["Endpoints"]["docker"]["Host"]
+        containers = json.loads(
+            _docker_output(["--context", context, "container", "inspect", container_id])
+        )
+        container = containers[0]
+        labels = container["Config"]["Labels"]
+        bindings = container["NetworkSettings"]["Ports"]["3306/tcp"]
+    except (IndexError, KeyError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError("owned Compose MySQL cannot be verified") from error
+    if (
+        not isinstance(endpoint, str)
+        or not endpoint.startswith(("unix://", "npipe://"))
+        or len(containers) != 1
+        or container.get("Id") != container_id
+        or container.get("State", {}).get("Running") is not True
+        or labels.get("com.docker.compose.project") != "tap-tapper-e2e"
+        or labels.get("com.docker.compose.service") != "mysql"
+        or bindings != [{"HostIp": "127.0.0.1", "HostPort": str(port)}]
+    ):
+        raise ValueError("owned Compose MySQL identity does not match")
+
+
 def _require_owned_database(database_url: str) -> None:
     marker_name = os.environ.get("TAPPER_E2E_OWNERSHIP_FILE", "")
     marker = Path(marker_name) if marker_name else None
@@ -99,6 +152,7 @@ def _require_owned_database(database_url: str) -> None:
         os.kill(receipt["runnerPid"], 0)
     except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
         raise ValueError("owned E2E database marker is invalid") from error
+    _require_compose_mysql(receipt, url.port)
 
 
 async def prepare(revision_ids: tuple[str, ...]) -> dict[str, object]:

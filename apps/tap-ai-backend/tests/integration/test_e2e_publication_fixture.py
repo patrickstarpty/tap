@@ -42,6 +42,7 @@ GENERATION = "kb_doc_v1_tapper_demo_000000000001"
 SCHEMA = "doc-schema-v1"
 INDEX = "tapper-index-v1"
 NOW = datetime(2026, 9, 25, 9)
+MYSQL_CONTAINER_ID = "a" * 64
 
 
 def _owned_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, url: str) -> None:
@@ -55,6 +56,8 @@ def _owned_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, url: str
                 "databaseUrlSha256": hashlib.sha256(url.encode()).hexdigest(),
                 "hostPort": make_url(url).port,
                 "runnerPid": os.getpid(),
+                "mysqlContainerId": MYSQL_CONTAINER_ID,
+                "dockerContext": "default",
             }
         )
     )
@@ -103,6 +106,8 @@ def test_fixture_rejects_shared_loopback_database_before_connection(
                 "databaseUrlSha256": hashlib.sha256(owned.encode()).hexdigest(),
                 "hostPort": 13306,
                 "runnerPid": os.getpid(),
+                "mysqlContainerId": MYSQL_CONTAINER_ID,
+                "dockerContext": "default",
             }
         )
     )
@@ -120,8 +125,74 @@ def test_fixture_rejects_shared_loopback_database_before_connection(
             )
         ),
     )
+    with pytest.raises(ValueError, match="owned Compose MySQL"):
+        asyncio.run(PREPARE(("rev_owned",)))
+
+    def owned_docker(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        if command == ["docker", "context", "show"]:
+            return SimpleNamespace(returncode=0, stdout="default\n")
+        if command == ["docker", "context", "inspect", "default"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    [{"Endpoints": {"docker": {"Host": "unix:///var/run/docker.sock"}}}]
+                ),
+            )
+        assert command == [
+            "docker",
+            "--context",
+            "default",
+            "container",
+            "inspect",
+            MYSQL_CONTAINER_ID,
+        ]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {
+                        "Id": MYSQL_CONTAINER_ID,
+                        "State": {"Running": True},
+                        "Config": {
+                            "Labels": {
+                                "com.docker.compose.project": "tap-tapper-e2e",
+                                "com.docker.compose.service": "mysql",
+                            }
+                        },
+                        "NetworkSettings": {
+                            "Ports": {"3306/tcp": [{"HostIp": "127.0.0.1", "HostPort": "13306"}]}
+                        },
+                    }
+                ]
+            ),
+        )
+
+    monkeypatch.setitem(PREPARE.__globals__, "subprocess", SimpleNamespace(run=owned_docker))
     with pytest.raises(ConnectionAttempt):
         asyncio.run(PREPARE(("rev_owned",)))
+
+
+def test_forged_receipt_for_disposable_non_compose_mysql_never_opens_engine(
+    owned_project_mysql, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    url = owned_project_database_url(owned_project_mysql)
+    _owned_environment(monkeypatch, tmp_path, url)
+
+    class ConnectionAttempt(Exception):
+        pass
+
+    monkeypatch.setitem(
+        PREPARE.__globals__,
+        "create_engine_and_session_factory",
+        lambda _url: (_ for _ in ()).throw(ConnectionAttempt()),
+    )
+    monkeypatch.setitem(
+        PREPARE.__globals__,
+        "subprocess",
+        SimpleNamespace(run=lambda _command, **_kwargs: SimpleNamespace(returncode=1, stdout="")),
+    )
+    with pytest.raises(ValueError, match="owned Compose MySQL"):
+        asyncio.run(PREPARE(("rev_disposable",)))
 
 
 async def _seed(engine, *revision_ids: str) -> None:  # type: ignore[no-untyped-def]
@@ -249,6 +320,9 @@ async def test_fixture_rejects_drifted_manifest_and_projection_facts(
 ) -> None:
     url = owned_project_database_url(owned_project_mysql)
     _owned_environment(monkeypatch, tmp_path, url)
+    # Exercise durable publication behavior on the disposable integration DB;
+    # Docker ownership is covered separately at the public entrypoint above.
+    monkeypatch.setitem(PREPARE.__globals__, "_require_owned_database", lambda _url: None)
     engine, _ = create_engine_and_session_factory(url)
     try:
         await _seed(engine, "rev_drift")
@@ -300,6 +374,7 @@ async def test_fixture_retry_is_idempotent_and_concurrent_selections_accumulate(
 ) -> None:
     url = owned_project_database_url(owned_project_mysql)
     _owned_environment(monkeypatch, tmp_path, url)
+    monkeypatch.setitem(PREPARE.__globals__, "_require_owned_database", lambda _url: None)
     engine, sessions = create_engine_and_session_factory(url)
     try:
         await _seed(engine, "rev_one", "rev_two")
