@@ -545,6 +545,31 @@
       "Citation": {
         "additionalProperties": false,
         "properties": {
+          "approvalDigest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approvaldigest"
+          },
+          "approvedItemId": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approveditemid"
+          },
           "chunkContentHash": {
             "minLength": 1,
             "title": "Chunkcontenthash",
@@ -586,6 +611,19 @@
             "minLength": 1,
             "title": "Logicalchunkid",
             "type": "string"
+          },
+          "publicationId": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publicationid"
           },
           "source": {
             "$ref": "#/components/schemas/SourceRevisionRef"
@@ -6743,6 +6781,19 @@
               }
             ],
             "title": "Headingpath"
+          },
+          "inventoryItemId": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inventoryitemid"
           },
           "page": {
             "anyOf": [

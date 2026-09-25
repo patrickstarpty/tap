@@ -842,6 +842,10 @@ export interface components {
         };
         /** Citation */
         Citation: {
+            /** Approvaldigest */
+            approvalDigest?: string | null;
+            /** Approveditemid */
+            approvedItemId?: string | null;
             /** Chunkcontenthash */
             chunkContentHash: string;
             /** Chunkid */
@@ -855,6 +859,8 @@ export interface components {
             evidenceLabel: string;
             /** Logicalchunkid */
             logicalChunkId: string;
+            /** Publicationid */
+            publicationId?: string | null;
             source: components["schemas"]["SourceRevisionRef"];
         };
         /** CitationPreview */
@@ -3124,6 +3130,8 @@ export interface components {
             endOffset?: number | null;
             /** Headingpath */
             headingPath?: string[] | null;
+            /** Inventoryitemid */
+            inventoryItemId?: string | null;
             /** Page */
             page?: number | null;
             /** Startoffset */

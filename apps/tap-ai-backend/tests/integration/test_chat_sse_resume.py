@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+from tap.contracts.http import RetrievalAnswerResponse
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.sse import encode_sse
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
@@ -13,7 +14,13 @@ from tap.modules.chat.application.conversations import (
     ConversationService,
     InMemoryConversationRepository,
 )
-from tap.modules.chat.domain.conversations import ConversationEvent, TurnInput
+from tap.modules.chat.domain.conversations import (
+    AnswerEvidence,
+    ConversationEvent,
+    GraphContextStatus,
+    RetrievalSummary,
+    TurnInput,
+)
 from tests.conftest import validation_http_services
 
 
@@ -139,3 +146,115 @@ def test_http_sse_reconnect_replays_generation_waiting_and_result_link() -> None
     assert "event: test-plan.generation.waiting" in resumed.text
     assert "event: test-plan.generation.result_ready" in resumed.text
     assert "/test-management/plan-1/revisions/revision-1" in resumed.text
+
+
+def test_http_sse_replays_published_terminal_answer_and_closes() -> None:
+    service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    asyncio.run(
+        service.create(
+            "chat-published",
+            "turn-published",
+            "request-published",
+            TurnInput(
+                message="Question kept out of public event payloads",
+                actor_id=VALIDATION_SCOPE.actor_id,
+                identity_mode="validation",
+                model_alias="tapper-chat",
+            ),
+        )
+    )
+    asyncio.run(
+        service.emit("chat-published", "turn-published", "answer.delta", {"text": "Evidence"})
+    )
+    answer = RetrievalAnswerResponse.model_validate(
+        {
+            "traceId": "trace-1",
+            "queryPlanId": "plan-1",
+            "contextSnapshotId": "context-1",
+            "corpusVersion": "corpus-1",
+            "retrievalProfileId": "profile-1",
+            "degradedMode": False,
+            "answer": "Evidence",
+            "abstained": False,
+            "claims": [
+                {
+                    "claimId": "claim-1",
+                    "text": "Evidence",
+                    "answerStart": 0,
+                    "answerEnd": 8,
+                    "citationIds": ["citation-1"],
+                }
+            ],
+            "citations": [
+                {
+                    "citationId": "citation-1",
+                    "evidenceLabel": "1",
+                    "chunkId": "chunk-1",
+                    "logicalChunkId": "logical-1",
+                    "source": {
+                        "sourceId": "source-1",
+                        "sourceType": "document",
+                        "revisionKind": "blob_version",
+                        "revision": "revision-1",
+                        "sourceContentHash": "sha256:" + "a" * 64,
+                        "anchor": {
+                            "type": "document",
+                            "inventoryItemId": "pi_1",
+                            "startOffset": 0,
+                            "endOffset": 8,
+                        },
+                    },
+                    "chunkContentHash": "sha256:" + "b" * 64,
+                    "contentRole": "source",
+                    "publicationId": "publication-1",
+                    "approvalDigest": "sha256:" + "c" * 64,
+                    "approvedItemId": "pi_1",
+                }
+            ],
+        }
+    )
+    asyncio.run(
+        service.complete_evidence(
+            "chat-published",
+            "turn-published",
+            AnswerEvidence(
+                "Evidence",
+                "completed",
+                RetrievalSummary("completed"),
+                GraphContextStatus.NOT_REQUESTED,
+            ),
+            terminal_event=(
+                "turn.completed",
+                {"answer": answer.model_dump(mode="json", by_alias=True)},
+            ),
+        )
+    )
+    client = TestClient(
+        create_app(replace(validation_http_services(), conversations=service)),
+        raise_server_exceptions=False,
+    )
+
+    resumed = client.get(
+        "/api/v1/projects/tapper-demo/conversations/chat-published/stream",
+        headers={"Last-Event-ID": "2"},
+    )
+
+    assert resumed.status_code == 200
+    assert [line for line in resumed.text.splitlines() if line.startswith("id: ")] == [
+        "id: 3",
+        "id: 4",
+    ]
+    assert [line for line in resumed.text.splitlines() if line.startswith("event: ")] == [
+        "event: turn.completed",
+        "event: conversation.turn.completed",
+    ]
+    terminal = json.loads(
+        next(line[6:] for line in resumed.text.splitlines() if line.startswith("data: "))
+    )
+    citation = terminal["event"]["payload"]["answer"]["citations"][0]
+    assert citation["source"]["anchor"]["inventoryItemId"] == "pi_1"
+    assert citation["publicationId"] == "publication-1"
+    assert citation["approvalDigest"] == "sha256:" + "c" * 64
+    assert citation["approvedItemId"] == "pi_1"
+    assert "Question kept out" not in resumed.text
+    assert '"answerPlan"' not in resumed.text
