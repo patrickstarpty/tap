@@ -667,7 +667,9 @@ export function KnowledgeReview({
                   />
                   <Button
                     type="primary"
-                    disabled={writeLocked || !note.trim()}
+                    disabled={
+                      writeLocked || comparison === null || !note.trim()
+                    }
                     loading={pending}
                     onClick={() =>
                       void execute((value) =>

@@ -43,6 +43,7 @@ test("Tapper durable state survives the selected restart boundary", async ({
   const phase = process.env.TAPPER_E2E_PHASE;
   expect(["app-restart", "compose-restart"]).toContain(phase);
   const state = await readState();
+  const reviewState = await readReviewState();
   const runtimeHttp = await page.request.get("/api/v1/runtime-mode");
   expect(runtimeHttp.status()).toBe(200);
   const runtime = (await runtimeHttp.json()) as { projectId: string };
@@ -65,7 +66,10 @@ test("Tapper durable state survives the selected restart boundary", async ({
     items: Array<{ documentId: string; filename: string; status: string }>;
   };
   expect(list.items.map((item) => item.documentId).sort()).toEqual(
-    survivors.map((item) => item.documentId).sort(),
+    [
+      ...survivors.map((item) => item.documentId),
+      reviewState.documentId,
+    ].sort(),
   );
   expect(
     list.items.some((item) => item.documentId === state.deleted.documentId),
@@ -76,6 +80,13 @@ test("Tapper durable state survives the selected restart boundary", async ({
   expect(policyFilename).toBeDefined();
   for (const document of survivors)
     await assertCurrentDocument(page, document, knowledgePath);
+  const reviewedDocument = await page.request.get(
+    `${knowledgePath}/documents/${reviewState.documentId}`,
+  );
+  expect(reviewedDocument.status()).toBe(200);
+  expect(
+    (await reviewedDocument.json()) as { revisionId: string },
+  ).toMatchObject({ revisionId: reviewState.revisionId });
 
   const graphSnapshots = await page.request.get(
     `${knowledgePath}/graph/snapshots`,
@@ -151,7 +162,6 @@ test("Tapper durable state survives the selected restart boundary", async ({
 
   await page.goto("/");
   const conversationState = await readConversationState();
-  const reviewState = await readReviewState();
   const persistedReviewResponse = await page.request.get(
     `${knowledgePath}/reviews/${reviewState.reviewId}`,
   );
@@ -318,7 +328,7 @@ test("Tapper durable state survives the selected restart boundary", async ({
   }
   await expect(
     page.locator(".tap-library-status[data-status=ready]"),
-  ).toHaveCount(7);
+  ).toHaveCount(8);
   // The current Library proves browser-visible persisted documents. Answers
   // and citations are deliberately verified through the canonical Project API.
   const answerHttp = await page.request.post(`${knowledgePath}/answers`, {

@@ -191,6 +191,66 @@ describe("KnowledgeReview", () => {
     expect(screen.queryAllByText("Extracted policy")).toHaveLength(1);
   });
 
+  it("keeps item decisions disabled until the comparison succeeds", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient().withReviews([review()]);
+    let finish!: (value: KnowledgeReviewItemComparison) => void;
+    api.compareReviewItem = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: /page:4:paragraph:2/u }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "核对说明" }),
+      "Evidence checked",
+    );
+    expect(screen.getByRole("button", { name: "保存核对" })).toBeDisabled();
+    await act(async () =>
+      finish({
+        reviewId: "krv_1",
+        itemId: ITEM,
+        original: {
+          availability: "unavailable",
+          excerpt: null,
+          reason: "original-not-available",
+        },
+        extracted: {
+          availability: "available",
+          excerpt: "Extracted evidence",
+          reason: null,
+        },
+      }),
+    );
+    expect(await screen.findByText("Extracted evidence")).toBeVisible();
+    expect(screen.getByRole("button", { name: "保存核对" })).toBeEnabled();
+  });
+
+  it("keeps item decisions disabled after comparison read failure", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient().withReviews([review()]);
+    api.compareReviewItem = async () => {
+      throw new Error("comparison unavailable");
+    };
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: /page:4:paragraph:2/u }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "核对说明" }),
+      "Evidence checked",
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("操作未完成");
+    expect(screen.getByRole("button", { name: "保存核对" })).toBeDisabled();
+    expect(screen.getByText("对照读取失败。")).toBeVisible();
+  });
+
   it("reloads an existing review after an open conflict", async () => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient();
