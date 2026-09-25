@@ -335,25 +335,29 @@ class GenerationWorker:
                 # Cancellation or lease reclaim won the terminal-state race.
                 continue
             except AuthorizationDenied:
-                await self.conversations.complete_evidence(
-                    conversation_id,
-                    turn.turn_id,
-                    AnswerEvidence(
-                        "",
-                        "failed",
-                        RetrievalSummary("failed"),
-                        GraphContextStatus.FAILED,
-                    ),
-                    lease_token=turn.lease_token,
-                    terminal_event=(
-                        "turn.failed",
-                        {
-                            "problem": build_problem(
-                                "answer-unavailable", correlation_id=turn.turn_id
-                            ).model_dump(mode="json", by_alias=True)
-                        },
-                    ),
-                )
+                try:
+                    await self.conversations.complete_evidence(
+                        conversation_id,
+                        turn.turn_id,
+                        AnswerEvidence(
+                            "",
+                            "failed",
+                            RetrievalSummary("failed"),
+                            GraphContextStatus.FAILED,
+                        ),
+                        lease_token=turn.lease_token,
+                        terminal_event=(
+                            "turn.failed",
+                            {
+                                "problem": build_problem(
+                                    "answer-unavailable", correlation_id=turn.turn_id
+                                ).model_dump(mode="json", by_alias=True)
+                            },
+                        ),
+                    )
+                except (ConversationConflict, PermissionError):
+                    # Cancellation or lease reclaim won the terminal-state race.
+                    continue
         return len(claimed)
 
 

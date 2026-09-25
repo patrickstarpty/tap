@@ -437,12 +437,15 @@ async def test_worker_routes_in_graph_persists_plan_and_binds_completion(questio
 
 
 @pytest.mark.asyncio
-async def test_worker_records_preplanning_publication_denial_as_failed_turn():
+@pytest.mark.parametrize("lease_reclaimed", [False, True], ids=["owned", "reclaimed"])
+async def test_worker_records_preplanning_publication_denial_as_failed_turn(lease_reclaimed):
     from tap.entrypoints.tapper_generation_worker import GenerationWorker
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.access.domain.policy import AuthorizationDenied
+    from tap.modules.chat.application.conversations import ConversationConflict
     from tap.modules.chat.domain.conversations import (
         FrozenResource,
+        GraphContextStatus,
         TurnInput,
         TurnInputSnapshot,
     )
@@ -477,30 +480,77 @@ async def test_worker_records_preplanning_publication_denial_as_failed_turn():
 
     class Conversations:
         repository = Repository()
-        completed = []
+
+        def __init__(self):
+            self.attempts = []
 
         async def complete_evidence(self, chat, turn, evidence, **kwargs):
-            self.completed.append((chat, turn, evidence, kwargs["terminal_event"]))
+            self.attempts.append((chat, turn, evidence, kwargs))
+            if lease_reclaimed:
+                raise ConversationConflict("lease reclaimed before completion")
+
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        async def plan(self, _input):
+            self.calls += 1
+            raise AssertionError("planner must not run after authorization denial")
 
     class Knowledge:
-        answer_planner = object()
+        def __init__(self):
+            self.answer_planner = Planner()
+            self.authorize_calls = 0
+            self.answer_calls = 0
 
         async def authorize_planning(self, _snapshot):
+            self.authorize_calls += 1
             raise AuthorizationDenied("current knowledge publication is unavailable")
 
+        async def answer_conversation(self, *_args, **_kwargs):
+            self.answer_calls += 1
+            raise AssertionError("answer generation must not run after authorization denial")
+
+        async def answer(self, *_args, **_kwargs):
+            self.answer_calls += 1
+            raise AssertionError("provider must not run after authorization denial")
+
     conversations = Conversations()
-    worker = GenerationWorker(conversations, Knowledge(), checkpointer=InMemorySaver())
+    knowledge = Knowledge()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
 
     assert await worker.run_once(limit=1) == 1
-    assert len(conversations.completed) == 1
-    chat, turn, evidence, terminal = conversations.completed[0]
+    assert len(conversations.attempts) == 1
+    chat, turn, evidence, completion = conversations.attempts[0]
     assert (chat, turn, evidence.outcome, evidence.retrieval_summary.status) == (
         "chat-denied",
         "turn-denied",
         "failed",
         "failed",
     )
-    assert terminal[0] == "turn.failed"
+    assert evidence.answer == ""
+    assert evidence.graph_context_status is GraphContextStatus.FAILED
+    assert evidence.retrieval_summary.authorized_hit_count == 0
+    assert evidence.citations == ()
+    assert completion["lease_token"] == "lease-denied"
+    assert completion["terminal_event"] == (
+        "turn.failed",
+        {
+            "problem": {
+                "type": "https://tap.example/problems/answer-unavailable",
+                "title": "Answer unavailable",
+                "status": 503,
+                "detail": "The answer service is currently unavailable.",
+                "instance": None,
+                "correlationId": "turn-denied",
+                "retryable": True,
+                "failureStage": "answer",
+            }
+        },
+    )
+    assert knowledge.authorize_calls == 1
+    assert knowledge.answer_planner.calls == 0
+    assert knowledge.answer_calls == 0
 
 
 @pytest.mark.asyncio
