@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.dependencies import HttpServices
 from tap.modules.access.domain.authorization import AuthorizationDecision
+from tap.modules.knowledge.domain.review import review_id_for
 from tests.conftest import validation_http_services
 
 BASE = "/api/v1/projects/tapper-demo/knowledge/reviews/krv_001"
@@ -238,6 +239,19 @@ class DenyPolicy(RecordingPolicy):
         return AuthorizationDecision(False, "test-denied")
 
 
+class ReviewResourcePolicy(RecordingPolicy):
+    def __init__(self, allowed_review_id: str) -> None:
+        super().__init__()
+        self.allowed_review_id = allowed_review_id
+
+    async def authorize(self, scope, action, resource):  # type: ignore[no-untyped-def]
+        self.calls.append((action, resource.kind, resource.resource_id))
+        return AuthorizationDecision(
+            resource.kind == "knowledge-review" and resource.resource_id == self.allowed_review_id,
+            "resource-match",
+        )
+
+
 def client(policy=None) -> tuple[TestClient, ReviewHttpSpy]:  # type: ignore[no-untyped-def]
     spy = ReviewHttpSpy()
     base = validation_http_services()
@@ -313,8 +327,24 @@ def test_ready_document_review_is_opened_idempotently_without_client_authority()
     assert (
         "knowledge.review.edit",
         "knowledge-review",
-        "doc_001",
+        review_id_for("tapper-demo", ("rev_001",)),
     ) in policy.calls
+
+
+def test_open_review_authorization_is_restricted_to_server_derived_review_id():
+    expected_review_id = review_id_for("tapper-demo", ("rev_001",))
+    policy = ReviewResourcePolicy(expected_review_id)
+    http, spy = client(policy)
+
+    response = http.post(
+        "/api/v1/projects/tapper-demo/knowledge/documents/doc_001/review",
+        headers={"Origin": ORIGIN, "Idempotency-Key": "open-review-resource"},
+        json={"sourceRevisionId": "rev_001"},
+    )
+
+    assert response.status_code == 200
+    assert spy.calls == [("open", "doc_001", "rev_001", "open-review-resource")]
+    assert policy.calls == [("knowledge.review.edit", "knowledge-review", expected_review_id)]
 
 
 def test_open_review_authorization_denial_does_not_reach_the_service():
@@ -329,7 +359,13 @@ def test_open_review_authorization_denial_does_not_reach_the_service():
 
     assert response.status_code == 403
     assert spy.calls == []
-    assert policy.calls == [("knowledge.review.edit", "knowledge-review", "doc_001")]
+    assert policy.calls == [
+        (
+            "knowledge.review.edit",
+            "knowledge-review",
+            review_id_for("tapper-demo", ("rev_001",)),
+        )
+    ]
 
 
 def test_review_http_preserves_optimistic_version_and_idempotent_publish_intent():

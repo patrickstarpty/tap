@@ -330,9 +330,34 @@ class MysqlKnowledgeReviewRepository:
             raise ReviewStateConflict("scope-mismatch")
         async with self._sessions() as session, session.begin():
             await self._lock_project(session)
+            existing_rows = (
+                (
+                    await session.execute(
+                        select(knowledge_review_revision)
+                        .where(
+                            *scope_predicates(knowledge_review_revision, self._scope),
+                            func.json_contains(
+                                knowledge_review_revision.c.source_revision_ids,
+                                func.json_quote(source_revision_id),
+                            )
+                            == 1,
+                        )
+                        .order_by(knowledge_review_revision.c.review_id)
+                        .limit(2)
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            if len(existing_rows) > 1:
+                raise ReviewStateConflict("parallel-review-conflict")
             replay_id = await self._locked_open_command(session, command_key, command_digest)
             if replay_id is not None:
-                replay = await self._locked_review(session, replay_id)
+                replay = next(
+                    (_review(row) for row in existing_rows if row["review_id"] == replay_id),
+                    None,
+                )
                 if replay is None:
                     raise ReviewStateConflict("review-command-result-missing")
                 return replay
@@ -398,28 +423,6 @@ class MysqlKnowledgeReviewRepository:
             if authority is None:
                 raise ReviewStateConflict("review-source-not-current")
 
-            existing_rows = (
-                (
-                    await session.execute(
-                        select(knowledge_review_revision)
-                        .where(
-                            *scope_predicates(knowledge_review_revision, self._scope),
-                            func.json_contains(
-                                knowledge_review_revision.c.source_revision_ids,
-                                func.json_quote(source_revision_id),
-                            )
-                            == 1,
-                        )
-                        .order_by(knowledge_review_revision.c.review_id)
-                        .limit(2)
-                        .with_for_update()
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            if len(existing_rows) > 1:
-                raise ReviewStateConflict("parallel-review-conflict")
             if existing_rows:
                 existing = _review(existing_rows[0])
                 await self._insert_open_command(
@@ -570,6 +573,7 @@ class MysqlKnowledgeReviewRepository:
             raise ReviewStateConflict("scope-mismatch")
         now = _naive_utc(datetime.now(UTC))
         async with self._sessions() as session, session.begin():
+            await self._lock_project(session)
             await session.execute(
                 insert(knowledge_review_revision).values(
                     **scope_values(self._scope),
@@ -1205,9 +1209,34 @@ class MysqlKnowledgeReviewRepository:
                 knowledge_document_revision.c.chunk_manifest_digest,
                 knowledge_document_revision.c.projection_digest,
             )
+            .select_from(
+                knowledge_document_revision.join(
+                    knowledge_document,
+                    (knowledge_document.c.document_id == knowledge_document_revision.c.document_id)
+                    & (
+                        knowledge_document.c.enterprise_id
+                        == knowledge_document_revision.c.enterprise_id
+                    )
+                    & (knowledge_document.c.project_id == knowledge_document_revision.c.project_id),
+                ).join(
+                    knowledge_source,
+                    (knowledge_source.c.source_id == knowledge_document.c.source_id)
+                    & (knowledge_source.c.enterprise_id == knowledge_document.c.enterprise_id)
+                    & (knowledge_source.c.project_id == knowledge_document.c.project_id),
+                )
+            )
             .where(
                 *scope_predicates(knowledge_document_revision, self._scope),
+                *scope_predicates(knowledge_document, self._scope),
+                *scope_predicates(knowledge_source, self._scope),
                 knowledge_document_revision.c.revision_id.in_(revision.source_revision_ids),
+                knowledge_document.c.current_revision_id
+                == knowledge_document_revision.c.revision_id,
+                knowledge_document.c.status == "ready",
+                knowledge_document.c.stage == "ready",
+                knowledge_document.c.activated_at.is_not(None),
+                knowledge_document.c.deleted_at.is_(None),
+                knowledge_source.c.deleted_at.is_(None),
             )
             .order_by(knowledge_document_revision.c.revision_id)
         )
@@ -1253,24 +1282,12 @@ class MysqlKnowledgeReviewRepository:
         occurred_at: datetime,
     ) -> KnowledgeReviewRevision:
         async with self._sessions() as session, session.begin():
+            await self._lock_project(session)
+            locked = await self._locked_review(session, revision.review_id)
+            if locked is None or locked.version != expected_version:
+                raise ReviewStateConflict("revision-conflict")
             if action in {"submitted", "approved"}:
-                locked = (
-                    (
-                        await session.execute(
-                            select(knowledge_review_revision)
-                            .where(
-                                *scope_predicates(knowledge_review_revision, self._scope),
-                                knowledge_review_revision.c.review_id == revision.review_id,
-                            )
-                            .with_for_update()
-                        )
-                    )
-                    .mappings()
-                    .one_or_none()
-                )
-                if locked is None or locked["version"] != expected_version:
-                    raise ReviewStateConflict("revision-conflict")
-                if not await self._review_authority(session, _review(locked), lock=True):
+                if not await self._review_authority(session, locked, lock=True):
                     raise ReviewStateConflict("review-authority-changed")
             result = await session.execute(
                 update(knowledge_review_revision)
@@ -1482,7 +1499,11 @@ class MysqlKnowledgeReviewRepository:
         expected_version: int,
     ) -> KnowledgeReviewRevision:
         async with self._sessions() as session, session.begin():
-            if not await self._review_authority(session, revision, lock=True):
+            await self._lock_project(session)
+            locked = await self._locked_review(session, revision.review_id)
+            if locked is None or locked.version != expected_version:
+                raise ReviewStateConflict("revision-conflict")
+            if not await self._review_authority(session, locked, lock=True):
                 raise ReviewStateConflict("review-authority-changed")
             result = await session.execute(
                 update(knowledge_review_revision)

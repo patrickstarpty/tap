@@ -64,6 +64,19 @@ class AllowPolicy:
         return AuthorizationDecision(True, "test-allowed")
 
 
+class PausingAuthorityRepository(MysqlKnowledgeReviewRepository):
+    def __init__(self, *args, authority_locked: asyncio.Event, release: asyncio.Event, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self._authority_locked = authority_locked
+        self._release = release
+
+    async def _review_authority(self, session, revision, *, lock):  # type: ignore[no-untyped-def]
+        if lock:
+            self._authority_locked.set()
+            await self._release.wait()
+        return await super()._review_authority(session, revision, lock=lock)
+
+
 async def _seed_ready_document(sessions):  # type: ignore[no-untyped-def]
     old_failed = ParseInventoryItem.create(
         source_revision_id="rev_create_001",
@@ -174,6 +187,62 @@ async def _seed_ready_document(sessions):  # type: ignore[no-untyped-def]
             )
         )
     return latest
+
+
+async def _activate_replacement_revision(sessions):  # type: ignore[no-untyped-def]
+    replacement = ParseInventoryItem.create(
+        source_revision_id="rev_create_002",
+        kind=ParseInventoryKind.PARAGRAPH,
+        locator="paragraph:1",
+        status=ParseInventoryStatus.PARSED,
+        artifact_digest=DIGEST_C,
+    )
+    async with sessions() as session, session.begin():
+        await session.execute(
+            insert(knowledge_document_revision).values(
+                **scope_values(VALIDATION_SCOPE),
+                revision_id="rev_create_002",
+                source_id="src_" + "7" * 32,
+                document_id="doc_create_001",
+                source_content_hash=DIGEST_B,
+                original_blob_locator="tapper-originals/refund-v2.md",
+                normalized_blob_locator="tapper-artifacts/refund-v2.normalized",
+                chunks_blob_locator="tapper-artifacts/refund-v2.chunks",
+                embeddings_blob_locator="tapper-artifacts/refund-v2.embeddings",
+                parser_version="tapper-parser-v1",
+                chunker_version="tapper-chunker-v1",
+                pipeline_version="tapper-ingestion-v1",
+                parse_inventory_attempt=1,
+                parser_config_digest=DIGEST_C,
+                parse_inventory_digest=parse_inventory_digest((replacement,)),
+                chunk_manifest_digest=DIGEST_B,
+                projection_digest=DIGEST_C,
+                created_at=NOW.replace(tzinfo=None),
+            )
+        )
+        await session.execute(
+            insert(knowledge_parse_inventory).values(
+                **scope_values(VALIDATION_SCOPE),
+                inventory_row_id="inventory-create-replacement",
+                source_revision_id=replacement.source_revision_id,
+                attempt=1,
+                item_id=replacement.item_id,
+                ordinal=0,
+                item_kind=replacement.kind.value,
+                locator=replacement.locator,
+                status=replacement.status.value,
+                reason=replacement.reason,
+                artifact_digest=replacement.artifact_digest,
+                decision_actor_id=replacement.decision_actor_id,
+                created_at=NOW.replace(tzinfo=None),
+            )
+        )
+        await session.execute(
+            update(knowledge_document)
+            .where(knowledge_document.c.document_id == "doc_create_001")
+            .values(current_revision_id="rev_create_002")
+        )
+    return replacement
 
 
 async def test_ready_latest_attempt_concurrent_create_or_open_is_one_durable_review(
@@ -490,6 +559,236 @@ async def test_existing_approved_and_current_publication_are_opened_without_para
                 actor_id=VALIDATION_SCOPE.actor_id,
                 idempotency_key="open-existing-published",
                 now=NOW,
+            )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize("mutation", ["submit", "approve"])
+async def test_reopen_serializes_with_review_mutation_without_deadlock(
+    owned_project_mysql, mutation
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        await _seed_ready_document(sessions)
+        seed_application = KnowledgeReviewApplication(
+            MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE),
+            UnusedProjection(),
+        )
+        created = await seed_application.open_review(
+            document_id="doc_create_001",
+            source_revision_id="rev_create_001",
+            actor_id=VALIDATION_SCOPE.actor_id,
+            idempotency_key=f"open-before-{mutation}",
+            now=NOW,
+        )
+        if mutation == "approve":
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_review_revision)
+                    .where(knowledge_review_revision.c.review_id == created.review_id)
+                    .values(status="reviewing", version=2)
+                )
+
+        authority_locked = asyncio.Event()
+        release = asyncio.Event()
+        mutation_application = KnowledgeReviewApplication(
+            PausingAuthorityRepository(
+                sessions,
+                scope=VALIDATION_SCOPE,
+                authority_locked=authority_locked,
+                release=release,
+            ),
+            UnusedProjection(),
+        )
+        if mutation == "submit":
+            mutation_task = asyncio.create_task(
+                mutation_application.transition_review(
+                    created.review_id,
+                    target=ReviewStatus.REVIEWING,
+                    actor_id=VALIDATION_SCOPE.actor_id,
+                    expected_version=1,
+                    now=NOW,
+                )
+            )
+        else:
+            mutation_task = asyncio.create_task(
+                mutation_application.approve_review(
+                    created.review_id,
+                    actor_id="independent-reviewer",
+                    expected_version=2,
+                    now=NOW,
+                )
+            )
+        await asyncio.wait_for(authority_locked.wait(), timeout=5)
+
+        reopen_task = asyncio.create_task(
+            seed_application.open_review(
+                document_id="doc_create_001",
+                source_revision_id="rev_create_001",
+                actor_id=VALIDATION_SCOPE.actor_id,
+                idempotency_key=f"concurrent-reopen-{mutation}",
+                now=NOW,
+            )
+        )
+        await asyncio.sleep(0.1)
+        release.set()
+        mutated, reopened = await asyncio.wait_for(
+            asyncio.gather(mutation_task, reopen_task), timeout=10
+        )
+
+        assert mutated.review_id == reopened.review_id == created.review_id
+        assert mutated.status is (
+            ReviewStatus.REVIEWING if mutation == "submit" else ReviewStatus.APPROVED
+        )
+    finally:
+        await engine.dispose()
+
+
+async def test_review_authority_requires_current_ready_undeleted_document_and_source(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        await _seed_ready_document(sessions)
+        repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        application = KnowledgeReviewApplication(repository, UnusedProjection())
+        created = await application.open_review(
+            document_id="doc_create_001",
+            source_revision_id="rev_create_001",
+            actor_id=VALIDATION_SCOPE.actor_id,
+            idempotency_key="open-authority-guards",
+            now=NOW,
+        )
+
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(knowledge_document)
+                .where(knowledge_document.c.document_id == "doc_create_001")
+                .values(status="failed")
+            )
+        assert not await repository.review_authority(created)
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(knowledge_document)
+                .where(knowledge_document.c.document_id == "doc_create_001")
+                .values(status="ready", deleted_at=NOW.replace(tzinfo=None))
+            )
+        assert not await repository.review_authority(created)
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(knowledge_document)
+                .where(knowledge_document.c.document_id == "doc_create_001")
+                .values(deleted_at=None)
+            )
+            await session.execute(
+                update(knowledge_source)
+                .where(knowledge_source.c.source_id == "src_" + "7" * 32)
+                .values(deleted_at=NOW.replace(tzinfo=None))
+            )
+        assert not await repository.review_authority(created)
+    finally:
+        await engine.dispose()
+
+
+async def test_replaced_revision_cannot_be_submitted_approved_or_published_over_current_pointer(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        await _seed_ready_document(sessions)
+        repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        application = KnowledgeReviewApplication(repository, UnusedProjection())
+        created = await application.open_review(
+            document_id="doc_create_001",
+            source_revision_id="rev_create_001",
+            actor_id=VALIDATION_SCOPE.actor_id,
+            idempotency_key="open-before-replacement",
+            now=NOW,
+        )
+        await _activate_replacement_revision(sessions)
+
+        with pytest.raises(ReviewStateConflict, match="review-authority-changed"):
+            await application.transition_review(
+                created.review_id,
+                target=ReviewStatus.REVIEWING,
+                actor_id=VALIDATION_SCOPE.actor_id,
+                expected_version=1,
+                now=NOW,
+            )
+
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(knowledge_review_revision)
+                .where(knowledge_review_revision.c.review_id == created.review_id)
+                .values(status="reviewing", version=2)
+            )
+        with pytest.raises(ReviewStateConflict, match="review-authority-changed"):
+            await application.approve_review(
+                created.review_id,
+                actor_id="independent-reviewer",
+                expected_version=2,
+                now=NOW,
+            )
+
+        guard_publication_id = "kpb_current_guard"
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(knowledge_review_revision)
+                .where(knowledge_review_revision.c.review_id == created.review_id)
+                .values(status="approved", version=3, reviewer_actor_id="independent-reviewer")
+            )
+            await session.execute(
+                insert(knowledge_publication).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    publication_id=guard_publication_id,
+                    review_id=created.review_id,
+                    review_version=2,
+                    version=1,
+                    approval_digest=created.approval_digest,
+                    source_revision_ids=list(created.source_revision_ids),
+                    approved_item_ids=list(created.approved_item_ids),
+                    generation="generation-create-001",
+                    published_by="independent-reviewer",
+                    published_at=NOW.replace(tzinfo=None),
+                    expires_at=created.expires_at.replace(tzinfo=None),
+                    status="published",
+                    withdrawn_by=None,
+                    withdrawn_at=None,
+                )
+            )
+            await session.execute(
+                insert(knowledge_current_publication).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    pointer_id=scoped_outbox_id(
+                        VALIDATION_SCOPE,
+                        kind="knowledge-current-publication",
+                        identity="current",
+                    ),
+                    publication_id=guard_publication_id,
+                    updated_at=NOW.replace(tzinfo=None),
+                )
+            )
+
+        with pytest.raises(ReviewStateConflict, match="review-authority-changed"):
+            await application.publish_review(
+                created.review_id,
+                generation="generation-create-001",
+                idempotency_key="publish-stale-review",
+                actor_id=VALIDATION_SCOPE.actor_id,
+                expected_version=3,
+                now=NOW,
+            )
+        async with sessions() as session:
+            assert (
+                await session.scalar(select(knowledge_current_publication.c.publication_id))
+                == guard_publication_id
+            )
+            assert (
+                await session.scalar(select(func.count()).select_from(knowledge_publication)) == 1
             )
     finally:
         await engine.dispose()

@@ -18,12 +18,17 @@ from tap.contracts.http import (
     PublishedKnowledgeSourcePage,
 )
 from tap.interfaces.http.dependencies import (
+    HttpServices,
     knowledge_review_service,
     review_expected_version,
     source_command_key,
 )
 from tap.interfaces.http.problems import problem_response_metadata
-from tap.interfaces.http.scope import project_authorization
+from tap.interfaces.http.scope import project_authorization, resolve_project_scope
+from tap.modules.access.application.policy import require_authorized
+from tap.modules.access.domain.authorization import ResourceRef
+from tap.modules.knowledge.domain.review import review_id_for
+from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 
 router = APIRouter(
     tags=["knowledge"],
@@ -34,13 +39,34 @@ router = APIRouter(
 )
 
 
+async def authorize_open_document_review(request: Request) -> None:
+    scope = await resolve_project_scope(request)
+    try:
+        body = KnowledgeReviewOpenRequest.model_validate(await request.json())
+    except (TypeError, ValueError):
+        return
+    services: HttpServices = request.app.state.http_services
+    if services.authorization_policy is None:
+        raise KnowledgeRuntimeUnavailable
+    await require_authorized(
+        services.authorization_policy,
+        scope,
+        "knowledge.review.edit",
+        ResourceRef(
+            enterprise_id=scope.enterprise_id,
+            project_id=scope.project_id,
+            kind="knowledge-review",
+            resource_id=review_id_for(scope.project_id, (body.source_revision_id,)),
+        ),
+    )
+    request.state.project_scope = scope
+
+
 @router.post(
     "/knowledge/documents/{document_id}/review",
     operation_id="knowledge_open_document_review",
     response_model=KnowledgeReviewDetail,
-    dependencies=[
-        Depends(project_authorization("knowledge.review.edit", resource_id_param="document_id"))
-    ],
+    dependencies=[Depends(authorize_open_document_review)],
 )
 async def open_document_review(
     request: Request,
