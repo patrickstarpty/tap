@@ -15,6 +15,7 @@ import {
   type JourneyState,
   type SafeDocumentState,
 } from "./fixtureBuilder";
+import { preparePublishedFixture } from "./publicationFixture";
 
 const STAGES = [
   "stored",
@@ -540,6 +541,27 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
     policy!.receipt.sourceId!,
     selectedReference!.receipt.sourceId!,
   ];
+  preparePublishedFixture([
+    policy!.detail.revisionId,
+    selectedReference!.detail.revisionId,
+  ]);
+  const publishedGraphSnapshots = await page.request.get(
+    knowledgePath(page, "graph/snapshots"),
+    { params: { sourceRevisionId: policy!.detail.revisionId } },
+  );
+  expect(publishedGraphSnapshots.status()).toBe(200);
+  const snapshot = (await publishedGraphSnapshots.json()) as {
+    items: Array<{ snapshotId: string }>;
+  };
+  expect(snapshot.items[0]?.snapshotId).toBeTruthy();
+  const publishedGraph = await page.request.post(
+    knowledgePath(page, "graph/query"),
+    {
+      headers: { Origin: ORIGIN },
+      data: { snapshotId: snapshot.items[0]!.snapshotId, query: "*", nodeLimit: 500 },
+    },
+  );
+  expect(publishedGraph.status()).toBe(200);
   const query = policyQuestion(fixtures.runId);
   const initialAnswer = await ask(page, query, initiallySelected);
   assertScopedRequest(initialAnswer.request, query, initiallySelected);
@@ -597,6 +619,7 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
     injectionReceipt.document.documentId,
     "ready",
   );
+  preparePublishedFixture([injectionDetail.revisionId]);
   assertReadyTimeline(injectionDetail);
   expect((await journeyDocumentIds()).length).toBe(8);
 

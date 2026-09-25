@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { preparePublishedFixture } from "./publicationFixture";
 
 const ORIGIN = "http://127.0.0.1:15173";
 let cleanupSourceId: string | null = null;
@@ -79,6 +80,7 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
       { timeout: 45_000 },
     )
     .not.toBe("");
+  preparePublishedFixture([sourceRevisionId]);
 
   const agents = (await (
     await page.request.get(`${root}/ai/agents`)
