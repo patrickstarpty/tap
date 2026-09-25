@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 
 import pytest
 from langgraph.checkpoint.base import empty_checkpoint
@@ -7,6 +8,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.mysql_checkpointer import (
     MysqlGraphCheckpointer,
@@ -20,6 +22,7 @@ from tap.modules.ai.application.interaction_graph import (
     InteractionGraph,
     InteractionGraphState,
 )
+from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
 from tap.modules.chat.adapters.mysql_conversations import (
     MysqlConversationRepository,
     turn_answer_evidence_snapshot,
@@ -30,6 +33,7 @@ from tap.modules.chat.domain.conversations import (
     GraphContextStatus,
     RetrievalSummary,
 )
+from tap.platform.db.schema import outbox
 from tests.integration.test_conversation_persistence import _input
 
 
@@ -427,6 +431,86 @@ async def test_mysql_checkpoint_replay_deduplicates_concurrent_task_writes_after
                 .where(graph_checkpoint_write.c.run_id == "run-concurrent-replay")
             )
         assert write_count == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_permanent_checkpoint_error_terminalizes_once_and_does_not_reclaim(
+    owned_project_mysql,
+) -> None:
+    class PermanentResultFailure(InMemorySaver):
+        async def aput_writes(self, config, writes, task_id, task_path=""):
+            if config["configurable"]["thread_id"] == "turn-permanent" and any(
+                channel == "result" for channel, _value in writes
+            ):
+                raise GraphCheckpointUnavailable("checkpoint row is invalid")
+            await super().aput_writes(config, writes, task_id, task_path)
+
+    class Knowledge:
+        calls = []
+
+        async def answer(self, request):
+            self.calls.append(request.query)
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+        )
+        await conversations.create(
+            "chat-permanent", "turn-permanent", "request-permanent", _input("first")
+        )
+        await conversations.create(
+            "chat-healthy", "turn-healthy", "request-healthy", _input("second")
+        )
+        knowledge = Knowledge()
+        worker = GenerationWorker(
+            conversations,
+            knowledge,
+            checkpointer=PermanentResultFailure(),
+        )
+
+        assert await worker.run_once(limit=2) == 2
+        assert (await conversations.load("chat-permanent")).turns[0].state == "failed"
+        assert (await conversations.load("chat-healthy")).turns[0].state == "completed"
+        assert await conversations.repository.claim_queued(limit=2) == ()
+        assert await worker.run_once(limit=2) == 0
+        assert knowledge.calls == ["first", "second"]
+
+        async with sessions() as session:
+            failure_outbox_count = await session.scalar(
+                select(func.count())
+                .select_from(outbox)
+                .where(
+                    outbox.c.aggregate_id == "turn-permanent",
+                    outbox.c.message_type == "conversation.turn.completed",
+                )
+            )
+            leaked_answer_count = await session.scalar(
+                text(
+                    "SELECT COUNT(*) FROM chat_event "
+                    "WHERE turn_id='turn-permanent' AND event_type='answer.delta'"
+                )
+            )
+            healthy_answer_count = await session.scalar(
+                text(
+                    "SELECT COUNT(*) FROM chat_event "
+                    "WHERE turn_id='turn-healthy' AND event_type='answer.delta'"
+                )
+            )
+        assert failure_outbox_count == 1
+        assert leaked_answer_count == 0
+        assert healthy_answer_count == 1
     finally:
         await engine.dispose()
 

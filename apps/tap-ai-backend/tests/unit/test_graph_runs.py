@@ -2,11 +2,14 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy.exc import DataError, IntegrityError, OperationalError, TimeoutError
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.ai.adapters.mysql_checkpointer import MysqlGraphCheckpointer
+from tap.modules.ai.adapters.mysql_checkpointer import MysqlGraphCheckpointer, _checkpoint_storage
+from tap.modules.ai.domain import graph_runs
 from tap.modules.ai.domain.graph_runs import (
     ExecutionMode,
+    GraphCheckpointUnavailable,
     GraphLeaseLost,
     GraphRun,
     GraphRunBudget,
@@ -121,3 +124,33 @@ def test_mysql_checkpoint_serializer_allows_domain_draft_but_blocks_unknown_cons
     )
     assert blocked == {"max_model_calls": 1, "max_seconds": 1, "max_cost_micros": 1}
     assert not isinstance(blocked, GraphRunBudget)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        OperationalError("SELECT 1", {}, ConnectionError("connection lost")),
+        TimeoutError("connection pool exhausted"),
+    ],
+)
+async def test_checkpoint_storage_classifies_operational_errors_as_retryable(error) -> None:
+    with pytest.raises(graph_runs.GraphCheckpointRetryable):
+        async with _checkpoint_storage():
+            raise error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        IntegrityError("INSERT", {}, ValueError("invalid checkpoint relation")),
+        DataError("INSERT", {}, ValueError("invalid checkpoint value")),
+    ],
+)
+async def test_checkpoint_storage_keeps_data_errors_permanent(error) -> None:
+    with pytest.raises(GraphCheckpointUnavailable) as captured:
+        async with _checkpoint_storage():
+            raise error
+
+    assert not isinstance(captured.value, graph_runs.GraphCheckpointRetryable)

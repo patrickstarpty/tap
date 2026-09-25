@@ -649,6 +649,7 @@ class MysqlConversationRepository:
         event,
         lease_token=None,
         terminal_event=None,
+        stream_events=(),
     ):
         async with self.sessions() as session, session.begin():
             parent = await session.scalar(
@@ -683,7 +684,12 @@ class MysqlConversationRepository:
             if (
                 row["state"] == "running"
                 and snapshot.value.outcome != "canceled"
-                and (not lease_token or lease_token != row["processing_lease_token"])
+                and (
+                    not lease_token
+                    or lease_token != row["processing_lease_token"]
+                    or row["processing_lease_expires_at"] is None
+                    or row["processing_lease_expires_at"] < _naive(datetime.now(timezone.utc))
+                )
             ):
                 raise ConversationConflict("generation lease lost")
             input_row = (
@@ -784,6 +790,17 @@ class MysqlConversationRepository:
                         created_at=_naive(snapshot.created_at),
                     )
                 )
+            for stream_event in stream_events:
+                if stream_event.event_type in {
+                    "conversation.turn.requested",
+                    "conversation.turn.completed",
+                    "turn.completed",
+                    "turn.abstained",
+                    "turn.failed",
+                }:
+                    raise ValueError("completion stream event is invalid")
+                stream_event = await self._next_event(session, conversation_id, stream_event)
+                await self._stream_event(session, stream_event, turn_id)
             if terminal_event is not None:
                 if terminal_event.event_type not in {
                     "turn.completed",

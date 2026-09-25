@@ -8,6 +8,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
+from tap.modules.ai.domain import graph_runs
 from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
 from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
@@ -61,10 +62,13 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
         events = []
         completed = []
 
-        async def emit(self, conversation_id, turn_id, event_type, payload, **_):
-            self.events.append((conversation_id, turn_id, event_type, payload))
-
-        async def complete_evidence(self, conversation_id, turn_id, evidence, **_):
+        async def complete_evidence(
+            self, conversation_id, turn_id, evidence, *, stream_events=(), **_
+        ):
+            self.events.extend(
+                (conversation_id, turn_id, event_type, payload)
+                for event_type, payload in stream_events
+            )
             self.completed.append((conversation_id, turn_id, evidence))
 
     class Knowledge:
@@ -154,13 +158,10 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
 
     class Conversations:
         repository = Repository()
-        emitted = []
+        completion = None
 
-        async def emit(self, *args, **kwargs):
-            self.emitted.append((args, kwargs))
-
-        async def complete_evidence(self, *_args, **_kwargs):
-            return None
+        async def complete_evidence(self, *_args, **kwargs):
+            self.completion = kwargs
 
     class Knowledge:
         async def answer(self, _request):
@@ -185,7 +186,11 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
 
     conversations = Conversations()
     await GenerationWorker(conversations, Knowledge()).run_once(limit=1)
-    assert conversations.emitted[0][1] == {"lease_token": "lease-1"}
+    assert conversations.completion["lease_token"] == "lease-1"
+    assert conversations.completion["stream_events"][-1] == (
+        "answer.delta",
+        {"text": "delta"},
+    )
 
 
 @pytest.mark.asyncio
@@ -264,11 +269,9 @@ async def test_generation_worker_continues_after_cancel_wins_completion_race():
         repository = Repository()
         completed = []
 
-        async def emit(self, _conversation_id, turn_id, *_args, **_kwargs):
-            if turn_id == "turn-1":
-                raise ConversationConflict("terminal Turn cannot accept stream events")
-
         async def complete_evidence(self, _conversation_id, turn_id, *_args, **_kwargs):
+            if turn_id == "turn-1":
+                raise ConversationConflict("generation lease lost")
             self.completed.append(turn_id)
 
     class Knowledge:
@@ -305,16 +308,12 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
 
     class Conversations:
         repository = Repository()
-        emitted = []
+        stream_events = None
         terminal_event = None
 
-        async def emit(self, _conversation_id, _turn_id, event_type, *_args, **_kwargs):
-            if event_type in {"turn.completed", "turn.abstained", "turn.failed"}:
-                raise AssertionError("terminal stream event must not precede evidence completion")
-            self.emitted.append(event_type)
-
-        async def complete_evidence(self, *_args, terminal_event=None, **_kwargs):
+        async def complete_evidence(self, *_args, terminal_event=None, stream_events=(), **_kwargs):
             self.terminal_event = terminal_event
+            self.stream_events = stream_events
 
     class Knowledge:
         async def answer(self, _request):
@@ -328,7 +327,7 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
 
     conversations = Conversations()
     await GenerationWorker(conversations, Knowledge()).run_once(limit=1)
-    assert conversations.emitted == [
+    assert [event_type for event_type, _payload in conversations.stream_events] == [
         "context.assembled",
         "stage.completed",
         "retrieval.hits_ready",
@@ -454,17 +453,98 @@ async def test_generation_worker_uses_turn_scoped_persistent_checkpointer_factor
 
 
 @pytest.mark.asyncio
-async def test_generation_worker_keeps_checkpoint_failure_retryable_and_continues_batch():
-    class UnavailableCheckpointer(InMemorySaver):
+async def test_generation_worker_recovers_after_one_transient_checkpoint_failure():
+    class RetryOnceCheckpointer(InMemorySaver):
+        failed = False
+
+        async def aput_writes(self, config, writes, task_id, task_path=""):
+            if not self.failed and any(channel == "result" for channel, _value in writes):
+                self.failed = True
+                raise graph_runs.GraphCheckpointRetryable("checkpoint database unavailable")
+            return await super().aput_writes(config, writes, task_id, task_path)
+
+    checkpointer = RetryOnceCheckpointer()
+
+    class Repository:
+        claims = 0
+
+        async def claim_queued(self, *, limit):
+            assert limit == 1
+            self.claims += 1
+            return (
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        attempt=self.claims,
+                        lease_token=f"lease-{self.claims}",
+                        input_snapshot=SimpleNamespace(
+                            value=SimpleNamespace(message="question", resolved_resources=())
+                        ),
+                    ),
+                ),
+            )
+
+        def graph_checkpointer(self, _turn):
+            return checkpointer
+
+    class Conversations:
+        repository = Repository()
+        completed = []
+        emitted = []
+
+        async def emit(self, _conversation_id, _turn_id, event_type, payload, **_kwargs):
+            self.emitted.append((event_type, payload))
+
+        async def complete_evidence(self, _conversation_id, turn_id, evidence, **kwargs):
+            self.completed.append((turn_id, evidence.outcome, kwargs["stream_events"]))
+
+    class Knowledge:
+        calls = 0
+
+        async def answer(self, _request):
+            self.calls += 1
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    conversations = Conversations()
+    knowledge = Knowledge()
+    worker = GenerationWorker(conversations, knowledge)
+
+    assert await worker.run_once(limit=1) == 1
+    assert conversations.completed == []
+    assert conversations.emitted == []
+    assert await worker.run_once(limit=1) == 1
+    assert [event[0] for event in conversations.completed[0][2]] == [
+        "context.assembled",
+        "stage.completed",
+        "retrieval.hits_ready",
+        "answer.delta",
+    ]
+    assert conversations.completed[0][:2] == ("turn-1", "completed")
+    assert conversations.emitted == []
+    assert knowledge.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_terminalizes_permanent_checkpoint_error_and_continues_batch():
+    class PermanentlyUnavailableCheckpointer(InMemorySaver):
         async def aget_tuple(self, config):
-            del config
-            raise GraphCheckpointUnavailable("checkpoint database unavailable")
+            if config["configurable"]["thread_id"] == "turn-1":
+                raise GraphCheckpointUnavailable("checkpoint data is invalid")
+            return await super().aget_tuple(config)
 
     turns = tuple(
         (
             "conversation-1",
             SimpleNamespace(
                 turn_id=f"turn-{number}",
+                attempt=1,
                 lease_token=f"lease-{number}",
                 input_snapshot=SimpleNamespace(
                     value=SimpleNamespace(message="question", resolved_resources=())
@@ -480,7 +560,7 @@ async def test_generation_worker_keeps_checkpoint_failure_retryable_and_continue
             return turns
 
         def graph_checkpointer(self, turn):
-            return UnavailableCheckpointer() if turn.turn_id == "turn-1" else InMemorySaver()
+            return PermanentlyUnavailableCheckpointer()
 
     class Conversations:
         repository = Repository()
@@ -489,8 +569,10 @@ async def test_generation_worker_keeps_checkpoint_failure_retryable_and_continue
         async def emit(self, *_args, **_kwargs):
             pass
 
-        async def complete_evidence(self, _conversation_id, turn_id, *_args, **_kwargs):
-            self.completed.append(turn_id)
+        async def complete_evidence(
+            self, _conversation_id, turn_id, evidence, *, terminal_event, **_kwargs
+        ):
+            self.completed.append((turn_id, evidence.outcome, terminal_event[0]))
 
     class Knowledge:
         async def answer(self, _request):
@@ -504,7 +586,93 @@ async def test_generation_worker_keeps_checkpoint_failure_retryable_and_continue
 
     conversations = Conversations()
     assert await GenerationWorker(conversations, Knowledge()).run_once(limit=2) == 2
-    assert conversations.completed == ["turn-2"]
+    assert conversations.completed == [
+        ("turn-1", "failed", "turn.failed"),
+        ("turn-2", "completed", "turn.completed"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_terminalizes_transient_checkpoint_failure_at_retry_budget():
+    class RetryableFailureCheckpointer(InMemorySaver):
+        async def aget_tuple(self, config):
+            del config
+            raise graph_runs.GraphCheckpointRetryable("checkpoint database unavailable")
+
+    turn = SimpleNamespace(
+        turn_id="turn-3",
+        attempt=3,
+        lease_token="lease-3",
+        input_snapshot=SimpleNamespace(
+            value=SimpleNamespace(message="question", resolved_resources=())
+        ),
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            assert limit == 1
+            return (("conversation-1", turn),)
+
+        def graph_checkpointer(self, _turn):
+            return RetryableFailureCheckpointer()
+
+    class Conversations:
+        repository = Repository()
+        completed = []
+
+        async def complete_evidence(self, _conversation_id, turn_id, evidence, **kwargs):
+            self.completed.append((turn_id, evidence.outcome, kwargs["terminal_event"][0]))
+
+    class Knowledge:
+        async def answer(self, _request):
+            raise AssertionError("provider must not run after checkpoint preflight failure")
+
+    conversations = Conversations()
+    worker = GenerationWorker(conversations, Knowledge(), max_checkpoint_attempts=3)
+
+    assert await worker.run_once(limit=1) == 1
+    assert conversations.completed == [("turn-3", "failed", "turn.failed")]
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_respects_lease_loss_during_checkpoint_failure_settlement():
+    class PermanentFailureCheckpointer(InMemorySaver):
+        async def aget_tuple(self, config):
+            del config
+            raise GraphCheckpointUnavailable("checkpoint schema is invalid")
+
+    turn = SimpleNamespace(
+        turn_id="turn-expired",
+        attempt=1,
+        lease_token="expired-lease",
+        input_snapshot=SimpleNamespace(
+            value=SimpleNamespace(message="question", resolved_resources=())
+        ),
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            assert limit == 1
+            return (("conversation-1", turn),)
+
+        def graph_checkpointer(self, _turn):
+            return PermanentFailureCheckpointer()
+
+    class Conversations:
+        repository = Repository()
+        settlements = 0
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            self.settlements += 1
+            raise ConversationConflict("generation lease lost")
+
+    class Knowledge:
+        async def answer(self, _request):
+            raise AssertionError("provider must not run after checkpoint preflight failure")
+
+    conversations = Conversations()
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
+    assert conversations.settlements == 1
 
 
 @pytest.mark.asyncio

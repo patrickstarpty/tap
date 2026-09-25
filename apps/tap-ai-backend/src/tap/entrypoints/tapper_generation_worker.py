@@ -16,7 +16,7 @@ from tap.contracts.http import ResourceMode, ResourceRef, RetrievalAnswerRequest
 from tap.contracts.problems import build_problem
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
-from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
+from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable, GraphCheckpointUnavailable
 from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
@@ -84,13 +84,16 @@ class GenerationWorker:
     checkpointer: BaseCheckpointSaver | None = None
     lease_duration: timedelta = timedelta(seconds=60)
     renew_interval_seconds: float = 20.0
+    max_checkpoint_attempts: int = 3
 
     def __post_init__(self) -> None:
         if (
             not timedelta(0) < self.lease_duration <= timedelta(minutes=15)
             or not 0 < self.renew_interval_seconds < self.lease_duration.total_seconds()
+            or type(self.max_checkpoint_attempts) is not int
+            or not 1 <= self.max_checkpoint_attempts <= 100
         ):
-            raise ValueError("generation worker lease renewal is invalid")
+            raise ValueError("generation worker lease or checkpoint retry configuration is invalid")
 
     async def run_once(self, *, limit: int) -> int:
         claimed = await self.conversations.repository.claim_queued(limit=limit)
@@ -152,48 +155,61 @@ class GenerationWorker:
                     answer_plan_id=None if active_plan is None else active_plan.plan_id,
                 )
 
-            async def complete(evidence, chat=conversation_id, identity=turn.turn_id):
+            def stream_events(evidence) -> list[dict[str, object]]:
                 if evidence.outcome == "failed":
-                    return
-                await self.conversations.emit(
-                    chat,
-                    identity,
-                    "context.assembled",
-                    {"sourceCount": len(turn.input_snapshot.value.resolved_resources)},
-                    lease_token=turn.lease_token,
-                )
-                await self.conversations.emit(
-                    chat,
-                    identity,
-                    "stage.completed",
-                    {"stage": "knowledge.answer", "outcome": evidence.outcome},
-                    lease_token=turn.lease_token,
-                )
-                await self.conversations.emit(
-                    chat,
-                    identity,
-                    "retrieval.hits_ready",
-                    {"authorizedHitCount": evidence.retrieval_summary.authorized_hit_count},
-                    lease_token=turn.lease_token,
-                )
+                    return []
+                events: list[dict[str, object]] = [
+                    {
+                        "type": "context.assembled",
+                        "payload": {
+                            "sourceCount": len(turn.input_snapshot.value.resolved_resources)
+                        },
+                    },
+                    {
+                        "type": "stage.completed",
+                        "payload": {"stage": "knowledge.answer", "outcome": evidence.outcome},
+                    },
+                    {
+                        "type": "retrieval.hits_ready",
+                        "payload": {
+                            "authorizedHitCount": evidence.retrieval_summary.authorized_hit_count
+                        },
+                    },
+                ]
                 if evidence.answer:
-                    await self.conversations.emit(
-                        chat,
-                        identity,
-                        "answer.delta",
-                        {"text": evidence.answer},
-                        lease_token=turn.lease_token,
+                    events.append({"type": "answer.delta", "payload": {"text": evidence.answer}})
+                if answer_response is not None:
+                    events.extend(
+                        {
+                            "type": "citation.resolved",
+                            "payload": {
+                                "citation": citation.model_dump(mode="json", by_alias=True)
+                            },
+                        }
+                        for citation in answer_response.citations
                     )
-                if answer_response is None:
-                    return
-                for citation in answer_response.citations:
-                    await self.conversations.emit(
-                        chat,
-                        identity,
-                        "citation.resolved",
-                        {"citation": citation.model_dump(mode="json", by_alias=True)},
-                        lease_token=turn.lease_token,
-                    )
+                return events
+
+            async def fail_turn() -> None:
+                await self.conversations.complete_evidence(
+                    conversation_id,
+                    turn.turn_id,
+                    AnswerEvidence(
+                        "",
+                        "failed",
+                        RetrievalSummary("failed"),
+                        GraphContextStatus.FAILED,
+                    ),
+                    lease_token=turn.lease_token,
+                    terminal_event=(
+                        "turn.failed",
+                        {
+                            "problem": build_problem(
+                                "answer-unavailable", correlation_id=turn.turn_id
+                            ).model_dump(mode="json", by_alias=True)
+                        },
+                    ),
+                )
 
             try:
 
@@ -222,9 +238,9 @@ class GenerationWorker:
                     if planner is not None:
                         active_plan = AnswerPlan.from_dict(_state["answer_plan"])
                         active_plan.validate_binding(planning_input(turn.input_snapshot))
-                    evidence = await TurnProcessor(provider=provider, complete=complete).process(
-                        turn.input_snapshot
-                    )
+                    evidence = await TurnProcessor(
+                        provider=provider, complete=lambda _evidence: None
+                    ).process(turn.input_snapshot)
                     terminal_event: dict[str, object] | None
                     if evidence.outcome == "failed":
                         terminal_event = {
@@ -250,6 +266,7 @@ class GenerationWorker:
                         "result": {
                             "evidence": _evidence_checkpoint(evidence),
                             "terminalEvent": terminal_event,
+                            "streamEvents": stream_events(evidence),
                         }
                     }
 
@@ -320,10 +337,14 @@ class GenerationWorker:
                 result = state.get("result", {})
                 evidence = _evidence_from_checkpoint(result.get("evidence"))
                 raw_terminal = result.get("terminalEvent")
+                raw_stream_events = result.get("streamEvents", ())
                 terminal_event = (
                     None
                     if raw_terminal is None
                     else (str(raw_terminal["type"]), dict(raw_terminal["payload"]))
+                )
+                persisted_stream_events = tuple(
+                    (str(item["type"]), dict(item["payload"])) for item in raw_stream_events
                 )
                 await self.conversations.complete_evidence(
                     conversation_id,
@@ -331,32 +352,26 @@ class GenerationWorker:
                     evidence,
                     lease_token=turn.lease_token,
                     terminal_event=terminal_event,
+                    stream_events=persisted_stream_events,
                 )
-            except (ConversationConflict, PermissionError, GraphCheckpointUnavailable):
-                # Cancellation, lease reclaim, or transient checkpoint storage leaves
-                # the turn non-terminal so a later claim can recover it.
+            except (ConversationConflict, PermissionError):
+                # Cancellation or lease reclaim won the terminal-state race.
                 continue
+            except GraphCheckpointRetryable:
+                if turn.attempt < self.max_checkpoint_attempts:
+                    continue
+                try:
+                    await fail_turn()
+                except (ConversationConflict, PermissionError):
+                    continue
+            except GraphCheckpointUnavailable:
+                try:
+                    await fail_turn()
+                except (ConversationConflict, PermissionError):
+                    continue
             except AuthorizationDenied:
                 try:
-                    await self.conversations.complete_evidence(
-                        conversation_id,
-                        turn.turn_id,
-                        AnswerEvidence(
-                            "",
-                            "failed",
-                            RetrievalSummary("failed"),
-                            GraphContextStatus.FAILED,
-                        ),
-                        lease_token=turn.lease_token,
-                        terminal_event=(
-                            "turn.failed",
-                            {
-                                "problem": build_problem(
-                                    "answer-unavailable", correlation_id=turn.turn_id
-                                ).model_dump(mode="json", by_alias=True)
-                            },
-                        ),
-                    )
+                    await fail_turn()
                 except (ConversationConflict, PermissionError):
                     # Cancellation or lease reclaim won the terminal-state race.
                     continue

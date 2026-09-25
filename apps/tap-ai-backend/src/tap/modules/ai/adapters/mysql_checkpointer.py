@@ -34,12 +34,13 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.mysql import DATETIME, JSON, LONGBLOB, insert
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.events import ProjectEventEnvelope
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
+from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable, GraphCheckpointUnavailable
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
@@ -165,6 +166,10 @@ _CHECKPOINT_PARENT_WAIT_SECONDS = 1.0
 async def _checkpoint_storage():
     try:
         yield
+    except (OperationalError, SQLAlchemyTimeoutError) as error:
+        raise GraphCheckpointRetryable(
+            "graph checkpoint storage is temporarily unavailable"
+        ) from error
     except SQLAlchemyError as error:
         raise GraphCheckpointUnavailable("graph checkpoint storage is unavailable") from error
 
@@ -246,7 +251,7 @@ class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
                 return
             remaining = deadline - loop.time()
             if remaining <= 0:
-                raise GraphCheckpointUnavailable("graph checkpoint parent did not become durable")
+                raise GraphCheckpointRetryable("graph checkpoint parent did not become durable")
             await asyncio.sleep(min(_CHECKPOINT_PARENT_POLL_SECONDS, remaining))
 
     @staticmethod

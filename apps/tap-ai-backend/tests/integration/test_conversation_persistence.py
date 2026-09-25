@@ -85,6 +85,18 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
                         "- INTERVAL 1 SECOND WHERE turn_id='turn-2'"
                     )
                 )
+            with pytest.raises(ConversationConflict, match="lease"):
+                await restarted.complete_evidence(
+                    "conversation-1",
+                    "turn-2",
+                    AnswerEvidence(
+                        "expired",
+                        "completed",
+                        RetrievalSummary("completed"),
+                        GraphContextStatus.NOT_REQUESTED,
+                    ),
+                    lease_token=first_claim.lease_token,
+                )
             second_claim = (await restarted.repository.claim_queued(limit=1))[0][1]
             assert second_claim.attempt == 2
             assert second_claim.lease_token != first_claim.lease_token

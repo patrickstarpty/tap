@@ -36,6 +36,10 @@ class GraphCheckpointUnavailable(RuntimeError):
     """Durable checkpoint storage failed before its transaction committed."""
 
 
+class GraphCheckpointRetryable(GraphCheckpointUnavailable):
+    """Checkpoint persistence can be retried from the last durable boundary."""
+
+
 @dataclass(frozen=True, slots=True)
 class GraphRunBudget:
     max_model_calls: int
