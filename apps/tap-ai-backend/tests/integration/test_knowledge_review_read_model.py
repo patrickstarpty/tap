@@ -27,9 +27,11 @@ from tap.modules.knowledge.adapters.mysql_review import (
 )
 from tap.modules.knowledge.application.review import KnowledgeReviewApplication, ReviewStateConflict
 from tap.modules.knowledge.domain.parse_inventory import (
+    OriginalExcerptRange,
     ParseInventoryItem,
     ParseInventoryKind,
     ParseInventoryStatus,
+    original_alignment_binding_digest,
     parse_inventory_digest,
 )
 from tap.modules.knowledge.domain.review import (
@@ -87,6 +89,12 @@ async def _seed_revision(sessions):  # type: ignore[no-untyped-def]
         locator="paragraph:1",
         status=ParseInventoryStatus.PARSED,
         artifact_digest=DIGEST_A,
+        original_excerpt=OriginalExcerptRange(
+            source_digest=DIGEST_A,
+            start_byte=1_000_000,
+            end_byte=1_000_012,
+            excerpt_digest=DIGEST_B,
+        ),
     )
     failed = ParseInventoryItem.create(
         source_revision_id="rev_mysql_001",
@@ -96,6 +104,7 @@ async def _seed_revision(sessions):  # type: ignore[no-untyped-def]
         reason="ocr-required",
         artifact_digest=DIGEST_B,
     )
+    inventory_digest = parse_inventory_digest((parsed, failed))
     async with sessions() as session, session.begin():
         await session.execute(
             insert(knowledge_source).values(
@@ -151,7 +160,7 @@ async def _seed_revision(sessions):  # type: ignore[no-untyped-def]
                 pipeline_version="tapper-ingestion-v1",
                 parse_inventory_attempt=2,
                 parser_config_digest=DIGEST_C,
-                parse_inventory_digest=parse_inventory_digest((parsed, failed)),
+                parse_inventory_digest=inventory_digest,
                 chunk_manifest_digest=DIGEST_B,
                 projection_digest=DIGEST_C,
                 created_at=NOW.replace(tzinfo=None),
@@ -177,6 +186,29 @@ async def _seed_revision(sessions):  # type: ignore[no-untyped-def]
                     reason=item.reason,
                     artifact_digest=item.artifact_digest,
                     decision_actor_id=item.decision_actor_id,
+                    original_source_digest=(
+                        None
+                        if item.original_excerpt is None
+                        else item.original_excerpt.source_digest
+                    ),
+                    original_start_byte=(
+                        None if item.original_excerpt is None else item.original_excerpt.start_byte
+                    ),
+                    original_end_byte=(
+                        None if item.original_excerpt is None else item.original_excerpt.end_byte
+                    ),
+                    original_excerpt_digest=(
+                        None
+                        if item.original_excerpt is None
+                        else item.original_excerpt.excerpt_digest
+                    ),
+                    original_alignment_reason=item.original_alignment_reason,
+                    original_alignment_binding_digest=original_alignment_binding_digest(
+                        item,
+                        attempt=2,
+                        parser_digest=DIGEST_C,
+                        inventory_digest=inventory_digest,
+                    ),
                     created_at=NOW.replace(tzinfo=None),
                 )
             )
@@ -207,6 +239,40 @@ async def _seed_revision(sessions):  # type: ignore[no-untyped-def]
             )
         )
     return parsed, failed
+
+
+async def test_comparison_target_requires_the_latest_attempt_alignment_binding(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        parsed, _, _ = await _publish_seeded_review(sessions, "krv_alignment_binding")
+        repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+
+        target = await repository.comparison_target("krv_alignment_binding", parsed.item_id)
+        assert target is not None
+        assert target.original_alignment_valid is True
+        assert target.original_excerpt == parsed.original_excerpt
+        assert target.source_revision_id == "rev_mysql_001"
+        assert target.source_digest == DIGEST_A
+
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(knowledge_parse_inventory)
+                .where(
+                    knowledge_parse_inventory.c.source_revision_id == "rev_mysql_001",
+                    knowledge_parse_inventory.c.attempt == 2,
+                    knowledge_parse_inventory.c.item_id == parsed.item_id,
+                )
+                .values(original_alignment_binding_digest=DIGEST_A)
+            )
+        tampered = await repository.comparison_target("krv_alignment_binding", parsed.item_id)
+        assert tampered is not None
+        assert tampered.original_alignment_valid is False
+        assert tampered.original_excerpt == parsed.original_excerpt
+    finally:
+        await engine.dispose()
 
 
 async def _publish_seeded_review(sessions, review_id):  # type: ignore[no-untyped-def]
@@ -1236,3 +1302,4 @@ async def test_batched_inventory_first_page_matches_child_cursor_order_beyond_50
         assert "pi_sort_0001" in traversed
     finally:
         await engine.dispose()
+    (original_alignment_binding_digest,)

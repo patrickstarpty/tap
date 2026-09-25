@@ -1279,6 +1279,52 @@ async def test_artifact_read_malformed_provider_properties_are_integrity(
 
 
 @pytest.mark.asyncio
+async def test_original_excerpt_reads_only_the_verified_bounded_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b"prefix-exact-clause-suffix"
+    source_digest = canonical_sha256(payload)
+    start = payload.index(b"exact")
+    excerpt = payload[start : start + len(b"exact-clause")]
+    requested: list[tuple[int, int]] = []
+
+    class Stream:
+        async def readall(self) -> bytes:
+            return excerpt
+
+    class Blob(_BlobDouble):
+        async def get_blob_properties(self) -> object:
+            return SimpleNamespace(
+                metadata={
+                    "blobsha256": source_digest.removeprefix("sha256:"),
+                    "size": str(len(payload)),
+                },
+                size=len(payload),
+            )
+
+        async def download_blob(self, **kwargs: object) -> Stream:
+            requested.append((int(kwargs["offset"]), int(kwargs["length"])))
+            return Stream()
+
+    store = _store_with_double(monkeypatch, Blob())
+    locator = ArtifactLocator(
+        f"{ORIGINALS_CONTAINER}/revisions/{REVISION}/{source_digest.removeprefix('sha256:')}"
+    )
+
+    value = await store.read_original_excerpt(
+        locator,
+        revision_id=REVISION,
+        source_digest=source_digest,
+        start_byte=start,
+        end_byte=start + len(excerpt),
+        excerpt_digest=canonical_sha256(excerpt),
+    )
+
+    assert value == excerpt
+    assert requested == [(start, len(excerpt))]
+
+
+@pytest.mark.asyncio
 async def test_copy_terminal_malformed_provider_properties_are_integrity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

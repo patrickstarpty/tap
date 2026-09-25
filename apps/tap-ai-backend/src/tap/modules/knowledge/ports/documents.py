@@ -606,6 +606,17 @@ class ArtifactStore(Protocol):
 
     async def read_original(self, locator: ArtifactLocator) -> bytes: ...
 
+    async def read_original_excerpt(
+        self,
+        locator: ArtifactLocator,
+        *,
+        revision_id: str,
+        source_digest: str,
+        start_byte: int,
+        end_byte: int,
+        excerpt_digest: str,
+    ) -> bytes: ...
+
     async def write_normalized(
         self, revision_id: str, artifact: NormalizedArtifact
     ) -> ArtifactLocator: ...

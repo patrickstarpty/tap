@@ -106,6 +106,27 @@ async def exercise_artifact_round_trip(store):
     chunk_ref = await store.write_chunks(REVISION, chunks)
     embedding_ref = await store.write_embeddings(REVISION, vectors, source_content_hash=SOURCE_HASH)
     assert await store.read_original(original) == PAYLOAD
+    excerpt = PAYLOAD[7:13]
+    assert (
+        await store.read_original_excerpt(
+            original,
+            revision_id=REVISION,
+            source_digest=SOURCE_HASH,
+            start_byte=7,
+            end_byte=13,
+            excerpt_digest=canonical_sha256(excerpt),
+        )
+        == excerpt
+    )
+    with pytest.raises(ArtifactIntegrityFailure):
+        await store.read_original_excerpt(
+            original,
+            revision_id=REVISION,
+            source_digest=SOURCE_HASH,
+            start_byte=7,
+            end_byte=13,
+            excerpt_digest="sha256:" + "0" * 64,
+        )
     assert await store.read_normalized(normalized) == normalized_artifact()
     assert await store.read_chunks(chunk_ref) == chunks
     assert await store.read_embeddings(embedding_ref) == vectors

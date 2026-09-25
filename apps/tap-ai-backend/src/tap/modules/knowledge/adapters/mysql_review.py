@@ -49,9 +49,11 @@ from tap.modules.knowledge.application.review import (
     ReviewStateConflict,
 )
 from tap.modules.knowledge.domain.parse_inventory import (
+    OriginalExcerptRange,
     ParseInventoryItem,
     ParseInventoryKind,
     ParseInventoryStatus,
+    original_alignment_binding_digest,
     parse_inventory_digest,
 )
 from tap.modules.knowledge.domain.review import (
@@ -523,19 +525,7 @@ class MysqlKnowledgeReviewRepository:
             if not inventory_rows or len(inventory_rows) > 500:
                 raise ReviewStateConflict("review-inventory-unavailable")
             try:
-                inventory = tuple(
-                    ParseInventoryItem(
-                        source_revision_id=row["source_revision_id"],
-                        item_id=row["item_id"],
-                        kind=ParseInventoryKind(row["item_kind"]),
-                        locator=row["locator"],
-                        status=ParseInventoryStatus(row["status"]),
-                        artifact_digest=row["artifact_digest"],
-                        reason=row["reason"],
-                        decision_actor_id=row["decision_actor_id"],
-                    )
-                    for row in inventory_rows
-                )
+                inventory = tuple(_parse_inventory_item(row) for row in inventory_rows)
                 inventory_digest = parse_inventory_digest(inventory)
             except (TypeError, ValueError) as error:
                 raise ReviewStateConflict("review-inventory-invalid") from error
@@ -2026,10 +2016,28 @@ class MysqlKnowledgeReviewRepository:
                     await session.execute(
                         select(
                             knowledge_document.c.media_type,
+                            knowledge_document_revision.c.revision_id,
+                            knowledge_document_revision.c.source_content_hash,
                             knowledge_document_revision.c.original_blob_locator,
                             knowledge_document_revision.c.normalized_blob_locator,
                             knowledge_document_revision.c.parse_inventory_attempt,
+                            knowledge_document_revision.c.parser_config_digest,
+                            knowledge_document_revision.c.parse_inventory_digest,
                             knowledge_parse_inventory.c.attempt,
+                            knowledge_parse_inventory.c.source_revision_id,
+                            knowledge_parse_inventory.c.item_id,
+                            knowledge_parse_inventory.c.item_kind,
+                            knowledge_parse_inventory.c.locator,
+                            knowledge_parse_inventory.c.status,
+                            knowledge_parse_inventory.c.reason,
+                            knowledge_parse_inventory.c.artifact_digest,
+                            knowledge_parse_inventory.c.decision_actor_id,
+                            knowledge_parse_inventory.c.original_source_digest,
+                            knowledge_parse_inventory.c.original_start_byte,
+                            knowledge_parse_inventory.c.original_end_byte,
+                            knowledge_parse_inventory.c.original_excerpt_digest,
+                            knowledge_parse_inventory.c.original_alignment_reason,
+                            knowledge_parse_inventory.c.original_alignment_binding_digest,
                         )
                         .select_from(
                             knowledge_parse_inventory.join(
@@ -2060,8 +2068,24 @@ class MysqlKnowledgeReviewRepository:
             )
         if row is None:
             return None
+        alignment_valid = True
+        try:
+            item = _parse_inventory_item(row)
+            binding = original_alignment_binding_digest(
+                item,
+                attempt=row["attempt"],
+                parser_digest=row["parser_config_digest"],
+                inventory_digest=row["parse_inventory_digest"],
+            )
+            if binding != row["original_alignment_binding_digest"]:
+                alignment_valid = False
+        except (TypeError, ValueError):
+            item = None
+            alignment_valid = False
         return ReviewComparisonTarget(
             media_type=row["media_type"],
+            source_revision_id=row["revision_id"],
+            source_digest=row["source_content_hash"],
             original_locator=ArtifactLocator(row["original_blob_locator"]),
             normalized_locator=(
                 None
@@ -2069,6 +2093,9 @@ class MysqlKnowledgeReviewRepository:
                 else ArtifactLocator(row["normalized_blob_locator"])
             ),
             item_id=item_id,
+            original_excerpt=None if item is None else item.original_excerpt,
+            original_alignment_reason=(None if item is None else item.original_alignment_reason),
+            original_alignment_valid=alignment_valid,
         )
 
     async def withdraw(
@@ -2410,16 +2437,7 @@ def _review_authority_matches(
                 source_id,
                 parse_inventory_digest(
                     tuple(
-                        ParseInventoryItem(
-                            source_revision_id=item["source_revision_id"],
-                            item_id=item["item_id"],
-                            kind=ParseInventoryKind(item["item_kind"]),
-                            locator=item["locator"],
-                            status=ParseInventoryStatus(item["status"]),
-                            artifact_digest=item["artifact_digest"],
-                            reason=item["reason"],
-                            decision_actor_id=item["decision_actor_id"],
-                        )
+                        _parse_inventory_item(item)
                         for item in inventory_rows
                         if item["source_revision_id"] == source_id
                     )
@@ -2461,6 +2479,37 @@ def _review_authority_matches(
         and expected_chunks == revision.chunk_manifest_digest
         and expected_dependency == revision.dependency_digest
         and set(revision.approved_item_ids) <= latest_ids
+    )
+
+
+def _parse_inventory_item(row) -> ParseInventoryItem:  # type: ignore[no-untyped-def]
+    start = row["original_start_byte"]
+    end = row["original_end_byte"]
+    source_digest = row["original_source_digest"]
+    excerpt_digest = row["original_excerpt_digest"]
+    range_values = (source_digest, start, end, excerpt_digest)
+    if all(value is None for value in range_values):
+        original_excerpt = None
+    elif any(value is None for value in range_values):
+        raise ValueError("persisted original excerpt range is incomplete")
+    else:
+        original_excerpt = OriginalExcerptRange(
+            source_digest=source_digest,
+            start_byte=start,
+            end_byte=end,
+            excerpt_digest=excerpt_digest,
+        )
+    return ParseInventoryItem(
+        source_revision_id=row["source_revision_id"],
+        item_id=row["item_id"],
+        kind=ParseInventoryKind(row["item_kind"]),
+        locator=row["locator"],
+        status=ParseInventoryStatus(row["status"]),
+        artifact_digest=row["artifact_digest"],
+        reason=row["reason"],
+        decision_actor_id=row["decision_actor_id"],
+        original_excerpt=original_excerpt,
+        original_alignment_reason=row["original_alignment_reason"],
     )
 
 

@@ -8,8 +8,33 @@ from enum import Enum
 from hashlib import sha256
 
 PARSE_INVENTORY_SCHEMA = "parse-inventory-v1"
+PARSE_INVENTORY_ALIGNMENT_SCHEMA = "parse-inventory-v2"
 PARSER_CONFIG_SCHEMA = "parser-config-v1"
-PARSER_IMPLEMENTATION_VERSION = "tapper-parser-v1"
+PARSER_IMPLEMENTATION_VERSION = "tapper-parser-v2"
+MAX_ORIGINAL_EXCERPT_BYTES = 16_000
+
+
+@dataclass(frozen=True, slots=True)
+class OriginalExcerptRange:
+    """A bounded byte range proven against one immutable source artifact."""
+
+    source_digest: str
+    start_byte: int
+    end_byte: int
+    excerpt_digest: str
+
+    def __post_init__(self) -> None:
+        _validate_digest(self.source_digest)
+        _validate_digest(self.excerpt_digest)
+        if (
+            type(self.start_byte) is not int
+            or type(self.end_byte) is not int
+            or self.start_byte < 0
+            or self.end_byte <= self.start_byte
+        ):
+            raise ValueError("original excerpt range is invalid")
+        if self.end_byte - self.start_byte > MAX_ORIGINAL_EXCERPT_BYTES:
+            raise ValueError("original excerpt exceeds the byte bound")
 
 
 class ParseInventoryStatus(str, Enum):
@@ -42,6 +67,8 @@ class ParseInventoryItem:
     artifact_digest: str
     reason: str | None = None
     decision_actor_id: str | None = None
+    original_excerpt: OriginalExcerptRange | None = None
+    original_alignment_reason: str | None = None
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -69,6 +96,17 @@ class ParseInventoryItem:
                 raise ValueError("excluded inventory items require an accountable actor")
         elif self.decision_actor_id is not None:
             raise ValueError("only excluded inventory items carry a decision actor")
+        if self.original_excerpt is not None:
+            if not isinstance(self.original_excerpt, OriginalExcerptRange):
+                raise TypeError("original excerpt must use the closed range model")
+            if self.original_alignment_reason is not None:
+                raise ValueError("available original alignment cannot carry a reason")
+        elif self.original_alignment_reason is not None and (
+            not isinstance(self.original_alignment_reason, str)
+            or not self.original_alignment_reason.strip()
+            or len(self.original_alignment_reason) > 128
+        ):
+            raise ValueError("original alignment reason is invalid")
 
     @classmethod
     def create(
@@ -81,6 +119,8 @@ class ParseInventoryItem:
         artifact_digest: str,
         reason: str | None = None,
         decision_actor_id: str | None = None,
+        original_excerpt: OriginalExcerptRange | None = None,
+        original_alignment_reason: str | None = None,
     ) -> ParseInventoryItem:
         return cls(
             source_revision_id=source_revision_id,
@@ -91,6 +131,8 @@ class ParseInventoryItem:
             artifact_digest=artifact_digest,
             reason=reason,
             decision_actor_id=decision_actor_id,
+            original_excerpt=original_excerpt,
+            original_alignment_reason=original_alignment_reason,
         )
 
 
@@ -99,7 +141,7 @@ def parser_config_digest(media_type: str) -> str:
         raise ValueError("parser media type must be nonblank")
     return _digest(
         {
-            "inventorySchema": PARSE_INVENTORY_SCHEMA,
+            "inventorySchema": PARSE_INVENTORY_ALIGNMENT_SCHEMA,
             "mediaType": media_type,
             "parserVersion": PARSER_IMPLEMENTATION_VERSION,
             "schema": PARSER_CONFIG_SCHEMA,
@@ -117,22 +159,78 @@ def parse_inventory_digest(items: tuple[ParseInventoryItem, ...]) -> str:
     source_revisions = {item.source_revision_id for item in items}
     if len(source_revisions) != 1:
         raise ValueError("parse inventory must belong to one source revision")
+    alignment_enabled = any(
+        item.original_excerpt is not None or item.original_alignment_reason is not None
+        for item in items
+    )
+    encoded_items: list[dict[str, object]] = []
+    for item in items:
+        encoded: dict[str, object] = {
+            "artifactDigest": item.artifact_digest,
+            "decisionActorId": item.decision_actor_id,
+            "itemId": item.item_id,
+            "kind": item.kind.value,
+            "locator": item.locator,
+            "reason": item.reason,
+            "sourceRevisionId": item.source_revision_id,
+            "status": item.status.value,
+        }
+        if alignment_enabled:
+            encoded["originalAlignmentReason"] = item.original_alignment_reason
+            encoded["originalExcerpt"] = (
+                None
+                if item.original_excerpt is None
+                else {
+                    "endByte": item.original_excerpt.end_byte,
+                    "excerptDigest": item.original_excerpt.excerpt_digest,
+                    "sourceDigest": item.original_excerpt.source_digest,
+                    "startByte": item.original_excerpt.start_byte,
+                }
+            )
+        encoded_items.append(encoded)
     return _digest(
         {
-            "items": [
-                {
-                    "artifactDigest": item.artifact_digest,
-                    "decisionActorId": item.decision_actor_id,
-                    "itemId": item.item_id,
-                    "kind": item.kind.value,
-                    "locator": item.locator,
-                    "reason": item.reason,
-                    "sourceRevisionId": item.source_revision_id,
-                    "status": item.status.value,
+            "items": encoded_items,
+            "schema": (
+                PARSE_INVENTORY_ALIGNMENT_SCHEMA if alignment_enabled else PARSE_INVENTORY_SCHEMA
+            ),
+        }
+    )
+
+
+def original_alignment_binding_digest(
+    item: ParseInventoryItem,
+    *,
+    attempt: int,
+    parser_digest: str,
+    inventory_digest: str,
+) -> str | None:
+    """Bind alignment metadata to the exact parse attempt and its aggregate digest."""
+    if item.original_excerpt is None and item.original_alignment_reason is None:
+        return None
+    if type(attempt) is not int or attempt < 0:
+        raise ValueError("parse inventory attempt is invalid")
+    _validate_digest(parser_digest)
+    _validate_digest(inventory_digest)
+    return _digest(
+        {
+            "attempt": attempt,
+            "inventoryDigest": inventory_digest,
+            "itemId": item.item_id,
+            "originalAlignmentReason": item.original_alignment_reason,
+            "originalExcerpt": (
+                None
+                if item.original_excerpt is None
+                else {
+                    "endByte": item.original_excerpt.end_byte,
+                    "excerptDigest": item.original_excerpt.excerpt_digest,
+                    "sourceDigest": item.original_excerpt.source_digest,
+                    "startByte": item.original_excerpt.start_byte,
                 }
-                for item in items
-            ],
-            "schema": PARSE_INVENTORY_SCHEMA,
+            ),
+            "parserDigest": parser_digest,
+            "schema": "original-alignment-binding-v1",
+            "sourceRevisionId": item.source_revision_id,
         }
     )
 

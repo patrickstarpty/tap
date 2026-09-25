@@ -26,7 +26,7 @@ from tap.modules.knowledge.adapters.blob_artifacts import (
     _parse_locator,
     _revision_from_artifact_name,
 )
-from tap.modules.knowledge.domain.documents import ChunkDraft, NormalizedArtifact
+from tap.modules.knowledge.domain.documents import ChunkDraft, NormalizedArtifact, canonical_sha256
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
     ArtifactScavengeReceipt,
@@ -47,6 +47,7 @@ from tap.platform.storage.objects import (
     StagedObject,
     StagingRef,
     VerifiedObject,
+    VerifiedObjectRange,
 )
 
 _P = ParamSpec("_P")
@@ -203,7 +204,9 @@ class KnowledgeArtifactStore:
 
     @staticmethod
     def _validate_binding(
-        value: ObjectDescriptor | VerifiedObject, revision: str, kind: str
+        value: ObjectDescriptor | VerifiedObject | VerifiedObjectRange,
+        revision: str,
+        kind: str,
     ) -> None:
         if dict(value.attributes) != {
             "revision": revision,
@@ -216,6 +219,38 @@ class KnowledgeArtifactStore:
         if not locator.startswith("art1."):
             return await self._legacy(locator).read_original(locator)
         return (await self._read(locator, "original"))[1].data
+
+    @_boundary
+    async def read_original_excerpt(
+        self,
+        locator: ArtifactLocator,
+        *,
+        revision_id: str,
+        source_digest: str,
+        start_byte: int,
+        end_byte: int,
+        excerpt_digest: str,
+    ) -> bytes:
+        revision_id = _persisted_identity("revision", revision_id)
+        if not locator.startswith("art1."):
+            return await self._legacy(locator).read_original_excerpt(
+                locator,
+                revision_id=revision_id,
+                source_digest=source_digest,
+                start_byte=start_byte,
+                end_byte=end_byte,
+                excerpt_digest=excerpt_digest,
+            )
+        locator_revision, kind, ref = _parse(locator)
+        if locator_revision != revision_id or kind != "original":
+            raise ArtifactIntegrityFailure("artifact range binding differs")
+        value = await self.objects.read_verified_range(
+            ref, start_byte=start_byte, end_byte=end_byte
+        )
+        self._validate_binding(value, revision_id, "original")
+        if value.sha256 != source_digest or canonical_sha256(value.data) != excerpt_digest:
+            raise ArtifactIntegrityFailure("artifact range digest differs")
+        return value.data
 
     async def _write(
         self, revision: str, kind: str, data: bytes, content_type: str, slot: str = ""

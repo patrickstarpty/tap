@@ -61,6 +61,7 @@ from tap.modules.knowledge.domain.documents import (
 )
 from tap.modules.knowledge.domain.parse_inventory import (
     ParseInventoryItem,
+    original_alignment_binding_digest,
     parse_inventory_digest,
 )
 from tap.modules.knowledge.domain.sources import (
@@ -239,6 +240,12 @@ knowledge_parse_inventory = Table(
     Column("reason", String(128)),
     Column("artifact_digest", String(71), nullable=False),
     Column("decision_actor_id", String(128)),
+    Column("original_source_digest", String(71)),
+    Column("original_start_byte", Integer),
+    Column("original_end_byte", Integer),
+    Column("original_excerpt_digest", String(71)),
+    Column("original_alignment_reason", String(128)),
+    Column("original_alignment_binding_digest", String(71)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     UniqueConstraint(
         "source_revision_id",
@@ -4175,6 +4182,25 @@ class MysqlDocumentRepository:
                 "reason": item.reason,
                 "artifact_digest": item.artifact_digest,
                 "decision_actor_id": item.decision_actor_id,
+                "original_source_digest": (
+                    None if item.original_excerpt is None else item.original_excerpt.source_digest
+                ),
+                "original_start_byte": (
+                    None if item.original_excerpt is None else item.original_excerpt.start_byte
+                ),
+                "original_end_byte": (
+                    None if item.original_excerpt is None else item.original_excerpt.end_byte
+                ),
+                "original_excerpt_digest": (
+                    None if item.original_excerpt is None else item.original_excerpt.excerpt_digest
+                ),
+                "original_alignment_reason": item.original_alignment_reason,
+                "original_alignment_binding_digest": original_alignment_binding_digest(
+                    item,
+                    attempt=attempt,
+                    parser_digest=parser_digest,
+                    inventory_digest=inventory_digest,
+                ),
             }
             for ordinal, item in enumerate(items)
         ]

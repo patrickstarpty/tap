@@ -23,10 +23,12 @@ from tap.modules.knowledge.domain.documents import (
     logical_chunk_id_for,
 )
 from tap.modules.knowledge.domain.parse_inventory import (
+    OriginalExcerptRange,
     ParseInventoryItem,
     ParseInventoryKind,
     ParseInventoryStatus,
     failed_document_inventory,
+    original_alignment_binding_digest,
     parse_inventory_digest,
     parser_config_digest,
 )
@@ -135,6 +137,12 @@ def test_real_mysql_parse_retry_preserves_each_inventory_attempt(owned_project_m
                     locator="paragraph:1",
                     status=ParseInventoryStatus.PARSED,
                     artifact_digest=source_hash,
+                    original_excerpt=OriginalExcerptRange(
+                        source_digest=source_hash,
+                        start_byte=0,
+                        end_byte=13,
+                        excerpt_digest=source_hash,
+                    ),
                 ),
             )
             parsed_digest = parse_inventory_digest(parsed)
@@ -156,7 +164,10 @@ def test_real_mysql_parse_retry_preserves_each_inventory_attempt(owned_project_m
                 rows = (
                     await connection.execute(
                         text(
-                            "SELECT attempt, status, reason FROM knowledge_parse_inventory "
+                            "SELECT attempt, status, reason, original_source_digest, "
+                            "original_start_byte, original_end_byte, original_excerpt_digest, "
+                            "original_alignment_reason, original_alignment_binding_digest "
+                            "FROM knowledge_parse_inventory "
                             "WHERE source_revision_id=:revision_id ORDER BY attempt, ordinal"
                         ),
                         {"revision_id": reservation.revision_id},
@@ -172,9 +183,15 @@ def test_real_mysql_parse_retry_preserves_each_inventory_attempt(owned_project_m
                         {"revision_id": reservation.revision_id},
                     )
                 ).one()
+            binding_digest = original_alignment_binding_digest(
+                parsed[0],
+                attempt=2,
+                parser_digest=config_digest,
+                inventory_digest=parsed_digest,
+            )
             assert [tuple(row) for row in rows] == [
-                (1, "failed", "parser-unavailable"),
-                (2, "parsed", None),
+                (1, "failed", "parser-unavailable", None, None, None, None, None, None),
+                (2, "parsed", None, source_hash, 0, 13, source_hash, None, binding_digest),
             ]
             assert tuple(revision) == (2, config_digest, parsed_digest)
         finally:

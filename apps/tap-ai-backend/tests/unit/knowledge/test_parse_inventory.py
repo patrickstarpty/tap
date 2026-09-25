@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+import zipfile
+from xml.sax.saxutils import escape
 
 import pytest
 from docx import Document
@@ -28,6 +30,8 @@ from tap.modules.knowledge.domain.documents import (
     revision_id_for,
 )
 from tap.modules.knowledge.domain.parse_inventory import (
+    MAX_ORIGINAL_EXCERPT_BYTES,
+    OriginalExcerptRange,
     ParseInventoryItem,
     ParseInventoryKind,
     ParseInventoryStatus,
@@ -79,6 +83,44 @@ def _identified_source(filename: str, media_type: MediaType, content: bytes) -> 
     )
 
 
+def _stored_docx(*paragraphs: tuple[str, str]) -> bytes:
+    body = "".join(
+        '<w:p><w:pPr><w:pStyle w:val="%s"/></w:pPr><w:r><w:t>%s</w:t></w:r></w:p>'
+        % (style, escape(text))
+        for style, text in paragraphs
+    )
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}<w:sectPr/></w:body></w:document>"
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" '
+        'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.'
+        'wordprocessingml.document.main+xml"/>'
+        "</Types>"
+    )
+    relationships = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'
+        'officeDocument" Target="word/document.xml"/>'
+        "</Relationships>"
+    )
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr("_rels/.rels", relationships)
+        archive.writestr("word/document.xml", document)
+    return payload.getvalue()
+
+
 def test_mixed_pdf_inventory_does_not_hide_a_page_without_extractable_text() -> None:
     """Skipping a blank/scanned page would falsely mark a mixed PDF complete."""
     artifact = ParserRegistry().parse(
@@ -93,6 +135,79 @@ def test_mixed_pdf_inventory_does_not_hide_a_page_without_extractable_text() -> 
     assert {block.inventory_item_id for block in artifact.blocks} == {pages[0].item_id}
     assert artifact.parser_config_digest == parser_config_digest(MediaType.PDF.value)
     assert artifact.parse_inventory_digest == parse_inventory_digest(artifact.parse_inventory)
+
+
+def test_text_inventory_persists_a_bounded_unicode_byte_range_for_a_late_item() -> None:
+    """A code-point offset or document-head fallback would select the wrong original bytes."""
+    prefix = ("前置🙂" * 180_000).encode()
+    target = "后部精确条款🙂"
+    content = prefix + b"\n\n" + target.encode()
+
+    artifact = ParserRegistry().parse(_identified_source("late.txt", MediaType.TEXT, content))
+
+    item = artifact.parse_inventory[-1]
+    assert item.original_excerpt is not None
+    span = item.original_excerpt
+    assert content[span.start_byte : span.end_byte].decode() == target
+    assert span.end_byte - span.start_byte <= MAX_ORIGINAL_EXCERPT_BYTES
+    assert span.source_digest == canonical_sha256(content)
+    assert span.excerpt_digest == canonical_sha256(target.encode())
+
+
+def test_markdown_original_range_keeps_source_markup_instead_of_relabeling_extracted_text() -> None:
+    """The normalized heading title must never masquerade as the Markdown original."""
+    content = "# 原始标题🙂\r\n\r\n正文".encode()
+
+    artifact = ParserRegistry().parse(_identified_source("guide.md", MediaType.MARKDOWN, content))
+
+    heading = artifact.parse_inventory[0]
+    assert heading.original_excerpt is not None
+    span = heading.original_excerpt
+    assert content[span.start_byte : span.end_byte].decode() == "# 原始标题🙂"
+    assert artifact.blocks[0].text == "原始标题🙂"
+
+
+def test_pdf_and_docx_only_claim_original_alignment_for_an_exact_source_span() -> None:
+    """Container text that cannot be tied to exact immutable bytes must stay unsupported."""
+    pdf = ParserRegistry().parse(
+        _identified_source("policy.pdf", MediaType.PDF, _pdf_with_text("Exact PDF clause"))
+    )
+    pdf_item = next(
+        item for item in pdf.parse_inventory if item.status is ParseInventoryStatus.PARSED
+    )
+    assert pdf_item.original_excerpt is not None
+
+    docx = ParserRegistry().parse(
+        _identified_source(
+            "policy.docx",
+            MediaType.DOCX,
+            _stored_docx(("Normal", "Exact DOCX clause"), ("Normal", "A & B")),
+        )
+    )
+    exact, escaped = [
+        item for item in docx.parse_inventory if item.kind is ParseInventoryKind.PARAGRAPH
+    ]
+    assert exact.original_excerpt is not None
+    assert escaped.original_excerpt is None
+    assert escaped.original_alignment_reason == "source-text-not-stably-addressable"
+
+
+def test_original_excerpt_range_rejects_malformed_or_unbounded_offsets() -> None:
+    """A malformed persisted range must fail closed before any object-store read."""
+    with pytest.raises(ValueError, match="range"):
+        OriginalExcerptRange(
+            source_digest=canonical_sha256(b"text"),
+            start_byte=4,
+            end_byte=3,
+            excerpt_digest=canonical_sha256(b""),
+        )
+    with pytest.raises(ValueError, match="bound"):
+        OriginalExcerptRange(
+            source_digest=canonical_sha256(b"x" * (MAX_ORIGINAL_EXCERPT_BYTES + 1)),
+            start_byte=0,
+            end_byte=MAX_ORIGINAL_EXCERPT_BYTES + 1,
+            excerpt_digest=canonical_sha256(b"x" * (MAX_ORIGINAL_EXCERPT_BYTES + 1)),
+        )
 
 
 def test_docx_inventory_records_table_and_embedded_image_separately() -> None:
@@ -276,3 +391,5 @@ def test_normalized_artifact_codec_preserves_inventory_and_reads_legacy_as_unrev
     assert legacy.blocks[0].text == "Legacy rule"
     assert legacy.parse_inventory[0].status is ParseInventoryStatus.NEEDS_REVIEW
     assert legacy.parse_inventory[0].reason == "historical-unreviewed"
+    assert legacy.parse_inventory[0].original_excerpt is None
+    assert legacy.parse_inventory[0].original_alignment_reason is None

@@ -17,10 +17,12 @@ from tap.modules.knowledge.domain.documents import (
     MediaType,
     NormalizedArtifact,
     NormalizedBlock,
+    canonical_sha256,
 )
+from tap.modules.knowledge.domain.parse_inventory import OriginalExcerptRange
 from tap.modules.knowledge.domain.review import KnowledgeReviewRevision, ReviewStatus
 from tap.modules.knowledge.ports.documents import ArtifactLocator
-from tap.modules.knowledge.ports.errors import ArtifactUnavailable
+from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure, ArtifactUnavailable
 
 NOW = datetime(2026, 9, 25, 9, tzinfo=UTC)
 DIGEST = "sha256:" + "a" * 64
@@ -89,12 +91,40 @@ class Artifacts:
         self.original = original
         self.normalized = normalized
         self.original_read_calls = 0
+        self.original_excerpt_reads: list[tuple[object, ...]] = []
 
     async def read_original(self, locator):  # type: ignore[no-untyped-def]
         self.original_read_calls += 1
         if isinstance(self.original, Exception):
             raise self.original
         return self.original
+
+    async def read_original_excerpt(  # type: ignore[no-untyped-def]
+        self,
+        locator,
+        *,
+        revision_id,
+        source_digest,
+        start_byte,
+        end_byte,
+        excerpt_digest,
+    ):
+        self.original_excerpt_reads.append(
+            (
+                locator,
+                revision_id,
+                source_digest,
+                start_byte,
+                end_byte,
+                excerpt_digest,
+            )
+        )
+        if isinstance(self.original, Exception):
+            raise self.original
+        value = self.original[start_byte:end_byte]
+        if canonical_sha256(value) != excerpt_digest:
+            raise ArtifactIntegrityFailure("changed source excerpt")
+        return value
 
     async def read_normalized(self, locator):  # type: ignore[no-untyped-def]
         if isinstance(self.normalized, Exception):
@@ -211,16 +241,28 @@ def test_allowed_actions_share_command_resource_targets_expiry_and_inventory_pre
 
 def test_review_comparison_uses_the_exact_late_item_without_reading_the_whole_original():
     async def scenario() -> None:
+        prefix = "A" * 1_000_000
+        target_text = "后部精确条款"
+        original = (prefix + target_text).encode()
+        start = len(prefix.encode())
+        excerpt = target_text.encode()
         target = ReviewComparisonTarget(
             media_type="text/markdown",
+            source_revision_id="rev_001",
+            source_digest=canonical_sha256(original),
             original_locator=ArtifactLocator("private/original"),
             normalized_locator=ArtifactLocator("private/normalized"),
             item_id="pi_001",
+            original_excerpt=OriginalExcerptRange(
+                source_digest=canonical_sha256(original),
+                start_byte=start,
+                end_byte=start + len(excerpt),
+                excerpt_digest=canonical_sha256(excerpt),
+            ),
+            original_alignment_reason=None,
         )
         repository = ComparisonRepository(target)
         await repository.add(review(), inventory_item_ids=("pi_001",))
-        prefix = "A" * 1_000_000
-        target_text = "后部精确条款"
         artifact = NormalizedArtifact(
             filename="rule.md",
             media_type=MediaType.MARKDOWN,
@@ -250,7 +292,7 @@ def test_review_comparison_uses_the_exact_late_item_without_reading_the_whole_or
                 ),
             ),
         )
-        artifacts = Artifacts(original=(prefix + target_text).encode(), normalized=artifact)
+        artifacts = Artifacts(original=original, normalized=artifact)
         application = KnowledgeReviewApplication(
             repository,
             Projection(),
@@ -258,29 +300,49 @@ def test_review_comparison_uses_the_exact_late_item_without_reading_the_whole_or
         )
 
         comparison = await application.compare_review_item("krv_001", "pi_001")
-        assert comparison.original.availability == "unavailable"
-        assert comparison.original.reason == "item-aligned-original-unavailable"
+        assert comparison.original.availability == "available"
+        assert comparison.original.excerpt == target_text
         assert comparison.extracted.availability == "available"
         assert comparison.extracted.excerpt == target_text
         assert artifacts.original_read_calls == 0
+        assert artifacts.original_excerpt_reads == [
+            (
+                ArtifactLocator("private/original"),
+                "rev_001",
+                canonical_sha256(original),
+                start,
+                start + len(excerpt),
+                canonical_sha256(excerpt),
+            )
+        ]
         assert "private/original" not in repr(comparison)
         assert "private/normalized" not in repr(comparison)
 
     run(scenario())
 
 
-def test_review_comparison_reports_artifact_unavailable_instead_of_leaking_provider_failure():
-    async def scenario() -> None:
+def test_review_comparison_reports_changed_or_missing_artifact_without_provider_detail():
+    async def scenario(original_error: Exception) -> None:
+        original = b"exact clause"
         target = ReviewComparisonTarget(
             media_type="text/plain",
+            source_revision_id="rev_001",
+            source_digest=canonical_sha256(original),
             original_locator=ArtifactLocator("private/original"),
             normalized_locator=ArtifactLocator("private/normalized"),
             item_id="pi_001",
+            original_excerpt=OriginalExcerptRange(
+                source_digest=canonical_sha256(original),
+                start_byte=0,
+                end_byte=len(original),
+                excerpt_digest=canonical_sha256(original),
+            ),
+            original_alignment_reason=None,
         )
         repository = ComparisonRepository(target)
         await repository.add(review(), inventory_item_ids=("pi_001",))
         artifacts = Artifacts(  # type: ignore[arg-type]
-            original=ArtifactUnavailable("provider detail"),
+            original=original_error,
             normalized=ArtifactUnavailable("provider detail"),
         )
         application = KnowledgeReviewApplication(
@@ -291,9 +353,42 @@ def test_review_comparison_reports_artifact_unavailable_instead_of_leaking_provi
 
         comparison = await application.compare_review_item("krv_001", "pi_001")
         assert comparison.original.availability == "unavailable"
-        assert comparison.original.reason == "item-aligned-original-unavailable"
+        assert comparison.original.reason == "original-preview-unavailable"
         assert artifacts.original_read_calls == 0
+        assert len(artifacts.original_excerpt_reads) == 1
         assert comparison.extracted.availability == "unavailable"
         assert comparison.extracted.reason == "extraction-preview-unavailable"
 
-    run(scenario())
+    run(scenario(ArtifactIntegrityFailure("changed digest")))
+    run(scenario(ArtifactUnavailable("missing artifact")))
+
+
+def test_review_comparison_keeps_old_and_unalignable_inventory_explicit():
+    async def scenario(reason: str | None, expected: str) -> None:
+        target = ReviewComparisonTarget(
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            source_revision_id="rev_001",
+            source_digest=DIGEST,
+            original_locator=ArtifactLocator("private/original"),
+            normalized_locator=None,
+            item_id="pi_001",
+            original_excerpt=None,
+            original_alignment_reason=reason,
+        )
+        repository = ComparisonRepository(target)
+        await repository.add(review(), inventory_item_ids=("pi_001",))
+        artifacts = Artifacts(original=b"unused", normalized=ArtifactUnavailable("unused"))
+        comparison = await KnowledgeReviewApplication(
+            repository,
+            Projection(),
+            artifacts,  # type: ignore[arg-type]
+        ).compare_review_item("krv_001", "pi_001")
+        assert comparison.original.availability == expected
+        assert comparison.original.reason == (
+            reason if reason is not None else "item-aligned-original-unavailable"
+        )
+        assert artifacts.original_read_calls == 0
+        assert artifacts.original_excerpt_reads == []
+
+    run(scenario(None, "unavailable"))
+    run(scenario("source-text-not-stably-addressable", "unsupported"))

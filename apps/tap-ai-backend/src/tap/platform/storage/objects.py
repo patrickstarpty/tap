@@ -67,6 +67,16 @@ class VerifiedObject:
 
 
 @dataclass(frozen=True, slots=True)
+class VerifiedObjectRange:
+    data: bytes
+    sha256: str
+    size: int
+    content_type: str
+    identity: str
+    attributes: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class StagingScavengeReceipt:
     scanned: int
     removed: tuple[StagingRef, ...]
@@ -87,6 +97,10 @@ class ObjectStorePort(Protocol):
     async def describe_verified(self, ref: ObjectRef) -> ObjectDescriptor: ...
 
     async def open_verified(self, ref: ObjectRef | StagingRef) -> VerifiedObject: ...
+
+    async def read_verified_range(
+        self, ref: ObjectRef, *, start_byte: int, end_byte: int
+    ) -> VerifiedObjectRange: ...
 
     async def delete(self, ref: ObjectRef | StagingRef) -> None: ...
 

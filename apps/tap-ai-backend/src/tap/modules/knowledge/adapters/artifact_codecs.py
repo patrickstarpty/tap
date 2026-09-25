@@ -27,6 +27,7 @@ from tap.modules.knowledge.domain.documents import (
     revision_id_for,
 )
 from tap.modules.knowledge.domain.parse_inventory import (
+    OriginalExcerptRange,
     ParseInventoryItem,
     ParseInventoryKind,
     ParseInventoryStatus,
@@ -105,6 +106,17 @@ def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -
                         "reason": item.reason,
                         "sourceRevisionId": item.source_revision_id,
                         "status": item.status.value,
+                        "originalAlignmentReason": item.original_alignment_reason,
+                        "originalExcerpt": (
+                            None
+                            if item.original_excerpt is None
+                            else {
+                                "endByte": item.original_excerpt.end_byte,
+                                "excerptDigest": item.original_excerpt.excerpt_digest,
+                                "sourceDigest": item.original_excerpt.source_digest,
+                                "startByte": item.original_excerpt.start_byte,
+                            }
+                        ),
                     }
                     for item in artifact.parse_inventory
                 ],
@@ -433,19 +445,30 @@ def _chunk_payload(chunk: ChunkDraft, revision_id: str) -> dict[str, object]:
 
 def _inventory_item(value: object) -> ParseInventoryItem:
     item = _mapping(value)
-    _exact_keys(
-        item,
-        {
-            "artifactDigest",
-            "decisionActorId",
-            "itemId",
-            "kind",
-            "locator",
-            "reason",
-            "sourceRevisionId",
-            "status",
-        },
-    )
+    legacy_keys = {
+        "artifactDigest",
+        "decisionActorId",
+        "itemId",
+        "kind",
+        "locator",
+        "reason",
+        "sourceRevisionId",
+        "status",
+    }
+    current_keys = legacy_keys | {"originalAlignmentReason", "originalExcerpt"}
+    if frozenset(item) not in {frozenset(legacy_keys), frozenset(current_keys)}:
+        raise ValueError("object fields differ from the closed schema")
+    raw_excerpt = item.get("originalExcerpt")
+    original_excerpt = None
+    if raw_excerpt is not None:
+        excerpt = _mapping(raw_excerpt)
+        _exact_keys(excerpt, {"endByte", "excerptDigest", "sourceDigest", "startByte"})
+        original_excerpt = OriginalExcerptRange(
+            source_digest=_digest(excerpt["sourceDigest"]),
+            start_byte=_integer(excerpt["startByte"], minimum=0),
+            end_byte=_integer(excerpt["endByte"], minimum=1),
+            excerpt_digest=_digest(excerpt["excerptDigest"]),
+        )
     return ParseInventoryItem(
         source_revision_id=_text(item["sourceRevisionId"], maximum=256),
         item_id=_text(item["itemId"], maximum=128),
@@ -455,6 +478,12 @@ def _inventory_item(value: object) -> ParseInventoryItem:
         artifact_digest=_digest(item["artifactDigest"]),
         reason=_optional_text(item["reason"], maximum=128),
         decision_actor_id=_optional_text(item["decisionActorId"], maximum=128),
+        original_excerpt=original_excerpt,
+        original_alignment_reason=(
+            _optional_text(item.get("originalAlignmentReason"), maximum=128)
+            if "originalAlignmentReason" in item
+            else None
+        ),
     )
 
 

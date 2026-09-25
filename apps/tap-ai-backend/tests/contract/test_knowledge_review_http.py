@@ -318,6 +318,17 @@ def test_route_authorization_uses_the_same_review_and_publication_resource_ids_a
     ) in policy.calls
 
 
+def test_original_comparison_permission_denial_never_reaches_artifact_service():
+    policy = DenyPolicy()
+    http, spy = client(policy)
+
+    response = http.get(BASE + "/items/pi_001/comparison")
+
+    assert response.status_code == 403
+    assert spy.calls == []
+    assert policy.calls == [("knowledge.original.read", "knowledge-original", "krv_001")]
+
+
 def test_ready_document_review_is_opened_idempotently_without_client_authority():
     policy = RecordingPolicy()
     http, spy = client(policy)

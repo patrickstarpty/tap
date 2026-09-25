@@ -424,6 +424,64 @@ class AzureBlobArtifactStore:
         return await self._download_verified(self._blob(container, blob_name))
 
     @_artifact_boundary
+    async def read_original_excerpt(
+        self,
+        locator: ArtifactLocator,
+        *,
+        revision_id: str,
+        source_digest: str,
+        start_byte: int,
+        end_byte: int,
+        excerpt_digest: str,
+    ) -> bytes:
+        container, blob_name = _persisted_locator(locator, expected_container=ORIGINALS_CONTAINER)
+        revision_id = _persisted_identity("revision identity", revision_id)
+        source_digest = _digest(source_digest)
+        excerpt_digest = _digest(excerpt_digest)
+        if (
+            _revision_from_artifact_name(blob_name) != revision_id
+            or type(start_byte) is not int
+            or type(end_byte) is not int
+            or start_byte < 0
+            or end_byte <= start_byte
+            or end_byte - start_byte > 16_000
+        ):
+            raise ArtifactIntegrityError("original excerpt binding is malformed")
+        blob = self._blob(container, blob_name)
+        try:
+            properties = await self._bounded(blob.get_blob_properties())
+            if (
+                properties.size < end_byte
+                or _metadata_size(properties.metadata) != properties.size
+                or _metadata_digest(properties.metadata) != source_digest
+                or blob_name.rsplit("/", 1)[-1] != source_digest.removeprefix("sha256:")
+            ):
+                raise ArtifactIntegrityError("original excerpt source binding differs")
+            stream = await self._bounded(
+                blob.download_blob(
+                    offset=start_byte,
+                    length=end_byte - start_byte,
+                    max_concurrency=1,
+                )
+            )
+            data = await self._bounded(stream.readall())
+        except asyncio.CancelledError:
+            raise
+        except (ArtifactIntegrityError, ArtifactProviderUnavailable):
+            raise
+        except ResourceNotFoundError as error:
+            raise ArtifactIntegrityError("original artifact does not exist") from error
+        except Exception as error:
+            raise ArtifactProviderUnavailable("Blob provider range read failed") from error
+        if (
+            not isinstance(data, bytes)
+            or len(data) != end_byte - start_byte
+            or canonical_sha256(data) != excerpt_digest
+        ):
+            raise ArtifactIntegrityError("original excerpt digest differs")
+        return data
+
+    @_artifact_boundary
     async def write_normalized(
         self,
         revision_id: str,

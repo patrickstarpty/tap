@@ -2,6 +2,7 @@ import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
+from tap.modules.knowledge.domain.documents import canonical_sha256
 from tap.modules.knowledge.ports.documents import ArtifactLocator
 from tap.modules.knowledge.ports.errors import ArtifactUnavailable
 from tap.platform.storage.s3 import S3ObjectStore
@@ -15,6 +16,41 @@ async def test_composed_artifacts_share_canonical_contract():
         S3ObjectStore(config(), scope=VALIDATION_SCOPE, client=MemoryS3())
     )
     await exercise_artifact_round_trip(store)
+
+
+@pytest.mark.asyncio
+async def test_large_original_excerpt_uses_one_late_bounded_s3_range():
+    prefix = b"A" * 1_100_000
+    excerpt = "后部条款🙂".encode()
+    payload = prefix + excerpt + b"suffix"
+
+    class Upload:
+        filename = "large.txt"
+        media_type = "text/plain"
+
+        @property
+        def content(self):  # type: ignore[no-untyped-def]
+            async def stream():  # type: ignore[no-untyped-def]
+                yield payload
+
+            return stream()
+
+    client = MemoryS3()
+    store = KnowledgeArtifactStore(S3ObjectStore(config(), scope=VALIDATION_SCOPE, client=client))
+    staged = await store.stage_original(Upload(), max_bytes=len(payload))
+    locator = await store.commit_original(staged, "revision-large")
+
+    value = await store.read_original_excerpt(
+        locator,
+        revision_id="revision-large",
+        source_digest=canonical_sha256(payload),
+        start_byte=len(prefix),
+        end_byte=len(prefix) + len(excerpt),
+        excerpt_digest=canonical_sha256(excerpt),
+    )
+
+    assert value == excerpt
+    assert client.ranges == [f"bytes={len(prefix)}-{len(prefix) + len(excerpt) - 1}"]
 
 
 @pytest.mark.asyncio

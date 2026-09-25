@@ -37,6 +37,7 @@ from tap.platform.storage.objects import (
     StagingRef,
     StagingScavengeReceipt,
     VerifiedObject,
+    VerifiedObjectRange,
 )
 
 _P = ParamSpec("_P")
@@ -475,6 +476,47 @@ class S3ObjectStore(ObjectStorePort):
             raise ObjectIntegrityError("object manifest is invalid") from None
         return cast(Mapping[str, Any], manifest)
 
+    async def _read_range(self, key: str, *, start_byte: int, end_byte: int) -> bytes:
+        expected = end_byte - start_byte
+        try:
+            result = await self._call(
+                "get_object", Key=key, Range=f"bytes={start_byte}-{end_byte - 1}"
+            )
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") in _MISSING:
+                raise ObjectMissingError("object does not exist") from None
+            raise ObjectUnavailable("object range read failed") from None
+        body = result.get("Body")
+        try:
+            if result.get("ContentLength") != expected:
+                raise ObjectIntegrityError("object range length differs")
+            chunks = bytearray()
+            while len(chunks) < expected:
+                deadline = _DEADLINE.get()
+                remaining = (
+                    self._config.timeout_seconds
+                    if deadline is None
+                    else deadline - asyncio.get_running_loop().time()
+                )
+                part = await self._bounded(body.read(expected - len(chunks)), remaining)
+                if not isinstance(part, bytes) or len(chunks) + len(part) > expected:
+                    raise ObjectIntegrityError("object range exceeds bound")
+                if not part:
+                    break
+                chunks.extend(part)
+            deadline = _DEADLINE.get()
+            remaining = (
+                self._config.timeout_seconds
+                if deadline is None
+                else deadline - asyncio.get_running_loop().time()
+            )
+            if len(chunks) != expected or await self._bounded(body.read(1), remaining):
+                raise ObjectIntegrityError("object range length differs")
+            return bytes(chunks)
+        finally:
+            if body is not None:
+                body.close()
+
     @_boundary
     async def describe_verified(self, ref: ObjectRef) -> ObjectDescriptor:
         manifest = await self._manifest(ref)
@@ -506,6 +548,34 @@ class S3ObjectStore(ObjectStorePort):
         if len(data) != size or _hash(data) != digest:
             raise ObjectIntegrityError("object digest differs")
         return VerifiedObject(data, "sha256:" + digest, size, content_type, identity, attributes)
+
+    @_boundary
+    async def read_verified_range(
+        self, ref: ObjectRef, *, start_byte: int, end_byte: int
+    ) -> VerifiedObjectRange:
+        if (
+            not isinstance(ref, ObjectRef)
+            or type(start_byte) is not int
+            or type(end_byte) is not int
+            or start_byte < 0
+            or end_byte <= start_byte
+            or end_byte - start_byte > 16_000
+        ):
+            raise _ArgumentValueError("object range is outside the bound")
+        manifest = await self._manifest(ref)
+        if end_byte > manifest["size"]:
+            raise ObjectIntegrityError("object range exceeds immutable size")
+        data = await self._read_range(
+            self._payload_key(manifest), start_byte=start_byte, end_byte=end_byte
+        )
+        return VerifiedObjectRange(
+            data=data,
+            sha256="sha256:" + manifest["sha256"],
+            size=manifest["size"],
+            content_type=manifest["contentType"],
+            identity=manifest["identity"],
+            attributes=tuple(sorted(manifest["attributes"].items())),
+        )
 
     async def _put_immutable(self, key: str, data: bytes, content_type: str) -> None:
         try:

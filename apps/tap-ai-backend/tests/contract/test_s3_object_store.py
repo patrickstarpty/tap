@@ -45,6 +45,7 @@ class MemoryS3:
         self.bodies = []
         self.fail = None
         self.closed = False
+        self.ranges = []
 
     async def close(self):
         self.closed = True
@@ -76,9 +77,14 @@ class MemoryS3:
         if kwargs["Key"] not in self.objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
         item = self.objects[kwargs["Key"]]
-        body = Body(item["data"])
+        data = item["data"]
+        if "Range" in kwargs:
+            self.ranges.append(kwargs["Range"])
+            bounds = kwargs["Range"].removeprefix("bytes=").split("-", 1)
+            data = data[int(bounds[0]) : int(bounds[1]) + 1]
+        body = Body(data)
         self.bodies.append(body)
-        return {**item, "Body": body}
+        return {**item, "ContentLength": len(data), "Body": body}
 
     async def delete_object(self, **kwargs):
         self.observe("delete", kwargs)

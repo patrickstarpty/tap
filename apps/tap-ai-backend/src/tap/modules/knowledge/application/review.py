@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol, cast
 
+from tap.modules.knowledge.domain.parse_inventory import OriginalExcerptRange
 from tap.modules.knowledge.domain.review import (
     KnowledgePublication,
     KnowledgeReviewHistoryEntry,
@@ -20,7 +21,7 @@ from tap.modules.knowledge.domain.review import (
     publication_id_for,
 )
 from tap.modules.knowledge.ports.documents import ArtifactLocator, ArtifactStore
-from tap.modules.knowledge.ports.errors import ArtifactUnavailable
+from tap.modules.knowledge.ports.errors import ArtifactError
 
 
 class ReviewStateConflict(Exception):
@@ -126,9 +127,14 @@ class PublishedSourceRecord:
 @dataclass(frozen=True, slots=True)
 class ReviewComparisonTarget:
     media_type: str
+    source_revision_id: str
+    source_digest: str
     original_locator: ArtifactLocator
     normalized_locator: ArtifactLocator | None
     item_id: str
+    original_excerpt: OriginalExcerptRange | None
+    original_alignment_reason: str | None
+    original_alignment_valid: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -537,8 +543,28 @@ class KnowledgeReviewApplication:
         return ReviewItemComparisonRead(review_id, item_id, original, extracted)
 
     async def _original_preview(self, target: ReviewComparisonTarget) -> ReviewPreview:
-        del target
-        return ReviewPreview("unavailable", reason="item-aligned-original-unavailable")
+        if not target.original_alignment_valid:
+            return ReviewPreview("unavailable", reason="item-alignment-invalid")
+        if target.original_excerpt is None:
+            if target.original_alignment_reason is None:
+                return ReviewPreview("unavailable", reason="item-aligned-original-unavailable")
+            return ReviewPreview("unsupported", reason=target.original_alignment_reason)
+        if target.original_excerpt.source_digest != target.source_digest:
+            return ReviewPreview("unavailable", reason="original-preview-unavailable")
+        assert self._artifacts is not None
+        try:
+            excerpt = await self._artifacts.read_original_excerpt(
+                target.original_locator,
+                revision_id=target.source_revision_id,
+                source_digest=target.source_digest,
+                start_byte=target.original_excerpt.start_byte,
+                end_byte=target.original_excerpt.end_byte,
+                excerpt_digest=target.original_excerpt.excerpt_digest,
+            )
+            text = excerpt.decode("utf-8")
+        except (ArtifactError, UnicodeError):
+            return ReviewPreview("unavailable", reason="original-preview-unavailable")
+        return ReviewPreview("available", excerpt=text[:4_000])
 
     async def _extracted_preview(self, target: ReviewComparisonTarget) -> ReviewPreview:
         if target.normalized_locator is None:
@@ -546,7 +572,7 @@ class KnowledgeReviewApplication:
         assert self._artifacts is not None
         try:
             artifact = await self._artifacts.read_normalized(target.normalized_locator)
-        except ArtifactUnavailable:
+        except ArtifactError:
             return ReviewPreview("unavailable", reason="extraction-preview-unavailable")
         excerpt = "\n".join(
             block.text for block in artifact.blocks if block.inventory_item_id == target.item_id

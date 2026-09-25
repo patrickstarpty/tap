@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from scripts.migration_support import seed_baseline
 from sqlalchemy import create_engine, inspect, text
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
@@ -23,6 +24,40 @@ DIGEST_C = "sha256:" + "c" * 64
 class UnusedProjection:
     async def verify(self, revision, generation):  # type: ignore[no-untyped-def]
         raise AssertionError("idempotent replay must not verify the projection again")
+
+
+async def test_0020_inventory_upgrades_without_guessing_original_alignment(
+    owned_project_mysql,
+):
+    owned_project_mysql.rebuild("0005_projection_lineage")
+    sync_engine = create_engine(owned_project_mysql.url)
+    try:
+        with sync_engine.begin() as connection:
+            seed_baseline(connection)
+        owned_project_mysql.upgrade("0020_knowledge_review_read_model")
+        with sync_engine.connect() as connection:
+            before = connection.execute(
+                text(
+                    "SELECT item_id, reason FROM knowledge_parse_inventory "
+                    "WHERE source_revision_id='legacy-revision'"
+                )
+            ).one()
+        assert before.reason == "historical-unreviewed"
+
+        owned_project_mysql.upgrade("0021_original_excerpt_alignment")
+        with sync_engine.connect() as connection:
+            after = connection.execute(
+                text(
+                    "SELECT original_source_digest, original_start_byte, original_end_byte, "
+                    "original_excerpt_digest, original_alignment_reason, "
+                    "original_alignment_binding_digest FROM knowledge_parse_inventory "
+                    "WHERE item_id=:item_id"
+                ),
+                {"item_id": before.item_id},
+            ).one()
+        assert tuple(after) == (None, None, None, None, None, None)
+    finally:
+        sync_engine.dispose()
 
 
 async def test_0019_publish_and_withdraw_commands_replay_after_0020_upgrade(

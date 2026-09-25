@@ -32,6 +32,8 @@ from tap.modules.knowledge.domain.documents import (
     validate_filename_media_type,
 )
 from tap.modules.knowledge.domain.parse_inventory import (
+    MAX_ORIGINAL_EXCERPT_BYTES,
+    OriginalExcerptRange,
     ParseInventoryItem,
     ParseInventoryKind,
     ParseInventoryStatus,
@@ -164,6 +166,8 @@ class PdfParser:
                 ParseInventoryStatus.PARSED if text else ParseInventoryStatus.FAILED,
                 text.encode("utf-8") if text else page_bytes,
                 reason=None if text else "ocr-required",
+                original_text=text if text else None,
+                original_bounds=_unique_bytes_bounds(source.content, page_bytes) or (0, 0),
             )
             inventory.append(page_item)
             try:
@@ -220,6 +224,7 @@ class DocxParser:
 
     def parse(self, source: DocumentSource) -> NormalizedArtifact:
         _validate_docx_zip(source.content)
+        document_xml_bounds = _stored_zip_member_bounds(source.content, "word/document.xml")
         document = Document(io.BytesIO(source.content))
         builder = _BlockBuilder()
         inventory: list[ParseInventoryItem] = []
@@ -247,6 +252,8 @@ class DocxParser:
                     f"paragraph:{paragraph_number}",
                     ParseInventoryStatus.PARSED,
                     text.encode("utf-8"),
+                    original_text=text,
+                    original_bounds=document_xml_bounds or (0, 0),
                 )
                 inventory.append(item)
                 if level is not None:
@@ -282,6 +289,8 @@ class DocxParser:
                     ParseInventoryStatus.PARSED if text else ParseInventoryStatus.FAILED,
                     text.encode("utf-8"),
                     reason=None if text else "empty-table",
+                    original_text=text if text else None,
+                    original_bounds=document_xml_bounds or (0, 0),
                 )
                 inventory.append(item)
                 builder.add(
@@ -332,13 +341,16 @@ class MarkdownParser:
         lines = text.split("\n")
         index = 0
 
-        def add(kind: BlockKind, content: str, locator: str) -> None:
+        def add(
+            kind: BlockKind, content: str, locator: str, *, original_text: str | None = None
+        ) -> None:
             item = _inventory_item(
                 source,
                 _inventory_kind(kind),
                 locator,
                 ParseInventoryStatus.PARSED,
                 _normalize_text(content).strip("\n").encode("utf-8"),
+                original_text=content if original_text is None else original_text,
             )
             inventory.append(item)
             builder.add(kind, content, tuple(headings), inventory_item_id=item.item_id)
@@ -351,7 +363,12 @@ class MarkdownParser:
                 title = match.group(2).strip()
                 headings = headings[: level - 1]
                 headings.append(title)
-                add(BlockKind.HEADING, title, f"line:{index + 1}:heading")
+                add(
+                    BlockKind.HEADING,
+                    title,
+                    f"line:{index + 1}:heading",
+                    original_text=line,
+                )
                 index += 1
                 continue
             fence = _FENCE.match(line)
@@ -427,6 +444,7 @@ class TextParser:
                 f"paragraph:{paragraph_number}",
                 ParseInventoryStatus.PARSED,
                 clean.encode("utf-8"),
+                original_text=clean,
             )
             inventory.append(item)
             builder.add(
@@ -485,7 +503,14 @@ def _inventory_item(
     content: bytes,
     *,
     reason: str | None = None,
+    original_text: str | None = None,
+    original_bounds: tuple[int, int] | None = None,
 ) -> ParseInventoryItem:
+    original_excerpt = (
+        _exact_original_excerpt(source, original_text, bounds=original_bounds)
+        if status is ParseInventoryStatus.PARSED and original_text is not None
+        else None
+    )
     return ParseInventoryItem.create(
         source_revision_id=_source_revision_id(source),
         kind=kind,
@@ -493,7 +518,75 @@ def _inventory_item(
         status=status,
         reason=reason,
         artifact_digest=canonical_sha256(content),
+        original_excerpt=original_excerpt,
+        original_alignment_reason=(
+            None
+            if original_excerpt is not None
+            else (
+                "source-text-not-stably-addressable"
+                if status is ParseInventoryStatus.PARSED
+                else "item-original-not-text"
+            )
+        ),
     )
+
+
+def _exact_original_excerpt(
+    source: DocumentSource,
+    original_text: str,
+    *,
+    bounds: tuple[int, int] | None = None,
+) -> OriginalExcerptRange | None:
+    """Return only a unique exact UTF-8 range; never rediscover by fuzzy matching."""
+    if not original_text:
+        return None
+    excerpt = original_text.encode("utf-8")
+    while len(excerpt) > MAX_ORIGINAL_EXCERPT_BYTES and original_text:
+        original_text = original_text[: max(1, len(original_text) // 2)]
+        excerpt = original_text.encode("utf-8")
+    if not excerpt or len(excerpt) > MAX_ORIGINAL_EXCERPT_BYTES:
+        return None
+    lower, upper = (0, len(source.content)) if bounds is None else bounds
+    if lower < 0 or upper > len(source.content) or lower >= upper:
+        return None
+    start = source.content.find(excerpt, lower, upper)
+    if start < 0 or source.content.find(excerpt, start + 1, upper) >= 0:
+        return None
+    return OriginalExcerptRange(
+        source_digest=canonical_sha256(source.content),
+        start_byte=start,
+        end_byte=start + len(excerpt),
+        excerpt_digest=canonical_sha256(excerpt),
+    )
+
+
+def _unique_bytes_bounds(content: bytes, region: bytes) -> tuple[int, int] | None:
+    if not region:
+        return None
+    start = content.find(region)
+    if start < 0 or content.find(region, start + 1) >= 0:
+        return None
+    return start, start + len(region)
+
+
+def _stored_zip_member_bounds(content: bytes, member: str) -> tuple[int, int] | None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            info = archive.getinfo(member)
+            if info.compress_type != zipfile.ZIP_STORED:
+                return None
+            header = info.header_offset
+            if content[header : header + 4] != b"PK\x03\x04":
+                return None
+            name_length = int.from_bytes(content[header + 26 : header + 28], "little")
+            extra_length = int.from_bytes(content[header + 28 : header + 30], "little")
+            start = header + 30 + name_length + extra_length
+            end = start + info.file_size
+            if content[start:end] != archive.read(info):
+                return None
+            return start, end
+    except (KeyError, ValueError, zipfile.BadZipFile):
+        return None
 
 
 def _source_revision_id(source: DocumentSource) -> str:
