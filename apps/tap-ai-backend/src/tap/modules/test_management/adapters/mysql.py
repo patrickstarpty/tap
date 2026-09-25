@@ -31,6 +31,7 @@ from sqlalchemy.dialects.mysql import DATETIME, JSON
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.events import ProjectEventEnvelope
+from tap.modules.access.adapters.mysql import project
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.ai.adapters.litellm import ProviderModelMapping
 from tap.modules.ai.adapters.mysql import ai_agent_revision, skill_revision
@@ -608,17 +609,40 @@ class MysqlTestPlanRepository:
         sessions: async_sessionmaker[AsyncSession],
         *,
         scope: ProjectScopeContext,
+        model_alias: str,
         model_mapping: ProviderModelMapping,
     ) -> None:
         self._sessions = sessions
         self.scope = require_project_scope(scope)
         if not isinstance(model_mapping, ProviderModelMapping):
             raise TypeError("test design model mapping is required")
+        if not isinstance(model_alias, str) or not model_alias.strip():
+            raise ValueError("test design model alias is required")
+        self._model_alias = model_alias
         self._model_mapping = model_mapping
 
+    def _assert_model_alias(self, model_alias: str) -> None:
+        if model_alias != self._model_alias:
+            raise ValueError("model alias is not test-design-capable")
+
     def _assert_model_route(self, model_alias: str, model_revision_id: str | None) -> None:
+        self._assert_model_alias(model_alias)
         if model_revision_id != design_model_revision_id(model_alias, self._model_mapping):
             raise ValueError("test design model route revision is no longer current")
+
+    async def _lock_write_namespace(
+        self, session: AsyncSession, scope: ProjectScopeContext
+    ) -> None:
+        locked = await session.scalar(
+            select(project.c.project_id)
+            .where(
+                project.c.enterprise_id == scope.enterprise_id,
+                project.c.project_id == scope.project_id,
+            )
+            .with_for_update()
+        )
+        if locked is None:
+            raise ValueError("Project write authority is unavailable")
 
     async def _assert_enabled_generation_assets(
         self,
@@ -672,6 +696,7 @@ class MysqlTestPlanRepository:
     async def _write_replay(
         self, session: AsyncSession, scope: ProjectScopeContext, key: str, digest: str
     ):
+        await self._lock_write_namespace(session, scope)
         row = (
             (
                 await session.execute(
@@ -1022,22 +1047,6 @@ class MysqlTestPlanRepository:
         scope = self._matching_scope(scope)
         digest = self._write_digest("fork", source_revision_id, expected_version, test_plan_id)
         async with self._sessions() as session, session.begin():
-            plan_exists = await session.scalar(
-                select(test_plan.c.test_plan_id)
-                .where(
-                    *scope_predicates(test_plan, scope),
-                    test_plan.c.test_plan_id == test_plan_id,
-                )
-                .with_for_update()
-            )
-            if plan_exists is None:
-                raise LookupError("test plan not found")
-            replay = await self._write_replay(session, scope, idempotency_key, digest)
-            if replay is not None:
-                existing = await self._load_revision(session, replay["result_id"])
-                if existing is None:
-                    raise RevisionConflict("fork replay result no longer exists")
-                return existing
             row = (
                 (
                     await session.execute(
@@ -1055,8 +1064,24 @@ class MysqlTestPlanRepository:
             )
             if row is None:
                 raise LookupError("test plan revision not found")
+            replay = await self._write_replay(session, scope, idempotency_key, digest)
+            if replay is not None:
+                existing = await self._load_revision(session, replay["result_id"])
+                if existing is None:
+                    raise RevisionConflict("fork replay result no longer exists")
+                return existing
             if row["row_version"] != expected_version:
                 raise RevisionConflict("revision version changed")
+            plan_exists = await session.scalar(
+                select(test_plan.c.test_plan_id)
+                .where(
+                    *scope_predicates(test_plan, scope),
+                    test_plan.c.test_plan_id == test_plan_id,
+                )
+                .with_for_update()
+            )
+            if plan_exists is None:
+                raise LookupError("test plan not found")
             source = await self._load_revision(session, source_revision_id)
             assert source is not None
             suffix = hashlib.sha256(
@@ -1384,14 +1409,20 @@ class MysqlTestPlanRepository:
             revision.skill_revision_ids,
         )
         provenance_revision_id = revision.revision_id
-        if revision.adopted_from_revision_id is not None:
+        parent_revision_id = revision.adopted_from_revision_id
+        child_generated_digest = revision.generated_content_digest
+        visited_revision_ids = {revision.revision_id}
+        while parent_revision_id is not None:
+            if parent_revision_id in visited_revision_ids or len(visited_revision_ids) >= 128:
+                raise ValueError("fork generation provenance is cyclic or unbounded")
+            visited_revision_ids.add(parent_revision_id)
             source = (
                 (
                     await session.execute(
                         select(test_plan_revision)
                         .where(
                             *scope_predicates(test_plan_revision, scope),
-                            test_plan_revision.c.revision_id == revision.adopted_from_revision_id,
+                            test_plan_revision.c.revision_id == parent_revision_id,
                             test_plan_revision.c.test_plan_id == revision.test_plan_id,
                         )
                         .with_for_update()
@@ -1407,7 +1438,7 @@ class MysqlTestPlanRepository:
                     RevisionStatus.PUBLISHED.value,
                     RevisionStatus.SUPERSEDED.value,
                 }
-                or source["content_digest"] != revision.generated_content_digest
+                or source["content_digest"] != child_generated_digest
                 or source["requirement_scope_id"] != revision.requirement_scope_id
                 or source["requirement_scope_version"] != revision.requirement_scope_version
                 or source["requirement_scope_digest"] != revision.requirement_scope_digest
@@ -1418,7 +1449,9 @@ class MysqlTestPlanRepository:
                 or tuple(source["skill_revision_ids"]) != revision.skill_revision_ids
             ):
                 raise ValueError("fork generation provenance is invalid")
-            provenance_revision_id = revision.adopted_from_revision_id
+            provenance_revision_id = parent_revision_id
+            parent_revision_id = source["adopted_from_revision_id"]
+            child_generated_digest = source["generated_content_digest"]
         model_rows = (
             (
                 await session.execute(
@@ -1599,6 +1632,7 @@ class MysqlTestPlanRepository:
             )
             if row is None:
                 raise LookupError("test plan revision not found")
+            await self._lock_write_namespace(session, scope)
             replay = (
                 (
                     await session.execute(
@@ -1841,6 +1875,10 @@ class MysqlTestPlanRepository:
             frozen_input = snapshot["input_snapshot"]
             if not isinstance(frozen_input, dict):
                 raise ValueError("frozen Turn input is malformed")
+            model_alias = frozen_input.get("model_alias")
+            if not isinstance(model_alias, str):
+                raise ValueError("frozen Turn execution versions are incomplete")
+            self._assert_model_alias(model_alias)
             publication = (
                 (
                     await session.execute(
@@ -1923,7 +1961,6 @@ class MysqlTestPlanRepository:
                 version=publication["version"],
                 requirements=requirements,
             )
-            model_alias = frozen_input.get("model_alias")
             agent_revision_id = frozen_input.get("agent_revision_id")
             skill_revision_ids = frozen_input.get("skill_revision_ids")
             if (
@@ -1975,6 +2012,7 @@ class MysqlTestPlanRepository:
             )
             if turn_exists is None:
                 raise ValueError("completed Turn snapshot binding was not found")
+            await self._lock_write_namespace(session, self.scope)
             existing = (
                 (
                     await session.execute(

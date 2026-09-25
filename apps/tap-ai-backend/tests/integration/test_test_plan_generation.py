@@ -328,6 +328,7 @@ async def test_generation_context_rejects_changed_provider_model_mapping(
         changed_repository = MysqlTestPlanRepository(
             sessions,
             scope=VALIDATION_SCOPE,
+            model_alias="tapper-chat",
             model_mapping=ProviderModelMapping("fake", "deterministic-chat-v2"),
         )
 

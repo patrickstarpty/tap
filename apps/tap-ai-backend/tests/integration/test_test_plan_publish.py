@@ -52,6 +52,7 @@ from tap.modules.test_management.domain.models import (
 from tap.modules.test_management.domain.models import (
     TestScenario as PlanScenario,
 )
+from tap.modules.test_management.domain.validation import RevisionConflict
 from tap.platform.db.project_scope import scope_values
 from tap.platform.db.schema import outbox
 from tests.integration.test_knowledge_publication import (
@@ -381,6 +382,26 @@ async def test_mysql_publish_is_atomic_immutable_and_emits_closed_event(
         )
         assert (first_fork.version, second_fork.version) == (2, 3)
 
+        conflicting_edits = await asyncio.gather(
+            repository.replace_draft(
+                VALIDATION_SCOPE,
+                replace(first_fork, title="First target").with_recomputed_digest(),
+                first_fork.row_version,
+                idempotency_key="cross-target-concurrent-key",
+                now=datetime(2026, 9, 13, 12, 5, 1),
+            ),
+            repository.replace_draft(
+                VALIDATION_SCOPE,
+                replace(second_fork, title="Second target").with_recomputed_digest(),
+                second_fork.row_version,
+                idempotency_key="cross-target-concurrent-key",
+                now=datetime(2026, 9, 13, 12, 5, 2),
+            ),
+            return_exceptions=True,
+        )
+        assert sum(isinstance(item, PlanRevision) for item in conflicting_edits) == 1
+        assert sum(isinstance(item, RevisionConflict) for item in conflicting_edits) == 1
+
         concurrent_forks = await asyncio.gather(
             *(
                 repository.fork_revision(
@@ -445,6 +466,42 @@ async def test_mysql_publish_is_atomic_immutable_and_emits_closed_event(
         )
         assert concurrent_published[0] == concurrent_published[1]
         assert concurrent_published[0].status.value == "PUBLISHED"
+
+        next_fork = await repository.fork_revision(
+            VALIDATION_SCOPE,
+            concurrent_published[0].test_plan_id,
+            concurrent_published[0].revision_id,
+            expected_version=concurrent_published[0].row_version,
+            idempotency_key="fork-second-published-generation",
+            now=datetime(2026, 9, 13, 12, 9),
+        )
+        next_edit = await repository.replace_draft(
+            VALIDATION_SCOPE,
+            replace(
+                next_fork, title="Checkout validation — second revision"
+            ).with_recomputed_digest(),
+            next_fork.row_version,
+            idempotency_key="edit-second-published-generation",
+            now=datetime(2026, 9, 13, 12, 10),
+        )
+        next_review = await repository.record_review(
+            VALIDATION_SCOPE,
+            next_edit.test_plan_id,
+            next_edit.revision_id,
+            disposition=ReviewDisposition.ACCEPTED_MODIFIED,
+            reason="Confirmed the second successive published-plan revision.",
+            expected_version=next_edit.row_version,
+            idempotency_key="review-second-published-generation",
+            now=datetime(2026, 9, 13, 12, 11),
+        )
+        next_published = await PublishTestPlan(repository, CitationAuthority()).execute(
+            VALIDATION_SCOPE,
+            next_review.test_plan_id,
+            next_review.revision_id,
+            expected_version=next_review.row_version,
+            idempotency_key="publish-second-published-generation",
+        )
+        assert next_published.status.value == "PUBLISHED"
     finally:
         await engine.dispose()
 
@@ -573,6 +630,7 @@ async def test_mysql_publish_holds_authority_lock_against_concurrent_withdrawal(
         repository = PausingPublishRepository(
             sessions,
             scope=VALIDATION_SCOPE,
+            model_alias="tapper-chat",
             model_mapping=TEST_DESIGN_MODEL_MAPPING,
         )
         publish_task = asyncio.create_task(
@@ -608,6 +666,51 @@ async def test_mysql_publish_holds_authority_lock_against_concurrent_withdrawal(
 
 
 @pytest.mark.asyncio
+async def test_mysql_publish_and_fork_share_revision_then_plan_lock_order(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        _, reviewed, _, _ = await _seed_governed_draft(sessions)
+        repository = PausingPublishRepository(
+            sessions,
+            scope=VALIDATION_SCOPE,
+            model_alias="tapper-chat",
+            model_mapping=TEST_DESIGN_MODEL_MAPPING,
+        )
+        publish = asyncio.create_task(
+            PublishTestPlan(repository, CitationAuthority()).execute(
+                VALIDATION_SCOPE,
+                reviewed.test_plan_id,
+                reviewed.revision_id,
+                expected_version=reviewed.row_version,
+                idempotency_key="publish-before-concurrent-fork",
+            )
+        )
+        await asyncio.wait_for(repository.authority_locked.wait(), timeout=5)
+        fork = asyncio.create_task(
+            repository.fork_revision(
+                VALIDATION_SCOPE,
+                reviewed.test_plan_id,
+                reviewed.revision_id,
+                expected_version=reviewed.row_version,
+                idempotency_key="fork-during-publish",
+                now=datetime(2026, 9, 13, 12, 5),
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert not fork.done()
+        repository.release_publish.set()
+
+        assert (await publish).status.value == "PUBLISHED"
+        with pytest.raises(RevisionConflict, match="version"):
+            await asyncio.wait_for(fork, timeout=5)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_mysql_generation_insertion_holds_authority_lock_against_withdrawal(
     owned_project_mysql,
 ) -> None:
@@ -619,6 +722,7 @@ async def test_mysql_generation_insertion_holds_authority_lock_against_withdrawa
         repository = PausingGenerationRepository(
             sessions,
             scope=VALIDATION_SCOPE,
+            model_alias="tapper-chat",
             model_mapping=TEST_DESIGN_MODEL_MAPPING,
         )
         request = _request(publication)

@@ -927,6 +927,7 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
             jobs=MysqlTestPlanRepository(
                 sessions,
                 scope=scope,
+                model_alias=settings.chat_alias,
                 model_mapping=_test_design_model_mapping(settings),
             ),
             generator=generator,
@@ -1588,6 +1589,7 @@ def _assemble_http_services(
             MysqlTestPlanRepository(
                 test_plan_sessions,  # type: ignore[arg-type]
                 scope=repository.scope,  # type: ignore[arg-type]
+                model_alias=embeddings.chat_alias,
                 model_mapping=test_design_model_mapping,
             )
         )
@@ -1626,7 +1628,7 @@ def _assemble_http_services(
                     ModelDescriptor(
                         _FIXED_CODEX_CHAT_ALIAS,
                         "GPT-5.6 Sol · Codex",
-                        frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
+                        frozenset({ModelCapability.CHAT}),
                     ),
                 )
                 if _FIXED_CODEX_CHAT_ALIAS in embeddings.chat_aliases

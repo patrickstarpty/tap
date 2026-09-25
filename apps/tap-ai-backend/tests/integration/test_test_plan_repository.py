@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
@@ -45,6 +45,7 @@ def _repository(sessions):  # type: ignore[no-untyped-def]
     return MysqlTestPlanRepository(
         sessions,
         scope=VALIDATION_SCOPE,
+        model_alias="tapper-chat",
         model_mapping=TEST_DESIGN_MODEL_MAPPING,
     )
 
@@ -240,10 +241,45 @@ async def test_generation_job_rejects_tampered_or_cross_turn_snapshots(
         publication = await _seed_test_design_authority(sessions)
         await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
         repository = _repository(sessions)
-        with pytest.raises(ValueError, match="snapshot|Turn|governance|model route"):
+        with pytest.raises(ValueError, match="snapshot|Turn|governance|model route|model alias"):
             await repository.request_generation(
                 VALIDATION_SCOPE,
                 _request(publication, **changes),
+                now=datetime(2026, 9, 13, 12, 1),
+            )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_generation_from_turn_rejects_non_design_capable_model_alias(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        publication = await _seed_test_design_authority(sessions)
+        await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(turn_input_snapshot)
+                .where(turn_input_snapshot.c.turn_id == "turn_checkout")
+                .values(
+                    snapshot={
+                        "model_alias": "tapper-chat-codex",
+                        "agent_revision_id": "validation-knowledge-agent-v2",
+                        "skill_revision_ids": ["validation-citation-skill-v2"],
+                    }
+                )
+            )
+
+        with pytest.raises(ValueError, match="design-capable"):
+            await _repository(sessions).request_generation_from_turn(
+                VALIDATION_SCOPE,
+                conversation_id="conversation_checkout",
+                turn_id="turn_checkout",
+                objective="Design checkout tests",
+                idempotency_key="reject-codex-test-design",
                 now=datetime(2026, 9, 13, 12, 1),
             )
     finally:
