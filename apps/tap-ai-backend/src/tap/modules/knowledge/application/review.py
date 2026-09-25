@@ -67,6 +67,38 @@ class ReviewInventoryRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewInventoryPageRead:
+    items: tuple[ReviewInventoryRecord, ...]
+    total_count: int
+    parsed_count: int
+    failed_count: int
+    needs_review_count: int
+    excluded_count: int
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewDecisionPageRead:
+    items: tuple[KnowledgeReviewItemDecision, ...]
+    total_count: int
+    next_cursor: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewHistoryPageRead:
+    items: tuple[KnowledgeReviewHistoryEntry, ...]
+    total_count: int
+    next_cursor: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewPublicationPageRead:
+    items: tuple[KnowledgePublication, ...]
+    total_count: int
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class PublishedSourceRecord:
     source_id: str
     document_id: str
@@ -112,6 +144,9 @@ class KnowledgeReviewRepository(Protocol):
         after_review_id: str | None = None,
     ) -> tuple[KnowledgeReviewRevision, ...]: ...
     async def list_inventory(self, review_id: str) -> tuple[ReviewInventoryRecord, ...]: ...
+    async def inventory_page(
+        self, review_id: str, *, limit: int, after_item_id: str | None
+    ) -> ReviewInventoryPageRead: ...
     async def review_authority(self, revision: KnowledgeReviewRevision) -> bool: ...
     async def save_review(
         self,
@@ -127,7 +162,13 @@ class KnowledgeReviewRepository(Protocol):
     async def list_decision_history(
         self, review_id: str
     ) -> tuple[KnowledgeReviewItemDecision, ...]: ...
+    async def decision_history_page(
+        self, review_id: str, *, limit: int, after_version: int | None
+    ) -> ReviewDecisionPageRead: ...
     async def list_history(self, review_id: str) -> tuple[KnowledgeReviewHistoryEntry, ...]: ...
+    async def history_page(
+        self, review_id: str, *, limit: int, after_version: int | None
+    ) -> ReviewHistoryPageRead: ...
     async def save_item_decision(
         self,
         revision: KnowledgeReviewRevision,
@@ -152,6 +193,9 @@ class KnowledgeReviewRepository(Protocol):
         self, project_id: str | None = None
     ) -> KnowledgePublication | None: ...
     async def list_publications(self, review_id: str) -> tuple[KnowledgePublication, ...]: ...
+    async def publication_page(
+        self, review_id: str, *, limit: int, after_publication_id: str | None
+    ) -> ReviewPublicationPageRead: ...
     async def list_published_sources(
         self, *, now: datetime
     ) -> tuple[PublishedSourceRecord, ...]: ...
@@ -254,6 +298,56 @@ class KnowledgeReviewApplication:
     async def list_inventory(self, review_id: str) -> tuple[ReviewInventoryRecord, ...]:
         await self._required_review(review_id)
         return await self._repository.list_inventory(review_id)
+
+    async def inventory_page(
+        self,
+        review_id: str,
+        *,
+        limit: int,
+        after_item_id: str | None,
+    ) -> ReviewInventoryPageRead:
+        await self._required_review(review_id)
+        return await self._repository.inventory_page(
+            review_id, limit=limit, after_item_id=after_item_id
+        )
+
+    async def decision_history_page(
+        self,
+        review_id: str,
+        *,
+        limit: int,
+        after_version: int | None,
+    ) -> ReviewDecisionPageRead:
+        await self._required_review(review_id)
+        return await self._repository.decision_history_page(
+            review_id, limit=limit, after_version=after_version
+        )
+
+    async def history_page(
+        self,
+        review_id: str,
+        *,
+        limit: int,
+        after_version: int | None,
+    ) -> ReviewHistoryPageRead:
+        await self._required_review(review_id)
+        return await self._repository.history_page(
+            review_id, limit=limit, after_version=after_version
+        )
+
+    async def publication_page(
+        self,
+        review_id: str,
+        *,
+        limit: int,
+        after_publication_id: str | None,
+    ) -> ReviewPublicationPageRead:
+        await self._required_review(review_id)
+        return await self._repository.publication_page(
+            review_id,
+            limit=limit,
+            after_publication_id=after_publication_id,
+        )
 
     async def get_publication(self, publication_id: str) -> KnowledgePublication:
         publication = await self._repository.get_publication(publication_id)
@@ -698,6 +792,26 @@ class InMemoryKnowledgeReviewRepository:
     async def list_inventory(self, review_id: str) -> tuple[ReviewInventoryRecord, ...]:
         return ()
 
+    async def inventory_page(
+        self, review_id: str, *, limit: int, after_item_id: str | None
+    ) -> ReviewInventoryPageRead:
+        all_values = await self.list_inventory(review_id)
+        values = all_values
+        if after_item_id is not None:
+            values = tuple(item for item in values if item.item_id > after_item_id)
+        page = values[: limit + 1]
+        items = page[:limit]
+        statuses = [item.status for item in all_values]
+        return ReviewInventoryPageRead(
+            items=items,
+            total_count=len(all_values),
+            parsed_count=statuses.count("parsed"),
+            failed_count=statuses.count("failed"),
+            needs_review_count=statuses.count("needs_review"),
+            excluded_count=statuses.count("excluded"),
+            next_cursor=items[-1].item_id if len(page) > limit else None,
+        )
+
     async def review_authority(self, revision: KnowledgeReviewRevision) -> bool:
         inventory = self._inventory.get(revision.review_id, frozenset())
         return (
@@ -747,8 +861,42 @@ class InMemoryKnowledgeReviewRepository:
     ) -> tuple[KnowledgeReviewItemDecision, ...]:
         return tuple(self._decisions.get(review_id, []))
 
+    async def decision_history_page(
+        self, review_id: str, *, limit: int, after_version: int | None
+    ) -> ReviewDecisionPageRead:
+        all_values = tuple(self._decisions.get(review_id, []))
+        values = tuple(
+            item
+            for item in all_values
+            if after_version is None or item.review_version > after_version
+        )
+        page = values[: limit + 1]
+        items = page[:limit]
+        return ReviewDecisionPageRead(
+            items=items,
+            total_count=len(all_values),
+            next_cursor=items[-1].review_version if len(page) > limit else None,
+        )
+
     async def list_history(self, review_id: str) -> tuple[KnowledgeReviewHistoryEntry, ...]:
         return tuple(self._history.get(review_id, ()))
+
+    async def history_page(
+        self, review_id: str, *, limit: int, after_version: int | None
+    ) -> ReviewHistoryPageRead:
+        all_values = tuple(self._history.get(review_id, ()))
+        values = tuple(
+            item
+            for item in all_values
+            if after_version is None or item.review_version > after_version
+        )
+        page = values[: limit + 1]
+        items = page[:limit]
+        return ReviewHistoryPageRead(
+            items=items,
+            total_count=len(all_values),
+            next_cursor=items[-1].review_version if len(page) > limit else None,
+        )
 
     async def save_item_decision(
         self,
@@ -838,6 +986,28 @@ class InMemoryKnowledgeReviewRepository:
             )
         )
 
+    async def publication_page(
+        self, review_id: str, *, limit: int, after_publication_id: str | None
+    ) -> ReviewPublicationPageRead:
+        all_values = tuple(
+            sorted(
+                (item for item in self._publications.values() if item.review_id == review_id),
+                key=lambda item: item.publication_id,
+            )
+        )
+        values = tuple(
+            item
+            for item in all_values
+            if after_publication_id is None or item.publication_id > after_publication_id
+        )
+        page = values[: limit + 1]
+        items = page[:limit]
+        return ReviewPublicationPageRead(
+            items=items,
+            total_count=len(all_values),
+            next_cursor=items[-1].publication_id if len(page) > limit else None,
+        )
+
     async def list_published_sources(self, *, now: datetime) -> tuple[PublishedSourceRecord, ...]:
         del now
         return ()
@@ -867,9 +1037,10 @@ class InMemoryKnowledgeReviewRepository:
                 raise ReviewNotFound("publication-not-found")
             if current.version != expected_version:
                 raise ReviewStateConflict("revision-conflict")
+            if self._current.get(publication.project_id) != publication.publication_id:
+                raise ReviewStateConflict("publication-not-current")
             self._publications[publication.publication_id] = publication
-            if self._current.get(publication.project_id) == publication.publication_id:
-                del self._current[publication.project_id]
+            del self._current[publication.project_id]
             review = self._reviews.get(publication.review_id)
             if review is not None:
                 self._reviews[publication.review_id] = replace(

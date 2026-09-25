@@ -16,6 +16,8 @@ from tap.modules.knowledge.adapters.mysql_projection import knowledge_projection
 from tap.modules.knowledge.adapters.mysql_review import (
     MysqlKnowledgeReviewRepository,
     knowledge_publication,
+    knowledge_review_history,
+    knowledge_review_item_decision,
     knowledge_review_revision,
 )
 from tap.modules.knowledge.application.review import KnowledgeReviewApplication, ReviewStateConflict
@@ -26,6 +28,7 @@ from tap.modules.knowledge.domain.parse_inventory import (
     parse_inventory_digest,
 )
 from tap.modules.knowledge.domain.review import (
+    KnowledgeReviewItemDecision,
     KnowledgeReviewRevision,
     ReviewCheckKind,
     ReviewDecisionStatus,
@@ -289,7 +292,33 @@ async def test_review_state_decisions_history_and_picker_survive_repository_rest
             await session.execute(
                 update(knowledge_publication)
                 .where(knowledge_publication.c.publication_id == published.publication_id)
-                .values(approved_item_ids=["pi_missing_from_latest_inventory"])
+                .values(
+                    approved_item_ids=[
+                        parsed.item_id,
+                        "pi_missing_from_latest_inventory",
+                    ]
+                )
+            )
+        assert await restarted.list_published_sources(now=NOW) == ()
+
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(knowledge_publication)
+                .where(knowledge_publication.c.publication_id == published.publication_id)
+                .values(approved_item_ids=[parsed.item_id, failed.item_id])
+            )
+        assert await restarted.list_published_sources(now=NOW) == ()
+
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(knowledge_publication)
+                .where(knowledge_publication.c.publication_id == published.publication_id)
+                .values(approved_item_ids=[parsed.item_id])
+            )
+            await session.execute(
+                update(knowledge_document)
+                .where(knowledge_document.c.document_id == "doc_mysql_001")
+                .values(deleted_at=NOW.replace(tzinfo=None))
             )
         assert await restarted.list_published_sources(now=NOW) == ()
 
@@ -501,6 +530,267 @@ async def test_latest_inventory_attempt_is_revalidated_for_submit_approve_and_pu
                 expected_version=3,
                 now=NOW,
             )
+    finally:
+        await engine.dispose()
+
+
+async def test_current_decisions_preserve_old_blocker_beyond_501_audit_edits(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        parsed, failed = await _seed_revision(sessions)
+        repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        await repository.create_review(
+            KnowledgeReviewRevision(
+                review_id="krv_mysql_many_decisions",
+                project_id=VALIDATION_SCOPE.project_id,
+                source_revision_ids=("rev_mysql_001",),
+                inventory_digest=parse_inventory_digest((parsed, failed)),
+                chunk_manifest_digest=DIGEST_B,
+                annotation_digest=DIGEST_C,
+                dependency_digest=AUTHORITY_DEPENDENCY_DIGEST,
+                editor_actor_ids=("synthetic-editor-01",),
+                reviewer_actor_id=None,
+                expires_at=NOW + timedelta(days=30),
+                status=ReviewStatus.CHECKING,
+                version=1,
+                blocking_item_ids=(failed.item_id,),
+                approved_item_ids=(parsed.item_id,),
+            )
+        )
+        blocker = KnowledgeReviewItemDecision(
+            review_id="krv_mysql_many_decisions",
+            item_id=failed.item_id,
+            check_kind=ReviewCheckKind.EXCEPTION,
+            status=ReviewDecisionStatus.BLOCKED,
+            note="仍需业务确认",
+            actor_id="synthetic-editor-01",
+            review_version=2,
+            decided_at=NOW,
+        )
+        edits = [
+            KnowledgeReviewItemDecision(
+                review_id="krv_mysql_many_decisions",
+                item_id=parsed.item_id,
+                check_kind=ReviewCheckKind.AMOUNT,
+                status=ReviewDecisionStatus.ACCEPTED,
+                note=f"复核 {version}",
+                actor_id="synthetic-editor-01",
+                review_version=version,
+                decided_at=NOW + timedelta(seconds=version),
+            )
+            for version in range(3, 505)
+        ]
+        async with sessions() as session, session.begin():
+            await session.execute(
+                insert(knowledge_review_item_decision),
+                [
+                    {
+                        **scope_values(VALIDATION_SCOPE),
+                        "decision_id": item.decision_id,
+                        "review_id": item.review_id,
+                        "item_id": item.item_id,
+                        "check_kind": item.check_kind.value,
+                        "status": item.status.value,
+                        "note": item.note,
+                        "decided_by": item.actor_id,
+                        "review_version": item.review_version,
+                        "decided_at": item.decided_at.replace(tzinfo=None),
+                    }
+                    for item in (blocker, *edits)
+                ],
+            )
+            await session.execute(
+                update(knowledge_review_revision)
+                .where(knowledge_review_revision.c.review_id == "krv_mysql_many_decisions")
+                .values(version=504)
+            )
+
+        updated = await KnowledgeReviewApplication(
+            repository, ReadyProjection()
+        ).record_item_decision(
+            "krv_mysql_many_decisions",
+            item_id=parsed.item_id,
+            check_kind=ReviewCheckKind.AMOUNT,
+            status=ReviewDecisionStatus.ACCEPTED,
+            note="最终复核",
+            actor_id="synthetic-editor-01",
+            expected_version=504,
+            now=NOW + timedelta(seconds=505),
+        )
+
+        assert updated.blocking_item_ids == (failed.item_id,)
+        assert [
+            (item.item_id, item.status)
+            for item in await repository.list_decisions("krv_mysql_many_decisions")
+        ] == [
+            (failed.item_id, ReviewDecisionStatus.BLOCKED),
+            (parsed.item_id, ReviewDecisionStatus.ACCEPTED),
+        ]
+    finally:
+        await engine.dispose()
+
+
+async def test_child_collection_pages_reach_all_rows_beyond_501(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        parsed, failed = await _seed_revision(sessions)
+        repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        await repository.create_review(
+            KnowledgeReviewRevision(
+                review_id="krv_mysql_pages",
+                project_id=VALIDATION_SCOPE.project_id,
+                source_revision_ids=("rev_mysql_001",),
+                inventory_digest=parse_inventory_digest((parsed, failed)),
+                chunk_manifest_digest=DIGEST_B,
+                annotation_digest=DIGEST_C,
+                dependency_digest=AUTHORITY_DEPENDENCY_DIGEST,
+                editor_actor_ids=("synthetic-editor-01",),
+                reviewer_actor_id=None,
+                expires_at=NOW + timedelta(days=30),
+                status=ReviewStatus.CHECKING,
+                version=1,
+                blocking_item_ids=(),
+                approved_item_ids=(parsed.item_id,),
+            )
+        )
+        decisions = [
+            KnowledgeReviewItemDecision(
+                review_id="krv_mysql_pages",
+                item_id=parsed.item_id,
+                check_kind=ReviewCheckKind.AMOUNT,
+                status=ReviewDecisionStatus.ACCEPTED,
+                note=f"审计 {version}",
+                actor_id="synthetic-editor-01",
+                review_version=version,
+                decided_at=NOW + timedelta(seconds=version),
+            )
+            for version in range(2, 505)
+        ]
+        async with sessions() as session, session.begin():
+            await session.execute(
+                insert(knowledge_review_item_decision),
+                [
+                    {
+                        **scope_values(VALIDATION_SCOPE),
+                        "decision_id": item.decision_id,
+                        "review_id": item.review_id,
+                        "item_id": item.item_id,
+                        "check_kind": item.check_kind.value,
+                        "status": item.status.value,
+                        "note": item.note,
+                        "decided_by": item.actor_id,
+                        "review_version": item.review_version,
+                        "decided_at": item.decided_at.replace(tzinfo=None),
+                    }
+                    for item in decisions
+                ],
+            )
+            await session.execute(
+                insert(knowledge_review_history),
+                [
+                    {
+                        **scope_values(VALIDATION_SCOPE),
+                        "history_id": f"krh_page_{item.review_version:04d}",
+                        "review_id": item.review_id,
+                        "review_version": item.review_version,
+                        "action": "item_decided",
+                        "history_actor_id": item.actor_id,
+                        "item_id": item.item_id,
+                        "decision_id": item.decision_id,
+                        "decision_digest": item.decision_digest,
+                        "occurred_at": item.decided_at.replace(tzinfo=None),
+                    }
+                    for item in decisions
+                ],
+            )
+            await session.execute(
+                insert(knowledge_publication),
+                [
+                    {
+                        **scope_values(VALIDATION_SCOPE),
+                        "publication_id": f"kpb_page_{index:04d}",
+                        "review_id": "krv_mysql_pages",
+                        "review_version": 504,
+                        "version": 2,
+                        "approval_digest": DIGEST_A,
+                        "source_revision_ids": ["rev_mysql_001"],
+                        "approved_item_ids": [parsed.item_id],
+                        "generation": f"generation-page-{index:04d}",
+                        "published_by": "synthetic-publisher-03",
+                        "published_at": (NOW + timedelta(seconds=index)).replace(tzinfo=None),
+                        "expires_at": (NOW + timedelta(days=30)).replace(tzinfo=None),
+                        "status": "withdrawn",
+                        "withdrawn_by": "synthetic-publisher-03",
+                        "withdrawn_at": (NOW + timedelta(seconds=index + 1)).replace(tzinfo=None),
+                    }
+                    for index in range(502)
+                ],
+            )
+
+        inventory_one = await repository.inventory_page(
+            "krv_mysql_pages", limit=1, after_item_id=None
+        )
+        inventory_two = await repository.inventory_page(
+            "krv_mysql_pages", limit=1, after_item_id=inventory_one.next_cursor
+        )
+        decision_one = await repository.decision_history_page(
+            "krv_mysql_pages", limit=200, after_version=None
+        )
+        decision_two = await repository.decision_history_page(
+            "krv_mysql_pages", limit=200, after_version=decision_one.next_cursor
+        )
+        decision_three = await repository.decision_history_page(
+            "krv_mysql_pages", limit=200, after_version=decision_two.next_cursor
+        )
+        history_one = await repository.history_page(
+            "krv_mysql_pages", limit=200, after_version=None
+        )
+        history_two = await repository.history_page(
+            "krv_mysql_pages", limit=200, after_version=history_one.next_cursor
+        )
+        history_three = await repository.history_page(
+            "krv_mysql_pages", limit=200, after_version=history_two.next_cursor
+        )
+        publication_one = await repository.publication_page(
+            "krv_mysql_pages", limit=200, after_publication_id=None
+        )
+        publication_two = await repository.publication_page(
+            "krv_mysql_pages",
+            limit=200,
+            after_publication_id=publication_one.next_cursor,
+        )
+        publication_three = await repository.publication_page(
+            "krv_mysql_pages",
+            limit=200,
+            after_publication_id=publication_two.next_cursor,
+        )
+
+        assert inventory_one.total_count == inventory_two.total_count == 2
+        assert len(inventory_one.items) == len(inventory_two.items) == 1
+        assert inventory_two.next_cursor is None
+        assert [len(page.items) for page in (decision_one, decision_two, decision_three)] == [
+            200,
+            200,
+            103,
+        ]
+        assert decision_three.total_count == 503 and decision_three.next_cursor is None
+        assert [len(page.items) for page in (history_one, history_two, history_three)] == [
+            200,
+            200,
+            104,
+        ]
+        assert history_three.total_count == 504 and history_three.next_cursor is None
+        assert [
+            len(page.items) for page in (publication_one, publication_two, publication_three)
+        ] == [200, 200, 102]
+        assert publication_three.total_count == 502
+        assert publication_three.next_cursor is None
     finally:
         await engine.dispose()
 

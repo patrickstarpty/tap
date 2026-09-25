@@ -19,6 +19,7 @@ from tap.modules.knowledge.application.review import (
     KnowledgeReviewApplication,
     ProjectionNotReady,
     ReviewCommandConflict,
+    ReviewStateConflict,
 )
 from tap.modules.knowledge.domain.parse_inventory import (
     ParseInventoryItem,
@@ -241,6 +242,17 @@ async def test_publication_cutover_replays_after_restart_and_withdraws_authority
             ),
         )
         assert concurrent[0] == concurrent[1]
+        assert await restarted_repository.current_publication() == concurrent[0]
+
+        with pytest.raises(ReviewStateConflict, match="publication-not-current"):
+            await restarted_application.withdraw_publication(
+                published.publication_id,
+                idempotency_key="withdraw-historical-publication",
+                actor_id="synthetic-publisher-03",
+                expected_version=1,
+                now=NOW + timedelta(seconds=2),
+            )
+        assert await restarted_repository.get_publication(published.publication_id) == published
         assert await restarted_repository.current_publication() == concurrent[0]
 
         await restarted_application.withdraw_publication(

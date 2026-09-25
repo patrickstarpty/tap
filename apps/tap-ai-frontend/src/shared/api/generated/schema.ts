@@ -515,6 +515,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/decision-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Review Decision History */
+        get: operations["knowledge_list_review_decision_history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Review History */
+        get: operations["knowledge_list_review_history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Review Inventory */
+        get: operations["knowledge_list_review_inventory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/comparison": {
         parameters: {
             query?: never;
@@ -542,6 +593,23 @@ export interface paths {
         get?: never;
         /** Update Review Item Decision */
         put: operations["knowledge_update_review_item_decision"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/publications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Review Publications */
+        get: operations["knowledge_list_review_publications"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1719,6 +1787,15 @@ export interface components {
             /** Withdrawnby */
             withdrawnBy?: string | null;
         };
+        /** KnowledgePublicationPage */
+        KnowledgePublicationPage: {
+            /** Items */
+            items: components["schemas"]["KnowledgePublicationDetail"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
+            /** Totalcount */
+            totalCount: number;
+        };
         /** KnowledgePublicationTarget */
         KnowledgePublicationTarget: {
             /** Generation */
@@ -1746,6 +1823,15 @@ export interface components {
          * @enum {string}
          */
         KnowledgeReviewCheckKind: "scope" | "term" | "amount" | "unit" | "exception";
+        /** KnowledgeReviewDecisionPage */
+        KnowledgeReviewDecisionPage: {
+            /** Items */
+            items: components["schemas"]["KnowledgeReviewItemDecisionDetail"][];
+            /** Nextcursor */
+            nextCursor?: number | null;
+            /** Totalcount */
+            totalCount: number;
+        };
         /** KnowledgeReviewDecisionRequest */
         KnowledgeReviewDecisionRequest: {
             checkKind: components["schemas"]["KnowledgeReviewCheckKind"];
@@ -1772,7 +1858,9 @@ export interface components {
             /** Decisionhistory */
             decisionHistory: components["schemas"]["KnowledgeReviewItemDecisionDetail"][];
             /** Decisionhistorynextcursor */
-            decisionHistoryNextCursor?: string | null;
+            decisionHistoryNextCursor?: number | null;
+            /** Decisionhistorytotalcount */
+            decisionHistoryTotalCount: number;
             /** Decisions */
             decisions: components["schemas"]["KnowledgeReviewItemDecisionDetail"][];
             /** Editoractorids */
@@ -1783,10 +1871,16 @@ export interface components {
             history: components["schemas"]["KnowledgeReviewHistoryDetail"][];
             /** Historynextcursor */
             historyNextCursor?: number | null;
+            /** Historytotalcount */
+            historyTotalCount: number;
             inventory: components["schemas"]["KnowledgeReviewInventory"];
             /** Publicationids */
             publicationIds: string[];
+            /** Publicationnextcursor */
+            publicationNextCursor?: string | null;
             publicationTarget: components["schemas"]["KnowledgePublicationTarget"];
+            /** Publicationtotalcount */
+            publicationTotalCount: number;
             /** Reviewid */
             reviewId: string;
             /** Revieweractorid */
@@ -1814,6 +1908,15 @@ export interface components {
             /** Reviewversion */
             reviewVersion: number;
         };
+        /** KnowledgeReviewHistoryPage */
+        KnowledgeReviewHistoryPage: {
+            /** Items */
+            items: components["schemas"]["KnowledgeReviewHistoryDetail"][];
+            /** Nextcursor */
+            nextCursor?: number | null;
+            /** Totalcount */
+            totalCount: number;
+        };
         /** KnowledgeReviewInventory */
         KnowledgeReviewInventory: {
             /** Excludedcount */
@@ -1828,6 +1931,8 @@ export interface components {
             nextCursor?: string | null;
             /** Parsedcount */
             parsedCount: number;
+            /** Totalcount */
+            totalCount: number;
         };
         /** KnowledgeReviewInventoryItem */
         KnowledgeReviewInventoryItem: {
@@ -5640,6 +5745,219 @@ export interface operations {
             };
         };
     };
+    knowledge_list_review_decision_history: {
+        parameters: {
+            query?: {
+                limit?: number;
+                afterVersion?: number | null;
+            };
+            header?: never;
+            path: {
+                review_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeReviewDecisionPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_list_review_history: {
+        parameters: {
+            query?: {
+                limit?: number;
+                afterVersion?: number | null;
+            };
+            header?: never;
+            path: {
+                review_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeReviewHistoryPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_list_review_inventory: {
+        parameters: {
+            query?: {
+                limit?: number;
+                afterItemId?: string | null;
+            };
+            header?: never;
+            path: {
+                review_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeReviewInventory"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     knowledge_compare_review_item: {
         parameters: {
             query?: never;
@@ -5735,6 +6053,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["KnowledgeReviewDetail"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_list_review_publications: {
+        parameters: {
+            query?: {
+                limit?: number;
+                afterPublicationId?: string | null;
+            };
+            header?: never;
+            path: {
+                review_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePublicationPage"];
                 };
             };
             /** @description Project scope or authorization denied */

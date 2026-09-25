@@ -2713,6 +2713,43 @@
         "title": "KnowledgePublicationDetail",
         "type": "object"
       },
+      "KnowledgePublicationPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgePublicationDetail"
+            },
+            "maxItems": 100,
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          },
+          "totalCount": {
+            "minimum": 0.0,
+            "title": "Totalcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "totalCount"
+        ],
+        "title": "KnowledgePublicationPage",
+        "type": "object"
+      },
       "KnowledgePublicationTarget": {
         "additionalProperties": false,
         "properties": {
@@ -2796,6 +2833,42 @@
         ],
         "title": "KnowledgeReviewCheckKind",
         "type": "string"
+      },
+      "KnowledgeReviewDecisionPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeReviewItemDecisionDetail"
+            },
+            "maxItems": 100,
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          },
+          "totalCount": {
+            "minimum": 0.0,
+            "title": "Totalcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "totalCount"
+        ],
+        "title": "KnowledgeReviewDecisionPage",
+        "type": "object"
       },
       "KnowledgeReviewDecisionRequest": {
         "additionalProperties": false,
@@ -2882,22 +2955,26 @@
             "items": {
               "$ref": "#/components/schemas/KnowledgeReviewItemDecisionDetail"
             },
-            "maxItems": 500,
+            "maxItems": 100,
             "title": "Decisionhistory",
             "type": "array"
           },
           "decisionHistoryNextCursor": {
             "anyOf": [
               {
-                "maxLength": 256,
-                "minLength": 1,
-                "type": "string"
+                "minimum": 1.0,
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Decisionhistorynextcursor"
+          },
+          "decisionHistoryTotalCount": {
+            "minimum": 0.0,
+            "title": "Decisionhistorytotalcount",
+            "type": "integer"
           },
           "decisions": {
             "items": {
@@ -2928,7 +3005,7 @@
             "items": {
               "$ref": "#/components/schemas/KnowledgeReviewHistoryDetail"
             },
-            "maxItems": 500,
+            "maxItems": 100,
             "title": "History",
             "type": "array"
           },
@@ -2944,6 +3021,11 @@
             ],
             "title": "Historynextcursor"
           },
+          "historyTotalCount": {
+            "minimum": 0.0,
+            "title": "Historytotalcount",
+            "type": "integer"
+          },
           "inventory": {
             "$ref": "#/components/schemas/KnowledgeReviewInventory"
           },
@@ -2953,12 +3035,30 @@
               "minLength": 1,
               "type": "string"
             },
-            "maxItems": 500,
+            "maxItems": 100,
             "title": "Publicationids",
             "type": "array"
           },
+          "publicationNextCursor": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publicationnextcursor"
+          },
           "publicationTarget": {
             "$ref": "#/components/schemas/KnowledgePublicationTarget"
+          },
+          "publicationTotalCount": {
+            "minimum": 0.0,
+            "title": "Publicationtotalcount",
+            "type": "integer"
           },
           "reviewId": {
             "maxLength": 256,
@@ -3012,8 +3112,11 @@
           "inventory",
           "decisions",
           "decisionHistory",
+          "decisionHistoryTotalCount",
           "history",
+          "historyTotalCount",
           "publicationIds",
+          "publicationTotalCount",
           "publicationTarget",
           "allowedActions"
         ],
@@ -3096,6 +3199,42 @@
         "title": "KnowledgeReviewHistoryDetail",
         "type": "object"
       },
+      "KnowledgeReviewHistoryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeReviewHistoryDetail"
+            },
+            "maxItems": 100,
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          },
+          "totalCount": {
+            "minimum": 0.0,
+            "title": "Totalcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "totalCount"
+        ],
+        "title": "KnowledgeReviewHistoryPage",
+        "type": "object"
+      },
       "KnowledgeReviewInventory": {
         "additionalProperties": false,
         "properties": {
@@ -3113,7 +3252,7 @@
             "items": {
               "$ref": "#/components/schemas/KnowledgeReviewInventoryItem"
             },
-            "maxItems": 500,
+            "maxItems": 100,
             "title": "Items",
             "type": "array"
           },
@@ -3139,10 +3278,16 @@
             "minimum": 0.0,
             "title": "Parsedcount",
             "type": "integer"
+          },
+          "totalCount": {
+            "minimum": 0.0,
+            "title": "Totalcount",
+            "type": "integer"
           }
         },
         "required": [
           "items",
+          "totalCount",
           "parsedCount",
           "failedCount",
           "needsReviewCount",
@@ -11212,6 +11357,373 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/decision-history": {
+      "get": {
+        "operationId": "knowledge_list_review_decision_history",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "title": "Review Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "afterVersion",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Afterversion"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeReviewDecisionPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          }
+        },
+        "summary": "List Review Decision History",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/history": {
+      "get": {
+        "operationId": "knowledge_list_review_history",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "title": "Review Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "afterVersion",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Afterversion"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeReviewHistoryPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          }
+        },
+        "summary": "List Review History",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/inventory": {
+      "get": {
+        "operationId": "knowledge_list_review_inventory",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "title": "Review Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "afterItemId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Afteritemid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeReviewInventory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          }
+        },
+        "summary": "Get Review Inventory",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/comparison": {
       "get": {
         "operationId": "knowledge_compare_review_item",
@@ -11430,6 +11942,129 @@
           }
         },
         "summary": "Update Review Item Decision",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/publications": {
+      "get": {
+        "operationId": "knowledge_list_review_publications",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "title": "Review Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "afterPublicationId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Afterpublicationid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgePublicationPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          }
+        },
+        "summary": "List Review Publications",
         "tags": [
           "knowledge"
         ]

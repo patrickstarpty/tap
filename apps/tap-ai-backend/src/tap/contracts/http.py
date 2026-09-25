@@ -323,7 +323,8 @@ class KnowledgeReviewInventoryItem(ContractModel):
 
 
 class KnowledgeReviewInventory(ContractModel):
-    items: Annotated[list[KnowledgeReviewInventoryItem], Field(max_length=500)]
+    items: Annotated[list[KnowledgeReviewInventoryItem], Field(max_length=100)]
+    total_count: Annotated[StrictInt, Field(ge=0)]
     parsed_count: Annotated[StrictInt, Field(ge=0)]
     failed_count: Annotated[StrictInt, Field(ge=0)]
     needs_review_count: Annotated[StrictInt, Field(ge=0)]
@@ -353,6 +354,24 @@ class KnowledgeReviewHistoryDetail(ContractModel):
     decision_digest: CanonicalSha256 | None = None
 
 
+class KnowledgeReviewDecisionPage(ContractModel):
+    items: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=100)]
+    total_count: Annotated[StrictInt, Field(ge=0)]
+    next_cursor: Annotated[StrictInt, Field(ge=1)] | None = None
+
+
+class KnowledgeReviewHistoryPage(ContractModel):
+    items: Annotated[list[KnowledgeReviewHistoryDetail], Field(max_length=100)]
+    total_count: Annotated[StrictInt, Field(ge=0)]
+    next_cursor: Annotated[StrictInt, Field(ge=1)] | None = None
+
+
+class KnowledgePublicationPage(ContractModel):
+    items: Annotated[list[KnowledgePublicationDetail], Field(max_length=100)]
+    total_count: Annotated[StrictInt, Field(ge=0)]
+    next_cursor: ShortIdentifier | None = None
+
+
 class KnowledgePublicationTarget(ContractModel):
     status: Literal["ready", "unavailable"]
     generation: ShortIdentifier | None = None
@@ -366,11 +385,15 @@ class KnowledgeReviewDetail(KnowledgeReviewSummary):
     approved_item_ids: Annotated[list[ShortIdentifier], Field(max_length=10_000)]
     inventory: KnowledgeReviewInventory
     decisions: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=500)]
-    decision_history: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=500)]
-    decision_history_next_cursor: ShortIdentifier | None = None
-    history: Annotated[list[KnowledgeReviewHistoryDetail], Field(max_length=500)]
+    decision_history: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=100)]
+    decision_history_total_count: Annotated[StrictInt, Field(ge=0)]
+    decision_history_next_cursor: Annotated[StrictInt, Field(ge=1)] | None = None
+    history: Annotated[list[KnowledgeReviewHistoryDetail], Field(max_length=100)]
+    history_total_count: Annotated[StrictInt, Field(ge=0)]
     history_next_cursor: Annotated[StrictInt, Field(ge=1)] | None = None
-    publication_ids: Annotated[list[ShortIdentifier], Field(max_length=500)]
+    publication_ids: Annotated[list[ShortIdentifier], Field(max_length=100)]
+    publication_total_count: Annotated[StrictInt, Field(ge=0)]
+    publication_next_cursor: ShortIdentifier | None = None
     current_publication: KnowledgePublicationDetail | None = None
     publication_target: KnowledgePublicationTarget
     allowed_actions: Annotated[list[KnowledgeReviewAction], Field(max_length=7)]

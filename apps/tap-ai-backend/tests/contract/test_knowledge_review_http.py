@@ -27,6 +27,42 @@ class ReviewHttpSpy:
         self.calls.append(("get", review_id))
         return review_detail_payload()
 
+    async def get_review_inventory(  # type: ignore[no-untyped-def]
+        self, review_id, limit=100, after_item_id=None
+    ):
+        self.calls.append(("inventory", review_id, limit, after_item_id))
+        return {
+            "items": review_detail_payload()["inventory"]["items"][:1],
+            "totalCount": 2,
+            "parsedCount": 1,
+            "failedCount": 1,
+            "needsReviewCount": 0,
+            "excludedCount": 0,
+            "nextCursor": "pi_001",
+        }
+
+    async def list_review_decision_history(  # type: ignore[no-untyped-def]
+        self, review_id, limit=100, after_version=None
+    ):
+        self.calls.append(("decision-history", review_id, limit, after_version))
+        return {"items": [], "totalCount": 503, "nextCursor": 501}
+
+    async def list_review_history(  # type: ignore[no-untyped-def]
+        self, review_id, limit=100, after_version=None
+    ):
+        self.calls.append(("history", review_id, limit, after_version))
+        return {"items": [], "totalCount": 507, "nextCursor": 500}
+
+    async def list_review_publications(  # type: ignore[no-untyped-def]
+        self, review_id, limit=100, after_publication_id=None
+    ):
+        self.calls.append(("publications", review_id, limit, after_publication_id))
+        return {
+            "items": [publication_payload()],
+            "totalCount": 502,
+            "nextCursor": "kpb_001",
+        }
+
     async def get_publication(self, publication_id):  # type: ignore[no-untyped-def]
         self.calls.append(("get-publication", publication_id))
         return publication_payload()
@@ -155,6 +191,7 @@ def review_detail_payload(*, status: str = "checking", version: int = 3) -> dict
                     "decisionActorId": None,
                 },
             ],
+            "totalCount": 2,
             "parsedCount": 1,
             "failedCount": 1,
             "needsReviewCount": 0,
@@ -162,8 +199,14 @@ def review_detail_payload(*, status: str = "checking", version: int = 3) -> dict
         },
         "decisions": [],
         "decisionHistory": [],
+        "decisionHistoryTotalCount": 0,
+        "decisionHistoryNextCursor": None,
         "history": [],
+        "historyTotalCount": 0,
+        "historyNextCursor": None,
         "publicationIds": ["kpb_historical", "kpb_001"],
+        "publicationTotalCount": 2,
+        "publicationNextCursor": None,
         "currentPublication": None,
         "publicationTarget": {
             "status": "ready",
@@ -293,6 +336,33 @@ def test_review_routes_are_in_the_canonical_project_api():
     assert "get" in paths["/api/v1/projects/{project_id}/knowledge/published-sources"]
 
 
+def test_review_child_collections_expose_consumable_stable_cursors_and_totals():
+    http, spy = client()
+
+    inventory = http.get(BASE + "/inventory", params={"limit": 1, "afterItemId": "pi_000"})
+    decisions = http.get(BASE + "/decision-history", params={"limit": 25, "afterVersion": 500})
+    history = http.get(BASE + "/history", params={"limit": 20, "afterVersion": 499})
+    publications = http.get(
+        BASE + "/publications",
+        params={"limit": 10, "afterPublicationId": "kpb_000"},
+    )
+
+    assert inventory.status_code == decisions.status_code == history.status_code == 200
+    assert publications.status_code == 200
+    assert inventory.json()["totalCount"] == 2
+    assert inventory.json()["nextCursor"] == "pi_001"
+    assert decisions.json() == {"items": [], "totalCount": 503, "nextCursor": 501}
+    assert history.json() == {"items": [], "totalCount": 507, "nextCursor": 500}
+    assert publications.json()["totalCount"] == 502
+    assert publications.json()["nextCursor"] == "kpb_001"
+    assert spy.calls == [
+        ("inventory", "krv_001", 1, "pi_000"),
+        ("decision-history", "krv_001", 25, 500),
+        ("history", "krv_001", 20, 499),
+        ("publications", "krv_001", 10, "kpb_000"),
+    ]
+
+
 def test_review_read_model_survives_refresh_and_exposes_partial_failure_and_capabilities():
     http, spy = client()
 
@@ -310,6 +380,7 @@ def test_review_read_model_survives_refresh_and_exposes_partial_failure_and_capa
     assert listed.status_code == 200
     assert listed.json()["items"][0]["inventory"] == {
         "items": listed.json()["items"][0]["inventory"]["items"],
+        "totalCount": 2,
         "parsedCount": 1,
         "failedCount": 1,
         "needsReviewCount": 0,
@@ -330,15 +401,16 @@ def test_review_read_model_survives_refresh_and_exposes_partial_failure_and_capa
     ]
 
 
-def test_review_contract_bounds_embedded_collections_to_500_items():
+def test_review_contract_bounds_embedded_collections_and_exposes_page_shapes():
     schemas = create_app().openapi()["components"]["schemas"]
     detail = schemas["KnowledgeReviewDetail"]["properties"]
     inventory = schemas["KnowledgeReviewInventory"]["properties"]
 
-    assert inventory["items"]["maxItems"] == 500
+    assert inventory["items"]["maxItems"] == 100
     assert detail["decisions"]["maxItems"] == 500
-    assert detail["decisionHistory"]["maxItems"] == 500
-    assert detail["history"]["maxItems"] == 500
+    assert detail["decisionHistory"]["maxItems"] == 100
+    assert detail["history"]["maxItems"] == 100
+    assert detail["publicationIds"]["maxItems"] == 100
 
 
 def test_review_mutations_all_carry_versions_and_return_reloadable_state():

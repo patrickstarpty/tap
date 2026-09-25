@@ -7,12 +7,15 @@ from datetime import UTC, datetime
 
 from tap.contracts.http import (
     KnowledgePublicationDetail,
+    KnowledgePublicationPage,
     KnowledgePublicationTarget,
     KnowledgeReviewAction,
     KnowledgeReviewCheckKind,
+    KnowledgeReviewDecisionPage,
     KnowledgeReviewDecisionStatus,
     KnowledgeReviewDetail,
     KnowledgeReviewHistoryDetail,
+    KnowledgeReviewHistoryPage,
     KnowledgeReviewInventory,
     KnowledgeReviewInventoryItem,
     KnowledgeReviewItemComparison,
@@ -31,6 +34,7 @@ from tap.modules.access.domain.policy import PolicyUnavailable
 from tap.modules.knowledge.application.review import (
     KnowledgeReviewApplication,
     KnowledgeReviewRead,
+    ReviewInventoryPageRead,
 )
 from tap.modules.knowledge.domain.review import (
     KnowledgePublication,
@@ -77,6 +81,55 @@ class KnowledgeReviewHttpService:
 
     async def get_review(self, review_id: str) -> KnowledgeReviewDetail:
         return await self._review_detail(await self._application.get_review(review_id))
+
+    async def get_review_inventory(
+        self, review_id: str, limit: int = 100, after_item_id: str | None = None
+    ) -> KnowledgeReviewInventory:
+        page = await self._application.inventory_page(
+            review_id, limit=limit, after_item_id=after_item_id
+        )
+        return _inventory_page_detail(page)
+
+    async def list_review_decision_history(
+        self, review_id: str, limit: int = 100, after_version: int | None = None
+    ) -> KnowledgeReviewDecisionPage:
+        page = await self._application.decision_history_page(
+            review_id, limit=limit, after_version=after_version
+        )
+        return KnowledgeReviewDecisionPage(
+            items=[_decision_detail(item) for item in page.items],
+            total_count=page.total_count,
+            next_cursor=page.next_cursor,
+        )
+
+    async def list_review_history(
+        self, review_id: str, limit: int = 100, after_version: int | None = None
+    ) -> KnowledgeReviewHistoryPage:
+        page = await self._application.history_page(
+            review_id, limit=limit, after_version=after_version
+        )
+        return KnowledgeReviewHistoryPage(
+            items=[_history_detail(item) for item in page.items],
+            total_count=page.total_count,
+            next_cursor=page.next_cursor,
+        )
+
+    async def list_review_publications(
+        self,
+        review_id: str,
+        limit: int = 100,
+        after_publication_id: str | None = None,
+    ) -> KnowledgePublicationPage:
+        page = await self._application.publication_page(
+            review_id,
+            limit=limit,
+            after_publication_id=after_publication_id,
+        )
+        return KnowledgePublicationPage(
+            items=[_publication_detail(item) for item in page.items],
+            total_count=page.total_count,
+            next_cursor=page.next_cursor,
+        )
 
     async def get_publication(self, publication_id: str) -> KnowledgePublicationDetail:
         return _publication_detail(await self._application.get_publication(publication_id))
@@ -197,62 +250,38 @@ class KnowledgeReviewHttpService:
 
     async def _review_detail(self, value: KnowledgeReviewRead) -> KnowledgeReviewDetail:
         revision = value.revision
-        inventory = await self._application.list_inventory(revision.review_id)
-        publications = await self._application.list_publications(revision.review_id)
+        inventory = await self._application.inventory_page(
+            revision.review_id, limit=100, after_item_id=None
+        )
+        decision_history = await self._application.decision_history_page(
+            revision.review_id, limit=100, after_version=None
+        )
+        history = await self._application.history_page(
+            revision.review_id, limit=100, after_version=None
+        )
+        publications = await self._application.publication_page(
+            revision.review_id, limit=100, after_publication_id=None
+        )
         current = await self._application.current_publication_for_review(revision)
         generation = await self._application.publication_generation(revision)
         allowed = await self._allowed_actions(revision, current, generation)
-        statuses = [item.status for item in inventory]
         return KnowledgeReviewDetail(
             **_review_summary(revision).model_dump(),
             source_revision_ids=list(revision.source_revision_ids),
             editor_actor_ids=list(revision.editor_actor_ids),
             blocking_item_ids=list(revision.blocking_item_ids),
             approved_item_ids=list(revision.approved_item_ids),
-            inventory=KnowledgeReviewInventory(
-                items=[
-                    KnowledgeReviewInventoryItem(
-                        source_revision_id=item.source_revision_id,
-                        item_id=item.item_id,
-                        attempt=item.attempt,
-                        kind=item.kind,  # type: ignore[arg-type]
-                        locator=item.locator,
-                        status=item.status,  # type: ignore[arg-type]
-                        artifact_digest=item.artifact_digest,
-                        reason=item.reason,
-                        decision_actor_id=item.decision_actor_id,
-                    )
-                    for item in inventory[:500]
-                ],
-                parsed_count=statuses.count("parsed"),
-                failed_count=statuses.count("failed"),
-                needs_review_count=statuses.count("needs_review"),
-                excluded_count=statuses.count("excluded"),
-                next_cursor=inventory[499].item_id if len(inventory) > 500 else None,
-            ),
+            inventory=_inventory_page_detail(inventory),
             decisions=[_decision_detail(item) for item in value.decisions[:500]],
-            decision_history=[_decision_detail(item) for item in value.decision_history[-500:]],
-            decision_history_next_cursor=(
-                value.decision_history[-500].decision_id
-                if len(value.decision_history) > 500
-                else None
-            ),
-            history=[
-                KnowledgeReviewHistoryDetail(
-                    review_version=item.review_version,
-                    action=item.action,
-                    actor_id=item.actor_id,
-                    occurred_at=item.occurred_at.isoformat(),
-                    item_id=item.item_id,
-                    decision_id=item.decision_id,
-                    decision_digest=item.decision_digest,
-                )
-                for item in value.history[-500:]
-            ],
-            history_next_cursor=(
-                value.history[-500].review_version if len(value.history) > 500 else None
-            ),
-            publication_ids=[item.publication_id for item in publications[-500:]],
+            decision_history=[_decision_detail(item) for item in decision_history.items],
+            decision_history_total_count=decision_history.total_count,
+            decision_history_next_cursor=decision_history.next_cursor,
+            history=[_history_detail(item) for item in history.items],
+            history_total_count=history.total_count,
+            history_next_cursor=history.next_cursor,
+            publication_ids=[item.publication_id for item in publications.items],
+            publication_total_count=publications.total_count,
+            publication_next_cursor=publications.next_cursor,
             current_publication=None if current is None else _publication_detail(current),
             publication_target=KnowledgePublicationTarget(
                 status="ready" if generation is not None else "unavailable",
@@ -363,6 +392,43 @@ def _decision_detail(value) -> KnowledgeReviewItemDecisionDetail:  # type: ignor
         actor_id=value.actor_id,
         review_version=value.review_version,
         decided_at=value.decided_at.isoformat(),
+    )
+
+
+def _history_detail(value) -> KnowledgeReviewHistoryDetail:  # type: ignore[no-untyped-def]
+    return KnowledgeReviewHistoryDetail(
+        review_version=value.review_version,
+        action=value.action,
+        actor_id=value.actor_id,
+        occurred_at=value.occurred_at.isoformat(),
+        item_id=value.item_id,
+        decision_id=value.decision_id,
+        decision_digest=value.decision_digest,
+    )
+
+
+def _inventory_page_detail(value: ReviewInventoryPageRead) -> KnowledgeReviewInventory:
+    return KnowledgeReviewInventory(
+        items=[
+            KnowledgeReviewInventoryItem(
+                source_revision_id=item.source_revision_id,
+                item_id=item.item_id,
+                attempt=item.attempt,
+                kind=item.kind,  # type: ignore[arg-type]
+                locator=item.locator,
+                status=item.status,  # type: ignore[arg-type]
+                artifact_digest=item.artifact_digest,
+                reason=item.reason,
+                decision_actor_id=item.decision_actor_id,
+            )
+            for item in value.items
+        ],
+        total_count=value.total_count,
+        parsed_count=value.parsed_count,
+        failed_count=value.failed_count,
+        needs_review_count=value.needs_review_count,
+        excluded_count=value.excluded_count,
+        next_cursor=value.next_cursor,
     )
 
 

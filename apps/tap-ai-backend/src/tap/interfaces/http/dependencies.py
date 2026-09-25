@@ -19,7 +19,11 @@ from tap.contracts.http import (
     HealthComponentState,
     HealthRemediationCode,
     KnowledgePublicationDetail,
+    KnowledgePublicationPage,
+    KnowledgeReviewDecisionPage,
     KnowledgeReviewDetail,
+    KnowledgeReviewHistoryPage,
+    KnowledgeReviewInventory,
     KnowledgeReviewItemComparison,
     KnowledgeReviewPage,
     KnowledgeReviewSummary,
@@ -103,6 +107,21 @@ class KnowledgeReviewHttpService(Protocol):
         after_review_id: str | None = None,
     ) -> KnowledgeReviewPage: ...
     async def get_review(self, review_id: str) -> KnowledgeReviewDetail: ...
+    async def get_review_inventory(
+        self, review_id: str, limit: int = 100, after_item_id: str | None = None
+    ) -> KnowledgeReviewInventory: ...
+    async def list_review_decision_history(
+        self, review_id: str, limit: int = 100, after_version: int | None = None
+    ) -> KnowledgeReviewDecisionPage: ...
+    async def list_review_history(
+        self, review_id: str, limit: int = 100, after_version: int | None = None
+    ) -> KnowledgeReviewHistoryPage: ...
+    async def list_review_publications(
+        self,
+        review_id: str,
+        limit: int = 100,
+        after_publication_id: str | None = None,
+    ) -> KnowledgePublicationPage: ...
     async def get_publication(self, publication_id: str) -> KnowledgePublicationDetail: ...
     async def get_current_publication(self) -> KnowledgePublicationDetail: ...
     async def list_published_sources(self) -> PublishedKnowledgeSourcePage: ...

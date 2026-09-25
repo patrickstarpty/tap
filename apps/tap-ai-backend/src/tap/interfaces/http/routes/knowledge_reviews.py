@@ -4,9 +4,13 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from tap.contracts.http import (
     KnowledgePublicationDetail,
+    KnowledgePublicationPage,
     KnowledgePublishRequest,
+    KnowledgeReviewDecisionPage,
     KnowledgeReviewDecisionRequest,
     KnowledgeReviewDetail,
+    KnowledgeReviewHistoryPage,
+    KnowledgeReviewInventory,
     KnowledgeReviewItemComparison,
     KnowledgeReviewPage,
     KnowledgeReviewSummary,
@@ -58,6 +62,78 @@ async def list_reviews(
 )
 async def get_review(request: Request, review_id: str) -> KnowledgeReviewDetail:
     return await knowledge_review_service(request).get_review(review_id)
+
+
+@router.get(
+    "/knowledge/reviews/{review_id}/inventory",
+    operation_id="knowledge_list_review_inventory",
+    response_model=KnowledgeReviewInventory,
+    dependencies=[Depends(project_authorization("knowledge.read", resource_id_param="review_id"))],
+)
+async def get_review_inventory(
+    request: Request,
+    review_id: str,
+    limit: int = Query(default=100, ge=1, le=100),
+    after_item_id: str | None = Query(
+        default=None, alias="afterItemId", min_length=1, max_length=256
+    ),
+) -> KnowledgeReviewInventory:
+    return await knowledge_review_service(request).get_review_inventory(
+        review_id, limit, after_item_id
+    )
+
+
+@router.get(
+    "/knowledge/reviews/{review_id}/decision-history",
+    operation_id="knowledge_list_review_decision_history",
+    response_model=KnowledgeReviewDecisionPage,
+    dependencies=[Depends(project_authorization("knowledge.read", resource_id_param="review_id"))],
+)
+async def list_review_decision_history(
+    request: Request,
+    review_id: str,
+    limit: int = Query(default=100, ge=1, le=100),
+    after_version: int | None = Query(default=None, alias="afterVersion", ge=1),
+) -> KnowledgeReviewDecisionPage:
+    return await knowledge_review_service(request).list_review_decision_history(
+        review_id, limit, after_version
+    )
+
+
+@router.get(
+    "/knowledge/reviews/{review_id}/history",
+    operation_id="knowledge_list_review_history",
+    response_model=KnowledgeReviewHistoryPage,
+    dependencies=[Depends(project_authorization("knowledge.read", resource_id_param="review_id"))],
+)
+async def list_review_history(
+    request: Request,
+    review_id: str,
+    limit: int = Query(default=100, ge=1, le=100),
+    after_version: int | None = Query(default=None, alias="afterVersion", ge=1),
+) -> KnowledgeReviewHistoryPage:
+    return await knowledge_review_service(request).list_review_history(
+        review_id, limit, after_version
+    )
+
+
+@router.get(
+    "/knowledge/reviews/{review_id}/publications",
+    operation_id="knowledge_list_review_publications",
+    response_model=KnowledgePublicationPage,
+    dependencies=[Depends(project_authorization("knowledge.read", resource_id_param="review_id"))],
+)
+async def list_review_publications(
+    request: Request,
+    review_id: str,
+    limit: int = Query(default=100, ge=1, le=100),
+    after_publication_id: str | None = Query(
+        default=None, alias="afterPublicationId", min_length=1, max_length=256
+    ),
+) -> KnowledgePublicationPage:
+    return await knowledge_review_service(request).list_review_publications(
+        review_id, limit, after_publication_id
+    )
 
 
 @router.get(
