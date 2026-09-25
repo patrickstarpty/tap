@@ -3482,6 +3482,22 @@
         "title": "KnowledgeReviewItemDecisionDetail",
         "type": "object"
       },
+      "KnowledgeReviewOpenRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "sourceRevisionId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Sourcerevisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceRevisionId"
+        ],
+        "title": "KnowledgeReviewOpenRequest",
+        "type": "object"
+      },
       "KnowledgeReviewPage": {
         "additionalProperties": false,
         "properties": {
@@ -10228,6 +10244,120 @@
           }
         },
         "summary": "Retry Document",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/review": {
+      "post": {
+        "operationId": "knowledge_open_document_review",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeReviewOpenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeReviewDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          }
+        },
+        "summary": "Open Document Review",
         "tags": [
           "knowledge"
         ]

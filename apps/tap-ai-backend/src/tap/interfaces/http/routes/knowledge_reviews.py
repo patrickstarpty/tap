@@ -12,6 +12,7 @@ from tap.contracts.http import (
     KnowledgeReviewHistoryPage,
     KnowledgeReviewInventory,
     KnowledgeReviewItemComparison,
+    KnowledgeReviewOpenRequest,
     KnowledgeReviewPage,
     KnowledgeReviewSummary,
     PublishedKnowledgeSourcePage,
@@ -31,6 +32,25 @@ router = APIRouter(
         for code in (404, 409, 422, 503)
     },
 )
+
+
+@router.post(
+    "/knowledge/documents/{document_id}/review",
+    operation_id="knowledge_open_document_review",
+    response_model=KnowledgeReviewDetail,
+    dependencies=[
+        Depends(project_authorization("knowledge.review.edit", resource_id_param="document_id"))
+    ],
+)
+async def open_document_review(
+    request: Request,
+    document_id: str,
+    body: KnowledgeReviewOpenRequest,
+    key: str = Depends(source_command_key),
+) -> KnowledgeReviewDetail:
+    return await knowledge_review_service(request).open_review(
+        document_id, body.source_revision_id, key
+    )
 
 
 @router.get(

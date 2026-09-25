@@ -106,6 +106,9 @@ class KnowledgeReviewHttpService(Protocol):
         limit: int = 50,
         after_review_id: str | None = None,
     ) -> KnowledgeReviewPage: ...
+    async def open_review(
+        self, document_id: str, source_revision_id: str, key: str
+    ) -> KnowledgeReviewDetail: ...
     async def get_review(self, review_id: str) -> KnowledgeReviewDetail: ...
     async def get_review_inventory(
         self, review_id: str, limit: int = 100, after_item_id: str | None = None

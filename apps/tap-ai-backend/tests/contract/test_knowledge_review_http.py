@@ -17,6 +17,12 @@ class ReviewHttpSpy:
     def __init__(self) -> None:
         self.calls: list[tuple[object, ...]] = []
 
+    async def open_review(  # type: ignore[no-untyped-def]
+        self, document_id, source_revision_id, key
+    ):
+        self.calls.append(("open", document_id, source_revision_id, key))
+        return review_detail_payload(status="checking", version=1)
+
     async def list_reviews(  # type: ignore[no-untyped-def]
         self, source_revision_id, limit=50, after_review_id=None
     ):
@@ -226,6 +232,12 @@ class RecordingPolicy:
         return AuthorizationDecision(True, "test-allowed")
 
 
+class DenyPolicy(RecordingPolicy):
+    async def authorize(self, scope, action, resource):  # type: ignore[no-untyped-def]
+        self.calls.append((action, resource.kind, resource.resource_id))
+        return AuthorizationDecision(False, "test-denied")
+
+
 def client(policy=None) -> tuple[TestClient, ReviewHttpSpy]:  # type: ignore[no-untyped-def]
     spy = ReviewHttpSpy()
     base = validation_http_services()
@@ -269,6 +281,55 @@ def test_route_authorization_uses_the_same_review_and_publication_resource_ids_a
         "knowledge-publication",
         "kpb_001",
     ) in policy.calls
+
+
+def test_ready_document_review_is_opened_idempotently_without_client_authority():
+    policy = RecordingPolicy()
+    http, spy = client(policy)
+    path = "/api/v1/projects/tapper-demo/knowledge/documents/doc_001/review"
+
+    missing_key = http.post(
+        path,
+        headers={"Origin": ORIGIN},
+        json={"sourceRevisionId": "rev_001"},
+    )
+    opened = http.post(
+        path,
+        headers={"Origin": ORIGIN, "Idempotency-Key": "open-review-001"},
+        json={"sourceRevisionId": "rev_001"},
+    )
+    caller_actor = http.post(
+        path,
+        headers={"Origin": ORIGIN, "Idempotency-Key": "open-review-actor"},
+        json={"sourceRevisionId": "rev_001", "actorId": "forged-editor"},
+    )
+
+    assert missing_key.status_code == 422
+    assert opened.status_code == 200
+    assert opened.json()["status"] == "checking"
+    assert opened.json()["version"] == 1
+    assert caller_actor.status_code == 403
+    assert spy.calls == [("open", "doc_001", "rev_001", "open-review-001")]
+    assert (
+        "knowledge.review.edit",
+        "knowledge-review",
+        "doc_001",
+    ) in policy.calls
+
+
+def test_open_review_authorization_denial_does_not_reach_the_service():
+    policy = DenyPolicy()
+    http, spy = client(policy)
+
+    response = http.post(
+        "/api/v1/projects/tapper-demo/knowledge/documents/doc_001/review",
+        headers={"Origin": ORIGIN, "Idempotency-Key": "open-review-denied"},
+        json={"sourceRevisionId": "rev_001"},
+    )
+
+    assert response.status_code == 403
+    assert spy.calls == []
+    assert policy.calls == [("knowledge.review.edit", "knowledge-review", "doc_001")]
 
 
 def test_review_http_preserves_optimistic_version_and_idempotent_publish_intent():

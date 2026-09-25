@@ -64,6 +64,7 @@ from tap.modules.knowledge.domain.review import (
     ReviewStatus,
     canonical_digest,
     review_dependency_digest,
+    review_id_for,
 )
 from tap.modules.knowledge.ports.documents import ArtifactLocator
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
@@ -313,6 +314,256 @@ class MysqlKnowledgeReviewRepository:
     ) -> None:
         self._sessions = sessions
         self._scope = require_project_scope(scope)
+
+    async def create_or_open_review(
+        self,
+        *,
+        document_id: str,
+        source_revision_id: str,
+        actor_id: str,
+        expires_at: datetime,
+        command_key: str,
+        command_digest: str,
+        now: datetime,
+    ) -> KnowledgeReviewRevision:
+        if actor_id != self._scope.actor_id:
+            raise ReviewStateConflict("scope-mismatch")
+        async with self._sessions() as session, session.begin():
+            await self._lock_project(session)
+            replay_id = await self._locked_open_command(session, command_key, command_digest)
+            if replay_id is not None:
+                replay = await self._locked_review(session, replay_id)
+                if replay is None:
+                    raise ReviewStateConflict("review-command-result-missing")
+                return replay
+
+            authority = (
+                (
+                    await session.execute(
+                        select(
+                            knowledge_document.c.status,
+                            knowledge_document.c.stage,
+                            knowledge_document_revision.c.revision_id,
+                            knowledge_document_revision.c.source_content_hash,
+                            knowledge_document_revision.c.parse_inventory_attempt,
+                            knowledge_document_revision.c.parser_config_digest,
+                            knowledge_document_revision.c.parse_inventory_digest,
+                            knowledge_document_revision.c.chunk_manifest_digest,
+                            knowledge_document_revision.c.projection_digest,
+                        )
+                        .select_from(
+                            knowledge_document.join(
+                                knowledge_source,
+                                (knowledge_source.c.source_id == knowledge_document.c.source_id)
+                                & (
+                                    knowledge_source.c.enterprise_id
+                                    == knowledge_document.c.enterprise_id
+                                )
+                                & (
+                                    knowledge_source.c.project_id == knowledge_document.c.project_id
+                                ),
+                            ).join(
+                                knowledge_document_revision,
+                                (
+                                    knowledge_document_revision.c.document_id
+                                    == knowledge_document.c.document_id
+                                )
+                                & (
+                                    knowledge_document_revision.c.enterprise_id
+                                    == knowledge_document.c.enterprise_id
+                                )
+                                & (
+                                    knowledge_document_revision.c.project_id
+                                    == knowledge_document.c.project_id
+                                ),
+                            )
+                        )
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            *scope_predicates(knowledge_source, self._scope),
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_document.c.document_id == document_id,
+                            knowledge_document.c.current_revision_id == source_revision_id,
+                            knowledge_document_revision.c.revision_id == source_revision_id,
+                            knowledge_document.c.activated_at.is_not(None),
+                            knowledge_document.c.deleted_at.is_(None),
+                            knowledge_source.c.deleted_at.is_(None),
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if authority is None:
+                raise ReviewStateConflict("review-source-not-current")
+
+            existing_rows = (
+                (
+                    await session.execute(
+                        select(knowledge_review_revision)
+                        .where(
+                            *scope_predicates(knowledge_review_revision, self._scope),
+                            func.json_contains(
+                                knowledge_review_revision.c.source_revision_ids,
+                                func.json_quote(source_revision_id),
+                            )
+                            == 1,
+                        )
+                        .order_by(knowledge_review_revision.c.review_id)
+                        .limit(2)
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            if len(existing_rows) > 1:
+                raise ReviewStateConflict("parallel-review-conflict")
+            if existing_rows:
+                existing = _review(existing_rows[0])
+                await self._insert_open_command(
+                    session,
+                    command_key,
+                    command_digest,
+                    existing.review_id,
+                    now,
+                )
+                return existing
+
+            if authority["status"] != "ready" or authority["stage"] != "ready":
+                raise ReviewStateConflict("review-source-not-ready")
+            required = (
+                authority["parse_inventory_attempt"],
+                authority["parser_config_digest"],
+                authority["parse_inventory_digest"],
+                authority["chunk_manifest_digest"],
+                authority["projection_digest"],
+            )
+            if any(value is None for value in required):
+                raise ReviewStateConflict("review-source-incomplete")
+            generations = tuple(
+                (
+                    await session.execute(
+                        select(knowledge_projection_state.c.physical_collection).where(
+                            *scope_predicates(knowledge_projection_state, self._scope)
+                        )
+                    )
+                ).scalars()
+            )
+            if len(generations) != 1:
+                raise ReviewStateConflict("review-projection-not-ready")
+
+            inventory_rows = (
+                (
+                    await session.execute(
+                        select(knowledge_parse_inventory)
+                        .where(
+                            *scope_predicates(knowledge_parse_inventory, self._scope),
+                            knowledge_parse_inventory.c.source_revision_id == source_revision_id,
+                            knowledge_parse_inventory.c.attempt
+                            == authority["parse_inventory_attempt"],
+                        )
+                        .order_by(knowledge_parse_inventory.c.ordinal)
+                        .limit(501)
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            if not inventory_rows or len(inventory_rows) > 500:
+                raise ReviewStateConflict("review-inventory-unavailable")
+            try:
+                inventory = tuple(
+                    ParseInventoryItem(
+                        source_revision_id=row["source_revision_id"],
+                        item_id=row["item_id"],
+                        kind=ParseInventoryKind(row["item_kind"]),
+                        locator=row["locator"],
+                        status=ParseInventoryStatus(row["status"]),
+                        artifact_digest=row["artifact_digest"],
+                        reason=row["reason"],
+                        decision_actor_id=row["decision_actor_id"],
+                    )
+                    for row in inventory_rows
+                )
+                inventory_digest = parse_inventory_digest(inventory)
+            except (TypeError, ValueError) as error:
+                raise ReviewStateConflict("review-inventory-invalid") from error
+            if inventory_digest != authority["parse_inventory_digest"]:
+                raise ReviewStateConflict("review-inventory-changed")
+            if any(item.status is not ParseInventoryStatus.PARSED for item in inventory):
+                raise ReviewStateConflict("review-inventory-incomplete")
+
+            revision = KnowledgeReviewRevision(
+                review_id=review_id_for(self._scope.project_id, (source_revision_id,)),
+                project_id=self._scope.project_id,
+                source_revision_ids=(source_revision_id,),
+                inventory_digest=inventory_digest,
+                chunk_manifest_digest=cast(str, authority["chunk_manifest_digest"]),
+                annotation_digest=canonical_digest([]),
+                dependency_digest=review_dependency_digest(
+                    (
+                        (
+                            source_revision_id,
+                            authority["source_content_hash"],
+                            cast(str, authority["parser_config_digest"]),
+                            cast(str, authority["projection_digest"]),
+                        ),
+                    )
+                ),
+                editor_actor_ids=(actor_id,),
+                reviewer_actor_id=None,
+                expires_at=expires_at,
+                status=ReviewStatus.CHECKING,
+                version=1,
+                blocking_item_ids=(),
+                approved_item_ids=tuple(sorted(item.item_id for item in inventory)),
+            )
+            await session.execute(
+                insert(knowledge_review_revision).values(
+                    **scope_values(self._scope),
+                    **_review_values(revision),
+                    created_at=_naive_utc(now),
+                    updated_at=_naive_utc(now),
+                )
+            )
+            await self._insert_history(
+                session,
+                review_id=revision.review_id,
+                review_version=revision.version,
+                action="created",
+                actor_id=actor_id,
+                occurred_at=now,
+            )
+            await self._insert_open_command(
+                session,
+                command_key,
+                command_digest,
+                revision.review_id,
+                now,
+            )
+            return revision
+
+    async def _locked_review(
+        self, session: AsyncSession, review_id: str
+    ) -> KnowledgeReviewRevision | None:
+        row = (
+            (
+                await session.execute(
+                    select(knowledge_review_revision)
+                    .where(
+                        *scope_predicates(knowledge_review_revision, self._scope),
+                        knowledge_review_revision.c.review_id == review_id,
+                    )
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else _review(row)
 
     async def create_review(self, revision: KnowledgeReviewRevision) -> KnowledgeReviewRevision:
         if revision.project_id != self._scope.project_id:
@@ -1899,6 +2150,33 @@ class MysqlKnowledgeReviewRepository:
             raise ReviewCommandConflict("idempotency-conflict")
         return _publication_json(cast(dict[str, object], row["result"]))
 
+    async def _locked_open_command(
+        self, session: AsyncSession, key: str, digest: str
+    ) -> str | None:
+        row = (
+            (
+                await session.execute(
+                    select(knowledge_review_command)
+                    .where(
+                        *scope_predicates(knowledge_review_command, self._scope),
+                        knowledge_review_command.c.idempotency_key == key,
+                    )
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        if row["request_digest"] != digest:
+            raise ReviewCommandConflict("idempotency-conflict")
+        result = cast(dict[str, object], row["result"])
+        review_id = result.get("review_id")
+        if result.get("operation") != "open-review" or not isinstance(review_id, str):
+            raise ReviewCommandConflict("idempotency-conflict")
+        return review_id
+
     async def _lock_project(self, session: AsyncSession) -> None:
         locked = await session.scalar(
             select(project.c.project_id)
@@ -1928,6 +2206,27 @@ class MysqlKnowledgeReviewRepository:
                 idempotency_key=key,
                 request_digest=digest,
                 result=_publication_payload(result),
+                created_at=_naive_utc(now),
+            )
+        )
+
+    async def _insert_open_command(
+        self,
+        session: AsyncSession,
+        key: str,
+        digest: str,
+        review_id: str,
+        now: datetime,
+    ) -> None:
+        await session.execute(
+            insert(knowledge_review_command).values(
+                **scope_values(self._scope),
+                command_id=scoped_outbox_id(
+                    self._scope, kind="knowledge-review-command", identity=key
+                ),
+                idempotency_key=key,
+                request_digest=digest,
+                result={"operation": "open-review", "review_id": review_id},
                 created_at=_naive_utc(now),
             )
         )

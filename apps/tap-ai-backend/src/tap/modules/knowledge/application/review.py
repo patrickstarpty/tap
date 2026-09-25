@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol, cast
 
 from tap.modules.knowledge.domain.review import (
@@ -147,6 +147,17 @@ class ReviewItemComparisonRead:
 
 
 class KnowledgeReviewRepository(Protocol):
+    async def create_or_open_review(
+        self,
+        *,
+        document_id: str,
+        source_revision_id: str,
+        actor_id: str,
+        expires_at: datetime,
+        command_key: str,
+        command_digest: str,
+        now: datetime,
+    ) -> KnowledgeReviewRevision: ...
     async def get_review(self, review_id: str) -> KnowledgeReviewRevision | None: ...
     async def list_reviews(
         self,
@@ -240,6 +251,33 @@ class KnowledgeReviewApplication:
         self._repository = repository
         self._projection = projection
         self._artifacts = artifacts
+
+    async def open_review(
+        self,
+        *,
+        document_id: str,
+        source_revision_id: str,
+        actor_id: str,
+        idempotency_key: str,
+        now: datetime,
+    ) -> KnowledgeReviewRevision:
+        command_digest = canonical_digest(
+            {
+                "actorId": actor_id,
+                "documentId": document_id,
+                "operation": "open-review",
+                "sourceRevisionId": source_revision_id,
+            }
+        )
+        return await self._repository.create_or_open_review(
+            document_id=document_id,
+            source_revision_id=source_revision_id,
+            actor_id=actor_id,
+            expires_at=now + timedelta(days=30),
+            command_key=idempotency_key,
+            command_digest=command_digest,
+            now=now,
+        )
 
     async def transition_review(
         self,

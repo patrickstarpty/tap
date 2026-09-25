@@ -243,6 +243,20 @@ def publication_id_for(review: KnowledgeReviewRevision, generation: str) -> str:
     )
 
 
+def review_id_for(project_id: str, source_revision_ids: tuple[str, ...]) -> str:
+    _identifier("project", project_id)
+    _unique_nonempty("source revisions", source_revision_ids)
+    return (
+        "krv_"
+        + canonical_digest(
+            {
+                "projectId": project_id,
+                "sourceRevisionIds": sorted(source_revision_ids),
+            }
+        )[7:39]
+    )
+
+
 def canonical_digest(value: object) -> str:
     payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
         "utf-8"

@@ -290,6 +290,10 @@ class KnowledgeReviewSummary(ContractModel):
     approval_digest: CanonicalSha256
 
 
+class KnowledgeReviewOpenRequest(ContractModel):
+    source_revision_id: ShortIdentifier
+
+
 class KnowledgePublishRequest(ContractModel):
     generation: ShortIdentifier
 

@@ -18,6 +18,8 @@ from tap.modules.knowledge.domain.review import (
     ReviewCheckKind,
     ReviewDecisionStatus,
     ReviewStatus,
+    canonical_digest,
+    review_id_for,
 )
 
 NOW = datetime(2026, 9, 23, 9, tzinfo=UTC)
@@ -56,8 +58,74 @@ class ProjectionGate:
         return self.ready
 
 
+class OpenReviewRepository:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def create_or_open_review(self, **values: object) -> KnowledgeReviewRevision:
+        self.calls.append(values)
+        return review(
+            review_id=review_id_for(
+                "synthetic-commerce-project", (str(values["source_revision_id"]),)
+            ),
+            source_revision_ids=(str(values["source_revision_id"]),),
+            editor_actor_ids=(str(values["actor_id"]),),
+            reviewer_actor_id=None,
+            expires_at=values["expires_at"],
+            status=ReviewStatus.CHECKING,
+            version=1,
+        )
+
+
 def run(coro):  # type: ignore[no-untyped-def]
     return asyncio.run(coro)
+
+
+def test_open_review_uses_server_actor_and_idempotent_intent_only():
+    async def scenario() -> None:
+        repository = OpenReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())  # type: ignore[arg-type]
+
+        opened = await application.open_review(
+            document_id="doc_001",
+            source_revision_id="rev_001",
+            actor_id="synthetic-editor-01",
+            idempotency_key="open-review-001",
+            now=NOW,
+        )
+
+        assert opened.review_id == review_id_for("synthetic-commerce-project", ("rev_001",))
+        assert opened.status is ReviewStatus.CHECKING
+        assert opened.editor_actor_ids == ("synthetic-editor-01",)
+        assert repository.calls == [
+            {
+                "document_id": "doc_001",
+                "source_revision_id": "rev_001",
+                "actor_id": "synthetic-editor-01",
+                "expires_at": NOW + timedelta(days=30),
+                "command_key": "open-review-001",
+                "command_digest": canonical_digest(
+                    {
+                        "actorId": "synthetic-editor-01",
+                        "documentId": "doc_001",
+                        "operation": "open-review",
+                        "sourceRevisionId": "rev_001",
+                    }
+                ),
+                "now": NOW,
+            }
+        ]
+
+    run(scenario())
+
+
+def test_review_identity_is_stable_for_the_project_revision_set():
+    assert review_id_for("project-001", ("rev-b", "rev-a")) == review_id_for(
+        "project-001", ("rev-a", "rev-b")
+    )
+    assert review_id_for("project-002", ("rev-a", "rev-b")) != review_id_for(
+        "project-001", ("rev-a", "rev-b")
+    )
 
 
 def test_review_approval_rejects_self_review_blockers_expiry_and_stale_version():
