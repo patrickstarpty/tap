@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from langgraph.checkpoint.base import empty_checkpoint
 from langgraph.checkpoint.memory import InMemorySaver
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
@@ -22,9 +22,10 @@ from tap.modules.ai.application.interaction_graph import (
     InteractionGraph,
     InteractionGraphState,
 )
-from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
+from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable, GraphCheckpointUnavailable
 from tap.modules.chat.adapters.mysql_conversations import (
     MysqlConversationRepository,
+    chat_turn,
     turn_answer_evidence_snapshot,
 )
 from tap.modules.chat.application.conversations import ConversationService
@@ -511,6 +512,349 @@ async def test_permanent_checkpoint_error_terminalizes_once_and_does_not_reclaim
         assert failure_outbox_count == 1
         assert leaked_answer_count == 0
         assert healthy_answer_count == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_provider(
+    owned_project_mysql, monkeypatch
+) -> None:
+    failed = False
+    original_aput_writes = MysqlGraphCheckpointer.aput_writes
+
+    async def fail_once_after_durable_write(self, config, writes, task_id, task_path=""):
+        nonlocal failed
+        await original_aput_writes(self, config, writes, task_id, task_path)
+        if not failed and any(channel == "result" for channel, _value in writes):
+            failed = True
+            raise GraphCheckpointRetryable("connection lost after durable task write")
+
+    monkeypatch.setattr(MysqlGraphCheckpointer, "aput_writes", fail_once_after_durable_write)
+
+    class Knowledge:
+        calls = 0
+
+        async def answer(self, _request):
+            self.calls += 1
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+        )
+        await conversations.create("chat-takeover", "turn-takeover", "request-takeover", _input())
+        knowledge = Knowledge()
+        worker = GenerationWorker(conversations, knowledge)
+
+        assert await worker.run_once(limit=1) == 1
+        first = (await conversations.load("chat-takeover")).turns[0]
+        assert first.state == "running"
+        assert first.attempt == 1
+        assert knowledge.calls == 1
+
+        async with sessions() as session, session.begin():
+            graph_before = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == "turn-takeover")
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert graph_before["status"] == "RUNNING"
+            assert graph_before["current_checkpoint_id"] is not None
+            assert graph_before["lease_token"] == first.lease_token
+            await session.execute(
+                update(chat_turn)
+                .where(chat_turn.c.turn_id == "turn-takeover")
+                .values(
+                    processing_lease_expires_at=func.utc_timestamp() - text("INTERVAL 1 SECOND")
+                )
+            )
+            await session.execute(
+                update(graph_run)
+                .where(graph_run.c.run_id == "turn-takeover")
+                .values(lease_until=func.utc_timestamp() - text("INTERVAL 1 SECOND"))
+            )
+
+        reclaimed = (await conversations.repository.claim_queued(limit=1))[0]
+        assert reclaimed[1].attempt == 2
+        async with sessions() as session:
+            reclaimed_turn_token = await session.scalar(
+                select(chat_turn.c.processing_lease_token).where(
+                    chat_turn.c.turn_id == "turn-takeover"
+                )
+            )
+            reclaimed_graph_token = await session.scalar(
+                select(graph_run.c.lease_token).where(graph_run.c.run_id == "turn-takeover")
+            )
+        assert reclaimed_turn_token == reclaimed[1].lease_token
+        assert reclaimed_graph_token == reclaimed[1].lease_token
+
+        class ClaimedRepository:
+            def __init__(self, delegate, claimed):
+                self.delegate = delegate
+                self.claimed = claimed
+
+            async def claim_queued(self, *, limit):
+                del limit
+                claimed, self.claimed = self.claimed, None
+                return () if claimed is None else (claimed,)
+
+            def __getattr__(self, name):
+                return getattr(self.delegate, name)
+
+        durable_repository = conversations.repository
+        conversations.repository = ClaimedRepository(durable_repository, reclaimed)
+        assert await worker.run_once(limit=1) == 1
+        completed = (await conversations.load("chat-takeover")).turns[0]
+        assert completed.state == "completed"
+        assert completed.attempt == 2
+        assert knowledge.calls == 1
+        assert await durable_repository.claim_queued(limit=1) == ()
+        assert await worker.run_once(limit=1) == 0
+
+        async with sessions() as session:
+            graph_after = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == "turn-takeover")
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            completion_outbox_count = await session.scalar(
+                select(func.count())
+                .select_from(outbox)
+                .where(
+                    outbox.c.aggregate_id == "turn-takeover",
+                    outbox.c.message_type == "conversation.turn.completed",
+                )
+            )
+        assert graph_after["status"] == "SUCCEEDED"
+        assert graph_after["lease_token"] is None
+        assert completion_outbox_count == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_expired_graph_lease_reclaim_and_cancel_have_one_terminal_winner(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+        )
+        await conversations.create("chat-race", "turn-race", "request-race", _input())
+        first = (await conversations.repository.claim_queued(limit=1))[0][1]
+        await _completed_graph(conversations.repository.graph_checkpointer(first), first.turn_id)
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(chat_turn)
+                .where(chat_turn.c.turn_id == first.turn_id)
+                .values(
+                    processing_lease_expires_at=func.utc_timestamp() - text("INTERVAL 1 SECOND")
+                )
+            )
+            await session.execute(
+                update(graph_run)
+                .where(graph_run.c.run_id == first.turn_id)
+                .values(lease_until=func.utc_timestamp() - text("INTERVAL 1 SECOND"))
+            )
+
+        reclaimed, canceled = await asyncio.gather(
+            conversations.repository.claim_queued(limit=1),
+            conversations.cancel("chat-race", first.turn_id),
+        )
+        assert len(reclaimed) <= 1
+        assert canceled.state == "canceled"
+        assert (await conversations.load("chat-race")).turns[0].state == "canceled"
+        assert await conversations.repository.claim_queued(limit=1) == ()
+        async with sessions() as session:
+            graph = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == first.turn_id)
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert graph["status"] == "CANCELLED"
+        assert graph["lease_token"] is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_waiting_graph_stays_parked_without_blocking_later_queued_turn(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+        )
+        await conversations.create("chat-wait", "turn-wait", "request-wait", _input())
+        first = (await conversations.repository.claim_queued(limit=1))[0][1]
+
+        async def authorized() -> bool:
+            return True
+
+        async def classify(_state):
+            return {"reasoning_mode": "workflow"}
+
+        async def admit(_state):
+            return {"admitted": False, "waiting_reason": "human-confirmation"}
+
+        async def execute(_state):
+            raise AssertionError("waiting graph must not execute")
+
+        state = await InteractionGraph(
+            graph_version="wait-takeover-v1",
+            state_schema_version=1,
+            checkpointer=conversations.repository.graph_checkpointer(first),
+            classify=classify,
+            admit=admit,
+            execute=execute,
+            authorize=authorized,
+        ).start(run_id=first.turn_id, payload={}, execution_mode="durable")
+        assert state["waiting_reason"] == "human-confirmation"
+
+        async with sessions() as session, session.begin():
+            waiting = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == first.turn_id)
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert waiting["status"] == "WAITING"
+            assert waiting["lease_token"] is None
+            await session.execute(
+                update(chat_turn)
+                .where(chat_turn.c.turn_id == first.turn_id)
+                .values(
+                    processing_lease_expires_at=func.utc_timestamp() - text("INTERVAL 1 SECOND")
+                )
+            )
+        await conversations.create(
+            "chat-after-wait", "turn-after-wait", "request-after-wait", _input()
+        )
+        claimed = await conversations.repository.claim_queued(limit=1)
+        assert len(claimed) == 1
+        assert claimed[0][1].turn_id == "turn-after-wait"
+        async with sessions() as session:
+            parked = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == first.turn_id)
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert parked["status"] == "WAITING"
+        assert parked["waiting_reason"] == "human-confirmation"
+        assert parked["lease_token"] is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_active_graph_candidate_does_not_starve_later_queued_turn(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+        )
+        await conversations.create("chat-blocked", "turn-blocked", "request-blocked", _input())
+        blocked = (await conversations.repository.claim_queued(limit=1))[0][1]
+        await _completed_graph(
+            conversations.repository.graph_checkpointer(blocked), blocked.turn_id
+        )
+        await conversations.create("chat-healthy", "turn-healthy", "request-healthy", _input())
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(chat_turn)
+                .where(chat_turn.c.turn_id == blocked.turn_id)
+                .values(
+                    processing_lease_expires_at=func.utc_timestamp() - text("INTERVAL 1 SECOND")
+                )
+            )
+
+        claimed = await conversations.repository.claim_queued(limit=1)
+        assert len(claimed) == 1
+        assert claimed[0][1].turn_id == "turn-healthy"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reclaimers_transfer_expired_graph_lease_once(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        first_repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+        second_repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+        conversations = ConversationService(first_repository, scope=VALIDATION_SCOPE)
+        await conversations.create(
+            "chat-reclaimers", "turn-reclaimers", "request-reclaimers", _input()
+        )
+        first = (await first_repository.claim_queued(limit=1))[0][1]
+        await _completed_graph(first_repository.graph_checkpointer(first), first.turn_id)
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(chat_turn)
+                .where(chat_turn.c.turn_id == first.turn_id)
+                .values(
+                    processing_lease_expires_at=func.utc_timestamp() - text("INTERVAL 1 SECOND")
+                )
+            )
+            await session.execute(
+                update(graph_run)
+                .where(graph_run.c.run_id == first.turn_id)
+                .values(lease_until=func.utc_timestamp() - text("INTERVAL 1 SECOND"))
+            )
+
+        claims = await asyncio.gather(
+            first_repository.claim_queued(limit=1),
+            second_repository.claim_queued(limit=1),
+        )
+        winners = tuple(item for batch in claims for item in batch)
+        assert len(winners) == 1
+        assert winners[0][1].attempt == 2
+        async with sessions() as session:
+            graph_token = await session.scalar(
+                select(graph_run.c.lease_token).where(graph_run.c.run_id == first.turn_id)
+            )
+        assert graph_token == winners[0][1].lease_token
     finally:
         await engine.dispose()
 

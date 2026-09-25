@@ -963,21 +963,42 @@ class MysqlConversationRepository:
     async def claim_queued(self, *, limit: int) -> tuple[tuple[str, ConversationTurn], ...]:
         if type(limit) is not int or limit < 1:
             raise ValueError("limit must be positive")
+        from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+
         claimed: list[tuple[str, ConversationTurn]] = []
         async with self.sessions() as session, session.begin():
+            candidate_now = _naive(datetime.now(timezone.utc))
             rows = (
                 (
                     await session.execute(
                         select(chat_turn)
+                        .select_from(
+                            chat_turn.outerjoin(
+                                graph_run,
+                                and_(
+                                    graph_run.c.enterprise_id == chat_turn.c.enterprise_id,
+                                    graph_run.c.project_id == chat_turn.c.project_id,
+                                    graph_run.c.run_id == chat_turn.c.turn_id,
+                                ),
+                            )
+                        )
                         .where(
                             *scope_predicates(chat_turn, self.scope),
                             or_(
-                                chat_turn.c.state == "queued",
+                                and_(
+                                    chat_turn.c.state == "queued",
+                                    graph_run.c.run_id.is_(None),
+                                ),
                                 (
                                     (chat_turn.c.state == "running")
-                                    & (
-                                        chat_turn.c.processing_lease_expires_at
-                                        < datetime.now(timezone.utc).replace(tzinfo=None)
+                                    & (chat_turn.c.processing_lease_expires_at < candidate_now)
+                                    & or_(
+                                        graph_run.c.run_id.is_(None),
+                                        and_(
+                                            graph_run.c.status == "RUNNING",
+                                            graph_run.c.lease_until.is_not(None),
+                                            graph_run.c.lease_until < candidate_now,
+                                        ),
                                     )
                                 ),
                             ),
@@ -1022,7 +1043,32 @@ class MysqlConversationRepository:
                     )
                 ):
                     continue
+                graph = None
+                if row["state"] == "running":
+                    graph = (
+                        (
+                            await session.execute(
+                                select(graph_run)
+                                .where(
+                                    *scope_predicates(graph_run, self.scope),
+                                    graph_run.c.run_id == row["turn_id"],
+                                )
+                                .with_for_update()
+                            )
+                        )
+                        .mappings()
+                        .one_or_none()
+                    )
+                    if graph is not None:
+                        graph_lease_reclaimable = (
+                            graph["status"] == "RUNNING"
+                            and graph["lease_until"] is not None
+                            and graph["lease_until"] < _naive(now)
+                        )
+                        if not graph_lease_reclaimable:
+                            continue
                 lease_token = uuid4().hex
+                lease_until = _naive(now + timedelta(seconds=60))
                 event = await self._next_event(
                     session,
                     row["chat_id"],
@@ -1058,13 +1104,31 @@ class MysqlConversationRepository:
                         last_sequence=event.sequence,
                         processing_attempt=row["processing_attempt"] + 1,
                         processing_lease_token=lease_token,
-                        processing_lease_expires_at=_naive(now + timedelta(seconds=60)),
+                        processing_lease_expires_at=lease_until,
                     )
                 )
+                if graph is not None:
+                    await session.execute(
+                        update(graph_run)
+                        .where(
+                            *scope_predicates(graph_run, self.scope),
+                            graph_run.c.run_id == row["turn_id"],
+                        )
+                        .values(
+                            status="RUNNING",
+                            waiting_reason=None,
+                            lease_owner=f"chat:{row['turn_id']}",
+                            lease_token=lease_token,
+                            lease_until=lease_until,
+                            attempt_count=row["processing_attempt"] + 1,
+                            updated_at=_naive(now),
+                        )
+                    )
                 mutable = dict(row)
                 mutable["state"] = "running"
                 mutable["processing_attempt"] = row["processing_attempt"] + 1
                 mutable["processing_lease_token"] = lease_token
+                mutable["processing_lease_expires_at"] = lease_until
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
         return tuple(claimed)
 

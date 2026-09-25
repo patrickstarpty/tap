@@ -252,6 +252,7 @@ async def test_generation_worker_continues_after_cancel_wins_completion_race():
             "conversation-1",
             SimpleNamespace(
                 turn_id=f"turn-{number}",
+                attempt=1,
                 lease_token=f"lease-{number}",
                 input_snapshot=SimpleNamespace(
                     value=SimpleNamespace(message="question", resolved_resources=())
@@ -673,6 +674,84 @@ async def test_generation_worker_respects_lease_loss_during_checkpoint_failure_s
     conversations = Conversations()
     assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
     assert conversations.settlements == 1
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_bounds_checkpoint_settlement_conflict_at_attempt_budget():
+    turn = SimpleNamespace(
+        turn_id="turn-conflict",
+        attempt=3,
+        lease_token="lease-3",
+        input_snapshot=SimpleNamespace(
+            value=SimpleNamespace(message="question", resolved_resources=())
+        ),
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            assert limit == 1
+            return (("conversation-1", turn),)
+
+    class Conversations:
+        repository = Repository()
+        attempts = []
+
+        async def complete_evidence(self, _conversation_id, _turn_id, evidence, **_kwargs):
+            self.attempts.append(evidence.outcome)
+            if evidence.outcome == "completed":
+                raise ConversationConflict("graph lease takeover was not settled")
+
+    class Knowledge:
+        async def answer(self, _request):
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    conversations = Conversations()
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
+    assert conversations.attempts == ["completed", "failed"]
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_cannot_fail_a_checkpoint_conflict_after_losing_lease():
+    turn = SimpleNamespace(
+        turn_id="turn-loser",
+        attempt=3,
+        lease_token="stale-lease",
+        input_snapshot=SimpleNamespace(
+            value=SimpleNamespace(message="question", resolved_resources=())
+        ),
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return (("conversation-1", turn),)
+
+    class Conversations:
+        repository = Repository()
+        attempts = []
+
+        async def complete_evidence(self, _conversation_id, _turn_id, evidence, **_kwargs):
+            self.attempts.append(evidence.outcome)
+            raise ConversationConflict("generation lease lost")
+
+    class Knowledge:
+        async def answer(self, _request):
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    conversations = Conversations()
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
+    assert conversations.attempts == ["completed", "failed"]
 
 
 @pytest.mark.asyncio

@@ -354,9 +354,17 @@ class GenerationWorker:
                     terminal_event=terminal_event,
                     stream_events=persisted_stream_events,
                 )
-            except (ConversationConflict, PermissionError):
-                # Cancellation or lease reclaim won the terminal-state race.
+            except PermissionError:
+                # The graph fence proves another worker owns the Turn.
                 continue
+            except ConversationConflict:
+                if turn.attempt < self.max_checkpoint_attempts:
+                    continue
+                try:
+                    await fail_turn()
+                except (ConversationConflict, PermissionError):
+                    # Token and expiry checks prevent a real loser from failing the Turn.
+                    continue
             except GraphCheckpointRetryable:
                 if turn.attempt < self.max_checkpoint_attempts:
                     continue
