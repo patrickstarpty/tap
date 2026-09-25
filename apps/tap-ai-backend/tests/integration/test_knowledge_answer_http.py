@@ -145,7 +145,12 @@ class Citations:
             filename="policy.md",
             source_content_hash="sha256:" + "a" * 64,
             chunk_content_hash="sha256:" + "b" * 64,
-            anchor=DocumentAnchor(heading_path=("Policy",), start_offset=0, end_offset=8),
+            anchor=DocumentAnchor(
+                heading_path=("Policy",),
+                start_offset=0,
+                end_offset=8,
+                inventory_item_id="pi_approved",
+            ),
             quote="Evidence",
         )
 
@@ -221,7 +226,7 @@ def test_http_normalizes_selection_and_maps_answer_and_citation_dtos() -> None:
             "bbox": None,
             "startOffset": 0,
             "endOffset": 8,
-            "inventoryItemId": None,
+            "inventoryItemId": "pi_approved",
         },
         "quote": "Evidence",
         "prefix": "",

@@ -507,6 +507,7 @@ class KnowledgeHttpService:
                     bbox=list(anchor.bbox) or None,
                     start_offset=anchor.start_offset,
                     end_offset=anchor.end_offset,
+                    inventory_item_id=anchor.inventory_item_id,
                 )
             ),
             quote=preview.quote,

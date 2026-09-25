@@ -314,6 +314,7 @@ export function canonicalAnchorHash(value: unknown): string {
     "bbox",
     "endOffset",
     "headingPath",
+    "inventoryItemId",
     "page",
     "startOffset",
     "type",
@@ -325,6 +326,10 @@ export function canonicalAnchorHash(value: unknown): string {
     throw new Error("invalid document anchor");
   }
   const headingPath = anchor.headingPath ?? null;
+  const inventoryItemId = anchor.inventoryItemId ?? null;
+  if (inventoryItemId !== null && !isIdentity(inventoryItemId)) {
+    throw new Error("invalid document inventory item");
+  }
   if (
     headingPath !== null &&
     (!Array.isArray(headingPath) ||
@@ -357,6 +362,7 @@ export function canonicalAnchorHash(value: unknown): string {
   const canonical = {
     type: "document",
     headingPath,
+    inventoryItemId,
     page,
     bbox,
     startOffset,
