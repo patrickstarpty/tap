@@ -70,6 +70,10 @@ PROJECT_PARENT_LINKS: dict[str, tuple[tuple[str, str, str, str | None], ...]] = 
         ("alias_name", "knowledge_projection_state", "alias_name", None),
     ),
     "knowledge_publication": (("review_id", "knowledge_review_revision", "review_id", None),),
+    "knowledge_review_item_decision": (
+        ("review_id", "knowledge_review_revision", "review_id", None),
+    ),
+    "knowledge_review_history": (("review_id", "knowledge_review_revision", "review_id", None),),
     "knowledge_current_publication": (
         ("publication_id", "knowledge_publication", "publication_id", None),
     ),

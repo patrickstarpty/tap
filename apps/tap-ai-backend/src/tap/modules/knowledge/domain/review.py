@@ -21,6 +21,74 @@ class ReviewStatus(str, Enum):
     WITHDRAWN = "withdrawn"
 
 
+class ReviewCheckKind(str, Enum):
+    SCOPE = "scope"
+    TERM = "term"
+    AMOUNT = "amount"
+    UNIT = "unit"
+    EXCEPTION = "exception"
+
+
+class ReviewDecisionStatus(str, Enum):
+    ACCEPTED = "accepted"
+    BLOCKED = "blocked"
+    EXCLUDED = "excluded"
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeReviewItemDecision:
+    review_id: str
+    item_id: str
+    check_kind: ReviewCheckKind
+    status: ReviewDecisionStatus
+    note: str
+    actor_id: str
+    review_version: int
+    decided_at: datetime
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("review", self.review_id),
+            ("item", self.item_id),
+            ("actor", self.actor_id),
+        ):
+            _identifier(name, value)
+        if not isinstance(self.check_kind, ReviewCheckKind) or not isinstance(
+            self.status, ReviewDecisionStatus
+        ):
+            raise TypeError("review decision uses a closed check and status model")
+        if not isinstance(self.note, str) or not self.note.strip() or len(self.note) > 1_000:
+            raise ValueError("review decision note must be bounded and nonblank")
+        if type(self.review_version) is not int or self.review_version < 2:
+            raise ValueError("review decision version must follow its prior revision")
+        if self.decided_at.utcoffset() is None:
+            raise ValueError("review decision time must be timezone-aware")
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeReviewHistoryEntry:
+    review_id: str
+    review_version: int
+    action: str
+    actor_id: str
+    occurred_at: datetime
+    item_id: str | None = None
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("review", self.review_id),
+            ("action", self.action),
+            ("actor", self.actor_id),
+        ):
+            _identifier(name, value)
+        if self.item_id is not None:
+            _identifier("item", self.item_id)
+        if type(self.review_version) is not int or self.review_version < 1:
+            raise ValueError("review history version must be positive")
+        if self.occurred_at.utcoffset() is None:
+            raise ValueError("review history time must be timezone-aware")
+
+
 @dataclass(frozen=True, slots=True)
 class KnowledgeReviewRevision:
     review_id: str
@@ -43,7 +111,7 @@ class KnowledgeReviewRevision:
             _identifier(name, value)
         _unique_nonempty("source revisions", self.source_revision_ids)
         _unique_nonempty("editors", self.editor_actor_ids)
-        _unique_nonempty("approved items", self.approved_item_ids)
+        _unique("approved items", self.approved_item_ids)
         if len(set(self.blocking_item_ids)) != len(self.blocking_item_ids):
             raise ValueError("blocking item identities must be unique")
         for item in self.blocking_item_ids:
@@ -91,6 +159,7 @@ class KnowledgePublication:
     published_by: str
     published_at: datetime
     expires_at: datetime
+    version: int = 1
     status: Literal["published", "withdrawn"] = "published"
     withdrawn_by: str | None = None
     withdrawn_at: datetime | None = None
@@ -109,6 +178,8 @@ class KnowledgePublication:
         _unique_nonempty("publication approved items", self.approved_item_ids)
         if self.status not in {"published", "withdrawn"}:
             raise ValueError("publication status is invalid")
+        if type(self.version) is not int or self.version < 1:
+            raise ValueError("publication version must be positive")
         if self.published_at.utcoffset() is None:
             raise ValueError("publication time must be timezone-aware")
         if self.expires_at.utcoffset() is None or self.expires_at <= self.published_at:
@@ -151,6 +222,13 @@ def _identifier(name: str, value: str) -> None:
 def _unique_nonempty(name: str, values: tuple[str, ...]) -> None:
     if not isinstance(values, tuple) or not values or len(set(values)) != len(values):
         raise ValueError(f"{name} must be a non-empty unique tuple")
+    for value in values:
+        _identifier(name, value)
+
+
+def _unique(name: str, values: tuple[str, ...]) -> None:
+    if not isinstance(values, tuple) or len(set(values)) != len(values):
+        raise ValueError(f"{name} must be a unique tuple")
     for value in values:
         _identifier(name, value)
 

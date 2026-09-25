@@ -64,6 +64,8 @@ EXPECTED_TABLES = {
     "knowledge_chunk_manifest",
     "knowledge_parse_inventory",
     "knowledge_review_revision",
+    "knowledge_review_item_decision",
+    "knowledge_review_history",
     "knowledge_publication",
     "knowledge_current_publication",
     "knowledge_review_command",

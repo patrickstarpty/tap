@@ -1591,8 +1591,10 @@ def _assemble_http_services(
                     review_sessions,
                     scope=repository.scope,  # type: ignore[arg-type]
                 ),
+                artifact_store,
             ),
             scope=repository.scope,
+            authorization_policy=authorization_policy,
         )
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]

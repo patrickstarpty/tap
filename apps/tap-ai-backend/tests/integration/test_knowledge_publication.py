@@ -57,6 +57,7 @@ async def test_publication_cutover_replays_after_restart_and_withdraws_authority
             generation="generation-001",
             idempotency_key="publish-mysql-001",
             actor_id="synthetic-reviewer-02",
+            expected_version=4,
             now=NOW,
         )
 
@@ -67,6 +68,7 @@ async def test_publication_cutover_replays_after_restart_and_withdraws_authority
             generation="generation-001",
             idempotency_key="publish-mysql-001",
             actor_id="synthetic-reviewer-02",
+            expected_version=4,
             now=NOW,
         )
         assert replay == published
@@ -78,6 +80,7 @@ async def test_publication_cutover_replays_after_restart_and_withdraws_authority
                 generation="generation-changed",
                 idempotency_key="publish-mysql-001",
                 actor_id="synthetic-reviewer-02",
+                expected_version=4,
                 now=NOW,
             )
 
@@ -88,6 +91,7 @@ async def test_publication_cutover_replays_after_restart_and_withdraws_authority
                 generation="generation-002",
                 idempotency_key="publish-mysql-002",
                 actor_id="synthetic-reviewer-02",
+                expected_version=4,
                 now=NOW + timedelta(seconds=1),
             ),
             restarted_application.publish_review(
@@ -95,6 +99,7 @@ async def test_publication_cutover_replays_after_restart_and_withdraws_authority
                 generation="generation-002",
                 idempotency_key="publish-mysql-002",
                 actor_id="synthetic-reviewer-02",
+                expected_version=4,
                 now=NOW + timedelta(seconds=1),
             ),
         )
@@ -105,6 +110,7 @@ async def test_publication_cutover_replays_after_restart_and_withdraws_authority
             concurrent[0].publication_id,
             idempotency_key="withdraw-mysql-001",
             actor_id="synthetic-publisher-03",
+            expected_version=1,
             now=NOW + timedelta(minutes=1),
         )
         assert await restarted_repository.current_publication() is None

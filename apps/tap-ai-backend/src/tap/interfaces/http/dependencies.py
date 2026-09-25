@@ -19,7 +19,11 @@ from tap.contracts.http import (
     HealthComponentState,
     HealthRemediationCode,
     KnowledgePublicationDetail,
+    KnowledgeReviewDetail,
+    KnowledgeReviewItemComparison,
+    KnowledgeReviewPage,
     KnowledgeReviewSummary,
+    PublishedKnowledgeSourcePage,
     ReadyHealth,
     RetrievalAnswerRequest,
     RetrievalAnswerResponse,
@@ -92,14 +96,32 @@ class KnowledgeReviewHttpService(Protocol):
     @property
     def scope(self) -> ProjectScopeContext: ...
 
+    async def list_reviews(self, source_revision_id: str | None) -> KnowledgeReviewPage: ...
+    async def get_review(self, review_id: str) -> KnowledgeReviewDetail: ...
+    async def get_publication(self, publication_id: str) -> KnowledgePublicationDetail: ...
+    async def get_current_publication(self) -> KnowledgePublicationDetail: ...
+    async def list_published_sources(self) -> PublishedKnowledgeSourcePage: ...
+    async def compare_review_item(
+        self, review_id: str, item_id: str
+    ) -> KnowledgeReviewItemComparison: ...
+    async def update_item_decision(
+        self, review_id: str, item_id: str, body: dict[str, object], expected_version: int
+    ) -> KnowledgeReviewDetail: ...
+    async def return_review(
+        self, review_id: str, expected_version: int
+    ) -> KnowledgeReviewDetail: ...
+    async def submit_review(
+        self, review_id: str, expected_version: int
+    ) -> KnowledgeReviewDetail: ...
+
     async def approve_review(
         self, review_id: str, expected_version: int
     ) -> KnowledgeReviewSummary: ...
     async def publish_review(
-        self, review_id: str, generation: str, key: str
+        self, review_id: str, generation: str, expected_version: int, key: str
     ) -> KnowledgePublicationDetail: ...
     async def withdraw_publication(
-        self, publication_id: str, key: str
+        self, publication_id: str, expected_version: int, key: str
     ) -> KnowledgePublicationDetail: ...
 
 

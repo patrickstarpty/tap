@@ -132,6 +132,37 @@ class KnowledgeReviewStatus(str, Enum):
     WITHDRAWN = "withdrawn"
 
 
+class KnowledgeReviewAction(str, Enum):
+    EDIT = "edit"
+    SUBMIT = "submit"
+    RETURN = "return"
+    APPROVE = "approve"
+    PUBLISH = "publish"
+    WITHDRAW = "withdraw"
+    READ_ORIGINAL = "read_original"
+
+
+class KnowledgeReviewCheckKind(str, Enum):
+    SCOPE = "scope"
+    TERM = "term"
+    AMOUNT = "amount"
+    UNIT = "unit"
+    EXCEPTION = "exception"
+
+
+class KnowledgeReviewDecisionStatus(str, Enum):
+    ACCEPTED = "accepted"
+    BLOCKED = "blocked"
+    EXCLUDED = "excluded"
+
+
+class ParseInventoryItemStatus(str, Enum):
+    PARSED = "parsed"
+    FAILED = "failed"
+    NEEDS_REVIEW = "needs_review"
+    EXCLUDED = "excluded"
+
+
 class IngestionStage(str, Enum):
     STORED = "stored"
     PARSING = "parsing"
@@ -267,6 +298,7 @@ class KnowledgePublicationDetail(ContractModel):
     publication_id: ShortIdentifier
     review_id: ShortIdentifier
     review_version: Annotated[StrictInt, Field(ge=1)]
+    version: Annotated[StrictInt, Field(ge=1)]
     status: Literal["published", "withdrawn"]
     generation: ShortIdentifier
     approval_digest: CanonicalSha256
@@ -274,6 +306,105 @@ class KnowledgePublicationDetail(ContractModel):
     approved_item_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=10_000)]
     published_at: TimestampValue
     expires_at: TimestampValue
+    withdrawn_by: ShortIdentifier | None = None
+    withdrawn_at: TimestampValue | None = None
+
+
+class KnowledgeReviewInventoryItem(ContractModel):
+    source_revision_id: ShortIdentifier
+    item_id: ShortIdentifier
+    attempt: Annotated[StrictInt, Field(ge=1)]
+    kind: Literal["document", "page", "paragraph", "heading", "table", "image", "list", "code"]
+    locator: Annotated[str, Field(strict=True, min_length=1, max_length=1_024)]
+    status: ParseInventoryItemStatus
+    artifact_digest: CanonicalSha256
+    reason: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = None
+    decision_actor_id: ShortIdentifier | None = None
+
+
+class KnowledgeReviewInventory(ContractModel):
+    items: Annotated[list[KnowledgeReviewInventoryItem], Field(max_length=10_000)]
+    parsed_count: Annotated[StrictInt, Field(ge=0)]
+    failed_count: Annotated[StrictInt, Field(ge=0)]
+    needs_review_count: Annotated[StrictInt, Field(ge=0)]
+    excluded_count: Annotated[StrictInt, Field(ge=0)]
+
+
+class KnowledgeReviewItemDecisionDetail(ContractModel):
+    item_id: ShortIdentifier
+    check_kind: KnowledgeReviewCheckKind
+    status: KnowledgeReviewDecisionStatus
+    note: Annotated[str, Field(strict=True, min_length=1, max_length=1_000)]
+    actor_id: ShortIdentifier
+    review_version: Annotated[StrictInt, Field(ge=2)]
+    decided_at: TimestampValue
+
+
+class KnowledgeReviewHistoryDetail(ContractModel):
+    review_version: Annotated[StrictInt, Field(ge=1)]
+    action: ShortIdentifier
+    actor_id: ShortIdentifier
+    occurred_at: TimestampValue
+    item_id: ShortIdentifier | None = None
+
+
+class KnowledgePublicationTarget(ContractModel):
+    status: Literal["ready", "unavailable"]
+    generation: ShortIdentifier | None = None
+    reason: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = None
+
+
+class KnowledgeReviewDetail(KnowledgeReviewSummary):
+    source_revision_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=100)]
+    editor_actor_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=100)]
+    blocking_item_ids: Annotated[list[ShortIdentifier], Field(max_length=10_000)]
+    approved_item_ids: Annotated[list[ShortIdentifier], Field(max_length=10_000)]
+    inventory: KnowledgeReviewInventory
+    decisions: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=10_000)]
+    history: Annotated[list[KnowledgeReviewHistoryDetail], Field(max_length=10_000)]
+    current_publication: KnowledgePublicationDetail | None = None
+    publication_target: KnowledgePublicationTarget
+    allowed_actions: Annotated[list[KnowledgeReviewAction], Field(max_length=7)]
+
+
+class KnowledgeReviewPage(ContractModel):
+    items: Annotated[list[KnowledgeReviewDetail], Field(max_length=100)]
+
+
+class KnowledgeReviewDecisionRequest(ContractModel):
+    check_kind: KnowledgeReviewCheckKind
+    status: KnowledgeReviewDecisionStatus
+    note: Annotated[str, Field(strict=True, min_length=1, max_length=1_000)]
+
+
+class KnowledgeReviewPreview(ContractModel):
+    availability: Literal["available", "unavailable", "unsupported"]
+    excerpt: Annotated[str, Field(strict=True, max_length=4_000)] | None = None
+    reason: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = None
+
+
+class KnowledgeReviewItemComparison(ContractModel):
+    review_id: ShortIdentifier
+    item_id: ShortIdentifier
+    original: KnowledgeReviewPreview
+    extracted: KnowledgeReviewPreview
+
+
+class PublishedKnowledgeSource(ContractModel):
+    source_id: Annotated[str, Field(strict=True, pattern=r"^src_[0-9a-f]{32}$")]
+    document_id: ShortIdentifier
+    revision_id: ShortIdentifier
+    source_name: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
+    filename: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
+    publication_id: ShortIdentifier
+    expires_at: TimestampValue
+    approved_item_count: Annotated[StrictInt, Field(ge=0, le=10_000)]
+    inventory_item_count: Annotated[StrictInt, Field(ge=0, le=10_000)]
+    partial: bool
+
+
+class PublishedKnowledgeSourcePage(ContractModel):
+    items: Annotated[list[PublishedKnowledgeSource], Field(max_length=100)]
 
 
 class DocumentPage(ContractModel):

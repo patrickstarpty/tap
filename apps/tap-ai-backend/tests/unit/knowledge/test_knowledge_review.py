@@ -15,6 +15,8 @@ from tap.modules.knowledge.application.review import (
 )
 from tap.modules.knowledge.domain.review import (
     KnowledgeReviewRevision,
+    ReviewCheckKind,
+    ReviewDecisionStatus,
     ReviewStatus,
 )
 
@@ -74,6 +76,11 @@ def test_review_approval_rejects_self_review_blockers_expiry_and_stale_version()
                 review(expires_at=NOW),
                 "synthetic-reviewer-02",
                 "review-expired",
+            ),
+            (
+                review(approved_item_ids=()),
+                "synthetic-reviewer-02",
+                "review-has-no-approved-items",
             ),
         ):
             await repository.add(candidate)
@@ -177,6 +184,23 @@ def test_review_progression_is_ordered_and_return_to_checking_records_editor():
     run(scenario())
 
 
+def test_submit_rejects_an_empty_approved_scope():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        await repository.add(review(status=ReviewStatus.CHECKING, approved_item_ids=()))
+
+        with pytest.raises(ReviewStateConflict, match="review-has-no-approved-items"):
+            await application.transition_review(
+                "krv_001",
+                target=ReviewStatus.REVIEWING,
+                actor_id="synthetic-editor-01",
+                expected_version=3,
+            )
+
+    run(scenario())
+
+
 def test_dependency_change_invalidates_approval_and_requires_new_review():
     async def scenario() -> None:
         repository = InMemoryKnowledgeReviewRepository()
@@ -216,6 +240,7 @@ def test_publish_verifies_projection_before_switch_and_replays_same_intent():
             generation="generation-001",
             idempotency_key="publish-001",
             actor_id="synthetic-reviewer-02",
+            expected_version=3,
             now=NOW,
         )
         replay = await application.publish_review(
@@ -223,6 +248,7 @@ def test_publish_verifies_projection_before_switch_and_replays_same_intent():
             generation="generation-001",
             idempotency_key="publish-001",
             actor_id="synthetic-reviewer-02",
+            expected_version=3,
             now=NOW,
         )
 
@@ -237,6 +263,7 @@ def test_publish_verifies_projection_before_switch_and_replays_same_intent():
                 generation="generation-002",
                 idempotency_key="publish-001",
                 actor_id="synthetic-reviewer-02",
+                expected_version=3,
                 now=NOW,
             )
 
@@ -256,6 +283,7 @@ def test_publish_rejects_unapproved_or_expired_review_and_concurrent_replay_is_s
                 generation="generation-001",
                 idempotency_key="publish-001",
                 actor_id="synthetic-reviewer-02",
+                expected_version=3,
                 now=NOW,
             )
 
@@ -272,6 +300,7 @@ def test_publish_rejects_unapproved_or_expired_review_and_concurrent_replay_is_s
                 generation="generation-001",
                 idempotency_key="publish-001",
                 actor_id="synthetic-reviewer-02",
+                expected_version=3,
                 now=NOW,
             )
 
@@ -287,6 +316,7 @@ def test_publish_rejects_unapproved_or_expired_review_and_concurrent_replay_is_s
                 generation="generation-001",
                 idempotency_key="publish-001",
                 actor_id="synthetic-reviewer-02",
+                expected_version=3,
                 now=NOW,
             ),
             application.publish_review(
@@ -294,6 +324,7 @@ def test_publish_rejects_unapproved_or_expired_review_and_concurrent_replay_is_s
                 generation="generation-001",
                 idempotency_key="publish-001",
                 actor_id="synthetic-reviewer-02",
+                expected_version=3,
                 now=NOW,
             ),
         )
@@ -320,6 +351,7 @@ def test_failed_projection_keeps_previous_publication_visible():
             generation="generation-old",
             idempotency_key="publish-old",
             actor_id="synthetic-reviewer-02",
+            expected_version=3,
             now=NOW,
         )
         await repository.add(
@@ -338,6 +370,7 @@ def test_failed_projection_keeps_previous_publication_visible():
                 generation="generation-new",
                 idempotency_key="publish-new",
                 actor_id="synthetic-reviewer-03",
+                expected_version=3,
                 now=NOW,
             )
 
@@ -361,6 +394,7 @@ def test_withdraw_makes_publication_unreadable_before_projection_cleanup():
             generation="generation-001",
             idempotency_key="publish-001",
             actor_id="synthetic-reviewer-02",
+            expected_version=3,
             now=NOW,
         )
 
@@ -380,6 +414,7 @@ def test_withdraw_makes_publication_unreadable_before_projection_cleanup():
                 publication.publication_id,
                 idempotency_key="withdraw-001",
                 actor_id="synthetic-publisher-03",
+                expected_version=1,
                 now=NOW,
             )
             withdrawal_committed.set()
@@ -392,5 +427,123 @@ def test_withdraw_makes_publication_unreadable_before_projection_cleanup():
         assert after is None
         assert await repository.current_publication("synthetic-commerce-project") is None
         assert await repository.pending_projection_cleanup() == ("generation-001",)
+
+    run(scenario())
+
+
+def test_item_decision_is_durable_updates_checklist_and_survives_application_refresh():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        await repository.add(
+            review(
+                status=ReviewStatus.CHECKING,
+                blocking_item_ids=("pi_failed",),
+            ),
+            inventory_item_ids=("pi_001", "pi_failed"),
+        )
+
+        updated = await application.record_item_decision(
+            "krv_001",
+            item_id="pi_failed",
+            check_kind=ReviewCheckKind.EXCEPTION,
+            status=ReviewDecisionStatus.ACCEPTED,
+            note="原件明确列为允许的例外",
+            actor_id="synthetic-editor-03",
+            expected_version=3,
+            now=NOW,
+        )
+
+        refreshed = KnowledgeReviewApplication(repository, ProjectionGate())
+        detail = await refreshed.get_review("krv_001")
+        assert updated.version == 4
+        assert updated.blocking_item_ids == ()
+        assert updated.approved_item_ids == ("pi_001", "pi_failed")
+        assert updated.editor_actor_ids == ("synthetic-editor-01", "synthetic-editor-03")
+        assert len(detail.decisions) == 1
+        assert detail.decisions[0].item_id == "pi_failed"
+        assert detail.decisions[0].check_kind is ReviewCheckKind.EXCEPTION
+        assert detail.decisions[0].status is ReviewDecisionStatus.ACCEPTED
+        assert [entry.action for entry in detail.history][-1] == "item_decided"
+
+    run(scenario())
+
+
+def test_item_decision_rejects_unknown_item_and_stale_version_without_mutation():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        await repository.add(review(status=ReviewStatus.CHECKING), inventory_item_ids=("pi_001",))
+
+        for item_id, expected_version, expected in (
+            ("pi_unknown", 3, "review-item-not-found"),
+            ("pi_001", 2, "revision-conflict"),
+        ):
+            with pytest.raises(ReviewStateConflict, match=expected):
+                await application.record_item_decision(
+                    "krv_001",
+                    item_id=item_id,
+                    check_kind=ReviewCheckKind.AMOUNT,
+                    status=ReviewDecisionStatus.BLOCKED,
+                    note="金额与原件不一致",
+                    actor_id="synthetic-editor-01",
+                    expected_version=expected_version,
+                    now=NOW,
+                )
+        current = await repository.get_review("krv_001")
+        assert current is not None and current.version == 3
+        assert await repository.list_decisions("krv_001") == ()
+
+    run(scenario())
+
+
+def test_publish_and_withdraw_reject_stale_versions_and_expose_current_vs_history():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        await repository.add(
+            review(
+                status=ReviewStatus.APPROVED,
+                reviewer_actor_id="synthetic-reviewer-02",
+            )
+        )
+
+        with pytest.raises(ReviewStateConflict, match="revision-conflict"):
+            await application.publish_review(
+                "krv_001",
+                generation="generation-001",
+                idempotency_key="publish-stale",
+                actor_id="synthetic-reviewer-02",
+                expected_version=2,
+                now=NOW,
+            )
+        published = await application.publish_review(
+            "krv_001",
+            generation="generation-001",
+            idempotency_key="publish-001",
+            actor_id="synthetic-reviewer-02",
+            expected_version=3,
+            now=NOW,
+        )
+        assert published.version == 1
+        with pytest.raises(ReviewStateConflict, match="revision-conflict"):
+            await application.withdraw_publication(
+                published.publication_id,
+                idempotency_key="withdraw-stale",
+                actor_id="synthetic-publisher-03",
+                expected_version=2,
+                now=NOW,
+            )
+        withdrawn = await application.withdraw_publication(
+            published.publication_id,
+            idempotency_key="withdraw-001",
+            actor_id="synthetic-publisher-03",
+            expected_version=1,
+            now=NOW,
+        )
+
+        assert withdrawn.version == 2
+        assert await repository.current_publication("synthetic-commerce-project") is None
+        assert await repository.get_publication(published.publication_id) == withdrawn
 
     run(scenario())
