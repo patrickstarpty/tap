@@ -54,6 +54,7 @@ unset TAP_RUN_PAID_EMBEDDING_RESEARCH
 unset TAPPER_OBJECT_STORE_PROVIDER TAPPER_S3_ENDPOINT TAPPER_S3_BUCKET TAPPER_S3_REGION
 unset TAPPER_S3_ACCESS_KEY TAPPER_S3_SECRET_KEY TAPPER_S3_STORE_ID TAPPER_S3_PORT
 unset TAPPER_LEGACY_AZURE_ENABLED TAPPER_OBJECT_STORE_IMAGE DOCKER_HOST
+unset TAPPER_E2E_OWNERSHIP_FILE
 
 tapper_e2e_state_root="${TMPDIR:-/tmp}"
 tapper_e2e_state_dir=""
@@ -330,6 +331,23 @@ tapper_e2e_state_dir="$(mktemp -d "$tapper_e2e_state_root/tap-tapper-e2e.XXXXXX"
   exit 2
 }
 chmod 700 "$tapper_e2e_state_dir"
+export TAPPER_E2E_OWNERSHIP_FILE="$tapper_e2e_state_dir/database-owner.json"
+python3 - <<'PY'
+import hashlib
+import json
+import os
+
+path = os.environ["TAPPER_E2E_OWNERSHIP_FILE"]
+payload = {
+    "project": os.environ["TAP_TAPPER_COMPOSE_PROJECT"],
+    "databaseUrlSha256": hashlib.sha256(os.environ["TAP_DATABASE_URL"].encode()).hexdigest(),
+    "hostPort": int(os.environ["MYSQL_PORT"]),
+    "runnerPid": os.getppid(),
+}
+descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+PY
 export TAPPER_E2E_STATE_FILE="$tapper_e2e_state_dir/state.json"
 export TAPPER_E2E_HOSTILE_DIR="$tapper_e2e_state_dir/hostile"
 uv run --project apps/tap-ai-backend python "$tapper_e2e_script_dir/build-hostile-document-fixtures.py" "$TAPPER_E2E_HOSTILE_DIR"
