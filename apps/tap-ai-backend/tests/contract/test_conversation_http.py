@@ -1,7 +1,9 @@
+import asyncio
 import json
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tap.interfaces.http.app import create_app
@@ -16,6 +18,7 @@ from tap.modules.chat.domain.conversations import (
     CitationEvidence,
     GraphContextStatus,
     RetrievalSummary,
+    TurnInput,
 )
 from tests.conftest import validation_http_services
 
@@ -33,6 +36,55 @@ def test_conversation_routes_are_registered_and_blank_first_message_is_rejected(
     assert schema["properties"]["message"]["minLength"] == 1
     stream = paths["/api/v1/projects/{project_id}/conversations/{conversation_id}/stream"]["get"]
     assert "text/event-stream" in stream["responses"]["200"]["content"]
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload"),
+    [
+        ("test-plan.generation.waiting", {"jobId": "job-1", "reason": "review"}),
+        (
+            "test-plan.generation.result_ready",
+            {
+                "jobId": "job-1",
+                "testPlanId": "plan-1",
+                "revisionId": "revision-1",
+                "deepLink": "/test-management/plan-1/revisions/revision-1",
+            },
+        ),
+        ("test-plan.generation.failed", {"jobId": "job-1", "failureCode": "failed"}),
+        ("test-plan.generation.canceled", {"jobId": "job-1", "reason": "canceled"}),
+    ],
+)
+def test_conversation_events_http_reads_persisted_test_plan_lifecycle(
+    event_type: str, payload: dict[str, str]
+) -> None:
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    asyncio.run(
+        conversations.create(
+            "conversation-1",
+            "turn-1",
+            "request-1",
+            TurnInput(
+                message="Design tests",
+                actor_id=VALIDATION_SCOPE.actor_id,
+                identity_mode=VALIDATION_SCOPE.identity_mode.value,
+                model_alias="tapper-chat",
+            ),
+        )
+    )
+    asyncio.run(conversations.emit("conversation-1", "turn-1", event_type, payload))
+    client = TestClient(
+        create_app(replace(validation_http_services(), conversations=conversations)),
+        raise_server_exceptions=False,
+    )
+
+    detail = client.get("/api/v1/projects/tapper-demo/conversations/conversation-1")
+    response = client.get("/api/v1/projects/tapper-demo/conversations/conversation-1/events")
+
+    assert detail.status_code == 200, detail.text
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][-1]["eventType"] == event_type
+    assert response.json()["items"][-1]["payload"] == payload
 
 
 def test_conversation_accepts_a_model_only_turn_without_knowledge_revisions():

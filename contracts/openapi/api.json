@@ -1063,7 +1063,11 @@
               "turn.canceled",
               "turn.failed",
               "conversation.turn.requested",
-              "conversation.turn.completed"
+              "conversation.turn.completed",
+              "test-plan.generation.waiting",
+              "test-plan.generation.result_ready",
+              "test-plan.generation.failed",
+              "test-plan.generation.canceled"
             ],
             "title": "Eventtype",
             "type": "string"

@@ -832,6 +832,10 @@ class ConversationEventItem(ContractModel):
         "turn.failed",
         "conversation.turn.requested",
         "conversation.turn.completed",
+        "test-plan.generation.waiting",
+        "test-plan.generation.result_ready",
+        "test-plan.generation.failed",
+        "test-plan.generation.canceled",
     ]
     payload: dict[str, object]
     occurred_at: TimestampValue
