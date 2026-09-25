@@ -210,7 +210,7 @@ test_scenario = _scoped(
     Column("title", String(512), nullable=False),
     uniques=(
         (("revision_id", "scenario_id"), "uq_test_scenario_revision_pk"),
-        (("case_id", "ordinal"), "uq_test_scenario_ordinal"),
+        (("revision_id", "case_id", "ordinal"), "uq_test_scenario_ordinal"),
     ),
     parents=(
         (("revision_id",), "test_plan_revision", ("revision_id",), "fk_test_scenario_revision"),
@@ -236,7 +236,7 @@ test_plan_step = _scoped(
     Column("unknown_ids", JSON, nullable=False),
     uniques=(
         (("revision_id", "step_id"), "uq_test_plan_step_revision_pk"),
-        (("scenario_id", "ordinal"), "uq_test_plan_step_ordinal"),
+        (("revision_id", "scenario_id", "ordinal"), "uq_test_plan_step_ordinal"),
     ),
     parents=(
         (("revision_id",), "test_plan_revision", ("revision_id",), "fk_test_plan_step_revision"),
@@ -280,7 +280,12 @@ test_plan_assumption = _child(
     Column("text", Text, nullable=False),
     Column("graph_edge_id", String(128)),
 )
-test_plan_unknown = _child("test_plan_unknown", "unknown_id", Column("text", Text, nullable=False))
+test_plan_unknown = _child(
+    "test_plan_unknown",
+    "unknown_id",
+    Column("text", Text, nullable=False),
+    Column("requirement_ref", String(512)),
+)
 test_plan_coverage_gap = _child(
     "test_plan_coverage_gap",
     "gap_id",
@@ -423,6 +428,7 @@ TEST_MANAGEMENT_TABLES = (
     test_design_model_call,
     test_plan_review_decision,
     test_plan_source_impact,
+    test_plan_write_command,
 )
 
 
@@ -814,6 +820,7 @@ class MysqlTestPlanRepository:
                             test_plan_citation.c.chunk_id,
                             test_plan_citation.c.content_digest,
                             test_plan_citation.c.claim_text,
+                            test_plan_citation.c.origin,
                             test_plan_citation.c.anchor_json,
                         )
                         .select_from(
@@ -847,6 +854,7 @@ class MysqlTestPlanRepository:
             "chunk_id": row["chunk_id"],
             "content_digest": row["content_digest"],
             "claim_text": row["claim_text"],
+            "origin": row["origin"],
             "anchor": row["anchor_json"] or {},
         }
 
@@ -973,6 +981,16 @@ class MysqlTestPlanRepository:
                 if existing is None:
                     raise RevisionConflict("fork replay result no longer exists")
                 return existing
+            plan_exists = await session.scalar(
+                select(test_plan.c.test_plan_id)
+                .where(
+                    *scope_predicates(test_plan, scope),
+                    test_plan.c.test_plan_id == test_plan_id,
+                )
+                .with_for_update()
+            )
+            if plan_exists is None:
+                raise LookupError("test plan not found")
             row = (
                 (
                     await session.execute(
@@ -997,8 +1015,17 @@ class MysqlTestPlanRepository:
             suffix = hashlib.sha256(
                 f"{scope.project_id}:{test_plan_id}:{idempotency_key}".encode()
             ).hexdigest()[:32]
+            latest_version = int(
+                await session.scalar(
+                    select(func.max(test_plan_revision.c.version)).where(
+                        *scope_predicates(test_plan_revision, scope),
+                        test_plan_revision.c.test_plan_id == test_plan_id,
+                    )
+                )
+                or 0
+            )
             draft = replace(
-                source.fork(f"tpr_{suffix}", source.version + 1),
+                source.fork(f"tpr_{suffix}", latest_version + 1),
                 author_actor_id=scope.actor_id,
             )
             await self._insert_revision(session, draft, now=_naive(now))
@@ -1171,8 +1198,7 @@ class MysqlTestPlanRepository:
             or revision.agent_revision_id is None
             or not revision.skill_revision_ids
         ):
-            # Legacy hand-authored plans keep the existing application gate.
-            return
+            raise ValueError("test plan governance bindings are incomplete")
         pointer = (
             (
                 await session.execute(
@@ -1270,6 +1296,9 @@ class MysqlTestPlanRepository:
                             knowledge_citation_snapshot.c.revision_id,
                             knowledge_citation_snapshot.c.chunk_id,
                             knowledge_citation_snapshot.c.chunk_content_hash,
+                            knowledge_citation_snapshot.c.anchor_json,
+                            knowledge_citation_snapshot.c.claim_text,
+                            knowledge_citation_snapshot.c.origin,
                         )
                         .where(
                             *scope_predicates(knowledge_citation_snapshot, scope),
@@ -1288,8 +1317,19 @@ class MysqlTestPlanRepository:
                 or evidence["chunk_id"] != citation.chunk_id
                 or evidence["chunk_content_hash"] != citation.content_digest
                 or evidence["revision_id"] not in approved_versions
+                or evidence["claim_text"] != citation.claim_text
+                or evidence["origin"] != citation.origin.value
             ):
                 raise ValueError("test plan citation is not currently authorized")
+            anchor = evidence["anchor_json"]
+            if isinstance(anchor, str):
+                anchor = json.loads(anchor)
+            if (
+                not isinstance(anchor, dict)
+                or anchor != (citation.anchor or {})
+                or anchor.get("inventoryItemId") not in approved_items
+            ):
+                raise ValueError("test plan citation item is not currently approved")
         agent_rows = tuple(
             await session.scalars(
                 select(ai_agent_revision.c.revision_id)
@@ -1329,6 +1369,107 @@ class MysqlTestPlanRepository:
             or len(model_rows) != 1
         ):
             raise ValueError("test plan generation versions are no longer current")
+
+    async def _assert_generation_authority(
+        self,
+        session: AsyncSession,
+        scope: ProjectScopeContext,
+        request: TestPlanGenerationRequest,
+        now: datetime,
+    ) -> set[str]:
+        if request.requirement_scope is None:
+            raise ValueError("generation Requirement Scope is missing")
+        pointer = (
+            (
+                await session.execute(
+                    select(
+                        knowledge_publication.c.publication_id,
+                        knowledge_publication.c.version,
+                        knowledge_publication.c.status,
+                        knowledge_publication.c.expires_at,
+                        knowledge_publication.c.source_revision_ids,
+                        knowledge_publication.c.approved_item_ids,
+                    )
+                    .select_from(
+                        knowledge_current_publication.join(
+                            knowledge_publication,
+                            knowledge_publication.c.publication_id
+                            == knowledge_current_publication.c.publication_id,
+                        )
+                    )
+                    .where(
+                        *scope_predicates(knowledge_current_publication, scope),
+                        *scope_predicates(knowledge_publication, scope),
+                        knowledge_current_publication.c.pointer_id == _current_pointer_id(scope),
+                    )
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        frozen_scope = request.requirement_scope
+        if (
+            pointer is None
+            or pointer["publication_id"] != frozen_scope.scope_id
+            or pointer["version"] != frozen_scope.version
+            or pointer["status"] != "published"
+            or pointer["expires_at"] <= _naive(now)
+            or not set(request.approved_knowledge_revision_ids)
+            <= set(pointer["source_revision_ids"])
+        ):
+            raise ValueError("generation publication authority is no longer current")
+        approved_items = set(pointer["approved_item_ids"])
+        inventory = (
+            (
+                await session.execute(
+                    select(
+                        knowledge_parse_inventory.c.item_id,
+                        knowledge_parse_inventory.c.source_revision_id,
+                        knowledge_parse_inventory.c.locator,
+                    )
+                    .select_from(
+                        knowledge_parse_inventory.join(
+                            knowledge_document_revision,
+                            knowledge_document_revision.c.revision_id
+                            == knowledge_parse_inventory.c.source_revision_id,
+                        )
+                    )
+                    .where(
+                        *scope_predicates(knowledge_parse_inventory, scope),
+                        *scope_predicates(knowledge_document_revision, scope),
+                        knowledge_parse_inventory.c.source_revision_id.in_(
+                            request.approved_knowledge_revision_ids
+                        ),
+                        knowledge_parse_inventory.c.attempt
+                        == knowledge_document_revision.c.parse_inventory_attempt,
+                        knowledge_parse_inventory.c.status == "parsed",
+                    )
+                    .order_by(
+                        knowledge_parse_inventory.c.source_revision_id,
+                        knowledge_parse_inventory.c.ordinal,
+                    )
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .all()
+        )
+        current_scope = RequirementScopeSnapshot.create(
+            scope_id=pointer["publication_id"],
+            version=pointer["version"],
+            requirements=tuple(
+                RequirementScopeItem(row["item_id"], row["source_revision_id"], row["locator"])
+                for row in inventory
+                if row["item_id"] in approved_items
+            ),
+        )
+        if (
+            current_scope.content_digest != frozen_scope.content_digest
+            or current_scope.requirements != frozen_scope.requirements
+        ):
+            raise ValueError("generation Requirement Scope is no longer approved")
+        return approved_items
 
     async def record_review(
         self,
@@ -1449,8 +1590,28 @@ class MysqlTestPlanRepository:
             rows = (
                 (
                     await session.execute(
-                        select(test_plan_review_decision)
-                        .where(*scope_predicates(test_plan_review_decision, scope))
+                        select(
+                            test_plan_review_decision,
+                            test_plan_revision.c.content_digest.label("current_content_digest"),
+                            test_plan_revision.c.needs_review.label("current_needs_review"),
+                        )
+                        .select_from(
+                            test_plan_review_decision.join(
+                                test_plan_revision,
+                                (
+                                    test_plan_revision.c.project_id
+                                    == test_plan_review_decision.c.project_id
+                                )
+                                & (
+                                    test_plan_revision.c.revision_id
+                                    == test_plan_review_decision.c.revision_id
+                                ),
+                            )
+                        )
+                        .where(
+                            *scope_predicates(test_plan_review_decision, scope),
+                            *scope_predicates(test_plan_revision, scope),
+                        )
                         .order_by(
                             test_plan_review_decision.c.created_at,
                             test_plan_review_decision.c.decision_id,
@@ -1460,7 +1621,12 @@ class MysqlTestPlanRepository:
                 .mappings()
                 .all()
             )
-        current = {row["revision_id"]: ReviewDisposition(row["disposition"]) for row in rows}
+        current = {
+            row["revision_id"]: ReviewDisposition(row["disposition"])
+            for row in rows
+            if row["reviewed_content_digest"] == row["current_content_digest"]
+            and not row["current_needs_review"]
+        }
         reviewed = [value for value in current.values() if value is not ReviewDisposition.PENDING]
         return TestPlanReviewSummary(
             len(reviewed),
@@ -1690,10 +1856,16 @@ class MysqlTestPlanRepository:
                 or not all(isinstance(item, str) for item in skill_revision_ids)
             ):
                 raise ValueError("frozen Turn execution versions are incomplete")
+            from tap.modules.test_management.adapters.model_gateway_generation import (
+                TEST_DESIGN_MODEL_ROUTE_VERSION,
+                TEST_DESIGN_PROFILE_DIGEST,
+            )
+
             model_material = json.dumps(
                 {
                     "modelAlias": model_alias,
-                    "serverModelProfile": "test-design-model-profile-v1",
+                    "modelRouteVersion": TEST_DESIGN_MODEL_ROUTE_VERSION,
+                    "promptSchemaProfileDigest": TEST_DESIGN_PROFILE_DIGEST,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -1803,6 +1975,7 @@ class MysqlTestPlanRepository:
                 or request.model_revision_id is None
             ):
                 raise ValueError("generation governance versions are incomplete")
+            await self._assert_generation_authority(session, self.scope, request, _naive(now))
             approved_versions = set(request.approved_knowledge_revision_ids)
             if any(
                 item.source_revision_id not in approved_versions
@@ -2029,6 +2202,18 @@ class MysqlTestPlanRepository:
                 GenerationJobStatus.FAILED.value,
                 GenerationJobStatus.CANCELED.value,
             }:
+                await self._record_write(
+                    session,
+                    scope,
+                    operation="cancel",
+                    target_id=job_id,
+                    key=idempotency_key,
+                    digest=digest,
+                    result_kind="job",
+                    result_id=job_id,
+                    result_version=row["row_version"],
+                    now=now,
+                )
                 return self._job(row)
             await session.execute(
                 update(test_plan_generation_job)
@@ -2329,6 +2514,7 @@ class MysqlTestPlanRepository:
                         lease_token=token,
                         lease_expires_at=instant + lease_duration,
                         attempt_count=test_plan_generation_job.c.attempt_count + 1,
+                        row_version=test_plan_generation_job.c.row_version + 1,
                         updated_at=instant,
                     )
                 )
@@ -2339,6 +2525,7 @@ class MysqlTestPlanRepository:
                     lease_token=token,
                     lease_expires_at=instant + lease_duration,
                     attempt_count=row["attempt_count"] + 1,
+                    row_version=row["row_version"] + 1,
                     updated_at=instant,
                 )
                 claims.append(ClaimedTestDesignJob(self._job(claimed), token))
@@ -2403,49 +2590,66 @@ class MysqlTestPlanRepository:
             for item in answer_snapshot.get("citations", [])
             if isinstance(item, dict) and isinstance(item.get("citation_snapshot_id"), str)
         )
+        retrieval = answer_snapshot.get("retrieval_summary")
+        trace_id = retrieval.get("trace_id") if isinstance(retrieval, dict) else None
+        if citation_ids and not isinstance(trace_id, str):
+            raise ValueError("Answer Evidence citation trace is missing")
         authorized_evidence: list[dict[str, object]] = []
-        if citation_ids:
-            async with self._sessions() as session:
+        async with self._sessions() as session, session.begin():
+            approved_items = await self._assert_generation_authority(
+                session, scope, request, datetime.now(timezone.utc).replace(tzinfo=None)
+            )
+            if citation_ids:
                 for citation_id in citation_ids:
                     evidence = (
                         (
                             await session.execute(
-                                text(
-                                    "SELECT source_id,document_id,revision_id,chunk_id,"
-                                    "chunk_content_hash,anchor_json "
-                                    "FROM knowledge_citation_snapshot "
-                                    "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
-                                    "AND citation_id=:citation_id"
-                                ),
-                                {
-                                    "enterprise_id": scope.enterprise_id,
-                                    "project_id": scope.project_id,
-                                    "citation_id": citation_id,
-                                },
+                                select(
+                                    knowledge_citation_snapshot.c.revision_id,
+                                    knowledge_citation_snapshot.c.chunk_id,
+                                    knowledge_citation_snapshot.c.chunk_content_hash,
+                                    knowledge_citation_snapshot.c.anchor_json,
+                                    knowledge_citation_snapshot.c.claim_text,
+                                    knowledge_citation_snapshot.c.origin,
+                                ).where(
+                                    *scope_predicates(knowledge_citation_snapshot, scope),
+                                    knowledge_citation_snapshot.c.citation_id == citation_id,
+                                    knowledge_citation_snapshot.c.trace_id == trace_id,
+                                )
                             )
                         )
                         .mappings()
                         .one_or_none()
                     )
-                    if evidence is not None:
-                        raw_anchor = evidence["anchor_json"]
-                        anchor = (
-                            json.loads(raw_anchor) if isinstance(raw_anchor, str) else raw_anchor
-                        )
-                        if not isinstance(anchor, dict):
-                            raise RevisionConflict("citation snapshot anchor is invalid")
-                        authorized_evidence.append(
-                            {
-                                "citationSnapshotId": citation_id,
-                                "sourceRevisionId": evidence["revision_id"],
-                                "documentRevisionId": evidence["revision_id"],
-                                "chunkId": evidence["chunk_id"],
-                                "contentDigest": evidence["chunk_content_hash"],
-                                "claimText": str(answer_snapshot.get("answer", "")),
-                                "origin": CitationOrigin.SOURCE.value,
-                                "anchor": anchor,
-                            }
-                        )
+                    if evidence is None:
+                        raise ValueError("Answer Evidence citation is unavailable")
+                    raw_anchor = evidence["anchor_json"]
+                    anchor = json.loads(raw_anchor) if isinstance(raw_anchor, str) else raw_anchor
+                    if (
+                        not isinstance(anchor, dict)
+                        or anchor.get("inventoryItemId") not in approved_items
+                    ):
+                        raise ValueError("Answer Evidence citation is not currently approved")
+                    if (
+                        not isinstance(evidence["claim_text"], str)
+                        or not evidence["claim_text"].strip()
+                        or evidence["origin"] != CitationOrigin.SOURCE.value
+                    ):
+                        # The answer may retain unreferenced citations for historical
+                        # fidelity, but they are never eligible as Test Design evidence.
+                        continue
+                    authorized_evidence.append(
+                        {
+                            "citationSnapshotId": citation_id,
+                            "sourceRevisionId": evidence["revision_id"],
+                            "documentRevisionId": evidence["revision_id"],
+                            "chunkId": evidence["chunk_id"],
+                            "contentDigest": evidence["chunk_content_hash"],
+                            "claimText": evidence["claim_text"],
+                            "origin": evidence["origin"],
+                            "anchor": anchor,
+                        }
+                    )
         answer_snapshot["authorizedEvidence"] = authorized_evidence
         return TestDesignContext(
             scope,
@@ -2582,6 +2786,7 @@ class MysqlTestPlanRepository:
                     lease_token=None,
                     lease_expires_at=None,
                     updated_at=instant,
+                    row_version=test_plan_generation_job.c.row_version + 1,
                 )
             )
             if result.rowcount != 1:
@@ -2719,6 +2924,7 @@ class MysqlTestPlanRepository:
                     lease_token=None,
                     lease_expires_at=None,
                     updated_at=_naive(now),
+                    row_version=test_plan_generation_job.c.row_version + 1,
                 )
             )
             if result.rowcount != 1:
@@ -2780,6 +2986,7 @@ class MysqlTestPlanRepository:
                     lease_token=None,
                     lease_expires_at=None,
                     updated_at=instant,
+                    row_version=test_plan_generation_job.c.row_version + 1,
                 )
             )
             if result.rowcount != 1:
@@ -2933,6 +3140,7 @@ class MysqlTestPlanRepository:
                     unknown_id=unknown.unknown_id,
                     revision_id=revision.revision_id,
                     text=unknown.text,
+                    requirement_ref=unknown.requirement_ref,
                 )
             )
         for gap in revision.coverage_gaps:
@@ -3077,7 +3285,7 @@ class MysqlTestPlanRepository:
             for item in await rows(test_plan_assumption)
         )
         unknowns = tuple(
-            TestPlanUnknown(item["unknown_id"], item["text"])
+            TestPlanUnknown(item["unknown_id"], item["text"], item["requirement_ref"])
             for item in await rows(test_plan_unknown)
         )
         gaps = tuple(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Literal, cast
@@ -18,9 +20,11 @@ from sqlalchemy import (
     func,
     insert,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.mysql import DATETIME, JSON
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.events import ProjectEventEnvelope
@@ -1674,6 +1678,28 @@ class MysqlKnowledgeReviewRepository:
             replay = await self._locked_command(session, command_key, command_digest)
             if replay is not None:
                 return replay
+            previous = (
+                (
+                    await session.execute(
+                        select(knowledge_publication)
+                        .select_from(
+                            knowledge_current_publication.join(
+                                knowledge_publication,
+                                knowledge_publication.c.publication_id
+                                == knowledge_current_publication.c.publication_id,
+                            )
+                        )
+                        .where(
+                            *scope_predicates(knowledge_current_publication, self._scope),
+                            *scope_predicates(knowledge_publication, self._scope),
+                            knowledge_current_publication.c.pointer_id == pointer_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
             if (
                 locked_review is None
                 or locked_review["version"] != expected_version
@@ -1727,6 +1753,16 @@ class MysqlKnowledgeReviewRepository:
                     updated_at=_naive_utc(publication.published_at),
                 )
             )
+            if previous is not None and previous["publication_id"] != publication.publication_id:
+                await self._mark_test_plan_impacts(
+                    session,
+                    allowed_source_revision_ids=set(publication.source_revision_ids),
+                    allowed_item_ids=set(publication.approved_item_ids),
+                    invalidated_source_revision_ids=set(previous["source_revision_ids"]),
+                    reason="approved knowledge publication replaced",
+                    key_prefix=f"replace:{command_key}",
+                    now=publication.published_at,
+                )
             await self._insert_command(
                 session, command_key, command_digest, publication, publication.published_at
             )
@@ -2146,6 +2182,15 @@ class MysqlKnowledgeReviewRepository:
             )
             if current_publication_id != publication.publication_id:
                 raise ReviewStateConflict("publication-not-current")
+            await self._mark_test_plan_impacts(
+                session,
+                allowed_source_revision_ids=set(),
+                allowed_item_ids=set(),
+                invalidated_source_revision_ids=set(publication.source_revision_ids),
+                reason="approved knowledge publication withdrawn",
+                key_prefix=f"withdraw:{command_key}",
+                now=publication.withdrawn_at,
+            )
             result = await session.execute(
                 update(knowledge_publication)
                 .where(
@@ -2228,6 +2273,92 @@ class MysqlKnowledgeReviewRepository:
                 },
             )
         return publication
+
+    async def _mark_test_plan_impacts(
+        self,
+        session: AsyncSession,
+        *,
+        allowed_source_revision_ids: set[str],
+        allowed_item_ids: set[str],
+        invalidated_source_revision_ids: set[str],
+        reason: str,
+        key_prefix: str,
+        now: datetime,
+    ) -> None:
+        """Atomically project publication authority changes into Test Plan review state."""
+
+        rows = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT c.revision_id,c.source_revision_id,c.anchor_json "
+                        "FROM test_plan_citation c JOIN test_plan_revision r "
+                        "ON r.project_id=c.project_id AND r.revision_id=c.revision_id "
+                        "WHERE c.enterprise_id=:enterprise_id AND c.project_id=:project_id "
+                        "FOR UPDATE"
+                    ),
+                    {
+                        "enterprise_id": self._scope.enterprise_id,
+                        "project_id": self._scope.project_id,
+                    },
+                )
+            )
+            .mappings()
+            .all()
+        )
+        impacted: set[tuple[str, str]] = set()
+        for row in rows:
+            anchor = row["anchor_json"]
+            if isinstance(anchor, str):
+                anchor = json.loads(anchor)
+            item_id = anchor.get("inventoryItemId") if isinstance(anchor, dict) else None
+            if (
+                row["source_revision_id"] in invalidated_source_revision_ids
+                or row["source_revision_id"] not in allowed_source_revision_ids
+                or item_id not in allowed_item_ids
+            ):
+                impacted.add((row["revision_id"], row["source_revision_id"]))
+        for revision_id, source_revision_id in sorted(impacted):
+            callback_key = f"{key_prefix}:{source_revision_id}"
+            impact_key = hashlib.sha256(
+                f"{self._scope.project_id}:{callback_key}:{revision_id}".encode()
+            ).hexdigest()
+            inserted = cast(
+                CursorResult[object],
+                await session.execute(
+                    text(
+                        "INSERT IGNORE INTO test_plan_source_impact "
+                        "(impact_id,revision_id,source_revision_id,reason,idempotency_key,created_at,"
+                        "enterprise_id,project_id,actor_id,identity_mode,identity_origin) VALUES "
+                        "(:impact_id,:revision_id,:source_revision_id,:reason,:idempotency_key,"
+                        ":created_at,:enterprise_id,:project_id,:actor_id,:identity_mode,"
+                        ":identity_origin)"
+                    ),
+                    {
+                        "impact_id": f"tpsi_{impact_key[:32]}",
+                        "revision_id": revision_id,
+                        "source_revision_id": source_revision_id,
+                        "reason": reason,
+                        "idempotency_key": impact_key,
+                        "created_at": _naive_utc(now),
+                        **scope_values(self._scope),
+                    },
+                ),
+            )
+            if inserted.rowcount == 1:
+                await session.execute(
+                    text(
+                        "UPDATE test_plan_revision SET needs_review=1,needs_review_reason=:reason,"
+                        "row_version=row_version+1 WHERE enterprise_id=:enterprise_id "
+                        "AND project_id=:project_id AND revision_id=:revision_id"
+                    ),
+                    {
+                        "reason": reason,
+                        "enterprise_id": self._scope.enterprise_id,
+                        "project_id": self._scope.project_id,
+                        "revision_id": revision_id,
+                    },
+                )
 
     async def pending_projection_cleanup(self) -> tuple[str, ...]:
         async with self._sessions() as session:

@@ -133,7 +133,10 @@ TEST_DESIGN_SCHEMA: dict[str, object] = _object(
         },
         "unknowns": {
             "type": "array",
-            "items": _object(["id", "text"], {"id": _STRING, "text": _STRING}),
+            "items": _object(
+                ["id", "text", "requirementRef"],
+                {"id": _STRING, "text": _STRING, "requirementRef": _STRING},
+            ),
         },
         "coverageGaps": {
             "type": "array",
@@ -172,6 +175,9 @@ TEST_DESIGN_PROMPT = (
 TEST_DESIGN_PROFILE_DIGEST = text_digest(
     TEST_DESIGN_PROMPT + "\n" + schema_digest(TEST_DESIGN_SCHEMA)
 )
+# Versioned server route binding for the Test Design workload. Changing model
+# routing semantics requires changing this value and therefore the frozen ID.
+TEST_DESIGN_MODEL_ROUTE_VERSION = "test-design-route-v1"
 
 
 class ModelGatewayTestDesign:
@@ -325,7 +331,11 @@ def _revision(context: TestDesignContext, raw: dict[str, object]) -> TestPlanRev
             for item in _objects(raw, "assumptions")
         )
         unknowns = tuple(
-            TestPlanUnknown(_string(item, "id"), _string(item, "text"))
+            TestPlanUnknown(
+                _string(item, "id"),
+                _string(item, "text"),
+                _string(item, "requirementRef"),
+            )
             for item in _objects(raw, "unknowns")
         )
         gaps = tuple(

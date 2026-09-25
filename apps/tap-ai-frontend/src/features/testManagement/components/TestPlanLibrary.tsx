@@ -33,6 +33,7 @@ const COPY = {
       "The Test Plan draft could not be generated. Try again from Tapper.",
     generationStatusFailed:
       "Generation status could not be loaded. Refresh to try again.",
+    generationCanceled: "Test Plan generation was canceled.",
     retry: "Retry generation",
     result: "Open generated draft",
     generate: "Generate from latest answer",
@@ -58,6 +59,7 @@ const COPY = {
     generating: "正在生成测试计划草稿，可能需要一分钟。",
     generationFailed: "测试计划草稿生成失败，请返回 Tapper 重试。",
     generationStatusFailed: "暂时无法获取生成进度，请刷新页面重试。",
+    generationCanceled: "测试计划生成已取消。",
     retry: "重试生成",
     result: "打开生成的草稿",
     generate: "从最新回答生成",
@@ -157,6 +159,9 @@ export function TestPlanLibrary({
           </Button>
         </div>
       ) : null}
+      {generation.data?.status === "CANCELED" ? (
+        <p role="status">{text.generationCanceled}</p>
+      ) : null}
       {generation.data?.status === "DRAFT_READY" ? (
         <Button
           onClick={() =>
@@ -169,7 +174,8 @@ export function TestPlanLibrary({
       {generationJobId !== null &&
       !generation.isError &&
       generation.data?.status !== "DRAFT_READY" &&
-      generation.data?.status !== "FAILED" ? (
+      generation.data?.status !== "FAILED" &&
+      generation.data?.status !== "CANCELED" ? (
         <p role="status">{text.generating}</p>
       ) : null}
       {!plans.isPending && !plans.isError ? (
@@ -189,8 +195,8 @@ export function TestPlanLibrary({
           generationJobId !== null &&
           !generation.isError &&
           generation.data?.status !== "FAILED" &&
-          generation.data?.status !== "DRAFT_READY" ? null : items.length ===
-            0 ? (
+          generation.data?.status !== "DRAFT_READY" &&
+          generation.data?.status !== "CANCELED" ? null : items.length === 0 ? (
             <div className="tap-data-workspace">
               <FileTextOutlined aria-hidden="true" />
               <h2>{plans.data?.length ? text.noMatch : text.empty}</h2>

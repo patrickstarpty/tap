@@ -115,6 +115,11 @@ def _validate(revision: TestPlanRevision, *, require_citations: bool) -> str:
     }
     if revision.requirement_ids:
         requirement_ids = set(revision.requirement_ids)
+        unknown_requirements = {item.requirement_ref for item in revision.unknowns}
+        if None in unknown_requirements or not unknown_requirements <= requirement_ids:
+            raise ValueError("Unknowns must bind to the frozen Requirement Scope")
+        if covered_requirements & unknown_requirements:
+            raise ValueError("unknown requirements cannot have definite covered scenarios")
         if not covered_requirements <= requirement_ids:
             raise ValueError("covered requirement is outside the frozen Requirement Scope")
         gap_requirements = {item.requirement_ref for item in revision.coverage_gaps}

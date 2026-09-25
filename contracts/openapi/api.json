@@ -6760,6 +6760,15 @@
             "title": "Documentrevisionid",
             "type": "string"
           },
+          "origin": {
+            "enum": [
+              "SOURCE",
+              "GRAPH_EXTRACTED",
+              "GRAPH_INFERRED"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
           "sourceRevisionId": {
             "title": "Sourcerevisionid",
             "type": "string"
@@ -6772,6 +6781,7 @@
           "chunkId",
           "contentDigest",
           "claimText",
+          "origin",
           "anchor"
         ],
         "title": "TestPlanEvidencePreview",
@@ -7721,6 +7731,17 @@
               }
             ],
             "title": "Graphedgeid"
+          },
+          "requirementRef": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirementref"
           },
           "text": {
             "title": "Text",

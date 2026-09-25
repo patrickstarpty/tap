@@ -40,10 +40,25 @@ def _scope_constraints(name: str) -> tuple[sa.ForeignKeyConstraint, ...]:
 
 
 def upgrade() -> None:
+    op.drop_constraint("uq_test_scenario_ordinal", "test_scenario", type_="unique")
+    op.create_unique_constraint(
+        "uq_test_scenario_ordinal",
+        "test_scenario",
+        ["project_id", "revision_id", "case_id", "ordinal"],
+    )
+    op.drop_constraint("uq_test_plan_step_ordinal", "test_plan_step", type_="unique")
+    op.create_unique_constraint(
+        "uq_test_plan_step_ordinal",
+        "test_plan_step",
+        ["project_id", "revision_id", "scenario_id", "ordinal"],
+    )
     op.add_column("test_case", sa.Column("covered_requirement_ids", JSON, nullable=True))
     op.add_column("test_plan_step", sa.Column("citation_ids", JSON, nullable=True))
     op.add_column("test_plan_step", sa.Column("unknown_ids", JSON, nullable=True))
     op.add_column("test_plan_citation", sa.Column("anchor_json", JSON))
+    op.add_column("test_plan_unknown", sa.Column("requirement_ref", sa.String(512)))
+    op.add_column("knowledge_citation_snapshot", sa.Column("claim_text", sa.Text()))
+    op.add_column("knowledge_citation_snapshot", sa.Column("origin", sa.String(32)))
     for column in (
         sa.Column("requirement_scope_id", sa.String(128)),
         sa.Column("requirement_scope_version", sa.Integer()),
@@ -176,14 +191,19 @@ def downgrade() -> None:
         "OR JSON_LENGTH(requirement_ids) > 0 OR JSON_LENGTH(approved_knowledge_revision_ids) > 0 "
         "OR model_revision_id IS NOT NULL OR agent_revision_id IS NOT NULL "
         "OR JSON_LENGTH(skill_revision_ids) > 0 OR author_actor_id IS NOT NULL "
-        "OR generated_content_digest IS NOT NULL OR needs_review = 1 LIMIT 1",
+        "OR generated_content_digest IS NOT NULL OR needs_review = 1 "
+        "OR strict_review_required = 1 LIMIT 1",
         "SELECT 1 FROM test_plan_generation_job WHERE requirement_scope IS NOT NULL "
         "OR JSON_LENGTH(approved_knowledge_revision_ids) > 0 OR model_revision_id IS NOT NULL "
-        "OR retry_idempotency_key IS NOT NULL OR row_version <> 1 LIMIT 1",
+        "OR retry_idempotency_key IS NOT NULL OR row_version <> 1 "
+        "OR strict_review_required = 1 LIMIT 1",
         "SELECT 1 FROM test_case WHERE JSON_LENGTH(covered_requirement_ids) > 0 LIMIT 1",
         "SELECT 1 FROM test_plan_step WHERE JSON_LENGTH(citation_ids) > 0 "
         "OR JSON_LENGTH(unknown_ids) > 0 LIMIT 1",
         "SELECT 1 FROM test_plan_citation WHERE anchor_json IS NOT NULL LIMIT 1",
+        "SELECT 1 FROM knowledge_citation_snapshot WHERE claim_text IS NOT NULL "
+        "OR origin IS NOT NULL LIMIT 1",
+        "SELECT 1 FROM test_plan_unknown WHERE requirement_ref IS NOT NULL LIMIT 1",
     )
     if any(bind.execute(sa.text(statement)).first() is not None for statement in governed_checks):
         raise RuntimeError("Test Plan governance data requires retention; downgrade refused")
@@ -197,6 +217,8 @@ def downgrade() -> None:
     op.drop_table("test_plan_write_command")
     op.drop_table("test_plan_source_impact")
     op.drop_table("test_plan_review_decision")
+    op.drop_column("knowledge_citation_snapshot", "origin")
+    op.drop_column("knowledge_citation_snapshot", "claim_text")
     for table, names in (
         (
             "test_plan_generation_job",
@@ -229,7 +251,20 @@ def downgrade() -> None:
         ),
         ("test_plan_step", ("unknown_ids", "citation_ids")),
         ("test_plan_citation", ("anchor_json",)),
+        ("test_plan_unknown", ("requirement_ref",)),
         ("test_case", ("covered_requirement_ids",)),
     ):
         for name in names:
             op.drop_column(table, name)
+    op.drop_constraint("uq_test_plan_step_ordinal", "test_plan_step", type_="unique")
+    op.create_unique_constraint(
+        "uq_test_plan_step_ordinal",
+        "test_plan_step",
+        ["project_id", "scenario_id", "ordinal"],
+    )
+    op.drop_constraint("uq_test_scenario_ordinal", "test_scenario", type_="unique")
+    op.create_unique_constraint(
+        "uq_test_scenario_ordinal",
+        "test_scenario",
+        ["project_id", "case_id", "ordinal"],
+    )

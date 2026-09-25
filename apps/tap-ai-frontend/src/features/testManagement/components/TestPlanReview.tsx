@@ -270,7 +270,12 @@ function ReviewWorkspace({
           ))}
           {draft.unknowns.map((unknown) => (
             <div className="tap-plan-blocker-editor" key={unknown.factId}>
-              <span>{unknown.text}</span>
+              <span>
+                {unknown.requirementRef ? (
+                  <strong>{unknown.requirementRef}: </strong>
+                ) : null}
+                {unknown.text}
+              </span>
               <Button
                 onClick={() =>
                   setDraft((current) => ({

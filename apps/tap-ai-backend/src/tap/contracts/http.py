@@ -1143,6 +1143,7 @@ class TestPlanEvidencePreview(ContractModel):
     chunk_id: str
     content_digest: CanonicalSha256
     claim_text: str
+    origin: Literal["SOURCE", "GRAPH_EXTRACTED", "GRAPH_INFERRED"]
     anchor: dict[str, object]
 
 
@@ -1150,6 +1151,7 @@ class TestPlanTextFactView(ContractModel):
     fact_id: str
     text: str
     graph_edge_id: str | None = None
+    requirement_ref: str | None = None
 
 
 class TestPlanCoverageGapView(ContractModel):

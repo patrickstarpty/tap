@@ -130,7 +130,8 @@ def _revision_from_checkpoint(value: object) -> TestPlanRevision:
         for item in content["assumptions"]
     )
     unknowns = tuple(
-        TestPlanUnknown(item["unknownId"], item["text"]) for item in content["unknowns"]
+        TestPlanUnknown(item["unknownId"], item["text"], item.get("requirementRef"))
+        for item in content["unknowns"]
     )
     coverage_gaps = tuple(
         TestPlanCoverageGap(

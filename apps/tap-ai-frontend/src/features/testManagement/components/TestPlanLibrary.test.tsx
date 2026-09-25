@@ -173,3 +173,30 @@ it("explains a failed generation and retries the same durable job", async () => 
     expect.objectContaining({ jobId: "tpj_failed" }),
   );
 });
+
+it("shows a canceled generation as terminal instead of generating", () => {
+  vi.mocked(useTestPlans).mockReturnValue({
+    isPending: false,
+    isError: false,
+    data: [],
+    refetch: vi.fn(),
+  } as never);
+  vi.mocked(useTestPlanGeneration).mockReturnValue({
+    isError: false,
+    data: { status: "CANCELED" },
+  } as never);
+
+  render(
+    <TestPlanLibrary
+      projectId="tapper-demo"
+      locale="en"
+      generationJobId="tpj_canceled"
+      onOpen={vi.fn()}
+      onGoTapper={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("status")).toHaveTextContent("was canceled");
+  expect(screen.queryByText(/Generating a Test Plan/u)).not.toBeInTheDocument();
+  expect(screen.getByText("No Test Plans yet")).toBeVisible();
+});

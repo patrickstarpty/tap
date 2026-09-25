@@ -68,6 +68,8 @@ class CitationSnapshot:
     source_content_hash: str
     chunk_content_hash: str
     anchor_json: str
+    claim_text: str | None = None
+    origin: str | None = None
 
     def __post_init__(self) -> None:
         _bounded("citation trace ID", self.trace_id, maximum=64)
@@ -87,6 +89,12 @@ class CitationSnapshot:
             != self.anchor_json
         ):
             raise ValueError("citation anchor must be a canonical JSON object")
+        if self.claim_text is not None and (
+            not self.claim_text.strip() or len(self.claim_text) > 8000
+        ):
+            raise ValueError("citation claim text must be bounded nonblank text")
+        if self.origin is not None and self.origin != "SOURCE":
+            raise ValueError("citation snapshot origin must be SOURCE")
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +155,12 @@ class AnswerSnapshot:
             for item in ordered
         }
         citations: list[CitationSnapshot] = []
+        claims_by_citation = {
+            citation_id: "\n\n".join(
+                claim.text for claim in response.claims if citation_id in claim.citation_ids
+            )
+            for citation_id in (item.citation_id for item in response.citations)
+        }
         for item in response.citations:
             source = item.source
             if not isinstance(source, SourceRevisionRef) or not isinstance(
@@ -198,6 +212,8 @@ class AnswerSnapshot:
                     source_content_hash=source.source_content_hash,
                     chunk_content_hash=item.chunk_content_hash,
                     anchor_json=anchor_json,
+                    claim_text=claims_by_citation[item.citation_id] or None,
+                    origin=("SOURCE" if claims_by_citation[item.citation_id] else None),
                 )
             )
         citation_ids = {item.citation_id for item in citations}

@@ -22,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Table,
+    Text,
     UniqueConstraint,
     and_,
     delete,
@@ -366,6 +367,8 @@ knowledge_citation_snapshot = Table(
     Column("source_content_hash", String(71), nullable=False),
     Column("chunk_content_hash", String(71), nullable=False),
     Column("anchor_json", JSON, nullable=False),
+    Column("claim_text", Text),
+    Column("origin", String(32)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     UniqueConstraint("trace_id", "citation_id", name="uq_knowledge_citation_trace_id"),
 )
@@ -1538,6 +1541,8 @@ class MysqlDocumentRepository:
                         "source_content_hash": item.source_content_hash,
                         "chunk_content_hash": item.chunk_content_hash,
                         "anchor_json": json.loads(item.anchor_json),
+                        "claim_text": item.claim_text,
+                        "origin": item.origin,
                         "created_at": now,
                     }
                     for item in snapshot.citations
@@ -1626,6 +1631,8 @@ class MysqlDocumentRepository:
                             citation.c.source_content_hash.label("citation_source_hash"),
                             citation.c.chunk_content_hash.label("citation_chunk_hash"),
                             citation.c.anchor_json.label("citation_anchor"),
+                            citation.c.claim_text.label("citation_claim_text"),
+                            citation.c.origin.label("citation_origin"),
                             answer.c.trace_id.label("answer_trace_id"),
                             answer.c.selected_revisions_json,
                             document.c.document_id.label("document_id"),
@@ -1698,6 +1705,8 @@ class MysqlDocumentRepository:
                 source_content_hash=cast(str, row["citation_source_hash"]),
                 chunk_content_hash=cast(str, row["citation_chunk_hash"]),
                 anchor_json=citation_anchor,
+                claim_text=cast(str | None, row["citation_claim_text"]),
+                origin=cast(str | None, row["citation_origin"]),
             )
             selected = tuple(
                 ReadyDocumentRevision(

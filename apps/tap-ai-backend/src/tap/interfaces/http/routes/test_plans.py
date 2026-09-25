@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, Request, status
 
@@ -146,7 +146,11 @@ def _view(revision, project_id: str) -> TestPlanRevisionView:
             for item in revision.assumptions
         ],
         unknowns=[
-            TestPlanTextFactView(fact_id=item.unknown_id, text=item.text)
+            TestPlanTextFactView(
+                fact_id=item.unknown_id,
+                text=item.text,
+                requirement_ref=item.requirement_ref,
+            )
             for item in revision.unknowns
         ],
         coverage_gaps=[
@@ -239,6 +243,10 @@ async def get_evidence_preview(
         chunk_id=str(value["chunk_id"]),
         content_digest=str(value["content_digest"]),
         claim_text=str(value["claim_text"]),
+        origin=cast(
+            Literal["SOURCE", "GRAPH_EXTRACTED", "GRAPH_INFERRED"],
+            value["origin"],
+        ),
         anchor=value["anchor"] if isinstance(value["anchor"], dict) else {},
     )
 
@@ -320,7 +328,9 @@ async def replace_draft(
             TestPlanAssumption(item.fact_id, item.text, item.graph_edge_id)
             for item in body.assumptions
         ),
-        unknowns=tuple(TestPlanUnknown(item.fact_id, item.text) for item in body.unknowns),
+        unknowns=tuple(
+            TestPlanUnknown(item.fact_id, item.text, item.requirement_ref) for item in body.unknowns
+        ),
         coverage_gaps=tuple(
             TestPlanCoverageGap(
                 item.gap_id,

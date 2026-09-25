@@ -189,7 +189,8 @@ class MysqlConversationRepository:
                     await session.execute(
                         text(
                             "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
-                            "chunk_id,source_content_hash,chunk_content_hash,anchor_json "
+                            "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
+                            "claim_text,origin "
                             "FROM knowledge_citation_snapshot WHERE enterprise_id=:enterprise_id "
                             "AND project_id=:project_id AND trace_id=:trace_id "
                             f"AND citation_id IN ({placeholders})"
@@ -223,6 +224,8 @@ class MysqlConversationRepository:
                     source_content_hash=row["source_content_hash"],
                     chunk_content_hash=row["chunk_content_hash"],
                     anchor=row["anchor_json"],
+                    claim_text=row["claim_text"],
+                    origin=row["origin"],
                 ),
             )
             for row in rows
@@ -741,7 +744,8 @@ class MysqlConversationRepository:
                         await session.execute(
                             text(
                                 "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
-                                "chunk_id,source_content_hash,chunk_content_hash,anchor_json "
+                                "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
+                                "claim_text,origin "
                                 "FROM knowledge_citation_snapshot "
                                 "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
                                 "AND citation_id=:citation_id AND trace_id=:trace_id"
@@ -769,6 +773,8 @@ class MysqlConversationRepository:
                     source_content_hash=citation_row["source_content_hash"],
                     chunk_content_hash=citation_row["chunk_content_hash"],
                     anchor=citation_row["anchor_json"],
+                    claim_text=citation_row["claim_text"],
+                    origin=citation_row["origin"],
                 )
                 if trusted_digest != citation.citation_digest:
                     raise ValueError("citation snapshot digest differs from persisted fact")

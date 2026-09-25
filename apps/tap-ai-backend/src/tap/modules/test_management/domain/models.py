@@ -255,10 +255,13 @@ class TestPlanAssumption:
 class TestPlanUnknown:
     unknown_id: str
     text: str
+    requirement_ref: str | None = None
 
     def __post_init__(self) -> None:
         _identifier("unknown_id", self.unknown_id)
         _text("unknown", self.text)
+        if self.requirement_ref is not None:
+            _text("unknown requirement", self.requirement_ref, 512)
 
 
 @dataclass(frozen=True, slots=True)
@@ -687,7 +690,12 @@ class TestPlanRevision:
                 for item in self.assumptions
             ],
             "unknowns": [
-                {"unknownId": item.unknown_id, "text": item.text} for item in self.unknowns
+                {
+                    "unknownId": item.unknown_id,
+                    "text": item.text,
+                    "requirementRef": item.requirement_ref,
+                }
+                for item in self.unknowns
             ],
             "coverageGaps": [
                 {

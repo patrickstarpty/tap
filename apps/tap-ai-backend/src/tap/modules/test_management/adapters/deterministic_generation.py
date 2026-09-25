@@ -45,6 +45,11 @@ class DeterministicTestDesign:
                 TestPlanUnknown(
                     "unknown_source_evidence",
                     "No source evidence was available for this generated draft.",
+                    (
+                        context.request.requirement_scope.requirements[0].requirement_id
+                        if context.request.requirement_scope is not None
+                        else None
+                    ),
                 ),
             )
             requirement_ids = (

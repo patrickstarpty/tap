@@ -191,6 +191,24 @@ async def test_test_design_generation_is_schema_locked_grounded_and_draft_only()
 
 
 @pytest.mark.asyncio
+async def test_unknown_requirement_cannot_be_emitted_as_definite_covered_behavior() -> None:
+    output = _output()
+    output["unknowns"] = [
+        {
+            "id": "unknown_confirmation_rule",
+            "text": "The confirmation rule is unresolved.",
+            "requirementRef": "requirement_01",
+        }
+    ]
+    # The model deliberately omits unknownIds from the Then step; the server-owned
+    # requirement binding must still reject this contradiction.
+    gateway = Gateway(output)
+
+    with pytest.raises(ValueError, match="unknown requirements"):
+        await ModelGatewayTestDesign(gateway).generate(_context())
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mutation", ["status", "citation", "bdd"])
 async def test_malformed_ungrounded_or_privileged_model_output_fails_closed(mutation) -> None:
     output = deepcopy(_output())
@@ -251,7 +269,13 @@ async def test_model_cannot_submit_mutable_citation_claim_fields() -> None:
 @pytest.mark.asyncio
 async def test_unknown_business_condition_cannot_be_emitted_as_a_definite_then() -> None:
     output = deepcopy(_output())
-    output["unknowns"] = [{"id": "unknown_retry_policy", "text": "Whether retry is permitted"}]
+    output["unknowns"] = [
+        {
+            "id": "unknown_retry_policy",
+            "text": "Whether retry is permitted",
+            "requirementRef": "requirement_01",
+        }
+    ]
     output["cases"][0]["scenarios"][0]["steps"][2]["unknownIds"] = [  # type: ignore[index]
         "unknown_retry_policy"
     ]

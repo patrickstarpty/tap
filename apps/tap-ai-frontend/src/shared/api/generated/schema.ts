@@ -3379,6 +3379,11 @@ export interface components {
             contentDigest: string;
             /** Documentrevisionid */
             documentRevisionId: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "SOURCE" | "GRAPH_EXTRACTED" | "GRAPH_INFERRED";
             /** Sourcerevisionid */
             sourceRevisionId: string;
         };
@@ -3710,6 +3715,8 @@ export interface components {
             factId: string;
             /** Graphedgeid */
             graphEdgeId?: string | null;
+            /** Requirementref */
+            requirementRef?: string | null;
             /** Text */
             text: string;
         };

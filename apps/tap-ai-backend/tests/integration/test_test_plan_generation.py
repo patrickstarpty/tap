@@ -25,6 +25,7 @@ from tests.integration.test_test_plan_publish import _draft
 from tests.integration.test_test_plan_repository import (
     _request,
     _seed_completed_turn,
+    _seed_test_design_authority,
 )
 
 
@@ -36,9 +37,10 @@ async def test_generation_worker_reclaims_expired_job_and_commits_draft_with_art
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         base = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
-        await _seed_completed_turn(sessions)
+        publication = await _seed_test_design_authority(sessions)
+        await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
         repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
-        request = _request()
+        request = _request(publication)
         await repository.request_generation(VALIDATION_SCOPE, request, now=base)
         first = (
             await repository.claim_generation_jobs(
@@ -143,9 +145,10 @@ async def test_generation_completion_rolls_back_business_graph_and_outbox_togeth
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        await _seed_completed_turn(sessions)
+        publication = await _seed_test_design_authority(sessions)
+        await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
         repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
-        request = _request()
+        request = _request(publication)
         await repository.request_generation(
             VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 12, 0)
         )
@@ -234,9 +237,10 @@ async def test_expired_generation_claim_cannot_load_model_context(owned_project_
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        await _seed_completed_turn(sessions)
+        publication = await _seed_test_design_authority(sessions)
+        await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
         repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
-        request = _request()
+        request = _request(publication)
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         await repository.request_generation(VALIDATION_SCOPE, request, now=now)
         claim = (
@@ -275,9 +279,10 @@ async def test_unknown_provider_response_is_held_for_reconciliation_without_reis
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        await _seed_completed_turn(sessions)
+        publication = await _seed_test_design_authority(sessions)
+        await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
         repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
-        request = _request()
+        request = _request(publication)
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         await repository.request_generation(VALIDATION_SCOPE, request, now=now)
         claim = (
@@ -321,9 +326,10 @@ async def test_running_generation_can_be_cancelled_and_not_reclaimed(
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        await _seed_completed_turn(sessions)
+        publication = await _seed_test_design_authority(sessions)
+        await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
         repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
-        request = _request()
+        request = _request(publication)
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         await repository.request_generation(VALIDATION_SCOPE, request, now=now)
         claim = (
@@ -341,17 +347,36 @@ async def test_running_generation_can_be_cancelled_and_not_reclaimed(
             reason="human-confirmation",
             now=now + timedelta(seconds=1),
         )
+        waiting = await repository.get_generation_job(VALIDATION_SCOPE, request.job_id)
+        assert waiting.row_version == claim.job.row_version + 1
 
         canceled = await repository.cancel_generation(
             VALIDATION_SCOPE,
             request.job_id,
-            expected_version=1,
+            expected_version=waiting.row_version,
             idempotency_key="cancel-waiting-generation",
             now=now + timedelta(seconds=2),
         )
 
         assert canceled.status is GenerationJobStatus.CANCELED
+        assert canceled.row_version == waiting.row_version + 1
         assert canceled.failure_code == "canceled-by-user"
+        replayed = await repository.cancel_generation(
+            VALIDATION_SCOPE,
+            request.job_id,
+            expected_version=waiting.row_version,
+            idempotency_key="cancel-waiting-generation",
+            now=now + timedelta(seconds=3),
+        )
+        assert replayed.row_version == canceled.row_version
+        terminal = await repository.cancel_generation(
+            VALIDATION_SCOPE,
+            request.job_id,
+            expected_version=canceled.row_version,
+            idempotency_key="cancel-terminal-generation",
+            now=now + timedelta(seconds=4),
+        )
+        assert terminal.row_version == canceled.row_version
         assert (
             await repository.claim_generation_jobs(
                 VALIDATION_SCOPE,

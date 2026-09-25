@@ -30,20 +30,25 @@ def citation_evidence_digest(
     source_content_hash: str,
     chunk_content_hash: str,
     anchor: object,
+    claim_text: str | None = None,
+    origin: str | None = None,
 ) -> str:
-    return content_digest(
-        {
-            "citationId": citation_id,
-            "traceId": trace_id,
-            "sourceId": source_id,
-            "documentId": document_id,
-            "revisionId": revision_id,
-            "chunkId": chunk_id,
-            "sourceContentHash": source_content_hash,
-            "chunkContentHash": chunk_content_hash,
-            "anchor": anchor,
-        }
-    )
+    material: dict[str, object] = {
+        "citationId": citation_id,
+        "traceId": trace_id,
+        "sourceId": source_id,
+        "documentId": document_id,
+        "revisionId": revision_id,
+        "chunkId": chunk_id,
+        "sourceContentHash": source_content_hash,
+        "chunkContentHash": chunk_content_hash,
+        "anchor": anchor,
+    }
+    # New governed evidence binds the exact cited claim and provenance. Keeping
+    # legacy rows' material unchanged preserves historical snapshot verification.
+    if claim_text is not None or origin is not None:
+        material.update({"claimText": claim_text, "origin": origin})
+    return content_digest(material)
 
 
 class GraphContextStatus(StrEnum):

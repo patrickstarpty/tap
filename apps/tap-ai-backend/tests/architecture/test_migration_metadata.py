@@ -26,6 +26,7 @@ EXPECTED_TABLES = {
     "test_design_model_call",
     "test_plan_review_decision",
     "test_plan_source_impact",
+    "test_plan_write_command",
     "graph_snapshot",
     "graph_snapshot_revision",
     "graph_active_snapshot",
