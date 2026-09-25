@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import gzip
 import json
 import traceback
@@ -69,6 +70,12 @@ from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure, Artifac
 SOURCE_HASH = "sha256:" + "a" * 64
 DOCUMENT_ID = DocumentId("doc_a")
 REVISION = str(revision_id_for(DOCUMENT_ID, SOURCE_HASH, PARSER_VERSION))
+
+
+def _versioned_original_locator(blob_name: str, etag: str) -> ArtifactLocator:
+    payload = json.dumps([ORIGINALS_CONTAINER, blob_name, etag], separators=(",", ":")).encode()
+    token = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    return ArtifactLocator("azorig1." + token)
 
 
 @pytest.mark.asyncio
@@ -1287,8 +1294,15 @@ async def test_original_excerpt_reads_only_the_verified_bounded_range(
     start = payload.index(b"exact")
     excerpt = payload[start : start + len(b"exact-clause")]
     requested: list[tuple[int, int]] = []
+    etag = '"original-generation"'
 
     class Stream:
+        properties = SimpleNamespace(
+            etag=etag,
+            size=len(excerpt),
+            content_range=f"bytes {start}-{start + len(excerpt) - 1}/{len(payload)}",
+        )
+
         async def readall(self) -> bytes:
             return excerpt
 
@@ -1300,15 +1314,17 @@ async def test_original_excerpt_reads_only_the_verified_bounded_range(
                     "size": str(len(payload)),
                 },
                 size=len(payload),
+                etag=etag,
             )
 
         async def download_blob(self, **kwargs: object) -> Stream:
+            assert kwargs["etag"] == etag
             requested.append((int(kwargs["offset"]), int(kwargs["length"])))
             return Stream()
 
     store = _store_with_double(monkeypatch, Blob())
-    locator = ArtifactLocator(
-        f"{ORIGINALS_CONTAINER}/revisions/{REVISION}/{source_digest.removeprefix('sha256:')}"
+    locator = _versioned_original_locator(
+        f"revisions/{REVISION}/{source_digest.removeprefix('sha256:')}", etag
     )
 
     value = await store.read_original_excerpt(
@@ -1322,6 +1338,53 @@ async def test_original_excerpt_reads_only_the_verified_bounded_range(
 
     assert value == excerpt
     assert requested == [(start, len(excerpt))]
+
+
+@pytest.mark.asyncio
+async def test_original_excerpt_rejects_unversioned_locator_and_mid_read_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b"prefix-exact-clause-suffix"
+    source_digest = canonical_sha256(payload)
+    start = payload.index(b"exact")
+    excerpt = payload[start : start + len(b"exact-clause")]
+    blob_name = f"revisions/{REVISION}/{source_digest.removeprefix('sha256:')}"
+    etag = '"original-generation"'
+
+    class Blob(_BlobDouble):
+        async def get_blob_properties(self) -> object:
+            return SimpleNamespace(
+                metadata={
+                    "blobsha256": source_digest.removeprefix("sha256:"),
+                    "size": str(len(payload)),
+                },
+                size=len(payload),
+                etag=etag,
+            )
+
+        async def download_blob(self, **kwargs: object) -> object:
+            assert kwargs["etag"] == etag
+            raise ResourceModifiedError("provider generation changed")
+
+    store = _store_with_double(monkeypatch, Blob())
+    with pytest.raises(ArtifactProviderUnavailable):
+        await store.read_original_excerpt(
+            ArtifactLocator(f"{ORIGINALS_CONTAINER}/{blob_name}"),
+            revision_id=REVISION,
+            source_digest=source_digest,
+            start_byte=start,
+            end_byte=start + len(excerpt),
+            excerpt_digest=canonical_sha256(excerpt),
+        )
+    with pytest.raises(ArtifactProviderUnavailable):
+        await store.read_original_excerpt(
+            _versioned_original_locator(blob_name, etag),
+            revision_id=REVISION,
+            source_digest=source_digest,
+            start_byte=start,
+            end_byte=start + len(excerpt),
+            excerpt_digest=canonical_sha256(excerpt),
+        )
 
 
 @pytest.mark.asyncio
@@ -1564,6 +1627,7 @@ async def test_original_promotion_race_reuses_exact_existing_blob_without_deleti
         async def get_blob_properties(self):  # type: ignore[no-untyped-def]
             return SimpleNamespace(
                 size=3,
+                etag='"race-winner"',
                 metadata={
                     "blobsha256": canonical_sha256(b"abc").removeprefix("sha256:"),
                     "size": "3",
@@ -1609,7 +1673,7 @@ async def test_original_promotion_race_reuses_exact_existing_blob_without_deleti
 
     locator = await store.commit_original(staged, "rev_task5_race")
 
-    assert str(locator).startswith("tapper-originals/revisions/rev_task5_race/")
+    assert str(locator).startswith("azorig1.")
     assert deleted == [source]
     assert "etag" not in copy_conditions
     assert getattr(copy_conditions["match_condition"], "name", None) == "IfMissing"
@@ -1657,6 +1721,7 @@ async def test_uncertain_copy_response_recovers_owned_success_from_destination_m
         async def get_blob_properties(self):  # type: ignore[no-untyped-def]
             return SimpleNamespace(
                 size=3,
+                etag='"uncertain-success"',
                 metadata=self.metadata,
                 copy=SimpleNamespace(status="success", id="copy-owned"),
             )
@@ -1698,7 +1763,7 @@ async def test_uncertain_copy_response_recovers_owned_success_from_destination_m
 
     locator = await store.commit_original(staged, "rev_uncertain_success")
 
-    assert str(locator).startswith("tapper-originals/revisions/rev_uncertain_success/")
+    assert str(locator).startswith("azorig1.")
     assert destination.metadata["copyowner"]
     assert destination.metadata["blobsha256"] == staged.source_content_hash.removeprefix("sha256:")
     assert deleted == [source]
@@ -2017,6 +2082,21 @@ async def test_delete_rejects_cross_revision_locator_before_provider_mutation(
         await store.delete_revision_artifacts(target)
 
     assert blob.delete_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_accepts_versioned_original_locator_without_dropping_revision_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blob = _BlobDouble()
+    store = _store_with_double(monkeypatch, blob)
+    locator = _versioned_original_locator(
+        f"revisions/{REVISION}/{SOURCE_HASH.removeprefix('sha256:')}", '"generation"'
+    )
+
+    await store.delete_revision_artifacts(DeletionTarget("doc_a", REVISION, (), (locator,)))
+
+    assert blob.delete_calls == 1
 
 
 @pytest.mark.asyncio

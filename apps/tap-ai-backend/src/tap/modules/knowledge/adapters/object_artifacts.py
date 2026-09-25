@@ -24,6 +24,7 @@ from tap.modules.knowledge.adapters.artifact_codecs import (
 from tap.modules.knowledge.adapters.blob_artifacts import (
     AzureBlobArtifactStore,
     _parse_locator,
+    _parse_versioned_original_locator,
     _revision_from_artifact_name,
 )
 from tap.modules.knowledge.domain.documents import ChunkDraft, NormalizedArtifact, canonical_sha256
@@ -129,7 +130,8 @@ class KnowledgeArtifactStore:
 
     def _legacy(self, locator: ArtifactLocator) -> AzureBlobArtifactStore:
         try:
-            _parse_locator(locator)
+            if _parse_versioned_original_locator(locator) is None:
+                _parse_locator(locator)
         except (ValueError, TypeError):
             raise ArtifactIntegrityFailure("unknown artifact reference") from None
         if self.legacy is None:
@@ -340,7 +342,8 @@ class KnowledgeArtifactStore:
                 refs.append((locator, kind, ref))
             else:
                 self._legacy(locator)
-                _, name = _parse_locator(locator)
+                versioned = _parse_versioned_original_locator(locator)
+                _, name = versioned[:2] if versioned is not None else _parse_locator(locator)
                 if _revision_from_artifact_name(name) != target.revision_id:
                     raise ArtifactIntegrityFailure("legacy deletion revision differs")
                 legacy_refs.append(locator)

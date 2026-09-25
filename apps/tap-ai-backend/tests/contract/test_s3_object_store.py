@@ -77,14 +77,24 @@ class MemoryS3:
         if kwargs["Key"] not in self.objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
         item = self.objects[kwargs["Key"]]
+        if kwargs.get("IfMatch") not in (None, item["ETag"]):
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "GetObject")
         data = item["data"]
+        content_range = None
         if "Range" in kwargs:
             self.ranges.append(kwargs["Range"])
             bounds = kwargs["Range"].removeprefix("bytes=").split("-", 1)
-            data = data[int(bounds[0]) : int(bounds[1]) + 1]
+            start, end = int(bounds[0]), int(bounds[1])
+            content_range = f"bytes {start}-{end}/{len(data)}"
+            data = data[start : end + 1]
         body = Body(data)
         self.bodies.append(body)
-        return {**item, "ContentLength": len(data), "Body": body}
+        return {
+            **item,
+            "ContentLength": len(data),
+            **({"ContentRange": content_range} if content_range is not None else {}),
+            "Body": body,
+        }
 
     async def delete_object(self, **kwargs):
         self.observe("delete", kwargs)
@@ -175,6 +185,38 @@ async def test_digest_tamper_closes_body_and_never_returns_unverified_bytes(stor
     with pytest.raises(ObjectIntegrityError):
         await store.open_verified(ref)
     assert all(body.closed for body in store._client.bodies)
+
+
+@pytest.mark.asyncio
+async def test_range_read_rejects_payload_replacement_even_when_excerpt_bytes_match(store):
+    staged = await store.put_staged(PutObjectRequest(parts(), 100, "text/plain"))
+    ref = await store.promote(staged, staged.sha256, identity="r/original", attributes={})
+    payload_key = next(key for key in store._client.objects if "/payloads/" in key)
+    replacement = b"verified replaced"
+    store._client.objects[payload_key].update(
+        data=replacement,
+        ContentLength=len(replacement),
+        ETag='"replacement-generation"',
+    )
+
+    with pytest.raises(ObjectUnavailable):
+        await store.read_verified_range(ref, start_byte=0, end_byte=8)
+
+
+@pytest.mark.asyncio
+async def test_range_read_requires_provider_content_range_attestation(store):
+    staged = await store.put_staged(PutObjectRequest(parts(), 100, "text/plain"))
+    ref = await store.promote(staged, staged.sha256, identity="r/original", attributes={})
+    original_get = store._client.get_object
+
+    async def without_content_range(**kwargs):  # type: ignore[no-untyped-def]
+        response = await original_get(**kwargs)
+        response.pop("ContentRange", None)
+        return response
+
+    store._client.get_object = without_content_range
+    with pytest.raises(ObjectUnavailable):
+        await store.read_verified_range(ref, start_byte=0, end_byte=8)
 
 
 @pytest.mark.asyncio

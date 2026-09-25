@@ -41,13 +41,18 @@ from tap.modules.knowledge.domain.parse_inventory import (
 
 
 def _pdf_with_text(*pages: str) -> bytes:
+    return _pdf_with_streams(
+        *(f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("latin-1") for text in pages)
+    )
+
+
+def _pdf_with_streams(*streams: bytes) -> bytes:
     objects: list[bytes] = [b"<< /Type /Catalog /Pages 2 0 R >>"]
-    page_ids = [4 + index * 2 for index in range(len(pages))]
+    page_ids = [4 + index * 2 for index in range(len(streams))]
     kids = " ".join(f"{item} 0 R" for item in page_ids)
-    objects.append(f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>".encode())
+    objects.append(f"<< /Type /Pages /Kids [{kids}] /Count {len(streams)} >>".encode())
     objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
-    for index, text in enumerate(pages):
-        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("latin-1")
+    for index, stream in enumerate(streams):
         page_id = page_ids[index]
         objects.append(
             (
@@ -121,6 +126,39 @@ def _stored_docx(*paragraphs: tuple[str, str]) -> bytes:
     return payload.getvalue()
 
 
+def _stored_docx_body(body: str) -> bytes:
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}<w:sectPr/></w:body></w:document>"
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" '
+        'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.'
+        'wordprocessingml.document.main+xml"/>'
+        "</Types>"
+    )
+    relationships = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'
+        'officeDocument" Target="word/document.xml"/>'
+        "</Relationships>"
+    )
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr("_rels/.rels", relationships)
+        archive.writestr("word/document.xml", document)
+    return payload.getvalue()
+
+
 def test_mixed_pdf_inventory_does_not_hide_a_page_without_extractable_text() -> None:
     """Skipping a blank/scanned page would falsely mark a mixed PDF complete."""
     artifact = ParserRegistry().parse(
@@ -154,6 +192,56 @@ def test_text_inventory_persists_a_bounded_unicode_byte_range_for_a_late_item() 
     assert span.excerpt_digest == canonical_sha256(target.encode())
 
 
+def test_text_provenance_keeps_repeated_nfc_equivalent_items_on_their_source_nodes() -> None:
+    """A normalized whole-file search can bind decomposed text to a different item."""
+    decomposed = "e\N{COMBINING ACUTE ACCENT}"
+    content = f"{decomposed}\n\né\n\n{decomposed}".encode()
+
+    artifact = ParserRegistry().parse(_identified_source("unicode.txt", MediaType.TEXT, content))
+
+    excerpts = [
+        content[item.original_excerpt.start_byte : item.original_excerpt.end_byte]
+        for item in artifact.parse_inventory
+        if item.original_excerpt is not None
+    ]
+    assert excerpts == [decomposed.encode(), "é".encode(), decomposed.encode()]
+    assert [block.text for block in artifact.blocks] == ["é", "é", "é"]
+
+
+def test_text_provenance_is_unsupported_when_normalization_has_no_safe_boundary_map() -> None:
+    """Normalization across independent Hangul Jamo cannot be guessed as raw byte bounds."""
+    content = "\N{HANGUL CHOSEONG KIYEOK}\N{HANGUL JUNGSEONG A}".encode()
+
+    artifact = ParserRegistry().parse(_identified_source("jamo.txt", MediaType.TEXT, content))
+
+    item = artifact.parse_inventory[0]
+    assert artifact.blocks[0].text == "가"
+    assert item.original_excerpt is None
+    assert item.original_alignment_reason == "source-text-not-stably-addressable"
+
+
+def test_text_provenance_does_not_scan_the_source_once_per_inventory_item() -> None:
+    """A parser with many items must not regress to items multiplied by source scans."""
+
+    class CountingBytes(bytes):
+        find_calls = 0
+
+        def find(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            type(self).find_calls += 1
+            if type(self).find_calls > 2:
+                raise AssertionError("parser repeatedly scanned the complete source")
+            return super().find(*args, **kwargs)
+
+    content = CountingBytes(
+        "\n\n".join(f"item-{index}-" + "x" * 6000 for index in range(200)).encode()
+    )
+
+    artifact = ParserRegistry().parse(_identified_source("many.txt", MediaType.TEXT, content))
+
+    assert len(artifact.parse_inventory) == 200
+    assert CountingBytes.find_calls == 0
+
+
 def test_markdown_original_range_keeps_source_markup_instead_of_relabeling_extracted_text() -> None:
     """The normalized heading title must never masquerade as the Markdown original."""
     content = "# 原始标题🙂\r\n\r\n正文".encode()
@@ -165,6 +253,26 @@ def test_markdown_original_range_keeps_source_markup_instead_of_relabeling_extra
     span = heading.original_excerpt
     assert content[span.start_byte : span.end_byte].decode() == "# 原始标题🙂"
     assert artifact.blocks[0].text == "原始标题🙂"
+
+
+def test_markdown_provenance_keeps_repeated_nfc_equivalent_nodes_distinct() -> None:
+    """Markdown syntax positions, not normalized value equality, choose the original item."""
+    decomposed = "e\N{COMBINING ACUTE ACCENT}"
+    content = f"# {decomposed}\n\n# é\n\n# {decomposed}".encode()
+
+    artifact = ParserRegistry().parse(_identified_source("unicode.md", MediaType.MARKDOWN, content))
+
+    excerpts = [
+        content[item.original_excerpt.start_byte : item.original_excerpt.end_byte]
+        for item in artifact.parse_inventory
+        if item.original_excerpt is not None
+    ]
+    assert excerpts == [
+        f"# {decomposed}".encode(),
+        "# é".encode(),
+        f"# {decomposed}".encode(),
+    ]
+    assert [block.text for block in artifact.blocks] == ["é", "é", "é"]
 
 
 def test_pdf_and_docx_only_claim_original_alignment_for_an_exact_source_span() -> None:
@@ -188,8 +296,46 @@ def test_pdf_and_docx_only_claim_original_alignment_for_an_exact_source_span() -
         item for item in docx.parse_inventory if item.kind is ParseInventoryKind.PARAGRAPH
     ]
     assert exact.original_excerpt is not None
-    assert escaped.original_excerpt is None
-    assert escaped.original_alignment_reason == "source-text-not-stably-addressable"
+    assert escaped.original_excerpt is not None
+    escaped_span = escaped.original_excerpt
+    assert (
+        _stored_docx(("Normal", "Exact DOCX clause"), ("Normal", "A & B"))[
+            escaped_span.start_byte : escaped_span.end_byte
+        ]
+        == b"A &amp; B"
+    )
+
+
+def test_pdf_provenance_uses_the_text_showing_token_not_an_identical_comment() -> None:
+    """A PDF comment must not defeat or impersonate the displayed TJ token."""
+    payload = _pdf_with_streams(
+        b"% Exact PDF clause\nBT /F1 12 Tf 72 720 Td [(Exact PDF clause)] TJ ET"
+    )
+
+    artifact = ParserRegistry().parse(_identified_source("operator.pdf", MediaType.PDF, payload))
+
+    item = next(item for item in artifact.parse_inventory if item.kind is ParseInventoryKind.PAGE)
+    assert item.original_excerpt is not None
+    span = item.original_excerpt
+    assert payload[span.start_byte : span.end_byte] == b"Exact PDF clause"
+    assert payload[: span.start_byte].endswith(b"[(")
+
+
+def test_docx_split_runs_never_bind_to_matching_hidden_attribute_text() -> None:
+    """A bookmark/attribute match is not provenance for visible split-run text."""
+    payload = _stored_docx_body(
+        '<w:p><w:bookmarkStart w:id="0" w:name="Split clause"/>'
+        "<w:r><w:t>Split </w:t></w:r><w:r><w:t>clause</w:t></w:r>"
+        '<w:bookmarkEnd w:id="0"/></w:p>'
+    )
+
+    artifact = ParserRegistry().parse(_identified_source("split.docx", MediaType.DOCX, payload))
+
+    item = next(
+        item for item in artifact.parse_inventory if item.kind is ParseInventoryKind.PARAGRAPH
+    )
+    assert item.original_excerpt is None
+    assert item.original_alignment_reason == "source-text-not-stably-addressable"
 
 
 def test_original_excerpt_range_rejects_malformed_or_unbounded_offsets() -> None:

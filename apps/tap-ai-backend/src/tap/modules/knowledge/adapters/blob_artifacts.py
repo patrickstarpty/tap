@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import math
 import re
@@ -229,6 +230,52 @@ def artifact_locator(container: str, blob_name: str) -> ArtifactLocator:
     return ArtifactLocator(f"{container}/{blob_name}")
 
 
+def _original_artifact_locator(container: str, blob_name: str, etag: str) -> ArtifactLocator:
+    artifact_locator(container, blob_name)
+    if (
+        not isinstance(etag, str)
+        or not 1 <= len(etag) <= 512
+        or any(ord(character) < 32 for character in etag)
+    ):
+        raise ArtifactProviderUnavailable("original provider identity is unavailable")
+    payload = json.dumps([container, blob_name, etag], separators=(",", ":")).encode()
+    token = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    if len(token) > 1000:
+        raise ArtifactIntegrityError("original provider identity is malformed")
+    return ArtifactLocator("azorig1." + token)
+
+
+def _parse_versioned_original_locator(locator: object) -> tuple[str, str, str] | None:
+    if not isinstance(locator, ArtifactLocator) or not locator.startswith("azorig1."):
+        return None
+    token = str(locator).removeprefix("azorig1.")
+    try:
+        padding = "=" * (-len(token) % 4)
+        payload = json.loads(base64.b64decode(token + padding, altchars=b"-_", validate=True))
+        if not isinstance(payload, list) or len(payload) != 3:
+            raise ValueError
+        container, blob_name, etag = payload
+        if artifact_locator(container, blob_name) != f"{container}/{blob_name}":
+            raise ValueError
+        if (
+            not isinstance(etag, str)
+            or not 1 <= len(etag) <= 512
+            or any(ord(character) < 32 for character in etag)
+        ):
+            raise ValueError
+        return container, blob_name, etag
+    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        raise ArtifactIntegrityError("persisted original locator is malformed") from None
+
+
+def _persisted_original_locator(locator: object) -> tuple[str, str, str | None]:
+    versioned = _parse_versioned_original_locator(locator)
+    if versioned is not None:
+        return versioned
+    container, blob_name = _persisted_locator(locator, expected_container=ORIGINALS_CONTAINER)
+    return container, blob_name, None
+
+
 def _persisted_staging_name(value: object) -> str:
     try:
         _staging_name(cast(str, value))
@@ -420,7 +467,7 @@ class AzureBlobArtifactStore:
 
     @_artifact_boundary
     async def read_original(self, locator: ArtifactLocator) -> bytes:
-        container, blob_name = _persisted_locator(locator, expected_container=ORIGINALS_CONTAINER)
+        container, blob_name, _etag = _persisted_original_locator(locator)
         return await self._download_verified(self._blob(container, blob_name))
 
     @_artifact_boundary
@@ -434,7 +481,7 @@ class AzureBlobArtifactStore:
         end_byte: int,
         excerpt_digest: str,
     ) -> bytes:
-        container, blob_name = _persisted_locator(locator, expected_container=ORIGINALS_CONTAINER)
+        container, blob_name, expected_etag = _persisted_original_locator(locator)
         revision_id = _persisted_identity("revision identity", revision_id)
         source_digest = _digest(source_digest)
         excerpt_digest = _digest(excerpt_digest)
@@ -447,9 +494,13 @@ class AzureBlobArtifactStore:
             or end_byte - start_byte > 16_000
         ):
             raise ArtifactIntegrityError("original excerpt binding is malformed")
+        if expected_etag is None:
+            raise ArtifactProviderUnavailable("original provider identity is unavailable")
         blob = self._blob(container, blob_name)
         try:
             properties = await self._bounded(blob.get_blob_properties())
+            if getattr(properties, "etag", None) != expected_etag:
+                raise ArtifactProviderUnavailable("original provider identity changed")
             if (
                 properties.size < end_byte
                 or _metadata_size(properties.metadata) != properties.size
@@ -462,6 +513,8 @@ class AzureBlobArtifactStore:
                     offset=start_byte,
                     length=end_byte - start_byte,
                     max_concurrency=1,
+                    etag=expected_etag,
+                    match_condition=MatchConditions.IfNotModified,
                 )
             )
             data = await self._bounded(stream.readall())
@@ -473,9 +526,17 @@ class AzureBlobArtifactStore:
             raise ArtifactIntegrityError("original artifact does not exist") from error
         except Exception as error:
             raise ArtifactProviderUnavailable("Blob provider range read failed") from error
+        response_properties = getattr(stream, "properties", None)
+        if (
+            getattr(response_properties, "etag", None) != expected_etag
+            or getattr(response_properties, "content_range", None)
+            != f"bytes {start_byte}-{end_byte - 1}/{properties.size}"
+        ):
+            raise ArtifactProviderUnavailable("conditional Blob range identity is unavailable")
         if (
             not isinstance(data, bytes)
             or len(data) != end_byte - start_byte
+            or getattr(response_properties, "size", None) != end_byte - start_byte
             or canonical_sha256(data) != excerpt_digest
         ):
             raise ArtifactIntegrityError("original excerpt digest differs")
@@ -561,7 +622,14 @@ class AzureBlobArtifactStore:
         if not isinstance(target, DeletionTarget):
             raise _ArtifactArgumentTypeError("artifact deletion requires an exact target")
         try:
-            resolved = tuple(_parse_locator(locator) for locator in target.artifact_locators)
+            resolved = tuple(
+                (
+                    versioned[:2]
+                    if (versioned := _parse_versioned_original_locator(locator)) is not None
+                    else _parse_locator(locator)
+                )
+                for locator in target.artifact_locators
+            )
         except (AttributeError, TypeError, ValueError) as error:
             raise ArtifactIntegrityError("artifact deletion target is malformed") from error
         if any(
@@ -752,7 +820,9 @@ class AzureBlobArtifactStore:
                 deadline=deadline,
             ):
                 await self._promotion_call(lambda: self._delete_if_exists(source), deadline)
-                return artifact_locator(ORIGINALS_CONTAINER, blob_name)
+                return await self._committed_original_locator(
+                    destination, blob_name, expected_size, digest, deadline
+                )
 
         copy_id: str | None = None
         try:
@@ -789,7 +859,9 @@ class AzureBlobArtifactStore:
                 deadline=deadline,
             ):
                 await self._promotion_call(lambda: self._delete_if_exists(source), deadline)
-                return artifact_locator(ORIGINALS_CONTAINER, blob_name)
+                return await self._committed_original_locator(
+                    destination, blob_name, expected_size, digest, deadline
+                )
             raise ArtifactIntegrityError("server-side original copy did not succeed") from None
         except asyncio.CancelledError as cancellation:
             settlement_deadline = deadline + min(
@@ -839,7 +911,9 @@ class AzureBlobArtifactStore:
                 )
             if recovered:
                 await self._promotion_call(lambda: self._delete_if_exists(source), deadline)
-                return artifact_locator(ORIGINALS_CONTAINER, blob_name)
+                return await self._committed_original_locator(
+                    destination, blob_name, expected_size, digest, settlement_deadline
+                )
             if recovery_failure is not None:
                 raise recovery_failure
             if recovery_integrity is not None:
@@ -854,7 +928,37 @@ class AzureBlobArtifactStore:
                 ) from error
             raise ArtifactProviderUnavailable("server-side original copy failed") from None
         await self._promotion_call(lambda: self._delete_if_exists(source), deadline)
-        return artifact_locator(ORIGINALS_CONTAINER, blob_name)
+        return await self._committed_original_locator(
+            destination, blob_name, expected_size, digest, deadline
+        )
+
+    async def _committed_original_locator(
+        self,
+        destination: BlobClient,
+        blob_name: str,
+        expected_size: int,
+        expected_digest: str,
+        deadline: float,
+    ) -> ArtifactLocator:
+        properties = await self._promotion_call(
+            lambda: self._bounded(destination.get_blob_properties()), deadline
+        )
+        try:
+            if (
+                properties.size != expected_size
+                or _metadata_size(properties.metadata) != expected_size
+                or _metadata_digest(properties.metadata) != expected_digest
+            ):
+                raise ValueError
+            return _original_artifact_locator(
+                ORIGINALS_CONTAINER,
+                blob_name,
+                properties.etag,
+            )
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise ArtifactProviderUnavailable(
+                "original provider identity is unavailable"
+            ) from error
 
     async def _promotion_call(
         self,
