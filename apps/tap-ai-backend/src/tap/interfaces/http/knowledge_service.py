@@ -264,6 +264,7 @@ class KnowledgeHttpService:
             )
         )
         governance = self._generation_governance(frozen_input)
+        answer_input = None
         if answer_plan is not None:
             from tap.modules.chat.domain.answer_plan import PlanningInput
 
@@ -285,6 +286,19 @@ class KnowledgeHttpService:
             )
             if authorize is not None:
                 await authorize()
+            if answer_plan.route != "retrieve":
+                from tap.modules.knowledge.application.answer_templates import assemble_answer
+
+                answer_input = assemble_answer(
+                    template_id=answer_plan.template_id,
+                    template_version=answer_plan.template_version,
+                    template_digest=answer_plan.template_digest,
+                    original_question=answer_plan.original_question,
+                    standalone_question=answer_plan.standalone_query,
+                    evidence_map={},
+                    output_requirements=answer_plan.output_requirements,
+                    missing_fields=answer_plan.missing,
+                )
         if not revisions:
             if self._models is None:
                 raise ValueError("model-only conversation runtime is unavailable")
@@ -298,12 +312,16 @@ class KnowledgeHttpService:
             ):
                 raise ValueError("accepted model-only authority changed")
             if answer_plan is not None and answer_plan.route != "direct":
-                return self._stopped_answer(answer_plan)
+                return self._stopped_answer(answer_plan, answer_input)
             generation = await self._models.chat(
                 request.query,
                 model_alias=frozen_input.model_alias,
                 governance=governance,
-                **({"answer_plan_id": answer_plan.plan_id} if answer_plan is not None else {}),
+                **(
+                    {"answer_plan_id": answer_plan.plan_id, "answer_input": answer_input}
+                    if answer_plan is not None
+                    else {}
+                ),
             )
             if authorize is not None:
                 await authorize()
@@ -335,7 +353,7 @@ class KnowledgeHttpService:
         if answer_plan is not None and answer_plan.route != "retrieve":
             await self._answers.authorize_frozen_selection(revisions)
             if answer_plan.route != "direct":
-                return self._stopped_answer(answer_plan)
+                return self._stopped_answer(answer_plan, answer_input)
             if self._models is None:
                 raise ValueError("direct answer model is unavailable")
             generation = await self._models.chat(
@@ -343,6 +361,7 @@ class KnowledgeHttpService:
                 model_alias=frozen_input.model_alias,
                 governance=governance,
                 answer_plan_id=answer_plan.plan_id,
+                answer_input=answer_input,
             )
             if authorize is not None:
                 await authorize()
@@ -395,13 +414,11 @@ class KnowledgeHttpService:
 
         return authorized_execution(plan)
 
-    def _stopped_answer(self, plan):
+    def _stopped_answer(self, plan, answer_input):
         if plan.route in {"insights", "file_analysis"}:
             answer = "所需的指标或完整文件分析能力尚不可用，无法提供可靠的统计结果。"
-        elif "sources" in plan.missing:
-            answer = "请选择有权限的项目来源，以便提供有依据的回答。"
         else:
-            answer = "请明确要比较的对象和版本。"
+            answer = answer_input.context["clarificationQuestion"] or "请补充回答所需的信息。"
         return RetrievalAnswerResponse(
             trace_id=plan.plan_id,
             query_plan_id=plan.plan_id,

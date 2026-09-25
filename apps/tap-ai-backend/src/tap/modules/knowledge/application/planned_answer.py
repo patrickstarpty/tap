@@ -9,6 +9,7 @@ class AuthorizedAnswerQuery:
     text: str
     depends_on: tuple[str, ...]
     source_ids: tuple[str, ...]
+    evidence_goal: str
 
 
 @dataclass(frozen=True, slots=True)

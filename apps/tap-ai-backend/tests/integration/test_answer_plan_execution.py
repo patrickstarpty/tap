@@ -170,6 +170,73 @@ async def test_subqueries_share_budget_keep_original_generation_question_and_pla
 
 
 @pytest.mark.asyncio
+async def test_saturated_subqueries_share_evidence_capacity_without_starving_coverage():
+    class Search(FakeSearchPort):
+        async def search(self, item):
+            self.executions.append(item)
+            prefix = "a" if item.plan.sanitized_query == "章节 A" else "b"
+            return tuple(
+                replace(
+                    search_hit(),
+                    chunk_id="h_" + prefix + f"{index:063x}",
+                    logical_chunk_id="h_" + prefix + f"{index:063x}",
+                )
+                for index in range(10)
+            )
+
+    models = PlannedModels()
+    result = await knowledge(Search(), models).answer_frozen(
+        request(), policy(), governance=None, answer_execution=execution(await planned())
+    )
+    evidence = models.answer_evidence[0]
+    assert len(evidence) == 10
+    assert {item.chunk_id[2] for item in evidence} == {"a", "b"}
+    assert models.generation_input.context["missingEvidence"] == []
+    assert not result.degraded_mode
+
+
+@pytest.mark.asyncio
+async def test_reordered_failed_subquestion_keeps_text_and_evidence_goal_in_generation():
+    from tap.modules.chat.domain.answer_plan import PlannedQuery
+
+    plan = await planned()
+    plan = replace(
+        plan,
+        queries=(
+            PlannedQuery("q2", "章节 B", (), "B 的限制条件", plan.source_ids),
+            PlannedQuery("q1", "章节 A", (), "A 的许可条件", plan.source_ids),
+        ),
+    )
+
+    class Search(FakeSearchPort):
+        async def search(self, item):
+            if item.plan.sanitized_query == "章节 B":
+                raise SearchUnavailable("unavailable")
+            return await super().search(item)
+
+    models = PlannedModels()
+    await knowledge(Search((search_hit(),)), models).answer_frozen(
+        request(), policy(), governance=None, answer_execution=execution(plan)
+    )
+    assert models.generation_input.context.get("subquestions") == [
+        {
+            "id": "q2",
+            "text": "章节 B",
+            "evidenceGoal": "B 的限制条件",
+            "evidenceLabels": [],
+            "missingEvidence": True,
+        },
+        {
+            "id": "q1",
+            "text": "章节 A",
+            "evidenceGoal": "A 的许可条件",
+            "evidenceLabels": ["S1"],
+            "missingEvidence": False,
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_partial_query_failure_marks_missing_evidence_without_inventing_it():
     class Search(FakeSearchPort):
         async def search(self, item):
@@ -590,3 +657,100 @@ async def test_direct_answer_respects_persisted_deadline_before_any_model_call()
         await service.answer_conversation(
             RetrievalAnswerRequest(query="你好"), frozen, answer_plan=plan
         )
+
+
+async def model_only_plan(question):
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.chat.application.plan_answer import planning_input
+    from tap.modules.chat.domain.conversations import TurnInput, TurnInputSnapshot, content_digest
+
+    frozen = TurnInput(
+        question,
+        VALIDATION_SCOPE.actor_id,
+        "validation",
+        "tapper-chat",
+        acl_digest=content_digest({"mode": "model-only", "resources": []}),
+        retrieval_policy_digest=content_digest({"mode": "model-only", "retrieval": "not-selected"}),
+    )
+    snapshot = TurnInputSnapshot.create(
+        snapshot_id="snapshot-a",
+        project_id=VALIDATION_SCOPE.project_id,
+        turn_id="turn-a",
+        value=frozen,
+        now=datetime.now(timezone.utc),
+    )
+    return frozen, await AnswerPlanner().plan(planning_input(snapshot))
+
+
+def nonretrieval_service(models):
+    from tap.interfaces.http.knowledge_service import KnowledgeHttpService
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    class Scoped:
+        scope = VALIDATION_SCOPE
+
+    return KnowledgeHttpService(
+        documents=Scoped(), answers=Scoped(), citations=Scoped(), models=models
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "drift", [{"template_digest": "sha256:" + "a" * 64}, {"template_version": "latest"}]
+)
+async def test_direct_plan_rejects_template_drift_before_generation(drift):
+    from tap.contracts.http import RetrievalAnswerRequest
+    from tap.modules.knowledge.ports.models import AnswerGeneration
+
+    class Models:
+        calls = 0
+
+        async def chat(self, *args, **kwargs):
+            self.calls += 1
+            return AnswerGeneration("Hello", (), "tapper-chat", "direct-chat-v1", None)
+
+    frozen, plan = await model_only_plan("你好")
+    models = Models()
+    with pytest.raises(ValueError, match="template"):
+        await nonretrieval_service(models).answer_conversation(
+            RetrievalAnswerRequest(query=frozen.message), frozen, answer_plan=replace(plan, **drift)
+        )
+    assert models.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "missing,required", [("time-range", "时间范围"), ("comparison-conditions", "比较条件")]
+)
+async def test_clarification_asks_for_the_validated_missing_field(missing, required):
+    from tap.contracts.http import RetrievalAnswerRequest
+
+    frozen, plan = await model_only_plan("比较本次与目标结果")
+    plan = replace(plan, missing=(missing,))
+    result = await nonretrieval_service(object()).answer_conversation(
+        RetrievalAnswerRequest(query=frozen.message), frozen, answer_plan=plan
+    )
+    assert required in result.answer
+    assert "对象和版本" not in result.answer
+
+
+@pytest.mark.asyncio
+async def test_direct_plan_passes_pinned_assembly_to_generation():
+    from tap.contracts.http import RetrievalAnswerRequest
+    from tap.modules.knowledge.application.answer_templates import get_template
+    from tap.modules.knowledge.ports.models import AnswerGeneration
+
+    inputs = []
+
+    class Models:
+        async def chat(self, *args, **kwargs):
+            inputs.append(kwargs.get("answer_input"))
+            return AnswerGeneration("Hello", (), "tapper-chat", "direct-chat-v1", None)
+
+    frozen, plan = await model_only_plan("你好")
+    await nonretrieval_service(Models()).answer_conversation(
+        RetrievalAnswerRequest(query=frozen.message), frozen, answer_plan=plan
+    )
+    assert inputs[0] is not None
+    assert get_template("general", "1").instruction in inputs[0].platform_instruction
+    assert inputs[0].context["originalQuestion"] == "你好"

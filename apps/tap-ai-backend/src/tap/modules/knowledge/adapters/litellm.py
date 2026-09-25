@@ -148,6 +148,7 @@ class KnowledgeModelGateway:
         model_alias: str,
         governance: GenerationGovernance | None = None,
         answer_plan_id: str | None = None,
+        answer_input: AssembledAnswer | None = None,
     ) -> AnswerGeneration:
         """Generate a model-only answer when the user selected no Knowledge corpus."""
 
@@ -181,6 +182,19 @@ class KnowledgeModelGateway:
             schema = governance.output_schema
             schema_value = governance.output_schema_digest
             operation = ModelOperation.STRUCTURED
+        if answer_input is not None:
+            prompt = "\n\n".join(
+                (
+                    prompt,
+                    answer_input.platform_instruction,
+                    "No retrieval evidence is available: return an empty claims array.",
+                )
+            )
+            context = await self._redact(json.dumps(answer_input.context, ensure_ascii=False))
+            schema = answer_input.schema
+            schema_value = schema_digest(schema)
+            operation = ModelOperation.STRUCTURED
+            governance_digests += (text_digest(answer_input.platform_instruction),)
         try:
             request = ModelRequest(
                 self.scope,

@@ -21,6 +21,9 @@ INTENTS = frozenset(
     }
 )
 ROUTES = frozenset({"direct", "retrieve", "clarify", "insights", "file_analysis"})
+MISSING_FIELDS = frozenset(
+    {"sources", "object-or-version", "object", "version", "time-range", "comparison-conditions"}
+)
 
 
 def protected_constraints(text: str) -> tuple[str, ...]:
@@ -63,6 +66,11 @@ class PlannedQuery:
     source_ids: tuple[str, ...]
 
     def __post_init__(self):
+        for values in (self.depends_on, self.source_ids):
+            if not isinstance(values, tuple) or not all(
+                isinstance(value, str) and value.strip() for value in values
+            ):
+                raise TypeError("query collections must be immutable tuples of identities")
         if not all(
             isinstance(value, str) and value.strip()
             for value in (self.id, self.text, self.evidence_goal)
@@ -125,6 +133,10 @@ class AnswerPlan:
                 raise TypeError("plan collections must be immutable")
         if self.intent not in INTENTS or self.route not in ROUTES:
             raise ValueError("unknown answer intent or route")
+        if not set(self.missing) <= MISSING_FIELDS:
+            raise ValueError("unknown missing information field")
+        if self.route == "clarify" and (self.intent != "clarification" or not self.missing):
+            raise ValueError("clarification requires a missing field and clarification intent")
         if not math.isfinite(self.deadline_at) or self.deadline_at <= 0:
             raise ValueError("invalid persisted answer deadline")
         if not math.isfinite(self.confidence) or not 0 <= self.confidence <= 1:

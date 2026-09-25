@@ -49,6 +49,25 @@ def test_unknown_version_and_digest_drift_are_rejected():
         )
 
 
+def test_clarification_wording_changes_have_an_additive_template_version():
+    module = templates()
+    legacy = module.get_template("clarification", "1")
+    current = module.get_template("clarification", "2")
+    assert current.digest != legacy.digest
+    assert "Clarification wording:" not in legacy.instruction
+    assert "time-range" in current.instruction
+    recovered = module.assemble_answer(
+        template_id="clarification",
+        template_version="1",
+        template_digest="sha256:f8531d6e58b9bf5c119c68181f4db310bf1682b0b2c81f71273483a59924e2a4",
+        original_question="它和上一版有什么不同？",
+        standalone_question="它和上一版有什么不同？",
+        evidence_map={},
+        missing_fields=("object-or-version",),
+    )
+    assert recovered.context["clarificationQuestion"] == "请明确要比较的对象和版本。"
+
+
 @pytest.mark.asyncio
 async def test_model_generation_consumes_pinned_template_and_preserves_schema():
     import inspect
@@ -205,3 +224,56 @@ async def test_direct_generation_is_bound_to_plan_identity():
     result = await model.chat("你好", model_alias="tapper-chat", answer_plan_id="plan-a")
     assert result.text == "Hello"
     assert requests[0].idempotency_key == "plan-a:generation"
+
+
+@pytest.mark.asyncio
+async def test_direct_model_consumes_pinned_template_and_schema():
+    import inspect
+    import json
+    from types import SimpleNamespace
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    assert "answer_input" in inspect.signature(KnowledgeModelGateway.chat).parameters
+    requests = []
+
+    class Gateway:
+        async def generate_structured(self, request):
+            requests.append(request)
+            return SimpleNamespace(
+                output={"answer": "Hello", "claims": []},
+                provider_request_id="provider",
+                gateway_call_id="call",
+                actual_model="model",
+            )
+
+    async def redact(text):
+        return text
+
+    module = templates()
+    selected = module.get_template("general", "1")
+    assembled = module.assemble_answer(
+        template_id="general",
+        template_version="1",
+        template_digest=selected.digest,
+        original_question="你好",
+        standalone_question="你好",
+        evidence_map={},
+    )
+    model = KnowledgeModelGateway(
+        Gateway(),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="embed",
+        chat_alias="tapper-chat",
+        embedding_dimension=2,
+        timeout_seconds=5,
+    )
+    result = await model.chat(
+        "你好", model_alias="tapper-chat", answer_plan_id="plan-a", answer_input=assembled
+    )
+    assert result.text == "Hello"
+    assert selected.instruction in requests[0].prompt
+    assert requests[0].schema == assembled.schema
+    assert json.loads(requests[0].context)["originalQuestion"] == "你好"

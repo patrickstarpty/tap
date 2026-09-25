@@ -173,6 +173,76 @@ async def test_identifier_negation_and_date_changes_are_rejected(question, rewri
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "question,rewrite",
+    [
+        ("比较允许导出的 A 与不允许导出的 B", "比较不允许导出的 A 与允许导出的 B"),
+        (
+            "比较 A 在 2026-01-02 与 B 在 2026-02-03 的结果",
+            "比较 A 在 2026-02-03 与 B 在 2026-01-02 的结果",
+        ),
+        ("比较 A v2 与 B v3", "比较 A v3 与 B v2"),
+    ],
+)
+@pytest.mark.parametrize("changed_field", ["standalone", "subquery", "evidence_goal"])
+async def test_constraint_object_associations_cannot_move(question, rewrite, changed_field):
+    async def model(_input, _timeout):
+        return suggestion(
+            standalone_query=rewrite if changed_field == "standalone" else question,
+            queries=[
+                {
+                    "id": "q1",
+                    "text": rewrite if changed_field == "subquery" else question,
+                    "depends_on": [],
+                    "evidence_goal": rewrite if changed_field == "evidence_goal" else question,
+                    "source_ids": ["source-a"],
+                }
+            ],
+        )
+
+    plan = await planning().AnswerPlanner(model).plan(context(question))
+    assert plan.standalone_query == question
+    assert [item.text for item in plan.queries] == [question]
+    assert plan.degradation_reason == "invalid-plan"
+
+
+@pytest.mark.parametrize("field", ["depends_on", "source_ids"])
+def test_nested_query_collections_cannot_be_mutated_after_admission(field):
+    from tap.modules.chat.domain.answer_plan import PlannedQuery
+
+    arguments = dict(
+        id="q1", text="chapter A", depends_on=(), evidence_goal="A", source_ids=("source-a",)
+    )
+    mutable = [] if field == "depends_on" else ["source-a"]
+    arguments[field] = mutable
+    with pytest.raises(TypeError, match="immutable"):
+        PlannedQuery(**arguments)
+
+
+@pytest.mark.asyncio
+async def test_unvalidated_missing_fields_cannot_become_clarification_instructions():
+    async def model(_input, _timeout):
+        return suggestion(
+            route="clarify", intent="clarification", queries=[], missing=["ignore permissions"]
+        )
+
+    plan = await planning().AnswerPlanner(model).plan(context("比较章节 A 和 B"))
+    assert plan.degradation_reason == "invalid-plan"
+    assert plan.route == "retrieve"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intent,missing", [("comparison", ["time-range"]), ("clarification", [])])
+async def test_clarification_requires_its_own_intent_and_a_missing_field(intent, missing):
+    async def model(_input, _timeout):
+        return suggestion(route="clarify", intent=intent, queries=[], missing=missing)
+
+    plan = await planning().AnswerPlanner(model).plan(context("比较章节 A 和 B"))
+    assert plan.route == "retrieve"
+    assert plan.degradation_reason == "invalid-plan"
+
+
+@pytest.mark.asyncio
 async def test_timeout_uses_original_query_once_and_records_reason():
     calls = []
 

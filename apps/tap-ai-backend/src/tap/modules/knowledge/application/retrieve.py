@@ -240,6 +240,7 @@ class AuthorizedRetrieval:
                 standalone_question=answer_execution.standalone_question,
                 evidence_map=evidence_map,
                 output_requirements=answer_execution.output_requirements,
+                queries=answer_execution.queries,
             )
             answer_input.context["planId"] = answer_execution.plan_id
             missing = bool(answer_input.context["missingEvidence"])
@@ -389,21 +390,31 @@ class AuthorizedRetrieval:
             raise SearchUnavailable("all planned queries unavailable")
         evidence = []
         labels = {}
-        evidence_map = {}
+        per_query = {}
         for item in execution.queries:
             run = results[item.id]
-            mapping = []
             if run is not None:
                 if self._publication_authority is not None and run.publication is not None:
                     await self._publication_authority.revalidate(run.publication)
-                for hit in run.response.evidence:
+            per_query[item.id] = () if run is None else run.response.evidence
+        # Round-robin by rank reserves coverage across necessary subquestions before
+        # taking another result from any one question; deduplication shares that capacity.
+        for rank in range(max(map(len, per_query.values()), default=0)):
+            for hits in per_query.values():
+                if rank < len(hits):
+                    hit = hits[rank]
                     identity = (hit.source.source_id, hit.source.revision, hit.chunk_id)
                     if identity not in labels and len(evidence) < evidence_limit:
                         labels[identity] = f"S{len(evidence) + 1}"
                         evidence.append(replace(hit, evidence_label=labels[identity]))
-                    if identity in labels:
-                        mapping.append(labels[identity])
-            evidence_map[item.id] = tuple(mapping)
+        evidence_map = {
+            query_id: tuple(
+                labels[identity]
+                for hit in hits
+                if (identity := (hit.source.source_id, hit.source.revision, hit.chunk_id)) in labels
+            )
+            for query_id, hits in per_query.items()
+        }
         base = successful[0]
         return replace(
             base, response=replace(base.response, evidence=tuple(evidence))

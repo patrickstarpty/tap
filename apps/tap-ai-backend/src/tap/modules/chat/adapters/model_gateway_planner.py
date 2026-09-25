@@ -8,7 +8,7 @@ from uuid import uuid4
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest, schema_digest, text_digest
 from tap.modules.ai.ports.gateway import ModelGateway
-from tap.modules.chat.domain.answer_plan import INTENTS, ROUTES, PlanningInput
+from tap.modules.chat.domain.answer_plan import INTENTS, MISSING_FIELDS, ROUTES, PlanningInput
 
 _QUERY_PROPERTIES = {
     "id": {"type": "string"},
@@ -26,7 +26,7 @@ PLANNER_SCHEMA: dict[str, Any] = {
         "route": {"type": "string", "enum": sorted(ROUTES)},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "standalone_query": {"type": "string"},
-        "missing": {"type": "array", "items": {"type": "string"}},
+        "missing": {"type": "array", "items": {"type": "string", "enum": sorted(MISSING_FIELDS)}},
         "queries": {
             "type": "array",
             "maxItems": 3,

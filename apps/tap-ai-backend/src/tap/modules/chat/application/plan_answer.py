@@ -44,7 +44,9 @@ def authorized_execution(plan: AnswerPlan) -> _AuthorizedAnswerExecution:
         plan.original_question,
         plan.standalone_query,
         tuple(
-            _AuthorizedAnswerQuery(item.id, item.text, item.depends_on, item.source_ids)
+            _AuthorizedAnswerQuery(
+                item.id, item.text, item.depends_on, item.source_ids, item.evidence_goal
+            )
             for item in plan.queries
         ),
         plan.template_id,
@@ -141,7 +143,7 @@ class AnswerPlanner:
                 intent = "explanation"
 
         def build(queries=None):
-            template = _get_template(_TEMPLATE[intent], "1")
+            template = _get_template(_TEMPLATE[intent], "2" if intent == "clarification" else "1")
             return AnswerPlan(
                 plan_id=uuid4().hex,
                 project_id=value.project_id,
@@ -215,6 +217,17 @@ class AnswerPlanner:
                 protected_constraints(original)
             ):
                 raise ValueError("model changed exact constraints")
+            # Token presence cannot prove which object a negation/date/version modifies.
+            # Until there is a trusted proposition verifier, retain the entire original
+            # expression for constrained questions instead of admitting a semantic rewrite.
+            if protected_constraints(original) and (
+                raw["standalone_query"] != original
+                or any(
+                    query["text"] != original or query["evidence_goal"] != original
+                    for query in raw["queries"]
+                )
+            ):
+                raise ValueError("model changed constraint associations")
             if (
                 set(protected_constraints(" ".join(query["text"] for query in raw["queries"])))
                 != set(protected_constraints(original))

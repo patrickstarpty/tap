@@ -1,9 +1,11 @@
 """Pinned answer templates. Search expressions never include these instructions."""
 
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from tap.modules.ai.domain.models import text_digest
+from tap.modules.knowledge.application.planned_answer import AuthorizedAnswerQuery
 
 ANSWER_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -41,6 +43,14 @@ _TEMPLATES = {
     "procedural": "Preserve conditions, ordered steps and exceptions.",
     "clarification": "Ask only for the missing information needed to continue.",
 }
+_CLARIFICATION_FIELDS = {
+    "sources": "请选择有权限的项目来源，以便提供有依据的回答。",
+    "object-or-version": "请明确要比较的对象和版本。",
+    "object": "请明确要比较的对象。",
+    "version": "请明确要比较的版本。",
+    "time-range": "请明确所需的时间范围。",
+    "comparison-conditions": "请明确所需的比较条件。",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,9 +62,15 @@ class AnswerTemplate:
 
 
 def get_template(template_id: str, version: str) -> AnswerTemplate:
-    if version != "1" or template_id not in _TEMPLATES:
+    if template_id not in _TEMPLATES or not (
+        version == "1" or (template_id == "clarification" and version == "2")
+    ):
         raise ValueError("answer template version is unavailable")
     instruction = _RULES + " " + _TEMPLATES[template_id]
+    if template_id == "clarification" and version == "2":
+        instruction += " Clarification wording: " + json.dumps(
+            _CLARIFICATION_FIELDS, ensure_ascii=False, sort_keys=True
+        )
     return AnswerTemplate(template_id, version, instruction, text_digest(instruction))
 
 
@@ -76,10 +92,20 @@ def assemble_answer(
     evidence_map: Mapping[str, tuple[str, ...]],
     output_requirements: str = "",
     approved_instructions: tuple[str, ...] = (),
+    queries: tuple[AuthorizedAnswerQuery, ...] = (),
+    missing_fields: tuple[str, ...] = (),
 ) -> AssembledAnswer:
     template = get_template(template_id, template_version)
     if template.digest != template_digest:
         raise ValueError("answer template digest changed")
+    if not set(missing_fields) <= _CLARIFICATION_FIELDS.keys():
+        raise ValueError("unknown missing information field")
+    if (
+        template_id == "clarification"
+        and template_version == "1"
+        and set(missing_fields) - {"sources", "object-or-version"}
+    ):
+        raise ValueError("missing information requires clarification template version 2")
     return AssembledAnswer(
         template.instruction,
         approved_instructions,
@@ -89,6 +115,20 @@ def assemble_answer(
             "outputRequirements": output_requirements,
             "evidenceMap": {key: list(labels) for key, labels in evidence_map.items()},
             "missingEvidence": [key for key, labels in evidence_map.items() if not labels],
+            "missingFields": list(missing_fields),
+            "clarificationQuestion": "".join(
+                _CLARIFICATION_FIELDS[field] for field in missing_fields
+            ),
+            "subquestions": [
+                {
+                    "id": query.id,
+                    "text": query.text,
+                    "evidenceGoal": query.evidence_goal,
+                    "evidenceLabels": list(evidence_map.get(query.id, ())),
+                    "missingEvidence": not evidence_map.get(query.id),
+                }
+                for query in queries
+            ],
         },
         ANSWER_SCHEMA,
     )
