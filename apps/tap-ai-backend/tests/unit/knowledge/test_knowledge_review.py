@@ -62,6 +62,9 @@ class OpenReviewRepository:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
+    async def resolve_open_review_target(self, **values: object) -> str:
+        return review_id_for("synthetic-commerce-project", (str(values["source_revision_id"]),))
+
     async def create_or_open_review(self, **values: object) -> KnowledgeReviewRevision:
         self.calls.append(values)
         return review(
@@ -89,6 +92,7 @@ def test_open_review_uses_server_actor_and_idempotent_intent_only():
         opened = await application.open_review(
             document_id="doc_001",
             source_revision_id="rev_001",
+            authorized_review_id=review_id_for("synthetic-commerce-project", ("rev_001",)),
             actor_id="synthetic-editor-01",
             idempotency_key="open-review-001",
             now=NOW,
@@ -101,6 +105,7 @@ def test_open_review_uses_server_actor_and_idempotent_intent_only():
             {
                 "document_id": "doc_001",
                 "source_revision_id": "rev_001",
+                "authorized_review_id": review_id_for("synthetic-commerce-project", ("rev_001",)),
                 "actor_id": "synthetic-editor-01",
                 "expires_at": NOW + timedelta(days=30),
                 "command_key": "open-review-001",

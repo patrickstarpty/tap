@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.dependencies import HttpServices
 from tap.modules.access.domain.authorization import AuthorizationDecision
+from tap.modules.knowledge.application.review import ReviewStateConflict
 from tap.modules.knowledge.domain.review import review_id_for
 from tests.conftest import validation_http_services
 
@@ -17,12 +18,23 @@ class ReviewHttpSpy:
 
     def __init__(self) -> None:
         self.calls: list[tuple[object, ...]] = []
+        self.open_target_review_id = review_id_for("tapper-demo", ("rev_001",))
+        self.open_target_conflict: str | None = None
+
+    async def resolve_open_review(self, document_id, source_revision_id):  # type: ignore[no-untyped-def]
+        self.calls.append(("resolve-open", document_id, source_revision_id))
+        if self.open_target_conflict is not None:
+            raise ReviewStateConflict(self.open_target_conflict)
+        return self.open_target_review_id
 
     async def open_review(  # type: ignore[no-untyped-def]
-        self, document_id, source_revision_id, key
+        self, document_id, source_revision_id, authorized_review_id, key
     ):
-        self.calls.append(("open", document_id, source_revision_id, key))
-        return review_detail_payload(status="checking", version=1)
+        self.calls.append(("open", document_id, source_revision_id, authorized_review_id, key))
+        return {
+            **review_detail_payload(status="checking", version=1),
+            "reviewId": authorized_review_id,
+        }
 
     async def list_reviews(  # type: ignore[no-untyped-def]
         self, source_revision_id, limit=50, after_review_id=None
@@ -240,14 +252,23 @@ class DenyPolicy(RecordingPolicy):
 
 
 class ReviewResourcePolicy(RecordingPolicy):
-    def __init__(self, allowed_review_id: str) -> None:
+    def __init__(self, *allowed_review_ids: str) -> None:
         super().__init__()
-        self.allowed_review_id = allowed_review_id
+        self.allowed_review_ids = frozenset(allowed_review_ids)
 
     async def authorize(self, scope, action, resource):  # type: ignore[no-untyped-def]
         self.calls.append((action, resource.kind, resource.resource_id))
         return AuthorizationDecision(
-            resource.kind == "knowledge-review" and resource.resource_id == self.allowed_review_id,
+            (
+                action == "knowledge.read"
+                and resource.kind == "knowledge"
+                and resource.resource_id == "doc_001"
+            )
+            or (
+                action == "knowledge.review.edit"
+                and resource.kind == "knowledge-review"
+                and resource.resource_id in self.allowed_review_ids
+            ),
             "resource-match",
         )
 
@@ -323,11 +344,22 @@ def test_ready_document_review_is_opened_idempotently_without_client_authority()
     assert opened.json()["status"] == "checking"
     assert opened.json()["version"] == 1
     assert caller_actor.status_code == 403
-    assert spy.calls == [("open", "doc_001", "rev_001", "open-review-001")]
+    expected_review_id = review_id_for("tapper-demo", ("rev_001",))
+    assert spy.calls == [
+        ("resolve-open", "doc_001", "rev_001"),
+        (
+            "open",
+            "doc_001",
+            "rev_001",
+            expected_review_id,
+            "open-review-001",
+        ),
+    ]
+    assert ("knowledge.read", "knowledge", "doc_001") in policy.calls
     assert (
         "knowledge.review.edit",
         "knowledge-review",
-        review_id_for("tapper-demo", ("rev_001",)),
+        expected_review_id,
     ) in policy.calls
 
 
@@ -343,8 +375,88 @@ def test_open_review_authorization_is_restricted_to_server_derived_review_id():
     )
 
     assert response.status_code == 200
-    assert spy.calls == [("open", "doc_001", "rev_001", "open-review-resource")]
-    assert policy.calls == [("knowledge.review.edit", "knowledge-review", expected_review_id)]
+    assert spy.calls == [
+        ("resolve-open", "doc_001", "rev_001"),
+        (
+            "open",
+            "doc_001",
+            "rev_001",
+            expected_review_id,
+            "open-review-resource",
+        ),
+    ]
+    assert policy.calls == [
+        ("knowledge.read", "knowledge", "doc_001"),
+        ("knowledge.review.edit", "knowledge-review", expected_review_id),
+    ]
+
+
+def test_open_review_authorizes_legacy_actual_review_id_before_mutation():
+    legacy_review_id = "krv_legacy_actual"
+    policy = ReviewResourcePolicy(legacy_review_id)
+    http, spy = client(policy)
+    spy.open_target_review_id = legacy_review_id
+
+    response = http.post(
+        "/api/v1/projects/tapper-demo/knowledge/documents/doc_001/review",
+        headers={"Origin": ORIGIN, "Idempotency-Key": "open-review-legacy"},
+        json={"sourceRevisionId": "rev_001"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reviewId"] == legacy_review_id
+    assert spy.calls[-1] == (
+        "open",
+        "doc_001",
+        "rev_001",
+        legacy_review_id,
+        "open-review-legacy",
+    )
+    assert policy.calls[-1] == (
+        "knowledge.review.edit",
+        "knowledge-review",
+        legacy_review_id,
+    )
+
+
+def test_open_review_denied_for_actual_legacy_id_never_mutates_or_returns_detail():
+    derived_review_id = review_id_for("tapper-demo", ("rev_001",))
+    policy = ReviewResourcePolicy(derived_review_id)
+    http, spy = client(policy)
+    spy.open_target_review_id = "krv_legacy_denied"
+
+    response = http.post(
+        "/api/v1/projects/tapper-demo/knowledge/documents/doc_001/review",
+        headers={"Origin": ORIGIN, "Idempotency-Key": "open-review-legacy-denied"},
+        json={"sourceRevisionId": "rev_001"},
+    )
+
+    assert response.status_code == 403
+    assert "reviewId" not in response.json()
+    assert spy.calls == [("resolve-open", "doc_001", "rev_001")]
+    assert policy.calls[-1] == (
+        "knowledge.review.edit",
+        "knowledge-review",
+        "krv_legacy_denied",
+    )
+
+
+def test_document_open_rejects_multi_source_target_before_review_authorization_or_detail():
+    derived_review_id = review_id_for("tapper-demo", ("rev_001",))
+    policy = ReviewResourcePolicy(derived_review_id)
+    http, spy = client(policy)
+    spy.open_target_conflict = "review-source-set-conflict"
+
+    response = http.post(
+        "/api/v1/projects/tapper-demo/knowledge/documents/doc_001/review",
+        headers={"Origin": ORIGIN, "Idempotency-Key": "open-review-multi-source"},
+        json={"sourceRevisionId": "rev_001"},
+    )
+
+    assert response.status_code == 409
+    assert "reviewId" not in response.json()
+    assert spy.calls == [("resolve-open", "doc_001", "rev_001")]
+    assert policy.calls == [("knowledge.read", "knowledge", "doc_001")]
 
 
 def test_open_review_authorization_denial_does_not_reach_the_service():
@@ -359,13 +471,7 @@ def test_open_review_authorization_denial_does_not_reach_the_service():
 
     assert response.status_code == 403
     assert spy.calls == []
-    assert policy.calls == [
-        (
-            "knowledge.review.edit",
-            "knowledge-review",
-            review_id_for("tapper-demo", ("rev_001",)),
-        )
-    ]
+    assert policy.calls == [("knowledge.read", "knowledge", "doc_001")]
 
 
 def test_review_http_preserves_optimistic_version_and_idempotent_publish_intent():

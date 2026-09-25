@@ -147,11 +147,15 @@ class ReviewItemComparisonRead:
 
 
 class KnowledgeReviewRepository(Protocol):
+    async def resolve_open_review_target(
+        self, *, document_id: str, source_revision_id: str
+    ) -> str: ...
     async def create_or_open_review(
         self,
         *,
         document_id: str,
         source_revision_id: str,
+        authorized_review_id: str,
         actor_id: str,
         expires_at: datetime,
         command_key: str,
@@ -252,11 +256,18 @@ class KnowledgeReviewApplication:
         self._projection = projection
         self._artifacts = artifacts
 
+    async def resolve_open_review(self, *, document_id: str, source_revision_id: str) -> str:
+        return await self._repository.resolve_open_review_target(
+            document_id=document_id,
+            source_revision_id=source_revision_id,
+        )
+
     async def open_review(
         self,
         *,
         document_id: str,
         source_revision_id: str,
+        authorized_review_id: str,
         actor_id: str,
         idempotency_key: str,
         now: datetime,
@@ -272,6 +283,7 @@ class KnowledgeReviewApplication:
         return await self._repository.create_or_open_review(
             document_id=document_id,
             source_revision_id=source_revision_id,
+            authorized_review_id=authorized_review_id,
             actor_id=actor_id,
             expires_at=now + timedelta(days=30),
             command_key=idempotency_key,

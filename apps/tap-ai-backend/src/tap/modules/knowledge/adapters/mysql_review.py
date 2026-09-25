@@ -315,11 +315,64 @@ class MysqlKnowledgeReviewRepository:
         self._sessions = sessions
         self._scope = require_project_scope(scope)
 
+    async def resolve_open_review_target(self, *, document_id: str, source_revision_id: str) -> str:
+        async with self._sessions() as session:
+            current_document = await session.scalar(
+                select(knowledge_document.c.document_id)
+                .select_from(
+                    knowledge_document.join(
+                        knowledge_source,
+                        (knowledge_source.c.source_id == knowledge_document.c.source_id)
+                        & (knowledge_source.c.enterprise_id == knowledge_document.c.enterprise_id)
+                        & (knowledge_source.c.project_id == knowledge_document.c.project_id),
+                    ).join(
+                        knowledge_document_revision,
+                        (
+                            knowledge_document_revision.c.document_id
+                            == knowledge_document.c.document_id
+                        )
+                        & (
+                            knowledge_document_revision.c.enterprise_id
+                            == knowledge_document.c.enterprise_id
+                        )
+                        & (
+                            knowledge_document_revision.c.project_id
+                            == knowledge_document.c.project_id
+                        ),
+                    )
+                )
+                .where(
+                    *scope_predicates(knowledge_document, self._scope),
+                    *scope_predicates(knowledge_source, self._scope),
+                    *scope_predicates(knowledge_document_revision, self._scope),
+                    knowledge_document.c.document_id == document_id,
+                    knowledge_document.c.current_revision_id == source_revision_id,
+                    knowledge_document_revision.c.revision_id == source_revision_id,
+                    knowledge_document.c.activated_at.is_not(None),
+                    knowledge_document.c.deleted_at.is_(None),
+                    knowledge_source.c.deleted_at.is_(None),
+                )
+            )
+            if current_document != document_id:
+                raise ReviewStateConflict("review-source-not-current")
+            existing_rows = await self._open_review_candidates(
+                session, source_revision_id=source_revision_id, lock=False
+            )
+        if len(existing_rows) > 1:
+            raise ReviewStateConflict("parallel-review-conflict")
+        if not existing_rows:
+            return review_id_for(self._scope.project_id, (source_revision_id,))
+        existing = _review(existing_rows[0])
+        if existing.source_revision_ids != (source_revision_id,):
+            raise ReviewStateConflict("review-source-set-conflict")
+        return existing.review_id
+
     async def create_or_open_review(
         self,
         *,
         document_id: str,
         source_revision_id: str,
+        authorized_review_id: str,
         actor_id: str,
         expires_at: datetime,
         command_key: str,
@@ -330,28 +383,20 @@ class MysqlKnowledgeReviewRepository:
             raise ReviewStateConflict("scope-mismatch")
         async with self._sessions() as session, session.begin():
             await self._lock_project(session)
-            existing_rows = (
-                (
-                    await session.execute(
-                        select(knowledge_review_revision)
-                        .where(
-                            *scope_predicates(knowledge_review_revision, self._scope),
-                            func.json_contains(
-                                knowledge_review_revision.c.source_revision_ids,
-                                func.json_quote(source_revision_id),
-                            )
-                            == 1,
-                        )
-                        .order_by(knowledge_review_revision.c.review_id)
-                        .limit(2)
-                        .with_for_update()
-                    )
-                )
-                .mappings()
-                .all()
+            existing_rows = await self._open_review_candidates(
+                session, source_revision_id=source_revision_id, lock=True
             )
             if len(existing_rows) > 1:
                 raise ReviewStateConflict("parallel-review-conflict")
+            if existing_rows:
+                existing = _review(existing_rows[0])
+                if existing.source_revision_ids != (source_revision_id,):
+                    raise ReviewStateConflict("review-source-set-conflict")
+                actual_review_id = existing.review_id
+            else:
+                actual_review_id = review_id_for(self._scope.project_id, (source_revision_id,))
+            if actual_review_id != authorized_review_id:
+                raise ReviewStateConflict("review-open-target-changed")
             replay_id = await self._locked_open_command(session, command_key, command_digest)
             if replay_id is not None:
                 replay = next(
@@ -548,6 +593,26 @@ class MysqlKnowledgeReviewRepository:
                 now,
             )
             return revision
+
+    async def _open_review_candidates(
+        self, session: AsyncSession, *, source_revision_id: str, lock: bool
+    ):  # type: ignore[no-untyped-def]
+        statement = (
+            select(knowledge_review_revision)
+            .where(
+                *scope_predicates(knowledge_review_revision, self._scope),
+                func.json_contains(
+                    knowledge_review_revision.c.source_revision_ids,
+                    func.json_quote(source_revision_id),
+                )
+                == 1,
+            )
+            .order_by(knowledge_review_revision.c.review_id)
+            .limit(2)
+        )
+        if lock:
+            statement = statement.with_for_update()
+        return (await session.execute(statement)).mappings().all()
 
     async def _locked_review(
         self, session: AsyncSession, review_id: str

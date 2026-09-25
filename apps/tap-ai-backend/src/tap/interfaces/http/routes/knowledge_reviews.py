@@ -24,10 +24,9 @@ from tap.interfaces.http.dependencies import (
     source_command_key,
 )
 from tap.interfaces.http.problems import problem_response_metadata
-from tap.interfaces.http.scope import project_authorization, resolve_project_scope
+from tap.interfaces.http.scope import project_authorization
 from tap.modules.access.application.policy import require_authorized
 from tap.modules.access.domain.authorization import ResourceRef
-from tap.modules.knowledge.domain.review import review_id_for
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 
 router = APIRouter(
@@ -39,15 +38,26 @@ router = APIRouter(
 )
 
 
-async def authorize_open_document_review(request: Request) -> None:
-    scope = await resolve_project_scope(request)
-    try:
-        body = KnowledgeReviewOpenRequest.model_validate(await request.json())
-    except (TypeError, ValueError):
-        return
+@router.post(
+    "/knowledge/documents/{document_id}/review",
+    operation_id="knowledge_open_document_review",
+    response_model=KnowledgeReviewDetail,
+    dependencies=[
+        Depends(project_authorization("knowledge.read", resource_id_param="document_id"))
+    ],
+)
+async def open_document_review(
+    request: Request,
+    document_id: str,
+    body: KnowledgeReviewOpenRequest,
+    key: str = Depends(source_command_key),
+) -> KnowledgeReviewDetail:
+    service = knowledge_review_service(request)
+    actual_review_id = await service.resolve_open_review(document_id, body.source_revision_id)
     services: HttpServices = request.app.state.http_services
     if services.authorization_policy is None:
         raise KnowledgeRuntimeUnavailable
+    scope = request.state.project_scope
     await require_authorized(
         services.authorization_policy,
         scope,
@@ -56,27 +66,10 @@ async def authorize_open_document_review(request: Request) -> None:
             enterprise_id=scope.enterprise_id,
             project_id=scope.project_id,
             kind="knowledge-review",
-            resource_id=review_id_for(scope.project_id, (body.source_revision_id,)),
+            resource_id=actual_review_id,
         ),
     )
-    request.state.project_scope = scope
-
-
-@router.post(
-    "/knowledge/documents/{document_id}/review",
-    operation_id="knowledge_open_document_review",
-    response_model=KnowledgeReviewDetail,
-    dependencies=[Depends(authorize_open_document_review)],
-)
-async def open_document_review(
-    request: Request,
-    document_id: str,
-    body: KnowledgeReviewOpenRequest,
-    key: str = Depends(source_command_key),
-) -> KnowledgeReviewDetail:
-    return await knowledge_review_service(request).open_review(
-        document_id, body.source_revision_id, key
-    )
+    return await service.open_review(document_id, body.source_revision_id, actual_review_id, key)
 
 
 @router.get(

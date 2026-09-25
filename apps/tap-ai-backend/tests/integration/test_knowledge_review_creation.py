@@ -23,6 +23,7 @@ from tap.modules.knowledge.adapters.mysql_review import (
     MysqlKnowledgeReviewRepository,
     knowledge_current_publication,
     knowledge_publication,
+    knowledge_review_command,
     knowledge_review_history,
     knowledge_review_revision,
 )
@@ -38,9 +39,11 @@ from tap.modules.knowledge.domain.parse_inventory import (
     parse_inventory_digest,
 )
 from tap.modules.knowledge.domain.review import (
+    KnowledgeReviewRevision,
     ReviewStatus,
     canonical_digest,
     review_dependency_digest,
+    review_id_for,
 )
 from tap.platform.db.project_scope import scope_values
 from tap.platform.db.session import create_engine_and_session_factory
@@ -52,6 +55,29 @@ NOW = datetime(2026, 9, 25, 9, tzinfo=UTC)
 DIGEST_A = "sha256:" + "a" * 64
 DIGEST_B = "sha256:" + "b" * 64
 DIGEST_C = "sha256:" + "c" * 64
+
+
+def _authorized_review_id(source_revision_id: str) -> str:
+    return review_id_for(VALIDATION_SCOPE.project_id, (source_revision_id,))
+
+
+def _legacy_review(review_id: str, source_revision_ids: tuple[str, ...]) -> KnowledgeReviewRevision:
+    return KnowledgeReviewRevision(
+        review_id=review_id,
+        project_id=VALIDATION_SCOPE.project_id,
+        source_revision_ids=source_revision_ids,
+        inventory_digest=DIGEST_A,
+        chunk_manifest_digest=DIGEST_B,
+        annotation_digest=canonical_digest([]),
+        dependency_digest=DIGEST_C,
+        editor_actor_ids=(VALIDATION_SCOPE.actor_id,),
+        reviewer_actor_id=None,
+        expires_at=NOW.replace(year=2027),
+        status=ReviewStatus.CHECKING,
+        version=1,
+        blocking_item_ids=(),
+        approved_item_ids=("pi_legacy",),
+    )
 
 
 class UnusedProjection:
@@ -354,6 +380,7 @@ async def test_create_or_open_fails_closed_for_unready_missing_failed_and_unproj
             await application.open_review(
                 document_id="doc_create_001",
                 source_revision_id="rev_stale_001",
+                authorized_review_id=_authorized_review_id("rev_stale_001"),
                 actor_id=VALIDATION_SCOPE.actor_id,
                 idempotency_key="open-stale-revision",
                 now=NOW,
@@ -369,6 +396,7 @@ async def test_create_or_open_fails_closed_for_unready_missing_failed_and_unproj
             await application.open_review(
                 document_id="doc_create_001",
                 source_revision_id="rev_create_001",
+                authorized_review_id=_authorized_review_id("rev_create_001"),
                 actor_id=VALIDATION_SCOPE.actor_id,
                 idempotency_key="open-unready",
                 now=NOW,
@@ -389,6 +417,7 @@ async def test_create_or_open_fails_closed_for_unready_missing_failed_and_unproj
             await application.open_review(
                 document_id="doc_create_001",
                 source_revision_id="rev_create_001",
+                authorized_review_id=_authorized_review_id("rev_create_001"),
                 actor_id=VALIDATION_SCOPE.actor_id,
                 idempotency_key="open-no-inventory",
                 now=NOW,
@@ -433,6 +462,7 @@ async def test_create_or_open_fails_closed_for_unready_missing_failed_and_unproj
             await application.open_review(
                 document_id="doc_create_001",
                 source_revision_id="rev_create_001",
+                authorized_review_id=_authorized_review_id("rev_create_001"),
                 actor_id=VALIDATION_SCOPE.actor_id,
                 idempotency_key="open-failed-inventory",
                 now=NOW,
@@ -452,6 +482,7 @@ async def test_create_or_open_fails_closed_for_unready_missing_failed_and_unproj
             await application.open_review(
                 document_id="doc_create_001",
                 source_revision_id="rev_create_001",
+                authorized_review_id=_authorized_review_id("rev_create_001"),
                 actor_id=VALIDATION_SCOPE.actor_id,
                 idempotency_key="open-unprojected",
                 now=NOW,
@@ -478,6 +509,7 @@ async def test_existing_approved_and_current_publication_are_opened_without_para
         created = await application.open_review(
             document_id="doc_create_001",
             source_revision_id="rev_create_001",
+            authorized_review_id=_authorized_review_id("rev_create_001"),
             actor_id=VALIDATION_SCOPE.actor_id,
             idempotency_key="open-existing-created",
             now=NOW,
@@ -492,6 +524,7 @@ async def test_existing_approved_and_current_publication_are_opened_without_para
         approved = await application.open_review(
             document_id="doc_create_001",
             source_revision_id="rev_create_001",
+            authorized_review_id=_authorized_review_id("rev_create_001"),
             actor_id=VALIDATION_SCOPE.actor_id,
             idempotency_key="open-existing-approved",
             now=NOW,
@@ -540,6 +573,7 @@ async def test_existing_approved_and_current_publication_are_opened_without_para
         published = await application.open_review(
             document_id="doc_create_001",
             source_revision_id="rev_create_001",
+            authorized_review_id=_authorized_review_id("rev_create_001"),
             actor_id=VALIDATION_SCOPE.actor_id,
             idempotency_key="open-existing-published",
             now=NOW,
@@ -556,9 +590,120 @@ async def test_existing_approved_and_current_publication_are_opened_without_para
             await application.open_review(
                 document_id="doc_other",
                 source_revision_id="rev_other",
+                authorized_review_id=_authorized_review_id("rev_other"),
                 actor_id=VALIDATION_SCOPE.actor_id,
                 idempotency_key="open-existing-published",
                 now=NOW,
+            )
+    finally:
+        await engine.dispose()
+
+
+async def test_legacy_single_source_actual_id_resolves_and_reopens_atomically(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        await _seed_ready_document(sessions)
+        repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        application = KnowledgeReviewApplication(repository, UnusedProjection())
+        legacy = _legacy_review("krv_legacy_actual", ("rev_create_001",))
+        await repository.create_review(legacy)
+
+        actual_review_id = await application.resolve_open_review(
+            document_id="doc_create_001", source_revision_id="rev_create_001"
+        )
+        reopened = await application.open_review(
+            document_id="doc_create_001",
+            source_revision_id="rev_create_001",
+            authorized_review_id=actual_review_id,
+            actor_id=VALIDATION_SCOPE.actor_id,
+            idempotency_key="open-legacy-actual",
+            now=NOW,
+        )
+
+        assert actual_review_id == reopened.review_id == legacy.review_id
+        async with sessions() as session:
+            assert (
+                await session.scalar(select(func.count()).select_from(knowledge_review_revision))
+                == 1
+            )
+            assert (
+                await session.scalar(select(func.count()).select_from(knowledge_review_command))
+                == 1
+            )
+    finally:
+        await engine.dispose()
+
+
+async def test_open_revalidates_actual_id_before_command_write_when_target_changes(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        await _seed_ready_document(sessions)
+        repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        application = KnowledgeReviewApplication(repository, UnusedProjection())
+        initially_resolved = await application.resolve_open_review(
+            document_id="doc_create_001", source_revision_id="rev_create_001"
+        )
+        await repository.create_review(_legacy_review("krv_raced_legacy", ("rev_create_001",)))
+
+        with pytest.raises(ReviewStateConflict, match="review-open-target-changed"):
+            await application.open_review(
+                document_id="doc_create_001",
+                source_revision_id="rev_create_001",
+                authorized_review_id=initially_resolved,
+                actor_id=VALIDATION_SCOPE.actor_id,
+                idempotency_key="open-raced-target",
+                now=NOW,
+            )
+
+        async with sessions() as session:
+            assert (
+                await session.scalar(select(func.count()).select_from(knowledge_review_command))
+                == 0
+            )
+            assert (
+                await session.scalar(select(func.count()).select_from(knowledge_review_history))
+                == 1
+            )
+    finally:
+        await engine.dispose()
+
+
+async def test_document_open_rejects_multi_source_review_before_command_write(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        await _seed_ready_document(sessions)
+        repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        application = KnowledgeReviewApplication(repository, UnusedProjection())
+        multi_source = _legacy_review("krv_legacy_multi", ("rev_create_001", "rev_unrelated_002"))
+        await repository.create_review(multi_source)
+
+        with pytest.raises(ReviewStateConflict, match="review-source-set-conflict"):
+            await application.resolve_open_review(
+                document_id="doc_create_001", source_revision_id="rev_create_001"
+            )
+        with pytest.raises(ReviewStateConflict, match="review-source-set-conflict"):
+            await application.open_review(
+                document_id="doc_create_001",
+                source_revision_id="rev_create_001",
+                authorized_review_id=multi_source.review_id,
+                actor_id=VALIDATION_SCOPE.actor_id,
+                idempotency_key="open-multi-source",
+                now=NOW,
+            )
+
+        async with sessions() as session:
+            assert (
+                await session.scalar(select(func.count()).select_from(knowledge_review_command))
+                == 0
             )
     finally:
         await engine.dispose()
@@ -579,6 +724,7 @@ async def test_reopen_serializes_with_review_mutation_without_deadlock(
         created = await seed_application.open_review(
             document_id="doc_create_001",
             source_revision_id="rev_create_001",
+            authorized_review_id=_authorized_review_id("rev_create_001"),
             actor_id=VALIDATION_SCOPE.actor_id,
             idempotency_key=f"open-before-{mutation}",
             now=NOW,
@@ -627,6 +773,7 @@ async def test_reopen_serializes_with_review_mutation_without_deadlock(
             seed_application.open_review(
                 document_id="doc_create_001",
                 source_revision_id="rev_create_001",
+                authorized_review_id=_authorized_review_id("rev_create_001"),
                 actor_id=VALIDATION_SCOPE.actor_id,
                 idempotency_key=f"concurrent-reopen-{mutation}",
                 now=NOW,
@@ -658,6 +805,7 @@ async def test_review_authority_requires_current_ready_undeleted_document_and_so
         created = await application.open_review(
             document_id="doc_create_001",
             source_revision_id="rev_create_001",
+            authorized_review_id=_authorized_review_id("rev_create_001"),
             actor_id=VALIDATION_SCOPE.actor_id,
             idempotency_key="open-authority-guards",
             now=NOW,
@@ -705,6 +853,7 @@ async def test_replaced_revision_cannot_be_submitted_approved_or_published_over_
         created = await application.open_review(
             document_id="doc_create_001",
             source_revision_id="rev_create_001",
+            authorized_review_id=_authorized_review_id("rev_create_001"),
             actor_id=VALIDATION_SCOPE.actor_id,
             idempotency_key="open-before-replacement",
             now=NOW,

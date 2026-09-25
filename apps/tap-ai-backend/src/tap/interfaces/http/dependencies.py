@@ -100,6 +100,7 @@ class KnowledgeReviewHttpService(Protocol):
     @property
     def scope(self) -> ProjectScopeContext: ...
 
+    async def resolve_open_review(self, document_id: str, source_revision_id: str) -> str: ...
     async def list_reviews(
         self,
         source_revision_id: str | None,
@@ -107,7 +108,11 @@ class KnowledgeReviewHttpService(Protocol):
         after_review_id: str | None = None,
     ) -> KnowledgeReviewPage: ...
     async def open_review(
-        self, document_id: str, source_revision_id: str, key: str
+        self,
+        document_id: str,
+        source_revision_id: str,
+        authorized_review_id: str,
+        key: str,
     ) -> KnowledgeReviewDetail: ...
     async def get_review(self, review_id: str) -> KnowledgeReviewDetail: ...
     async def get_review_inventory(

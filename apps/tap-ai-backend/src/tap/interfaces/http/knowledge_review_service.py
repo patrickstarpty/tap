@@ -68,12 +68,23 @@ class KnowledgeReviewHttpService:
     def scope(self) -> ProjectScopeContext:
         return self._scope
 
+    async def resolve_open_review(self, document_id: str, source_revision_id: str) -> str:
+        return await self._application.resolve_open_review(
+            document_id=document_id,
+            source_revision_id=source_revision_id,
+        )
+
     async def open_review(
-        self, document_id: str, source_revision_id: str, key: str
+        self,
+        document_id: str,
+        source_revision_id: str,
+        authorized_review_id: str,
+        key: str,
     ) -> KnowledgeReviewDetail:
         revision = await self._application.open_review(
             document_id=document_id,
             source_revision_id=source_revision_id,
+            authorized_review_id=authorized_review_id,
             actor_id=self._scope.actor_id,
             idempotency_key=key,
             now=self._clock(),
