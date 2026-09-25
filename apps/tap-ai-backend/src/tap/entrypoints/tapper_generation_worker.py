@@ -14,6 +14,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from tap.contracts.http import ResourceMode, ResourceRef, RetrievalAnswerRequest, SourceFamily
 from tap.contracts.problems import build_problem
+from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.plan_answer import planning_input
@@ -333,6 +334,26 @@ class GenerationWorker:
             except (ConversationConflict, PermissionError):
                 # Cancellation or lease reclaim won the terminal-state race.
                 continue
+            except AuthorizationDenied:
+                await self.conversations.complete_evidence(
+                    conversation_id,
+                    turn.turn_id,
+                    AnswerEvidence(
+                        "",
+                        "failed",
+                        RetrievalSummary("failed"),
+                        GraphContextStatus.FAILED,
+                    ),
+                    lease_token=turn.lease_token,
+                    terminal_event=(
+                        "turn.failed",
+                        {
+                            "problem": build_problem(
+                                "answer-unavailable", correlation_id=turn.turn_id
+                            ).model_dump(mode="json", by_alias=True)
+                        },
+                    ),
+                )
         return len(claimed)
 
 

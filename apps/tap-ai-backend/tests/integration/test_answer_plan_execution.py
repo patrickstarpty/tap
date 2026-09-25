@@ -437,6 +437,73 @@ async def test_worker_routes_in_graph_persists_plan_and_binds_completion(questio
 
 
 @pytest.mark.asyncio
+async def test_worker_records_preplanning_publication_denial_as_failed_turn():
+    from tap.entrypoints.tapper_generation_worker import GenerationWorker
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.access.domain.policy import AuthorizationDenied
+    from tap.modules.chat.domain.conversations import (
+        FrozenResource,
+        TurnInput,
+        TurnInputSnapshot,
+    )
+
+    frozen = TurnInput(
+        "What does the selected document say?",
+        VALIDATION_SCOPE.actor_id,
+        "validation",
+        "tapper-chat",
+        resolved_resources=(
+            FrozenResource("source-a", "document-a", "revision-a", "sha256:" + "a" * 64),
+        ),
+    )
+    snapshot = TurnInputSnapshot.create(
+        snapshot_id="snapshot-denied",
+        project_id=VALIDATION_SCOPE.project_id,
+        turn_id="turn-denied",
+        value=frozen,
+        now=datetime.now(timezone.utc),
+    )
+
+    class Repository:
+        async def claim_queued(self, **kwargs):
+            return (
+                (
+                    "chat-denied",
+                    SimpleNamespace(
+                        turn_id="turn-denied", lease_token="lease-denied", input_snapshot=snapshot
+                    ),
+                ),
+            )
+
+    class Conversations:
+        repository = Repository()
+        completed = []
+
+        async def complete_evidence(self, chat, turn, evidence, **kwargs):
+            self.completed.append((chat, turn, evidence, kwargs["terminal_event"]))
+
+    class Knowledge:
+        answer_planner = object()
+
+        async def authorize_planning(self, _snapshot):
+            raise AuthorizationDenied("current knowledge publication is unavailable")
+
+    conversations = Conversations()
+    worker = GenerationWorker(conversations, Knowledge(), checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+    assert len(conversations.completed) == 1
+    chat, turn, evidence, terminal = conversations.completed[0]
+    assert (chat, turn, evidence.outcome, evidence.retrieval_summary.status) == (
+        "chat-denied",
+        "turn-denied",
+        "failed",
+        "failed",
+    )
+    assert terminal[0] == "turn.failed"
+
+
+@pytest.mark.asyncio
 async def test_http_selected_plan_returns_citations_from_existing_answer_boundary():
     from tap.contracts.http import RetrievalAnswerRequest
     from tap.interfaces.http.knowledge_service import KnowledgeHttpService
