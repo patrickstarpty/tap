@@ -1,5 +1,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,7 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
+from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.mysql_checkpointer import (
     MysqlGraphCheckpointer,
@@ -31,11 +34,25 @@ from tap.modules.chat.adapters.mysql_conversations import (
 from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
+    FrozenResource,
     GraphContextStatus,
     RetrievalSummary,
+    content_digest,
 )
+from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
+from tap.modules.knowledge.adapters.mysql_review import MysqlKnowledgeReviewRepository
+from tap.modules.knowledge.application.answers import AnswerService
+from tap.modules.knowledge.application.citations import CitationResolver
+from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+from tap.modules.knowledge.application.review import KnowledgeReviewApplication
 from tap.platform.db.schema import outbox
 from tests.integration.test_conversation_persistence import _input
+from tests.integration.test_knowledge_publication import (
+    NOW,
+    ReadyProjection,
+    approved_review,
+    seed_authority,
+)
 
 
 def _graph(
@@ -125,6 +142,24 @@ async def test_resume_rechecks_authorization_before_retrying_failed_node() -> No
 
     with pytest.raises(PermissionError, match="authorization changed"):
         await graph.resume(run_id="run-revoked")
+
+    assert calls == ["classify", "admit", "execute"]
+
+
+@pytest.mark.asyncio
+async def test_completed_checkpoint_resume_rechecks_authorization_without_reexecuting() -> None:
+    calls: list[str] = []
+    allowed = True
+
+    async def authorized() -> bool:
+        return allowed
+
+    graph = _graph(checkpointer=InMemorySaver(), calls=calls, authorize=authorized)
+    await graph.start(run_id="run-completed-revoked", payload={}, execution_mode="durable")
+    allowed = False
+
+    with pytest.raises(PermissionError, match="authorization changed"):
+        await graph.resume(run_id="run-completed-revoked")
 
     assert calls == ["classify", "admit", "execute"]
 
@@ -646,6 +681,176 @@ async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_p
         assert graph_after["status"] == "SUCCEEDED"
         assert graph_after["lease_token"] is None
         assert completion_outbox_count == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("publication_state", ["withdrawn", "expired", "revision_changed", "valid"])
+async def test_reclaimed_result_requires_current_publication_before_delivery(
+    owned_project_mysql, publication_state: str
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        await seed_authority(sessions)
+        review = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        await review.create_review(approved_review())
+        publication = await KnowledgeReviewApplication(review, ReadyProjection()).publish_review(
+            "krv_mysql_001",
+            generation="generation-001",
+            idempotency_key="publish-recovery",
+            actor_id="synthetic-reviewer-02",
+            expected_version=4,
+            now=NOW,
+        )
+        documents = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=lambda _: None
+        )
+        authority = PublishedKnowledgeAuthority(review)
+
+        class Knowledge(KnowledgeHttpService):
+            calls = 0
+
+            async def answer_conversation(self, *_args, **_kwargs):
+                self.calls += 1
+                return SimpleNamespace(
+                    answer="grounded secret",
+                    citations=(),
+                    abstained=False,
+                    trace_id="trace-recovery",
+                    model_dump=lambda **_: {"answer": "grounded secret", "citations": []},
+                )
+
+        knowledge = Knowledge(
+            documents=documents,
+            answers=AnswerService(
+                repository=documents, knowledge=object(), publication_authority=authority
+            ),
+            citations=CitationResolver(
+                repository=documents,
+                artifacts=object(),
+                publication_authority=authority,
+            ),
+        )
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+        )
+        _revisions, policy = await knowledge.resolve_conversation_selection(("rev_mysql_001",))
+        frozen = replace(
+            _input(),
+            acl_digest=policy.acl_digest,
+            retrieval_policy_digest=content_digest(
+                {
+                    "decisionId": policy.decision_id,
+                    "policyVersion": policy.policy_version,
+                    "corpusVersion": policy.active_corpus_version,
+                }
+            ),
+            source_revision_ids=("rev_mysql_001",),
+            document_revision_ids=("rev_mysql_001",),
+            resolved_resources=(
+                FrozenResource(
+                    source_id="src_" + "2" * 32,
+                    document_id="doc_mysql_publication",
+                    revision_id="rev_mysql_001",
+                    source_content_hash="sha256:" + "a" * 64,
+                ),
+            ),
+        )
+        await conversations.create(
+            "chat-publication-recovery",
+            "turn-publication-recovery",
+            "request-publication-recovery",
+            frozen,
+        )
+        worker = GenerationWorker(conversations, knowledge)
+        settle = conversations.complete_evidence
+
+        async def crash_before_settle(*_args, **_kwargs):
+            conversations.complete_evidence = settle
+            raise RuntimeError("worker stopped after result checkpoint")
+
+        conversations.complete_evidence = crash_before_settle
+        with pytest.raises(RuntimeError, match="worker stopped"):
+            await worker.run_once(limit=1)
+        first = (await conversations.load("chat-publication-recovery")).turns[0]
+        assert first.state == "running"
+        persisted = await conversations.repository.graph_checkpointer(first).aget_tuple(
+            {"configurable": {"thread_id": first.turn_id}}
+        )
+        assert persisted is not None
+        assert persisted.checkpoint["channel_values"]["result"]["evidence"]["answer"] == (
+            "grounded secret"
+        )
+        assert knowledge.calls == 1
+
+        if publication_state == "withdrawn":
+            await KnowledgeReviewApplication(review, ReadyProjection()).withdraw_publication(
+                publication.publication_id,
+                idempotency_key="withdraw-recovery",
+                actor_id="synthetic-reviewer-02",
+                expected_version=1,
+                now=NOW + timedelta(seconds=1),
+            )
+        elif publication_state == "expired":
+            from tap.modules.knowledge.adapters.mysql_review import knowledge_publication
+
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_publication)
+                    .where(knowledge_publication.c.publication_id == publication.publication_id)
+                    .values(expires_at=NOW + timedelta(seconds=1))
+                )
+        elif publication_state == "revision_changed":
+            from tap.modules.knowledge.adapters.mysql_documents import knowledge_document
+
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_document)
+                    .where(knowledge_document.c.document_id == "doc_mysql_publication")
+                    .values(current_revision_id=None)
+                )
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(chat_turn)
+                .where(chat_turn.c.turn_id == "turn-publication-recovery")
+                .values(
+                    processing_lease_expires_at=func.utc_timestamp() - text("INTERVAL 1 SECOND")
+                )
+            )
+            await session.execute(
+                update(graph_run)
+                .where(graph_run.c.run_id == "turn-publication-recovery")
+                .values(lease_until=func.utc_timestamp() - text("INTERVAL 1 SECOND"))
+            )
+
+        if publication_state != "valid":
+            await conversations.create(
+                "chat-after-denial", "turn-after-denial", "request-after-denial", _input("next")
+            )
+        assert await worker.run_once(limit=2) == (1 if publication_state == "valid" else 2)
+        resumed = (await conversations.load("chat-publication-recovery")).turns[0]
+        assert resumed.state == ("completed" if publication_state == "valid" else "failed")
+        if publication_state != "valid":
+            assert (await conversations.load("chat-after-denial")).turns[0].state == "completed"
+        assert knowledge.calls == (1 if publication_state == "valid" else 2)
+        async with sessions() as session:
+            events = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT event_type FROM chat_event "
+                            "WHERE turn_id='turn-publication-recovery'"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert ("answer.delta" in events) == (publication_state == "valid")
+        assert ("turn.completed" in events) == (publication_state == "valid")
     finally:
         await engine.dispose()
 

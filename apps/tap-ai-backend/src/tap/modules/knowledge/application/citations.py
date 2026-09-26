@@ -72,6 +72,47 @@ class CitationResolver:
     async def resolve_historical(self, citation_id: str) -> CitationPreviewResult:
         return await self._resolve(citation_id, historical=True)
 
+    async def authorize_current(self, citation_id: str) -> None:
+        """Check current ledger and publication authority without reopening artifacts."""
+        if not isinstance(citation_id, str) or not citation_id or len(citation_id) > 64:
+            raise CitationStale
+        try:
+            lookup = await self._repository.load_citation(citation_id)
+        except CitationSnapshotCorrupt as error:
+            raise CitationStale from error
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise CitationUnavailable from error
+        if lookup is None:
+            raise CitationStale
+        self._validate_ledger_facts(lookup)
+        publication = None
+        if self._publication_authority is not None:
+            try:
+                publication = await self._publication_authority.authorize_evidence(
+                    self.scope.project_id,
+                    source_revision_id=lookup.citation.revision_id,
+                    approved_item_id=_inventory_item_id(lookup.citation.anchor_json),
+                )
+            except Exception as error:
+                raise CitationStale from error
+        try:
+            current = await self._repository.citation_is_current(lookup.citation)
+        except CitationSnapshotCorrupt as error:
+            raise CitationStale from error
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise CitationUnavailable from error
+        if not current:
+            raise CitationStale
+        if publication is not None and self._publication_authority is not None:
+            try:
+                await self._publication_authority.revalidate(publication)
+            except Exception as error:
+                raise CitationStale from error
+
     async def _resolve(self, citation_id: str, *, historical: bool) -> CitationPreviewResult:
         if not isinstance(citation_id, str) or not citation_id or len(citation_id) > 64:
             raise CitationStale

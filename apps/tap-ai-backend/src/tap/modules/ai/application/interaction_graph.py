@@ -135,6 +135,8 @@ class InteractionGraph:
                 f"{stored_version!s}/{stored_schema!s} with "
                 f"{self._graph_version}/{self._state_schema_version}"
             )
+        if not await self._authorize():
+            raise PermissionError("graph run authorization changed")
         result = await self._compiled.ainvoke(
             None, config, durability=cast(Literal["sync"], "sync")
         )

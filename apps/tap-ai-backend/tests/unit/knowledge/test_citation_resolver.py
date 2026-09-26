@@ -3,14 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.application.citations import (
     CitationResolver,
     CitationStale,
     CitationUnavailable,
 )
+from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.modules.knowledge.domain.documents import (
     BlockKind,
     ChunkDraft,
@@ -25,6 +28,7 @@ from tap.modules.knowledge.domain.documents import (
     logical_chunk_id_for,
     revision_id_for,
 )
+from tap.modules.knowledge.domain.review import KnowledgePublication
 from tap.modules.knowledge.ports.answers import CitationSnapshot, ReadyDocumentRevision
 from tap.modules.knowledge.ports.citations import (
     CitationDocumentFacts,
@@ -145,6 +149,8 @@ def fixtures() -> tuple[
 
 
 class MemoryCitationRepository:
+    scope = VALIDATION_SCOPE
+
     def __init__(self, lookup: CitationLookup | None) -> None:
         self.lookup = lookup
         self.corrupt = False
@@ -202,6 +208,53 @@ def resolver() -> tuple[CitationResolver, MemoryCitationRepository, MemoryArtifa
     repository = MemoryCitationRepository(lookup)
     artifacts = MemoryArtifacts(normalized, chunks)
     return CitationResolver(repository=repository, artifacts=artifacts), repository, artifacts
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_citation_requires_current_approved_item_without_artifact_reads() -> None:
+    lookup, normalized, chunks, _prefix, _content, _suffix = fixtures()
+    anchor = {**json.loads(lookup.citation.anchor_json), "inventoryItemId": "item-approved"}
+    anchor_json = json.dumps(anchor, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    lookup = replace(
+        lookup,
+        citation=replace(lookup.citation, anchor_json=anchor_json),
+        manifest=replace(lookup.manifest, anchor_json=anchor_json),
+    )
+    repository = MemoryCitationRepository(lookup)
+    artifacts = MemoryArtifacts(normalized, chunks)
+    now = datetime.now(UTC)
+
+    class Publications:
+        publication = KnowledgePublication(
+            publication_id="publication-citation",
+            project_id=VALIDATION_SCOPE.project_id,
+            review_id="review-citation",
+            review_version=2,
+            approval_digest="sha256:" + "a" * 64,
+            source_revision_ids=(str(REVISION_ID),),
+            approved_item_ids=("item-approved",),
+            generation="generation-citation",
+            published_by="reviewer-citation",
+            published_at=now - timedelta(minutes=1),
+            expires_at=now + timedelta(minutes=1),
+        )
+
+        async def current_publication(self):
+            return self.publication
+
+    publications = Publications()
+    citation_resolver = CitationResolver(
+        repository=repository,
+        artifacts=artifacts,
+        publication_authority=PublishedKnowledgeAuthority(publications),
+    )
+
+    await citation_resolver.authorize_current("citation-a")
+    publications.publication = replace(publications.publication, approved_item_ids=("other",))
+    with pytest.raises(CitationStale):
+        await citation_resolver.authorize_current("citation-a")
+
+    assert artifacts.reads == []
 
 
 def test_resolver_returns_exact_unicode_bounded_quote_and_context() -> None:

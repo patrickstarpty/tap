@@ -69,6 +69,8 @@ class AnswerOperations(Protocol):
 
     async def authorize_frozen_selection(self, revisions) -> None: ...
 
+    async def resolve_conversation_selection(self, revision_ids): ...
+
 
 class CitationOperations(Protocol):
     @property
@@ -77,6 +79,8 @@ class CitationOperations(Protocol):
     async def resolve(self, citation_id: str) -> CitationPreviewResult: ...
 
     async def resolve_historical(self, citation_id: str) -> CitationPreviewResult: ...
+
+    async def authorize_current(self, citation_id: str) -> None: ...
 
 
 class SearchOperations(Protocol):
@@ -234,6 +238,57 @@ class KnowledgeHttpService:
                     for item in snapshot.value.resolved_resources
                 )
             )
+
+    async def authorize_completed_answer(self, snapshot, evidence) -> None:
+        """Reopen trusted authority for a checkpointed answer before delivery."""
+        from tap.modules.chat.domain.conversations import content_digest
+
+        if snapshot.project_id != self.scope.project_id:
+            raise AuthorizationDenied("scope-mismatch")
+        frozen = snapshot.value.resolved_resources
+        if frozen:
+            try:
+                current, policy = await self._answers.resolve_conversation_selection(
+                    tuple(item.revision_id for item in frozen)
+                )
+                if {
+                    (item.source_id, item.document_id, item.revision_id, item.source_content_hash)
+                    for item in current
+                } != {
+                    (item.source_id, item.document_id, item.revision_id, item.source_content_hash)
+                    for item in frozen
+                }:
+                    raise AuthorizationDenied("frozen revision selection changed")
+                if (
+                    snapshot.value.acl_digest != policy.acl_digest
+                    or snapshot.value.retrieval_policy_digest
+                    != content_digest(
+                        {
+                            "decisionId": policy.decision_id,
+                            "policyVersion": policy.policy_version,
+                            "corpusVersion": policy.active_corpus_version,
+                        }
+                    )
+                ):
+                    raise AuthorizationDenied("frozen retrieval policy changed")
+                await self._answers.authorize_frozen_selection(current)
+            except asyncio.CancelledError:
+                raise
+            except AuthorizationDenied:
+                raise
+            except Exception as error:
+                raise AuthorizationDenied(
+                    "checkpoint selection authorization unavailable"
+                ) from error
+        elif evidence.citations:
+            raise AuthorizationDenied("citation is outside frozen resources")
+        for citation in evidence.citations:
+            try:
+                await self._citations.authorize_current(citation.citation_snapshot_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                raise AuthorizationDenied("checkpoint citation authorization changed") from error
 
     async def _answer_conversation(
         self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None

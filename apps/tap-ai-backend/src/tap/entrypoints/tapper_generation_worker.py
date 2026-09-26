@@ -336,6 +336,13 @@ class GenerationWorker:
                     raise
                 result = state.get("result", {})
                 evidence = _evidence_from_checkpoint(result.get("evidence"))
+                if evidence.outcome not in {"failed", "canceled"}:
+                    await require_authorized()
+                    authorize_completed = getattr(
+                        self.knowledge, "authorize_completed_answer", None
+                    )
+                    if authorize_completed is not None:
+                        await authorize_completed(turn.input_snapshot, evidence)
                 raw_terminal = result.get("terminalEvent")
                 raw_stream_events = result.get("streamEvents", ())
                 terminal_event = (

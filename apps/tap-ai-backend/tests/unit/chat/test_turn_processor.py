@@ -809,6 +809,8 @@ async def _async_value(value):
     [({}, "tapper-demo-v2"), ({"TAPPER_SCHEMA_VERSION": "doc-schema-v1"}, "tapper-demo-v1")],
 )
 async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_values, expected_corpus):
+    from datetime import datetime, timezone
+
     from tap.entrypoints.tapper_runtime import (
         TapperSettings,
         _assemble_http_services,
@@ -817,7 +819,12 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
     from tap.interfaces.http.knowledge_service import KnowledgeHttpService
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.ai.application.assets import validation_asset_seed
-    from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
+    from tap.modules.chat.domain.conversations import (
+        FrozenResource,
+        TurnInput,
+        TurnInputSnapshot,
+        content_digest,
+    )
     from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
     from tests.unit.knowledge import test_answer_service as fixtures
 
@@ -844,14 +851,16 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
     )
     repository.scope = VALIDATION_SCOPE
 
-    async def reject_current_reload(_ids):
-        raise AssertionError("accepted Turn must not re-read current revisions")
+    class Citations:
+        scope = VALIDATION_SCOPE
 
-    repository.load_revision_selection = reject_current_reload
+        async def authorize_current(self, citation_id):
+            assert citation_id == "citation-a"
+
     knowledge = KnowledgeHttpService(
         documents=SimpleNamespace(scope=VALIDATION_SCOPE),
         answers=answers,
-        citations=SimpleNamespace(scope=VALIDATION_SCOPE),
+        citations=Citations(),
         corpus_version=settings.corpus_version,
     )
     frozen = fixtures.ready()
@@ -893,6 +902,13 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
             }
         ),
     )
+    snapshot = TurnInputSnapshot.create(
+        snapshot_id="snapshot-1",
+        project_id=VALIDATION_SCOPE.project_id,
+        turn_id="turn-1",
+        value=turn_input,
+        now=datetime.now(timezone.utc),
+    )
 
     class Repository:
         async def claim_queued(self, *, limit):
@@ -902,7 +918,7 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
                     SimpleNamespace(
                         turn_id="turn-1",
                         lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(value=turn_input),
+                        input_snapshot=snapshot,
                     ),
                 ),
             )
