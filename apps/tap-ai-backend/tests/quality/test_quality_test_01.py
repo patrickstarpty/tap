@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,14 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.domain.models import text_digest
 from tap.modules.test_management.domain.models import (
     TestPlanGenerationRequest as GenerationRequest,
+)
+from tap.quality.evidence import (
+    candidate_digest as evidence_candidate_digest,
+)
+from tap.quality.evidence import (
+    candidate_run_id,
+    canonical_digest,
+    reviewed_candidate_digest,
 )
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -261,16 +270,25 @@ def _profile() -> dict:
     for item in cases:
         observation = item["observation"]
         receipt = observation["providerReceipt"]
-        evidence_candidate_digest = digest(
-            {
-                "caseId": item["caseId"],
-                "requestDigest": receipt["requestDigest"],
-                "outputDigest": observation["outputDigest"],
-                "datasetDigest": dataset_digest,
-                "configDigest": config_digest,
-                "modelDigest": model_digest,
-            }
+        provider_receipt = {
+            "provider": receipt["provider"],
+            "model": receipt["model"],
+            "providerRequestId": receipt["providerRequestId"],
+            "requestDigest": receipt["requestDigest"],
+            "outputDigest": observation["outputDigest"],
+        }
+        receipt_digest = canonical_digest(provider_receipt)
+        case_candidate_digest = evidence_candidate_digest(
+            case_id=item["caseId"],
+            request_id=receipt["providerRequestId"],
+            request_digest=receipt["requestDigest"],
+            receipt_digest=receipt_digest,
+            output_digest=observation["outputDigest"],
+            dataset_digest=dataset_digest,
+            config_digest=config_digest,
+            model_digest=model_digest,
         )
+        review_result = _evaluator().review_result(item)
         evidence_cases.append(
             {
                 "caseId": item["caseId"],
@@ -278,23 +296,36 @@ def _profile() -> dict:
                 "executionMode": "real",
                 "requestId": receipt["providerRequestId"],
                 "requestDigest": receipt["requestDigest"],
+                "providerReceipt": provider_receipt,
+                "receiptDigest": receipt_digest,
                 "output": observation["generatedOutput"],
                 "outputDigest": observation["outputDigest"],
-                "candidateDigest": evidence_candidate_digest,
+                "datasetDigest": dataset_digest,
+                "configDigest": config_digest,
+                "modelDigest": model_digest,
+                "candidateDigest": case_candidate_digest,
                 "reviewedOutputDigest": observation["outputDigest"],
-                "reviewedCandidateDigest": evidence_candidate_digest,
+                "reviewResult": review_result,
                 "reviewJudgments": [
                     {
                         "reviewer": "patrick",
                         "approved": True,
-                        "reviewRunId": "quality-test-run-current",
+                        "reviewRunId": "pending",
                     }
                 ],
             }
         )
+    run_id = candidate_run_id(evidence_cases)
+    for case in evidence_cases:
+        case["reviewJudgments"][0]["reviewRunId"] = run_id
+        case["reviewedCandidateDigest"] = reviewed_candidate_digest(
+            candidate_digest_value=case["candidateDigest"],
+            review_result=case["reviewResult"],
+            review_judgments=case["reviewJudgments"],
+        )
     profile["runEvidence"] = {
         "schemaVersion": "quality-candidate-evidence-v1",
-        "runId": "quality-test-run-current",
+        "runId": run_id,
         "runStatus": "completed",
         "executionMode": "real",
         "datasetDigest": dataset_digest,
@@ -428,6 +459,35 @@ def test_real_gate_requires_dataset_config_model_and_current_run_evidence() -> N
     profile.pop("runEvidence")
 
     with pytest.raises(ValueError, match="candidate batch"):
+        module.evaluate(profile, real=True)
+
+
+def test_real_gate_rejects_post_review_score_mutation() -> None:
+    module = _evaluator()
+    profile = _profile()
+    profile["cases"][0]["observation"]["unsupportedFactCount"] = 1
+
+    with pytest.raises(ValueError, match="review result"):
+        module.evaluate(profile, real=True)
+
+
+def test_real_gate_rejects_root_output_that_differs_from_reviewed_batch() -> None:
+    module = _evaluator()
+    profile = _profile()
+    target = profile["cases"][0]
+    replacement = profile["cases"][1]["observation"]
+    target_observation = target["observation"]
+    for name in ("generatedOutput", "outputDigest", "reviewedOutputDigest"):
+        target_observation[name] = deepcopy(replacement[name])
+    target_observation["providerReceipt"]["outputDigest"] = target_observation["outputDigest"]
+    target_observation["candidateDigest"] = module._candidate_digest(
+        target,
+        request_digest=target_observation["providerReceipt"]["requestDigest"],
+        output_digest=target_observation["outputDigest"],
+    )
+    target_observation["reviewedCaseDigest"] = target_observation["candidateDigest"]
+
+    with pytest.raises(ValueError, match="reviewed batch"):
         module.evaluate(profile, real=True)
 
 
@@ -613,3 +673,9 @@ def test_real_runner_never_reuses_prefilled_review_for_identical_output(monkeypa
     assert "reviewedOutputDigest" not in result["cases"][0]["observation"]
     assert result["runEvidence"]["runStatus"] == "awaiting_review"
     assert result["runEvidence"]["cases"][0]["reviewJudgments"] == []
+
+
+def test_real_runner_always_reads_authorized_profile_not_existing_observations() -> None:
+    source = (ROOT / "scripts" / "run-quality-test-design-candidate.py").read_text(encoding="utf-8")
+
+    assert "arguments.observations if arguments.observations.exists()" not in source

@@ -36,41 +36,63 @@ def _batch() -> tuple[dict, dict[str, object], dict[str, object], dict[str, obje
                 "modelDigest": model_digest,
             }
         )
-        candidate_digest = module.canonical_digest(
-            {
-                "caseId": case_id,
-                "requestDigest": request_digest,
-                "outputDigest": output_digest,
-                "datasetDigest": dataset_digest,
-                "configDigest": config_digest,
-                "modelDigest": model_digest,
-            }
+        request_id = f"provider-request-{index}"
+        receipt = {
+            "provider": "provider",
+            "model": "model",
+            "providerRequestId": request_id,
+            "requestDigest": request_digest,
+            "outputDigest": output_digest,
+        }
+        receipt_digest = module.canonical_digest(receipt)
+        candidate_digest = module.candidate_digest(
+            case_id=case_id,
+            request_id=request_id,
+            request_digest=request_digest,
+            receipt_digest=receipt_digest,
+            output_digest=output_digest,
+            dataset_digest=dataset_digest,
+            config_digest=config_digest,
+            model_digest=model_digest,
         )
         cases.append(
             {
                 "caseId": case_id,
                 "status": "completed",
                 "executionMode": "real",
-                "requestId": f"provider-request-{index}",
+                "requestId": request_id,
                 "requestDigest": request_digest,
+                "providerReceipt": receipt,
+                "receiptDigest": receipt_digest,
                 "output": output,
                 "outputDigest": output_digest,
+                "datasetDigest": dataset_digest,
+                "configDigest": config_digest,
+                "modelDigest": model_digest,
                 "candidateDigest": candidate_digest,
                 "reviewedOutputDigest": output_digest,
-                "reviewedCandidateDigest": candidate_digest,
+                "reviewResult": {"decision": "approved", "grounded": True},
                 "reviewJudgments": [
                     {
                         "reviewer": "named-reviewer",
                         "approved": True,
-                        "reviewRunId": "run-current",
+                        "reviewRunId": "pending",
                     }
                 ],
             }
         )
+    run_id = module.candidate_run_id(cases)
+    for case in cases:
+        case["reviewJudgments"][0]["reviewRunId"] = run_id
+        case["reviewedCandidateDigest"] = module.reviewed_candidate_digest(
+            candidate_digest_value=case["candidateDigest"],
+            review_result=case["reviewResult"],
+            review_judgments=case["reviewJudgments"],
+        )
     return (
         {
             "schemaVersion": "quality-candidate-evidence-v1",
-            "runId": "run-current",
+            "runId": run_id,
             "runStatus": "completed",
             "executionMode": "real",
             "datasetDigest": dataset_digest,
@@ -154,6 +176,25 @@ def test_anti_forgery_requires_complete_dataset_config_and_model_digests(
         _validate(batch, dataset, config, model)
 
 
+@pytest.mark.parametrize("digest_name", ["datasetDigest", "configDigest", "modelDigest"])
+def test_each_candidate_requires_dataset_config_and_model_digests(
+    digest_name: str,
+) -> None:
+    batch, dataset, config, model = _batch()
+    batch["cases"][0].pop(digest_name)
+
+    with pytest.raises(ValueError, match=digest_name):
+        _validate(batch, dataset, config, model)
+
+
+def test_post_review_result_mutation_invalidates_approval() -> None:
+    batch, dataset, config, model = _batch()
+    batch["cases"][0]["reviewResult"]["grounded"] = False
+
+    with pytest.raises(ValueError, match="current candidate"):
+        _validate(batch, dataset, config, model)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -179,6 +220,31 @@ def test_dataset_change_cannot_reuse_old_batch_digests() -> None:
         _validate(batch, changed_dataset, config, model)
 
 
+def test_swapped_unique_request_ids_invalidate_approved_candidates() -> None:
+    batch, dataset, config, model = _batch()
+    first = batch["cases"][0]["requestId"]
+    batch["cases"][0]["requestId"] = batch["cases"][1]["requestId"]
+    batch["cases"][1]["requestId"] = first
+
+    with pytest.raises(ValueError, match="provider receipt|candidate digest"):
+        _validate(batch, dataset, config, model)
+
+
+def test_changed_run_identity_cannot_reuse_old_candidate_approvals() -> None:
+    batch, dataset, config, model = _batch()
+    batch["runId"] = "run-forged"
+    for case in batch["cases"]:
+        case["reviewJudgments"][0]["reviewRunId"] = "run-forged"
+        case["reviewedCandidateDigest"] = quality_evidence.reviewed_candidate_digest(
+            candidate_digest_value=case["candidateDigest"],
+            review_result=case["reviewResult"],
+            review_judgments=case["reviewJudgments"],
+        )
+
+    with pytest.raises(ValueError, match="runId"):
+        _validate(batch, dataset, config, model)
+
+
 @pytest.mark.parametrize(
     ("target", "environment", "message"),
     [
@@ -197,6 +263,15 @@ def test_dataset_change_cannot_reuse_old_batch_digests() -> None:
                 "TAP_QUALITY_TEST_DATASET_AUTHORIZATION": "approved:test-dataset-v1",
             },
             "reviewer authorization",
+        ),
+        (
+            "quality-graph-real",
+            {
+                "TAP_RUN_QUALITY_GRAPH_01": "1",
+                "TAP_QUALITY_GRAPH_DATASET_AUTHORIZATION": "approved:graph-dataset-v1",
+                "TAP_QUALITY_GRAPH_REVIEWER_AUTHORIZATION": "approved:reviewer-v1",
+            },
+            "journey producer authorization",
         ),
         (
             "quality-kb-trusted-real",
@@ -227,3 +302,66 @@ def test_make_real_gates_fail_closed_before_any_runner(
 
     assert result.returncode == 2
     assert message in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("target", "environment", "message"),
+    [
+        (
+            "quality-graph-candidate-real",
+            {
+                "TAP_RUN_QUALITY_GRAPH_01": "1",
+                "TAP_QUALITY_GRAPH_DATASET_AUTHORIZATION": "approved:",
+            },
+            "dataset authorization",
+        ),
+        (
+            "quality-kb-trusted-real",
+            {
+                "TAP_RUN_QUALITY_KB_TRUSTED_01": "1",
+                "TAP_QUALITY_KB_DATASET_AUTHORIZATION": "approved:",
+            },
+            "dataset authorization",
+        ),
+    ],
+)
+def test_make_rejects_empty_approval_identifiers(
+    target: str, environment: dict[str, str], message: str
+) -> None:
+    result = subprocess.run(
+        ["make", "--no-print-directory", target],
+        cwd=ROOT,
+        env={**os.environ, **environment},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert message in result.stderr
+
+
+def test_trusted_kb_official_gate_cannot_pass_without_real_candidate_producer(
+    tmp_path: Path,
+) -> None:
+    profile = tmp_path / "reviewed-profile.json"
+    profile.write_text("{}\n", encoding="utf-8")
+    result = subprocess.run(
+        ["make", "--no-print-directory", "quality-kb-trusted-real"],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "TAP_RUN_QUALITY_KB_TRUSTED_01": "1",
+            "TAP_QUALITY_KB_DATASET_AUTHORIZATION": "approved:dataset-v1",
+            "TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION": "approved:model-v1",
+            "TAP_QUALITY_KB_REVIEWER_AUTHORIZATION": "approved:reviewer-v1",
+            "TAP_QUALITY_KB_TRUSTED_PROFILE": str(profile),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "no authorized real candidate producer" in result.stderr
+    assert "PENDING" in result.stderr

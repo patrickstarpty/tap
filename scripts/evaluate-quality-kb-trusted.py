@@ -4,14 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from tap.quality.evidence import validate_candidate_batch
+from tap.quality.evidence import canonical_digest, validate_candidate_batch
 
-_TOPICS = frozenset({"amount", "percentage", "date", "condition", "exception"})
+_TOPICS = frozenset({"amount", "percentage", "date", "condition", "exception", "unit"})
 
 
 def _mapping(value: object, name: str) -> dict[str, Any]:
@@ -74,6 +75,111 @@ def _legacy_metrics(value: object) -> dict[str, dict[str, object]]:
     }
 
 
+def _evaluator_digest(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def review_result(case: dict[str, Any]) -> dict[str, object]:
+    """Return all trusted-KB judgments that contribute to acceptance metrics."""
+    return {
+        name: case.get(name)
+        for name in (
+            "retrievalRelevantAt50",
+            "retrievalRelevantTotal",
+            "top10EvidenceCovered",
+            "top10EvidenceTotal",
+            "correctAndSufficient",
+            "citationLocated",
+            "requiresNoAnswerOrConflict",
+            "noAnswerOrConflictCorrect",
+            "criticalFactErrorCount",
+        )
+    }
+
+
+def _validate_legacy_v1_evidence(
+    value: object, *, declared_metrics: object
+) -> dict[str, Any]:
+    evidence = _mapping(value, "legacy V1 evidence")
+    report = _mapping(evidence.get("report"), "legacy V1 report")
+    if report.get("schemaVersion") != "quality-kb-report-v2":
+        raise ValueError("legacy V1 evidence requires quality-kb-report-v2")
+    if report.get("profileId") != "QUALITY-KB-01" or report.get("status") != "pass":
+        raise ValueError("legacy V1 report must be a passing QUALITY-KB-01 report")
+    if evidence.get("reportDigest") != canonical_digest(report):
+        raise ValueError("legacy V1 report digest is stale")
+    legacy_evaluator = Path(__file__).with_name("evaluate-quality-kb.py")
+    if report.get("evaluatorDigest") != _evaluator_digest(legacy_evaluator):
+        raise ValueError("legacy V1 evidence requires the current evaluator")
+    for name in ("datasetDigest", "configDigest"):
+        digest = report.get(name)
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 71
+            or not digest.startswith("sha256:")
+        ):
+            raise ValueError(f"legacy V1 report requires {name}")
+    bindings = _mapping(report.get("bindings"), "legacy V1 bindings")
+    for name in ("promptDigest", "schemaDigest", "policyDigest", "approvalDigest"):
+        digest = bindings.get(name)
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 71
+            or not digest.startswith("sha256:")
+        ):
+            raise ValueError(f"legacy V1 report requires bound {name}")
+    metrics = _mapping(report.get("metrics"), "legacy V1 metrics")
+    declared = _mapping(declared_metrics, "declared legacy V1 metrics")
+    if {name: metrics.get(name) for name in declared} != declared:
+        raise ValueError("legacy V1 report does not match the reported metrics")
+    thresholds = _mapping(report.get("thresholds"), "legacy V1 thresholds")
+    required_thresholds = {
+        "minimumCases",
+        "zeroSkipped",
+        "zeroLeakage",
+        "zeroCacheHits",
+        "anchorResolution",
+        "groundedClaimCitationPrecision",
+        "retrievalRecallAt10",
+        "abstainAccuracy",
+    }
+    if not required_thresholds <= set(thresholds) or any(
+        _mapping(thresholds[name], name).get("passed") is not True
+        for name in required_thresholds
+    ):
+        raise ValueError("legacy V1 report thresholds are incomplete or failing")
+    execution = _mapping(report.get("execution"), "legacy V1 execution")
+    if (
+        type(execution.get("providerCalls")) is not int
+        or execution["providerCalls"] <= 0
+        or execution.get("cacheHits") != 0
+    ):
+        raise ValueError("legacy V1 report lacks real provider execution")
+    cases = [
+        _mapping(item, "legacy V1 case")
+        for item in _array(report.get("cases"), "cases")
+    ]
+    if len(cases) < 100 or any(case.get("status") != "evaluated" for case in cases):
+        raise ValueError("legacy V1 report must contain at least 100 evaluated cases")
+    if report.get("failures") != []:
+        raise ValueError("legacy V1 report contains failures")
+    identities = [
+        _mapping(item, "legacy V1 identity")
+        for item in _array(report.get("capturedActualIdentities"), "identities")
+    ]
+    if not identities or any(
+        not identity.get("provider") or not identity.get("model")
+        for identity in identities
+    ):
+        raise ValueError("legacy V1 report lacks captured real model identity")
+    if (
+        not isinstance(report.get("approvedRoutes"), list)
+        or not report["approvedRoutes"]
+    ):
+        raise ValueError("legacy V1 report lacks approved routes")
+    return report
+
+
 def evaluate(profile_value: object, *, real: bool = False) -> dict[str, object]:
     profile = _mapping(profile_value, "profile")
     if (
@@ -100,8 +206,15 @@ def evaluate(profile_value: object, *, real: bool = False) -> dict[str, object]:
         file_splits[file_id] = split
     if len(documents) < 100:
         raise ValueError("trusted knowledge gate requires at least 100 files")
-    if len(cases) < 200:
-        raise ValueError("trusted knowledge gate requires at least 200 questions")
+    acceptance_cases = [
+        case
+        for case in cases
+        if file_splits.get(str(case.get("fileId"))) == "acceptance"
+    ]
+    if len(acceptance_cases) < 200:
+        raise ValueError(
+            "trusted knowledge gate requires at least 200 acceptance questions"
+        )
     case_ids: set[str] = set()
     topic_counts: Counter[str] = Counter()
     totals: Counter[str] = Counter()
@@ -115,6 +228,8 @@ def evaluate(profile_value: object, *, real: bool = False) -> dict[str, object]:
         topic = case.get("topic")
         if topic not in _TOPICS:
             raise ValueError("question topic is not an enabled critical-fact type")
+        if file_splits[str(case["fileId"])] != "acceptance":
+            continue
         topic_counts[str(topic)] += 1
         totals["relevant50"] += _integer(
             case.get("retrievalRelevantAt50"), "retrievalRelevantAt50"
@@ -160,9 +275,9 @@ def evaluate(profile_value: object, *, real: bool = False) -> dict[str, object]:
             "passed": len(documents) >= 100,
         },
         "minimumQuestions": {
-            "actual": len(cases),
+            "actual": len(acceptance_cases),
             "required": ">=200",
-            "passed": len(cases) >= 200,
+            "passed": len(acceptance_cases) >= 200,
         },
         "retrievalRecallAt50": _ratio(
             totals["relevant50"], totals["relevantTotal"], 95
@@ -170,8 +285,10 @@ def evaluate(profile_value: object, *, real: bool = False) -> dict[str, object]:
         "top10EvidenceCoverage": _ratio(
             totals["top10Covered"], totals["top10Total"], 90
         ),
-        "correctAndSufficientAnswer": _ratio(totals["correct"], len(cases), 90),
-        "citationLocation": _ratio(totals["located"], len(cases), 98),
+        "correctAndSufficientAnswer": _ratio(
+            totals["correct"], len(acceptance_cases), 90
+        ),
+        "citationLocation": _ratio(totals["located"], len(acceptance_cases), 98),
         "noAnswerConflictNotice": _ratio(
             totals["noticeCorrect"], totals["noticeTotal"], 95
         ),
@@ -187,14 +304,30 @@ def evaluate(profile_value: object, *, real: bool = False) -> dict[str, object]:
         bindings = _mapping(profile.get("bindings"), "bindings")
         actual_model = bindings.get("actualModel")
         if not isinstance(actual_model, str) or actual_model.startswith(
-            ("fake/", "pending/", "simulated/")
+            ("fake/", "pending/", "simulated/", "prebuilt/")
         ):
             raise ValueError("real trusted knowledge gate requires a real model")
+        current_evaluator_digest = _evaluator_digest(Path(__file__))
+        if bindings.get("evaluatorDigest") != current_evaluator_digest:
+            raise ValueError(
+                "real trusted knowledge gate requires the current evaluatorDigest"
+            )
+        for name in ("promptDigest", "schemaDigest"):
+            value = bindings.get(name)
+            if not isinstance(value, str) or not value.startswith("sha256:"):
+                raise ValueError(f"real trusted knowledge gate requires current {name}")
+        legacy_evidence = _mapping(
+            profile.get("legacyV1Evidence"), "legacy V1 evidence"
+        )
+        _validate_legacy_v1_evidence(
+            legacy_evidence, declared_metrics=profile.get("legacyV1Metrics")
+        )
         dataset_material = {
             "profileId": profile["profileId"],
             "version": dataset.get("version"),
             "documents": documents,
-            "cases": cases,
+            "acceptanceCases": acceptance_cases,
+            "legacyV1Evidence": legacy_evidence,
         }
         config_material = {
             "legacyV1Thresholds": {
@@ -211,15 +344,27 @@ def evaluate(profile_value: object, *, real: bool = False) -> dict[str, object]:
                 "citationLocation": ">=98%",
                 "noAnswerConflict": ">=95%",
                 "criticalFactErrors": 0,
+                "minimumAcceptanceQuestions": 200,
+                "topics": sorted(_TOPICS),
             },
         }
+        run_evidence = _mapping(profile.get("runEvidence"), "candidate batch")
         validate_candidate_batch(
-            profile.get("runEvidence"),
-            expected_case_ids=sorted(case_ids),
+            run_evidence,
+            expected_case_ids=sorted(str(case["caseId"]) for case in acceptance_cases),
             dataset_material=dataset_material,
             config_material=config_material,
             model_material=bindings,
         )
+        evidence_by_case = {
+            str(item["caseId"]): item
+            for item in _array(run_evidence.get("cases"), "candidate cases")
+        }
+        for case in acceptance_cases:
+            if evidence_by_case[str(case["caseId"])].get(
+                "reviewResult"
+            ) != review_result(case):
+                raise ValueError("trusted knowledge review result is stale")
     return {
         "profileId": profile["profileId"],
         "legacyV1Metrics": legacy,

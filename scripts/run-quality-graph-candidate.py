@@ -28,6 +28,8 @@ from tap.modules.graph.domain.models import GraphSnapshot
 from tap.modules.ai.ports.gateway import ModelGateway
 
 from tap.quality.evidence import (
+    candidate_digest,
+    candidate_run_id,
     canonical_digest,
     graph_candidate_sets,
     graph_materials,
@@ -307,20 +309,34 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
         config_digest = canonical_digest(config_material)
         model_digest = canonical_digest(model_material)
         for item in candidate_outputs:
-            item["candidateDigest"] = canonical_digest(
-                {
-                    "caseId": item["caseId"],
-                    "requestDigest": item["requestDigest"],
-                    "outputDigest": item["outputDigest"],
-                    "datasetDigest": dataset_digest,
-                    "configDigest": config_digest,
-                    "modelDigest": model_digest,
-                }
+            provider_receipt = {
+                "provider": item.pop("provider"),
+                "model": item.pop("model"),
+                "providerRequestId": item["requestId"],
+                "requestDigest": item["requestDigest"],
+                "outputDigest": item["outputDigest"],
+            }
+            receipt_digest = canonical_digest(provider_receipt)
+            item.update(
+                providerReceipt=provider_receipt,
+                receiptDigest=receipt_digest,
+                datasetDigest=dataset_digest,
+                configDigest=config_digest,
+                modelDigest=model_digest,
+            )
+            item["candidateDigest"] = candidate_digest(
+                case_id=str(item["caseId"]),
+                request_id=str(item["requestId"]),
+                request_digest=str(item["requestDigest"]),
+                receipt_digest=receipt_digest,
+                output_digest=str(item["outputDigest"]),
+                dataset_digest=dataset_digest,
+                config_digest=config_digest,
+                model_digest=model_digest,
             )
         observations["runEvidence"] = {
             "schemaVersion": "quality-candidate-evidence-v1",
-            "runId": "quality-graph-"
-            + canonical_digest(candidate_outputs).removeprefix("sha256:")[:32],
+            "runId": candidate_run_id(candidate_outputs),
             "runStatus": "awaiting_review",
             "executionMode": "real",
             "datasetDigest": dataset_digest,

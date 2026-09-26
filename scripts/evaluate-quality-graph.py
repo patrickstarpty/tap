@@ -114,6 +114,38 @@ def _validate(
     return root, documents, labels
 
 
+def review_result_for_revisions(
+    documents: list[dict[str, Any]],
+    labels: list[dict[str, Any]],
+    revisions: tuple[str, str],
+) -> dict[str, object]:
+    """Return every reviewed Graph judgment used by a candidate's metrics."""
+    revision_to_document = {
+        str(document["documentId"])
+        + "-revision-"
+        + str(document["contentDigest"]).removeprefix("sha256:")[:12]: str(
+            document["documentId"]
+        )
+        for document in documents
+    }
+    document_ids = {revision_to_document[revision] for revision in revisions}
+    return {
+        "labels": [
+            {
+                "labelId": label.get("labelId"),
+                "documentId": label.get("documentId"),
+                "predicted": label.get("predicted"),
+                "correct": label.get("correct"),
+                "evidenceResolvable": label.get("evidenceResolvable"),
+                "provenanceComplete": label.get("provenanceComplete"),
+                "reviewer": label.get("reviewer"),
+            }
+            for label in sorted(labels, key=lambda value: str(value.get("labelId")))
+            if label.get("documentId") in document_ids
+        ]
+    }
+
+
 def evaluate(profile: object) -> dict[str, object]:
     root, documents, labels = _validate(profile)
     extracted = [
@@ -218,14 +250,34 @@ def validate_real_profile(profile: object) -> None:
     for case in cases:
         output = _mapping(case.get("output"), "candidate output")
         revisions = output.get("sourceRevisionIds")
+        document_revisions = output.get("documentRevisionIds")
+        expected = expected_revisions.get(str(case.get("caseId")))
         if (
             not isinstance(revisions, list)
             or len(revisions) < 2
             or len(revisions) != len(set(revisions))
-            or tuple(revisions) != expected_revisions.get(str(case.get("caseId")))
+            or tuple(revisions) != expected
         ):
             raise ValueError(
                 "Graph candidate output must bind the exact multi-revision set"
+            )
+        if (
+            not isinstance(document_revisions, list)
+            or tuple(document_revisions) != expected
+        ):
+            raise ValueError("Graph candidate output has stale document revisions")
+        evidence = [
+            _mapping(value, "Graph evidence")
+            for value in _array(output.get("evidence"), "Graph evidence")
+        ]
+        if (
+            {item.get("sourceRevisionId") for item in evidence} != set(expected or ())
+            or {item.get("documentRevisionId") for item in evidence}
+            != set(expected or ())
+            or any(not item.get("chunkId") for item in evidence)
+        ):
+            raise ValueError(
+                "Graph evidence does not bind every document revision and chunk"
             )
     dataset_material, config_material, model_material = graph_materials(root)
     validate_candidate_batch(
@@ -235,12 +287,21 @@ def validate_real_profile(profile: object) -> None:
         config_material=config_material,
         model_material=model_material,
     )
+    for case in cases:
+        expected = expected_revisions[str(case["caseId"])]
+        if case.get("reviewResult") != review_result_for_revisions(
+            documents, labels, expected
+        ):
+            raise ValueError("Graph review result is stale")
     validate_journey_evidence(
         root.get("journeyEvidence"),
         required_kinds=("contract", "api", "answer", "browser", "restart"),
         dataset_digest=canonical_digest(dataset_material),
         config_digest=canonical_digest(config_material),
         model_digest=canonical_digest(model_material),
+        candidate_run_id_value=str(run_evidence["runId"]),
+        candidate_digests=(str(case["candidateDigest"]) for case in cases),
+        request_ids=(str(case["requestId"]) for case in cases),
     )
 
 

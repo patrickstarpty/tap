@@ -104,13 +104,14 @@ quality-kb-real: ## require an opted-in real, human-labeled QUALITY-KB-01 run
 TAP_QUALITY_KB_TRUSTED_PROFILE ?= .local/quality-kb-trusted/profile.json
 TAP_QUALITY_KB_TRUSTED_REPORT ?= .local/quality-kb-trusted/report.json
 
-quality-kb-trusted-real: ## evaluate an authorized real 100-file/200-question reviewed candidate
+quality-kb-trusted-real: ## fail closed until an authorized real 100-file/200-question producer exists
 	@if [ "$${TAP_RUN_QUALITY_KB_TRUSTED_01:-}" != "1" ]; then echo "quality-kb-trusted-real requires TAP_RUN_QUALITY_KB_TRUSTED_01=1" >&2; exit 2; fi
-	@case "$${TAP_QUALITY_KB_DATASET_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-kb-trusted-real requires explicit dataset authorization" >&2; exit 2;; esac
-	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-kb-trusted-real requires explicit model execution authorization" >&2; exit 2;; esac
-	@case "$${TAP_QUALITY_KB_REVIEWER_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-kb-trusted-real requires explicit reviewer authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_KB_DATASET_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-kb-trusted-real requires explicit dataset authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-kb-trusted-real requires explicit model execution authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_KB_REVIEWER_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-kb-trusted-real requires explicit reviewer authorization" >&2; exit 2;; esac
 	@[ -f "$(TAP_QUALITY_KB_TRUSTED_PROFILE)" ] || { echo "quality-kb-trusted-real requires an existing reviewed profile" >&2; exit 2; }
-	uv run --project apps/tap-ai-backend python scripts/evaluate-quality-kb-trusted.py "$(TAP_QUALITY_KB_TRUSTED_PROFILE)" --report "$(TAP_QUALITY_KB_TRUSTED_REPORT)" --real
+	@echo "quality-kb-trusted-real has no authorized real candidate producer; gate remains PENDING" >&2
+	@exit 2
 
 TAP_QUALITY_GRAPH_PROFILE ?= apps/tap-ai-backend/tests/fixtures/quality/graph/profile-v1.json
 TAP_QUALITY_GRAPH_OBSERVATIONS ?= .local/quality-graph/observations.json
@@ -124,8 +125,8 @@ quality-graph-candidate-real: ## generate fresh real multi-revision Graph output
 		echo "quality-graph-candidate-real requires TAP_RUN_QUALITY_GRAPH_01=1" >&2; \
 		exit 2; \
 	fi
-	@case "$${TAP_QUALITY_GRAPH_DATASET_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-graph-candidate-real requires explicit dataset authorization" >&2; exit 2;; esac
-	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-graph-candidate-real requires explicit model execution authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_GRAPH_DATASET_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-graph-candidate-real requires explicit dataset authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-graph-candidate-real requires explicit model execution authorization" >&2; exit 2;; esac
 	@if [ "$${TAPPER_GRAPH_EXTRACTION_MODE:-}" != "model" ]; then \
 		echo "quality-graph-candidate-real requires TAPPER_GRAPH_EXTRACTION_MODE=model" >&2; \
 		exit 2; \
@@ -138,8 +139,9 @@ quality-graph-candidate-real: ## generate fresh real multi-revision Graph output
 
 quality-graph-real: ## evaluate existing real Graph outputs after authorized human review
 	@if [ "$${TAP_RUN_QUALITY_GRAPH_01:-}" != "1" ]; then echo "quality-graph-real requires TAP_RUN_QUALITY_GRAPH_01=1" >&2; exit 2; fi
-	@case "$${TAP_QUALITY_GRAPH_DATASET_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-graph-real requires explicit dataset authorization" >&2; exit 2;; esac
-	@case "$${TAP_QUALITY_GRAPH_REVIEWER_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-graph-real requires explicit reviewer authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_GRAPH_DATASET_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-graph-real requires explicit dataset authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_GRAPH_REVIEWER_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-graph-real requires explicit reviewer authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_GRAPH_JOURNEY_PRODUCER_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-graph-real requires explicit journey producer authorization" >&2; exit 2;; esac
 	@[ -f "$(TAP_QUALITY_GRAPH_OBSERVATIONS)" ] || { echo "quality-graph-real requires existing reviewed observations" >&2; exit 2; }
 	uv run --project apps/tap-ai-backend python scripts/evaluate-quality-graph.py "$(TAP_QUALITY_GRAPH_OBSERVATIONS)" --report "$(TAP_QUALITY_GRAPH_REPORT)" --real
 
@@ -155,14 +157,14 @@ quality-test-design-candidate-real: ## generate fresh real outputs and invalidat
 		echo "quality-test-design-candidate-real requires TAP_RUN_QUALITY_TEST_01=1" >&2; \
 		exit 2; \
 	fi
-	@case "$${TAP_QUALITY_TEST_DATASET_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-test-design-candidate-real requires explicit dataset authorization" >&2; exit 2;; esac
-	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-test-design-candidate-real requires explicit model execution authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_TEST_DATASET_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-test-design-candidate-real requires explicit dataset authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-test-design-candidate-real requires explicit model execution authorization" >&2; exit 2;; esac
 	TAPPER_MODEL_TIMEOUT_SECONDS=60 uv run --project apps/tap-ai-backend python scripts/run-quality-test-design-candidate.py "$(TAP_QUALITY_TEST_PROFILE)" --observations "$(TAP_QUALITY_TEST_OBSERVATIONS)"
 
 quality-test-design-real: ## evaluate existing real outputs after authorized named review
 	@if [ "$${TAP_RUN_QUALITY_TEST_01:-}" != "1" ]; then echo "quality-test-design-real requires TAP_RUN_QUALITY_TEST_01=1" >&2; exit 2; fi
-	@case "$${TAP_QUALITY_TEST_DATASET_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-test-design-real requires explicit dataset authorization" >&2; exit 2;; esac
-	@case "$${TAP_QUALITY_TEST_REVIEWER_AUTHORIZATION:-}" in approved:*) ;; *) echo "quality-test-design-real requires explicit reviewer authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_TEST_DATASET_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-test-design-real requires explicit dataset authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_TEST_REVIEWER_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-test-design-real requires explicit reviewer authorization" >&2; exit 2;; esac
 	@[ -f "$(TAP_QUALITY_TEST_OBSERVATIONS)" ] || { echo "quality-test-design-real requires existing reviewed observations" >&2; exit 2; }
 	uv run --project apps/tap-ai-backend python scripts/evaluate-quality-test-design.py "$(TAP_QUALITY_TEST_OBSERVATIONS)" --report "$(TAP_QUALITY_TEST_REPORT)" --real
 

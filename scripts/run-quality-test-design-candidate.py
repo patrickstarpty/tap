@@ -22,7 +22,12 @@ from tap.modules.test_management.domain.models import TestPlanGenerationRequest
 from tap.modules.test_management.domain.validation import validate_draft_structure
 from tap.modules.test_management.ports.generation import TestDesignContext
 
-from tap.quality.evidence import canonical_digest, test_design_materials
+from tap.quality.evidence import (
+    candidate_digest as evidence_candidate_digest,
+    candidate_run_id,
+    canonical_digest,
+    test_design_materials,
+)
 
 
 class CapturingGateway:
@@ -211,32 +216,44 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                 or not isinstance(output_digest, str)
             ):
                 continue
-            candidate_digest = canonical_digest(
-                {
-                    "caseId": item["caseId"],
-                    "requestDigest": receipt["requestDigest"],
-                    "outputDigest": output_digest,
-                    "datasetDigest": dataset_digest,
-                    "configDigest": config_digest,
-                    "modelDigest": model_digest,
-                }
+            request_id = str(receipt["providerRequestId"])
+            provider_receipt = {
+                "provider": receipt["provider"],
+                "model": receipt["model"],
+                "providerRequestId": request_id,
+                "requestDigest": receipt["requestDigest"],
+                "outputDigest": output_digest,
+            }
+            receipt_digest = canonical_digest(provider_receipt)
+            candidate_digest = evidence_candidate_digest(
+                case_id=str(item["caseId"]),
+                request_id=request_id,
+                request_digest=str(receipt["requestDigest"]),
+                receipt_digest=receipt_digest,
+                output_digest=output_digest,
+                dataset_digest=dataset_digest,
+                config_digest=config_digest,
+                model_digest=model_digest,
             )
             completed.append(
                 {
                     "caseId": item["caseId"],
                     "status": "completed",
                     "executionMode": "real",
-                    "requestId": receipt["providerRequestId"],
+                    "requestId": request_id,
                     "requestDigest": receipt["requestDigest"],
+                    "providerReceipt": provider_receipt,
+                    "receiptDigest": receipt_digest,
                     "output": output,
                     "outputDigest": output_digest,
+                    "datasetDigest": dataset_digest,
+                    "configDigest": config_digest,
+                    "modelDigest": model_digest,
                     "candidateDigest": candidate_digest,
                     "reviewJudgments": [],
                 }
             )
-        run_id = (
-            "quality-test-" + canonical_digest(completed).removeprefix("sha256:")[:32]
-        )
+        run_id = candidate_run_id(completed)
         observations["runEvidence"] = {
             "schemaVersion": "quality-candidate-evidence-v1",
             "runId": run_id,
@@ -261,10 +278,7 @@ def main() -> int:
     parser.add_argument("profile", type=Path)
     parser.add_argument("--observations", type=Path, required=True)
     arguments = parser.parse_args()
-    source = (
-        arguments.observations if arguments.observations.exists() else arguments.profile
-    )
-    profile = json.loads(source.read_text(encoding="utf-8"))
+    profile = json.loads(arguments.profile.read_text(encoding="utf-8"))
     observations = asyncio.run(run(profile))
     arguments.observations.parent.mkdir(parents=True, exist_ok=True)
     arguments.observations.write_text(

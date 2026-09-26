@@ -289,6 +289,19 @@ def _candidate_digest(
     return text_digest(material)
 
 
+def review_result(case: dict[str, Any]) -> dict[str, object]:
+    """Return every human-scored value that can influence the V3 verdict."""
+    observation = _mapping(case.get("observation"), "observation")
+    return {
+        "schemaValid": observation.get("schemaValid"),
+        "bddValid": observation.get("bddValid"),
+        "unsupportedFactCount": observation.get("unsupportedFactCount"),
+        "criticalCovered": observation.get("criticalCovered"),
+        "criticalTotal": observation.get("criticalTotal"),
+        "criticalCorrectionRequired": observation.get("criticalCorrectionRequired"),
+    }
+
+
 def validate_profile(
     profile: object, *, real: bool = False
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -432,6 +445,51 @@ def validate_profile(
             config_material=config_material,
             model_material=model_material,
         )
+        evidence_by_case = {
+            str(item["caseId"]): item
+            for item in _array(
+                _mapping(root.get("runEvidence"), "candidate batch").get("cases"),
+                "candidate cases",
+            )
+        }
+        for case in cases:
+            evidence_case = evidence_by_case[str(case["caseId"])]
+            observation = _mapping(case.get("observation"), "observation")
+            receipt = _mapping(observation.get("providerReceipt"), "provider receipt")
+            if (
+                evidence_case.get("output") != observation.get("generatedOutput")
+                or evidence_case.get("outputDigest") != observation.get("outputDigest")
+                or evidence_case.get("requestId") != receipt.get("providerRequestId")
+                or evidence_case.get("requestDigest") != receipt.get("requestDigest")
+                or evidence_case.get("providerReceipt") != receipt
+            ):
+                raise ValueError(
+                    "Test Design root observation differs from the reviewed batch"
+                )
+            root_judgments = [
+                {
+                    "reviewer": judgment.get("reviewer"),
+                    "approved": judgment.get("approved"),
+                }
+                for judgment in _array(
+                    case.get("reviewerJudgments"), "reviewer judgments"
+                )
+            ]
+            evidence_judgments = [
+                {
+                    "reviewer": judgment.get("reviewer"),
+                    "approved": judgment.get("approved"),
+                }
+                for judgment in _array(
+                    evidence_case.get("reviewJudgments"), "review judgments"
+                )
+            ]
+            if root_judgments != evidence_judgments:
+                raise ValueError(
+                    "Test Design root review differs from the reviewed batch"
+                )
+            if evidence_case.get("reviewResult") != review_result(case):
+                raise ValueError("Test Design review result is stale")
     return root, cases
 
 
