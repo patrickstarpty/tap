@@ -1,7 +1,9 @@
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 
 import pytest
 from fastapi.testclient import TestClient
@@ -376,16 +378,84 @@ def test_orphaned_staging_file_is_recovered(tmp_path: Path) -> None:
     interrupted.write_bytes(b"partial")
 
     recent_cutoff = datetime.now(UTC) - timedelta(hours=1)
-    assert objects.recover_orphans(referenced=set(), older_than=recent_cutoff) == []
+    assert (
+        objects.recover_orphans(reference_supplier=set, older_than=recent_cutoff) == []
+    )
     assert interrupted.exists()
     old_timestamp = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
     os.utime(interrupted, (old_timestamp, old_timestamp))
     removed = objects.recover_orphans(
-        referenced=set(), older_than=datetime.now(UTC) - timedelta(hours=1)
+        reference_supplier=set,
+        older_than=datetime.now(UTC) - timedelta(hours=1),
     )
 
     assert removed == [".staging/interrupted-upload"]
     assert not interrupted.exists()
+
+
+def test_orphan_recovery_cannot_race_an_old_content_retry(runtime) -> None:
+    """A stale reference snapshot must not delete bytes before receipt commit."""
+    ledger, objects, _ = runtime
+    raw = junit(case())
+    orphan = objects.persist([raw], max_bytes=4096)
+    old_timestamp = (datetime.now(UTC) - timedelta(days=1)).timestamp()
+    os.utime(objects.root / orphan.ref, (old_timestamp, old_timestamp))
+    accepting = Event()
+    release_accept = Event()
+
+    class BlockingLedger:
+        def accept(self, report_manifest, stored):
+            accepting.set()
+            assert release_accept.wait(timeout=5)
+            return ledger.accept(report_manifest, stored)
+
+    intake = ReportIntake(ledger=BlockingLedger(), objects=objects)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        receipt_future = executor.submit(intake.receive, manifest(), [raw])
+        assert accepting.wait(timeout=5)
+        recovery_future = executor.submit(
+            objects.recover_orphans,
+            reference_supplier=ledger.referenced_raw_objects,
+            older_than=datetime.now(UTC),
+        )
+        with pytest.raises(FutureTimeoutError):
+            recovery_future.result(timeout=0.1)
+        release_accept.set()
+        receipt = receipt_future.result(timeout=5)
+        assert recovery_future.result(timeout=5) == []
+
+    assert objects.read(receipt.raw_object_ref) == raw
+
+
+def test_orphan_recovery_cannot_delete_an_active_staging_upload(runtime) -> None:
+    """Recovery must serialize with an upload even past the supplied cutoff."""
+    ledger, objects, _ = runtime
+    upload_paused = Event()
+    release_upload = Event()
+    raw = junit(case())
+
+    def paused_chunks():
+        yield raw[:10]
+        upload_paused.set()
+        assert release_upload.wait(timeout=5)
+        yield raw[10:]
+
+    intake = ReportIntake(ledger=ledger, objects=objects)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        receipt_future = executor.submit(intake.receive, manifest(), paused_chunks())
+        assert upload_paused.wait(timeout=5)
+        recovery_future = executor.submit(
+            objects.recover_orphans,
+            reference_supplier=ledger.referenced_raw_objects,
+            older_than=datetime.now(UTC) + timedelta(days=1),
+        )
+        with pytest.raises(FutureTimeoutError):
+            recovery_future.result(timeout=0.1)
+        release_upload.set()
+        receipt = receipt_future.result(timeout=5)
+        assert recovery_future.result(timeout=5) == []
+
+    assert objects.read(receipt.raw_object_ref) == raw
 
 
 def test_frozen_camel_case_manifest_is_normalized_without_trusting_completeness() -> (

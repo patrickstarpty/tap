@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextlib import AbstractContextManager
 from typing import Protocol
 
 from tap_platform.insights.adapters.objects import ObjectTooLarge, StoredObject
@@ -15,6 +16,7 @@ class UploadTooLarge(ValueError):
 
 class ReportObjectStore(Protocol):
     def persist(self, chunks: Iterable[bytes], *, max_bytes: int) -> StoredObject: ...
+    def intake_guard(self) -> AbstractContextManager[None]: ...
 
 
 class ReportLedger(Protocol):
@@ -38,8 +40,9 @@ class ReportIntake:
     def receive(
         self, manifest: ReportManifest, chunks: Iterable[bytes]
     ) -> ReportReceipt:
-        try:
-            raw = self._objects.persist(chunks, max_bytes=self.max_upload_bytes)
-        except ObjectTooLarge as exc:
-            raise UploadTooLarge(str(exc)) from exc
-        return self._ledger.accept(manifest, raw)
+        with self._objects.intake_guard():
+            try:
+                raw = self._objects.persist(chunks, max_bytes=self.max_upload_bytes)
+            except ObjectTooLarge as exc:
+                raise UploadTooLarge(str(exc)) from exc
+            return self._ledger.accept(manifest, raw)

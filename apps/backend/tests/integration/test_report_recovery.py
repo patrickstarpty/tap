@@ -154,7 +154,7 @@ def test_unreferenced_raw_object_is_recovered_after_ledger_failure(
     assert len(objects.list_raw_objects()) == 1
 
     recovered = objects.recover_orphans(
-        referenced=SqlAlchemyReportLedger(engine).referenced_raw_objects(),
+        reference_supplier=SqlAlchemyReportLedger(engine).referenced_raw_objects,
         older_than=datetime.now(UTC) + timedelta(seconds=1),
     )
     assert len(recovered) == 1
@@ -232,3 +232,52 @@ def test_receipt_and_outbox_rollback_together(migrated_mysql) -> None:
             ).scalar_one()
             == 0
         )
+
+
+def test_upgrade_adopts_the_interim_0001_version_table(migrated_mysql) -> None:
+    """An 081c522 database must upgrade additively instead of recreating tables."""
+    engine, _ = migrated_mysql
+    assert MYSQL_URL is not None
+    env = dict(os.environ, TAP_DATABASE_URL=MYSQL_URL)
+    command = [
+        sys.executable,
+        "-m",
+        "alembic",
+        "-c",
+        str(Path(__file__).parents[2] / "alembic.ini"),
+    ]
+    subprocess.run(
+        [*command, "downgrade", "base"],
+        cwd=Path(__file__).parents[2],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [*command, "upgrade", "0001_report_intake"],
+        cwd=Path(__file__).parents[2],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with engine.begin() as connection:
+        connection.execute(text("RENAME TABLE tap_alembic_version TO alembic_version"))
+
+    subprocess.run(
+        [*command, "upgrade", "head"],
+        cwd=Path(__file__).parents[2],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    tables = set(inspect(engine).get_table_names())
+    columns = {
+        item["name"] for item in inspect(engine).get_columns("tap_report_receipts")
+    }
+    assert "tap_alembic_version" in tables
+    assert "alembic_version" not in tables
+    assert "manifest_digest" in columns
