@@ -366,6 +366,8 @@ export interface components {
             metrics: components["schemas"]["MetricResultContract"][];
             /** Queryid */
             queryId: string;
+            /** Reportcoverage */
+            reportCoverage: components["schemas"]["ReportCoverageContract"][];
             /** Timezone */
             timezone: string;
             /** To */
@@ -391,6 +393,26 @@ export interface components {
             numerator: number | null;
             /** Value */
             value: number | null;
+        };
+        /** ReportCoverageContract */
+        ReportCoverageContract: {
+            /**
+             * Completeness
+             * @enum {string}
+             */
+            completeness: "complete" | "partial" | "unknown";
+            /** Expectedshards */
+            expectedShards: number | null;
+            /** Externalrunid */
+            externalRunId: string;
+            /** Missingreasons */
+            missingReasons: string[];
+            /** Receivedshards */
+            receivedShards: number;
+            /** Reportbatchid */
+            reportBatchId: string;
+            /** Sourceid */
+            sourceId: string;
         };
         /** RunPageContract */
         RunPageContract: {

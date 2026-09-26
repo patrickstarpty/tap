@@ -21,6 +21,8 @@ from tap_platform.insights.domain.reports import (
     ReportReceipt,
     ReportState,
     TestAttemptFact,
+    logical_attempt_key,
+    attempt_content_checksum,
 )
 
 
@@ -221,27 +223,7 @@ def _semantic_projection(
     attempt_rows: list[dict[str, object]] = []
     evidence_rows: list[dict[str, object]] = []
     for fact in attempts:
-        logical_identity = [
-            scope[field]
-            for field in (
-                "project_id",
-                "source_id",
-                "external_run_id",
-                "report_batch_id",
-                "shard_id",
-                "application_commit",
-                "script_commit",
-                "environment",
-                "configuration",
-                "timezone",
-            )
-        ] + [
-            receipt.correction_no,
-            fact.stable_test_id or fact.source_test_identity,
-            fact.data_row,
-            fact.attempt,
-        ]
-        fact_key = _checksum(logical_identity)
+        fact_key = logical_attempt_key(manifest, fact)
         value = {
             **scope,
             "fact_key": fact_key,
@@ -259,7 +241,7 @@ def _semantic_projection(
             "first_attempt_eligible": int(fact.first_attempt_eligible),
             "started_at": manifest.started_at,
         }
-        value["fact_checksum"] = _checksum(value)
+        value["fact_checksum"] = attempt_content_checksum(manifest, fact)
         attempt_rows.append(value)
         for evidence_ref in fact.evidence_refs:
             evidence = {
@@ -271,6 +253,8 @@ def _semantic_projection(
             evidence_rows.append(evidence)
     run_dimension = {
         **scope,
+        "expected_shards": manifest.expected_shards,
+        "contains_complete_attempts": int(manifest.contains_complete_attempts),
         "job_id": manifest.job_id,
         "build_id": manifest.build_id,
         "branch": manifest.branch,
@@ -315,6 +299,18 @@ def _materialize_batch(
     }
     scope = dict(semantic["scope"])
     marker = {**transport, **scope, "payload_checksum": payload_checksum}
+    marker.update(
+        {
+            field: semantic["run_dimension"][field]
+            for field in (
+                "expected_shards",
+                "contains_complete_attempts",
+                "started_at",
+                "build_id",
+                "branch",
+            )
+        }
+    )
     marker["is_deleted"] = int(not semantic["attempts"])
     marker["marker_checksum"] = _checksum(marker)
 
@@ -350,11 +346,32 @@ def _effective_oracle_checksums(
             int, current["scope"]["correction_no"]
         ):
             selected[key] = batch
-    return sorted(
-        str(row["fact_checksum"])
-        for batch in selected.values()
-        for row in batch["attempts"]
-    )
+    attempts: dict[str, dict[str, object]] = {}
+    tombstones: dict[str, int] = {}
+    for batch in batches:
+        winner = selected[tuple(batch["scope"][field] for field in fields)]
+        winner_keys = {str(row["fact_key"]) for row in winner["attempts"]}
+        correction = cast(int, winner["scope"]["correction_no"])
+        for row in batch["attempts"]:
+            fact_key = str(row["fact_key"])
+            if fact_key not in winner_keys:
+                tombstones[fact_key] = max(tombstones.get(fact_key, -1), correction)
+    for batch in selected.values():
+        for row in batch["attempts"]:
+            fact_key = str(row["fact_key"])
+            if cast(int, row["correction_no"]) <= tombstones.get(fact_key, -1):
+                continue
+            previous = attempts.get(fact_key)
+            if previous is None or int(str(row["correction_no"])) > int(
+                str(previous["correction_no"])
+            ):
+                attempts[fact_key] = row
+            elif (
+                row["correction_no"] == previous["correction_no"]
+                and row["fact_checksum"] != previous["fact_checksum"]
+            ):
+                raise RuntimeError("logical attempt content conflict during rebuild")
+    return sorted(str(row["fact_checksum"]) for row in attempts.values())
 
 
 def _checksum(value: object) -> str:

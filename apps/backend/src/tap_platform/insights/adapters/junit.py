@@ -90,7 +90,10 @@ def _map_testcase(
     source_identity = f"{class_name}::{display_name}"
     properties = {
         item.attrib.get("name", ""): item.attrib.get("value", item.text or "")
-        for item in element.findall("./properties/property")
+        for group in element
+        if _local_name(group.tag) == "properties"
+        for item in group
+        if _local_name(item.tag) == "property"
     }
     stable_id = properties.get("tap.test_id") or mapping.get(source_identity)
     data_row = properties.get("tap.data_row") or None
@@ -119,11 +122,12 @@ def _map_testcase(
         else:
             missing.append(f"attachment-missing:{attachment}")
     result = "pass"
-    if element.find("failure") is not None:
+    child_names = {_local_name(child.tag) for child in element}
+    if "failure" in child_names:
         result = "fail"
-    elif element.find("error") is not None:
+    elif "error" in child_names:
         result = "error"
-    elif element.find("skipped") is not None:
+    elif "skipped" in child_names:
         result = "skipped"
     duration: float | None = None
     if "time" in element.attrib:

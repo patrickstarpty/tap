@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 import threading
+import time
 
 import pytest
 
@@ -70,6 +71,28 @@ def metric_map(attempts: list[MetricAttempt]):
         ),
     )
     return {result.metric_id: result for result in results}
+
+
+def test_failure_details_sort_attempts_before_checking_first_eligibility() -> None:
+    from tap_platform.insights.application.queries import _failure_details_v1
+
+    facts = [
+        attempt(test_id="a", attempt_no=2, result="fail", first_attempt_eligible=False),
+        attempt(test_id="a", attempt_no=1, result="fail"),
+    ]
+    assert metric_map(facts)[MetricId.FINAL_PASS_RATE].value == 0.0
+    details = _failure_details_v1(
+        facts,
+        window=MetricWindow(
+            start=datetime(2026, 9, 23, tzinfo=UTC),
+            end=datetime(2026, 9, 25, tzinfo=UTC),
+            timezone="UTC",
+        ),
+        deadline=time.monotonic() + 5,
+    )
+    assert [(item.fact_key, item.result) for item in details] == [
+        ("run-1:a:browser=chromium:2", "fail")
+    ]
 
 
 def test_oracle_uses_distinct_first_final_and_recovery_denominators() -> None:

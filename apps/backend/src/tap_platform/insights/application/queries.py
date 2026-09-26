@@ -21,6 +21,7 @@ from tap_platform.insights.domain.metrics import (
     MetricValue,
     MetricWindow,
     calculate_metrics,
+    ReportCoverage,
 )
 from tap_platform.insights.domain.projection import ProjectionSnapshot
 
@@ -135,6 +136,7 @@ class QueryRecord:
     created_at: datetime
     metrics: tuple[MetricValue, ...]
     trends: tuple[TrendPoint, ...]
+    report_coverage: tuple[ReportCoverage, ...] = ()
     # Old local records may contain details. New records persist only bounded
     # aggregate output; pages re-read this record's immutable snapshot and scope.
     runs: tuple[RunSummary, ...] = ()
@@ -222,8 +224,32 @@ class InsightsQueryService:
                 snapshot=snapshot,
                 deadline=deadline,
             )
+            coverage_reader = getattr(self._facts, "query_report_coverage", None)
+            coverage: tuple[ReportCoverage, ...] = ()
+            if coverage_reader is not None:
+                try:
+                    coverage = coverage_reader(
+                        snapshot=snapshot,
+                        project_id=project_id,
+                        query=query,
+                        window=window,
+                        limits=replace(
+                            self._limits,
+                            timeout_seconds=max(0.001, deadline - time.monotonic()),
+                        ),
+                    )
+                except TimeoutError as exc:
+                    raise QueryTimedOut("insights coverage query timed out") from exc
+                except Exception as exc:
+                    raise QueryUnavailable(
+                        "insights report coverage unavailable"
+                    ) from exc
+                self._check_deadline(deadline)
             metrics = calculate_metrics(
-                attempts, metric_ids=query.metric_ids, window=window
+                attempts,
+                metric_ids=query.metric_ids,
+                window=window,
+                report_coverage=coverage,
             )
             record = QueryRecord(
                 query_id=str(uuid.uuid4()),
@@ -233,7 +259,8 @@ class InsightsQueryService:
                 snapshot=snapshot,
                 created_at=self._clock(),
                 metrics=metrics,
-                trends=_trend_points(attempts, query=query),
+                trends=_trend_points(attempts, query=query, report_coverage=coverage),
+                report_coverage=coverage,
             )
             self._check_output(record)
             self._check_deadline(deadline)
@@ -519,6 +546,8 @@ def _failure_details_v1(
         _check_detail_deadline(deadline, index)
         if _in_window(item, window):
             grouped[item.instance_key].append(item)
+    for items in grouped.values():
+        items.sort(key=lambda item: (item.attempt is None, item.attempt or 0))
     if any(
         not items[0].first_attempt_eligible
         or any(item.attempt is None for item in items)
@@ -554,7 +583,10 @@ def _failure_details_v1(
 
 
 def _trend_points(
-    attempts: list[MetricAttempt], *, query: MetricQuery
+    attempts: list[MetricAttempt],
+    *,
+    query: MetricQuery,
+    report_coverage: tuple[ReportCoverage, ...] = (),
 ) -> tuple[TrendPoint, ...]:
     window = query.window()
     by_day: dict[str, list[MetricAttempt]] = defaultdict(list)
@@ -573,6 +605,7 @@ def _trend_points(
                 items,
                 metric_ids=query.metric_ids,
                 window=window,
+                report_coverage=report_coverage,
             ),
         )
         for local_date, items in sorted(by_day.items())

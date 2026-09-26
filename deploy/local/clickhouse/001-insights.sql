@@ -35,6 +35,13 @@ ORDER BY
 ALTER TABLE tap_insights.report_batch_markers
 ADD COLUMN IF NOT EXISTS is_deleted UInt8 DEFAULT 0 AFTER payload_checksum;
 
+ALTER TABLE tap_insights.report_batch_markers
+    ADD COLUMN IF NOT EXISTS expected_shards Nullable(UInt32),
+    ADD COLUMN IF NOT EXISTS contains_complete_attempts UInt8 DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS started_at Nullable(String),
+    ADD COLUMN IF NOT EXISTS build_id Nullable(String),
+    ADD COLUMN IF NOT EXISTS branch Nullable(String);
+
 CREATE TABLE IF NOT EXISTS tap_insights.attempt_facts
 (
     projection_version String,

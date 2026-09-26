@@ -112,6 +112,16 @@ class TrendPointContract(ContractModel):
     metrics: list[MetricResultContract]
 
 
+class ReportCoverageContract(ContractModel):
+    source_id: str = Field(alias="sourceId")
+    external_run_id: str = Field(alias="externalRunId")
+    report_batch_id: str = Field(alias="reportBatchId")
+    expected_shards: int | None = Field(alias="expectedShards")
+    received_shards: int = Field(alias="receivedShards")
+    completeness: Literal["complete", "partial", "unknown"]
+    missing_reasons: list[str] = Field(alias="missingReasons")
+
+
 class MetricQueryResponse(ContractModel):
     query_id: str = Field(alias="queryId")
     metric_version: str = Field(alias="metricVersion")
@@ -124,6 +134,7 @@ class MetricQueryResponse(ContractModel):
     fact_watermark: FactWatermarkContract = Field(alias="factWatermark")
     metrics: list[MetricResultContract]
     trends: list[TrendPointContract]
+    report_coverage: list[ReportCoverageContract] = Field(alias="reportCoverage")
 
 
 class RunSummaryContract(ContractModel):
@@ -223,6 +234,18 @@ def query_contract(record: QueryRecord) -> MetricQueryResponse:
         ),
         metrics=[_metric_contract(value) for value in record.metrics],
         trends=[_trend_contract(point) for point in record.trends],
+        reportCoverage=[
+            ReportCoverageContract(
+                sourceId=item.source_id,
+                externalRunId=item.external_run_id,
+                reportBatchId=item.report_batch_id,
+                expectedShards=item.expected_shards,
+                receivedShards=item.received_shards,
+                completeness=item.completeness,
+                missingReasons=list(item.missing_reasons),
+            )
+            for item in record.report_coverage
+        ],
     )
 
 

@@ -44,13 +44,15 @@ from tap_platform.insights.application.queries import (
     RunSummary,
     TrendPoint,
 )
-from tap_platform.insights.domain.metrics import MetricId, MetricValue
+from tap_platform.insights.domain.metrics import MetricId, MetricValue, ReportCoverage
 from tap_platform.insights.domain.reports import (
     Completeness,
     ReportManifest,
     ReportReceipt,
     ReportState,
     TestAttemptFact,
+    logical_attempt_key,
+    attempt_content_checksum,
 )
 from tap_platform.insights.domain.projection import (
     ProjectionReservation,
@@ -421,6 +423,20 @@ class SqlAlchemyReportLedger:
             if current is not expected:
                 return self._row_to_receipt(row)
             if attempts is not None:
+                attempts = list(attempts)
+                manifest = ReportManifest.from_dict(_json_value(row["manifest"]))
+                conflict = self._logical_attempt_conflict(
+                    connection, receipt_id, manifest, attempts, now
+                )
+                if conflict is not None:
+                    target = ReportState.CONFLICTED
+                    reason = "logical-attempt-content-conflict"
+                    connection.execute(
+                        update(report_receipts)
+                        .where(report_receipts.c.receipt_id == receipt_id)
+                        .values(conflict_with_receipt_id=conflict)
+                    )
+                    attempts = []
                 connection.execute(
                     delete(report_attempts).where(
                         report_attempts.c.receipt_id == receipt_id
@@ -475,6 +491,89 @@ class SqlAlchemyReportLedger:
                 .one()
             )
             return self._row_to_receipt(updated)
+
+    def _logical_attempt_conflict(
+        self,
+        connection: Connection,
+        receipt_id: str,
+        manifest: ReportManifest,
+        attempts: list[TestAttemptFact],
+        now: datetime,
+    ) -> str | None:
+        # Serialize the whole run before checking prior immutable facts. A claim
+        # is a lock row only; receipts keep their independent delivery identity.
+        run_key = hashlib.sha256(
+            json.dumps(
+                [
+                    "attempt-authority",
+                    manifest.project_id,
+                    manifest.source_id,
+                    manifest.external_run_id,
+                ]
+            ).encode()
+        ).hexdigest()
+        try:
+            with connection.begin_nested():
+                connection.execute(
+                    insert(report_identity_claims).values(
+                        identity_digest=run_key,
+                        canonical_receipt_id=receipt_id,
+                        created_at=now,
+                    )
+                )
+        except IntegrityError:
+            pass
+        canonical = connection.execute(
+            select(report_identity_claims.c.canonical_receipt_id)
+            .where(report_identity_claims.c.identity_digest == run_key)
+            .with_for_update()
+        ).scalar_one()
+        rows = (
+            connection.execute(
+                select(report_receipts).where(
+                    report_receipts.c.project_id == manifest.project_id,
+                    report_receipts.c.source_id == manifest.source_id,
+                    report_receipts.c.external_run_id == manifest.external_run_id,
+                    report_receipts.c.correction_no == manifest.correction_no,
+                    report_receipts.c.receipt_id != receipt_id,
+                    report_receipts.c.state.in_(
+                        [
+                            ReportState.MAPPED.value,
+                            ReportState.PROJECTING.value,
+                            ReportState.READY.value,
+                        ]
+                    ),
+                )
+            )
+            .mappings()
+            .all()
+        )
+        known: dict[str, tuple[str, str]] = {}
+        for previous in sorted(rows, key=lambda item: item["receipt_id"] != canonical):
+            previous_manifest = ReportManifest.from_dict(
+                _json_value(previous["manifest"])
+            )
+            for mapped in connection.execute(
+                select(report_attempts).where(
+                    report_attempts.c.receipt_id == previous["receipt_id"]
+                )
+            ).mappings():
+                fact = self._row_to_attempt(mapped)
+                known.setdefault(
+                    logical_attempt_key(previous_manifest, fact),
+                    (
+                        attempt_content_checksum(previous_manifest, fact),
+                        str(previous["receipt_id"]),
+                    ),
+                )
+        for fact in attempts:
+            key = logical_attempt_key(manifest, fact)
+            checksum = attempt_content_checksum(manifest, fact)
+            prior = known.get(key)
+            if prior is not None and prior[0] != checksum:
+                return prior[1]
+            known[key] = (checksum, receipt_id)
+        return None
 
     def attempts_for(self, receipt_id: str) -> list[TestAttemptFact]:
         with self._engine.connect() as connection:
@@ -1304,6 +1403,18 @@ def _aware_utc(value: datetime) -> datetime:
 
 def _query_result_payload(record: QueryRecord) -> dict[str, object]:
     return {
+        "report_coverage": [
+            {
+                "source_id": item.source_id,
+                "external_run_id": item.external_run_id,
+                "report_batch_id": item.report_batch_id,
+                "expected_shards": item.expected_shards,
+                "received_shards": item.received_shards,
+                "completeness": item.completeness,
+                "missing_reasons": list(item.missing_reasons),
+            }
+            for item in record.report_coverage
+        ],
         "metrics": [_metric_payload(item) for item in record.metrics],
         "trends": [
             {
@@ -1403,6 +1514,12 @@ def _row_to_query_record(row: RowMapping) -> QueryRecord:
         ),
         created_at=_aware_utc(row["created_at"]),
         metrics=tuple(_metric_value(item) for item in payload["metrics"]),
+        report_coverage=tuple(
+            ReportCoverage(
+                **{**item, "missing_reasons": tuple(item["missing_reasons"])}
+            )
+            for item in payload.get("report_coverage", [])
+        ),
         trends=tuple(
             TrendPoint(
                 local_date=str(point["local_date"]),

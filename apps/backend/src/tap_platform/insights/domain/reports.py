@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -284,3 +284,43 @@ class TestAttemptFact:
     evidence_refs: tuple[str, ...]
     missing_reasons: tuple[str, ...]
     first_attempt_eligible: bool
+
+
+def logical_attempt_key(manifest: ReportManifest, fact: TestAttemptFact) -> str:
+    """Execution identity is independent of delivery and correction provenance."""
+    return _digest(
+        [
+            manifest.project_id,
+            manifest.source_id,
+            manifest.external_run_id,
+            manifest.application_commit,
+            manifest.script_commit,
+            manifest.environment,
+            manifest.configuration,
+            manifest.timezone,
+            fact.stable_test_id or fact.source_test_identity,
+            fact.data_row,
+            fact.attempt,
+            fact.source_locator if fact.attempt is None else None,
+        ]
+    )
+
+
+def attempt_content_checksum(manifest: ReportManifest, fact: TestAttemptFact) -> str:
+    content = asdict(fact)
+    content.pop("source_locator")
+    return _digest(
+        {
+            "fact_key": logical_attempt_key(manifest, fact),
+            "content": content,
+            "started_at": manifest.started_at,
+            "build_id": manifest.build_id,
+            "branch": manifest.branch,
+        }
+    )
+
+
+def _digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()

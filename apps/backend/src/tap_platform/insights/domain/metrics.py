@@ -25,6 +25,17 @@ class MetricId(StrEnum):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ReportCoverage:
+    source_id: str
+    external_run_id: str
+    report_batch_id: str
+    expected_shards: int | None
+    received_shards: int
+    completeness: Literal["complete", "partial", "unknown"]
+    missing_reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class MetricAttempt:
     fact_key: str
     receipt_id: str
@@ -175,6 +186,7 @@ def calculate_metrics(
     *,
     metric_ids: tuple[MetricId, ...],
     window: MetricWindow,
+    report_coverage: tuple[ReportCoverage, ...] = (),
 ) -> tuple[MetricValue, ...]:
     """Calculate allowlisted formulas from immutable effective facts."""
     deduplicated = {
@@ -198,11 +210,19 @@ def calculate_metrics(
         for items in ordered_groups
     )
     evidence = tuple(sorted({item.receipt_id for item in deduplicated.values()}))
-    if missing_first or missing_run_time:
-        missing_reason = (
-            "missing-run-start-time"
-            if missing_run_time
-            else "missing-first-attempt-history"
+    coverage_reasons = {
+        reason
+        for coverage in report_coverage
+        if coverage.completeness != "complete"
+        for reason in coverage.missing_reasons
+    }
+    if missing_first or missing_run_time or coverage_reasons:
+        missing_reasons = tuple(
+            sorted(
+                coverage_reasons
+                | ({"missing-run-start-time"} if missing_run_time else set())
+                | ({"missing-first-attempt-history"} if missing_first else set())
+            )
         )
         paired_unavailable = MetricValue(
             metric_id=MetricId.FIRST_PASS_RATE,
@@ -210,7 +230,7 @@ def calculate_metrics(
             denominator=None,
             value=None,
             completeness="unavailable",
-            missing_reasons=(missing_reason,),
+            missing_reasons=missing_reasons,
             evidence_refs=evidence,
         )
         values = {

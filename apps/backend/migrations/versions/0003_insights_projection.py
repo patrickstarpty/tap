@@ -74,6 +74,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    for table in (
+        "tap_insights_projection_versions",
+        "tap_insights_projection_state",
+        "tap_insights_projection_batches",
+    ):
+        if op.get_bind().execute(sa.text(f"SELECT 1 FROM {table} LIMIT 1")).first():
+            raise RuntimeError(
+                "projection authority requires retention; downgrade refused"
+            )
     op.drop_table("tap_insights_projection_batches")
     op.drop_table("tap_insights_projection_state")
     op.drop_table("tap_insights_projection_versions")

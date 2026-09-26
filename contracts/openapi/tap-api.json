@@ -485,6 +485,13 @@
             "title": "Queryid",
             "type": "string"
           },
+          "reportCoverage": {
+            "items": {
+              "$ref": "#/components/schemas/ReportCoverageContract"
+            },
+            "title": "Reportcoverage",
+            "type": "array"
+          },
           "timezone": {
             "title": "Timezone",
             "type": "string"
@@ -512,7 +519,8 @@
           "createdAt",
           "factWatermark",
           "metrics",
-          "trends"
+          "trends",
+          "reportCoverage"
         ],
         "title": "MetricQueryResponse",
         "type": "object"
@@ -590,6 +598,65 @@
           "evidenceRefs"
         ],
         "title": "MetricResultContract",
+        "type": "object"
+      },
+      "ReportCoverageContract": {
+        "additionalProperties": false,
+        "properties": {
+          "completeness": {
+            "enum": [
+              "complete",
+              "partial",
+              "unknown"
+            ],
+            "title": "Completeness",
+            "type": "string"
+          },
+          "expectedShards": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedshards"
+          },
+          "externalRunId": {
+            "title": "Externalrunid",
+            "type": "string"
+          },
+          "missingReasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missingreasons",
+            "type": "array"
+          },
+          "receivedShards": {
+            "title": "Receivedshards",
+            "type": "integer"
+          },
+          "reportBatchId": {
+            "title": "Reportbatchid",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "externalRunId",
+          "reportBatchId",
+          "expectedShards",
+          "receivedShards",
+          "completeness",
+          "missingReasons"
+        ],
+        "title": "ReportCoverageContract",
         "type": "object"
       },
       "RunPageContract": {

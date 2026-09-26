@@ -208,10 +208,9 @@ def test_clickhouse_query_template_binds_project_watermark_and_hard_limits(
         assert 0 < timeout <= 1.5
         assert "result_overflow_mode = 'throw'" in sql
     assert any("source_id IN ('ci-a')" in sql for sql in statements)
-    assert any("run.build_id IN ('build-a')" in sql for sql in statements)
-    assert any("run.branch IN ('main')" in sql for sql in statements)
-    assert any(
-        "coalesce(fact.started_at, run.started_at) IS NULL OR" in sql
+    # Mutable predicates before winner selection would revive older corrections.
+    assert all(
+        "run.build_id IN" not in sql and "run.branch IN" not in sql
         for sql in statements
     )
     assert any("ANY LEFT JOIN run_dimensions" in sql for sql in statements)

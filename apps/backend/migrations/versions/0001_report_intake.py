@@ -107,6 +107,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    for table in (
+        "tap_report_identity_claims",
+        "tap_report_receipts",
+        "tap_report_attempts",
+        "tap_report_outbox",
+        "tap_report_transitions",
+    ):
+        if op.get_bind().execute(sa.text(f"SELECT 1 FROM {table} LIMIT 1")).first():
+            raise RuntimeError("report authority requires retention; downgrade refused")
     op.drop_table("tap_report_transitions")
     op.drop_table("tap_report_outbox")
     op.drop_table("tap_report_attempts")

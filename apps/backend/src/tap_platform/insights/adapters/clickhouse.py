@@ -20,7 +20,11 @@ from tap_platform.insights.application.queries import (
     QueryLimitExceeded,
     QueryLimits,
 )
-from tap_platform.insights.domain.metrics import MetricAttempt, MetricWindow
+from tap_platform.insights.domain.metrics import (
+    MetricAttempt,
+    MetricWindow,
+    ReportCoverage,
+)
 from tap_platform.insights.domain.projection import (
     ProjectedAttempt,
     ProjectionReservation,
@@ -126,17 +130,39 @@ class ClickHouseInsightsStore:
             project_id=project_id,
             limits=_remaining_limits(limits, deadline),
             query=query,
-            window=window,
+            window=None,
         )
         by_key: dict[str, dict[str, Any]] = {}
         checksums: dict[str, set[str]] = {}
+        winner_keys: dict[tuple[str, ...], set[str]] = {}
+        for row in rows:
+            scope = _scope_key(row)
+            if selected.get(scope) == int(row["correction_no"]):
+                winner_keys.setdefault(scope, set()).add(str(row["fact_key"]))
+        tombstones: dict[str, int] = {}
+        for row in rows:
+            scope = _scope_key(row)
+            fact_key = str(row["fact_key"])
+            correction = selected.get(scope, -1)
+            if correction > int(
+                row["correction_no"]
+            ) and fact_key not in winner_keys.get(scope, set()):
+                tombstones[fact_key] = max(tombstones.get(fact_key, -1), correction)
         for row in rows:
             scope = _scope_key(row)
             if selected.get(scope) != int(row["correction_no"]):
                 continue
             fact_key = str(row["fact_key"])
-            checksums.setdefault(fact_key, set()).add(str(row["fact_checksum"]))
-            by_key.setdefault(fact_key, row)
+            if int(row["correction_no"]) <= tombstones.get(fact_key, -1):
+                continue
+            previous = by_key.get(fact_key)
+            if previous is None or int(row["correction_no"]) > int(
+                previous["correction_no"]
+            ):
+                by_key[fact_key] = row
+                checksums[fact_key] = {str(row["fact_checksum"])}
+            elif int(row["correction_no"]) == int(previous["correction_no"]):
+                checksums[fact_key].add(str(row["fact_checksum"]))
         conflicts = sorted(key for key, values in checksums.items() if len(values) > 1)
         if conflicts:
             raise ClickHouseProjectionError(
@@ -144,7 +170,11 @@ class ClickHouseInsightsStore:
                 + ",".join(conflicts)
             )
         return sorted(
-            (self._row_to_attempt(row) for row in by_key.values()),
+            (
+                self._row_to_attempt(row)
+                for row in by_key.values()
+                if _matches_winner(row, query, window)
+            ),
             key=lambda item: (
                 item.project_id,
                 item.source_id,
@@ -293,6 +323,78 @@ class ClickHouseInsightsStore:
             item.fact_checksum for item in self.effective_attempts(snapshot)
         )
         return hashlib.sha256("\n".join(checksums).encode()).hexdigest()
+
+    def query_report_coverage(
+        self,
+        *,
+        snapshot: ProjectionSnapshot,
+        project_id: str,
+        query: MetricQuery,
+        window: MetricWindow,
+        limits: QueryLimits,
+    ) -> tuple[ReportCoverage, ...]:
+        rows = self._visible_rows(
+            "report_batch_markers",
+            snapshot,
+            project_id=project_id,
+            query=query,
+            limits=limits,
+        )
+        selected: dict[tuple[str, ...], dict[str, Any]] = {}
+        for row in rows:
+            key = _scope_key(row)
+            prior = selected.get(key)
+            if prior is None or int(row["correction_no"]) > int(prior["correction_no"]):
+                selected[key] = row
+            elif (
+                row["correction_no"] == prior["correction_no"]
+                and row["marker_checksum"] != prior["marker_checksum"]
+            ):
+                raise ClickHouseProjectionError("report coverage marker conflict")
+        grouped: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+        for key, row in selected.items():
+            # Scope selection follows each immutable shard's correction winner.
+            winner = {
+                **row,
+                "resolved_started_at": row.get("started_at"),
+                "resolved_build_id": row.get("build_id"),
+                "resolved_branch": row.get("branch"),
+            }
+            if _matches_winner(winner, query, window):
+                grouped.setdefault(key[:-1], []).append(row)
+        coverage = []
+        for key, shards in sorted(grouped.items()):
+            declarations = {item.get("expected_shards") for item in shards}
+            expected = next(iter(declarations)) if len(declarations) == 1 else None
+            reasons = []
+            if expected is None:
+                reasons.append(
+                    "expected-shards-unknown"
+                    if len(declarations) == 1
+                    else "expected-shards-conflict"
+                )
+            elif len(shards) < int(expected):
+                reasons.append("report-shards-missing")
+            elif len(shards) > int(expected):
+                reasons.append("unexpected-report-shards")
+            if any(not item.get("contains_complete_attempts") for item in shards):
+                reasons.append("attempt-history-incomplete")
+            coverage.append(
+                ReportCoverage(
+                    source_id=key[1],
+                    external_run_id=key[2],
+                    report_batch_id=key[3],
+                    expected_shards=int(expected) if expected is not None else None,
+                    received_shards=len(shards),
+                    completeness="unknown"
+                    if expected is None
+                    else "partial"
+                    if reasons
+                    else "complete",
+                    missing_reasons=tuple(reasons),
+                )
+            )
+        return tuple(coverage)
 
     def _selected_markers(
         self,
@@ -538,27 +640,33 @@ def _query_scope_clause(
 ) -> str:
     if query is None:
         return ""
+    # Only immutable run identity may be pushed below correction selection.
     fields = (
         ("source_id", query.filters.source_ids),
         ("external_run_id", query.filters.run_ids),
-        ("environment", query.filters.environments),
-        ("configuration", query.filters.configurations),
     )
     clause = "".join(
         f" AND {prefix}{field} IN ({','.join(_quote(value) for value in values)})"
         for field, values in fields
         if values
     )
-    if include_run_dimensions:
-        clause += "".join(
-            f" AND run.{field} IN ({','.join(_quote(value) for value in values)})"
-            for field, values in (
-                ("build_id", query.filters.build_ids),
-                ("branch", query.filters.branches),
-            )
-            if values
-        )
     return clause
+
+
+def _matches_winner(
+    row: dict[str, Any], query: MetricQuery | None, window: MetricWindow | None
+) -> bool:
+    if query is not None:
+        for field, values in (
+            ("environment", query.filters.environments),
+            ("configuration", query.filters.configurations),
+            ("resolved_build_id", query.filters.build_ids),
+            ("resolved_branch", query.filters.branches),
+        ):
+            if values and row.get(field) not in values:
+                return False
+    started = _datetime(row, "resolved_started_at")
+    return window is None or started is None or window.contains(started)
 
 
 def _remaining_limits(

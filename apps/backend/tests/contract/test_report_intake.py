@@ -136,6 +136,24 @@ def test_same_identity_and_checksum_returns_the_original_receipt(runtime) -> Non
     assert ledger.outbox_events(first.receipt_id) == ["report.received"]
 
 
+@pytest.mark.parametrize(
+    "outcome,want", [("failure", "fail"), ("error", "error"), ("skipped", "skipped")]
+)
+@pytest.mark.parametrize("prefix", ["", "j:"])
+def test_namespaced_junit_retains_outcome_and_explicit_identity(prefix, outcome, want):
+    namespace = 'xmlns="urn:junit"' if not prefix else 'xmlns:j="urn:junit"'
+    raw = f"""<{prefix}testsuite {namespace}><{prefix}testcase classname="suite" name="case">
+      <{prefix}properties><{prefix}property name="tap.test_id" value="stable"/>
+      <{prefix}property name="tap.attempt" value="2"/>
+      <{prefix}property name="tap.data_row" value="row"/></{prefix}properties>
+      <{prefix}{outcome}/></{prefix}testcase></{prefix}testsuite>""".encode()
+    facts = parse_junit(raw, manifest())
+    assert [
+        (fact.stable_test_id, fact.attempt, fact.data_row, fact.result)
+        for fact in facts
+    ] == [("stable", 2, "row", want)]
+
+
 def test_same_identity_with_different_content_is_a_durable_conflict(runtime) -> None:
     """Removing content conflict detection must accept the second payload."""
     ledger, _, intake = runtime

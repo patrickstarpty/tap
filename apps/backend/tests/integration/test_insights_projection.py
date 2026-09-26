@@ -11,6 +11,8 @@ import urllib.parse
 import urllib.request
 import uuid
 import re
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,13 @@ from tap_platform.insights.application.projection import (
 )
 from tap_platform.insights.domain.reports import ReportManifest, ReportState
 from tap_platform.insights.worker import ReportWorker
+from tap_platform.insights.application.queries import (
+    InsightsQueryService,
+    MetricQuery,
+    QueryFilters,
+    QueryLimits,
+)
+from tap_platform.insights.domain.metrics import MetricId
 
 
 MYSQL_URL = os.getenv("TAP_TASK10_MYSQL_URL")
@@ -477,6 +486,196 @@ def test_correction_replaces_an_incorrect_configuration_dimension(
     effective = store.effective_attempts(ledger.projection_snapshot())
     assert len(effective) == 2
     assert {item.configuration for item in effective} == {"browser=firefox"}
+
+
+def query_service(ledger, store):
+    return InsightsQueryService(
+        facts=store,
+        snapshots=lambda _as_of: ledger.projection_snapshot(),
+        history=ledger,
+        clock=lambda: datetime.now(UTC),
+        limits=QueryLimits(
+            max_rows_to_read=10000,
+            max_bytes_to_read=5000000,
+            max_memory_bytes=5000000,
+            max_concurrent_queries=1,
+            max_output_rows=100,
+            timeout_seconds=10,
+        ),
+    )
+
+
+def metric_query(**filters):
+    return MetricQuery(
+        metric_ids=tuple(MetricId),
+        filters=QueryFilters(**filters),
+        from_date="2026-09-23",
+        to_date="2026-09-27",
+        timezone="UTC",
+        as_of=datetime.now(UTC),
+    )
+
+
+def project_manifest(ledger, objects, store, report_manifest, raw=None):
+    receipt = ReportIntake(ledger=ledger, objects=objects).receive(
+        report_manifest, [raw if raw is not None else report("retry.xml")]
+    )
+    worker = ReportWorker(
+        ledger=ledger,
+        objects=objects,
+        projector=ProjectionCoordinator(ledger=ledger, store=store),
+    )
+    for _ in range(4):
+        worker.process_one(receipt.receipt_id)
+    return ledger.get_receipt(receipt.receipt_id)
+
+
+def test_correction_winner_is_selected_before_mutable_filters_and_deletion(
+    projection_runtime,
+):
+    ledger, objects, store = projection_runtime
+    base = replace(manifest(), started_at="2026-09-24T00:00:00+00:00")
+    project_manifest(ledger, objects, store, base)
+    old = ledger.projection_snapshot()
+    project_manifest(
+        ledger,
+        objects,
+        store,
+        replace(
+            base, correction_no=1, configuration="browser=firefox", environment="new"
+        ),
+    )
+    query = metric_query(configurations=("browser=chromium",))
+    assert (
+        store.effective_attempts(
+            ledger.projection_snapshot(),
+            project_id=base.project_id,
+            query=query,
+            window=query.window(),
+        )
+        == []
+    )
+    assert (
+        len(
+            store.effective_attempts(
+                old, project_id=base.project_id, query=query, window=query.window()
+            )
+        )
+        == 2
+    )
+    project_manifest(
+        ledger,
+        objects,
+        store,
+        replace(base, correction_no=2, environment="deleted"),
+        b"<testsuite/>",
+    )
+    assert (
+        store.effective_attempts(
+            ledger.projection_snapshot(),
+            project_id=base.project_id,
+            query=metric_query(environments=("new",)),
+        )
+        == []
+    )
+
+
+def test_cross_batch_same_logical_attempt_is_idempotent_and_conflicts_are_durable(
+    projection_runtime,
+):
+    ledger, objects, store = projection_runtime
+    base = replace(manifest(), started_at="2026-09-24T00:00:00+00:00")
+    original = project_manifest(ledger, objects, store, base)
+    project_manifest(
+        ledger,
+        objects,
+        store,
+        replace(base, batch_id="other-batch", shard_id="other-shard"),
+    )
+    assert len(store.effective_attempts(ledger.projection_snapshot())) == 2
+    metrics = (
+        query_service(ledger, store)
+        .execute(project_id=base.project_id, query=metric_query())
+        .metrics
+    )
+    assert (
+        next(
+            item for item in metrics if item.metric_id is MetricId.P95_DURATION_SECONDS
+        ).value
+        == 1.7
+    )
+    raw = report("retry.xml").replace(b'time="0.7"', b'time="9.7"')
+    assert raw != report("retry.xml")
+    conflict = project_manifest(
+        ledger, objects, store, replace(base, batch_id="conflict-batch"), raw
+    )
+    assert conflict.state is ReportState.CONFLICTED
+    assert conflict.conflict_with_receipt_id == original.receipt_id
+    assert len(store.effective_attempts(ledger.projection_snapshot())) == 2
+    project_manifest(
+        ledger, objects, store, replace(base, correction_no=1), b"<testsuite/>"
+    )
+    assert store.effective_attempts(ledger.projection_snapshot()) == []
+    corrected = project_manifest(
+        ledger,
+        objects,
+        store,
+        replace(base, batch_id="correction-batch", correction_no=2),
+        raw,
+    )
+    assert corrected.state is ReportState.READY
+    assert len(store.effective_attempts(ledger.projection_snapshot())) == 2
+    result = ProjectionRebuilder(ledger=ledger, objects=objects, store=store).rebuild(
+        target_version="rebuild-cross-batch"
+    )
+    assert result.row_count == 2
+
+
+@pytest.mark.parametrize("expected", [2, None])
+def test_query_completeness_is_frozen_at_visible_projection_watermark(
+    projection_runtime, expected
+):
+    ledger, objects, store = projection_runtime
+    base = replace(
+        manifest(), expected_shards=expected, started_at="2026-09-24T00:00:00+00:00"
+    )
+    project_manifest(ledger, objects, store, base)
+    service = query_service(ledger, store)
+    historical = service.execute(project_id=base.project_id, query=metric_query())
+    assert all(
+        item.completeness == "unavailable" and item.value is None
+        for item in historical.metrics
+    )
+    coverage = historical.report_coverage[0]
+    assert (
+        coverage.expected_shards,
+        coverage.received_shards,
+        coverage.completeness,
+    ) == (expected, 1, "partial" if expected else "unknown")
+    if expected:
+        # Merely receiving the second shard cannot complete the projected snapshot.
+        receipt = ReportIntake(ledger=ledger, objects=objects).receive(
+            replace(base, shard_id="2"), [report("success.xml")]
+        )
+        assert all(
+            item.value is None
+            for item in service.execute(
+                project_id=base.project_id, query=metric_query()
+            ).metrics
+        )
+        worker = ReportWorker(
+            ledger=ledger,
+            objects=objects,
+            projector=ProjectionCoordinator(ledger=ledger, store=store),
+        )
+        for _ in range(4):
+            worker.process_one(receipt.receipt_id)
+        current = service.execute(project_id=base.project_id, query=metric_query())
+        assert current.report_coverage[0].completeness == "complete"
+        assert current.metrics[0].completeness == "complete"
+    reopened = ledger.get_query(historical.query_id)
+    assert reopened.metrics == historical.metrics
+    assert reopened.report_coverage == historical.report_coverage
 
 
 def test_incomplete_batch_never_advances_visible_watermark(

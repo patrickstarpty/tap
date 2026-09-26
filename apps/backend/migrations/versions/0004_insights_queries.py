@@ -45,6 +45,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if (
+        op.get_bind()
+        .execute(sa.text("SELECT 1 FROM tap_insights_queries LIMIT 1"))
+        .first()
+    ):
+        raise RuntimeError("query history requires retention; downgrade refused")
     op.drop_index(
         "ix_tap_insights_query_project_created",
         table_name="tap_insights_queries",
