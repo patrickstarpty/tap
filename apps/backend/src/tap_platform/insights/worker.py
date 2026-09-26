@@ -2,16 +2,38 @@
 
 from __future__ import annotations
 
+import os
+import time
+from pathlib import Path
+from collections.abc import Iterable
 from typing import Protocol
 
+from sqlalchemy import create_engine
+
 from tap_platform.insights.adapters.junit import JUnitSecurityError, parse_junit
-from tap_platform.insights.domain.reports import ReportState
+from tap_platform.insights.adapters.mysql import SqlAlchemyReportLedger
+from tap_platform.insights.adapters.objects import FileReportObjectStore
+from tap_platform.insights.domain.reports import (
+    ReportManifest,
+    ReportReceipt,
+    ReportState,
+    TestAttemptFact,
+)
 
 
 class WorkerLedger(Protocol):
-    def get_receipt(self, receipt_id: str): ...
-    def get_manifest(self, receipt_id: str): ...
-    def transition(self, receipt_id: str, **kwargs): ...
+    def get_receipt(self, receipt_id: str) -> ReportReceipt: ...
+    def get_manifest(self, receipt_id: str) -> ReportManifest: ...
+    def transition(
+        self,
+        receipt_id: str,
+        *,
+        expected: ReportState,
+        target: ReportState,
+        reason: str | None = None,
+        attempts: Iterable[TestAttemptFact] | None = None,
+    ) -> ReportReceipt: ...
+    def next_processable(self, *, limit: int = 100) -> list[str]: ...
 
 
 class WorkerObjects(Protocol):
@@ -54,12 +76,20 @@ class ReportWorker:
                     reason="mapping-failed",
                 )
                 return True
-            self._ledger.transition(
-                receipt_id,
-                expected=ReportState.VALIDATING,
-                target=ReportState.MAPPED,
-                attempts=attempts,
-            )
+            try:
+                self._ledger.transition(
+                    receipt_id,
+                    expected=ReportState.VALIDATING,
+                    target=ReportState.MAPPED,
+                    attempts=attempts,
+                )
+            except Exception:
+                self._ledger.transition(
+                    receipt_id,
+                    expected=ReportState.VALIDATING,
+                    target=ReportState.FAILED,
+                    reason="mapping-persistence-failed",
+                )
             return True
         if receipt.state is ReportState.MAPPED:
             self._ledger.transition(
@@ -69,13 +99,31 @@ class ReportWorker:
             )
             return True
         if receipt.state is ReportState.PROJECTING:
-            self._ledger.transition(
-                receipt_id,
-                expected=ReportState.PROJECTING,
-                target=ReportState.READY,
-            )
-            return True
+            return False
         return False
+
+    def process_available(self, *, limit: int = 100) -> int:
+        processed = 0
+        for receipt_id in self._ledger.next_processable(limit=limit):
+            try:
+                processed += int(self.process_one(receipt_id))
+            except Exception:
+                # A durable receipt remains discoverable on the next scan. One
+                # unavailable or malformed record must not stop the worker loop.
+                continue
+        return processed
+
+    def confirm_projection(self, receipt_id: str) -> bool:
+        """Mark ready only after the projection owner confirms durable success."""
+        receipt = self._ledger.get_receipt(receipt_id)
+        if receipt.state is not ReportState.PROJECTING:
+            return False
+        updated = self._ledger.transition(
+            receipt_id,
+            expected=ReportState.PROJECTING,
+            target=ReportState.READY,
+        )
+        return updated.state is ReportState.READY
 
     def retry_failed(self, receipt_id: str) -> bool:
         """Retry mapping of the stored artifact; never trigger the source test run."""
@@ -89,3 +137,27 @@ class ReportWorker:
             reason="mapping-retry-requested",
         )
         return True
+
+
+def main() -> None:
+    database_url = os.getenv("TAP_DATABASE_URL")
+    object_root = os.getenv("TAP_REPORT_OBJECT_ROOT")
+    if not database_url or not object_root:
+        raise RuntimeError(
+            "TAP_DATABASE_URL and TAP_REPORT_OBJECT_ROOT are required for the worker"
+        )
+    poll_seconds = float(os.getenv("TAP_REPORT_WORKER_POLL_SECONDS", "1"))
+    batch_size = int(os.getenv("TAP_REPORT_WORKER_BATCH_SIZE", "100"))
+    if not 0.05 <= poll_seconds <= 60:
+        raise ValueError("TAP_REPORT_WORKER_POLL_SECONDS must be between 0.05 and 60")
+    worker = ReportWorker(
+        ledger=SqlAlchemyReportLedger(create_engine(database_url, pool_pre_ping=True)),
+        objects=FileReportObjectStore(Path(object_root)),
+    )
+    while True:
+        if worker.process_available(limit=batch_size) == 0:
+            time.sleep(poll_seconds)
+
+
+if __name__ == "__main__":
+    main()

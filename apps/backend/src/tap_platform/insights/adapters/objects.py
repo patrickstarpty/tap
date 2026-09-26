@@ -7,6 +7,7 @@ import os
 import tempfile
 from collections.abc import Iterable, Set
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 
@@ -75,15 +76,21 @@ class FileReportObjectStore:
             if path.is_file()
         )
 
-    def recover_orphans(self, *, referenced: Set[str]) -> list[str]:
+    def recover_orphans(
+        self, *, referenced: Set[str], older_than: datetime
+    ) -> list[str]:
+        if older_than.utcoffset() is None:
+            raise ValueError("older_than must be timezone-aware")
+        cutoff = older_than.timestamp()
         removed: list[str] = []
         for temporary in self._staging.iterdir():
-            if temporary.is_file():
+            if temporary.is_file() and temporary.stat().st_mtime < cutoff:
                 temporary.unlink()
                 removed.append(f".staging/{temporary.name}")
         for ref in self.list_raw_objects():
-            if ref not in referenced:
-                self._resolve(ref).unlink()
+            candidate = self._resolve(ref)
+            if ref not in referenced and candidate.stat().st_mtime < cutoff:
+                candidate.unlink()
                 removed.append(ref)
         return sorted(removed)
 

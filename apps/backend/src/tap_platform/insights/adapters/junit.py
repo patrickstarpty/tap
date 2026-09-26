@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import cast
 from xml.etree import ElementTree
@@ -103,7 +104,7 @@ def _map_testcase(
     else:
         try:
             parsed_attempt = int(attempt_text)
-            if parsed_attempt < 1:
+            if not 1 <= parsed_attempt <= 2_147_483_647:
                 raise ValueError
             attempt = parsed_attempt
         except ValueError:
@@ -127,7 +128,10 @@ def _map_testcase(
     duration: float | None = None
     if "time" in element.attrib:
         try:
-            duration = float(element.attrib["time"])
+            parsed_duration = float(element.attrib["time"])
+            if not math.isfinite(parsed_duration) or parsed_duration < 0:
+                raise ValueError
+            duration = parsed_duration
         except ValueError:
             missing.append("duration-invalid")
     return TestAttemptFact(

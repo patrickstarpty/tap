@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import json
+import secrets
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from starlette.concurrency import run_in_threadpool
 
+from tap_platform.access import (
+    AccessPrincipal,
+    InsightsResource,
+    authorize_project_action,
+)
 from tap_platform.insights.application.intake import ReportIntake, UploadTooLarge
 from tap_platform.insights.domain.reports import (
     ReportManifest,
@@ -24,11 +31,65 @@ class EvidenceReader(Protocol):
     def read(self, ref: str) -> bytes: ...
 
 
+class InsightsAuthorizer(Protocol):
+    def authorize(
+        self,
+        *,
+        bearer_token: str,
+        project_id: str,
+        action: str,
+        resource_kind: str,
+        resource_id: str | None,
+    ) -> bool: ...
+
+
+class BearerPrincipalAuthorizer:
+    """Bind an opaque bearer secret to a server-validated principal."""
+
+    def __init__(
+        self,
+        *,
+        token: str,
+        principal: AccessPrincipal,
+        expected_audience: str,
+    ) -> None:
+        if len(token) < 16:
+            raise ValueError("bearer token must contain at least 16 characters")
+        self._token = token
+        self._principal = principal
+        self._expected_audience = expected_audience
+
+    def authorize(
+        self,
+        *,
+        bearer_token: str,
+        project_id: str,
+        action: str,
+        resource_kind: str,
+        resource_id: str | None,
+    ) -> bool:
+        if not secrets.compare_digest(bearer_token, self._token):
+            return False
+        decision = authorize_project_action(
+            self._principal,
+            action,
+            InsightsResource(
+                project_id=project_id,
+                kind=resource_kind,
+                resource_id=resource_id,
+            ),
+            expected_audience=self._expected_audience,
+            now=datetime.now(UTC),
+        )
+        return decision.allowed
+
+
 def create_insights_router(
     *,
     report_intake: ReportIntake | None,
     report_ledger: ReceiptReader | None,
     report_objects: EvidenceReader | None,
+    insights_authorizer: InsightsAuthorizer | None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/projects/{project_id}/insights")
 
@@ -37,11 +98,15 @@ def create_insights_router(
         project_id: str,
         request: Request,
         x_tap_report_manifest: str = Header(alias="X-TAP-Report-Manifest"),
-        x_tap_project_id: str | None = Header(default=None, alias="X-TAP-Project-ID"),
-        x_tap_actions: str | None = Header(default=None, alias="X-TAP-Actions"),
+        authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> dict[str, Any]:
         _authorize(
-            project_id, x_tap_project_id, x_tap_actions, "insights.reports.create"
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.reports.create",
+            resource_kind="report",
+            resource_id=None,
         )
         if report_intake is None:
             raise HTTPException(status_code=503, detail="report intake unavailable")
@@ -69,10 +134,16 @@ def create_insights_router(
     async def get_report(
         project_id: str,
         receipt_id: str,
-        x_tap_project_id: str | None = Header(default=None, alias="X-TAP-Project-ID"),
-        x_tap_actions: str | None = Header(default=None, alias="X-TAP-Actions"),
+        authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> dict[str, Any]:
-        _authorize(project_id, x_tap_project_id, x_tap_actions, "insights.reports.read")
+        _authorize(
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.reports.read",
+            resource_kind="report",
+            resource_id=receipt_id,
+        )
         receipt = await _load_receipt(report_ledger, receipt_id)
         _authorize_receipt_project(project_id, receipt)
         return _receipt_body(receipt)
@@ -81,11 +152,15 @@ def create_insights_router(
     async def download_evidence(
         project_id: str,
         receipt_id: str,
-        x_tap_project_id: str | None = Header(default=None, alias="X-TAP-Project-ID"),
-        x_tap_actions: str | None = Header(default=None, alias="X-TAP-Actions"),
+        authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> Response:
         _authorize(
-            project_id, x_tap_project_id, x_tap_actions, "insights.evidence.read"
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.evidence.read",
+            resource_kind="evidence",
+            resource_id=receipt_id,
         )
         if report_objects is None:
             raise HTTPException(status_code=503, detail="evidence store unavailable")
@@ -126,16 +201,36 @@ async def _load_receipt(ledger: ReceiptReader | None, receipt_id: str) -> Report
 
 
 def _authorize(
-    path_project: str,
-    principal_project: str | None,
-    action_header: str | None,
+    authorizer: InsightsAuthorizer | None,
+    authorization: str | None,
+    *,
+    project_id: str,
     action: str,
+    resource_kind: str,
+    resource_id: str | None,
 ) -> None:
-    actions = {
-        item.strip() for item in (action_header or "").split(",") if item.strip()
-    }
-    if principal_project != path_project or action not in actions:
+    bearer_token = _bearer_token(authorization)
+    if (
+        authorizer is None
+        or bearer_token is None
+        or not authorizer.authorize(
+            bearer_token=bearer_token,
+            project_id=project_id,
+            action=action,
+            resource_kind=resource_kind,
+            resource_id=resource_id,
+        )
+    ):
         raise HTTPException(status_code=403, detail="insights action denied")
+
+
+def _bearer_token(authorization: str | None) -> str | None:
+    if authorization is None:
+        return None
+    scheme, separator, token = authorization.partition(" ")
+    if separator != " " or scheme.lower() != "bearer" or not token:
+        return None
+    return token
 
 
 def _authorize_receipt_project(project_id: str, receipt: ReportReceipt) -> None:

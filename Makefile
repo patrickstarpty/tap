@@ -5,7 +5,7 @@ export TAP_TAPPER_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
 .PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev legacy-tapper-codex-dev demo-e2e demo-down demo-reset
-.PHONY: tap-backend-check tap-backend-migrate
+.PHONY: tap-backend-check tap-backend-migrate tap-insights-worker
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
@@ -89,6 +89,9 @@ tap-backend-check: ## verify TAP boundary, migrations, backend code, and all tes
 tap-backend-migrate: ## migrate configured TAP MySQL without resetting data
 	@set -eu; [ -n "$${TAP_DATABASE_URL:-}" ] || { echo "TAP_DATABASE_URL is required" >&2; exit 2; }; \
 	uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head
+
+tap-insights-worker: ## process durable TAP report receipts
+	uv run --project apps/backend python -m tap_platform.insights.worker
 
 TAP_QUALITY_KB_PROFILE ?= apps/tap-ai-backend/tests/fixtures/quality/kb/profile-v1.json
 TAP_QUALITY_KB_REPORT ?= .local/quality-kb/report.json

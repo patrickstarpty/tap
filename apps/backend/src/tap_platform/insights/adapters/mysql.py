@@ -54,6 +54,7 @@ report_receipts = Table(
     metadata,
     Column("receipt_id", String(36), primary_key=True),
     Column("identity_digest", String(64), nullable=False),
+    Column("manifest_digest", String(64), nullable=False),
     Column("project_id", String(256), nullable=False),
     Column("source_id", String(256), nullable=False),
     Column("external_run_id", String(256), nullable=False),
@@ -72,7 +73,10 @@ report_receipts = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint(
-        "identity_digest", "checksum", name="uq_tap_report_identity_content"
+        "identity_digest",
+        "checksum",
+        "manifest_digest",
+        name="uq_tap_report_identity_content",
     ),
 )
 
@@ -162,7 +166,9 @@ class SqlAlchemyReportLedger:
         try:
             return self._accept_once(manifest, raw)
         except IntegrityError:
-            existing = self._find_exact(manifest.identity_digest, raw.checksum)
+            existing = self._find_exact(
+                manifest.identity_digest, raw.checksum, manifest.fingerprint
+            )
             if existing is not None:
                 return existing
             canonical = self._find_canonical(manifest.identity_digest)
@@ -171,7 +177,9 @@ class SqlAlchemyReportLedger:
             try:
                 return self._insert_conflict(manifest, raw, canonical)
             except IntegrityError:
-                raced = self._find_exact(manifest.identity_digest, raw.checksum)
+                raced = self._find_exact(
+                    manifest.identity_digest, raw.checksum, manifest.fingerprint
+                )
                 if raced is None:
                     raise
                 return raced
@@ -186,6 +194,7 @@ class SqlAlchemyReportLedger:
                     select(report_receipts).where(
                         report_receipts.c.identity_digest == manifest.identity_digest,
                         report_receipts.c.checksum == raw.checksum,
+                        report_receipts.c.manifest_digest == manifest.fingerprint,
                     )
                 )
                 .mappings()
@@ -206,6 +215,7 @@ class SqlAlchemyReportLedger:
                 insert(report_receipts).values(
                     receipt_id=receipt_id,
                     identity_digest=manifest.identity_digest,
+                    manifest_digest=manifest.fingerprint,
                     project_id=manifest.project_id,
                     source_id=manifest.source_id,
                     external_run_id=manifest.external_run_id,
@@ -390,6 +400,30 @@ class SqlAlchemyReportLedger:
                 connection.execute(select(report_receipts.c.raw_object_ref)).scalars()
             )
 
+    def next_processable(self, *, limit: int = 100) -> list[str]:
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._engine.connect() as connection:
+            return list(
+                connection.execute(
+                    select(report_receipts.c.receipt_id)
+                    .where(
+                        report_receipts.c.state.in_(
+                            (
+                                ReportState.RECEIVED.value,
+                                ReportState.VALIDATING.value,
+                                ReportState.MAPPED.value,
+                            )
+                        )
+                    )
+                    .order_by(
+                        report_receipts.c.created_at,
+                        report_receipts.c.receipt_id,
+                    )
+                    .limit(limit)
+                ).scalars()
+            )
+
     def count_receipts(self) -> int:
         with self._engine.connect() as connection:
             return int(
@@ -398,13 +432,16 @@ class SqlAlchemyReportLedger:
                 ).scalar_one()
             )
 
-    def _find_exact(self, identity_digest: str, checksum: str) -> ReportReceipt | None:
+    def _find_exact(
+        self, identity_digest: str, checksum: str, manifest_digest: str
+    ) -> ReportReceipt | None:
         with self._engine.connect() as connection:
             row = (
                 connection.execute(
                     select(report_receipts).where(
                         report_receipts.c.identity_digest == identity_digest,
                         report_receipts.c.checksum == checksum,
+                        report_receipts.c.manifest_digest == manifest_digest,
                     )
                 )
                 .mappings()
@@ -434,6 +471,7 @@ class SqlAlchemyReportLedger:
                 insert(report_receipts).values(
                     receipt_id=receipt_id,
                     identity_digest=manifest.identity_digest,
+                    manifest_digest=manifest.fingerprint,
                     project_id=manifest.project_id,
                     source_id=manifest.source_id,
                     external_run_id=manifest.external_run_id,

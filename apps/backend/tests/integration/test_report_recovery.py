@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -89,7 +90,7 @@ def test_migration_owns_the_receipt_attempt_and_outbox_schema(migrated_mysql) ->
     engine, _ = migrated_mysql
     tables = set(inspect(engine).get_table_names())
     assert {
-        "alembic_version",
+        "tap_alembic_version",
         "tap_report_attempts",
         "tap_report_identity_claims",
         "tap_report_outbox",
@@ -110,20 +111,21 @@ def test_worker_restart_resumes_each_durable_state_without_rerunning_tests(
     assert receipt.state is ReportState.RECEIVED
     assert receipt.completeness is Completeness.COMPLETE
 
-    assert ReportWorker(ledger=ledger, objects=objects).process_one(receipt.receipt_id)
+    assert ReportWorker(ledger=ledger, objects=objects).process_available() == 1
     assert ledger.get_receipt(receipt.receipt_id).state is ReportState.VALIDATING
 
     restarted_ledger = SqlAlchemyReportLedger(create_engine(MYSQL_URL))
     restarted_worker = ReportWorker(ledger=restarted_ledger, objects=objects)
-    assert restarted_worker.process_one(receipt.receipt_id)
+    assert restarted_worker.process_available() == 1
     assert restarted_ledger.get_receipt(receipt.receipt_id).state is ReportState.MAPPED
     assert len(restarted_ledger.attempts_for(receipt.receipt_id)) == 2
 
-    assert restarted_worker.process_one(receipt.receipt_id)
+    assert restarted_worker.process_available() == 1
     assert (
         restarted_ledger.get_receipt(receipt.receipt_id).state is ReportState.PROJECTING
     )
-    assert restarted_worker.process_one(receipt.receipt_id)
+    assert restarted_worker.process_available() == 0
+    assert restarted_worker.confirm_projection(receipt.receipt_id)
     ready = restarted_ledger.get_receipt(receipt.receipt_id)
     assert ready.state is ReportState.READY
     assert restarted_ledger.outbox_events(receipt.receipt_id) == [
@@ -152,7 +154,8 @@ def test_unreferenced_raw_object_is_recovered_after_ledger_failure(
     assert len(objects.list_raw_objects()) == 1
 
     recovered = objects.recover_orphans(
-        referenced=SqlAlchemyReportLedger(engine).referenced_raw_objects()
+        referenced=SqlAlchemyReportLedger(engine).referenced_raw_objects(),
+        older_than=datetime.now(UTC) + timedelta(seconds=1),
     )
     assert len(recovered) == 1
     assert objects.list_raw_objects() == []

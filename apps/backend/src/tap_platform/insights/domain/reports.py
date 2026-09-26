@@ -125,6 +125,14 @@ class ReportManifest:
         ).encode()
         return hashlib.sha256(value).hexdigest()
 
+    @property
+    def fingerprint(self) -> str:
+        """Fingerprint every normalized field that affects report interpretation."""
+        value = json.dumps(
+            self.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode()
+        return hashlib.sha256(value).hexdigest()
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "project_id": self.project_id,

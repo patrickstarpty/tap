@@ -1,10 +1,13 @@
 import json
+import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
+from tap_platform.access import AccessPrincipal
 from tap_platform.app import create_app
 from tap_platform.insights.adapters.junit import JUnitSecurityError, parse_junit
 from tap_platform.insights.adapters.mysql import (
@@ -18,7 +21,11 @@ from tap_platform.insights.domain.reports import (
     ReportManifest,
     ReportState,
 )
+from tap_platform.insights.http import BearerPrincipalAuthorizer
 from tap_platform.insights.worker import ReportWorker
+
+
+TOKEN = "task9-test-bearer-token"
 
 
 def manifest(**changes: object) -> ReportManifest:
@@ -86,8 +93,31 @@ def runtime(tmp_path: Path):
 
 
 def drain(worker: ReportWorker, receipt_id: str) -> None:
-    for _ in range(4):
+    for _ in range(3):
         assert worker.process_one(receipt_id)
+    assert worker.confirm_projection(receipt_id)
+
+
+def authorizer(project_id: str) -> BearerPrincipalAuthorizer:
+    return BearerPrincipalAuthorizer(
+        token=TOKEN,
+        principal=AccessPrincipal(
+            project_id=project_id,
+            principal_id="task9-test-client",
+            principal_type="service",
+            audience="tap",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            actions=frozenset(
+                {
+                    "insights.evidence.read",
+                    "insights.reports.create",
+                    "insights.reports.read",
+                }
+            ),
+            enabled=True,
+        ),
+        expected_audience="tap",
+    )
 
 
 def test_same_identity_and_checksum_returns_the_original_receipt(runtime) -> None:
@@ -114,6 +144,26 @@ def test_same_identity_with_different_content_is_a_durable_conflict(runtime) -> 
     assert conflicted.state is ReportState.CONFLICTED
     assert conflicted.conflict_with_receipt_id == accepted.receipt_id
     assert ledger.get_receipt(accepted.receipt_id).state is ReportState.RECEIVED
+
+
+def test_same_raw_checksum_with_changed_manifest_is_not_an_exact_retry(runtime) -> None:
+    """Reusing a receipt despite manifest drift must fail this test."""
+    _, _, intake = runtime
+    raw = junit(case())
+    accepted = intake.receive(manifest(), [raw])
+
+    changed = intake.receive(
+        manifest(
+            application_commit="app-changed",
+            contains_complete_attempts=False,
+            expected_shards=2,
+        ),
+        [raw],
+    )
+
+    assert changed.receipt_id != accepted.receipt_id
+    assert changed.state is ReportState.CONFLICTED
+    assert changed.conflict_with_receipt_id == accepted.receipt_id
 
 
 def test_shards_arrive_out_of_order_and_corrections_append_versions(runtime) -> None:
@@ -182,6 +232,27 @@ def test_junit_mapping_uses_explicit_identity_and_preserves_unknowns() -> None:
         "stable-test-id-missing",
     }
     assert all(item.first_attempt_eligible is False for item in attempts)
+
+
+def test_junit_mapping_bounds_attempt_and_duration_values() -> None:
+    """Unbounded integers or nonfinite floats must not strand validation."""
+    raw = junit(
+        case(attempt="999999999999999999999999999999"),
+        "<testcase classname='suite' name='nan' time='NaN'>"
+        "<properties><property name='tap.test_id' value='nan-test'/>"
+        "<property name='tap.attempt' value='1'/></properties></testcase>",
+        "<testcase classname='suite' name='infinity' time='Infinity'>"
+        "<properties><property name='tap.test_id' value='inf-test'/>"
+        "<property name='tap.attempt' value='1'/></properties></testcase>",
+    )
+
+    attempts = parse_junit(raw, manifest())
+
+    assert attempts[0].attempt is None
+    assert "attempt-number-invalid" in attempts[0].missing_reasons
+    assert attempts[1].duration_seconds is None
+    assert attempts[2].duration_seconds is None
+    assert all("duration-invalid" in item.missing_reasons for item in attempts[1:])
 
 
 @pytest.mark.parametrize(
@@ -275,13 +346,43 @@ def test_failed_mapping_can_retry_only_the_persisted_report(runtime) -> None:
     assert len(ledger.attempts_for(receipt.receipt_id)) == 1
 
 
+def test_mapping_persistence_failure_becomes_durable_failed(
+    runtime, monkeypatch
+) -> None:
+    """A mapped persistence error must leave a durable failed state."""
+    ledger, objects, intake = runtime
+    receipt = intake.receive(manifest(), [junit(case())])
+    worker = ReportWorker(ledger=ledger, objects=objects)
+    assert worker.process_one(receipt.receipt_id)
+    original_transition = ledger.transition
+
+    def fail_mapped(receipt_id: str, **kwargs):
+        if kwargs["target"] is ReportState.MAPPED:
+            raise ValueError("simulated-attempt-persistence-failure")
+        return original_transition(receipt_id, **kwargs)
+
+    monkeypatch.setattr(ledger, "transition", fail_mapped)
+
+    assert worker.process_one(receipt.receipt_id)
+    failed = ledger.get_receipt(receipt.receipt_id)
+    assert failed.state is ReportState.FAILED
+    assert failed.failure_reason == "mapping-persistence-failed"
+
+
 def test_orphaned_staging_file_is_recovered(tmp_path: Path) -> None:
     """Cleaning only finalized raw objects must leak crash-left staging bytes."""
     objects = FileReportObjectStore(tmp_path / "objects")
     interrupted = tmp_path / "objects" / ".staging" / "interrupted-upload"
     interrupted.write_bytes(b"partial")
 
-    removed = objects.recover_orphans(referenced=set())
+    recent_cutoff = datetime.now(UTC) - timedelta(hours=1)
+    assert objects.recover_orphans(referenced=set(), older_than=recent_cutoff) == []
+    assert interrupted.exists()
+    old_timestamp = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    os.utime(interrupted, (old_timestamp, old_timestamp))
+    removed = objects.recover_orphans(
+        referenced=set(), older_than=datetime.now(UTC) - timedelta(hours=1)
+    )
 
     assert removed == [".staging/interrupted-upload"]
     assert not interrupted.exists()
@@ -312,7 +413,12 @@ def test_evidence_download_is_authorized_and_proxied_without_store_credentials(
     ledger, objects, intake = runtime
     raw = junit(case())
     receipt = intake.receive(manifest(), [raw])
-    app = create_app(report_intake=intake, report_ledger=ledger, report_objects=objects)
+    app = create_app(
+        report_intake=intake,
+        report_ledger=ledger,
+        report_objects=objects,
+        insights_authorizer=authorizer("project-one"),
+    )
     client = TestClient(app)
 
     denied = client.get(
@@ -328,8 +434,7 @@ def test_evidence_download_is_authorized_and_proxied_without_store_credentials(
     allowed = client.get(
         f"/api/v1/projects/project-one/insights/evidence/{receipt.receipt_id}",
         headers={
-            "X-TAP-Project-ID": "project-one",
-            "X-TAP-Actions": "insights.evidence.read",
+            "Authorization": f"Bearer {TOKEN}",
         },
     )
 
@@ -360,6 +465,7 @@ def test_http_intake_accepts_the_frozen_manifest_and_real_junit_fixture(
             report_intake=intake,
             report_ledger=ledger,
             report_objects=objects,
+            insights_authorizer=authorizer("synthetic-commerce-project"),
         )
     )
 
@@ -368,8 +474,7 @@ def test_http_intake_accepts_the_frozen_manifest_and_real_junit_fixture(
         content=raw,
         headers={
             "Content-Type": "application/xml",
-            "X-TAP-Project-ID": "synthetic-commerce-project",
-            "X-TAP-Actions": "insights.reports.create",
+            "Authorization": f"Bearer {TOKEN}",
             "X-TAP-Report-Manifest": json.dumps(manifest_value),
         },
     )
@@ -394,6 +499,12 @@ def test_default_app_wires_the_independent_tap_runtime(
     engine.dispose()
     monkeypatch.setenv("TAP_DATABASE_URL", database_url)
     monkeypatch.setenv("TAP_REPORT_OBJECT_ROOT", str(tmp_path / "runtime-objects"))
+    monkeypatch.setenv("TAP_REPORT_ACCESS_TOKEN", TOKEN)
+    monkeypatch.setenv("TAP_REPORT_PROJECT_ID", "project-one")
+    monkeypatch.setenv(
+        "TAP_REPORT_TOKEN_EXPIRES_AT",
+        (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+    )
     client = TestClient(create_app())
     raw = junit(case())
 
@@ -401,8 +512,7 @@ def test_default_app_wires_the_independent_tap_runtime(
         "/api/v1/projects/project-one/insights/reports",
         content=raw,
         headers={
-            "X-TAP-Project-ID": "project-one",
-            "X-TAP-Actions": "insights.reports.create",
+            "Authorization": f"Bearer {TOKEN}",
             "X-TAP-Report-Manifest": json.dumps(manifest().to_dict()),
         },
     )

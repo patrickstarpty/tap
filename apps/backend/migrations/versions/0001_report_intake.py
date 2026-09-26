@@ -28,6 +28,7 @@ def upgrade() -> None:
         "tap_report_receipts",
         sa.Column("receipt_id", sa.String(length=36), nullable=False),
         sa.Column("identity_digest", sa.String(length=64), nullable=False),
+        sa.Column("manifest_digest", sa.String(length=64), nullable=False),
         sa.Column("project_id", sa.String(length=256), nullable=False),
         sa.Column("source_id", sa.String(length=256), nullable=False),
         sa.Column("external_run_id", sa.String(length=256), nullable=False),
@@ -49,6 +50,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "identity_digest",
             "checksum",
+            "manifest_digest",
             name="uq_tap_report_identity_content",
         ),
     )

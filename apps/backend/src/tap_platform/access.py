@@ -75,6 +75,34 @@ _USER_ACTION_RESOURCE_KINDS = {
 }
 
 
+def authorize_project_action(
+    principal: AccessPrincipal,
+    action: str,
+    resource: InsightsResource,
+    *,
+    expected_audience: str,
+    now: datetime,
+) -> AccessDecision:
+    """Validate one authenticated TAP principal against a project resource."""
+    denial = _principal_denial(
+        principal,
+        resource,
+        expected_audience=expected_audience,
+        now=now,
+        prefix="principal",
+    )
+    if denial is not None:
+        return denial
+    if action not in principal.actions:
+        return AccessDecision(False, "principal-action-not-allowed")
+    expected_kind = _USER_ACTION_RESOURCE_KINDS.get(action)
+    if expected_kind is None:
+        return AccessDecision(False, "principal-action-not-allowed")
+    if resource.kind != expected_kind:
+        return AccessDecision(False, "resource-kind-mismatch")
+    return AccessDecision(True, "insights-action-allowed")
+
+
 def authorize_insights_request(
     user: AccessPrincipal,
     service: AccessPrincipal,
