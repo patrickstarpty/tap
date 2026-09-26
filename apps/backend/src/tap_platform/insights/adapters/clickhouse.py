@@ -27,11 +27,6 @@ _SCOPE_FIELDS = (
     "external_run_id",
     "report_batch_id",
     "shard_id",
-    "application_commit",
-    "script_commit",
-    "environment",
-    "configuration",
-    "timezone",
 )
 
 

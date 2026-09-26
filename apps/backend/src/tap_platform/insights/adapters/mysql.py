@@ -844,6 +844,18 @@ class SqlAlchemyReportLedger:
                 or int(state["visible_data_version"]) != expected_visible_data_version
             ):
                 raise ValueError("active projection changed during rebuild")
+            incomplete_source_batches = int(
+                connection.execute(
+                    select(func.count())
+                    .select_from(insights_projection_batches)
+                    .where(
+                        insights_projection_batches.c.projection_version == current,
+                        insights_projection_batches.c.status != "complete",
+                    )
+                ).scalar_one()
+            )
+            if incomplete_source_batches:
+                raise ValueError("incomplete source projection batches prevent cutover")
             connection.execute(
                 update(insights_projection_versions)
                 .where(insights_projection_versions.c.projection_version == current)
@@ -872,7 +884,11 @@ class SqlAlchemyReportLedger:
                 )
             )
 
-    def receipts_in_projection(self, projection_version: str) -> list[ReportReceipt]:
+    def receipts_in_projection(
+        self, projection_version: str, *, visible_data_version: int
+    ) -> list[ReportReceipt]:
+        if visible_data_version < 0:
+            raise ValueError("visible_data_version must be non-negative")
         with self._engine.connect() as connection:
             rows = connection.execute(
                 select(report_receipts)
@@ -885,6 +901,7 @@ class SqlAlchemyReportLedger:
                     insights_projection_batches.c.projection_version
                     == projection_version,
                     insights_projection_batches.c.status == "complete",
+                    insights_projection_batches.c.data_version <= visible_data_version,
                 )
                 .order_by(
                     report_receipts.c.project_id,

@@ -73,7 +73,7 @@ services:
     image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:25.8.33.6-alpine}
     restart: unless-stopped
     cap_drop: [ALL]
-    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, KILL, SETGID, SETUID]
     security_opt: ["no-new-privileges:true"]
     cpus: 2.0
     mem_limit: 2g
@@ -92,6 +92,7 @@ services:
       - "127.0.0.1:${CLICKHOUSE_HTTP_PORT:-28123}:8123"
     volumes:
       - clickhouse-insights-data:/var/lib/clickhouse
+      - clickhouse-insights-backups:/var/lib/clickhouse-backups
       - ./deploy/local/clickhouse/001-insights.sql:/docker-entrypoint-initdb.d/001-insights.sql:ro
       - ./deploy/local/clickhouse/002-users.sh:/docker-entrypoint-initdb.d/002-users.sh:ro
       - ./deploy/local/clickhouse/resource-limits.xml:/etc/clickhouse-server/config.d/resource-limits.xml:ro
@@ -264,3 +265,4 @@ volumes:
   milvus-minio-data:
   milvus-data:
   clickhouse-insights-data:
+  clickhouse-insights-backups:

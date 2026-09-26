@@ -5,13 +5,17 @@ import json
 import base64
 import subprocess
 import sys
+import threading
+import time
 import urllib.parse
 import urllib.request
 import uuid
+import re
 from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import make_url
 
 from tap_platform.insights.adapters.clickhouse import ClickHouseInsightsStore
 from tap_platform.insights.adapters.mysql import SqlAlchemyReportLedger
@@ -31,15 +35,95 @@ CLICKHOUSE_USER = os.getenv("TAP_TASK10_CLICKHOUSE_USER", "tap_insights_writer")
 CLICKHOUSE_PASSWORD = os.getenv("TAP_TASK10_CLICKHOUSE_PASSWORD")
 CLICKHOUSE_ADMIN_USER = os.getenv("TAP_TASK10_CLICKHOUSE_ADMIN_USER")
 CLICKHOUSE_ADMIN_PASSWORD = os.getenv("TAP_TASK10_CLICKHOUSE_ADMIN_PASSWORD")
+COMPOSE_PROJECT = os.getenv("TAP_TASK10_COMPOSE_PROJECT")
+REPOSITORY_ROOT = Path(__file__).parents[4]
 
 
-def clickhouse_admin(sql: str) -> bytes:
+def assert_owned_isolated_runtime() -> None:
+    """Fail closed before tests execute any destructive database cleanup."""
+    if (
+        COMPOSE_PROJECT is None
+        or re.fullmatch(r"tap-insights-[a-z0-9][a-z0-9_-]{2,48}", COMPOSE_PROJECT)
+        is None
+    ):
+        raise RuntimeError("Task 10 tests require an owned isolated Compose project")
+    assert MYSQL_URL is not None
+    assert CLICKHOUSE_URL is not None
+    mysql = make_url(MYSQL_URL)
+    clickhouse = urllib.parse.urlsplit(CLICKHOUSE_URL)
+    clickhouse_database = urllib.parse.parse_qs(clickhouse.query).get("database")
+    if (
+        mysql.host != "127.0.0.1"
+        or mysql.port in {None, 3306}
+        or mysql.database is None
+        or not mysql.database.startswith("tap_task10_")
+        or clickhouse.hostname != "127.0.0.1"
+        or clickhouse.port in {None, 8123}
+        or clickhouse_database != ["tap_insights"]
+    ):
+        raise RuntimeError("Task 10 tests require loopback-only dedicated databases")
+
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-p",
+            COMPOSE_PROJECT,
+            "-f",
+            str(REPOSITORY_ROOT / "compose.yaml"),
+            "ps",
+            "-q",
+            "mysql",
+            "clickhouse",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    container_ids = [item for item in result.stdout.splitlines() if item]
+    if len(container_ids) != 2:
+        raise RuntimeError("owned Task 10 Compose services are not both running")
+    inspected = json.loads(
+        subprocess.run(
+            ["docker", "inspect", *container_ids],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+    expected_ports = {
+        "mysql": ("3306/tcp", mysql.port),
+        "clickhouse": ("8123/tcp", clickhouse.port),
+    }
+    for container in inspected:
+        labels = container["Config"]["Labels"]
+        service = labels.get("com.docker.compose.service")
+        if (
+            labels.get("com.docker.compose.project") != COMPOSE_PROJECT
+            or labels.get("com.docker.compose.project.working_dir")
+            != str(REPOSITORY_ROOT)
+            or service not in expected_ports
+        ):
+            raise RuntimeError("database container ownership does not match the test")
+        container_port, host_port = expected_ports[service]
+        bindings = container["NetworkSettings"]["Ports"].get(container_port) or []
+        if not any(
+            binding.get("HostIp") == "127.0.0.1"
+            and int(binding.get("HostPort", 0)) == host_port
+            for binding in bindings
+        ):
+            raise RuntimeError("database port does not match the owned Compose service")
+
+
+def clickhouse_admin(sql: str, *, database: str | None = None) -> bytes:
     assert CLICKHOUSE_URL is not None
     assert CLICKHOUSE_ADMIN_USER is not None
     assert CLICKHOUSE_ADMIN_PASSWORD is not None
     parsed = urllib.parse.urlsplit(CLICKHOUSE_URL)
     query = urllib.parse.parse_qs(parsed.query)
     query["query"] = [sql]
+    if database is not None:
+        query["database"] = [database]
     request = urllib.request.Request(
         urllib.parse.urlunsplit(
             (
@@ -63,7 +147,12 @@ def clickhouse_admin(sql: str) -> bytes:
         return response.read()
 
 
-def manifest(*, correction_no: int = 0, attachments: frozenset[str] = frozenset()):
+def manifest(
+    *,
+    correction_no: int = 0,
+    attachments: frozenset[str] = frozenset(),
+    configuration: str = "browser=chromium",
+):
     return ReportManifest(
         project_id="isolated-project",
         source_id="fixture-ci",
@@ -75,7 +164,7 @@ def manifest(*, correction_no: int = 0, attachments: frozenset[str] = frozenset(
         application_commit="app-1",
         script_commit="tests-1",
         environment="isolated",
-        configuration="browser=chromium",
+        configuration=configuration,
         timezone="UTC",
         correction_no=correction_no,
         attachments=attachments,
@@ -113,6 +202,7 @@ def projection_runtime(tmp_path: Path):
     assert MYSQL_URL is not None
     assert CLICKHOUSE_URL is not None
     assert CLICKHOUSE_PASSWORD is not None
+    assert_owned_isolated_runtime()
     environment = dict(os.environ, TAP_DATABASE_URL=MYSQL_URL)
     subprocess.run(
         [
@@ -190,7 +280,7 @@ def test_rebuild_script_is_dry_run_by_default_and_rejects_unsafe_targets(
         "--object-root",
         str(tmp_path / "objects"),
         "--clickhouse-url",
-        "http://127.0.0.1:38123/?database=tap_task10_insights",
+        "http://127.0.0.1:38123/?database=tap_insights",
         "--dry-run",
     ]
     dry_run = subprocess.run(base, capture_output=True, text=True, check=False)
@@ -200,6 +290,16 @@ def test_rebuild_script_is_dry_run_by_default_and_rejects_unsafe_targets(
         "composeProject": "tap-insights-rebuild-task10",
         "targetVersion": "rebuild-task10-v2",
     }
+
+    local_stack = base.copy()
+    local_stack[3] = "tap-insights-local"
+    local_stack[7] = "mysql+pymysql://tap:tap@127.0.0.1:23306/tap"
+    assert (
+        subprocess.run(
+            local_stack, capture_output=True, text=True, check=False
+        ).returncode
+        == 0
+    )
 
     unsafe = subprocess.run(
         [
@@ -222,9 +322,15 @@ def map_to_projecting(
     correction_no: int,
     raw: bytes,
     attachments: frozenset[str] = frozenset(),
+    configuration: str = "browser=chromium",
 ) -> str:
     receipt = ReportIntake(ledger=ledger, objects=objects).receive(
-        manifest(correction_no=correction_no, attachments=attachments), [raw]
+        manifest(
+            correction_no=correction_no,
+            attachments=attachments,
+            configuration=configuration,
+        ),
+        [raw],
     )
     worker = ReportWorker(ledger=ledger, objects=objects)
     assert worker.process_one(receipt.receipt_id)
@@ -345,6 +451,34 @@ def test_out_of_order_delete_undo_and_same_version_conflict_use_ledger_authority
     } == {3}
 
 
+def test_correction_replaces_an_incorrect_configuration_dimension(
+    projection_runtime,
+) -> None:
+    """Scoping correction selection by configuration must leave stale facts visible."""
+    ledger, objects, store = projection_runtime
+    coordinator = ProjectionCoordinator(ledger=ledger, store=store)
+    original = map_to_projecting(
+        ledger,
+        objects,
+        correction_no=0,
+        raw=report("retry.xml"),
+        configuration="browser=chromium",
+    )
+    assert coordinator.project_receipt(original)
+    corrected = map_to_projecting(
+        ledger,
+        objects,
+        correction_no=1,
+        raw=report("retry.xml"),
+        configuration="browser=firefox",
+    )
+    assert coordinator.project_receipt(corrected)
+
+    effective = store.effective_attempts(ledger.projection_snapshot())
+    assert len(effective) == 2
+    assert {item.configuration for item in effective} == {"browser=firefox"}
+
+
 def test_incomplete_batch_never_advances_visible_watermark(
     projection_runtime, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -447,8 +581,198 @@ def test_rebuild_reparses_ledger_objects_and_atomically_cuts_over(
     assert ledger.get_receipt(receipt_id).state is ReportState.READY
 
 
-def test_clickhouse_backup_restores_to_clean_owned_database(projection_runtime) -> None:
-    """An unreadable backup must not count as recovery evidence."""
+def test_rebuild_excludes_complete_batches_beyond_the_visible_watermark(
+    projection_runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A complete batch behind an incomplete gap must not enter or permit cutover."""
+    ledger, objects, store = projection_runtime
+    coordinator = ProjectionCoordinator(ledger=ledger, store=store)
+    blocked_receipt = map_to_projecting(
+        ledger,
+        objects,
+        correction_no=0,
+        raw=report("retry.xml"),
+    )
+    original_append_marker = store.append_marker
+
+    def interrupt_before_marker(_batch) -> None:
+        raise RuntimeError("injected projection interruption")
+
+    monkeypatch.setattr(store, "append_marker", interrupt_before_marker)
+    with pytest.raises(RuntimeError, match="injected projection interruption"):
+        coordinator.project_receipt(blocked_receipt)
+    monkeypatch.setattr(store, "append_marker", original_append_marker)
+
+    hidden_receipt = map_to_projecting(
+        ledger,
+        objects,
+        correction_no=1,
+        raw=report("retry.xml"),
+    )
+    assert coordinator.project_receipt(hidden_receipt)
+    source = ledger.projection_snapshot()
+    assert source.visible_data_version == 0
+    assert store.effective_attempts(source) == []
+
+    with pytest.raises(ValueError, match="incomplete source projection batches"):
+        ProjectionRebuilder(
+            ledger=ledger,
+            objects=objects,
+            store=store,
+        ).rebuild(target_version="task10-gap-recovery-v2")
+    target = ledger.projection_snapshot("task10-gap-recovery-v2")
+    assert target.visible_data_version == 0
+    assert store.effective_attempts(target) == []
+    assert ledger.projection_snapshot() == source
+
+
+def test_cutover_cannot_overtake_in_flight_source_completion(
+    projection_runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Activation queued first must still reject a reserved source batch."""
+    ledger, objects, store = projection_runtime
+    coordinator = ProjectionCoordinator(ledger=ledger, store=store)
+    visible_receipt = map_to_projecting(
+        ledger, objects, correction_no=0, raw=report("retry.xml")
+    )
+    assert coordinator.project_receipt(visible_receipt)
+    source = ledger.projection_snapshot()
+
+    target_version = "task10-concurrent-v2"
+    ledger.create_projection_version(target_version)
+    ready_receipt = ledger.get_receipt(visible_receipt)
+    coordinator._project(
+        receipt=ready_receipt,
+        manifest=ledger.get_manifest(visible_receipt),
+        attempts=ledger.attempts_for(visible_receipt),
+        projection_version=target_version,
+        mark_receipt_ready=False,
+    )
+    target = ledger.projection_snapshot(target_version)
+    target_attempts = store.effective_attempts(target)
+    target_checksum = store.effective_checksum(target)
+
+    blocked_receipt = map_to_projecting(
+        ledger, objects, correction_no=1, raw=report("retry.xml")
+    )
+    original_append_marker = store.append_marker
+
+    def interrupt_before_marker(_batch) -> None:
+        raise RuntimeError("injected projection interruption")
+
+    monkeypatch.setattr(store, "append_marker", interrupt_before_marker)
+    with pytest.raises(RuntimeError, match="injected projection interruption"):
+        coordinator.project_receipt(blocked_receipt)
+    monkeypatch.setattr(store, "append_marker", original_append_marker)
+
+    assert MYSQL_URL is not None
+    lock_engine = create_engine(MYSQL_URL)
+    lock_connection = lock_engine.connect()
+    lock_transaction = lock_connection.begin()
+    lock_connection.execute(
+        text(
+            "SELECT projection_version FROM tap_insights_projection_versions "
+            "WHERE projection_version = 'insights-v1' FOR UPDATE"
+        )
+    )
+    activation_result: dict[str, object] = {}
+    completion_result: dict[str, object] = {}
+
+    def activate() -> None:
+        try:
+            ledger.activate_projection_version(
+                target_version,
+                row_count=len(target_attempts),
+                checksum=target_checksum,
+                expected_active_projection_version=source.projection_version,
+                expected_visible_data_version=source.visible_data_version,
+            )
+        except Exception as exc:  # noqa: BLE001 - assertion captures thread result
+            activation_result["error"] = exc
+
+    def complete() -> None:
+        try:
+            completion_result["changed"] = coordinator.project_receipt(blocked_receipt)
+        except Exception as exc:  # noqa: BLE001 - assertion captures thread result
+            completion_result["error"] = exc
+
+    activation_thread = threading.Thread(target=activate)
+    completion_thread = threading.Thread(target=complete)
+    try:
+        activation_thread.start()
+        time.sleep(0.1)
+        completion_thread.start()
+        time.sleep(0.1)
+        assert activation_thread.is_alive()
+        assert completion_thread.is_alive()
+    finally:
+        lock_transaction.rollback()
+        lock_connection.close()
+        lock_engine.dispose()
+    activation_thread.join(timeout=10)
+    completion_thread.join(timeout=10)
+
+    assert isinstance(activation_result.get("error"), ValueError)
+    assert "incomplete source projection batches" in str(activation_result["error"])
+    assert completion_result == {"changed": True}
+    assert ledger.projection_snapshot().projection_version == "insights-v1"
+    assert ledger.get_receipt(blocked_receipt).state is ReportState.READY
+
+
+def test_rebuild_rejects_tampered_raw_object(projection_runtime) -> None:
+    """A parseable altered object must never become its own rebuild oracle."""
+    ledger, objects, store = projection_runtime
+    receipt_id = map_to_projecting(
+        ledger, objects, correction_no=0, raw=report("retry.xml")
+    )
+    assert ProjectionCoordinator(ledger=ledger, store=store).project_receipt(receipt_id)
+    receipt = ledger.get_receipt(receipt_id)
+    (objects.root / receipt.raw_object_ref).write_bytes(empty_report())
+
+    with pytest.raises(RuntimeError, match="raw object integrity mismatch"):
+        ProjectionRebuilder(
+            ledger=ledger,
+            objects=objects,
+            store=store,
+        ).rebuild(target_version="task10-tampered-v2")
+    assert ledger.projection_snapshot().projection_version == "insights-v1"
+
+
+def test_rebuild_rejects_unknown_recorded_parser_version(projection_runtime) -> None:
+    """Rebuild must not silently reinterpret a receipt with another parser."""
+    ledger, objects, store = projection_runtime
+    receipt_id = map_to_projecting(
+        ledger, objects, correction_no=0, raw=report("retry.xml")
+    )
+    assert ProjectionCoordinator(ledger=ledger, store=store).project_receipt(receipt_id)
+    assert MYSQL_URL is not None
+    engine = create_engine(MYSQL_URL)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE tap_report_receipts "
+                    "SET parser_version = 'unknown-v9' "
+                    "WHERE receipt_id = :receipt_id"
+                ),
+                {"receipt_id": receipt_id},
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="unsupported recorded parser version"):
+        ProjectionRebuilder(
+            ledger=ledger,
+            objects=objects,
+            store=store,
+        ).rebuild(target_version="task10-parser-v2")
+    assert ledger.projection_snapshot().projection_version == "insights-v1"
+
+
+def test_clickhouse_backup_restores_after_owned_data_volume_loss(
+    projection_runtime,
+) -> None:
+    """Recovery must use the separate backup volume after clean data-volume loss."""
     ledger, objects, store = projection_runtime
     receipt_id = map_to_projecting(
         ledger, objects, correction_no=0, raw=report("retry.xml")
@@ -456,21 +780,42 @@ def test_clickhouse_backup_restores_to_clean_owned_database(projection_runtime) 
     assert ProjectionCoordinator(ledger=ledger, store=store).project_receipt(receipt_id)
     suffix = uuid.uuid4().hex
     backup_name = f"task10-{suffix}"
-    restored_database = f"tap_task10_restored_{suffix}"
-    try:
-        clickhouse_admin(
-            f"BACKUP DATABASE tap_insights TO Disk('insights_backups', '{backup_name}')"
-        )
-        clickhouse_admin(
-            "RESTORE DATABASE tap_insights "
-            f"AS {restored_database} "
-            f"FROM Disk('insights_backups', '{backup_name}')"
-        )
-        restored_count = int(
-            clickhouse_admin(
-                f"SELECT count() FROM {restored_database}.attempt_facts"
-            ).strip()
-        )
-        assert restored_count == 2
-    finally:
-        clickhouse_admin(f"DROP DATABASE IF EXISTS {restored_database}")
+    clickhouse_admin(
+        f"BACKUP DATABASE tap_insights TO Disk('insights_backups', '{backup_name}')"
+    )
+    assert COMPOSE_PROJECT is not None
+    compose = [
+        "docker",
+        "compose",
+        "-p",
+        COMPOSE_PROJECT,
+        "-f",
+        str(REPOSITORY_ROOT / "compose.yaml"),
+        "--profile",
+        "insights",
+    ]
+    subprocess.run([*compose, "stop", "clickhouse"], check=True)
+    subprocess.run([*compose, "rm", "-f", "clickhouse"], check=True)
+    data_volume = f"{COMPOSE_PROJECT}_clickhouse-insights-data"
+    volume = json.loads(
+        subprocess.run(
+            ["docker", "volume", "inspect", data_volume],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )[0]
+    if volume["Labels"].get("com.docker.compose.project") != COMPOSE_PROJECT:
+        raise RuntimeError("refusing to remove an unowned ClickHouse data volume")
+    subprocess.run(["docker", "volume", "rm", data_volume], check=True)
+    subprocess.run(
+        [*compose, "up", "-d", "--wait", "--wait-timeout", "180", "clickhouse"],
+        check=True,
+    )
+    clickhouse_admin("DROP DATABASE tap_insights")
+    clickhouse_admin(
+        "RESTORE DATABASE tap_insights AS tap_insights "
+        f"FROM Disk('insights_backups', '{backup_name}')",
+        database="default",
+    )
+    assert int(clickhouse_admin("SELECT count() FROM tap_insights.attempt_facts")) == 2

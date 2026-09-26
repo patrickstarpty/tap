@@ -8,7 +8,7 @@
     <disks>
       <insights_backups>
         <type>local</type>
-        <path>/var/lib/clickhouse/backups/</path>
+        <path>/var/lib/clickhouse-backups/</path>
       </insights_backups>
     </disks>
   </storage_configuration>

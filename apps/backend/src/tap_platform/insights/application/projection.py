@@ -10,7 +10,7 @@ from tap_platform.insights.adapters.clickhouse import (
     ClickHouseInsightsStore,
     ProjectionBatch,
 )
-from tap_platform.insights.adapters.junit import parse_junit
+from tap_platform.insights.adapters.junit import PARSER_VERSION, parse_junit
 from tap_platform.insights.domain.projection import (
     ProjectionReservation,
     ProjectionSnapshot,
@@ -56,7 +56,7 @@ class ProjectionLedger(Protocol):
         expected_visible_data_version: int,
     ) -> None: ...
     def receipts_in_projection(
-        self, projection_version: str
+        self, projection_version: str, *, visible_data_version: int
     ) -> list[ReportReceipt]: ...
 
 
@@ -140,13 +140,27 @@ class ProjectionRebuilder:
         source = self._ledger.projection_snapshot()
         if target_version == source.projection_version:
             raise ValueError("rebuild target must differ from the active projection")
-        receipts = self._ledger.receipts_in_projection(source.projection_version)
+        receipts = self._ledger.receipts_in_projection(
+            source.projection_version,
+            visible_data_version=source.visible_data_version,
+        )
         self._ledger.create_projection_version(target_version)
         coordinator = ProjectionCoordinator(ledger=self._ledger, store=self._store)
         semantic_batches: list[SemanticProjection] = []
         for receipt in receipts:
             manifest = self._ledger.get_manifest(receipt.receipt_id)
-            attempts = parse_junit(self._objects.read(receipt.raw_object_ref), manifest)
+            raw = self._objects.read(receipt.raw_object_ref)
+            if (
+                len(raw) != receipt.size_bytes
+                or hashlib.sha256(raw).hexdigest() != receipt.checksum
+            ):
+                raise RuntimeError("raw object integrity mismatch during rebuild")
+            if receipt.parser_version != PARSER_VERSION:
+                raise RuntimeError(
+                    "unsupported recorded parser version during rebuild: "
+                    f"{receipt.parser_version}"
+                )
+            attempts = parse_junit(raw, manifest)
             semantic = _semantic_projection(receipt, manifest, attempts)
             semantic_batches.append(semantic)
             coordinator._project(
@@ -326,11 +340,6 @@ def _effective_oracle_checksums(
         "external_run_id",
         "report_batch_id",
         "shard_id",
-        "application_commit",
-        "script_commit",
-        "environment",
-        "configuration",
-        "timezone",
     )
     for batch in batches:
         scope = batch["scope"]
