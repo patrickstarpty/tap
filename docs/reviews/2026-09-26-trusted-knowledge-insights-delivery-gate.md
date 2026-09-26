@@ -6,17 +6,17 @@
 
 ## 联合验收结果
 
-最终 runner 代码 SHA 为 `271a598386e723956033b3430a2a50a04856c2d9`，入口为 [`run-task14-acceptance.sh`](../../scripts/run-task14-acceptance.sh)。runner 每次生成独立项目名与随机临时凭据，凭据不打印并在日志管道中脱敏；启动前拒绝复用同标签资源，退出只停止本次运行拥有的容器/网络并保留具名数据卷和备份卷，不执行 `down -v`。执行收据采用 `task14-acceptance-v2`，其最终摘要如下；本地原始日志与收据为忽略产物，不作为稳定链接。
+最终 runner 代码 SHA 为 `3543a15e4e3f95e6aa6329666daf765e492af870`，入口为 [`run-task14-acceptance.sh`](../../scripts/run-task14-acceptance.sh)。runner 每次生成独立项目名与随机临时凭据，凭据不打印并在日志管道中脱敏；启动前拒绝复用同标签资源，只有 preflight 后写入的本次随机所有权标记才允许退出清理，退出只停止本次运行拥有的容器/网络并保留具名数据卷和备份卷，不执行 `down -v`。执行收据采用 `task14-acceptance-v2`，其最终摘要如下；本地原始日志与收据为忽略产物，不作为稳定链接。
 
 | 阶段 | 结果 | 证据与边界 |
 | --- | --- | --- |
-| Tapper 三旅程 | `PASS`（524 秒） | 6 个浏览器规格、应用重启、Compose 重启、29 个持久化断言；涵盖资料核对/发布/问答引用和需求→草稿→编辑→独立评审→发布。使用合成 fixture 与本地 LiteLLM stub，不是本轮真实模型质量 Gate。 |
-| Insights 三旅程 | `PASS`（38 秒） | 同一真实 JUnit 依次通过上传/查询/钻取、应用重启、MySQL/ClickHouse 重启，3 个 Playwright 阶段均通过；来源仍是仓库 fixture，不是获授权外部 CI。 |
-| TAP AI 故障/保留矩阵 | `56 passed, 3 skipped`（933 秒） | API/Worker/Redis 中断、租约/重复唤醒/响应未知、撤回/过期、跨项目拒绝、Graph/Test Plan/发布恢复及旧 `0005` 数据升级至 `0022`；3 个 skip 是既有可选恢复变体，不计作真实 Gate。 |
-| TAP Insights 故障/恢复矩阵 | `20 passed`（37 秒） | 重复/冲突/乱序/更正、Worker 恢复、投影水位与重建、ClickHouse 独立备份恢复；只删除标签验证后的本次运行数据卷，并从单独保留的备份卷恢复。 |
-| 原型与安全交接 | `26 + 9 passed`（9 秒） | TAP AI Insights Tool/HTTP 交接 26 项，完整原型与详情 9 项；无 URL 数值信任、无写权限扩大。 |
+| Tapper 三旅程 | `PASS`（532 秒） | 6 个浏览器规格、应用重启、Compose 重启、29 个持久化断言；涵盖资料核对/发布/问答引用和需求→草稿→编辑→独立评审→发布。使用合成 fixture 与本地 LiteLLM stub，不是本轮真实模型质量 Gate。 |
+| Insights 三旅程 | `PASS`（39 秒） | 同一真实 JUnit 依次通过上传/查询/钻取、应用重启、MySQL/ClickHouse 重启，3 个 Playwright 阶段均通过；来源仍是仓库 fixture，不是获授权外部 CI。 |
+| TAP AI 故障/保留矩阵 | `56 passed, 3 skipped`（964 秒） | API/Worker/Redis 中断、租约/重复唤醒/响应未知、撤回/过期、跨项目拒绝、Graph/Test Plan/发布恢复及旧 `0005` 数据升级至 `0022`；3 个 skip 是既有可选恢复变体，不计作真实 Gate。 |
+| TAP Insights 故障/恢复矩阵 | `20 passed`（41 秒） | 重复/冲突/乱序/更正、Worker 恢复、投影水位与重建、ClickHouse 独立备份恢复；只删除标签验证后的本次运行数据卷，并从单独保留的备份卷恢复。 |
+| 原型与安全交接 | `26 + 9 passed`（10 秒） | TAP AI Insights Tool/HTTP 交接 26 项，完整原型与详情 9 项；无 URL 数值信任、无写权限扩大。 |
 
-联合 runner 最终收据 SHA-256：`236339ed981e4d36fadf3859abacf8250099a6b535e32c5687334fb5ca41e731`。阶段日志 SHA-256 由收据逐项记录；保留卷名称带随机运行项目标签，未在文档固化为可复用资源名。收尾检查确认本次两个项目均无残留容器或网络，各自只保留 5 个带正确 Compose label 的数据/备份卷。
+联合 runner 最终收据 SHA-256：`193c36d6f94af7b74c760aaa6ed5552582de562dfd1d1b87119543bd2a12ca26`。阶段日志 SHA-256 由收据逐项记录；保留卷名称带随机运行项目标签，未在文档固化为可复用资源名。收尾检查确认本次两个项目均无残留容器或网络，各自只保留 5 个带正确 Compose label 的数据/备份卷。
 
 ## 产品基准对照
 
@@ -28,7 +28,7 @@
 
 | 项目 | 已核事实 | 待验证/限制 |
 | --- | --- | --- |
-| 代码 | runner SHA `271a598386e723956033b3430a2a50a04856c2d9`；Task 14 变更从 `cbe3373a396ee94c73944c42eb2e5400ac70385b` 开始 | 最终文档/复审提交 SHA 在合并记录中追踪；未部署到生产。 |
+| 代码 | runner SHA `3543a15e4e3f95e6aa6329666daf765e492af870`；Task 14 变更从 `cbe3373a396ee94c73944c42eb2e5400ac70385b` 开始 | 最终文档/复审提交 SHA 在合并记录中追踪；未部署到生产。 |
 | TAP AI 镜像与解析 | Parser 本地镜像 digest `sha256:4ef38e54f7bbc87ee5735132be927db1352bf27ca5cf772e5641f9d09887cb27`；运行收据 digest `sha256:ba4eb93b9afde7d57c6cb98f50786791e20b1eb764ef5a3f1c96bdfad1947d75`；`tapper-parser-v1`、`doc-schema-v2` | 没有生产镜像签名、SBOM/漏洞 Gate 或目标硬件签字。 |
 | TAP/ClickHouse 镜像 | `clickhouse/clickhouse-server:25.8.33.6-alpine`，已验证 registry digest `sha256:87e0a5b72f5465b18eacca7c76850e7ff551c9795c50e451f5646299e5e24146` | 没有生产镜像签名、容量/保留策略和运维签字。 |
 | 契约 | TAP OpenAPI `7b95015bf86ed82760a9f39396b865f7f856e318176deb222b34b49d1ab99c5c`；TAP AI OpenAPI `197ce546b4a451b86533e7453530f68dfc01abeb01d6f7b960e43c66c8215e1b`；生成 Web/TAP AI schema 分别为 `f0d3c14c…fb0c`、`04487b01…9bef` | 仅仓库生成/漂移检查；外部消费者兼容签字待补。 |
@@ -37,7 +37,7 @@
 | 冻结输入 | `trusted-checkout-v1.json` `2206bc7f…f436`；`task0-inputs-v1.json` `17f9b022…01b`；`metrics-oracle-v1.json` `9878df03…398`；旅程 `retry.xml` `661f9d25…804e` | 均为 `synthetic-development-fixture` / `pending-real-input`，不能替代真实业务资料或外部 CI。 |
 | 格式/来源 | 知识仅支持可提取文字的 PDF、DOCX、MD、TXT；Insights 当前启用 JUnit XML 上传/重试/更正 | 无 OCR、图片/Excel；无获授权外部 CI 连接器或真实来源负责人签字。 |
 | 数据量/性能 | 固定本地 fixture；Task 11 本地 smoke 为 5 次、每次 20 查询、并发 10，观测 P95 `109.945 ms` | 100 万 attempt/90 天、汇总 P95≤2s、钻取 P95≤3s 的签名硬件 Gate 均 `NOT RUN / PENDING`，不得外推。 |
-| 备份/恢复 | 故障矩阵总阶段 37 秒，已验证单独备份卷→全新 ClickHouse 数据卷恢复并校验投影 | 未单独采集生产级备份时长/RPO/RTO；生产保留、加密、异地副本及恢复签字待补。 |
+| 备份/恢复 | 故障矩阵总阶段 41 秒，已验证单独备份卷→全新 ClickHouse 数据卷恢复并校验投影 | 未单独采集生产级备份时长/RPO/RTO；生产保留、加密、异地副本及恢复签字待补。 |
 | 身份/签字 | 固定验证身份和服务 token 只限回环隔离环境 | 真实 IdP/RBAC、多 Project、具名业务复核、数据源负责人、运维、安全和发布签字全部 `PENDING`。 |
 
 ## 仓库级检查
