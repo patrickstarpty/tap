@@ -21,6 +21,8 @@
 
 该文件只冻结开发契约，显式标记 `synthetic-development-fixture` 和 `pending-real-input`。真实业务资料 digest、有效期、具名业务复核者、项目身份映射和模型外发授权尚未取得；在这些输入完成前，可以验证解析、状态、权限和恢复结构，但不能宣称真实知识质量或多人审批通过。
 
+2026-09-26 的 [Task 14 联合交付门禁](../reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md) 已通过该 fixture 的资料核对/独立复核/发布/问答引用、测试设计和恢复矩阵；真实资料、真实模型与具名逐例复核仍 `NOT RUN / PENDING`，不改变新增可信知识、V2 或 V3 Gate。
+
 ## 统一 AI 编排与领域端口
 
 后端在图外只校验当前用户、项目、Conversation/Turn/Task、授权范围、幂等键与基础输入。固定版本 LangGraph 内的 **Task Classification & Admission** 负责分类与准入，必要的首轮理解也经 ModelGateway→LiteLLM 调模型；不存在图外预分类 LLM、独立 Query Router 或 Model Router。

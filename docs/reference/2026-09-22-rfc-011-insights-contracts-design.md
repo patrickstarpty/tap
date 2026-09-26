@@ -35,6 +35,8 @@ TAP AI 独立前后端管知识、测试管理/手工执行、AI 生成；TAP �
 
 开发 oracle 固定 `D=3`、首次通过 `1/3`、最终通过 `2/3`、重试恢复 `1/2`、恢复贡献 `1/3`，另列跳过 1；分母规则独立手算并由 fixture 契约测试保护。100 万尝试、90 天、10 并发、汇总 P95 ≤2 秒和钻取 P95 ≤3 秒只是 `development-target-not-measured`。这些输入均标记 `synthetic-development-fixture` / `pending-real-input`；真实 CI 语义、凭证、保留范围、硬件实测及数据源负责人签字仍是基础 Insights 交付 Gate。
 
+2026-09-26 的 [Task 14 联合交付门禁](../reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md) 已用该 fixture 复验 JUnit→账本→ClickHouse→查询/钻取、应用/依赖重启、乱序/更正、投影重建和独立备份卷恢复。获授权外部 CI、真实来源语义/凭证、签名硬件规模测试及数据源/运维签字仍 `NOT RUN / PENDING`。
+
 ### 视图与五类质量分析
 
 | 视图 | 目标交互与约束 |

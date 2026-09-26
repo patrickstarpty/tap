@@ -459,12 +459,16 @@ uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/contract/t
 
 **文件：** 修改隔离 E2E runner、`README.md` 对应实现入口与状态、相关专题；新增执行当日命名的 `docs/reviews/` 记录及索引。只有实际完成时才更新本计划状态，不能用写完计划代替实现完成。
 
+**状态（2026-09-26）：** `active`。合成脱敏 fixture 的隔离结构门禁与交付记录已完成；真实业务资料、外部 CI、真实模型、生产身份、签名硬件规模和具名业务/运维/安全签字未提供，M1–M4 业务 Gate 均保持 `PENDING`，计划不标 `completed`。详见 [联合交付门禁](../reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md)。
+
 **输入/输出：** 消费 Task 1–13 的已验证产物、真实质量报告及冻结样本；产出每批次 Gate Review、保留式发布清单、恢复记录和产品验收结论。
 
 - [ ] 在隔离环境完成三条真实旅程：资料上传→核对/独立复核→发布→问答/引用；确认需求→生成→编辑/冲突恢复→业务评审→发布；真实报告→账本→ClickHouse→查询/钻取→AI 解读。
-- [ ] 故障矩阵覆盖 API/Worker/Redis/ClickHouse 中断、重复/乱序事件、补报更正、模型失败、过期/撤回、跨项目访问、响应未知、备份恢复和投影重建；原件、审批、账本与引用不丢失。
-- [ ] 对照固定 `/prototype` 基准检查全部模块导航、Tapper→Test Plan→Automation 双向关联和悬浮助手→Tapper 会话/草稿交接。UI 变更在相同 fixture、1280×720、2× 像素密度下采集前后 PNG 并人工对照；原型保留的 Automation 旅程单列为交互证据。
-- [ ] 执行当前产品的窄测试后，再运行下列仓库级检查；真实模型 Gate 与浏览器/恢复验证单独留记录，不把环境 skip 计入真实完成证据。
+  - 2026-09-26：三条合成脱敏 fixture 旅程已通过；因没有真实业务资料/模型与外部 CI，本项真实 Gate 仍未勾选。
+- [x] 故障矩阵覆盖 API/Worker/Redis/ClickHouse 中断、重复/乱序事件、补报更正、模型失败、过期/撤回、跨项目访问、响应未知、备份恢复和投影重建；原件、审批、账本与引用不丢失。
+- [x] 对照固定 `/prototype` 基准检查全部模块导航、Tapper→Test Plan→Automation 双向关联和悬浮助手→Tapper 会话/草稿交接。UI 变更在相同 fixture、1280×720、2× 像素密度下采集前后 PNG 并人工对照；原型保留的 Automation 旅程单列为交互证据。
+- [x] 执行当前产品的窄测试后，再运行下列仓库级检查；真实模型 Gate 与浏览器/恢复验证单独留记录，不把环境 skip 计入真实完成证据。
+  - 2026-09-26：命令均已执行；`contracts`、隔离 `demo-e2e` 与 diff 检查通过。`check` 保留未改动 Tapper E2E 文件的既有 Prettier 告警；`test` 为 `3405 passed, 226 skipped, 49 failed`，其中 15 项是既有 supervisor/parser/generated-contract 失败，34 项是受限环境拒绝本机 MySQL 连接。Task 14 聚焦合同和联合 runner 均通过；失败未被窄测试覆盖或改写。
 
 ```sh
 make contracts
@@ -475,8 +479,9 @@ git diff --check
 git diff -- README.md docs/ AGENTS.md
 ```
 
-- [ ] 先备份，再追加迁移，在隔离环境验证旧会话/计划/原件和数据保留；按项目逐步启用。故障回退采用兼容旧应用或撤回可见指针，保留新账本，不自动数据库降级/清卷。ClickHouse 重建按 Task 10 校验后切读。
+- [x] 先备份，再追加迁移，在隔离环境验证旧会话/计划/原件和数据保留；按项目逐步启用。故障回退采用兼容旧应用或撤回可见指针，保留新账本，不自动数据库降级/清卷。ClickHouse 重建按 Task 10 校验后切读。
 - [ ] 记录发布清单：代码 SHA、两产品镜像/契约、迁移前后 revision、模型/图/解析配置、质量集/报告 digest、已启用格式/报告来源、已知限制、数据量/性能、备份与恢复耗时、复核签字。真实团队开放前 Task 1、安全与运维检查全部完成。
+  - 2026-09-26：可得字段已写入联合交付门禁；真实输入、生产镜像签名、规模/RPO/RTO、身份与具名签字仍待补，因此不勾选。
 
 **出口：** M1/M2/M3/M4 分别有可追溯结论；未满足某批次的真实输入就保留“待验证”，不能将整个计划标 `completed`。只需交付隔离验证时明确标注部署边界，不宣称生产就绪。
 

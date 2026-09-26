@@ -18,6 +18,8 @@ corepack pnpm --dir apps/web dev --port 15176
 
 当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [资料核对与发布](docs/assets/prototype-current/document-review.png)。实际交互以 `main` 上运行的 `/prototype` 为准。
 
+2026-09-26 的 [Task 14 联合交付门禁](docs/reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md) 已通过合成脱敏 fixture 的隔离旅程、故障恢复、保留式升级和完整原型回归；该结论不替代真实业务资料、外部 CI、真实模型、生产身份、规模硬件或具名签字，M1–M4 业务 Gate 仍为 `PENDING`，实施计划保持 `active`。
+
 ## TAP AI 独立应用
 
 TAP AI 的前后端分别位于 `apps/tap-ai-frontend` 和 `apps/tap-ai-backend`，拥有 Tapper 问答、知识文档/图谱、模型与 Agent/Skill 资产，以及 AI 测试方案的生成、保存和评审。TAP 非 AI 应用入口保留在 `apps/web` 和 `apps/backend`；现有低代码与测试分析原型由 TAP Web 承载。公开 API 路径、数据库表、迁移链和 `TAPPER_*` 配置名在本次目录迁移中保持不变，因此已有 Tapper 数据和对象引用无需重建。
@@ -181,6 +183,7 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 
 - 架构状态：`v0.4 accepted — validation-first knowledge and web automation`
 - 实现状态：`V0/V1 gate-passed; V2/V3 gate-reopened; V4 blocked`
+- RFC-011 本轮状态：`Task 14 isolated structural gate-passed; M1–M4 business gates pending`
 - 当前交付重点：`关闭 V2/V3 更正门禁`
 - 后续顺序：`V2/V3 re-review → V4 Web LCA/Recorder → V5 Jenkins → VG → P0 → P1`
 - 默认仓库可见性：建议 `private`
