@@ -8,7 +8,7 @@
     "contracts:check": "node scripts/generate-api.mjs --check",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
-    "test": "vitest --run",
+    "test": "vitest --run src",
     "architecture": "node ../../scripts/check-frontend-boundary.mjs",
     "check": "corepack pnpm run architecture && tsc -b && vite build"
   },
@@ -24,6 +24,7 @@
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.6",
+    "@playwright/test": "1.62.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@vitejs/plugin-react": "6.1.0",

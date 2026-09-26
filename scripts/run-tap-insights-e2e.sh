@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+insights_script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+insights_repo_root="$(CDPATH= cd -- "$insights_script_dir/.." && pwd)"
+insights_project="tap-insights-task12-e2e"
+insights_state_dir="$(mktemp -d "${TMPDIR:-/tmp}/tap-insights-task12.XXXXXX")"
+insights_artifacts="$insights_repo_root/.superpowers/artifacts/task-12"
+insights_app_pids=""
+insights_compose_started=0
+readonly insights_script_dir insights_repo_root insights_project insights_state_dir insights_artifacts
+
+case "$insights_state_dir" in
+  "${TMPDIR:-/tmp}"/tap-insights-task12.*) ;;
+  *) echo "refusing unsafe TAP Insights state path" >&2; exit 2 ;;
+esac
+
+export MYSQL_ROOT_PASSWORD=task12-e2e-root
+export MYSQL_DATABASE=tap_task12_e2e
+export MYSQL_USER=tap
+export MYSQL_PASSWORD=task12-e2e
+export MYSQL_PORT=33329
+export CLICKHOUSE_HTTP_PORT=38129
+export CLICKHOUSE_ADMIN_USER=tap_insights_admin
+export CLICKHOUSE_ADMIN_PASSWORD=task12-e2e-admin
+export TAP_CLICKHOUSE_WRITER_USER=tap_insights_writer
+export TAP_CLICKHOUSE_WRITER_PASSWORD=task12-e2e-writer
+export TAP_CLICKHOUSE_READER_USER=tap_insights_reader
+export TAP_CLICKHOUSE_READER_PASSWORD=task12-e2e-reader
+export TAP_DATABASE_URL='mysql+pymysql://tap:task12-e2e@127.0.0.1:33329/tap_task12_e2e?charset=utf8mb4'
+export TAP_REPORT_OBJECT_ROOT="$insights_state_dir/objects"
+export TAP_CLICKHOUSE_URL='http://127.0.0.1:38129/?database=tap_insights'
+export TAP_REPORT_ACCESS_TOKEN=task12-e2e-access-token
+export TAP_REPORT_PROJECT_ID=project-a
+export TAP_REPORT_TOKEN_EXPIRES_AT=2099-12-31T23:59:59+00:00
+export TAP_REPORT_WORKER_POLL_SECONDS=0.1
+export TAP_WEB_API_TARGET=http://127.0.0.1:18012
+export TAP_INSIGHTS_E2E_BASE_URL=http://127.0.0.1:15182
+export TAP_INSIGHTS_E2E_AUTH_STATE="$insights_artifacts/auth-state.json"
+export TAP_INSIGHTS_E2E_SCREENSHOTS="$insights_artifacts"
+export TAP_REPO_ROOT="$insights_repo_root"
+
+mkdir -p "$TAP_REPORT_OBJECT_ROOT" "$insights_artifacts"
+
+insights_compose() {
+  docker compose -f "$insights_repo_root/compose.yaml" -p "$insights_project" --profile insights "$@"
+}
+
+insights_stop_apps() {
+  if [ -n "$insights_app_pids" ]; then
+    kill $insights_app_pids 2>/dev/null || true
+    wait $insights_app_pids 2>/dev/null || true
+    insights_app_pids=""
+  fi
+}
+
+insights_cleanup() {
+  insights_stop_apps
+  for log in "$insights_state_dir"/*.log; do
+    [ -f "$log" ] && cp "$log" "$insights_artifacts/$(basename "$log")"
+  done
+  if [ "$insights_compose_started" -eq 1 ]; then
+    insights_compose down -v --remove-orphans >/dev/null 2>&1 || true
+  fi
+  rm -rf -- "$insights_state_dir"
+}
+trap insights_cleanup EXIT INT TERM
+
+insights_wait_url() {
+  local url="$1"
+  local attempts=0
+  until curl --fail --silent --show-error "$url" >/dev/null; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 120 ]; then
+      echo "timed out waiting for $url" >&2
+      return 1
+    fi
+    sleep 0.25
+  done
+}
+
+insights_require_free_port() {
+  local port="$1"
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | rg -q .; then
+    echo "owned TAP Insights port $port is already in use" >&2
+    return 1
+  fi
+}
+
+insights_start_apps() {
+  insights_require_free_port 18012
+  insights_require_free_port 15182
+  (
+    cd "$insights_repo_root"
+    exec uv run --project apps/backend uvicorn tap_platform.app:app --host 127.0.0.1 --port 18012 \
+      >"$insights_state_dir/backend.log" 2>&1
+  ) &
+  local backend_pid=$!
+  (
+    cd "$insights_repo_root"
+    exec uv run --project apps/backend python -m tap_platform.insights.worker \
+      >"$insights_state_dir/worker.log" 2>&1
+  ) &
+  local worker_pid=$!
+  (
+    cd "$insights_repo_root"
+    exec corepack pnpm --dir apps/web exec vite --host 127.0.0.1 --port 15182 \
+      >"$insights_state_dir/web.log" 2>&1
+  ) &
+  local web_pid=$!
+  insights_app_pids="$backend_pid $worker_pid $web_pid"
+  insights_wait_url http://127.0.0.1:18012/health/live
+  insights_wait_url http://127.0.0.1:15182/
+  for pid in $insights_app_pids; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "a TAP Insights process exited before taking ownership" >&2
+      return 1
+    fi
+  done
+}
+
+insights_run_phase() {
+  export TAP_INSIGHTS_E2E_PHASE="$1"
+  corepack pnpm --dir "$insights_repo_root/apps/web" exec playwright test \
+    --config playwright.insights.config.ts insights-report.spec.ts
+}
+
+cd "$insights_repo_root"
+insights_compose up -d --wait --wait-timeout 180 mysql clickhouse
+insights_compose_started=1
+uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head
+
+insights_start_apps
+insights_run_phase upload
+
+insights_stop_apps
+insights_start_apps
+insights_run_phase app-restart
+
+insights_stop_apps
+insights_compose restart mysql clickhouse
+insights_compose up -d --wait --wait-timeout 180 mysql clickhouse
+insights_start_apps
+insights_run_phase compose-restart
+
+echo "TAP Insights owned JUnit upload, query, detail, and restart journey passed."

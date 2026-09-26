@@ -8,6 +8,11 @@ import {
 } from "@ant-design/icons";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { AccessibleDialog } from "./AccessibleDialog";
+import {
+  createInsightsClient,
+  type InsightsDataAdapter,
+} from "../features/insights/api/client";
+import { InsightsWorkspace } from "../features/insights/components/InsightsWorkspace";
 import type { Locale } from "./model";
 import {
   ANALYTICS,
@@ -121,7 +126,58 @@ function Widget({
   );
 }
 
+declare global {
+  interface Window {
+    __TAP_INSIGHTS_ACCESS_TOKEN__?: string;
+    __TAP_PROJECT_ID__?: string;
+  }
+}
+
+const browserInsightsClient = createInsightsClient({
+  token: () => window.__TAP_INSIGHTS_ACCESS_TOKEN__,
+});
+
 export function TestAnalyticsWorkspace({
+  locale = "zh",
+  initialPlanId,
+  reviewPrototype = false,
+  insightsAdapter = browserInsightsClient,
+  projectId,
+  initialQueryId,
+}: {
+  locale?: Locale;
+  initialPlanId?: string;
+  reviewPrototype?: boolean;
+  insightsAdapter?: InsightsDataAdapter;
+  projectId?: string;
+  initialQueryId?: string;
+}) {
+  const runtimeProjectId = projectId ?? window.__TAP_PROJECT_ID__;
+  if (!reviewPrototype && !runtimeProjectId)
+    return (
+      <section className="ti-workspace">
+        <h1>Test Insights</h1>
+        <p className="ti-error" role="alert">Project context is unavailable.</p>
+      </section>
+    );
+  if (!reviewPrototype && runtimeProjectId)
+    return (
+      <InsightsWorkspace
+        adapter={insightsAdapter}
+        projectId={runtimeProjectId}
+        initialQueryId={initialQueryId}
+      />
+    );
+  return (
+    <PrototypeAnalyticsWorkspace
+      locale={locale}
+      initialPlanId={initialPlanId}
+      reviewPrototype
+    />
+  );
+}
+
+function PrototypeAnalyticsWorkspace({
   locale = "zh",
   initialPlanId,
   reviewPrototype = false,

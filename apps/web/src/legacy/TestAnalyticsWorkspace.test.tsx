@@ -5,11 +5,28 @@ import {
   FailureKnowledgeExplanation,
 } from "./ReportIntakePrototype";
 import { TestAnalyticsWorkspace } from "./TestAnalyticsWorkspace";
+import type { InsightsDataAdapter } from "../features/insights/api/client";
+
+it("does not fall back to the prototype project when runtime context is missing", () => {
+  const data = { listMetrics: vi.fn() } as unknown as InsightsDataAdapter;
+  render(
+    <TestAnalyticsWorkspace
+      locale="en"
+      insightsAdapter={data}
+      projectId={undefined}
+    />,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Project context is unavailable.",
+  );
+  expect(data.listMetrics).not.toHaveBeenCalled();
+  expect(screen.queryByText("Life insurance")).not.toBeInTheDocument();
+});
 
 it("renders the BrowserStack dashboard composition", () => {
-  render(<TestAnalyticsWorkspace locale="en" />);
-  expect(screen.getByRole("heading", { name: "Demo Dashboard" })).toBeVisible();
-  expect(screen.getByText("Dashboards")).toBeVisible();
+  render(<TestAnalyticsWorkspace locale="en" reviewPrototype />);
+  expect(screen.getByRole("heading", { name: "Test Insights" })).toBeVisible();
+  expect(screen.getByText("Life insurance")).toBeVisible();
   expect(screen.getByRole("button", { name: "Add Widgets" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Share" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Filters" })).toBeVisible();
@@ -21,10 +38,10 @@ it("renders the BrowserStack dashboard composition", () => {
   for (const widget of [
     "Summary",
     "Build Summary",
-    "Stability",
-    "Flakiness",
+    "First-pass rate",
+    "Retry recovery share",
     "Browser wise summary",
-    "Build Performance",
+    "Execution duration",
   ]) {
     expect(
       within(dashboard).getByRole("heading", { name: widget }),
@@ -33,7 +50,7 @@ it("renders the BrowserStack dashboard composition", () => {
 });
 
 it("applies dashboard filters to every widget", () => {
-  render(<TestAnalyticsWorkspace locale="en" />);
+  render(<TestAnalyticsWorkspace locale="en" reviewPrototype />);
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   const filters = screen.getByRole("dialog", { name: "Dashboard filters" });
   fireEvent.change(within(filters).getByLabelText("Environment"), {
@@ -45,13 +62,15 @@ it("applies dashboard filters to every widget", () => {
 });
 
 it("drills down from a widget into contributing tests", () => {
-  render(<TestAnalyticsWorkspace locale="en" />);
+  render(<TestAnalyticsWorkspace locale="en" reviewPrototype />);
   fireEvent.click(
-    screen.getByRole("button", { name: "View Flakiness breakdown" }),
+    screen.getByRole("button", { name: "View recovered executions" }),
   );
-  const drilldown = screen.getByRole("dialog", { name: "Flakiness breakdown" });
+  const drilldown = screen.getByRole("dialog", {
+    name: "Retry recovery share breakdown",
+  });
   expect(
-    within(drilldown).getByRole("heading", { name: "Flakiness" }),
+    within(drilldown).getByRole("heading", { name: "Retry recovery share" }),
   ).toBeVisible();
   expect(
     within(drilldown).getAllByRole("button", { name: /Inspect execution/ })
@@ -66,7 +85,7 @@ it("drills down from a widget into contributing tests", () => {
 });
 
 it("opens the BrowserStack widget catalog", () => {
-  render(<TestAnalyticsWorkspace locale="en" />);
+  render(<TestAnalyticsWorkspace locale="en" reviewPrototype />);
   fireEvent.click(screen.getByRole("button", { name: "Add Widgets" }));
   const catalog = screen.getByRole("dialog", { name: "Add Widgets" });
   expect(within(catalog).getByText("Choose a widget")).toBeVisible();
@@ -83,7 +102,7 @@ it("exports the currently filtered synthetic data", async () => {
   const click = vi
     .spyOn(HTMLAnchorElement.prototype, "click")
     .mockImplementation(() => undefined);
-  render(<TestAnalyticsWorkspace locale="en" />);
+  render(<TestAnalyticsWorkspace locale="en" reviewPrototype />);
   fireEvent.click(screen.getByRole("button", { name: "Download dashboard" }));
   const blob = createObjectURL.mock.calls[0]![0] as Blob;
   expect((await blob.text()).split("\n")[0]).toContain(

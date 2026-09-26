@@ -6,7 +6,7 @@ TAP_INSIGHTS_COMPOSE_PROJECT ?= tap-insights-local
 export TAP_INSIGHTS_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev legacy-tapper-codex-dev demo-e2e demo-down demo-reset
+.PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev legacy-tapper-codex-dev demo-e2e demo-down demo-reset
 .PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check
 
 bootstrap: ## install frozen Python and Node dependencies
@@ -22,7 +22,7 @@ check: ## lint, format-check, typecheck, architecture checks
 	uv run --project apps/tap-ai-backend ruff format --check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/tap-ai-backend mypy apps/tap-ai-backend/src/tap scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/tap-ai-backend mypy --explicit-package-bases --follow-imports=silent scripts/tapper_v0_gate.py
-	bash -n scripts/run-tapper-v0-gate.sh scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/build-tapper-object-store.sh
+	bash -n scripts/run-tapper-v0-gate.sh scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/run-tap-insights-e2e.sh scripts/build-tapper-object-store.sh
 	uv run --project apps/tap-ai-backend python scripts/export_contracts.py --check
 	uv run --project apps/backend python scripts/export_tap_contracts.py --check
 	corepack pnpm --filter @tap/ai-frontend run contracts:check
@@ -110,6 +110,9 @@ tap-insights-down: ## stop TAP Insights ClickHouse while preserving its named vo
 
 tap-insights-check: ## verify the redacted TAP Insights ClickHouse writer path
 	bash scripts/check-local-services.sh --only-clickhouse
+
+tap-insights-e2e: ## run the isolated real JUnit Insights browser and restart journey
+	bash scripts/run-tap-insights-e2e.sh
 
 TAP_QUALITY_KB_PROFILE ?= apps/tap-ai-backend/tests/fixtures/quality/kb/profile-v1.json
 TAP_QUALITY_KB_REPORT ?= .local/quality-kb/report.json
