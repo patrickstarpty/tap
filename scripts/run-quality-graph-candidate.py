@@ -27,15 +27,44 @@ from tap.modules.graph.domain.extraction import GraphExtractionRequest
 from tap.modules.graph.domain.models import GraphSnapshot
 from tap.modules.ai.ports.gateway import ModelGateway
 
+from tap.quality.evidence import (
+    canonical_digest,
+    graph_candidate_sets,
+    graph_materials,
+)
+
 
 class CapturingGateway:
     def __init__(self, delegate: Any) -> None:
         self.delegate = delegate
         self.identities: set[tuple[str, str]] = set()
+        self.receipts: dict[str, tuple[str, str, str, str]] = {}
 
     async def generate_structured(self, request):  # type: ignore[no-untyped-def]
         result = await self.delegate.generate_structured(request)
         self.identities.add((result.actual_provider, result.actual_model))
+        if (
+            not isinstance(result.provider_request_id, str)
+            or not result.provider_request_id
+        ):
+            raise ValueError("real Graph result requires a provider request id")
+        request_digest = canonical_digest(
+            {
+                "alias": request.alias,
+                "operation": request.operation.value,
+                "promptDigest": request.prompt_digest,
+                "schemaDigest": request.schema_digest,
+                "contextDigest": canonical_digest(request.context),
+                "idempotencyKey": request.idempotency_key,
+                "governanceDigests": list(request.governance_digests),
+            }
+        )
+        self.receipts[request.idempotency_key] = (
+            result.actual_provider,
+            result.actual_model,
+            result.provider_request_id,
+            request_digest,
+        )
         return result
 
 
@@ -140,19 +169,29 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
         labels_by_document: dict[str, list[dict[str, Any]]] = {}
         for label in observations["labels"]:
             labels_by_document.setdefault(label["documentId"], []).append(label)
-        for document in observations["documents"]:
-            digest_suffix = document["contentDigest"].removeprefix("sha256:")[:12]
-            revision_id = document["documentId"] + "-revision-" + digest_suffix
+            label["reviewer"] = "pending-independent-human-review"
+        observations["dataset"]["reviewStatus"] = "pending"
+        documents_by_revision = {
+            document["documentId"]
+            + "-revision-"
+            + document["contentDigest"].removeprefix("sha256:")[:12]: document
+            for document in observations["documents"]
+        }
+        candidate_outputs: list[dict[str, Any]] = []
+        for case_id, revision_ids in graph_candidate_sets(observations):
+            selected_documents = [
+                documents_by_revision[value] for value in revision_ids
+            ]
             snapshot = GraphSnapshot.create(
-                snapshot_id="quality-" + document["documentId"] + "-" + digest_suffix,
+                snapshot_id="quality-" + case_id,
                 project_id=VALIDATION_SCOPE.project_id,
-                source_revision_ids=(revision_id,),
-                document_revision_ids=(revision_id,),
+                source_revision_ids=revision_ids,
+                document_revision_ids=revision_ids,
             )
             request = GraphExtractionRequest(
                 scope=VALIDATION_SCOPE,
                 snapshot=snapshot,
-                chunks=(
+                chunks=tuple(
                     {
                         "sourceRevisionId": revision_id,
                         "documentRevisionId": revision_id,
@@ -164,32 +203,131 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                             "end": len(document["content"]),
                         },
                         "contentDigest": document["contentDigest"],
-                    },
+                    }
+                    for revision_id, document in zip(
+                        revision_ids, selected_documents, strict=True
+                    )
                 ),
                 model_alias=settings.chat_alias,
-                idempotency_key="quality-graph:" + document["documentId"],
+                idempotency_key="quality-graph:" + case_id,
             )
             draft = await extractor.extract(request)
             await store.publish(VALIDATION_SCOPE, draft)
-            for label in labels_by_document[document["documentId"]]:
-                predicted, correct_or_resolvable, provenance = _observed(label, draft)
-                label["predicted"] = predicted
-                label["correct"] = (
-                    predicted if label["kind"] != "merge" else correct_or_resolvable
-                )
-                label["evidenceResolvable"] = (
-                    correct_or_resolvable if label["kind"] != "merge" else provenance
-                )
-                label["provenanceComplete"] = provenance
-                if observations["dataset"].get("reviewStatus") != "approved":
-                    label["reviewer"] = (
-                        "machine-observation-requires-independent-human-review"
+            for document in selected_documents:
+                for label in labels_by_document[document["documentId"]]:
+                    predicted, correct_or_resolvable, provenance = _observed(
+                        label, draft
                     )
+                    label["predicted"] = predicted
+                    label["correct"] = (
+                        predicted if label["kind"] != "merge" else correct_or_resolvable
+                    )
+                    label["evidenceResolvable"] = (
+                        correct_or_resolvable
+                        if label["kind"] != "merge"
+                        else provenance
+                    )
+                    label["provenanceComplete"] = provenance
+            output = {
+                "sourceRevisionIds": list(draft.snapshot.source_revision_ids),
+                "documentRevisionIds": list(draft.snapshot.document_revision_ids),
+                "nodes": [
+                    {
+                        "nodeId": item.node_id,
+                        "snapshotId": item.snapshot_id,
+                        "label": item.label,
+                        "nodeType": item.node_type,
+                        "canonicalKey": item.canonical_key,
+                        "evidenceIds": list(item.evidence_ids),
+                    }
+                    for item in draft.nodes
+                ],
+                "edges": [
+                    {
+                        "edgeId": item.edge_id,
+                        "snapshotId": item.snapshot_id,
+                        "sourceNodeId": item.source_node_id,
+                        "targetNodeId": item.target_node_id,
+                        "relationType": item.relation_type,
+                        "origin": item.origin.value,
+                        "confidence": item.confidence,
+                        "evidenceIds": list(item.evidence_ids),
+                    }
+                    for item in draft.edges
+                ],
+                "evidence": [
+                    {
+                        "evidenceId": item.evidence_id,
+                        "snapshotId": item.snapshot_id,
+                        "sourceRevisionId": item.source_revision_id,
+                        "documentRevisionId": item.document_revision_id,
+                        "chunkId": item.chunk_id,
+                        "anchor": dict(item.anchor),
+                        "contentDigest": item.content_digest,
+                    }
+                    for item in draft.evidence
+                ],
+                "provenance": [
+                    {
+                        "provenanceId": item.provenance_id,
+                        "snapshotId": item.snapshot_id,
+                        "edgeId": item.edge_id,
+                        "inputFactIds": list(item.input_fact_ids),
+                        "ruleDigest": item.rule_digest,
+                    }
+                    for item in draft.provenance
+                ],
+            }
+            provider, model, provider_request_id, request_digest = capture.receipts[
+                request.idempotency_key
+            ]
+            candidate_outputs.append(
+                {
+                    "caseId": case_id,
+                    "status": "completed",
+                    "executionMode": "real",
+                    "requestId": provider_request_id,
+                    "requestDigest": request_digest,
+                    "output": output,
+                    "outputDigest": canonical_digest(output),
+                    "provider": provider,
+                    "model": model,
+                    "reviewJudgments": [],
+                }
+            )
         if len(capture.identities) != 1:
             raise ValueError("real model identity changed during candidate run")
         provider, model = next(iter(capture.identities))
         observations["bindings"]["actualModel"] = f"{provider}/{model}"
         observations["dataset"]["modelObservationStatus"] = "captured"
+        dataset_material, config_material, model_material = graph_materials(
+            observations
+        )
+        dataset_digest = canonical_digest(dataset_material)
+        config_digest = canonical_digest(config_material)
+        model_digest = canonical_digest(model_material)
+        for item in candidate_outputs:
+            item["candidateDigest"] = canonical_digest(
+                {
+                    "caseId": item["caseId"],
+                    "requestDigest": item["requestDigest"],
+                    "outputDigest": item["outputDigest"],
+                    "datasetDigest": dataset_digest,
+                    "configDigest": config_digest,
+                    "modelDigest": model_digest,
+                }
+            )
+        observations["runEvidence"] = {
+            "schemaVersion": "quality-candidate-evidence-v1",
+            "runId": "quality-graph-"
+            + canonical_digest(candidate_outputs).removeprefix("sha256:")[:32],
+            "runStatus": "awaiting_review",
+            "executionMode": "real",
+            "datasetDigest": dataset_digest,
+            "configDigest": config_digest,
+            "modelDigest": model_digest,
+            "cases": candidate_outputs,
+        }
         return observations
     finally:
         await models.aclose()
@@ -204,7 +342,9 @@ def main() -> int:
     arguments = parser.parse_args()
     profile = json.loads(arguments.profile.read_text(encoding="utf-8"))
     if arguments.require_approved_review:
-        validate_approved_review(profile)
+        raise ValueError(
+            "candidate generation cannot consume prefilled approval; review observations after the run"
+        )
     observations = asyncio.run(run(profile))
     arguments.observations.parent.mkdir(parents=True, exist_ok=True)
     arguments.observations.write_text(

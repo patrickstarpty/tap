@@ -16,6 +16,14 @@ from tap.modules.graph.adapters.model_gateway_extraction import (
     GRAPH_EXTRACTION_SCHEMA,
 )
 
+from tap.quality.evidence import (
+    canonical_digest,
+    graph_candidate_sets,
+    graph_materials,
+    validate_candidate_batch,
+    validate_journey_evidence,
+)
+
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
@@ -182,15 +190,58 @@ def validate_real_profile(profile: object) -> None:
     dataset = _mapping(root.get("dataset"), "dataset")
     if dataset.get("reviewStatus") != "approved":
         raise ValueError("real Graph gate requires approved human review")
+    if any(
+        str(label.get("reviewer")).startswith(
+            ("machine-", "pending-", "generated-", "human:")
+        )
+        for label in labels
+    ):
+        raise ValueError("real Graph gate requires an independent human reviewer")
     bindings = _mapping(root.get("bindings"), "bindings")
     actual_model = bindings.get("actualModel")
-    if not isinstance(actual_model, str) or actual_model.startswith("fake/"):
+    if not isinstance(actual_model, str) or actual_model.startswith(
+        ("fake/", "pending/", "simulated/", "prebuilt/")
+    ):
         raise ValueError("real Graph gate requires a real model")
     for name in ("promptDigest", "schemaDigest", "evaluatorDigest"):
         if _DIGEST.fullmatch(str(bindings.get(name))) is None:
             raise ValueError(f"real Graph gate requires {name}")
         if bindings[name] != current_bindings()[name]:
             raise ValueError(f"real Graph gate requires current {name}")
+    candidate_sets = graph_candidate_sets(root)
+    run_evidence = _mapping(root.get("runEvidence"), "candidate batch")
+    cases = [
+        _mapping(value, "candidate case")
+        for value in _array(run_evidence.get("cases"), "candidate cases")
+    ]
+    expected_revisions = dict(candidate_sets)
+    for case in cases:
+        output = _mapping(case.get("output"), "candidate output")
+        revisions = output.get("sourceRevisionIds")
+        if (
+            not isinstance(revisions, list)
+            or len(revisions) < 2
+            or len(revisions) != len(set(revisions))
+            or tuple(revisions) != expected_revisions.get(str(case.get("caseId")))
+        ):
+            raise ValueError(
+                "Graph candidate output must bind the exact multi-revision set"
+            )
+    dataset_material, config_material, model_material = graph_materials(root)
+    validate_candidate_batch(
+        run_evidence,
+        expected_case_ids=(case_id for case_id, _ in candidate_sets),
+        dataset_material=dataset_material,
+        config_material=config_material,
+        model_material=model_material,
+    )
+    validate_journey_evidence(
+        root.get("journeyEvidence"),
+        required_kinds=("contract", "api", "answer", "browser", "restart"),
+        dataset_digest=canonical_digest(dataset_material),
+        config_digest=canonical_digest(config_material),
+        model_digest=canonical_digest(model_material),
+    )
 
 
 def main() -> int:

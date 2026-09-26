@@ -15,6 +15,7 @@ from tap.modules.knowledge.ports.errors import AnswerUnavailable, ModelUnavailab
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts" / "evaluate-quality-kb.py"
+TRUSTED_SCRIPT = ROOT / "scripts" / "evaluate-quality-kb-trusted.py"
 RUNNER = ROOT / "scripts" / "run-quality-kb-real.py"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "quality" / "kb"
 APPROVAL_CONTENT = {
@@ -70,6 +71,10 @@ def _evaluator() -> ModuleType:
 
 def _runner() -> ModuleType:
     return _module(RUNNER, "run_quality_kb_real")
+
+
+def _trusted_evaluator() -> ModuleType:
+    return _module(TRUSTED_SCRIPT, "evaluate_quality_kb_trusted")
 
 
 def _sha(character: str) -> str:
@@ -2105,3 +2110,101 @@ def test_offline_evaluator_never_needs_provider_configuration(tmp_path: Path) ->
     assert completed.returncode == 1
     assert "cases=0 (required 100)" in completed.stderr
     assert "provider" not in completed.stderr.casefold()
+
+
+def _trusted_profile() -> dict[str, object]:
+    documents = [
+        {
+            "fileId": f"file-{index:03d}",
+            "mediaType": "application/pdf" if index % 2 else "text/markdown",
+            "split": "tuning" if index < 50 else "acceptance",
+        }
+        for index in range(100)
+    ]
+    topics = ("amount", "percentage", "date", "condition", "exception")
+    cases = []
+    for index in range(200):
+        no_answer_or_conflict = index % 5 == 0
+        cases.append(
+            {
+                "caseId": f"trusted-{index:03d}",
+                "fileId": f"file-{index % 100:03d}",
+                "topic": topics[index % len(topics)],
+                "retrievalRelevantAt50": 1,
+                "retrievalRelevantTotal": 1,
+                "top10EvidenceCovered": 1,
+                "top10EvidenceTotal": 1,
+                "correctAndSufficient": True,
+                "citationLocated": True,
+                "requiresNoAnswerOrConflict": no_answer_or_conflict,
+                "noAnswerOrConflictCorrect": no_answer_or_conflict,
+                "criticalFactErrorCount": 0,
+            }
+        )
+    return {
+        "schemaVersion": "quality-kb-trusted-profile-v1",
+        "profileId": "QUALITY-KB-TRUSTED-01",
+        "dataset": {"version": "unit-v1", "reviewStatus": "pending"},
+        "bindings": {
+            "modelAlias": "tapper-chat",
+            "actualModel": "provider/model",
+            "promptDigest": "sha256:" + "a" * 64,
+            "schemaDigest": "sha256:" + "b" * 64,
+            "evaluatorDigest": "sha256:" + "c" * 64,
+        },
+        "legacyV1Metrics": {
+            "leakageCount": 0,
+            "anchorResolved": 100,
+            "anchorTotal": 100,
+            "groundedSupported": 100,
+            "groundedTotal": 100,
+            "retrievalRelevantAt10": 90,
+            "retrievalRelevantTotal": 100,
+            "abstainCorrect": 90,
+            "abstainTotal": 100,
+        },
+        "documents": documents,
+        "cases": cases,
+    }
+
+
+def test_trusted_knowledge_reports_v1_and_new_topic_metrics_separately() -> None:
+    report = _trusted_evaluator().evaluate(_trusted_profile())
+
+    assert report["passed"] is True
+    assert report["legacyV1Metrics"]["retrievalRecallAt10"]["actual"] == "90/100"
+    assert report["trustedKnowledgeMetrics"]["retrievalRecallAt50"]["actual"] == ("200/200")
+    assert report["trustedKnowledgeMetrics"]["citationLocation"]["required"] == (">=98%")
+
+
+def test_trusted_knowledge_real_gate_requires_current_reviewed_outputs() -> None:
+    profile = _trusted_profile()
+    profile["dataset"]["reviewStatus"] = "approved"
+
+    with pytest.raises(ValueError, match="candidate batch"):
+        _trusted_evaluator().evaluate(profile, real=True)
+
+
+def test_trusted_knowledge_rejects_tuning_acceptance_file_overlap() -> None:
+    profile = _trusted_profile()
+    profile["documents"].append(
+        {
+            "fileId": "file-000",
+            "mediaType": "text/plain",
+            "split": "acceptance",
+        }
+    )
+
+    with pytest.raises(ValueError, match="split by file"):
+        _trusted_evaluator().evaluate(profile)
+
+
+def test_new_metrics_cannot_hide_a_legacy_v1_failure() -> None:
+    profile = _trusted_profile()
+    profile["legacyV1Metrics"]["leakageCount"] = 1
+
+    report = _trusted_evaluator().evaluate(profile)
+
+    assert report["legacyV1Metrics"]["zeroLeakage"]["passed"] is False
+    assert all(metric["passed"] for metric in report["trustedKnowledgeMetrics"].values())
+    assert report["passed"] is False

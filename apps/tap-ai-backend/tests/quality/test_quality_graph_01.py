@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -51,7 +52,7 @@ def _profile():
                 "reviewer": "reviewer-1",
             }
         )
-    return {
+    profile = {
         "schemaVersion": "quality-graph-profile-v1",
         "profileId": "QUALITY-GRAPH-01",
         "dataset": {"version": "unit-v1", "reviewStatus": "approved"},
@@ -65,6 +66,133 @@ def _profile():
         "documents": documents,
         "labels": labels,
     }
+    profile["bindings"].update(_evaluator().current_bindings())
+
+    def digest(value):
+        return (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(
+                    value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode()
+            ).hexdigest()
+        )
+
+    dataset_material = {
+        "profileId": profile["profileId"],
+        "version": profile["dataset"]["version"],
+        "documents": documents,
+        "labels": [
+            {
+                key: value
+                for key, value in label.items()
+                if key
+                not in {
+                    "predicted",
+                    "correct",
+                    "evidenceResolvable",
+                    "provenanceComplete",
+                    "reviewer",
+                }
+            }
+            for label in labels
+        ],
+    }
+    config_material = {
+        "minimumDocuments": 20,
+        "minimumLabels": 200,
+        "evidenceProvenanceResolution": "100%",
+        "extractedEdgeEvidencePrecision": "100%",
+        "relationPrecision": ">=90%",
+        "incorrectEntityMergeRate": "<=1%",
+        "inferredProvenanceCompleteness": "100%",
+        "minimumRevisionsPerCandidate": 2,
+    }
+    model_material = profile["bindings"]
+    dataset_digest = digest(dataset_material)
+    config_digest = digest(config_material)
+    model_digest = digest(model_material)
+    evidence_cases = []
+    for index in range(10):
+        case_id = f"graph-set-{index + 1:03d}"
+        output = {
+            "sourceRevisionIds": [
+                documents[index * 2]["documentId"]
+                + "-revision-"
+                + documents[index * 2]["contentDigest"].removeprefix("sha256:")[:12],
+                documents[index * 2 + 1]["documentId"]
+                + "-revision-"
+                + documents[index * 2 + 1]["contentDigest"].removeprefix("sha256:")[:12],
+            ],
+            "nodes": [{"nodeId": f"node-{index}"}],
+            "edges": [],
+            "evidence": [],
+            "provenance": [],
+        }
+        output_digest = digest(output)
+        request_digest = digest(
+            {
+                "caseId": case_id,
+                "datasetDigest": dataset_digest,
+                "configDigest": config_digest,
+                "modelDigest": model_digest,
+            }
+        )
+        candidate_digest = digest(
+            {
+                "caseId": case_id,
+                "requestDigest": request_digest,
+                "outputDigest": output_digest,
+                "datasetDigest": dataset_digest,
+                "configDigest": config_digest,
+                "modelDigest": model_digest,
+            }
+        )
+        evidence_cases.append(
+            {
+                "caseId": case_id,
+                "status": "completed",
+                "executionMode": "real",
+                "requestId": f"graph-request-{index + 1:03d}",
+                "requestDigest": request_digest,
+                "output": output,
+                "outputDigest": output_digest,
+                "candidateDigest": candidate_digest,
+                "reviewedOutputDigest": output_digest,
+                "reviewedCandidateDigest": candidate_digest,
+                "reviewJudgments": [
+                    {
+                        "reviewer": "reviewer-1",
+                        "approved": True,
+                        "reviewRunId": "graph-run-current",
+                    }
+                ],
+            }
+        )
+    profile["runEvidence"] = {
+        "schemaVersion": "quality-candidate-evidence-v1",
+        "runId": "graph-run-current",
+        "runStatus": "completed",
+        "executionMode": "real",
+        "datasetDigest": dataset_digest,
+        "configDigest": config_digest,
+        "modelDigest": model_digest,
+        "cases": evidence_cases,
+    }
+    profile["journeyEvidence"] = [
+        {
+            "kind": kind,
+            "status": "passed",
+            "executionMode": "real",
+            "executionId": f"graph-{kind}-current",
+            "artifactDigest": digest({"kind": kind, "run": "current"}),
+            "datasetDigest": dataset_digest,
+            "configDigest": config_digest,
+            "modelDigest": model_digest,
+        }
+        for kind in ("contract", "api", "answer", "browser", "restart")
+    ]
+    return profile
 
 
 def test_quality_graph_thresholds_pass_only_with_complete_independent_labels():
@@ -113,6 +241,11 @@ def test_real_gate_rejects_fake_or_unreviewed_profiles():
     with pytest.raises(ValueError, match="real model"):
         module.validate_real_profile(profile)
 
+    profile = _profile()
+    profile["labels"][0]["reviewer"] = "pending-independent-human-review"
+    with pytest.raises(ValueError, match="independent human reviewer"):
+        module.validate_real_profile(profile)
+
 
 def test_real_runner_rejects_unreviewed_labels_before_provider_setup():
     profile = _profile()
@@ -149,4 +282,24 @@ def test_profile_rejects_content_digest_tampering_and_orphan_labels():
     profile = _profile()
     profile["dataset"]["reviewStatus"] = "pending"
     with pytest.raises(ValueError, match="review"):
+        module.validate_real_profile(profile)
+
+
+def test_real_gate_requires_current_multi_revision_candidate_outputs():
+    module = _evaluator()
+    profile = _profile()
+    profile["runEvidence"]["cases"][0]["output"]["sourceRevisionIds"] = ["only-one-revision"]
+
+    with pytest.raises(ValueError, match="multi-revision"):
+        module.validate_real_profile(profile)
+
+
+def test_real_gate_binds_contract_api_answer_browser_and_restart_evidence():
+    module = _evaluator()
+    profile = _profile()
+    profile["journeyEvidence"] = [
+        item for item in profile["journeyEvidence"] if item["kind"] != "browser"
+    ]
+
+    with pytest.raises(ValueError, match="every required kind"):
         module.validate_real_profile(profile)

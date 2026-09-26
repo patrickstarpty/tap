@@ -33,6 +33,8 @@ from tap.modules.test_management.domain.models import (
 )
 from tap.modules.test_management.domain.validation import validate_draft_structure
 
+from tap.quality.evidence import test_design_materials, validate_candidate_batch
+
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _PROVIDER_REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
 
@@ -97,6 +99,8 @@ def _canonical_revision(output: object) -> TestPlanRevision:
         "assumptions",
         "unknowns",
         "coverageGaps",
+        "requirementScope",
+        "generationVersions",
     }
     if set(value) != expected:
         raise ValueError("generated output is malformed")
@@ -139,11 +143,30 @@ def _canonical_revision(output: object) -> TestPlanRevision:
                                     _text(step, "text"),
                                     step.get("expectedResult"),
                                     step["critical"],
+                                    tuple(
+                                        _text({"value": item}, "value")
+                                        for item in _array(
+                                            step.get("citationIds"), "citationIds"
+                                        )
+                                    ),
+                                    tuple(
+                                        _text({"value": item}, "value")
+                                        for item in _array(
+                                            step.get("unknownIds"), "unknownIds"
+                                        )
+                                    ),
                                 )
                                 for step in _items(scenario, "steps")
                             ),
                         )
                         for scenario in _items(case, "scenarios")
+                    ),
+                    tuple(
+                        _text({"value": item}, "value")
+                        for item in _array(
+                            case.get("coveredRequirementIds"),
+                            "coveredRequirementIds",
+                        )
                     ),
                 )
                 for case in _items(value, "cases")
@@ -157,6 +180,7 @@ def _canonical_revision(output: object) -> TestPlanRevision:
                     _text(item, "contentDigest"),
                     _text(item, "claimText"),
                     CitationOrigin(_text(item, "origin")),
+                    item.get("anchor"),
                 )
                 for item in _items(value, "citations")
             ),
@@ -169,7 +193,11 @@ def _canonical_revision(output: object) -> TestPlanRevision:
                 for item in _items(value, "assumptions")
             ),
             unknowns=tuple(
-                TestPlanUnknown(_text(item, "unknownId"), _text(item, "text"))
+                TestPlanUnknown(
+                    _text(item, "unknownId"),
+                    _text(item, "text"),
+                    item.get("requirementRef"),
+                )
                 for item in _items(value, "unknowns")
             ),
             coverage_gaps=tuple(
@@ -182,6 +210,30 @@ def _canonical_revision(output: object) -> TestPlanRevision:
                 for item in _items(value, "coverageGaps")
             ),
             origin=IdentityOrigin.VALIDATION,
+            approved_knowledge_revision_ids=tuple(
+                _text({"value": item}, "value")
+                for item in _array(
+                    _mapping(value.get("generationVersions"), "generationVersions").get(
+                        "approvedKnowledgeRevisionIds"
+                    ),
+                    "approvedKnowledgeRevisionIds",
+                )
+            ),
+            model_revision_id=_mapping(
+                value.get("generationVersions"), "generationVersions"
+            ).get("modelRevisionId"),
+            agent_revision_id=_mapping(
+                value.get("generationVersions"), "generationVersions"
+            ).get("agentRevisionId"),
+            skill_revision_ids=tuple(
+                _text({"value": item}, "value")
+                for item in _array(
+                    _mapping(value.get("generationVersions"), "generationVersions").get(
+                        "skillRevisionIds"
+                    ),
+                    "skillRevisionIds",
+                )
+            ),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("generated output is malformed") from error
@@ -370,6 +422,16 @@ def validate_profile(
                 or bindings[name] != digest
             ):
                 raise ValueError(f"real Test Design gate requires current {name}")
+        dataset_material, config_material, model_material = test_design_materials(
+            root, binding_digests=current_bindings()
+        )
+        validate_candidate_batch(
+            root.get("runEvidence"),
+            expected_case_ids=(str(item["caseId"]) for item in cases),
+            dataset_material=dataset_material,
+            config_material=config_material,
+            model_material=model_material,
+        )
     return root, cases
 
 
