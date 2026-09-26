@@ -31,6 +31,14 @@ _METRIC_IDS = frozenset(
         "p95_duration_seconds",
     }
 )
+_RATIO_METRIC_IDS = frozenset(
+    {
+        "first_pass_rate",
+        "final_pass_rate",
+        "retry_recovery_rate",
+        "recovery_contribution_rate",
+    }
+)
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 
@@ -169,6 +177,39 @@ class MetricFact:
         _identifiers("evidence_refs", self.evidence_refs, 1000)
         if self.completeness != "complete" and self.value is not None:
             raise ValueError("incomplete metrics cannot carry a numeric value")
+        if self.completeness == "complete" and self.missing_reasons:
+            raise ValueError("complete metrics cannot carry missing reasons")
+        if self.metric_id in _RATIO_METRIC_IDS and self.completeness == "complete":
+            if (
+                self.numerator is None
+                or self.denominator is None
+                or self.denominator <= 0
+                or self.numerator > self.denominator
+                or self.value is None
+                or not math.isclose(
+                    self.value,
+                    self.numerator / self.denominator,
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                )
+            ):
+                raise ValueError("rate value must match its numerator and denominator")
+        if self.metric_id == "skipped_count" and self.completeness == "complete":
+            if (
+                self.numerator is None
+                or self.denominator is not None
+                or self.value != float(self.numerator)
+            ):
+                raise ValueError("count value must match its numerator")
+        if self.metric_id == "p95_duration_seconds" and self.completeness == "complete":
+            if (
+                self.numerator is not None
+                or self.denominator is None
+                or self.denominator <= 0
+                or self.value is None
+                or self.value < 0
+            ):
+                raise ValueError("duration value requires a positive denominator")
 
 
 @dataclass(frozen=True, slots=True)

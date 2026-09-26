@@ -273,6 +273,23 @@ async def test_http_adapter_rejects_missing_or_changed_response_binding(
 
 
 @pytest.mark.asyncio
+async def test_http_adapter_rejects_internally_inconsistent_metric_values() -> None:
+    body = response_body()
+    metrics = body["metrics"]
+    assert isinstance(metrics, list)
+    assert isinstance(metrics[0], dict)
+    metrics[0]["value"] = 0.9
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json=body)
+
+    client = adapter(httpx.MockTransport(handle))
+    with pytest.raises(InsightsQueryUnavailable, match="contract response"):
+        await client.query_insights(scope(), query())
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_historical_query_rejects_a_different_query_id() -> None:
     def handle(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=response_body(queryId="query-other"))
