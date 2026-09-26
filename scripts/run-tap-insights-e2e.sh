@@ -153,8 +153,8 @@ if [ -n "$existing" ]; then
   echo "refusing to reuse existing TAP Insights E2E resources" >&2
   exit 2
 fi
-insights_compose up -d --wait --wait-timeout 180 mysql clickhouse
 insights_compose_started=1
+insights_compose up -d --wait --wait-timeout 180 mysql clickhouse
 uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head
 
 insights_start_apps

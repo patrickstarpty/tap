@@ -4,7 +4,6 @@ set -euo pipefail
 task14_script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 task14_repo_root="$(CDPATH= cd -- "$task14_script_dir/.." && pwd)"
 task14_artifact_root="${TAP_TASK14_ARTIFACT_ROOT:-$task14_repo_root/.superpowers/artifacts/task-14}"
-task14_matrix_started=0
 task14_secrets=()
 readonly task14_script_dir task14_repo_root
 
@@ -91,8 +90,9 @@ done < <(env)
 
 task14_receipt="$task14_artifact_root/acceptance-receipt.tsv"
 task14_insights_journey_project="$task14_project-journey"
+task14_matrix_owned_marker="$task14_artifact_root/.matrix-owned-$task14_run_nonce"
 readonly task14_artifact_root task14_receipt task14_run_nonce task14_project \
-  task14_insights_journey_project
+  task14_insights_journey_project task14_matrix_owned_marker
 export COMPOSE_PROJECT_NAME="$task14_project"
 task14_sha="$(git -C "$task14_repo_root" rev-parse HEAD)"
 printf 'schema\ttask14-acceptance-v2\ncode_sha\t%s\ncompose_project\t%s\n' \
@@ -151,7 +151,7 @@ task14_record_preserved_volumes() {
 }
 
 task14_cleanup() {
-  if [ "$task14_matrix_started" -eq 1 ]; then
+  if [ -f "$task14_matrix_owned_marker" ]; then
     docker compose -f "$task14_repo_root/compose.yaml" -p "$task14_project" \
       --profile insights down --remove-orphans >/dev/null 2>&1 || true
     task14_record_preserved_volumes "$task14_project"
@@ -203,6 +203,7 @@ task14_insights_matrix() {
     echo "refusing to reuse existing Task 14 Insights resources" >&2
     return 2
   fi
+  : >"$task14_matrix_owned_marker"
 
   export MYSQL_ROOT_PASSWORD="$task14_mysql_root_password"
   export MYSQL_DATABASE=tap_task10_task14
@@ -250,7 +251,6 @@ task14_run_phase tapper-fixture-journeys task14_tapper_journey
 task14_run_phase insights-fixture-journey task14_insights_journey
 task14_record_preserved_volumes "$task14_insights_journey_project"
 task14_run_phase tap-ai-fault-retention-matrix task14_tap_ai_matrix
-task14_matrix_started=1
 task14_run_phase tap-insights-fault-recovery-matrix task14_insights_matrix
 task14_run_phase prototype-and-safe-handoff task14_product_and_handoff
 

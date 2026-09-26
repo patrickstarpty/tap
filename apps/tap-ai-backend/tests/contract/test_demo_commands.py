@@ -3813,3 +3813,66 @@ def test_task14_acceptance_runner_rejects_artifacts_outside_owned_roots(
     assert completed.returncode == 2
     assert "refusing unsafe Task 14 artifact path" in completed.stderr
     assert not calls.exists()
+
+
+def test_task14_acceptance_runner_never_cleans_preexisting_matrix_resources(
+    tmp_path: Path,
+) -> None:
+    environment, calls = _task14_acceptance_stub_environment(tmp_path)
+    (tmp_path / "matrix-active").touch()
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh")],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "refusing to reuse existing Task 14 Insights resources" in completed.stdout
+    assert " down " not in calls.read_text()
+
+
+def test_insights_e2e_cleans_owned_resources_after_partial_compose_up_failure(
+    tmp_path: Path,
+) -> None:
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    calls = tmp_path / "calls.log"
+    docker = stubs / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        f'printf "docker %s\\n" "$*" >> "{calls}"\n'
+        'case "$*" in\n'
+        '  *"compose"*"up"*) exit 73 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    artifact_root = tmp_path / "tap-task14.insights"
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-tap-insights-e2e.sh")],
+        cwd=ROOT,
+        env=os.environ
+        | {
+            "PATH": f"{stubs}:{os.environ['PATH']}",
+            "TMPDIR": str(tmp_path),
+            "TAP_INSIGHTS_E2E_PROJECT": "tap-insights-task14-0123456789ab-journey",
+            "TAP_INSIGHTS_E2E_PRESERVE_VOLUMES": "1",
+            "TAP_INSIGHTS_E2E_ARTIFACTS": str(artifact_root),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 73
+    commands = calls.read_text()
+    assert " compose " in f" {commands}"
+    assert " up -d --wait --wait-timeout 180 mysql clickhouse" in commands
+    assert " down --remove-orphans" in commands
+    assert " down -v" not in commands
