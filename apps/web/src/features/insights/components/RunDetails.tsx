@@ -74,15 +74,15 @@ export function RunDetails({
       <p>Run → instance → data row → attempt → raw report</p>
       <aside className="ti-tapper-handoff">
         <div>
-          <strong>Investigate with governed context</strong>
-          <p>Opens a number-free draft. Tapper must re-query the saved scope and recheck evidence access before a verified answer.</p>
+          <strong>Prepare an investigation draft</strong>
+          <p>This opens only an editable, number-free draft. It is not a verified Insights explanation.</p>
         </div>
         <a
           href={handoffUrl.toString()}
           rel="noopener noreferrer"
           target="_blank"
         >
-          Ask Tapper about this failure
+          Open draft in Tapper
         </a>
       </aside>
       {attempts.length ? (

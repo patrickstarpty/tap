@@ -38,7 +38,8 @@ it("hands Tapper only an opaque authorized reference and a number-free draft", (
     />,
   );
 
-  const link = screen.getByRole("link", { name: "Ask Tapper about this failure" });
+  const link = screen.getByRole("link", { name: "Open draft in Tapper" });
+  expect(screen.getByText(/not a verified Insights explanation/u)).toBeVisible();
   const url = new URL(link.getAttribute("href")!);
   expect(url.origin + url.pathname).toBe("https://tap-ai.example/chat");
   expect(url.searchParams.get("projectId")).toBe("project-a");
