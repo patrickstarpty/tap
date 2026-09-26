@@ -468,7 +468,7 @@ uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/contract/t
 - [x] 故障矩阵覆盖 API/Worker/Redis/ClickHouse 中断、重复/乱序事件、补报更正、模型失败、过期/撤回、跨项目访问、响应未知、备份恢复和投影重建；原件、审批、账本与引用不丢失。
 - [x] 对照固定 `/prototype` 基准检查全部模块导航、Tapper→Test Plan→Automation 双向关联和悬浮助手→Tapper 会话/草稿交接。UI 变更在相同 fixture、1280×720、2× 像素密度下采集前后 PNG 并人工对照；原型保留的 Automation 旅程单列为交互证据。
 - [x] 执行当前产品的窄测试后，再运行下列仓库级检查；真实模型 Gate 与浏览器/恢复验证单独留记录，不把环境 skip 计入真实完成证据。
-  - 2026-09-26：命令均已执行；`contracts`、隔离 `demo-e2e` 与 diff 检查通过。`check` 保留未改动 Tapper E2E 文件的既有 Prettier 告警；`test` 为 `3405 passed, 226 skipped, 49 failed`，其中 15 项是既有 supervisor/parser/generated-contract 失败，34 项是受限环境拒绝本机 MySQL 连接。Task 14 聚焦合同和联合 runner 均通过；失败未被窄测试覆盖或改写。
+  - 2026-09-27：最终兼容性修复后，`contracts`、`check`、隔离 `demo-e2e`、联合故障/恢复矩阵与 diff 检查通过。最近一次全量 `test` 仍记录为 `3405 passed, 226 skipped, 49 failed`，其中 15 项是既有 supervisor/parser/generated-contract 失败，34 项是当次受限环境拒绝本机 MySQL 连接；该历史全量结果未被窄测试覆盖或改写。
 
 ```sh
 make contracts
