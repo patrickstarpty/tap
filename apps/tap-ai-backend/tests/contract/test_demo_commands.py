@@ -3835,6 +3835,68 @@ def test_task14_acceptance_runner_never_cleans_preexisting_matrix_resources(
     assert " down " not in calls.read_text()
 
 
+def test_task14_acceptance_runner_stops_when_parser_rebuild_fails(
+    tmp_path: Path,
+) -> None:
+    environment, calls = _task14_acceptance_stub_environment(tmp_path)
+    make = Path(environment["PATH"].split(":", 1)[0]) / "make"
+    make.write_text(
+        "#!/bin/sh\n"
+        f'printf "make %s\\n" "$*" >> "{calls}"\n'
+        'case "$*" in\n'
+        '  *"parser-build"*) exit 71 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    make.chmod(0o755)
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh")],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    commands = calls.read_text()
+    assert "parser-build" in commands
+    assert "demo-e2e" not in commands
+
+
+def test_task14_acceptance_runner_stops_when_matrix_ownership_preflight_fails(
+    tmp_path: Path,
+) -> None:
+    environment, calls = _task14_acceptance_stub_environment(tmp_path)
+    docker = Path(environment["PATH"].split(":", 1)[0]) / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        f'printf "docker %s\\n" "$*" >> "{calls}"\n'
+        'case "$*" in\n'
+        '  *"ps -aq"*) exit 75 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh")],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    commands = calls.read_text()
+    assert "ps -aq" in commands
+    assert " compose " not in f" {commands}"
+
+
 def test_insights_e2e_cleans_owned_resources_after_partial_compose_up_failure(
     tmp_path: Path,
 ) -> None:

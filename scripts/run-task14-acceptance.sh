@@ -175,7 +175,7 @@ task14_tap_ai_matrix() {
 }
 
 task14_tapper_journey() {
-  make --no-print-directory parser-build
+  make --no-print-directory parser-build || return
   TAPPER_E2E_EVIDENCE_DIR="$task14_artifact_root/tapper-e2e" \
     make --no-print-directory demo-e2e
 }
@@ -196,9 +196,9 @@ task14_insights_journey() {
 
 task14_insights_matrix() {
   local existing
-  existing="$(docker ps -aq --filter "label=com.docker.compose.project=$task14_project")"
-  existing="$existing$(docker volume ls -q --filter "label=com.docker.compose.project=$task14_project")"
-  existing="$existing$(docker network ls -q --filter "label=com.docker.compose.project=$task14_project")"
+  existing="$(docker ps -aq --filter "label=com.docker.compose.project=$task14_project")" || return
+  existing="$existing$(docker volume ls -q --filter "label=com.docker.compose.project=$task14_project")" || return
+  existing="$existing$(docker network ls -q --filter "label=com.docker.compose.project=$task14_project")" || return
   if [ -n "$existing" ]; then
     echo "refusing to reuse existing Task 14 Insights resources" >&2
     return 2
@@ -227,7 +227,7 @@ task14_insights_matrix() {
   export TAP_TASK10_COMPOSE_PROJECT="$task14_project"
 
   docker compose -f "$task14_repo_root/compose.yaml" -p "$task14_project" \
-    --profile insights up -d --wait --wait-timeout 180 mysql clickhouse
+    --profile insights up -d --wait --wait-timeout 180 mysql clickhouse || return
   UV_CACHE_DIR="${UV_CACHE_DIR:-/private/tmp/tap-task14-uv}" \
     uv run --project apps/backend pytest \
       apps/backend/tests/integration/test_report_recovery.py \
@@ -240,7 +240,7 @@ task14_product_and_handoff() {
     uv run --project apps/tap-ai-backend pytest \
       apps/tap-ai-backend/tests/contract/test_insights_tool.py \
       apps/tap-ai-backend/tests/integration/test_insights_tap_http.py \
-      -q
+      -q || return
   corepack pnpm --dir apps/web exec vitest run \
     src/widgets/tap/TapProductPrototype.test.tsx \
     src/features/insights/components/RunDetails.test.tsx
