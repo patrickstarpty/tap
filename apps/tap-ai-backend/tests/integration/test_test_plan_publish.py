@@ -150,6 +150,22 @@ class PausingPublishRepository(MysqlTestPlanRepository):
         await self.release_publish.wait()
 
 
+class PausingProjectNamespaceRepository(MysqlTestPlanRepository):
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self.namespace_locked = asyncio.Event()
+        self.release_publish = asyncio.Event()
+        self._publish_paused = False
+
+    async def _lock_write_namespace(self, session, scope):  # type: ignore[no-untyped-def]
+        await super()._lock_write_namespace(session, scope)
+        task = asyncio.current_task()
+        if task is not None and task.get_name() == "child-publication" and not self._publish_paused:
+            self._publish_paused = True
+            self.namespace_locked.set()
+            await self.release_publish.wait()
+
+
 class PausingGenerationRepository(MysqlTestPlanRepository):
     def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -704,6 +720,77 @@ async def test_mysql_publish_and_fork_share_revision_then_plan_lock_order(
         repository.release_publish.set()
 
         assert (await publish).status.value == "PUBLISHED"
+        with pytest.raises(RevisionConflict, match="version"):
+            await asyncio.wait_for(fork, timeout=5)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mysql_child_publish_and_parent_fork_use_project_first_lock_order(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        seeded_repository, reviewed, _, _ = await _seed_governed_draft(sessions)
+        parent = await PublishTestPlan(seeded_repository, CitationAuthority()).execute(
+            VALIDATION_SCOPE,
+            reviewed.test_plan_id,
+            reviewed.revision_id,
+            expected_version=reviewed.row_version,
+            idempotency_key="publish-parent-before-lock-race",
+        )
+        child = await seeded_repository.fork_revision(
+            VALIDATION_SCOPE,
+            parent.test_plan_id,
+            parent.revision_id,
+            expected_version=parent.row_version,
+            idempotency_key="fork-child-before-lock-race",
+            now=datetime(2026, 9, 13, 12, 5),
+        )
+        reviewed_child = await seeded_repository.record_review(
+            VALIDATION_SCOPE,
+            child.test_plan_id,
+            child.revision_id,
+            disposition=ReviewDisposition.ACCEPTED_UNCHANGED,
+            reason="Confirmed the fork before exercising the parent/child lock order.",
+            expected_version=child.row_version,
+            idempotency_key="review-child-before-lock-race",
+            now=datetime(2026, 9, 13, 12, 6),
+        )
+        repository = PausingProjectNamespaceRepository(
+            sessions,
+            scope=VALIDATION_SCOPE,
+            model_alias="tapper-chat",
+            model_mapping=TEST_DESIGN_MODEL_MAPPING,
+        )
+        publish = asyncio.create_task(
+            PublishTestPlan(repository, CitationAuthority()).execute(
+                VALIDATION_SCOPE,
+                reviewed_child.test_plan_id,
+                reviewed_child.revision_id,
+                expected_version=reviewed_child.row_version,
+                idempotency_key="publish-child-before-parent-fork",
+            ),
+            name="child-publication",
+        )
+        await asyncio.wait_for(repository.namespace_locked.wait(), timeout=5)
+        fork = asyncio.create_task(
+            repository.fork_revision(
+                VALIDATION_SCOPE,
+                parent.test_plan_id,
+                parent.revision_id,
+                expected_version=parent.row_version,
+                idempotency_key="fork-parent-during-child-publish",
+                now=datetime(2026, 9, 13, 12, 7),
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert not fork.done()
+        repository.release_publish.set()
+
+        assert (await asyncio.wait_for(publish, timeout=5)).status.value == "PUBLISHED"
         with pytest.raises(RevisionConflict, match="version"):
             await asyncio.wait_for(fork, timeout=5)
     finally:

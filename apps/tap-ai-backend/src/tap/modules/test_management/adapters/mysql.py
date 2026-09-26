@@ -696,7 +696,6 @@ class MysqlTestPlanRepository:
     async def _write_replay(
         self, session: AsyncSession, scope: ProjectScopeContext, key: str, digest: str
     ):
-        await self._lock_write_namespace(session, scope)
         row = (
             (
                 await session.execute(
@@ -832,6 +831,7 @@ class MysqlTestPlanRepository:
         if revision.status is not RevisionStatus.DRAFT:
             raise RevisionImmutable("only drafts can be created")
         async with self._sessions() as session, session.begin():
+            await self._lock_write_namespace(session, scope)
             existing = await self._load_revision(session, revision.revision_id)
             if existing is not None:
                 if (
@@ -946,6 +946,7 @@ class MysqlTestPlanRepository:
             "edit", revision.revision_id, expected_version, revision.content_digest
         )
         async with self._sessions() as session, session.begin():
+            await self._lock_write_namespace(session, scope)
             row = (
                 (
                     await session.execute(
@@ -1047,6 +1048,7 @@ class MysqlTestPlanRepository:
         scope = self._matching_scope(scope)
         digest = self._write_digest("fork", source_revision_id, expected_version, test_plan_id)
         async with self._sessions() as session, session.begin():
+            await self._lock_write_namespace(session, scope)
             row = (
                 (
                     await session.execute(
@@ -1129,6 +1131,7 @@ class MysqlTestPlanRepository:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         digest = self._write_digest("publish", revision_id, expected_version, validation_digest)
         async with self._sessions() as session, session.begin():
+            await self._lock_write_namespace(session, scope)
             row = (
                 (
                     await session.execute(
@@ -1413,8 +1416,8 @@ class MysqlTestPlanRepository:
         child_generated_digest = revision.generated_content_digest
         visited_revision_ids = {revision.revision_id}
         while parent_revision_id is not None:
-            if parent_revision_id in visited_revision_ids or len(visited_revision_ids) >= 128:
-                raise ValueError("fork generation provenance is cyclic or unbounded")
+            if parent_revision_id in visited_revision_ids:
+                raise ValueError("fork generation provenance is cyclic")
             visited_revision_ids.add(parent_revision_id)
             source = (
                 (
@@ -1615,6 +1618,7 @@ class MysqlTestPlanRepository:
         )
         instant = _naive(now)
         async with self._sessions() as session, session.begin():
+            await self._lock_write_namespace(session, scope)
             row = (
                 (
                     await session.execute(
@@ -1632,7 +1636,6 @@ class MysqlTestPlanRepository:
             )
             if row is None:
                 raise LookupError("test plan revision not found")
-            await self._lock_write_namespace(session, scope)
             replay = (
                 (
                     await session.execute(
@@ -1761,6 +1764,7 @@ class MysqlTestPlanRepository:
             raise ValueError("source impact reason must be bounded nonblank text")
         instant = _naive(now)
         async with self._sessions() as session, session.begin():
+            await self._lock_write_namespace(session, scope)
             revision_ids = tuple(
                 (
                     await session.scalars(
@@ -2001,6 +2005,7 @@ class MysqlTestPlanRepository:
         if request.project_id != self.scope.project_id:
             raise ValueError("generation request is outside Project scope")
         async with self._sessions() as session, session.begin():
+            await self._lock_write_namespace(session, self.scope)
             turn_exists = await session.scalar(
                 select(chat_turn.c.turn_id)
                 .where(
@@ -2012,7 +2017,6 @@ class MysqlTestPlanRepository:
             )
             if turn_exists is None:
                 raise ValueError("completed Turn snapshot binding was not found")
-            await self._lock_write_namespace(session, self.scope)
             existing = (
                 (
                     await session.execute(
@@ -2274,6 +2278,7 @@ class MysqlTestPlanRepository:
         instant = _naive(now)
         digest = self._write_digest("cancel", job_id, expected_version, "cancel")
         async with self._sessions() as session, session.begin():
+            await self._lock_write_namespace(session, scope)
             row = (
                 (
                     await session.execute(
@@ -2422,6 +2427,7 @@ class MysqlTestPlanRepository:
         instant = _naive(now)
         digest = self._write_digest("retry", job_id, expected_version, "retry")
         async with self._sessions() as session, session.begin():
+            await self._lock_write_namespace(session, scope)
             row = (
                 (
                     await session.execute(
@@ -2829,6 +2835,7 @@ class MysqlTestPlanRepository:
             raise ValueError("generated draft identity or state is invalid")
         instant = _naive(now)
         async with self._sessions() as session, session.begin():
+            await self._lock_write_namespace(session, scope)
             job = (
                 (
                     await session.execute(
