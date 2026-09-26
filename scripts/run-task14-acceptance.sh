@@ -174,6 +174,12 @@ task14_tap_ai_matrix() {
       -q
 }
 
+task14_tapper_journey() {
+  make --no-print-directory parser-build
+  TAPPER_E2E_EVIDENCE_DIR="$task14_artifact_root/tapper-e2e" \
+    make --no-print-directory demo-e2e
+}
+
 task14_insights_journey() {
   TAP_INSIGHTS_E2E_PROJECT="$task14_insights_journey_project" \
     TAP_INSIGHTS_E2E_PRESERVE_VOLUMES=1 \
@@ -240,7 +246,7 @@ task14_product_and_handoff() {
 }
 
 cd "$task14_repo_root"
-task14_run_phase tapper-fixture-journeys make --no-print-directory demo-e2e
+task14_run_phase tapper-fixture-journeys task14_tapper_journey
 task14_run_phase insights-fixture-journey task14_insights_journey
 task14_record_preserved_volumes "$task14_insights_journey_project"
 task14_run_phase tap-ai-fault-retention-matrix task14_tap_ai_matrix

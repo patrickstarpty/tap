@@ -3765,6 +3765,9 @@ def test_task14_acceptance_runner_uses_ephemeral_redacted_credentials_and_preser
     assert "admin=[REDACTED]" in phase_log
     assert "writer=[REDACTED]" in phase_log
     assert "reader=[REDACTED]" in phase_log
+    assert commands.index("make --no-print-directory parser-build") < commands.index(
+        "make --no-print-directory demo-e2e"
+    )
     project_lines = [line for line in commands.splitlines() if "compose" in line]
     assert project_lines
     projects = {line.rsplit("project=", 1)[1] for line in project_lines}
