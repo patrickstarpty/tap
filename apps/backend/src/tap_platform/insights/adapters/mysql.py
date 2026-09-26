@@ -544,6 +544,8 @@ class SqlAlchemyReportLedger:
                     filters={
                         "source_ids": list(record.query.filters.source_ids),
                         "run_ids": list(record.query.filters.run_ids),
+                        "build_ids": list(record.query.filters.build_ids),
+                        "branches": list(record.query.filters.branches),
                         "environments": list(record.query.filters.environments),
                         "configurations": list(record.query.filters.configurations),
                     },
@@ -1315,6 +1317,8 @@ def _query_result_payload(record: QueryRecord) -> dict[str, object]:
                 "run_id": item.run_id,
                 "external_run_id": item.external_run_id,
                 "source_id": item.source_id,
+                "build_id": item.build_id,
+                "branch": item.branch,
                 "environment": item.environment,
                 "configuration": item.configuration,
                 "started_at": (
@@ -1378,6 +1382,8 @@ def _row_to_query_record(row: RowMapping) -> QueryRecord:
         filters=QueryFilters(
             source_ids=tuple(filters["source_ids"]),
             run_ids=tuple(filters["run_ids"]),
+            build_ids=tuple(filters.get("build_ids", ())),
+            branches=tuple(filters.get("branches", ())),
             environments=tuple(filters["environments"]),
             configurations=tuple(filters["configurations"]),
         ),
@@ -1409,6 +1415,8 @@ def _row_to_query_record(row: RowMapping) -> QueryRecord:
                 run_id=str(item["run_id"]),
                 external_run_id=str(item.get("external_run_id", item["run_id"])),
                 source_id=str(item["source_id"]),
+                build_id=item.get("build_id"),
+                branch=item.get("branch"),
                 environment=str(item["environment"]),
                 configuration=str(item["configuration"]),
                 started_at=(

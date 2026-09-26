@@ -31,6 +31,9 @@ def attempt(
     first_attempt_eligible: bool = True,
     run_id: str = "run-1",
     started_at: datetime = datetime(2026, 9, 23, 16, tzinfo=UTC),
+    duration_seconds: float = 0.25,
+    build_id: str | None = "build-1",
+    branch: str | None = "main",
 ) -> MetricAttempt:
     return MetricAttempt(
         fact_key=f"{run_id}:{test_id}:{configuration}:{attempt_no}",
@@ -47,10 +50,12 @@ def attempt(
         configuration=configuration,
         attempt=attempt_no,
         result=result,
-        duration_seconds=0.25,
+        duration_seconds=duration_seconds,
         first_attempt_eligible=first_attempt_eligible,
         missing_reasons=() if first_attempt_eligible else ("missing-attempt-identity",),
         run_started_at=started_at,
+        build_id=build_id,
+        branch=branch,
     )
 
 
@@ -100,6 +105,69 @@ def test_oracle_uses_distinct_first_final_and_recovery_denominators() -> None:
         results[MetricId.RECOVERY_CONTRIBUTION_RATE].value,
     ) == (1, 3, 1 / 3)
     assert results[MetricId.SKIPPED_COUNT].numerator == 1
+
+
+def test_p95_duration_is_a_server_metric_over_summed_instance_attempts() -> None:
+    """A browser percentile or per-attempt percentile would publish a different value."""
+    results = metric_map(
+        [
+            attempt(test_id="a", attempt_no=1, result="pass", duration_seconds=1.0),
+            attempt(test_id="b", attempt_no=1, result="fail", duration_seconds=2.0),
+            attempt(test_id="b", attempt_no=2, result="pass", duration_seconds=3.0),
+            attempt(test_id="c", attempt_no=1, result="error", duration_seconds=4.0),
+        ]
+    )
+
+    duration = results[MetricId.P95_DURATION_SECONDS]
+    assert (duration.value, duration.denominator, duration.completeness) == (
+        5.0,
+        3,
+        "complete",
+    )
+
+
+def test_build_and_branch_filters_are_authoritative_query_scope() -> None:
+    """Ignoring either dimension would leak a second run into every metric denominator."""
+    facts = [
+        attempt(test_id="a", attempt_no=1, result="pass"),
+        attempt(
+            test_id="b",
+            attempt_no=1,
+            result="fail",
+            run_id="run-2",
+            build_id="build-2",
+            branch="release",
+        ),
+    ]
+    service = InsightsQueryService(
+        facts=type("Facts", (), {"query_attempts": lambda self, **_: facts})(),
+        snapshots=lambda _as_of: ProjectionSnapshot(
+            projection_version="insights-v1", visible_data_version=2
+        ),
+        history=InMemoryQueryHistory(),
+        clock=lambda: datetime(2026, 9, 24, tzinfo=UTC),
+        limits=QueryLimits(
+            max_rows_to_read=10,
+            max_bytes_to_read=100_000,
+            max_memory_bytes=100_000,
+            max_concurrent_queries=1,
+            max_output_rows=10,
+            timeout_seconds=1,
+        ),
+    )
+    record = service.execute(
+        project_id="project-a",
+        query=MetricQuery(
+            metric_ids=(MetricId.FINAL_PASS_RATE,),
+            filters=QueryFilters(build_ids=("build-1",), branches=("main",)),
+            from_date="2026-09-23",
+            to_date="2026-09-25",
+            timezone="UTC",
+            as_of=datetime(2026, 9, 24, tzinfo=UTC),
+        ),
+    )
+
+    assert (record.metrics[0].numerator, record.metrics[0].denominator) == (1, 1)
 
 
 def test_oracle_uses_first_and_final_valid_terminal_attempts() -> None:

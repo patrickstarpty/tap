@@ -310,7 +310,8 @@
           "unit": {
             "enum": [
               "ratio",
-              "count"
+              "count",
+              "seconds"
             ],
             "title": "Unit",
             "type": "string"
@@ -329,6 +330,24 @@
       "MetricFiltersContract": {
         "additionalProperties": false,
         "properties": {
+          "branches": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Branches",
+            "type": "array"
+          },
+          "buildIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Buildids",
+            "type": "array"
+          },
           "configurations": {
             "default": [],
             "items": {
@@ -375,7 +394,8 @@
           "final_pass_rate",
           "retry_recovery_rate",
           "recovery_contribution_rate",
-          "skipped_count"
+          "skipped_count",
+          "p95_duration_seconds"
         ],
         "title": "MetricId",
         "type": "string"
@@ -400,7 +420,7 @@
             "items": {
               "$ref": "#/components/schemas/MetricId"
             },
-            "maxItems": 5,
+            "maxItems": 6,
             "minItems": 1,
             "title": "Metricids",
             "type": "array"
@@ -609,6 +629,28 @@
       "RunSummaryContract": {
         "additionalProperties": false,
         "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "buildId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buildid"
+          },
           "configuration": {
             "title": "Configuration",
             "type": "string"
@@ -657,6 +699,8 @@
           "runId",
           "externalRunId",
           "sourceId",
+          "buildId",
+          "branch",
           "environment",
           "configuration",
           "startedAt",
@@ -1192,6 +1236,72 @@
           }
         },
         "summary": "Get Report"
+      }
+    },
+    "/api/v1/projects/{project_id}/insights/reports/{receipt_id}/retry": {
+      "post": {
+        "operationId": "retry_report_api_v1_projects__project_id__insights_reports__receipt_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "receipt_id",
+            "required": true,
+            "schema": {
+              "title": "Receipt Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retry Report Api V1 Projects  Project Id  Insights Reports  Receipt Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Report"
       }
     },
     "/api/v1/projects/{project_id}/insights/runs": {

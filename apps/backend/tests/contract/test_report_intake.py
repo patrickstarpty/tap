@@ -348,6 +348,43 @@ def test_failed_mapping_can_retry_only_the_persisted_report(runtime) -> None:
     assert len(ledger.attempts_for(receipt.receipt_id)) == 1
 
 
+def test_authorized_http_retry_only_reprocesses_the_stored_report(runtime) -> None:
+    """Without a retry route the UI would have to upload again or imply a source rerun."""
+    ledger, objects, intake = runtime
+    receipt = intake.receive(manifest(), [junit(case())])
+    ledger.transition(
+        receipt.receipt_id,
+        expected=ReportState.RECEIVED,
+        target=ReportState.VALIDATING,
+    )
+    ledger.transition(
+        receipt.receipt_id,
+        expected=ReportState.VALIDATING,
+        target=ReportState.FAILED,
+        reason="temporary-parser-failure",
+    )
+    client = TestClient(
+        create_app(
+            report_intake=intake,
+            report_ledger=ledger,
+            report_objects=objects,
+            report_retry=ReportWorker(ledger=ledger, objects=objects),
+            insights_authorizer=authorizer("project-one"),
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/projects/project-one/insights/reports/{receipt.receipt_id}/retry",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["state"] == "validating"
+    assert (
+        ledger.get_receipt(receipt.receipt_id).raw_object_ref == receipt.raw_object_ref
+    )
+
+
 def test_mapping_persistence_failure_becomes_durable_failed(
     runtime, monkeypatch
 ) -> None:

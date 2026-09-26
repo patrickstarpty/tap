@@ -65,6 +65,8 @@ class FactSource:
                 first_attempt_eligible=True,
                 missing_reasons=(),
                 run_started_at=datetime(2026, 9, 24, 1, tzinfo=UTC),
+                build_id="build-24",
+                branch="main",
             )
         ]
 
@@ -75,6 +77,8 @@ def request_body() -> dict[str, Any]:
         "filters": {
             "sourceIds": ["ci-a"],
             "runIds": [],
+            "buildIds": ["build-24"],
+            "branches": ["main"],
             "environments": ["qa"],
             "configurations": [],
         },
@@ -234,6 +238,8 @@ def test_run_and_failure_pages_use_the_persisted_query_scope(query_app) -> None:
                 "runId": run_id,
                 "externalRunId": "run-a",
                 "sourceId": "ci-a",
+                "buildId": "build-24",
+                "branch": "main",
                 "environment": "qa",
                 "configuration": "browser=chromium",
                 "startedAt": "2026-09-24T01:00:00Z",

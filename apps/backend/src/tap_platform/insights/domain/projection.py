@@ -55,6 +55,8 @@ class ProjectedAttempt:
     missing_reasons: tuple[str, ...]
     first_attempt_eligible: bool
     started_at: datetime | None
+    build_id: str | None = None
+    branch: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

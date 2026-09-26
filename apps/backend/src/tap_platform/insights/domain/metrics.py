@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from enum import StrEnum
+import math
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -20,6 +21,7 @@ class MetricId(StrEnum):
     RETRY_RECOVERY_RATE = "retry_recovery_rate"
     RECOVERY_CONTRIBUTION_RATE = "recovery_contribution_rate"
     SKIPPED_COUNT = "skipped_count"
+    P95_DURATION_SECONDS = "p95_duration_seconds"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -42,6 +44,8 @@ class MetricAttempt:
     first_attempt_eligible: bool
     missing_reasons: tuple[str, ...]
     run_started_at: datetime | None
+    build_id: str | None = None
+    branch: str | None = None
 
     def __post_init__(self) -> None:
         if self.run_started_at is not None and self.run_started_at.utcoffset() is None:
@@ -122,7 +126,7 @@ class MetricValue:
 class MetricDefinition:
     metric_id: MetricId
     label: str
-    unit: Literal["ratio", "count"]
+    unit: Literal["ratio", "count", "seconds"]
     definition: str
 
 
@@ -156,6 +160,12 @@ METRIC_CATALOG: tuple[MetricDefinition, ...] = (
         "Skipped instances",
         "count",
         "Instances whose first observed state is skipped, reported outside D.",
+    ),
+    MetricDefinition(
+        MetricId.P95_DURATION_SECONDS,
+        "P95 execution duration",
+        "seconds",
+        "Nearest-rank P95 of summed attempt duration for each eligible instance.",
     ),
 )
 
@@ -270,6 +280,7 @@ def calculate_metrics(
                 missing_reasons=(),
                 evidence_refs=evidence,
             ),
+            MetricId.P95_DURATION_SECONDS: _duration_p95(denominator_groups, evidence),
         }
     return tuple(values[metric_id] for metric_id in metric_ids)
 
@@ -287,5 +298,42 @@ def _ratio(
         value=numerator / denominator if denominator else None,
         completeness="complete" if denominator else "empty",
         missing_reasons=() if denominator else ("zero-denominator",),
+        evidence_refs=evidence_refs,
+    )
+
+
+def _duration_p95(
+    groups: list[list[MetricAttempt]], evidence_refs: tuple[str, ...]
+) -> MetricValue:
+    if not groups:
+        return MetricValue(
+            metric_id=MetricId.P95_DURATION_SECONDS,
+            numerator=None,
+            denominator=0,
+            value=None,
+            completeness="empty",
+            missing_reasons=("zero-denominator",),
+            evidence_refs=evidence_refs,
+        )
+    if any(item.duration_seconds is None for items in groups for item in items):
+        return MetricValue(
+            metric_id=MetricId.P95_DURATION_SECONDS,
+            numerator=None,
+            denominator=len(groups),
+            value=None,
+            completeness="unavailable",
+            missing_reasons=("missing-duration",),
+            evidence_refs=evidence_refs,
+        )
+    durations = sorted(
+        sum(item.duration_seconds or 0.0 for item in items) for items in groups
+    )
+    return MetricValue(
+        metric_id=MetricId.P95_DURATION_SECONDS,
+        numerator=None,
+        denominator=len(durations),
+        value=durations[math.ceil(len(durations) * 0.95) - 1],
+        completeness="complete",
+        missing_reasons=(),
         evidence_refs=evidence_refs,
     )

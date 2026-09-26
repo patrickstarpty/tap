@@ -18,8 +18,10 @@ from tap_platform.insights.http import (
     EvidenceReader,
     InsightsAuthorizer,
     ReceiptReader,
+    ReportRetry,
     create_insights_router,
 )
+from tap_platform.insights.worker import ReportWorker
 
 
 def create_app(
@@ -27,6 +29,7 @@ def create_app(
     report_intake: ReportIntake | None = None,
     report_ledger: ReceiptReader | None = None,
     report_objects: EvidenceReader | None = None,
+    report_retry: ReportRetry | None = None,
     insights_authorizer: InsightsAuthorizer | None = None,
     query_service: InsightsQueryService | None = None,
 ) -> FastAPI:
@@ -53,6 +56,7 @@ def create_app(
                 objects=objects,
                 max_upload_bytes=max_upload_bytes,
             )
+            report_retry = ReportWorker(ledger=ledger, objects=objects)
     if query_service is None and ledger is not None:
         clickhouse_url = os.getenv("TAP_CLICKHOUSE_URL")
         clickhouse_user = os.getenv("TAP_CLICKHOUSE_READER_USER")
@@ -110,6 +114,7 @@ def create_app(
             report_intake=report_intake,
             report_ledger=report_ledger,
             report_objects=report_objects,
+            report_retry=report_retry,
             insights_authorizer=insights_authorizer,
             query_service=query_service,
         )

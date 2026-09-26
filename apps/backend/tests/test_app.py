@@ -36,6 +36,10 @@ async def assert_tap_surface(app: FastAPI) -> None:
             "/api/v1/projects/{project_id}/insights/reports/{receipt_id}",
             ("GET",),
         ),
+        (
+            "/api/v1/projects/{project_id}/insights/reports/{receipt_id}/retry",
+            ("POST",),
+        ),
         ("/api/v1/projects/{project_id}/insights/runs", ("GET",)),
         (
             "/api/v1/projects/{project_id}/insights/runs/{run_id}/attempts",
@@ -47,7 +51,7 @@ async def assert_tap_surface(app: FastAPI) -> None:
         ("/openapi.json", ("GET", "HEAD")),
         ("/redoc", ("GET", "HEAD")),
     ]
-    assert len(app.routes) == 14
+    assert len(app.routes) == 15
     for route in app.routes:
         if isinstance(route, APIRoute):
             assert route.endpoint.__module__.startswith("tap_platform.")
@@ -71,6 +75,7 @@ async def assert_tap_surface(app: FastAPI) -> None:
         "/api/v1/projects/{project_id}/insights/queries/{query_id}": {"get"},
         "/api/v1/projects/{project_id}/insights/reports": {"post"},
         "/api/v1/projects/{project_id}/insights/reports/{receipt_id}": {"get"},
+        "/api/v1/projects/{project_id}/insights/reports/{receipt_id}/retry": {"post"},
         "/api/v1/projects/{project_id}/insights/runs": {"get"},
         "/api/v1/projects/{project_id}/insights/runs/{run_id}/attempts": {"get"},
         "/health/live": {"get"},

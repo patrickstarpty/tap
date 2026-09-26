@@ -50,6 +50,10 @@ class EvidenceReader(Protocol):
     def read(self, ref: str) -> bytes: ...
 
 
+class ReportRetry(Protocol):
+    def retry_failed(self, receipt_id: str) -> bool: ...
+
+
 class InsightsAuthorizer(Protocol):
     def authorize(
         self,
@@ -109,6 +113,7 @@ def create_insights_router(
     report_ledger: ReceiptReader | None,
     report_objects: EvidenceReader | None,
     insights_authorizer: InsightsAuthorizer | None,
+    report_retry: ReportRetry | None = None,
     query_service: InsightsQueryService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/projects/{project_id}/insights")
@@ -398,6 +403,28 @@ def create_insights_router(
         receipt = await _load_receipt(report_ledger, receipt_id)
         _authorize_receipt_project(project_id, receipt)
         return _receipt_body(receipt)
+
+    @router.post("/reports/{receipt_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+    async def retry_report(
+        project_id: str,
+        receipt_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> dict[str, Any]:
+        _authorize(
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.reports.create",
+            resource_kind="report",
+            resource_id=receipt_id,
+        )
+        receipt = await _load_receipt(report_ledger, receipt_id)
+        _authorize_receipt_project(project_id, receipt)
+        if report_retry is None:
+            raise HTTPException(status_code=503, detail="report retry unavailable")
+        if not await run_in_threadpool(report_retry.retry_failed, receipt_id):
+            raise HTTPException(status_code=409, detail="report is not retryable")
+        return _receipt_body(await _load_receipt(report_ledger, receipt_id))
 
     @router.get("/evidence/{receipt_id}")
     async def download_evidence(

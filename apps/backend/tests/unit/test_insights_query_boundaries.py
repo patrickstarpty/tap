@@ -44,7 +44,11 @@ def record() -> QueryRecord:
         metric_version="insights-metrics-v1",
         query=MetricQuery(
             metric_ids=(MetricId.FIRST_PASS_RATE,),
-            filters=QueryFilters(source_ids=("ci-a",)),
+            filters=QueryFilters(
+                source_ids=("ci-a",),
+                build_ids=("build-a",),
+                branches=("main",),
+            ),
             from_date="2026-09-24",
             to_date="2026-09-25",
             timezone="Asia/Shanghai",
@@ -71,6 +75,8 @@ def record() -> QueryRecord:
                 run_id="run-a",
                 external_run_id="external-run-a",
                 source_id="ci-a",
+                build_id="build-a",
+                branch="main",
                 environment="qa",
                 configuration="browser=chromium",
                 started_at=datetime(2026, 9, 24, 1, tzinfo=UTC),
@@ -202,6 +208,8 @@ def test_clickhouse_query_template_binds_project_watermark_and_hard_limits(
         assert 0 < timeout <= 1.5
         assert "result_overflow_mode = 'throw'" in sql
     assert any("source_id IN ('ci-a')" in sql for sql in statements)
+    assert any("run.build_id IN ('build-a')" in sql for sql in statements)
+    assert any("run.branch IN ('main')" in sql for sql in statements)
     assert any(
         "coalesce(fact.started_at, run.started_at) IS NULL OR" in sql
         for sql in statements

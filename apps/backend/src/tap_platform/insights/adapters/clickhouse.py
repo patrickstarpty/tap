@@ -282,6 +282,8 @@ class ClickHouseInsightsStore:
                     first_attempt_eligible=item.first_attempt_eligible,
                     missing_reasons=item.missing_reasons,
                     run_started_at=item.started_at,
+                    build_id=item.build_id,
+                    branch=item.branch,
                 )
             )
         return results
@@ -346,7 +348,8 @@ class ClickHouseInsightsStore:
         if table == "attempt_facts":
             select_clause = (
                 "fact.*, coalesce(fact.started_at, run.started_at) "
-                "AS resolved_started_at"
+                "AS resolved_started_at, run.build_id AS resolved_build_id, "
+                "run.branch AS resolved_branch"
             )
             from_clause = (
                 "attempt_facts AS fact ANY LEFT JOIN run_dimensions AS run ON "
@@ -365,7 +368,11 @@ class ClickHouseInsightsStore:
             if project_id is not None
             else ""
         )
-        scope_clause = _query_scope_clause(query, prefix=prefix)
+        scope_clause = _query_scope_clause(
+            query,
+            prefix=prefix,
+            include_run_dimensions=table == "attempt_facts",
+        )
         window_clause = ""
         if table == "attempt_facts" and window is not None:
             window_clause = (
@@ -439,6 +446,8 @@ class ClickHouseInsightsStore:
             missing_reasons=tuple(str(item) for item in row["missing_reasons"]),
             first_attempt_eligible=bool(row["first_attempt_eligible"]),
             started_at=_datetime(row, "resolved_started_at"),
+            build_id=_optional(row, "resolved_build_id"),
+            branch=_optional(row, "resolved_branch"),
         )
 
     def _insert_rows(self, table: str, rows: tuple[dict[str, Any], ...]) -> None:
@@ -521,7 +530,12 @@ def _quote(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def _query_scope_clause(query: MetricQuery | None, *, prefix: str = "") -> str:
+def _query_scope_clause(
+    query: MetricQuery | None,
+    *,
+    prefix: str = "",
+    include_run_dimensions: bool = False,
+) -> str:
     if query is None:
         return ""
     fields = (
@@ -530,11 +544,21 @@ def _query_scope_clause(query: MetricQuery | None, *, prefix: str = "") -> str:
         ("environment", query.filters.environments),
         ("configuration", query.filters.configurations),
     )
-    return "".join(
+    clause = "".join(
         f" AND {prefix}{field} IN ({','.join(_quote(value) for value in values)})"
         for field, values in fields
         if values
     )
+    if include_run_dimensions:
+        clause += "".join(
+            f" AND run.{field} IN ({','.join(_quote(value) for value in values)})"
+            for field, values in (
+                ("build_id", query.filters.build_ids),
+                ("branch", query.filters.branches),
+            )
+            if values
+        )
+    return clause
 
 
 def _remaining_limits(

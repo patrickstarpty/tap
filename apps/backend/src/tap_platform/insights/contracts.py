@@ -32,6 +32,8 @@ class ContractModel(BaseModel):
 class MetricFiltersContract(ContractModel):
     source_ids: tuple[str, ...] = Field(default=(), alias="sourceIds", max_length=50)
     run_ids: tuple[str, ...] = Field(default=(), alias="runIds", max_length=100)
+    build_ids: tuple[str, ...] = Field(default=(), alias="buildIds", max_length=100)
+    branches: tuple[str, ...] = Field(default=(), max_length=50)
     environments: tuple[str, ...] = Field(default=(), max_length=20)
     configurations: tuple[str, ...] = Field(default=(), max_length=20)
 
@@ -66,6 +68,8 @@ class MetricQueryRequest(ContractModel):
             filters=QueryFilters(
                 source_ids=self.filters.source_ids,
                 run_ids=self.filters.run_ids,
+                build_ids=self.filters.build_ids,
+                branches=self.filters.branches,
                 environments=self.filters.environments,
                 configurations=self.filters.configurations,
             ),
@@ -79,7 +83,7 @@ class MetricQueryRequest(ContractModel):
 class MetricCatalogItemContract(ContractModel):
     metric_id: MetricId = Field(alias="metricId")
     label: str
-    unit: Literal["ratio", "count"]
+    unit: Literal["ratio", "count", "seconds"]
     definition: str
     metric_version: str = Field(alias="metricVersion")
 
@@ -126,6 +130,8 @@ class RunSummaryContract(ContractModel):
     run_id: str = Field(alias="runId")
     external_run_id: str = Field(alias="externalRunId")
     source_id: str = Field(alias="sourceId")
+    build_id: str | None = Field(alias="buildId")
+    branch: str | None
     environment: str
     configuration: str
     started_at: datetime | None = Field(alias="startedAt")
@@ -199,6 +205,8 @@ def query_contract(record: QueryRecord) -> MetricQueryResponse:
         filters=MetricFiltersContract(
             sourceIds=record.query.filters.source_ids,
             runIds=record.query.filters.run_ids,
+            buildIds=record.query.filters.build_ids,
+            branches=record.query.filters.branches,
             environments=record.query.filters.environments,
             configurations=record.query.filters.configurations,
         ),
@@ -305,6 +313,8 @@ def _run_contract(value: RunSummary) -> RunSummaryContract:
         runId=value.run_id,
         externalRunId=value.external_run_id,
         sourceId=value.source_id,
+        buildId=value.build_id,
+        branch=value.branch,
         environment=value.environment,
         configuration=value.configuration,
         startedAt=value.started_at,

@@ -54,6 +54,8 @@ class QueryLimits:
 class QueryFilters:
     source_ids: tuple[str, ...] = ()
     run_ids: tuple[str, ...] = ()
+    build_ids: tuple[str, ...] = ()
+    branches: tuple[str, ...] = ()
     environments: tuple[str, ...] = ()
     configurations: tuple[str, ...] = ()
 
@@ -85,6 +87,8 @@ class RunSummary:
     started_at: datetime | None
     instance_count: int
     evidence_refs: tuple[str, ...]
+    build_id: str | None = None
+    branch: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -444,6 +448,8 @@ def _apply_filters(
         for item in attempts
         if (not filters.source_ids or item.source_id in filters.source_ids)
         and (not filters.run_ids or item.external_run_id in filters.run_ids)
+        and (not filters.build_ids or item.build_id in filters.build_ids)
+        and (not filters.branches or item.branch in filters.branches)
         and (not filters.environments or item.environment in filters.environments)
         and (not filters.configurations or item.configuration in filters.configurations)
     ]
@@ -493,6 +499,8 @@ def _run_summaries_v1(
             run_id=run_id,
             external_run_id=items[0].external_run_id,
             source_id=items[0].source_id,
+            build_id=items[0].build_id,
+            branch=items[0].branch,
             environment=items[0].environment,
             configuration=items[0].configuration,
             started_at=items[0].run_started_at,
