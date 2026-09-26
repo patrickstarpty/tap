@@ -74,6 +74,7 @@ def migrated_mysql(tmp_path: Path):
     engine = create_engine(MYSQL_URL)
     with engine.begin() as connection:
         for table in (
+            "tap_insights_queries",
             "tap_insights_projection_batches",
             "tap_insights_projection_state",
             "tap_insights_projection_versions",

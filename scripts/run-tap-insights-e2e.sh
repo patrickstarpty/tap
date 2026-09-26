@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 insights_script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 insights_repo_root="$(CDPATH= cd -- "$insights_script_dir/.." && pwd)"
-insights_project="${TAP_INSIGHTS_E2E_PROJECT:-tap-insights-task12-e2e}"
+if [ "${1:-}" != "--redacted-child" ]; then
+  exec python3 "$insights_script_dir/insights_runtime.py" run-redacted
+fi
+insights_nonce="$(openssl rand -hex 6)"
+insights_project="${TAP_INSIGHTS_E2E_PROJECT:-tap-insights-task12-$insights_nonce}"
 insights_state_dir="$(mktemp -d "${TMPDIR:-/tmp}/tap-insights-task12.XXXXXX")"
 insights_artifacts="${TAP_INSIGHTS_E2E_ARTIFACTS:-$insights_repo_root/.superpowers/artifacts/task-12}"
 insights_preserve_volumes="${TAP_INSIGHTS_E2E_PRESERVE_VOLUMES:-0}"
+insights_runtime_dir="$insights_repo_root/.superpowers/runtime/insights/$insights_project"
 insights_app_pids=""
 insights_compose_started=0
-readonly insights_script_dir insights_repo_root insights_project insights_state_dir insights_artifacts insights_preserve_volumes
+readonly insights_script_dir insights_repo_root insights_project insights_state_dir insights_preserve_volumes insights_runtime_dir
 
 case "$insights_project" in
-  tap-insights-task12-e2e | tap-insights-task14-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-journey) ;;
+  tap-insights-task12-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f] | tap-insights-task14-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-journey) ;;
   *) echo "refusing unsafe TAP Insights Compose project" >&2; exit 2 ;;
 esac
 
@@ -31,32 +37,41 @@ case "$insights_state_dir" in
   *) echo "refusing unsafe TAP Insights state path" >&2; exit 2 ;;
 esac
 
-export MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-task12-e2e-root}"
-export MYSQL_DATABASE="${MYSQL_DATABASE:-tap_task12_e2e}"
+export MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-$(openssl rand -hex 24)}"
+export MYSQL_DATABASE="${MYSQL_DATABASE:-tap_task12_$insights_nonce}"
 export MYSQL_USER="${MYSQL_USER:-tap}"
-export MYSQL_PASSWORD="${MYSQL_PASSWORD:-task12-e2e}"
+export MYSQL_PASSWORD="${MYSQL_PASSWORD:-$(openssl rand -hex 24)}"
 export MYSQL_PORT="${MYSQL_PORT:-33329}"
 export CLICKHOUSE_HTTP_PORT="${CLICKHOUSE_HTTP_PORT:-38129}"
 export CLICKHOUSE_ADMIN_USER="${CLICKHOUSE_ADMIN_USER:-tap_insights_admin}"
-export CLICKHOUSE_ADMIN_PASSWORD="${CLICKHOUSE_ADMIN_PASSWORD:-task12-e2e-admin}"
+export CLICKHOUSE_ADMIN_PASSWORD="${CLICKHOUSE_ADMIN_PASSWORD:-$(openssl rand -hex 24)}"
 export TAP_CLICKHOUSE_WRITER_USER="${TAP_CLICKHOUSE_WRITER_USER:-tap_insights_writer}"
-export TAP_CLICKHOUSE_WRITER_PASSWORD="${TAP_CLICKHOUSE_WRITER_PASSWORD:-task12-e2e-writer}"
+export TAP_CLICKHOUSE_WRITER_PASSWORD="${TAP_CLICKHOUSE_WRITER_PASSWORD:-$(openssl rand -hex 24)}"
 export TAP_CLICKHOUSE_READER_USER="${TAP_CLICKHOUSE_READER_USER:-tap_insights_reader}"
-export TAP_CLICKHOUSE_READER_PASSWORD="${TAP_CLICKHOUSE_READER_PASSWORD:-task12-e2e-reader}"
+export TAP_CLICKHOUSE_READER_PASSWORD="${TAP_CLICKHOUSE_READER_PASSWORD:-$(openssl rand -hex 24)}"
 export TAP_DATABASE_URL="mysql+pymysql://$MYSQL_USER:$MYSQL_PASSWORD@127.0.0.1:$MYSQL_PORT/$MYSQL_DATABASE?charset=utf8mb4"
-export TAP_REPORT_OBJECT_ROOT="$insights_state_dir/objects"
+export TAP_REPORT_OBJECT_ROOT="$insights_runtime_dir/objects"
 export TAP_CLICKHOUSE_URL="http://127.0.0.1:$CLICKHOUSE_HTTP_PORT/?database=tap_insights"
-export TAP_REPORT_ACCESS_TOKEN="${TAP_REPORT_ACCESS_TOKEN:-task12-e2e-access-token}"
+export TAP_REPORT_ACCESS_TOKEN="${TAP_REPORT_ACCESS_TOKEN:-$(openssl rand -hex 24)}"
 export TAP_REPORT_PROJECT_ID=project-a
 export TAP_REPORT_TOKEN_EXPIRES_AT=2099-12-31T23:59:59+00:00
 export TAP_REPORT_WORKER_POLL_SECONDS=0.1
 export TAP_WEB_API_TARGET=http://127.0.0.1:18012
 export TAP_INSIGHTS_E2E_BASE_URL=http://127.0.0.1:15182
-export TAP_INSIGHTS_E2E_AUTH_STATE="$insights_artifacts/auth-state.json"
+export TAP_INSIGHTS_E2E_AUTH_STATE="$insights_runtime_dir/auth-state.json"
 export TAP_INSIGHTS_E2E_SCREENSHOTS="${TAP_INSIGHTS_E2E_SCREENSHOTS:-$insights_artifacts}"
 export TAP_REPO_ROOT="$insights_repo_root"
 
-mkdir -p "$TAP_REPORT_OBJECT_ROOT" "$insights_artifacts" "$TAP_INSIGHTS_E2E_SCREENSHOTS"
+mkdir -p "$insights_artifacts" "$TAP_INSIGHTS_E2E_SCREENSHOTS"
+insights_artifacts="$(CDPATH= cd -- "$insights_artifacts" && pwd -P)"
+case "$insights_artifacts" in
+  "$insights_repo_root"/.superpowers/artifacts/* | "${TMPDIR:-/tmp}"/tap-task14.*) ;;
+  *) echo "refusing unsafe resolved Insights artifacts" >&2; exit 2 ;;
+esac
+
+insights_redact() {
+  python3 "$insights_script_dir/insights_runtime.py" redact
+}
 
 insights_compose() {
   docker compose -f "$insights_repo_root/compose.yaml" -p "$insights_project" --profile insights "$@"
@@ -73,10 +88,12 @@ insights_stop_apps() {
 insights_cleanup() {
   insights_stop_apps
   for log in "$insights_state_dir"/*.log; do
-    [ -f "$log" ] && cp "$log" "$insights_artifacts/$(basename "$log")"
+    [ -f "$log" ] && insights_redact <"$log" >"$insights_artifacts/$(basename "$log")"
   done
   if [ "$insights_compose_started" -eq 1 ]; then
-    if [ "$insights_preserve_volumes" = "1" ]; then
+    if ! python3 "$insights_script_dir/insights_runtime.py" verify-cleanup --compose-project "$insights_project"; then
+      echo "refusing cleanup after Insights resource ownership changed" >&2
+    elif [ "$insights_preserve_volumes" = "1" ]; then
       insights_compose down --remove-orphans >/dev/null 2>&1 || true
     else
       insights_compose down -v --remove-orphans >/dev/null 2>&1 || true
@@ -153,6 +170,9 @@ if [ -n "$existing" ]; then
   echo "refusing to reuse existing TAP Insights E2E resources" >&2
   exit 2
 fi
+python3 "$insights_script_dir/insights_runtime.py" initialize --compose-project "$insights_project"
+insights_require_free_port "$MYSQL_PORT"
+insights_require_free_port "$CLICKHOUSE_HTTP_PORT"
 insights_compose_started=1
 insights_compose up -d --wait --wait-timeout 180 mysql clickhouse
 uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head

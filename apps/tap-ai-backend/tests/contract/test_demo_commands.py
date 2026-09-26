@@ -3915,6 +3915,10 @@ def test_insights_e2e_cleans_owned_resources_after_partial_compose_up_failure(
     )
     docker.chmod(0o755)
     artifact_root = tmp_path / "tap-task14.insights"
+    project = f"tap-insights-task14-{os.urandom(6).hex()}-journey"
+    lsof = stubs / "lsof"
+    lsof.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    lsof.chmod(0o755)
 
     completed = subprocess.run(
         ["/bin/bash", str(ROOT / "scripts/run-tap-insights-e2e.sh")],
@@ -3923,7 +3927,7 @@ def test_insights_e2e_cleans_owned_resources_after_partial_compose_up_failure(
         | {
             "PATH": f"{stubs}:{os.environ['PATH']}",
             "TMPDIR": str(tmp_path),
-            "TAP_INSIGHTS_E2E_PROJECT": "tap-insights-task14-0123456789ab-journey",
+            "TAP_INSIGHTS_E2E_PROJECT": project,
             "TAP_INSIGHTS_E2E_PRESERVE_VOLUMES": "1",
             "TAP_INSIGHTS_E2E_ARTIFACTS": str(artifact_root),
         },
@@ -3934,6 +3938,7 @@ def test_insights_e2e_cleans_owned_resources_after_partial_compose_up_failure(
 
     assert completed.returncode == 73
     commands = calls.read_text()
+    assert f"-p {project}" in commands
     assert " compose " in f" {commands}"
     assert " up -d --wait --wait-timeout 180 mysql clickhouse" in commands
     assert " down --remove-orphans" in commands

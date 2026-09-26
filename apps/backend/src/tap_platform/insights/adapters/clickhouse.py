@@ -188,12 +188,25 @@ class ClickHouseInsightsStore:
         )
 
     def evidence_for(self, snapshot: ProjectionSnapshot, fact_key: str) -> list[str]:
-        effective_keys = {item.fact_key for item in self.effective_attempts(snapshot)}
-        if fact_key not in effective_keys:
+        winner = next(
+            (
+                item
+                for item in self.effective_attempts(snapshot)
+                if item.fact_key == fact_key
+            ),
+            None,
+        )
+        if winner is None:
             return []
         rows = self._visible_rows("evidence_refs", snapshot)
         return sorted(
-            {str(row["evidence_ref"]) for row in rows if row["fact_key"] == fact_key}
+            {
+                str(row["evidence_ref"])
+                for row in rows
+                if row["fact_key"] == fact_key
+                and str(row["receipt_id"]) == winner.receipt_id
+                and int(row["correction_no"]) == winner.correction_no
+            }
         )
 
     def run_dimensions(

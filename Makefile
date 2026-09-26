@@ -87,9 +87,9 @@ tap-backend-dev: ## run TAP non-AI backend separately
 
 tap-backend-check: ## verify TAP boundary, migrations, backend code, and all tests
 	uv run --project apps/backend python scripts/check_backend_boundary.py --product tap
-	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests apps/backend/migrations scripts/rebuild-insights.py scripts/export_tap_contracts.py
-	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests apps/backend/migrations scripts/rebuild-insights.py scripts/export_tap_contracts.py
-	uv run --project apps/backend mypy apps/backend/src scripts/rebuild-insights.py scripts/export_tap_contracts.py
+	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests apps/backend/migrations scripts/rebuild-insights.py scripts/insights_runtime.py scripts/export_tap_contracts.py
+	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests apps/backend/migrations scripts/rebuild-insights.py scripts/insights_runtime.py scripts/export_tap_contracts.py
+	uv run --project apps/backend mypy apps/backend/src scripts/rebuild-insights.py scripts/insights_runtime.py scripts/export_tap_contracts.py
 	uv run --project apps/backend pytest apps/backend/tests -q
 
 tap-backend-migrate: ## migrate configured TAP MySQL without resetting data

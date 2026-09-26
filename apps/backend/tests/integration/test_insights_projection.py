@@ -13,6 +13,7 @@ import uuid
 import re
 from dataclasses import replace
 from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -232,6 +233,7 @@ def projection_runtime(tmp_path: Path):
     engine = create_engine(MYSQL_URL)
     with engine.begin() as connection:
         for table_name in (
+            "tap_insights_queries",
             "tap_insights_projection_batches",
             "tap_insights_projection_state",
             "tap_insights_projection_versions",
@@ -285,7 +287,7 @@ def test_rebuild_script_is_dry_run_by_default_and_rejects_unsafe_targets(
         "--target-version",
         "rebuild-task10-v2",
         "--database-url",
-        "mysql+pymysql://tap:tap@127.0.0.1:33319/tap_task10",
+        "mysql+pymysql://tap:tap@127.0.0.1:33319/tap_task10_rebuild",
         "--object-root",
         str(tmp_path / "objects"),
         "--clickhouse-url",
@@ -307,7 +309,7 @@ def test_rebuild_script_is_dry_run_by_default_and_rejects_unsafe_targets(
         subprocess.run(
             local_stack, capture_output=True, text=True, check=False
         ).returncode
-        == 0
+        == 2
     )
 
     unsafe = subprocess.run(
@@ -361,6 +363,69 @@ def test_projection_migration_owns_version_batch_and_state_tables(
             "tap_insights_projection_state",
             "tap_insights_projection_versions",
         } <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
+def test_mysql_data_bearing_downgrade_retains_query_projection_and_report(
+    projection_runtime,
+):
+    ledger, objects, store = projection_runtime
+    base = replace(manifest(), started_at="2026-09-24T00:00:00+00:00")
+    receipt = project_manifest(ledger, objects, store, base)
+    record = query_service(ledger, store).execute(
+        project_id=base.project_id, query=metric_query()
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "alembic",
+        "-c",
+        str(REPOSITORY_ROOT / "apps/backend/alembic.ini"),
+    ]
+    environment = dict(os.environ, TAP_DATABASE_URL=MYSQL_URL)
+
+    def migrate(action, target):
+        return subprocess.run(
+            [*command, action, target],
+            cwd=REPOSITORY_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+
+    result = migrate("downgrade", "base")
+    assert (
+        result.returncode != 0 and "query history requires retention" in result.stderr
+    )
+    assert ledger.get_query(record.query_id).metrics == record.metrics
+    engine = create_engine(MYSQL_URL)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM tap_insights_queries"))
+        assert migrate("downgrade", "0003_insights_projection").returncode == 0
+        result = migrate("downgrade", "0002_manifest_fingerprint")
+        assert (
+            result.returncode != 0
+            and "projection authority requires retention" in result.stderr
+        )
+        assert ledger.projection_snapshot().visible_data_version == 1
+        with engine.begin() as connection:
+            for table in (
+                "tap_insights_projection_batches",
+                "tap_insights_projection_state",
+                "tap_insights_projection_versions",
+            ):
+                connection.execute(text(f"DELETE FROM {table}"))
+        assert migrate("downgrade", "0001_report_intake").returncode == 0
+        result = migrate("downgrade", "base")
+        assert (
+            result.returncode != 0
+            and "report authority requires retention" in result.stderr
+        )
+        assert migrate("upgrade", "head").returncode == 0
+        assert ledger.get_receipt(receipt.receipt_id).checksum == receipt.checksum
+        assert objects.read(receipt.raw_object_ref) == report("retry.xml")
     finally:
         engine.dispose()
 
@@ -631,6 +696,41 @@ def test_cross_batch_same_logical_attempt_is_idempotent_and_conflicts_are_durabl
     assert result.row_count == 2
 
 
+def test_concurrent_cross_batch_mapping_serializes_logical_content_authority(
+    projection_runtime,
+):
+    ledger, objects, store = projection_runtime
+    base = replace(manifest(), started_at="2026-09-24T00:00:00+00:00")
+    intake = ReportIntake(ledger=ledger, objects=objects)
+    first = intake.receive(base, [report("retry.xml")])
+    second = intake.receive(
+        replace(base, batch_id="concurrent-batch"),
+        [report("retry.xml").replace(b'time="0.7"', b'time="9.7"')],
+    )
+    worker = ReportWorker(
+        ledger=ledger,
+        objects=objects,
+        projector=ProjectionCoordinator(ledger=ledger, store=store),
+    )
+    for item in (first, second):
+        worker.process_one(item.receipt_id)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert all(
+            executor.map(worker.process_one, (first.receipt_id, second.receipt_id))
+        )
+    receipts = [ledger.get_receipt(item.receipt_id) for item in (first, second)]
+    assert {item.state for item in receipts} == {
+        ReportState.MAPPED,
+        ReportState.CONFLICTED,
+    }
+    winner = next(item for item in receipts if item.state is ReportState.MAPPED)
+    loser = next(item for item in receipts if item.state is ReportState.CONFLICTED)
+    assert loser.conflict_with_receipt_id == winner.receipt_id
+    worker.process_one(winner.receipt_id)
+    worker.process_one(winner.receipt_id)
+    assert len(store.effective_attempts(ledger.projection_snapshot())) == 2
+
+
 @pytest.mark.parametrize("expected", [2, None])
 def test_query_completeness_is_frozen_at_visible_projection_watermark(
     projection_runtime, expected
@@ -743,6 +843,18 @@ def test_evidence_dimension_retains_authorized_reference(projection_runtime) -> 
     assert ProjectionCoordinator(ledger=ledger, store=store).project_receipt(receipt_id)
     snapshot = ledger.projection_snapshot()
     fact = store.effective_attempts(snapshot)[0]
+    assert store.evidence_for(snapshot, fact.fact_key) == ["failure-log"]
+    corrected = map_to_projecting(
+        ledger,
+        objects,
+        correction_no=1,
+        raw=raw.replace(b"failure-log", b"updated-log"),
+        attachments=frozenset({"updated-log"}),
+    )
+    assert ProjectionCoordinator(ledger=ledger, store=store).project_receipt(corrected)
+    assert store.evidence_for(ledger.projection_snapshot(), fact.fact_key) == [
+        "updated-log"
+    ]
     assert store.evidence_for(snapshot, fact.fact_key) == ["failure-log"]
 
 

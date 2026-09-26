@@ -12,6 +12,8 @@ import sys
 import urllib.parse
 from pathlib import Path
 
+from insights_runtime import verify_object_root, verify_service
+
 from sqlalchemy import create_engine
 
 from tap_platform.insights.adapters.clickhouse import ClickHouseInsightsStore
@@ -97,7 +99,10 @@ def _verify_owned_clickhouse(compose_project: str, clickhouse_url: str) -> None:
 
 def main() -> int:
     args = _arguments()
-    if _OWNED_PROJECT.fullmatch(args.compose_project) is None:
+    if (
+        _OWNED_PROJECT.fullmatch(args.compose_project) is None
+        or args.compose_project == "tap-insights-local"
+    ):
         return _reject("rebuild requires an owned isolated Compose project")
     if _TARGET.fullmatch(args.target_version) is None:
         return _reject("rebuild target must be an explicit rebuild-* version")
@@ -106,11 +111,16 @@ def main() -> int:
     clickhouse_database = urllib.parse.parse_qs(clickhouse.query).get("database", [""])[
         0
     ]
-    if mysql_host not in {
-        "127.0.0.1",
-        "localhost",
-        "::1",
-    } or not (mysql_database == "tap" or mysql_database.startswith("tap_task10")):
+    if (
+        mysql_host
+        not in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }
+        or re.fullmatch(r"tap_task[0-9]+_[a-z0-9_]+", mysql_database) is None
+        or urllib.parse.urlsplit(args.database_url).port in {None, 3306}
+    ):
         return _reject("rebuild refuses a shared, default, or non-loopback MySQL")
     if (
         clickhouse.hostname
@@ -120,6 +130,7 @@ def main() -> int:
             "::1",
         }
         or clickhouse_database != "tap_insights"
+        or clickhouse.port in {None, 8123}
     ):
         return _reject("rebuild refuses a shared, default, or non-loopback ClickHouse")
     if args.dry_run:
@@ -143,9 +154,24 @@ def main() -> int:
     if not writer_user or not writer_password:
         return _reject("confirmed rebuild requires ClickHouse writer credentials")
     try:
+        mysql_port = urllib.parse.urlsplit(args.database_url).port
+        assert mysql_port is not None and clickhouse.port is not None
+        verify_object_root(
+            args.compose_project,
+            args.object_root,
+            mysql_database,
+            mysql_port,
+            clickhouse.port,
+        )
+        verify_service(
+            args.compose_project, "mysql", mysql_port, database=mysql_database
+        )
+        verify_service(args.compose_project, "clickhouse", clickhouse.port)
         _verify_owned_clickhouse(args.compose_project, args.clickhouse_url)
-    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
-        return _reject(f"owned ClickHouse verification failed: {exc}")
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, KeyError):
+        return _reject(
+            "owned MySQL, ClickHouse and raw object authority verification failed"
+        )
     engine = create_engine(args.database_url, pool_pre_ping=True)
     try:
         ledger = SqlAlchemyReportLedger(engine)
