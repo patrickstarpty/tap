@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS tap_insights.attempt_facts
     result LowCardinality(String),
     duration_seconds Nullable(Float64),
     missing_reasons Array(String),
-    first_attempt_eligible UInt8
+    first_attempt_eligible UInt8,
+    started_at Nullable(String)
 )
 ENGINE = MergeTree
 ORDER BY
@@ -77,6 +78,9 @@ ORDER BY
     report_batch_id, shard_id, correction_no, fact_key,
     data_version, projection_batch_id
 );
+
+ALTER TABLE tap_insights.attempt_facts
+ADD COLUMN IF NOT EXISTS started_at Nullable(String) AFTER first_attempt_eligible;
 
 CREATE TABLE IF NOT EXISTS tap_insights.evidence_refs
 (

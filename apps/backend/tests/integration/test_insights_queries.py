@@ -362,16 +362,16 @@ def test_real_query_correction_history_limits_auth_and_evidence(runtime) -> None
     assert values["first_pass_rate"]["evidenceRefs"] == [receipt_id]
 
     query_id = created["queryId"]
-    assert (
-        client.get(
-            "/api/v1/projects/project-a/insights/runs",
-            params={"queryId": query_id},
-            headers=headers,
-        ).json()["queryId"]
-        == query_id
-    )
+    runs_page = client.get(
+        "/api/v1/projects/project-a/insights/runs",
+        params={"queryId": query_id},
+        headers=headers,
+    ).json()
+    assert runs_page["queryId"] == query_id
+    run_id = runs_page["items"][0]["runId"]
+    assert runs_page["items"][0]["externalRunId"] == "run-a"
     attempts_page = client.get(
-        "/api/v1/projects/project-a/insights/runs/run-a/attempts",
+        f"/api/v1/projects/project-a/insights/runs/{run_id}/attempts",
         params={"queryId": query_id},
         headers=headers,
     ).json()

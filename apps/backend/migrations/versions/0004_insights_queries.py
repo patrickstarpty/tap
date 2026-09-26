@@ -20,20 +20,6 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.alter_column(
-        "tap_insights_projection_versions",
-        "activated_at",
-        existing_type=sa.DateTime(timezone=True),
-        type_=mysql.DATETIME(fsp=6),
-        existing_nullable=True,
-    )
-    op.alter_column(
-        "tap_insights_projection_batches",
-        "completed_at",
-        existing_type=sa.DateTime(timezone=True),
-        type_=mysql.DATETIME(fsp=6),
-        existing_nullable=True,
-    )
     op.create_table(
         "tap_insights_queries",
         sa.Column("query_id", sa.String(length=36), nullable=False),
@@ -64,17 +50,3 @@ def downgrade() -> None:
         table_name="tap_insights_queries",
     )
     op.drop_table("tap_insights_queries")
-    op.alter_column(
-        "tap_insights_projection_batches",
-        "completed_at",
-        existing_type=mysql.DATETIME(fsp=6),
-        type_=sa.DateTime(timezone=True),
-        existing_nullable=True,
-    )
-    op.alter_column(
-        "tap_insights_projection_versions",
-        "activated_at",
-        existing_type=mysql.DATETIME(fsp=6),
-        type_=sa.DateTime(timezone=True),
-        existing_nullable=True,
-    )

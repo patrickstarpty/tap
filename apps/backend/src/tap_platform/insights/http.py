@@ -162,7 +162,11 @@ def create_insights_router(
             raise HTTPException(
                 status_code=504, detail="insights query timed out"
             ) from exc
-        except (QueryUnavailable, ValueError) as exc:
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail="invalid insights query"
+            ) from exc
+        except QueryUnavailable as exc:
             raise HTTPException(
                 status_code=503, detail="insights query unavailable"
             ) from exc
@@ -200,10 +204,38 @@ def create_insights_router(
             resource_kind="run",
             resource_id=query_id,
         )
+        if query_service is None:
+            raise HTTPException(status_code=503, detail="insights query unavailable")
+        try:
+            record, items, next_cursor = await run_in_threadpool(
+                query_service.run_page,
+                project_id=project_id,
+                query_id=query_id,
+                cursor=cursor,
+                limit=limit,
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404, detail="insights query not found"
+            ) from exc
+        except QueryTimedOut as exc:
+            raise HTTPException(
+                status_code=504, detail="insights query timed out"
+            ) from exc
+        except QueryLimitExceeded as exc:
+            raise HTTPException(
+                status_code=422, detail="insights query limit exceeded"
+            ) from exc
+        except QueryUnavailable as exc:
+            raise HTTPException(
+                status_code=503, detail="insights query unavailable"
+            ) from exc
         return run_page_contract(
-            _historical(query_service, project_id, query_id),
+            record,
             cursor=cursor,
             limit=limit,
+            items=items,
+            next_cursor=next_cursor,
         )
 
     @router.get(
@@ -226,14 +258,40 @@ def create_insights_router(
             resource_kind="run",
             resource_id=run_id,
         )
-        record = _historical(query_service, project_id, query_id)
-        if not any(item.run_id == run_id for item in record.runs):
-            raise HTTPException(status_code=404, detail="insights run not found")
+        if query_service is None:
+            raise HTTPException(status_code=503, detail="insights query unavailable")
+        try:
+            record, items, next_cursor = await run_in_threadpool(
+                query_service.attempt_page,
+                project_id=project_id,
+                query_id=query_id,
+                run_id=run_id,
+                cursor=cursor,
+                limit=limit,
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404, detail="insights run not found"
+            ) from exc
+        except QueryTimedOut as exc:
+            raise HTTPException(
+                status_code=504, detail="insights query timed out"
+            ) from exc
+        except QueryLimitExceeded as exc:
+            raise HTTPException(
+                status_code=422, detail="insights query limit exceeded"
+            ) from exc
+        except QueryUnavailable as exc:
+            raise HTTPException(
+                status_code=503, detail="insights query unavailable"
+            ) from exc
         return attempt_page_contract(
             record,
             run_id=run_id,
             cursor=cursor,
             limit=limit,
+            items=items,
+            next_cursor=next_cursor,
         )
 
     @router.get("/failures", response_model=FailurePageContract)
@@ -252,10 +310,38 @@ def create_insights_router(
             resource_kind="failure",
             resource_id=query_id,
         )
+        if query_service is None:
+            raise HTTPException(status_code=503, detail="insights query unavailable")
+        try:
+            record, items, next_cursor = await run_in_threadpool(
+                query_service.failure_page,
+                project_id=project_id,
+                query_id=query_id,
+                cursor=cursor,
+                limit=limit,
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404, detail="insights query not found"
+            ) from exc
+        except QueryTimedOut as exc:
+            raise HTTPException(
+                status_code=504, detail="insights query timed out"
+            ) from exc
+        except QueryLimitExceeded as exc:
+            raise HTTPException(
+                status_code=422, detail="insights query limit exceeded"
+            ) from exc
+        except QueryUnavailable as exc:
+            raise HTTPException(
+                status_code=503, detail="insights query unavailable"
+            ) from exc
         return failure_page_contract(
-            _historical(query_service, project_id, query_id),
+            record,
             cursor=cursor,
             limit=limit,
+            items=items,
+            next_cursor=next_cursor,
         )
 
     @router.post("/reports", status_code=status.HTTP_202_ACCEPTED)
@@ -352,6 +438,10 @@ def _historical(service: InsightsQueryService | None, project_id: str, query_id:
         return service.historical(project_id=project_id, query_id=query_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="insights query not found") from exc
+    except QueryUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail="insights query unavailable"
+        ) from exc
 
 
 async def _bounded_request_chunks(request: Request, *, max_bytes: int) -> list[bytes]:

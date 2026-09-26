@@ -36,6 +36,8 @@ class FactSource:
         *,
         snapshot: ProjectionSnapshot,
         project_id: str,
+        query: object,
+        window: object,
         limits: QueryLimits,
     ) -> list[MetricAttempt]:
         if not self.available:
@@ -92,7 +94,7 @@ def query_app():
         history=InMemoryQueryHistory(),
         clock=lambda: datetime(2026, 9, 25, tzinfo=UTC),
         limits=QueryLimits(
-            max_rows_to_read=100,
+            max_rows_to_read=1,
             max_bytes_to_read=1_000_000,
             max_memory_bytes=1_000_000,
             max_concurrent_queries=1,
@@ -146,6 +148,31 @@ def test_catalog_and_query_return_versioned_traceable_results(query_app) -> None
     assert body["queryId"]
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("from", "2026-02-30"),
+        ("to", "2026-09-23"),
+        ("timezone", "Not/A_Zone"),
+        ("asOf", "2026-09-25T00:00:00"),
+    ],
+)
+def test_query_contract_rejects_invalid_time_scope(
+    query_app, field: str, value: str
+) -> None:
+    client, _, _ = query_app
+    body = request_body()
+    body[field] = value
+
+    response = client.post(
+        "/api/v1/projects/project-a/insights/queries",
+        headers={"Authorization": "Bearer test-token"},
+        json=body,
+    )
+
+    assert response.status_code == 422
+
+
 def test_historical_query_is_immutable_and_reauthorized_after_revocation(
     query_app,
 ) -> None:
@@ -196,11 +223,15 @@ def test_run_and_failure_pages_use_the_persisted_query_scope(query_app) -> None:
     )
 
     assert runs.status_code == 200
+    run_id = runs.json()["items"][0]["runId"]
+    assert len(run_id) == 64
+    assert run_id != "run-a"
     assert runs.json() == {
         "queryId": query_id,
         "items": [
             {
-                "runId": "run-a",
+                "runId": run_id,
+                "externalRunId": "run-a",
                 "sourceId": "ci-a",
                 "environment": "qa",
                 "configuration": "browser=chromium",
@@ -218,17 +249,18 @@ def test_run_and_failure_pages_use_the_persisted_query_scope(query_app) -> None:
         "nextCursor": None,
     }
     attempts = client.get(
-        "/api/v1/projects/project-a/insights/runs/run-a/attempts",
+        f"/api/v1/projects/project-a/insights/runs/{run_id}/attempts",
         params={"queryId": query_id, "limit": 10},
         headers={"Authorization": "Bearer test-token"},
     )
     assert attempts.status_code == 200
     assert attempts.json() == {
         "queryId": query_id,
-        "runId": "run-a",
+        "runId": run_id,
         "items": [
             {
                 "factKey": "fact-a",
+                "externalRunId": "run-a",
                 "stableTestId": "test-a",
                 "sourceTestIdentity": "Checkout.test",
                 "dataRow": None,
@@ -282,7 +314,7 @@ def test_query_output_limit_returns_explicit_failure_not_truncated_data() -> Non
         history=InMemoryQueryHistory(),
         clock=lambda: datetime(2026, 9, 25, tzinfo=UTC),
         limits=QueryLimits(
-            max_rows_to_read=100,
+            max_rows_to_read=1,
             max_bytes_to_read=1_000_000,
             max_memory_bytes=1_000_000,
             max_concurrent_queries=1,

@@ -168,7 +168,7 @@ insights_projection_versions = Table(
     Column("verified_row_count", BigInteger, nullable=True),
     Column("verified_checksum", String(64), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("activated_at", precise_datetime, nullable=True),
+    Column("activated_at", DateTime(timezone=True), nullable=True),
 )
 
 insights_projection_state = Table(
@@ -206,7 +206,7 @@ insights_projection_batches = Table(
     Column("row_count", BigInteger, nullable=False),
     Column("status", String(32), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("completed_at", precise_datetime, nullable=True),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
     UniqueConstraint(
         "projection_version",
         "receipt_id",
@@ -252,7 +252,9 @@ _ALLOWED_TRANSITIONS: dict[ReportState, set[ReportState]] = {
 
 
 def _now() -> datetime:
-    return datetime.now(UTC)
+    # Existing projection timestamps are second-precision. Floor before writing
+    # so a just-captured as-of never precedes a rounded-up activation/completion.
+    return datetime.now(UTC).replace(microsecond=0)
 
 
 class SqlAlchemyReportLedger:
@@ -577,11 +579,13 @@ class SqlAlchemyReportLedger:
         requested = as_of.astimezone(UTC)
         with self._engine.begin() as connection:
             self._ensure_default_projection(connection)
-            versions = connection.execute(
-                select(insights_projection_versions)
-                .where(insights_projection_versions.c.activated_at.is_not(None))
-                .order_by(insights_projection_versions.c.activated_at.desc())
-            ).mappings()
+            versions = list(
+                connection.execute(
+                    select(insights_projection_versions)
+                    .where(insights_projection_versions.c.activated_at.is_not(None))
+                    .order_by(insights_projection_versions.c.activated_at.desc())
+                ).mappings()
+            )
             selected = next(
                 (
                     row
@@ -591,7 +595,12 @@ class SqlAlchemyReportLedger:
                 None,
             )
             if selected is None:
-                raise KeyError("no projection was active at the requested as-of")
+                # Before the first activation the authoritative view is explicitly
+                # empty, not an infrastructure error and never the latest facts.
+                return ProjectionSnapshot(
+                    projection_version=str(versions[-1]["projection_version"]),
+                    visible_data_version=0,
+                )
             batches = connection.execute(
                 select(
                     insights_projection_batches.c.data_version,
@@ -1304,6 +1313,7 @@ def _query_result_payload(record: QueryRecord) -> dict[str, object]:
         "runs": [
             {
                 "run_id": item.run_id,
+                "external_run_id": item.external_run_id,
                 "source_id": item.source_id,
                 "environment": item.environment,
                 "configuration": item.configuration,
@@ -1319,6 +1329,7 @@ def _query_result_payload(record: QueryRecord) -> dict[str, object]:
             {
                 "fact_key": item.fact_key,
                 "run_id": item.run_id,
+                "external_run_id": item.external_run_id,
                 "source_id": item.source_id,
                 "stable_test_id": item.stable_test_id,
                 "source_test_identity": item.source_test_identity,
@@ -1333,6 +1344,7 @@ def _query_result_payload(record: QueryRecord) -> dict[str, object]:
             {
                 "fact_key": item.fact_key,
                 "run_id": item.run_id,
+                "external_run_id": item.external_run_id,
                 "stable_test_id": item.stable_test_id,
                 "source_test_identity": item.source_test_identity,
                 "data_row": item.data_row,
@@ -1395,6 +1407,7 @@ def _row_to_query_record(row: RowMapping) -> QueryRecord:
         runs=tuple(
             RunSummary(
                 run_id=str(item["run_id"]),
+                external_run_id=str(item.get("external_run_id", item["run_id"])),
                 source_id=str(item["source_id"]),
                 environment=str(item["environment"]),
                 configuration=str(item["configuration"]),
@@ -1412,6 +1425,7 @@ def _row_to_query_record(row: RowMapping) -> QueryRecord:
             FailureDetail(
                 fact_key=str(item["fact_key"]),
                 run_id=str(item["run_id"]),
+                external_run_id=str(item.get("external_run_id", item["run_id"])),
                 source_id=str(item["source_id"]),
                 stable_test_id=item["stable_test_id"],
                 source_test_identity=str(item["source_test_identity"]),
@@ -1426,6 +1440,7 @@ def _row_to_query_record(row: RowMapping) -> QueryRecord:
             AttemptDetail(
                 fact_key=str(item["fact_key"]),
                 run_id=str(item["run_id"]),
+                external_run_id=str(item.get("external_run_id", item["run_id"])),
                 stable_test_id=item["stable_test_id"],
                 source_test_identity=str(item["source_test_identity"]),
                 data_row=item["data_row"],

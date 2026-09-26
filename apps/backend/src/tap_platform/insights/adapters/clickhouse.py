@@ -6,6 +6,8 @@ import base64
 import hashlib
 import json
 import re
+import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -13,8 +15,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from tap_platform.insights.application.queries import QueryLimitExceeded, QueryLimits
-from tap_platform.insights.domain.metrics import MetricAttempt
+from tap_platform.insights.application.queries import (
+    MetricQuery,
+    QueryLimitExceeded,
+    QueryLimits,
+)
+from tap_platform.insights.domain.metrics import MetricAttempt, MetricWindow
 from tap_platform.insights.domain.projection import (
     ProjectedAttempt,
     ProjectionReservation,
@@ -102,14 +108,25 @@ class ClickHouseInsightsStore:
         *,
         project_id: str | None = None,
         limits: QueryLimits | None = None,
+        query: MetricQuery | None = None,
+        window: MetricWindow | None = None,
+        deadline: float | None = None,
     ) -> list[ProjectedAttempt]:
         selected = self._selected_markers(
-            snapshot, project_id=project_id, limits=limits
+            snapshot,
+            project_id=project_id,
+            limits=_remaining_limits(limits, deadline),
+            query=query,
         )
         if not selected:
             return []
         rows = self._visible_rows(
-            "attempt_facts", snapshot, project_id=project_id, limits=limits
+            "attempt_facts",
+            snapshot,
+            project_id=project_id,
+            limits=_remaining_limits(limits, deadline),
+            query=query,
+            window=window,
         )
         by_key: dict[str, dict[str, Any]] = {}
         checksums: dict[str, set[str]] = {}
@@ -209,19 +226,24 @@ class ClickHouseInsightsStore:
         *,
         snapshot: ProjectionSnapshot,
         project_id: str,
+        query: MetricQuery,
+        window: MetricWindow,
         limits: QueryLimits,
     ) -> list[MetricAttempt]:
         """Execute only the fixed, project-scoped effective-fact templates."""
         try:
+            deadline = time.monotonic() + limits.timeout_seconds
             attempts = self.effective_attempts(
-                snapshot, project_id=project_id, limits=limits
-            )
-            dimensions = self.run_dimensions(
-                snapshot, project_id=project_id, limits=limits
+                snapshot,
+                project_id=project_id,
+                limits=limits,
+                query=query,
+                window=window,
+                deadline=deadline,
             )
         except ClickHouseProjectionError as exc:
             detail = str(exc).lower()
-            if "timeout" in detail or "time limit" in detail:
+            if "timeout_exceeded" in detail or "maximum execution time" in detail:
                 raise TimeoutError("ClickHouse query timed out") from exc
             if any(
                 token in detail
@@ -235,27 +257,8 @@ class ClickHouseInsightsStore:
             ):
                 raise QueryLimitExceeded("ClickHouse query limit exceeded") from exc
             raise
-        dimension_by_scope = {
-            (
-                item.project_id,
-                item.source_id,
-                item.external_run_id,
-                item.report_batch_id,
-                item.shard_id,
-            ): item
-            for item in dimensions
-        }
         results: list[MetricAttempt] = []
         for item in attempts:
-            dimension = dimension_by_scope.get(
-                (
-                    item.project_id,
-                    item.source_id,
-                    item.external_run_id,
-                    item.report_batch_id,
-                    item.shard_id,
-                )
-            )
             results.append(
                 MetricAttempt(
                     fact_key=item.fact_key,
@@ -275,9 +278,7 @@ class ClickHouseInsightsStore:
                     duration_seconds=item.duration_seconds,
                     first_attempt_eligible=item.first_attempt_eligible,
                     missing_reasons=item.missing_reasons,
-                    run_started_at=dimension.started_at
-                    if dimension is not None
-                    else None,
+                    run_started_at=item.started_at,
                 )
             )
         return results
@@ -294,12 +295,14 @@ class ClickHouseInsightsStore:
         *,
         project_id: str | None = None,
         limits: QueryLimits | None = None,
+        query: MetricQuery | None = None,
     ) -> dict[tuple[str, ...], int]:
         rows = self._visible_rows(
             "report_batch_markers",
             snapshot,
             project_id=project_id,
             limits=limits,
+            query=query,
         )
         selected: dict[tuple[str, ...], int] = {}
         marker_checksums: dict[tuple[tuple[str, ...], int], set[str]] = {}
@@ -323,6 +326,8 @@ class ClickHouseInsightsStore:
         *,
         project_id: str | None = None,
         limits: QueryLimits | None = None,
+        query: MetricQuery | None = None,
+        window: MetricWindow | None = None,
     ) -> list[dict[str, Any]]:
         if table not in {
             "attempt_facts",
@@ -335,6 +340,16 @@ class ClickHouseInsightsStore:
         project_clause = (
             f" AND project_id = {_quote(project_id)}" if project_id is not None else ""
         )
+        scope_clause = _query_scope_clause(query)
+        window_clause = ""
+        if table == "attempt_facts" and window is not None:
+            window_clause = (
+                " AND (started_at IS NULL OR "
+                "parseDateTimeBestEffortOrNull(started_at) >= "
+                f"parseDateTimeBestEffort({_quote(window.start.isoformat())}) "
+                "AND parseDateTimeBestEffortOrNull(started_at) < "
+                f"parseDateTimeBestEffort({_quote(window.end.isoformat())}))"
+            )
         settings = ""
         if limits is not None:
             settings = (
@@ -342,8 +357,8 @@ class ClickHouseInsightsStore:
                 f" max_rows_to_read = {limits.max_rows_to_read},"
                 f" max_bytes_to_read = {limits.max_bytes_to_read},"
                 f" max_memory_usage = {limits.max_memory_bytes},"
-                f" max_result_rows = {limits.max_output_rows},"
-                f" max_result_bytes = {limits.max_output_bytes},"
+                f" max_result_rows = {limits.max_rows_to_read},"
+                f" max_result_bytes = {limits.max_bytes_to_read},"
                 f" max_execution_time = {limits.timeout_seconds},"
                 " max_threads = 1,"
                 " read_overflow_mode = 'throw',"
@@ -354,7 +369,8 @@ class ClickHouseInsightsStore:
             f"SELECT * FROM {table} "
             f"WHERE projection_version = {projection_version} "
             f"AND data_version <= {snapshot.visible_data_version} "
-            f"{project_clause}{settings} FORMAT JSONEachRow"
+            f"{project_clause}{scope_clause}{window_clause}{settings} FORMAT JSONEachRow",
+            timeout_seconds=(limits.timeout_seconds if limits is not None else None),
         )
 
     @staticmethod
@@ -397,6 +413,7 @@ class ClickHouseInsightsStore:
             ),
             missing_reasons=tuple(str(item) for item in row["missing_reasons"]),
             first_attempt_eligible=bool(row["first_attempt_eligible"]),
+            started_at=_datetime(row, "started_at"),
         )
 
     def _insert_rows(self, table: str, rows: tuple[dict[str, Any], ...]) -> None:
@@ -408,11 +425,23 @@ class ClickHouseInsightsStore:
         )
         self._execute(f"INSERT INTO {table} FORMAT JSONEachRow", payload)
 
-    def _json_query(self, sql: str) -> list[dict[str, Any]]:
-        raw = self._execute(sql)
+    def _json_query(
+        self, sql: str, *, timeout_seconds: float | None = None
+    ) -> list[dict[str, Any]]:
+        raw = (
+            self._execute(sql)
+            if timeout_seconds is None
+            else self._execute(sql, timeout_seconds=timeout_seconds)
+        )
         return [json.loads(line) for line in raw.splitlines() if line]
 
-    def _execute(self, sql: str, body: bytes | None = None) -> bytes:
+    def _execute(
+        self,
+        sql: str,
+        body: bytes | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> bytes:
         params = urllib.parse.urlencode({"database": self._database, "query": sql})
         request = urllib.request.Request(
             f"{self._endpoint}?{params}",
@@ -424,16 +453,23 @@ class ClickHouseInsightsStore:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(
-                request, timeout=self._timeout_seconds
-            ) as response:
+            timeout = (
+                self._timeout_seconds
+                if timeout_seconds is None
+                else min(self._timeout_seconds, timeout_seconds)
+            )
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 return response.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")[:2000]
             raise ClickHouseProjectionError(
                 f"ClickHouse request failed ({exc.code}): {detail}"
             ) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise TimeoutError("ClickHouse query timed out") from exc
         except urllib.error.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise TimeoutError("ClickHouse query timed out") from exc
             raise ClickHouseProjectionError("ClickHouse is unavailable") from exc
 
 
@@ -458,3 +494,32 @@ def _datetime(value: dict[str, Any], field: str) -> datetime | None:
 
 def _quote(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _query_scope_clause(query: MetricQuery | None) -> str:
+    if query is None:
+        return ""
+    fields = (
+        ("source_id", query.filters.source_ids),
+        ("external_run_id", query.filters.run_ids),
+        ("environment", query.filters.environments),
+        ("configuration", query.filters.configurations),
+    )
+    return "".join(
+        f" AND {field} IN ({','.join(_quote(value) for value in values)})"
+        for field, values in fields
+        if values
+    )
+
+
+def _remaining_limits(
+    limits: QueryLimits | None, deadline: float | None
+) -> QueryLimits | None:
+    if limits is None or deadline is None:
+        return limits
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("ClickHouse query timed out")
+    from dataclasses import replace
+
+    return replace(limits, timeout_seconds=remaining)

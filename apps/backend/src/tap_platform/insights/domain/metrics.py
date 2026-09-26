@@ -203,7 +203,7 @@ def calculate_metrics(
             missing_reasons=(missing_reason,),
             evidence_refs=evidence,
         )
-        unavailable = {
+        values = {
             metric_id: MetricValue(
                 metric_id=metric_id,
                 numerator=paired_unavailable.numerator,
@@ -213,16 +213,17 @@ def calculate_metrics(
                 missing_reasons=paired_unavailable.missing_reasons,
                 evidence_refs=evidence,
             )
-            for metric_id in (
-                MetricId.FIRST_PASS_RATE,
-                MetricId.FINAL_PASS_RATE,
-                MetricId.RETRY_RECOVERY_RATE,
-                MetricId.RECOVERY_CONTRIBUTION_RATE,
-            )
+            for metric_id in MetricId
         }
     else:
         denominator_groups = [
-            items for items in ordered_groups if items[0].result in _TERMINAL_RESULTS
+            terminal_items
+            for items in ordered_groups
+            if (
+                terminal_items := [
+                    item for item in items if item.result in _TERMINAL_RESULTS
+                ]
+            )
         ]
         initial_failures = [
             items
@@ -231,7 +232,7 @@ def calculate_metrics(
         ]
         recovered = [items for items in initial_failures if items[-1].result == "pass"]
         d = len(denominator_groups)
-        unavailable = {
+        values = {
             MetricId.FIRST_PASS_RATE: _ratio(
                 MetricId.FIRST_PASS_RATE,
                 sum(items[0].result == "pass" for items in denominator_groups),
@@ -256,20 +257,20 @@ def calculate_metrics(
                 d,
                 evidence,
             ),
+            MetricId.SKIPPED_COUNT: MetricValue(
+                metric_id=MetricId.SKIPPED_COUNT,
+                numerator=(
+                    skipped := sum(
+                        items[0].result == "skipped" for items in ordered_groups
+                    )
+                ),
+                denominator=None,
+                value=float(skipped),
+                completeness="complete",
+                missing_reasons=(),
+                evidence_refs=evidence,
+            ),
         }
-    skipped = sum(items[0].result == "skipped" for items in ordered_groups)
-    values = {
-        **unavailable,
-        MetricId.SKIPPED_COUNT: MetricValue(
-            metric_id=MetricId.SKIPPED_COUNT,
-            numerator=skipped,
-            denominator=None,
-            value=float(skipped),
-            completeness="complete",
-            missing_reasons=(),
-            evidence_refs=evidence,
-        ),
-    }
     return tuple(values[metric_id] for metric_id in metric_ids)
 
 

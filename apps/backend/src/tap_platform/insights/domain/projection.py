@@ -54,6 +54,7 @@ class ProjectedAttempt:
     duration_seconds: float | None
     missing_reasons: tuple[str, ...]
     first_attempt_eligible: bool
+    started_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

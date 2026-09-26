@@ -44,6 +44,10 @@
             "title": "Evidencerefs",
             "type": "array"
           },
+          "externalRunId": {
+            "title": "Externalrunid",
+            "type": "string"
+          },
           "factKey": {
             "title": "Factkey",
             "type": "string"
@@ -70,6 +74,7 @@
         },
         "required": [
           "factKey",
+          "externalRunId",
           "stableTestId",
           "sourceTestIdentity",
           "dataRow",
@@ -165,6 +170,10 @@
             "title": "Evidencerefs",
             "type": "array"
           },
+          "externalRunId": {
+            "title": "Externalrunid",
+            "type": "string"
+          },
           "factKey": {
             "title": "Factkey",
             "type": "string"
@@ -204,6 +213,7 @@
         "required": [
           "factKey",
           "runId",
+          "externalRunId",
           "sourceId",
           "stableTestId",
           "sourceTestIdentity",
@@ -379,13 +389,7 @@
             "type": "string"
           },
           "filters": {
-            "$ref": "#/components/schemas/MetricFiltersContract",
-            "default": {
-              "configurations": [],
-              "environments": [],
-              "runIds": [],
-              "sourceIds": []
-            }
+            "$ref": "#/components/schemas/MetricFiltersContract"
           },
           "from": {
             "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
@@ -620,6 +624,10 @@
             "title": "Evidencerefs",
             "type": "array"
           },
+          "externalRunId": {
+            "title": "Externalrunid",
+            "type": "string"
+          },
           "instanceCount": {
             "title": "Instancecount",
             "type": "integer"
@@ -647,6 +655,7 @@
         },
         "required": [
           "runId",
+          "externalRunId",
           "sourceId",
           "environment",
           "configuration",

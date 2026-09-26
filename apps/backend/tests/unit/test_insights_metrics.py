@@ -102,6 +102,33 @@ def test_oracle_uses_distinct_first_final_and_recovery_denominators() -> None:
     assert results[MetricId.SKIPPED_COUNT].numerator == 1
 
 
+def test_oracle_uses_first_and_final_valid_terminal_attempts() -> None:
+    """Nonterminal observations must not change the paired terminal formula."""
+    results = metric_map(
+        [
+            attempt(test_id="a", attempt_no=1, result="skipped"),
+            attempt(test_id="a", attempt_no=2, result="pass"),
+            attempt(test_id="b", attempt_no=1, result="fail"),
+            attempt(test_id="b", attempt_no=2, result="pass"),
+            attempt(test_id="b", attempt_no=3, result="canceled"),
+        ]
+    )
+
+    assert (
+        results[MetricId.FIRST_PASS_RATE].numerator,
+        results[MetricId.FIRST_PASS_RATE].denominator,
+    ) == (1, 2)
+    assert (
+        results[MetricId.FINAL_PASS_RATE].numerator,
+        results[MetricId.FINAL_PASS_RATE].denominator,
+    ) == (2, 2)
+    assert (
+        results[MetricId.RETRY_RECOVERY_RATE].numerator,
+        results[MetricId.RETRY_RECOVERY_RATE].denominator,
+    ) == (1, 1)
+    assert results[MetricId.SKIPPED_COUNT].numerator == 1
+
+
 def test_missing_first_history_makes_paired_metrics_unavailable_not_zero() -> None:
     """Treating a final-only pass as attempt one would fabricate first-pass data."""
     results = metric_map(
@@ -159,6 +186,27 @@ def test_zero_denominator_returns_null_and_empty_not_normal_zero() -> None:
     assert results[MetricId.SKIPPED_COUNT].value == 1.0
 
 
+def test_undated_fact_makes_every_requested_metric_unavailable() -> None:
+    """A time-scoped query cannot claim a complete count for an undated fact."""
+    undated = attempt(test_id="a", attempt_no=1, result="pass")
+    undated = MetricAttempt(
+        **{
+            field: getattr(undated, field)
+            for field in undated.__dataclass_fields__
+            if field != "run_started_at"
+        },
+        run_started_at=None,
+    )
+
+    results = metric_map([undated])
+
+    assert all(item.completeness == "unavailable" for item in results.values())
+    assert all(item.value is None for item in results.values())
+    assert all(
+        "missing-run-start-time" in item.missing_reasons for item in results.values()
+    )
+
+
 def test_same_title_and_different_configurations_remain_distinct_instances() -> None:
     """Grouping by display title or omitting configuration would collapse instances."""
     results = metric_map(
@@ -187,6 +235,58 @@ def test_same_title_and_different_configurations_remain_distinct_instances() -> 
 
     first = results[MetricId.FIRST_PASS_RATE]
     assert (first.numerator, first.denominator) == (1, 3)
+
+
+def test_same_external_run_id_in_distinct_configurations_has_distinct_run_keys() -> (
+    None
+):
+    """External run labels are not globally unique drilldown identities."""
+    rows = [
+        attempt(test_id="a", attempt_no=1, result="pass"),
+        attempt(
+            test_id="a",
+            configuration="browser=firefox",
+            attempt_no=1,
+            result="fail",
+        ),
+    ]
+
+    class Facts:
+        def query_attempts(self, **_: object) -> list[MetricAttempt]:
+            return rows
+
+    service = InsightsQueryService(
+        facts=Facts(),
+        snapshots=lambda _as_of: ProjectionSnapshot(
+            projection_version="insights-v1", visible_data_version=1
+        ),
+        history=InMemoryQueryHistory(),
+        clock=lambda: datetime(2026, 9, 25, tzinfo=UTC),
+        limits=QueryLimits(
+            max_rows_to_read=100,
+            max_bytes_to_read=1000,
+            max_memory_bytes=1000,
+            max_concurrent_queries=1,
+            max_output_rows=10,
+            timeout_seconds=1,
+        ),
+    )
+    query = MetricQuery(
+        metric_ids=(MetricId.FIRST_PASS_RATE,),
+        filters=QueryFilters(),
+        from_date="2026-09-23",
+        to_date="2026-09-25",
+        timezone="UTC",
+        as_of=datetime(2026, 9, 25, tzinfo=UTC),
+    )
+
+    record = service.execute(project_id="project-a", query=query)
+    _, runs, _ = service.run_page(
+        project_id="project-a", query_id=record.query_id, cursor=0, limit=10
+    )
+
+    assert {item.external_run_id for item in runs} == {"run-1"}
+    assert len({item.run_id for item in runs}) == 2
 
 
 def test_timezone_window_is_start_inclusive_and_end_exclusive() -> None:

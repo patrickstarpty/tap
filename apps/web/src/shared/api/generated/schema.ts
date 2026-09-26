@@ -183,6 +183,8 @@ export interface components {
             durationSeconds: number | null;
             /** Evidencerefs */
             evidenceRefs: string[];
+            /** Externalrunid */
+            externalRunId: string;
             /** Factkey */
             factKey: string;
             /** Result */
@@ -218,6 +220,8 @@ export interface components {
             dataRow: string | null;
             /** Evidencerefs */
             evidenceRefs: string[];
+            /** Externalrunid */
+            externalRunId: string;
             /** Factkey */
             factKey: string;
             /**
@@ -303,14 +307,6 @@ export interface components {
              * Format: date-time
              */
             asOf: string;
-            /**
-             * @default {
-             *       "configurations": [],
-             *       "environments": [],
-             *       "runIds": [],
-             *       "sourceIds": []
-             *     }
-             */
             filters?: components["schemas"]["MetricFiltersContract"];
             /** From */
             from: string;
@@ -386,6 +382,8 @@ export interface components {
             environment: string;
             /** Evidencerefs */
             evidenceRefs: string[];
+            /** Externalrunid */
+            externalRunId: string;
             /** Instancecount */
             instanceCount: number;
             /** Runid */

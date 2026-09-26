@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tap_platform.insights.application.queries import (
     AttemptDetail,
@@ -16,7 +17,12 @@ from tap_platform.insights.application.queries import (
     RunSummary,
     TrendPoint,
 )
-from tap_platform.insights.domain.metrics import METRIC_CATALOG, MetricId, MetricValue
+from tap_platform.insights.domain.metrics import (
+    METRIC_CATALOG,
+    METRIC_VERSION,
+    MetricId,
+    MetricValue,
+)
 
 
 class ContractModel(BaseModel):
@@ -34,11 +40,25 @@ class MetricQueryRequest(ContractModel):
     metric_ids: tuple[MetricId, ...] = Field(
         alias="metricIds", min_length=1, max_length=len(MetricId)
     )
-    filters: MetricFiltersContract = MetricFiltersContract()
+    filters: MetricFiltersContract = Field(default_factory=MetricFiltersContract)
     from_date: str = Field(alias="from", pattern=r"^\d{4}-\d{2}-\d{2}$")
     to_date: str = Field(alias="to", pattern=r"^\d{4}-\d{2}-\d{2}$")
     timezone: str = Field(min_length=1, max_length=64)
     as_of: datetime = Field(alias="asOf")
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> MetricQueryRequest:
+        try:
+            start = date.fromisoformat(self.from_date)
+            end = date.fromisoformat(self.to_date)
+            ZoneInfo(self.timezone)
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError("query requires ISO dates and an IANA timezone") from exc
+        if start >= end:
+            raise ValueError("query from date must precede to date")
+        if self.as_of.utcoffset() is None:
+            raise ValueError("query asOf must be timezone-aware")
+        return self
 
     def to_domain(self) -> MetricQuery:
         return MetricQuery(
@@ -104,6 +124,7 @@ class MetricQueryResponse(ContractModel):
 
 class RunSummaryContract(ContractModel):
     run_id: str = Field(alias="runId")
+    external_run_id: str = Field(alias="externalRunId")
     source_id: str = Field(alias="sourceId")
     environment: str
     configuration: str
@@ -121,6 +142,7 @@ class RunPageContract(ContractModel):
 class FailureDetailContract(ContractModel):
     fact_key: str = Field(alias="factKey")
     run_id: str = Field(alias="runId")
+    external_run_id: str = Field(alias="externalRunId")
     source_id: str = Field(alias="sourceId")
     stable_test_id: str | None = Field(alias="stableTestId")
     source_test_identity: str = Field(alias="sourceTestIdentity")
@@ -138,6 +160,7 @@ class FailurePageContract(ContractModel):
 
 class AttemptDetailContract(ContractModel):
     fact_key: str = Field(alias="factKey")
+    external_run_id: str = Field(alias="externalRunId")
     stable_test_id: str | None = Field(alias="stableTestId")
     source_test_identity: str = Field(alias="sourceTestIdentity")
     data_row: str | None = Field(alias="dataRow")
@@ -162,7 +185,7 @@ def catalog_contract() -> MetricCatalogContract:
                 label=item.label,
                 unit=item.unit,
                 definition=item.definition,
-                metricVersion="insights-metrics-v1",
+                metricVersion=METRIC_VERSION,
             )
             for item in METRIC_CATALOG
         ]
@@ -196,10 +219,17 @@ def query_contract(record: QueryRecord) -> MetricQueryResponse:
 
 
 def run_page_contract(
-    record: QueryRecord, *, cursor: int, limit: int
+    record: QueryRecord,
+    *,
+    cursor: int,
+    limit: int,
+    items: tuple[RunSummary, ...] | None = None,
+    next_cursor: str | None = None,
 ) -> RunPageContract:
-    page = record.runs[cursor : cursor + limit]
-    next_cursor = str(cursor + limit) if cursor + limit < len(record.runs) else None
+    values = record.runs if items is None else items
+    page = values[cursor : cursor + limit] if items is None else values
+    if items is None:
+        next_cursor = str(cursor + limit) if cursor + limit < len(values) else None
     return RunPageContract(
         queryId=record.query_id,
         items=[_run_contract(item) for item in page],
@@ -208,10 +238,17 @@ def run_page_contract(
 
 
 def failure_page_contract(
-    record: QueryRecord, *, cursor: int, limit: int
+    record: QueryRecord,
+    *,
+    cursor: int,
+    limit: int,
+    items: tuple[FailureDetail, ...] | None = None,
+    next_cursor: str | None = None,
 ) -> FailurePageContract:
-    page = record.failures[cursor : cursor + limit]
-    next_cursor = str(cursor + limit) if cursor + limit < len(record.failures) else None
+    values = record.failures if items is None else items
+    page = values[cursor : cursor + limit] if items is None else values
+    if items is None:
+        next_cursor = str(cursor + limit) if cursor + limit < len(values) else None
     return FailurePageContract(
         queryId=record.query_id,
         items=[_failure_contract(item) for item in page],
@@ -220,11 +257,22 @@ def failure_page_contract(
 
 
 def attempt_page_contract(
-    record: QueryRecord, *, run_id: str, cursor: int, limit: int
+    record: QueryRecord,
+    *,
+    run_id: str,
+    cursor: int,
+    limit: int,
+    items: tuple[AttemptDetail, ...] | None = None,
+    next_cursor: str | None = None,
 ) -> AttemptPageContract:
-    matching = tuple(item for item in record.attempts if item.run_id == run_id)
-    page = matching[cursor : cursor + limit]
-    next_cursor = str(cursor + limit) if cursor + limit < len(matching) else None
+    matching = (
+        tuple(item for item in record.attempts if item.run_id == run_id)
+        if items is None
+        else items
+    )
+    page = matching[cursor : cursor + limit] if items is None else matching
+    if items is None:
+        next_cursor = str(cursor + limit) if cursor + limit < len(matching) else None
     return AttemptPageContract(
         queryId=record.query_id,
         runId=run_id,
@@ -255,6 +303,7 @@ def _trend_contract(value: TrendPoint) -> TrendPointContract:
 def _run_contract(value: RunSummary) -> RunSummaryContract:
     return RunSummaryContract(
         runId=value.run_id,
+        externalRunId=value.external_run_id,
         sourceId=value.source_id,
         environment=value.environment,
         configuration=value.configuration,
@@ -268,6 +317,7 @@ def _failure_contract(value: FailureDetail) -> FailureDetailContract:
     return FailureDetailContract(
         factKey=value.fact_key,
         runId=value.run_id,
+        externalRunId=value.external_run_id,
         sourceId=value.source_id,
         stableTestId=value.stable_test_id,
         sourceTestIdentity=value.source_test_identity,
@@ -281,6 +331,7 @@ def _failure_contract(value: FailureDetail) -> FailureDetailContract:
 def _attempt_contract(value: AttemptDetail) -> AttemptDetailContract:
     return AttemptDetailContract(
         factKey=value.fact_key,
+        externalRunId=value.external_run_id,
         stableTestId=value.stable_test_id,
         sourceTestIdentity=value.source_test_identity,
         dataRow=value.data_row,

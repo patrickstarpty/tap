@@ -257,6 +257,7 @@ def _semantic_projection(
             "duration_seconds": fact.duration_seconds,
             "missing_reasons": list(fact.missing_reasons),
             "first_attempt_eligible": int(fact.first_attempt_eligible),
+            "started_at": manifest.started_at,
         }
         value["fact_checksum"] = _checksum(value)
         attempt_rows.append(value)
