@@ -11,7 +11,8 @@ from tap_platform.insights.application.queries import (
     InsightsQueryService,
     QueryLimits,
 )
-from tap_platform.insights.domain.metrics import MetricAttempt
+from tap_platform.insights.contracts import MetricQueryResponse
+from tap_platform.insights.domain.metrics import MetricAttempt, ReportCoverage
 from tap_platform.insights.domain.projection import ProjectionSnapshot
 from tap_platform.insights.http import DualBearerInsightsAuthorizer
 
@@ -120,8 +121,8 @@ def _query() -> MetricQuery:
     )
 
 
-def _service() -> InsightsQueryService:
-    facts = OwnedFacts()
+def _service(facts=None) -> InsightsQueryService:
+    facts = facts or OwnedFacts()
     return InsightsQueryService(
         facts=facts,
         snapshots=lambda _as_of: facts.snapshot,
@@ -174,3 +175,59 @@ async def test_owned_tap_http_keeps_page_and_ai_query_parity_across_app_restart(
     ]
     assert created.fact_watermark.visible_data_version == 41
     assert created.query.as_of == NOW
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("completeness", ["partial", "unknown"])
+async def test_generated_tap_coverage_survives_ai_query_get_and_historical_read(
+    completeness: str,
+) -> None:
+    class CoverageFacts(OwnedFacts):
+        def query_report_coverage(self, **_: object) -> tuple[ReportCoverage, ...]:
+            return (
+                ReportCoverage(
+                    source_id="ci-a",
+                    external_run_id="run-a",
+                    report_batch_id="batch-a",
+                    expected_shards=2 if completeness == "partial" else None,
+                    received_shards=1,
+                    completeness=completeness,  # type: ignore[arg-type]
+                    missing_reasons=(
+                        "report-shards-missing"
+                        if completeness == "partial"
+                        else "expected-shards-unknown",
+                    ),
+                ),
+            )
+
+    service = _service(CoverageFacts())
+    app = _tap_app(service)
+    first = _adapter(app)
+    created = await first.query_insights(_scope(), _query())
+    page_read = await first.get_insights(_scope(), created.query_id)
+    await first.aclose()
+    restarted = _adapter(_tap_app(service))
+    historical = await restarted.get_insights(_scope(), created.query_id)
+    await restarted.aclose()
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
+    ) as raw_client:
+        response = await raw_client.get(
+            f"/api/v1/projects/project-a/insights/queries/{created.query_id}",
+            headers={
+                "Authorization": "Bearer delegated-user-token-0001",
+                "X-TAP-Service-Authorization": "Bearer service-token-00000001",
+                "X-TAP-Authorization-Version": "authz-1",
+            },
+        )
+    assert response.status_code == 200
+    dto = MetricQueryResponse.model_validate(response.json())
+    assert dto.report_coverage[0].completeness == completeness
+    assert created == page_read == historical
+    assert created.report_coverage[0].missing_reasons == (
+        "report-shards-missing" if completeness == "partial" else "expected-shards-unknown",
+    )
+    assert all(
+        item.completeness == "unavailable" and item.value is None for item in created.metrics
+    )

@@ -27,6 +27,7 @@ from tap.modules.ai.ports.insights import (
     MetricFact,
     MetricQuery,
     MetricResult,
+    ReportCoverage,
     StructuredInsightsTool,
 )
 
@@ -75,6 +76,7 @@ def result(**changes: object) -> MetricResult:
             MetricFact("first_pass_rate", 1, 3, 1 / 3, "complete", (), ("receipt-a",)),
             MetricFact("final_pass_rate", 2, 3, 2 / 3, "complete", (), ("receipt-a",)),
         ),
+        "report_coverage": (),
     }
     values.update(changes)
     return MetricResult(**values)  # type: ignore[arg-type]
@@ -122,6 +124,7 @@ def response_body(**changes: object) -> dict[str, object]:
             },
         ],
         "trends": [],
+        "reportCoverage": [],
     }
     value.update(changes)
     return value
@@ -291,6 +294,108 @@ async def test_http_adapter_rejects_internally_inconsistent_metric_values() -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("completeness", ["partial", "unknown"])
+async def test_http_adapter_preserves_report_coverage_without_inventing_metrics(
+    completeness: str,
+) -> None:
+    coverage = {
+        "sourceId": "ci-a",
+        "externalRunId": "run-a",
+        "reportBatchId": "batch-a",
+        "expectedShards": 2 if completeness == "partial" else None,
+        "receivedShards": 1,
+        "completeness": completeness,
+        "missingReasons": [
+            "report-shards-missing" if completeness == "partial" else "expected-shards-unknown"
+        ],
+    }
+    body = response_body(reportCoverage=[coverage])
+    for metric in body["metrics"]:
+        metric["numerator"] = None
+        metric["denominator"] = None
+        metric["value"] = None
+        metric["completeness"] = "unavailable"
+        metric["missingReasons"] = coverage["missingReasons"]
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    client = adapter(httpx.MockTransport(handle))
+    created = await client.query_insights(scope(), query())
+    historical = await client.get_insights(scope(), "query-a")
+    assert created == historical
+    assert created.report_coverage == (
+        ReportCoverage(
+            source_id="ci-a",
+            external_run_id="run-a",
+            report_batch_id="batch-a",
+            expected_shards=coverage["expectedShards"],
+            received_shards=1,
+            completeness=completeness,
+            missing_reasons=tuple(coverage["missingReasons"]),
+        ),
+    )
+    assert all(fact.value is None for fact in created.metrics)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "coverage_change",
+    [
+        {"receivedShards": -1},
+        {"expectedShards": 0},
+        {"completeness": "future"},
+        {"completeness": "complete", "missingReasons": ["report-shards-missing"]},
+        {"completeness": "partial", "missingReasons": []},
+        {
+            "completeness": "partial",
+            "expectedShards": 2,
+            "missingReasons": ["report-shards-missing"],
+        },
+        {"unexpected": True},
+    ],
+)
+async def test_http_adapter_rejects_tampered_report_coverage(
+    coverage_change: dict[str, object],
+) -> None:
+    coverage = {
+        "sourceId": "ci-a",
+        "externalRunId": "run-a",
+        "reportBatchId": "batch-a",
+        "expectedShards": 1,
+        "receivedShards": 1,
+        "completeness": "complete",
+        "missingReasons": [],
+        **coverage_change,
+    }
+
+    client = adapter(
+        httpx.MockTransport(
+            lambda _request: httpx.Response(200, json=response_body(reportCoverage=[coverage]))
+        )
+    )
+    with pytest.raises(InsightsQueryUnavailable, match="contract"):
+        await client.query_insights(scope(), query())
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["missing-coverage", "unknown-root-field"])
+async def test_http_adapter_rejects_missing_coverage_or_unknown_root_field(mutation: str) -> None:
+    body = response_body()
+    if mutation == "missing-coverage":
+        del body["reportCoverage"]
+    else:
+        body["serverOnly"] = True
+    client = adapter(httpx.MockTransport(lambda _request: httpx.Response(200, json=body)))
+
+    with pytest.raises(InsightsQueryUnavailable, match="contract response"):
+        await client.query_insights(scope(), query())
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_historical_query_rejects_a_different_query_id() -> None:
     def handle(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=response_body(queryId="query-other"))
@@ -374,6 +479,59 @@ async def test_handoff_requeries_the_historical_query_without_browser_metric_fil
     assert delivery.query_id == "query-a"
     assert delivery.facts == result().metrics
     assert insights.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_explanation_preserves_partial_report_coverage_and_unavailable_facts() -> None:
+    coverage = ReportCoverage(
+        source_id="ci-a",
+        external_run_id="run-a",
+        report_batch_id="batch-a",
+        expected_shards=2,
+        received_shards=1,
+        completeness="partial",
+        missing_reasons=("report-shards-missing",),
+    )
+    facts = (
+        MetricFact(
+            "first_pass_rate", None, None, None, "unavailable", coverage.missing_reasons, ()
+        ),
+        MetricFact(
+            "final_pass_rate", None, None, None, "unavailable", coverage.missing_reasons, ()
+        ),
+    )
+    verified = result(metrics=facts, report_coverage=(coverage,))
+
+    async def generate(_request, model_facts, _evidence, _max_cost_micros):
+        assert model_facts == facts
+        return ProposedExplanation(
+            "query-a",
+            "insights-metrics-v1",
+            FactWatermark("insights-v1", 7),
+            NOW,
+            facts,
+            (),
+            (),
+            (),
+            0,
+        )
+
+    delivery = await InsightsExplanationService(
+        insights=StubInsights(verified),
+        knowledge=StubKnowledge(()),
+        generate=generate,
+        authorize=lambda _scope, _refs: True,
+        clock=lambda: NOW,
+        monotonic=lambda: 10.0,
+    ).explain(
+        scope(),
+        ExplanationRequest("conversation-a", "turn-a", "graph-a", "Explain", query(), None, ()),
+        ExplanationBudget(1, 1, 30, 500),
+    )
+
+    assert delivery.report_coverage == (coverage,)
+    assert all(fact.value is None for fact in delivery.facts)
+    assert any("report-shards-missing" in item for item in delivery.missing_information)
 
 
 @pytest.mark.asyncio

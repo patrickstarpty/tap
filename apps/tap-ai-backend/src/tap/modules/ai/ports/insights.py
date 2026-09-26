@@ -213,12 +213,57 @@ class MetricFact:
 
 
 @dataclass(frozen=True, slots=True)
+class ReportCoverage:
+    source_id: str
+    external_run_id: str
+    report_batch_id: str
+    expected_shards: int | None
+    received_shards: int
+    completeness: Literal["complete", "partial", "unknown"]
+    missing_reasons: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("source_id", self.source_id),
+            ("external_run_id", self.external_run_id),
+            ("report_batch_id", self.report_batch_id),
+        ):
+            _identifier(name, value)
+        if self.expected_shards is not None and (
+            type(self.expected_shards) is not int or self.expected_shards < 1
+        ):
+            raise ValueError("expected report shards must be positive or unknown")
+        if type(self.received_shards) is not int or self.received_shards < 1:
+            raise ValueError("received report shards must be positive")
+        if self.completeness not in {"complete", "partial", "unknown"}:
+            raise ValueError("report coverage completeness is invalid")
+        if (
+            not isinstance(self.missing_reasons, tuple)
+            or len(self.missing_reasons) > 50
+            or len(set(self.missing_reasons)) != len(self.missing_reasons)
+            or any(
+                not isinstance(reason, str) or not reason.strip() for reason in self.missing_reasons
+            )
+        ):
+            raise ValueError("report coverage missing reasons are invalid")
+        if self.completeness == "complete":
+            if self.expected_shards != self.received_shards or self.missing_reasons:
+                raise ValueError("complete report coverage must match all shards")
+        elif self.completeness == "partial":
+            if self.expected_shards is None or not self.missing_reasons:
+                raise ValueError("partial report coverage requires known gaps")
+        elif self.expected_shards is not None or not self.missing_reasons:
+            raise ValueError("unknown report coverage requires an unknown shard count")
+
+
+@dataclass(frozen=True, slots=True)
 class MetricResult:
     query_id: str
     metric_version: str
     query: MetricQuery
     fact_watermark: FactWatermark
     metrics: tuple[MetricFact, ...]
+    report_coverage: tuple[ReportCoverage, ...]
 
     def __post_init__(self) -> None:
         _identifier("query_id", self.query_id)
@@ -231,6 +276,30 @@ class MetricResult:
             or tuple(item.metric_id for item in self.metrics) != self.query.metric_ids
         ):
             raise ValueError("metric result must match the requested metric order")
+        if (
+            not isinstance(self.report_coverage, tuple)
+            or len(self.report_coverage) > 10000
+            or any(type(item) is not ReportCoverage for item in self.report_coverage)
+            or len(
+                {
+                    (item.source_id, item.external_run_id, item.report_batch_id)
+                    for item in self.report_coverage
+                }
+            )
+            != len(self.report_coverage)
+        ):
+            raise ValueError("metric result report coverage is invalid")
+        coverage_gaps = {
+            reason
+            for item in self.report_coverage
+            if item.completeness != "complete"
+            for reason in item.missing_reasons
+        }
+        if coverage_gaps and any(
+            item.completeness != "unavailable" or not coverage_gaps <= set(item.missing_reasons)
+            for item in self.metrics
+        ):
+            raise ValueError("report coverage gaps require unavailable metrics")
 
 
 @dataclass(frozen=True, slots=True)

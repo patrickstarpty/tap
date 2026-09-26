@@ -18,6 +18,7 @@ from tap.modules.ai.ports.insights import (
     InsightsQueryUnavailable,
     MetricFact,
     MetricQuery,
+    ReportCoverage,
 )
 
 
@@ -94,6 +95,7 @@ class ExplanationDelivery:
     fact_watermark: FactWatermark | None
     as_of: datetime | None
     facts: tuple[MetricFact, ...]
+    report_coverage: tuple[ReportCoverage, ...]
     hypotheses: tuple[str, ...]
     missing_information: tuple[str, ...]
     audit: dict[str, str | None]
@@ -183,6 +185,7 @@ class InsightsExplanationService:
                 watermark=None,
                 as_of=None,
                 facts=(),
+                coverage=(),
                 hypotheses=(),
                 missing=("Explanation budget was exhausted before metric verification.",),
                 stop_reason="budget-exhausted",
@@ -195,6 +198,7 @@ class InsightsExplanationService:
                 watermark=None,
                 as_of=None,
                 facts=(),
+                coverage=(),
                 hypotheses=(),
                 missing=("Insights metrics are unavailable.",),
                 stop_reason="insights-unavailable",
@@ -223,6 +227,7 @@ class InsightsExplanationService:
                 watermark=metrics.fact_watermark,
                 as_of=metrics.query.as_of,
                 facts=facts,
+                coverage=metrics.report_coverage,
                 hypotheses=(),
                 missing=("Explanation budget was exhausted after metric verification.",),
                 stop_reason="budget-exhausted",
@@ -239,6 +244,7 @@ class InsightsExplanationService:
                     watermark=metrics.fact_watermark,
                     as_of=metrics.query.as_of,
                     facts=facts,
+                    coverage=metrics.report_coverage,
                     hypotheses=(),
                     missing=("Explanation budget was exhausted before knowledge retrieval.",),
                     stop_reason="budget-exhausted",
@@ -259,6 +265,7 @@ class InsightsExplanationService:
                     watermark=metrics.fact_watermark,
                     as_of=metrics.query.as_of,
                     facts=facts,
+                    coverage=metrics.report_coverage,
                     hypotheses=(),
                     missing=("Explanation budget was exhausted before knowledge retrieval.",),
                     stop_reason="budget-exhausted",
@@ -275,6 +282,7 @@ class InsightsExplanationService:
                 watermark=metrics.fact_watermark,
                 as_of=metrics.query.as_of,
                 facts=facts,
+                coverage=metrics.report_coverage,
                 hypotheses=(),
                 missing=("Explanation budget was exhausted after evidence retrieval.",),
                 stop_reason="budget-exhausted",
@@ -298,6 +306,7 @@ class InsightsExplanationService:
                 watermark=metrics.fact_watermark,
                 as_of=metrics.query.as_of,
                 facts=facts,
+                coverage=metrics.report_coverage,
                 hypotheses=(),
                 missing=("Explanation budget was exhausted before model completion.",),
                 stop_reason="budget-exhausted",
@@ -310,6 +319,7 @@ class InsightsExplanationService:
                 watermark=metrics.fact_watermark,
                 as_of=metrics.query.as_of,
                 facts=facts,
+                coverage=metrics.report_coverage,
                 hypotheses=(),
                 missing=("Explanation budget was exhausted after metric verification.",),
                 stop_reason="budget-exhausted",
@@ -355,6 +365,7 @@ class InsightsExplanationService:
                     watermark=metrics.fact_watermark,
                     as_of=metrics.query.as_of,
                     facts=facts,
+                    coverage=metrics.report_coverage,
                     hypotheses=(),
                     missing=("Explanation budget was exhausted before evidence reauthorization.",),
                     stop_reason="budget-exhausted",
@@ -374,6 +385,7 @@ class InsightsExplanationService:
             watermark=metrics.fact_watermark,
             as_of=metrics.query.as_of,
             facts=facts,
+            coverage=metrics.report_coverage,
             hypotheses=hypotheses,
             missing=missing,
             stop_reason="completed",
@@ -406,6 +418,7 @@ class InsightsExplanationService:
         watermark: FactWatermark | None,
         as_of: datetime | None,
         facts: tuple[MetricFact, ...],
+        coverage: tuple[ReportCoverage, ...],
         hypotheses: tuple[str, ...],
         missing: tuple[str, ...],
         stop_reason: Literal["completed", "budget-exhausted", "insights-unavailable"],
@@ -416,8 +429,22 @@ class InsightsExplanationService:
             fact_watermark=watermark,
             as_of=as_of,
             facts=facts,
+            report_coverage=coverage,
             hypotheses=hypotheses,
-            missing_information=missing,
+            missing_information=tuple(
+                dict.fromkeys(
+                    (
+                        *missing,
+                        *(
+                            f"Report coverage {item.source_id}/{item.external_run_id}/"
+                            f"{item.report_batch_id}: {reason}."
+                            for item in coverage
+                            if item.completeness != "complete"
+                            for reason in item.missing_reasons
+                        ),
+                    )
+                )
+            ),
             audit={
                 "conversationId": request.conversation_id,
                 "turnId": request.turn_id,

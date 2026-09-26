@@ -20,6 +20,7 @@ from tap.modules.ai.ports.insights import (
     MetricFact,
     MetricQuery,
     MetricResult,
+    ReportCoverage,
 )
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
@@ -202,6 +203,7 @@ def _parse_result(raw: Mapping[str, object]) -> MetricResult:
                 "factWatermark",
                 "metrics",
                 "trends",
+                "reportCoverage",
             },
             "response",
         )
@@ -251,6 +253,35 @@ def _parse_result(raw: Mapping[str, object]) -> MetricResult:
                     evidence_refs=_string_tuple(item["evidenceRefs"], "evidence refs"),
                 )
             )
+        coverage_rows = body["reportCoverage"]
+        if not isinstance(coverage_rows, list):
+            raise InsightsQueryUnavailable("TAP Insights contract report coverage is invalid")
+        report_coverage: list[ReportCoverage] = []
+        for row in coverage_rows:
+            item = _closed(
+                row,
+                {
+                    "sourceId",
+                    "externalRunId",
+                    "reportBatchId",
+                    "expectedShards",
+                    "receivedShards",
+                    "completeness",
+                    "missingReasons",
+                },
+                "report coverage",
+            )
+            report_coverage.append(
+                ReportCoverage(
+                    source_id=_text(item["sourceId"], "coverage source ID"),
+                    external_run_id=_text(item["externalRunId"], "coverage run ID"),
+                    report_batch_id=_text(item["reportBatchId"], "coverage batch ID"),
+                    expected_shards=item["expectedShards"],  # type: ignore[arg-type]
+                    received_shards=item["receivedShards"],  # type: ignore[arg-type]
+                    completeness=_text(item["completeness"], "coverage completeness"),  # type: ignore[arg-type]
+                    missing_reasons=_string_tuple(item["missingReasons"], "coverage reasons"),
+                )
+            )
         query = MetricQuery(
             metric_ids=tuple(item.metric_id for item in metrics),
             source_ids=_string_tuple(filters["sourceIds"], "source IDs"),
@@ -276,6 +307,7 @@ def _parse_result(raw: Mapping[str, object]) -> MetricResult:
                 watermark["visibleDataVersion"],  # type: ignore[arg-type]
             ),
             metrics=tuple(metrics),
+            report_coverage=tuple(report_coverage),
         )
     except InsightsQueryUnavailable:
         raise
