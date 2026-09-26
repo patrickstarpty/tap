@@ -14,6 +14,7 @@ from tap_platform.insights.application.queries import (
 from tap_platform.insights.contracts import MetricQueryResponse
 from tap_platform.insights.domain.metrics import MetricAttempt, ReportCoverage
 from tap_platform.insights.domain.projection import ProjectionSnapshot
+from tap_platform.insights.domain.reports import ReportManifest
 from tap_platform.insights.http import DualBearerInsightsAuthorizer
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
@@ -231,3 +232,78 @@ async def test_generated_tap_coverage_survives_ai_query_get_and_historical_read(
     assert all(
         item.completeness == "unavailable" and item.value is None for item in created.metrics
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        "ci.github",
+        "ci_github",
+        "ci:github",
+        "ci/github",
+        "ci;github",
+        "ci=github",
+        "ci@github",
+        "ci+github",
+        "ci-github",
+        "a" * 256,
+    ],
+)
+async def test_manifest_coverage_identifiers_survive_generated_dto_and_ai_adapter(
+    identifier: str,
+) -> None:
+    manifest = ReportManifest(
+        project_id="project-a",
+        source_id=identifier,
+        external_run_id=identifier,
+        batch_id=identifier,
+        shard_id="shard-a",
+        expected_shards=1,
+        contains_complete_attempts=True,
+        application_commit="app-a",
+        script_commit="script-a",
+        environment="qa",
+        configuration="browser=chromium",
+        timezone="UTC",
+    )
+
+    class ManifestFacts(OwnedFacts):
+        def query_report_coverage(self, **_: object) -> tuple[ReportCoverage, ...]:
+            return (
+                ReportCoverage(
+                    source_id=manifest.source_id,
+                    external_run_id=manifest.external_run_id,
+                    report_batch_id=manifest.batch_id,
+                    expected_shards=manifest.expected_shards,
+                    received_shards=1,
+                    completeness="complete",
+                    missing_reasons=(),
+                ),
+            )
+
+    service = _service(ManifestFacts())
+    app = _tap_app(service)
+    adapter = _adapter(app)
+    created = await adapter.query_insights(_scope(), _query())
+    await adapter.aclose()
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
+    ) as raw_client:
+        response = await raw_client.get(
+            f"/api/v1/projects/project-a/insights/queries/{created.query_id}",
+            headers={
+                "Authorization": "Bearer delegated-user-token-0001",
+                "X-TAP-Service-Authorization": "Bearer service-token-00000001",
+                "X-TAP-Authorization-Version": "authz-1",
+            },
+        )
+    assert response.status_code == 200
+    dto = MetricQueryResponse.model_validate(response.json())
+    assert dto.report_coverage[0].source_id == identifier
+    assert dto.report_coverage[0].external_run_id == identifier
+    assert dto.report_coverage[0].report_batch_id == identifier
+    assert created.report_coverage[0].source_id == identifier
+    assert created.report_coverage[0].external_run_id == identifier
+    assert created.report_coverage[0].report_batch_id == identifier

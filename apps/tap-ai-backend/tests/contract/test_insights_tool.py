@@ -82,6 +82,13 @@ def result(**changes: object) -> MetricResult:
     return MetricResult(**values)  # type: ignore[arg-type]
 
 
+def test_non_coverage_identifiers_keep_the_narrow_ai_boundary() -> None:
+    with pytest.raises(ValueError, match="query_id"):
+        result(query_id="ci/github")
+    with pytest.raises(ValueError, match="authorization_version"):
+        scope(authorization_version="a" * 129)
+
+
 def response_body(**changes: object) -> dict[str, object]:
     value: dict[str, object] = {
         "queryId": "query-a",
@@ -354,6 +361,15 @@ async def test_http_adapter_preserves_report_coverage_without_inventing_metrics(
             "missingReasons": ["report-shards-missing"],
         },
         {"unexpected": True},
+        {"sourceId": "a" * 257},
+        {"reportBatchId": "a" * 257},
+        {"externalRunId": "a" * 257},
+        {"sourceId": "ci github"},
+        {"reportBatchId": "ci\tgithub"},
+        {"externalRunId": "ci\ngithub"},
+        {"sourceId": "ci?github"},
+        {"reportBatchId": "ci/githubé"},
+        {"sourceId": "/ci-github"},
     ],
 )
 async def test_http_adapter_rejects_tampered_report_coverage(

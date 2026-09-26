@@ -40,11 +40,17 @@ _RATIO_METRIC_IDS = frozenset(
     }
 )
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_REPORT_MANIFEST_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/;=@+-]{0,255}\Z")
 
 
 def _identifier(name: str, value: str) -> None:
     if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
         raise ValueError(f"{name} must be a bounded identifier")
+
+
+def _report_manifest_identifier(name: str, value: str) -> None:
+    if not isinstance(value, str) or _REPORT_MANIFEST_IDENTIFIER.fullmatch(value) is None:
+        raise ValueError(f"{name} must be a bounded report manifest identifier")
 
 
 def _identifiers(name: str, values: tuple[str, ...], maximum: int) -> None:
@@ -228,7 +234,7 @@ class ReportCoverage:
             ("external_run_id", self.external_run_id),
             ("report_batch_id", self.report_batch_id),
         ):
-            _identifier(name, value)
+            _report_manifest_identifier(name, value)
         if self.expected_shards is not None and (
             type(self.expected_shards) is not int or self.expected_shards < 1
         ):
