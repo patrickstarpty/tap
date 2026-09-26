@@ -25,10 +25,14 @@ AZURITE_BLOB_PORT=${AZURITE_BLOB_PORT:-10000}
 LITELLM_PORT=${LITELLM_PORT:-4000}
 DOCKER_CHECK_TIMEOUT_SECONDS=${DOCKER_CHECK_TIMEOUT_SECONDS:-30}
 CHECK_MILVUS=0
+CHECK_CLICKHOUSE=0
+ONLY_CLICKHOUSE=0
 
 for argument in "$@"; do
   case "$argument" in
     --milvus) CHECK_MILVUS=1 ;;
+    --clickhouse) CHECK_CLICKHOUSE=1 ;;
+    --only-clickhouse) CHECK_CLICKHOUSE=1; ONLY_CLICKHOUSE=1 ;;
     *) printf 'Unknown argument: %s\n' "$argument" >&2; exit 2 ;;
   esac
 done
@@ -144,12 +148,42 @@ check_milvus() {
     uv run --project apps/tap-ai-backend python scripts/milvus_health_probe.py --reader-canary
 }
 
-run_or_capture "mysql" check_mysql || true
-run_or_capture "redis" check_redis || true
-run_or_capture "azurite" check_azurite || true
-run_or_capture "litellm" check_litellm || true
-if ((CHECK_MILVUS == 1)); then
-  run_or_capture "milvus-reader" check_milvus || true
+check_clickhouse() {
+  CLICKHOUSE_HTTP_PORT=${CLICKHOUSE_HTTP_PORT:-28123} \
+  TAP_CLICKHOUSE_WRITER_USER=${TAP_CLICKHOUSE_WRITER_USER:-tap_insights_writer} \
+  TAP_CLICKHOUSE_WRITER_PASSWORD=${TAP_CLICKHOUSE_WRITER_PASSWORD:-tap-local-insights-writer} \
+  python3 - <<'PY'
+import base64
+import os
+import urllib.request
+
+port = int(os.environ["CLICKHOUSE_HTTP_PORT"])
+user = os.environ["TAP_CLICKHOUSE_WRITER_USER"]
+password = os.environ["TAP_CLICKHOUSE_WRITER_PASSWORD"]
+request = urllib.request.Request(
+    f"http://127.0.0.1:{port}/?database=tap_insights&query=SELECT%201",
+    headers={
+        "Authorization": "Basic "
+        + base64.b64encode(f"{user}:{password}".encode()).decode()
+    },
+)
+with urllib.request.urlopen(request, timeout=5) as response:
+    if response.read().strip() != b"1":
+        raise SystemExit("unexpected ClickHouse readiness response")
+PY
+}
+
+if ((ONLY_CLICKHOUSE == 0)); then
+  run_or_capture "mysql" check_mysql || true
+  run_or_capture "redis" check_redis || true
+  run_or_capture "azurite" check_azurite || true
+  run_or_capture "litellm" check_litellm || true
+  if ((CHECK_MILVUS == 1)); then
+    run_or_capture "milvus-reader" check_milvus || true
+  fi
+fi
+if ((CHECK_CLICKHOUSE == 1)); then
+  run_or_capture "clickhouse-writer" check_clickhouse || true
 fi
 
 if ((${#failed_services[@]} > 0)); then
@@ -157,4 +191,8 @@ if ((${#failed_services[@]} > 0)); then
   exit 1
 fi
 
-printf 'All local middleware services are reachable.\n'
+if ((ONLY_CLICKHOUSE == 1)); then
+  printf 'TAP Insights ClickHouse is reachable.\n'
+else
+  printf 'All requested local middleware services are reachable.\n'
+fi

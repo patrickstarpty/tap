@@ -97,7 +97,7 @@ def runtime(tmp_path: Path):
 def drain(worker: ReportWorker, receipt_id: str) -> None:
     for _ in range(3):
         assert worker.process_one(receipt_id)
-    assert worker.confirm_projection(receipt_id)
+    assert worker.confirm_projection(receipt_id) is False
 
 
 def authorizer(project_id: str) -> BearerPrincipalAuthorizer:
@@ -321,7 +321,7 @@ def test_retry_after_lost_response_does_not_repeat_the_test_run(runtime) -> None
 
     assert recovered.receipt_id == lost.receipt_id
     assert len(ledger.attempts_for(recovered.receipt_id)) == 1
-    assert ledger.get_receipt(recovered.receipt_id).state is ReportState.READY
+    assert ledger.get_receipt(recovered.receipt_id).state is ReportState.PROJECTING
 
 
 def test_failed_mapping_can_retry_only_the_persisted_report(runtime) -> None:

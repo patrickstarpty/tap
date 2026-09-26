@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -15,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    BigInteger,
     MetaData,
     String,
     Table,
@@ -36,6 +39,10 @@ from tap_platform.insights.domain.reports import (
     ReportReceipt,
     ReportState,
     TestAttemptFact,
+)
+from tap_platform.insights.domain.projection import (
+    ProjectionReservation,
+    ProjectionSnapshot,
 )
 
 
@@ -138,6 +145,67 @@ report_attempts = Table(
     UniqueConstraint("receipt_id", "ordinal", name="uq_tap_report_attempt_ordinal"),
 )
 
+insights_projection_versions = Table(
+    "tap_insights_projection_versions",
+    metadata,
+    Column("projection_version", String(128), primary_key=True),
+    Column("status", String(32), nullable=False),
+    Column("next_data_version", BigInteger, nullable=False),
+    Column("visible_data_version", BigInteger, nullable=False),
+    Column("verified_row_count", BigInteger, nullable=True),
+    Column("verified_checksum", String(64), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("activated_at", DateTime(timezone=True), nullable=True),
+)
+
+insights_projection_state = Table(
+    "tap_insights_projection_state",
+    metadata,
+    Column("singleton_id", Integer, primary_key=True),
+    Column(
+        "active_projection_version",
+        String(128),
+        ForeignKey("tap_insights_projection_versions.projection_version"),
+        nullable=False,
+    ),
+    Column("visible_data_version", BigInteger, nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+insights_projection_batches = Table(
+    "tap_insights_projection_batches",
+    metadata,
+    Column("projection_batch_id", String(64), primary_key=True),
+    Column(
+        "projection_version",
+        String(128),
+        ForeignKey("tap_insights_projection_versions.projection_version"),
+        nullable=False,
+    ),
+    Column(
+        "receipt_id",
+        String(36),
+        ForeignKey("tap_report_receipts.receipt_id"),
+        nullable=False,
+    ),
+    Column("data_version", BigInteger, nullable=False),
+    Column("payload_checksum", String(64), nullable=False),
+    Column("row_count", BigInteger, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    UniqueConstraint(
+        "projection_version",
+        "receipt_id",
+        name="uq_tap_insights_projection_receipt",
+    ),
+    UniqueConstraint(
+        "projection_version",
+        "data_version",
+        name="uq_tap_insights_projection_data_version",
+    ),
+)
+
 
 _ALLOWED_TRANSITIONS: dict[ReportState, set[ReportState]] = {
     ReportState.RECEIVED: {ReportState.VALIDATING},
@@ -147,7 +215,7 @@ _ALLOWED_TRANSITIONS: dict[ReportState, set[ReportState]] = {
         ReportState.FAILED,
     },
     ReportState.MAPPED: {ReportState.PROJECTING},
-    ReportState.PROJECTING: {ReportState.READY, ReportState.FAILED},
+    ReportState.PROJECTING: {ReportState.FAILED},
     ReportState.FAILED: {ReportState.VALIDATING, ReportState.PROJECTING},
 }
 
@@ -413,6 +481,7 @@ class SqlAlchemyReportLedger:
                                 ReportState.RECEIVED.value,
                                 ReportState.VALIDATING.value,
                                 ReportState.MAPPED.value,
+                                ReportState.PROJECTING.value,
                             )
                         )
                     )
@@ -431,6 +500,451 @@ class SqlAlchemyReportLedger:
                     select(func.count()).select_from(report_receipts)
                 ).scalar_one()
             )
+
+    def projection_snapshot(
+        self, projection_version: str | None = None
+    ) -> ProjectionSnapshot:
+        with self._engine.begin() as connection:
+            self._ensure_default_projection(connection)
+            if projection_version is None:
+                row = connection.execute(
+                    select(
+                        insights_projection_state.c.active_projection_version,
+                        insights_projection_state.c.visible_data_version,
+                    ).where(insights_projection_state.c.singleton_id == 1)
+                ).one()
+                return ProjectionSnapshot(
+                    projection_version=row.active_projection_version,
+                    visible_data_version=int(row.visible_data_version),
+                )
+            version_row = connection.execute(
+                select(
+                    insights_projection_versions.c.projection_version,
+                    insights_projection_versions.c.visible_data_version,
+                ).where(
+                    insights_projection_versions.c.projection_version
+                    == projection_version
+                )
+            ).one_or_none()
+            if version_row is None:
+                raise KeyError(projection_version)
+            return ProjectionSnapshot(
+                projection_version=version_row.projection_version,
+                visible_data_version=int(version_row.visible_data_version),
+            )
+
+    def reserve_projection_batch(
+        self,
+        *,
+        receipt_id: str,
+        payload_checksum: str,
+        row_count: int,
+        projection_version: str | None = None,
+    ) -> ProjectionReservation:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,127}", payload_checksum):
+            raise ValueError("payload_checksum must be a bounded lowercase token")
+        if row_count < 0:
+            raise ValueError("row_count must be non-negative")
+        now = _now()
+        with self._engine.begin() as connection:
+            self._ensure_default_projection(connection)
+            selected_version = (
+                projection_version
+                or connection.execute(
+                    select(insights_projection_state.c.active_projection_version).where(
+                        insights_projection_state.c.singleton_id == 1
+                    )
+                ).scalar_one()
+            )
+            version_row = (
+                connection.execute(
+                    select(insights_projection_versions)
+                    .where(
+                        insights_projection_versions.c.projection_version
+                        == selected_version
+                    )
+                    .with_for_update()
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if version_row is None:
+                raise KeyError(selected_version)
+            if projection_version is None:
+                active_now = connection.execute(
+                    select(insights_projection_state.c.active_projection_version).where(
+                        insights_projection_state.c.singleton_id == 1
+                    )
+                ).scalar_one()
+                if version_row["status"] != "active" or active_now != selected_version:
+                    raise RuntimeError("active projection changed before batch reserve")
+            elif version_row["status"] != "building":
+                raise ValueError("rebuild projection version is not building")
+            existing = (
+                connection.execute(
+                    select(insights_projection_batches).where(
+                        insights_projection_batches.c.projection_version
+                        == selected_version,
+                        insights_projection_batches.c.receipt_id == receipt_id,
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if existing is not None:
+                if (
+                    existing["payload_checksum"] != payload_checksum
+                    or int(existing["row_count"]) != row_count
+                ):
+                    raise ValueError("same projection receipt has conflicting content")
+                return self._row_to_projection_reservation(existing)
+            receipt_state = connection.execute(
+                select(report_receipts.c.state).where(
+                    report_receipts.c.receipt_id == receipt_id
+                )
+            ).scalar_one_or_none()
+            if receipt_state is None:
+                raise KeyError(receipt_id)
+            if projection_version is None and receipt_state not in {
+                ReportState.PROJECTING.value,
+                ReportState.READY.value,
+            }:
+                raise ValueError("receipt is not authoritative for projection")
+            if (
+                projection_version is not None
+                and receipt_state != ReportState.READY.value
+            ):
+                raise ValueError("rebuild requires a ready source receipt")
+            data_version = int(version_row["next_data_version"])
+            batch_id = hashlib.sha256(
+                f"{selected_version}\x00{receipt_id}".encode()
+            ).hexdigest()
+            connection.execute(
+                insert(insights_projection_batches).values(
+                    projection_batch_id=batch_id,
+                    projection_version=selected_version,
+                    receipt_id=receipt_id,
+                    data_version=data_version,
+                    payload_checksum=payload_checksum,
+                    row_count=row_count,
+                    status="reserved",
+                    created_at=now,
+                    completed_at=None,
+                )
+            )
+            connection.execute(
+                update(insights_projection_versions)
+                .where(
+                    insights_projection_versions.c.projection_version
+                    == selected_version
+                )
+                .values(next_data_version=data_version + 1)
+            )
+            return ProjectionReservation(
+                projection_batch_id=batch_id,
+                projection_version=selected_version,
+                receipt_id=receipt_id,
+                data_version=data_version,
+                payload_checksum=payload_checksum,
+                row_count=row_count,
+                complete=False,
+            )
+
+    def complete_projection_batch(
+        self,
+        reservation: ProjectionReservation,
+        *,
+        mark_receipt_ready: bool = True,
+    ) -> bool:
+        now = _now()
+        with self._engine.begin() as connection:
+            version_row = (
+                connection.execute(
+                    select(insights_projection_versions)
+                    .where(
+                        insights_projection_versions.c.projection_version
+                        == reservation.projection_version
+                    )
+                    .with_for_update()
+                )
+                .mappings()
+                .one()
+            )
+            batch = (
+                connection.execute(
+                    select(insights_projection_batches)
+                    .where(
+                        insights_projection_batches.c.projection_batch_id
+                        == reservation.projection_batch_id
+                    )
+                    .with_for_update()
+                )
+                .mappings()
+                .one()
+            )
+            if (
+                batch["payload_checksum"] != reservation.payload_checksum
+                or int(batch["row_count"]) != reservation.row_count
+            ):
+                raise ValueError("projection reservation changed before completion")
+            changed = batch["status"] != "complete"
+            if changed:
+                connection.execute(
+                    update(insights_projection_batches)
+                    .where(
+                        insights_projection_batches.c.projection_batch_id
+                        == reservation.projection_batch_id
+                    )
+                    .values(status="complete", completed_at=now)
+                )
+            first_incomplete = connection.execute(
+                select(func.min(insights_projection_batches.c.data_version)).where(
+                    insights_projection_batches.c.projection_version
+                    == reservation.projection_version,
+                    insights_projection_batches.c.status != "complete",
+                )
+            ).scalar_one()
+            if first_incomplete is None:
+                visible = int(version_row["next_data_version"]) - 1
+            else:
+                visible = int(first_incomplete) - 1
+            connection.execute(
+                update(insights_projection_versions)
+                .where(
+                    insights_projection_versions.c.projection_version
+                    == reservation.projection_version
+                )
+                .values(visible_data_version=visible)
+            )
+            active = connection.execute(
+                select(insights_projection_state.c.active_projection_version).where(
+                    insights_projection_state.c.singleton_id == 1
+                )
+            ).scalar_one()
+            if active == reservation.projection_version:
+                connection.execute(
+                    update(insights_projection_state)
+                    .where(insights_projection_state.c.singleton_id == 1)
+                    .values(visible_data_version=visible, updated_at=now)
+                )
+            if mark_receipt_ready:
+                receipt_state = connection.execute(
+                    select(report_receipts.c.state)
+                    .where(report_receipts.c.receipt_id == reservation.receipt_id)
+                    .with_for_update()
+                ).scalar_one()
+                if receipt_state == ReportState.PROJECTING.value:
+                    connection.execute(
+                        update(report_receipts)
+                        .where(report_receipts.c.receipt_id == reservation.receipt_id)
+                        .values(
+                            state=ReportState.READY.value,
+                            failure_reason=None,
+                            updated_at=now,
+                        )
+                    )
+                    self._insert_transition(
+                        connection,
+                        receipt_id=reservation.receipt_id,
+                        from_state=ReportState.PROJECTING,
+                        to_state=ReportState.READY,
+                        reason=None,
+                        now=now,
+                    )
+                    self._insert_outbox(
+                        connection, reservation.receipt_id, ReportState.READY, now
+                    )
+                elif receipt_state != ReportState.READY.value:
+                    raise ValueError("receipt is not authoritative for projection")
+            return changed
+
+    def create_projection_version(self, projection_version: str) -> None:
+        self._require_projection_version(projection_version)
+        now = _now()
+        with self._engine.begin() as connection:
+            self._ensure_default_projection(connection)
+            existing = connection.execute(
+                select(insights_projection_versions.c.status).where(
+                    insights_projection_versions.c.projection_version
+                    == projection_version
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                connection.execute(
+                    insert(insights_projection_versions).values(
+                        projection_version=projection_version,
+                        status="building",
+                        next_data_version=1,
+                        visible_data_version=0,
+                        verified_row_count=None,
+                        verified_checksum=None,
+                        created_at=now,
+                        activated_at=None,
+                    )
+                )
+            elif existing != "building":
+                raise ValueError("target projection version is not rebuildable")
+
+    def activate_projection_version(
+        self,
+        projection_version: str,
+        *,
+        row_count: int,
+        checksum: str,
+        expected_active_projection_version: str,
+        expected_visible_data_version: int,
+    ) -> None:
+        now = _now()
+        with self._engine.begin() as connection:
+            preview = (
+                connection.execute(
+                    select(insights_projection_state).where(
+                        insights_projection_state.c.singleton_id == 1
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            preview_current = preview["active_projection_version"]
+            connection.execute(
+                select(insights_projection_versions.c.projection_version)
+                .where(
+                    insights_projection_versions.c.projection_version == preview_current
+                )
+                .with_for_update()
+            ).one()
+            state = (
+                connection.execute(
+                    select(insights_projection_state)
+                    .where(insights_projection_state.c.singleton_id == 1)
+                    .with_for_update()
+                )
+                .mappings()
+                .one()
+            )
+            current = state["active_projection_version"]
+            if current != preview_current:
+                raise ValueError("active projection changed during rebuild")
+            target = (
+                connection.execute(
+                    select(insights_projection_versions)
+                    .where(
+                        insights_projection_versions.c.projection_version
+                        == projection_version
+                    )
+                    .with_for_update()
+                )
+                .mappings()
+                .one()
+            )
+            if target["status"] != "building":
+                raise ValueError("only a verified building projection can activate")
+            if (
+                current != expected_active_projection_version
+                or int(state["visible_data_version"]) != expected_visible_data_version
+            ):
+                raise ValueError("active projection changed during rebuild")
+            connection.execute(
+                update(insights_projection_versions)
+                .where(insights_projection_versions.c.projection_version == current)
+                .values(status="retired")
+            )
+            connection.execute(
+                update(insights_projection_versions)
+                .where(
+                    insights_projection_versions.c.projection_version
+                    == projection_version
+                )
+                .values(
+                    status="active",
+                    verified_row_count=row_count,
+                    verified_checksum=checksum,
+                    activated_at=now,
+                )
+            )
+            connection.execute(
+                update(insights_projection_state)
+                .where(insights_projection_state.c.singleton_id == 1)
+                .values(
+                    active_projection_version=projection_version,
+                    visible_data_version=int(target["visible_data_version"]),
+                    updated_at=now,
+                )
+            )
+
+    def receipts_in_projection(self, projection_version: str) -> list[ReportReceipt]:
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                select(report_receipts)
+                .join(
+                    insights_projection_batches,
+                    insights_projection_batches.c.receipt_id
+                    == report_receipts.c.receipt_id,
+                )
+                .where(
+                    insights_projection_batches.c.projection_version
+                    == projection_version,
+                    insights_projection_batches.c.status == "complete",
+                )
+                .order_by(
+                    report_receipts.c.project_id,
+                    report_receipts.c.source_id,
+                    report_receipts.c.external_run_id,
+                    report_receipts.c.batch_id,
+                    report_receipts.c.shard_id,
+                    report_receipts.c.correction_no,
+                    report_receipts.c.receipt_id,
+                )
+            ).mappings()
+            return [self._row_to_receipt(row) for row in rows]
+
+    @staticmethod
+    def _require_projection_version(projection_version: str) -> None:
+        if re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,127}", projection_version) is None:
+            raise ValueError("projection_version must be a bounded lowercase token")
+
+    @staticmethod
+    def _ensure_default_projection(connection: Connection) -> None:
+        state = connection.execute(
+            select(insights_projection_state.c.singleton_id).where(
+                insights_projection_state.c.singleton_id == 1
+            )
+        ).scalar_one_or_none()
+        if state is not None:
+            return
+        now = _now()
+        connection.execute(
+            insert(insights_projection_versions).values(
+                projection_version="insights-v1",
+                status="active",
+                next_data_version=1,
+                visible_data_version=0,
+                verified_row_count=None,
+                verified_checksum=None,
+                created_at=now,
+                activated_at=now,
+            )
+        )
+        connection.execute(
+            insert(insights_projection_state).values(
+                singleton_id=1,
+                active_projection_version="insights-v1",
+                visible_data_version=0,
+                updated_at=now,
+            )
+        )
+
+    @staticmethod
+    def _row_to_projection_reservation(row: RowMapping) -> ProjectionReservation:
+        return ProjectionReservation(
+            projection_batch_id=row["projection_batch_id"],
+            projection_version=row["projection_version"],
+            receipt_id=row["receipt_id"],
+            data_version=int(row["data_version"]),
+            payload_checksum=row["payload_checksum"],
+            row_count=int(row["row_count"]),
+            complete=row["status"] == "complete",
+        )
 
     def _find_exact(
         self, identity_digest: str, checksum: str, manifest_digest: str

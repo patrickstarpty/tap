@@ -2,10 +2,12 @@ TAP_MILVUS_COMPOSE_PROJECT ?= tap-milvus-local-experiment
 export TAP_MILVUS_COMPOSE_PROJECT
 TAP_TAPPER_COMPOSE_PROJECT ?= tap-tapper-demo
 export TAP_TAPPER_COMPOSE_PROJECT
+TAP_INSIGHTS_COMPOSE_PROJECT ?= tap-insights-local
+export TAP_INSIGHTS_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
 .PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev legacy-tapper-codex-dev demo-e2e demo-down demo-reset
-.PHONY: tap-backend-check tap-backend-migrate tap-insights-worker
+.PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
@@ -81,9 +83,9 @@ tap-backend-dev: ## run TAP non-AI backend separately
 
 tap-backend-check: ## verify TAP boundary, migrations, backend code, and all tests
 	uv run --project apps/backend python scripts/check_backend_boundary.py --product tap
-	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests apps/backend/migrations
-	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests apps/backend/migrations
-	uv run --project apps/backend mypy apps/backend/src
+	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests apps/backend/migrations scripts/rebuild-insights.py
+	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests apps/backend/migrations scripts/rebuild-insights.py
+	uv run --project apps/backend mypy apps/backend/src scripts/rebuild-insights.py
 	uv run --project apps/backend pytest apps/backend/tests -q
 
 tap-backend-migrate: ## migrate configured TAP MySQL without resetting data
@@ -92,6 +94,18 @@ tap-backend-migrate: ## migrate configured TAP MySQL without resetting data
 
 tap-insights-worker: ## process durable TAP report receipts
 	uv run --project apps/backend python -m tap_platform.insights.worker
+
+tap-insights-up: ## start the persistent loopback TAP Insights ClickHouse only
+	@printf '%s' "$(TAP_INSIGHTS_COMPOSE_PROJECT)" | rg -q '^tap-insights-[a-z0-9][a-z0-9_-]{2,48}$$' || { echo "invalid owned TAP Insights Compose project" >&2; exit 2; }
+	docker compose -p "$(TAP_INSIGHTS_COMPOSE_PROJECT)" --profile insights up -d --wait --wait-timeout 180 clickhouse
+
+tap-insights-down: ## stop TAP Insights ClickHouse while preserving its named volume
+	@printf '%s' "$(TAP_INSIGHTS_COMPOSE_PROJECT)" | rg -q '^tap-insights-[a-z0-9][a-z0-9_-]{2,48}$$' || { echo "invalid owned TAP Insights Compose project" >&2; exit 2; }
+	docker compose -p "$(TAP_INSIGHTS_COMPOSE_PROJECT)" --profile insights stop clickhouse
+	docker compose -p "$(TAP_INSIGHTS_COMPOSE_PROJECT)" --profile insights rm -f clickhouse
+
+tap-insights-check: ## verify the redacted TAP Insights ClickHouse writer path
+	bash scripts/check-local-services.sh --only-clickhouse
 
 TAP_QUALITY_KB_PROFILE ?= apps/tap-ai-backend/tests/fixtures/quality/kb/profile-v1.json
 TAP_QUALITY_KB_REPORT ?= .local/quality-kb/report.json

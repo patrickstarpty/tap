@@ -74,6 +74,9 @@ def migrated_mysql(tmp_path: Path):
     engine = create_engine(MYSQL_URL)
     with engine.begin() as connection:
         for table in (
+            "tap_insights_projection_batches",
+            "tap_insights_projection_state",
+            "tap_insights_projection_versions",
             "tap_report_attempts",
             "tap_report_transitions",
             "tap_report_outbox",
@@ -125,15 +128,14 @@ def test_worker_restart_resumes_each_durable_state_without_rerunning_tests(
         restarted_ledger.get_receipt(receipt.receipt_id).state is ReportState.PROJECTING
     )
     assert restarted_worker.process_available() == 0
-    assert restarted_worker.confirm_projection(receipt.receipt_id)
-    ready = restarted_ledger.get_receipt(receipt.receipt_id)
-    assert ready.state is ReportState.READY
+    assert restarted_worker.confirm_projection(receipt.receipt_id) is False
+    waiting = restarted_ledger.get_receipt(receipt.receipt_id)
+    assert waiting.state is ReportState.PROJECTING
     assert restarted_ledger.outbox_events(receipt.receipt_id) == [
         "report.received",
         "report.validating",
         "report.mapped",
         "report.projecting",
-        "report.ready",
     ]
 
 
