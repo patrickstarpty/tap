@@ -7,14 +7,15 @@ const authState = process.env.TAP_INSIGHTS_E2E_AUTH_STATE ??
   path.join(repoRoot, ".superpowers", "artifacts", "task-12", "auth-state.json");
 const screenshots = process.env.TAP_INSIGHTS_E2E_SCREENSHOTS ??
   path.join(repoRoot, ".superpowers", "artifacts", "task-12");
+const accessToken = process.env.TAP_REPORT_ACCESS_TOKEN ?? "task12-e2e-access-token";
 
 test.use({ storageState: phase === "upload" ? undefined : authState });
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    window.__TAP_INSIGHTS_ACCESS_TOKEN__ = "task12-e2e-access-token";
+  await page.addInitScript((token) => {
+    window.__TAP_INSIGHTS_ACCESS_TOKEN__ = token;
     window.__TAP_PROJECT_ID__ = "project-a";
-  });
+  }, accessToken);
 });
 
 async function expectProjectedReport(page: import("@playwright/test").Page) {

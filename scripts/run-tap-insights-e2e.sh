@@ -3,44 +3,60 @@ set -euo pipefail
 
 insights_script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 insights_repo_root="$(CDPATH= cd -- "$insights_script_dir/.." && pwd)"
-insights_project="tap-insights-task12-e2e"
+insights_project="${TAP_INSIGHTS_E2E_PROJECT:-tap-insights-task12-e2e}"
 insights_state_dir="$(mktemp -d "${TMPDIR:-/tmp}/tap-insights-task12.XXXXXX")"
-insights_artifacts="$insights_repo_root/.superpowers/artifacts/task-12"
+insights_artifacts="${TAP_INSIGHTS_E2E_ARTIFACTS:-$insights_repo_root/.superpowers/artifacts/task-12}"
+insights_preserve_volumes="${TAP_INSIGHTS_E2E_PRESERVE_VOLUMES:-0}"
 insights_app_pids=""
 insights_compose_started=0
-readonly insights_script_dir insights_repo_root insights_project insights_state_dir insights_artifacts
+readonly insights_script_dir insights_repo_root insights_project insights_state_dir insights_artifacts insights_preserve_volumes
+
+case "$insights_project" in
+  tap-insights-task12-e2e | tap-insights-task14-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-journey) ;;
+  *) echo "refusing unsafe TAP Insights Compose project" >&2; exit 2 ;;
+esac
+
+case "$insights_artifacts" in
+  "$insights_repo_root"/.superpowers/artifacts/* | "${TMPDIR:-/tmp}"/tap-task14.*) ;;
+  *) echo "refusing unsafe TAP Insights artifact path" >&2; exit 2 ;;
+esac
+
+case "$insights_preserve_volumes" in
+  0 | 1) ;;
+  *) echo "TAP_INSIGHTS_E2E_PRESERVE_VOLUMES must be 0 or 1" >&2; exit 2 ;;
+esac
 
 case "$insights_state_dir" in
   "${TMPDIR:-/tmp}"/tap-insights-task12.*) ;;
   *) echo "refusing unsafe TAP Insights state path" >&2; exit 2 ;;
 esac
 
-export MYSQL_ROOT_PASSWORD=task12-e2e-root
-export MYSQL_DATABASE=tap_task12_e2e
-export MYSQL_USER=tap
-export MYSQL_PASSWORD=task12-e2e
-export MYSQL_PORT=33329
-export CLICKHOUSE_HTTP_PORT=38129
-export CLICKHOUSE_ADMIN_USER=tap_insights_admin
-export CLICKHOUSE_ADMIN_PASSWORD=task12-e2e-admin
-export TAP_CLICKHOUSE_WRITER_USER=tap_insights_writer
-export TAP_CLICKHOUSE_WRITER_PASSWORD=task12-e2e-writer
-export TAP_CLICKHOUSE_READER_USER=tap_insights_reader
-export TAP_CLICKHOUSE_READER_PASSWORD=task12-e2e-reader
-export TAP_DATABASE_URL='mysql+pymysql://tap:task12-e2e@127.0.0.1:33329/tap_task12_e2e?charset=utf8mb4'
+export MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-task12-e2e-root}"
+export MYSQL_DATABASE="${MYSQL_DATABASE:-tap_task12_e2e}"
+export MYSQL_USER="${MYSQL_USER:-tap}"
+export MYSQL_PASSWORD="${MYSQL_PASSWORD:-task12-e2e}"
+export MYSQL_PORT="${MYSQL_PORT:-33329}"
+export CLICKHOUSE_HTTP_PORT="${CLICKHOUSE_HTTP_PORT:-38129}"
+export CLICKHOUSE_ADMIN_USER="${CLICKHOUSE_ADMIN_USER:-tap_insights_admin}"
+export CLICKHOUSE_ADMIN_PASSWORD="${CLICKHOUSE_ADMIN_PASSWORD:-task12-e2e-admin}"
+export TAP_CLICKHOUSE_WRITER_USER="${TAP_CLICKHOUSE_WRITER_USER:-tap_insights_writer}"
+export TAP_CLICKHOUSE_WRITER_PASSWORD="${TAP_CLICKHOUSE_WRITER_PASSWORD:-task12-e2e-writer}"
+export TAP_CLICKHOUSE_READER_USER="${TAP_CLICKHOUSE_READER_USER:-tap_insights_reader}"
+export TAP_CLICKHOUSE_READER_PASSWORD="${TAP_CLICKHOUSE_READER_PASSWORD:-task12-e2e-reader}"
+export TAP_DATABASE_URL="mysql+pymysql://$MYSQL_USER:$MYSQL_PASSWORD@127.0.0.1:$MYSQL_PORT/$MYSQL_DATABASE?charset=utf8mb4"
 export TAP_REPORT_OBJECT_ROOT="$insights_state_dir/objects"
-export TAP_CLICKHOUSE_URL='http://127.0.0.1:38129/?database=tap_insights'
-export TAP_REPORT_ACCESS_TOKEN=task12-e2e-access-token
+export TAP_CLICKHOUSE_URL="http://127.0.0.1:$CLICKHOUSE_HTTP_PORT/?database=tap_insights"
+export TAP_REPORT_ACCESS_TOKEN="${TAP_REPORT_ACCESS_TOKEN:-task12-e2e-access-token}"
 export TAP_REPORT_PROJECT_ID=project-a
 export TAP_REPORT_TOKEN_EXPIRES_AT=2099-12-31T23:59:59+00:00
 export TAP_REPORT_WORKER_POLL_SECONDS=0.1
 export TAP_WEB_API_TARGET=http://127.0.0.1:18012
 export TAP_INSIGHTS_E2E_BASE_URL=http://127.0.0.1:15182
 export TAP_INSIGHTS_E2E_AUTH_STATE="$insights_artifacts/auth-state.json"
-export TAP_INSIGHTS_E2E_SCREENSHOTS="$insights_artifacts"
+export TAP_INSIGHTS_E2E_SCREENSHOTS="${TAP_INSIGHTS_E2E_SCREENSHOTS:-$insights_artifacts}"
 export TAP_REPO_ROOT="$insights_repo_root"
 
-mkdir -p "$TAP_REPORT_OBJECT_ROOT" "$insights_artifacts"
+mkdir -p "$TAP_REPORT_OBJECT_ROOT" "$insights_artifacts" "$TAP_INSIGHTS_E2E_SCREENSHOTS"
 
 insights_compose() {
   docker compose -f "$insights_repo_root/compose.yaml" -p "$insights_project" --profile insights "$@"
@@ -60,7 +76,11 @@ insights_cleanup() {
     [ -f "$log" ] && cp "$log" "$insights_artifacts/$(basename "$log")"
   done
   if [ "$insights_compose_started" -eq 1 ]; then
-    insights_compose down -v --remove-orphans >/dev/null 2>&1 || true
+    if [ "$insights_preserve_volumes" = "1" ]; then
+      insights_compose down --remove-orphans >/dev/null 2>&1 || true
+    else
+      insights_compose down -v --remove-orphans >/dev/null 2>&1 || true
+    fi
   fi
   rm -rf -- "$insights_state_dir"
 }
@@ -126,6 +146,13 @@ insights_run_phase() {
 }
 
 cd "$insights_repo_root"
+existing="$(docker ps -aq --filter "label=com.docker.compose.project=$insights_project")"
+existing="$existing$(docker volume ls -q --filter "label=com.docker.compose.project=$insights_project")"
+existing="$existing$(docker network ls -q --filter "label=com.docker.compose.project=$insights_project")"
+if [ -n "$existing" ]; then
+  echo "refusing to reuse existing TAP Insights E2E resources" >&2
+  exit 2
+fi
 insights_compose up -d --wait --wait-timeout 180 mysql clickhouse
 insights_compose_started=1
 uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head
