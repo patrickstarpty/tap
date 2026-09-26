@@ -77,9 +77,15 @@ test("real JUnit changes authorized cards and details and survives owned restart
     });
     const prototypePage = await prototypeContext.newPage();
     await prototypePage.goto("/prototype");
-    await prototypePage.getByRole("button", { name: "Test Analytics", exact: true }).click();
+    const insightsModule = prototypePage.getByRole("button", {
+      name: "Test Analytics",
+      exact: true,
+    });
+    await insightsModule.click();
+    await expect(insightsModule).toHaveAttribute("aria-current", "page");
     await prototypePage.screenshot({
       path: path.join(screenshots, "after-prototype-1280x720@2x.png"),
+      animations: "disabled",
     });
     await prototypeContext.close();
     await context.storageState({ path: authState });
