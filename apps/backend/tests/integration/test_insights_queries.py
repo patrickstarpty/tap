@@ -292,6 +292,13 @@ def limits(*, rows: int = 1000, concurrency: int = 2) -> QueryLimits:
 def test_real_query_correction_history_limits_auth_and_evidence(runtime) -> None:
     ledger, objects, writer, reader = runtime
     receipt_id = project(ledger, objects, writer, correction_no=0, corrected=False)
+    # Simulate rows written before Task 11 added attempt_facts.started_at. The
+    # query must resolve their immutable run dimension instead of declaring all
+    # existing projections undated after an additive schema upgrade.
+    clickhouse_admin(
+        "ALTER TABLE attempt_facts UPDATE started_at = NULL "
+        "WHERE project_id = 'project-a' SETTINGS mutations_sync = 2"
+    )
     service = InsightsQueryService(
         facts=reader,
         snapshots=ledger.projection_snapshot_at,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 import json
 import re
@@ -19,6 +20,7 @@ from tap_platform.insights.application.queries import (
     QueryLimits,
     QueryRecord,
     QueryTimedOut,
+    QueryUnavailable,
     RunSummary,
 )
 from tap_platform.insights.domain.metrics import MetricId, MetricValue
@@ -200,7 +202,11 @@ def test_clickhouse_query_template_binds_project_watermark_and_hard_limits(
         assert 0 < timeout <= 1.5
         assert "result_overflow_mode = 'throw'" in sql
     assert any("source_id IN ('ci-a')" in sql for sql in statements)
-    assert any("started_at IS NULL OR" in sql for sql in statements)
+    assert any(
+        "coalesce(fact.started_at, run.started_at) IS NULL OR" in sql
+        for sql in statements
+    )
+    assert any("ANY LEFT JOIN run_dimensions" in sql for sql in statements)
 
 
 def test_snapshot_resolution_is_inside_end_to_end_timeout() -> None:
@@ -238,3 +244,27 @@ def test_snapshot_resolution_is_inside_end_to_end_timeout() -> None:
 
     with pytest.raises(QueryTimedOut):
         service.execute(project_id="project-a", query=record().query)
+
+
+def test_historical_details_refuse_unknown_metric_semantics_version() -> None:
+    """A historical query must never be reinterpreted by current detail code."""
+    from tap_platform.insights.application.queries import (
+        InMemoryQueryHistory,
+        InsightsQueryService,
+    )
+
+    history = InMemoryQueryHistory()
+    original = replace(record(), metric_version="insights-metrics-v0")
+    history.save_query(original)
+    service = InsightsQueryService(
+        facts=type("EmptyFacts", (), {"query_attempts": lambda self, **kwargs: []})(),
+        snapshots=lambda _as_of: original.snapshot,
+        history=history,
+        clock=lambda: datetime(2026, 9, 25, tzinfo=UTC),
+        limits=LIMITS,
+    )
+
+    with pytest.raises(QueryUnavailable, match="semantics"):
+        service.run_page(
+            project_id="project-a", query_id=original.query_id, cursor=0, limit=10
+        )

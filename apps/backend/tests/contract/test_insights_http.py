@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -298,6 +299,59 @@ def test_unavailable_query_dependency_returns_explicit_failure_not_partial_resul
     assert response.status_code == 503
     assert response.json()["detail"] == "insights query unavailable"
     assert "metrics" not in response.json()
+
+
+def test_failure_page_is_unavailable_when_attempt_order_is_missing() -> None:
+    """Known attempt numbers must not masquerade as the final failure."""
+
+    class MissingOrderFacts(FactSource):
+        def query_attempts(self, **kwargs: object) -> list[MetricAttempt]:
+            first = replace(super().query_attempts(**kwargs)[0], result="fail")
+            return [
+                first,
+                replace(
+                    first,
+                    fact_key="fact-unknown",
+                    attempt=None,
+                    result="pass",
+                    first_attempt_eligible=False,
+                    missing_reasons=("missing-attempt-identity",),
+                ),
+            ]
+
+    facts = MissingOrderFacts()
+    service = InsightsQueryService(
+        facts=facts,
+        snapshots=lambda _as_of: facts.snapshot,
+        history=InMemoryQueryHistory(),
+        clock=lambda: datetime(2026, 9, 25, tzinfo=UTC),
+        limits=QueryLimits(
+            max_rows_to_read=100,
+            max_bytes_to_read=1_000_000,
+            max_memory_bytes=1_000_000,
+            max_concurrent_queries=1,
+            max_output_rows=100,
+            timeout_seconds=2,
+        ),
+    )
+    client = TestClient(
+        create_app(query_service=service, insights_authorizer=MutableAuthorizer())
+    )
+    created = client.post(
+        "/api/v1/projects/project-a/insights/queries",
+        headers={"Authorization": "Bearer test-token"},
+        json=request_body(),
+    )
+    assert created.status_code == 201
+
+    failures = client.get(
+        "/api/v1/projects/project-a/insights/failures",
+        params={"queryId": created.json()["queryId"], "limit": 10},
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert failures.status_code == 503
+    assert failures.json()["detail"] == "insights query unavailable"
 
 
 def test_query_output_limit_returns_explicit_failure_not_truncated_data() -> None:

@@ -265,7 +265,7 @@ def test_same_external_run_id_in_distinct_configurations_has_distinct_run_keys()
         limits=QueryLimits(
             max_rows_to_read=100,
             max_bytes_to_read=1000,
-            max_memory_bytes=1000,
+            max_memory_bytes=10_000,
             max_concurrent_queries=1,
             max_output_rows=10,
             timeout_seconds=1,

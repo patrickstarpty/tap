@@ -250,9 +250,12 @@ class ClickHouseInsightsStore:
                 for token in (
                     "limit exceeded",
                     "limit for rows",
+                    "limit for bytes",
                     "too many rows",
                     "too_many_rows",
+                    "too_many_bytes",
                     "memory limit",
+                    "memory_limit_exceeded",
                 )
             ):
                 raise QueryLimitExceeded("ClickHouse query limit exceeded") from exc
@@ -337,17 +340,39 @@ class ClickHouseInsightsStore:
         }:
             raise ValueError("ClickHouse query table is not allowlisted")
         projection_version = _quote(snapshot.projection_version)
+        prefix = "fact." if table == "attempt_facts" else ""
+        select_clause = "*"
+        from_clause = table
+        if table == "attempt_facts":
+            select_clause = (
+                "fact.*, coalesce(fact.started_at, run.started_at) "
+                "AS resolved_started_at"
+            )
+            from_clause = (
+                "attempt_facts AS fact ANY LEFT JOIN run_dimensions AS run ON "
+                "run.projection_version = fact.projection_version "
+                "AND run.data_version = fact.data_version "
+                "AND run.projection_batch_id = fact.projection_batch_id "
+                "AND run.project_id = fact.project_id "
+                "AND run.source_id = fact.source_id "
+                "AND run.external_run_id = fact.external_run_id "
+                "AND run.report_batch_id = fact.report_batch_id "
+                "AND run.shard_id = fact.shard_id "
+                "AND run.correction_no = fact.correction_no"
+            )
         project_clause = (
-            f" AND project_id = {_quote(project_id)}" if project_id is not None else ""
+            f" AND {prefix}project_id = {_quote(project_id)}"
+            if project_id is not None
+            else ""
         )
-        scope_clause = _query_scope_clause(query)
+        scope_clause = _query_scope_clause(query, prefix=prefix)
         window_clause = ""
         if table == "attempt_facts" and window is not None:
             window_clause = (
-                " AND (started_at IS NULL OR "
-                "parseDateTimeBestEffortOrNull(started_at) >= "
+                " AND (coalesce(fact.started_at, run.started_at) IS NULL OR "
+                "parseDateTimeBestEffortOrNull(coalesce(fact.started_at, run.started_at)) >= "
                 f"parseDateTimeBestEffort({_quote(window.start.isoformat())}) "
-                "AND parseDateTimeBestEffortOrNull(started_at) < "
+                "AND parseDateTimeBestEffortOrNull(coalesce(fact.started_at, run.started_at)) < "
                 f"parseDateTimeBestEffort({_quote(window.end.isoformat())}))"
             )
         settings = ""
@@ -366,9 +391,9 @@ class ClickHouseInsightsStore:
                 " timeout_overflow_mode = 'throw'"
             )
         return self._json_query(
-            f"SELECT * FROM {table} "
-            f"WHERE projection_version = {projection_version} "
-            f"AND data_version <= {snapshot.visible_data_version} "
+            f"SELECT {select_clause} FROM {from_clause} "
+            f"WHERE {prefix}projection_version = {projection_version} "
+            f"AND {prefix}data_version <= {snapshot.visible_data_version} "
             f"{project_clause}{scope_clause}{window_clause}{settings} FORMAT JSONEachRow",
             timeout_seconds=(limits.timeout_seconds if limits is not None else None),
         )
@@ -413,7 +438,7 @@ class ClickHouseInsightsStore:
             ),
             missing_reasons=tuple(str(item) for item in row["missing_reasons"]),
             first_attempt_eligible=bool(row["first_attempt_eligible"]),
-            started_at=_datetime(row, "started_at"),
+            started_at=_datetime(row, "resolved_started_at"),
         )
 
     def _insert_rows(self, table: str, rows: tuple[dict[str, Any], ...]) -> None:
@@ -496,7 +521,7 @@ def _quote(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def _query_scope_clause(query: MetricQuery | None) -> str:
+def _query_scope_clause(query: MetricQuery | None, *, prefix: str = "") -> str:
     if query is None:
         return ""
     fields = (
@@ -506,7 +531,7 @@ def _query_scope_clause(query: MetricQuery | None) -> str:
         ("configuration", query.filters.configurations),
     )
     return "".join(
-        f" AND {field} IN ({','.join(_quote(value) for value in values)})"
+        f" AND {prefix}{field} IN ({','.join(_quote(value) for value in values)})"
         for field, values in fields
         if values
     )

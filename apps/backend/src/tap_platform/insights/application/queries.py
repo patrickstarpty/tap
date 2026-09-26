@@ -7,6 +7,7 @@ import json
 import threading
 import time
 import uuid
+import sys
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
@@ -251,16 +252,46 @@ class InsightsQueryService:
     def run_page(
         self, *, project_id: str, query_id: str, cursor: int, limit: int
     ) -> tuple[QueryRecord, tuple[RunSummary, ...], str | None]:
-        record, attempts = self._historical_attempts(project_id, query_id)
-        values = _run_summaries(attempts, window=record.query.window())
-        return record, *self._bounded_page(values, cursor=cursor, limit=limit)
+        if not self._capacity.acquire(blocking=False):
+            raise QueryLimitExceeded("query concurrency limit exceeded")
+        deadline = time.monotonic() + self._limits.timeout_seconds
+        try:
+            record, attempts = self._historical_attempts(
+                project_id, query_id, deadline=deadline
+            )
+            _require_v1_details(record.metric_version)
+            values = _run_summaries_v1(
+                attempts, window=record.query.window(), deadline=deadline
+            )
+            page = self._bounded_page(
+                values, cursor=cursor, limit=limit, deadline=deadline
+            )
+            self._check_deadline(deadline)
+            return record, *page
+        finally:
+            self._capacity.release()
 
     def failure_page(
         self, *, project_id: str, query_id: str, cursor: int, limit: int
     ) -> tuple[QueryRecord, tuple[FailureDetail, ...], str | None]:
-        record, attempts = self._historical_attempts(project_id, query_id)
-        values = _failure_details(attempts, window=record.query.window())
-        return record, *self._bounded_page(values, cursor=cursor, limit=limit)
+        if not self._capacity.acquire(blocking=False):
+            raise QueryLimitExceeded("query concurrency limit exceeded")
+        deadline = time.monotonic() + self._limits.timeout_seconds
+        try:
+            record, attempts = self._historical_attempts(
+                project_id, query_id, deadline=deadline
+            )
+            _require_v1_details(record.metric_version)
+            values = _failure_details_v1(
+                attempts, window=record.query.window(), deadline=deadline
+            )
+            page = self._bounded_page(
+                values, cursor=cursor, limit=limit, deadline=deadline
+            )
+            self._check_deadline(deadline)
+            return record, *page
+        finally:
+            self._capacity.release()
 
     def attempt_page(
         self,
@@ -271,35 +302,48 @@ class InsightsQueryService:
         cursor: int,
         limit: int,
     ) -> tuple[QueryRecord, tuple[AttemptDetail, ...], str | None]:
-        record, attempts = self._historical_attempts(project_id, query_id)
-        runs = _run_summaries(attempts, window=record.query.window())
-        if not any(item.run_id == run_id for item in runs):
-            raise KeyError(run_id)
-        values = tuple(
-            item
-            for item in _attempt_details(attempts, window=record.query.window())
-            if item.run_id == run_id
-        )
-        return record, *self._bounded_page(values, cursor=cursor, limit=limit)
-
-    def _historical_attempts(
-        self, project_id: str, query_id: str
-    ) -> tuple[QueryRecord, list[MetricAttempt]]:
         if not self._capacity.acquire(blocking=False):
             raise QueryLimitExceeded("query concurrency limit exceeded")
         deadline = time.monotonic() + self._limits.timeout_seconds
         try:
-            record = self.historical(project_id=project_id, query_id=query_id)
-            attempts = self._load_attempts(
-                project_id=project_id,
-                query=record.query,
-                window=record.query.window(),
-                snapshot=record.snapshot,
-                deadline=deadline,
+            record, attempts = self._historical_attempts(
+                project_id, query_id, deadline=deadline
             )
-            return record, attempts
+            _require_v1_details(record.metric_version)
+            runs = _run_summaries_v1(
+                attempts, window=record.query.window(), deadline=deadline
+            )
+            if not any(item.run_id == run_id for item in runs):
+                raise KeyError(run_id)
+            values = tuple(
+                item
+                for item in _attempt_details_v1(
+                    attempts, window=record.query.window(), deadline=deadline
+                )
+                if item.run_id == run_id
+            )
+            page = self._bounded_page(
+                values, cursor=cursor, limit=limit, deadline=deadline
+            )
+            self._check_deadline(deadline)
+            return record, *page
         finally:
             self._capacity.release()
+
+    def _historical_attempts(
+        self, project_id: str, query_id: str, *, deadline: float
+    ) -> tuple[QueryRecord, list[MetricAttempt]]:
+        record = self.historical(project_id=project_id, query_id=query_id)
+        _require_v1_details(record.metric_version)
+        self._check_deadline(deadline)
+        attempts = self._load_attempts(
+            project_id=project_id,
+            query=record.query,
+            window=record.query.window(),
+            snapshot=record.snapshot,
+            deadline=deadline,
+        )
+        return record, attempts
 
     def _load_attempts(
         self,
@@ -332,6 +376,7 @@ class InsightsQueryService:
             raise QueryLimitExceeded("query scan row limit exceeded")
         if any(item.project_id != project_id for item in attempts):
             raise QueryUnavailable("fact source returned cross-project data")
+        self._check_client_memory(attempts, deadline=deadline)
         return _apply_filters(attempts, query.filters)
 
     def _check_output(self, record: QueryRecord) -> None:
@@ -349,10 +394,12 @@ class InsightsQueryService:
             raise QueryLimitExceeded("query output byte limit exceeded")
 
     def _bounded_page(
-        self, values: tuple, *, cursor: int, limit: int
+        self, values: tuple, *, cursor: int, limit: int, deadline: float
     ) -> tuple[tuple, str | None]:
         if limit > self._limits.max_output_rows:
             raise QueryLimitExceeded("query output row limit exceeded")
+        if _shallow_graph_size(values) > self._limits.max_memory_bytes // 2:
+            raise QueryLimitExceeded("query client memory limit exceeded")
         page, next_cursor = _page(values, cursor=cursor, limit=limit)
         output_bytes = len(
             json.dumps(
@@ -364,7 +411,24 @@ class InsightsQueryService:
         )
         if output_bytes > self._limits.max_output_bytes:
             raise QueryLimitExceeded("query output byte limit exceeded")
+        self._check_deadline(deadline)
         return page, next_cursor
+
+    def _check_client_memory(
+        self, attempts: list[MetricAttempt], *, deadline: float
+    ) -> None:
+        used = sys.getsizeof(attempts)
+        budget = self._limits.max_memory_bytes // 2
+        for index, item in enumerate(attempts):
+            used += sys.getsizeof(item)
+            used += sum(
+                sys.getsizeof(getattr(item, field))
+                for field in item.__dataclass_fields__
+            )
+            if used > budget:
+                raise QueryLimitExceeded("query client memory limit exceeded")
+            if index % 1024 == 0:
+                self._check_deadline(deadline)
 
     @staticmethod
     def _check_deadline(deadline: float) -> None:
@@ -404,11 +468,24 @@ def _in_window(item: MetricAttempt, window: MetricWindow) -> bool:
     return item.run_started_at is None or window.contains(item.run_started_at)
 
 
-def _run_summaries(
-    attempts: list[MetricAttempt], *, window: MetricWindow
+def _require_v1_details(metric_version: str) -> None:
+    # Detail identity and final-attempt selection are frozen with the metric
+    # version. A future version must add a new dispatcher instead of changing v1.
+    if metric_version != METRIC_VERSION:
+        raise QueryUnavailable("historical detail semantics unavailable")
+
+
+def _check_detail_deadline(deadline: float, index: int) -> None:
+    if index % 1024 == 0 and time.monotonic() >= deadline:
+        raise QueryTimedOut("insights query timed out")
+
+
+def _run_summaries_v1(
+    attempts: list[MetricAttempt], *, window: MetricWindow, deadline: float
 ) -> tuple[RunSummary, ...]:
     grouped: dict[str, list[MetricAttempt]] = defaultdict(list)
-    for item in attempts:
+    for index, item in enumerate(attempts):
+        _check_detail_deadline(deadline, index)
         if _in_window(item, window):
             grouped[_run_key(item)].append(item)
     return tuple(
@@ -426,15 +503,23 @@ def _run_summaries(
     )
 
 
-def _failure_details(
-    attempts: list[MetricAttempt], *, window: MetricWindow
+def _failure_details_v1(
+    attempts: list[MetricAttempt], *, window: MetricWindow, deadline: float
 ) -> tuple[FailureDetail, ...]:
     grouped: dict[tuple[str, ...], list[MetricAttempt]] = defaultdict(list)
-    for item in attempts:
+    for index, item in enumerate(attempts):
+        _check_detail_deadline(deadline, index)
         if _in_window(item, window):
             grouped[item.instance_key].append(item)
+    if any(
+        not items[0].first_attempt_eligible
+        or any(item.attempt is None for item in items)
+        for items in grouped.values()
+    ):
+        raise QueryUnavailable("failure details unavailable: missing attempt order")
     failures: list[FailureDetail] = []
-    for items in grouped.values():
+    for index, items in enumerate(grouped.values()):
+        _check_detail_deadline(deadline, index)
         terminals = [item for item in items if item.result in {"pass", "fail", "error"}]
         if not terminals:
             continue
@@ -486,37 +571,52 @@ def _trend_points(
     )
 
 
-def _attempt_details(
-    attempts: list[MetricAttempt], *, window: MetricWindow
+def _attempt_details_v1(
+    attempts: list[MetricAttempt], *, window: MetricWindow, deadline: float
 ) -> tuple[AttemptDetail, ...]:
-    return tuple(
-        AttemptDetail(
-            fact_key=item.fact_key,
-            run_id=_run_key(item),
-            external_run_id=item.external_run_id,
-            stable_test_id=item.stable_test_id,
-            source_test_identity=item.source_test_identity,
-            data_row=item.data_row,
-            attempt=item.attempt,
-            result=item.result,
-            duration_seconds=item.duration_seconds,
-            evidence_refs=(item.receipt_id,),
-        )
-        for item in sorted(
-            attempts,
-            key=lambda value: (
-                _run_key(value),
-                value.stable_test_id or value.source_test_identity,
-                value.data_row or "",
-                value.attempt is None,
-                value.attempt or 0,
-            ),
-        )
-        if _in_window(item, window)
+    ordered = sorted(
+        attempts,
+        key=lambda value: (
+            _run_key(value),
+            value.stable_test_id or value.source_test_identity,
+            value.data_row or "",
+            value.attempt is None,
+            value.attempt or 0,
+        ),
     )
+    values: list[AttemptDetail] = []
+    for index, item in enumerate(ordered):
+        _check_detail_deadline(deadline, index)
+        if not _in_window(item, window):
+            continue
+        values.append(
+            AttemptDetail(
+                fact_key=item.fact_key,
+                run_id=_run_key(item),
+                external_run_id=item.external_run_id,
+                stable_test_id=item.stable_test_id,
+                source_test_identity=item.source_test_identity,
+                data_row=item.data_row,
+                attempt=item.attempt,
+                result=item.result,
+                duration_seconds=item.duration_seconds,
+                evidence_refs=(item.receipt_id,),
+            )
+        )
+    return tuple(values)
 
 
 def _page(values: tuple, *, cursor: int, limit: int) -> tuple[tuple, str | None]:
     page = values[cursor : cursor + limit]
     next_cursor = str(cursor + limit) if cursor + limit < len(values) else None
     return page, next_cursor
+
+
+def _shallow_graph_size(values: tuple) -> int:
+    return sys.getsizeof(values) + sum(
+        sys.getsizeof(item)
+        + sum(
+            sys.getsizeof(getattr(item, field)) for field in item.__dataclass_fields__
+        )
+        for item in values
+    )
