@@ -1,16 +1,18 @@
 """Standalone TAP backend entrypoint for non-AI modules."""
 
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI
 from sqlalchemy import create_engine
 
 from tap_platform.access import AccessPrincipal
+from tap_platform.insights.adapters.clickhouse import ClickHouseInsightsStore
 from tap_platform.insights.adapters.mysql import SqlAlchemyReportLedger
 from tap_platform.insights.adapters.objects import FileReportObjectStore
 from tap_platform.insights.application.intake import ReportIntake
+from tap_platform.insights.application.queries import InsightsQueryService, QueryLimits
 from tap_platform.insights.http import (
     BearerPrincipalAuthorizer,
     EvidenceReader,
@@ -26,7 +28,9 @@ def create_app(
     report_ledger: ReceiptReader | None = None,
     report_objects: EvidenceReader | None = None,
     insights_authorizer: InsightsAuthorizer | None = None,
+    query_service: InsightsQueryService | None = None,
 ) -> FastAPI:
+    ledger: SqlAlchemyReportLedger | None = None
     if report_intake is None and report_ledger is None and report_objects is None:
         database_url = os.getenv("TAP_DATABASE_URL")
         object_root = os.getenv("TAP_REPORT_OBJECT_ROOT")
@@ -49,6 +53,55 @@ def create_app(
                 objects=objects,
                 max_upload_bytes=max_upload_bytes,
             )
+    if query_service is None and ledger is not None:
+        clickhouse_url = os.getenv("TAP_CLICKHOUSE_URL")
+        clickhouse_user = os.getenv("TAP_CLICKHOUSE_READER_USER")
+        clickhouse_password = os.getenv("TAP_CLICKHOUSE_READER_PASSWORD")
+        if clickhouse_url:
+            if not all((clickhouse_user, clickhouse_password)):
+                raise RuntimeError(
+                    "TAP Insights ClickHouse reader settings must be configured together"
+                )
+            assert clickhouse_url is not None
+            assert clickhouse_user is not None
+            assert clickhouse_password is not None
+            store = ClickHouseInsightsStore(
+                clickhouse_url,
+                username=clickhouse_user,
+                password=clickhouse_password,
+                timeout_seconds=float(
+                    os.getenv("TAP_INSIGHTS_QUERY_TIMEOUT_SECONDS", "3")
+                ),
+            )
+            query_service = InsightsQueryService(
+                facts=store,
+                snapshots=ledger.projection_snapshot_at,
+                history=ledger,
+                clock=lambda: datetime.now(UTC),
+                limits=QueryLimits(
+                    max_rows_to_read=int(
+                        os.getenv("TAP_INSIGHTS_MAX_ROWS_TO_READ", "1000000")
+                    ),
+                    max_bytes_to_read=int(
+                        os.getenv("TAP_INSIGHTS_MAX_BYTES_TO_READ", "268435456")
+                    ),
+                    max_memory_bytes=int(
+                        os.getenv("TAP_INSIGHTS_MAX_MEMORY_BYTES", "268435456")
+                    ),
+                    max_concurrent_queries=int(
+                        os.getenv("TAP_INSIGHTS_MAX_CONCURRENT_QUERIES", "10")
+                    ),
+                    max_output_rows=int(
+                        os.getenv("TAP_INSIGHTS_MAX_OUTPUT_ROWS", "10000")
+                    ),
+                    max_output_bytes=int(
+                        os.getenv("TAP_INSIGHTS_MAX_OUTPUT_BYTES", "4194304")
+                    ),
+                    timeout_seconds=float(
+                        os.getenv("TAP_INSIGHTS_QUERY_TIMEOUT_SECONDS", "3")
+                    ),
+                ),
+            )
     if insights_authorizer is None:
         insights_authorizer = _authorizer_from_environment()
     app = FastAPI(title="TAP API", version="0.1.0")
@@ -58,6 +111,7 @@ def create_app(
             report_ledger=report_ledger,
             report_objects=report_objects,
             insights_authorizer=insights_authorizer,
+            query_service=query_service,
         )
     )
 
@@ -95,8 +149,11 @@ def _authorizer_from_environment() -> InsightsAuthorizer | None:
         actions=frozenset(
             {
                 "insights.evidence.read",
+                "insights.failures.read",
+                "insights.metrics.read",
                 "insights.reports.create",
                 "insights.reports.read",
+                "insights.runs.read",
             }
         ),
         enabled=True,

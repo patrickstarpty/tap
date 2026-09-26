@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -72,6 +73,8 @@ class RunDimension:
     build_id: str | None
     branch: str | None
     business_cycle_id: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

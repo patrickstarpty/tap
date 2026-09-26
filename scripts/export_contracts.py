@@ -100,10 +100,7 @@ def write_or_check(output_directory: Path, *, check: bool) -> int:
     if check:
         # Only these namespaces/extensions belong to this exporter; never treat
         # documentation or unrelated contracts as generated output to remove.
-        owned = set(output_directory.glob("openapi/*.json")) | set(
-            output_directory.glob("events/*.schema.json")
-        )
-        owned |= {output_directory / "problem-types.json"}
+        owned = {output_directory / path for path in expected_files}
         mismatches.extend(
             sorted(
                 path.relative_to(output_directory)

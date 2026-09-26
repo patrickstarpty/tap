@@ -8,6 +8,7 @@ import re
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from typing import Any, Literal, cast
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -30,9 +31,20 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import Connection, Engine, RowMapping
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects import mysql
 
 from tap_platform.insights.adapters.junit import PARSER_VERSION
 from tap_platform.insights.adapters.objects import StoredObject
+from tap_platform.insights.application.queries import (
+    AttemptDetail,
+    FailureDetail,
+    MetricQuery,
+    QueryFilters,
+    QueryRecord,
+    RunSummary,
+    TrendPoint,
+)
+from tap_platform.insights.domain.metrics import MetricId, MetricValue
 from tap_platform.insights.domain.reports import (
     Completeness,
     ReportManifest,
@@ -47,6 +59,7 @@ from tap_platform.insights.domain.projection import (
 
 
 metadata = MetaData()
+precise_datetime = DateTime(timezone=True).with_variant(mysql.DATETIME(fsp=6), "mysql")
 
 report_identity_claims = Table(
     "tap_report_identity_claims",
@@ -155,7 +168,7 @@ insights_projection_versions = Table(
     Column("verified_row_count", BigInteger, nullable=True),
     Column("verified_checksum", String(64), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("activated_at", DateTime(timezone=True), nullable=True),
+    Column("activated_at", precise_datetime, nullable=True),
 )
 
 insights_projection_state = Table(
@@ -193,7 +206,7 @@ insights_projection_batches = Table(
     Column("row_count", BigInteger, nullable=False),
     Column("status", String(32), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("completed_at", precise_datetime, nullable=True),
     UniqueConstraint(
         "projection_version",
         "receipt_id",
@@ -204,6 +217,24 @@ insights_projection_batches = Table(
         "data_version",
         name="uq_tap_insights_projection_data_version",
     ),
+)
+
+insights_queries = Table(
+    "tap_insights_queries",
+    metadata,
+    Column("query_id", String(36), primary_key=True),
+    Column("project_id", String(256), nullable=False),
+    Column("metric_version", String(128), nullable=False),
+    Column("filters", JSON, nullable=False),
+    Column("from_date", String(10), nullable=False),
+    Column("to_date", String(10), nullable=False),
+    Column("timezone", String(64), nullable=False),
+    Column("as_of", precise_datetime, nullable=False),
+    Column("projection_version", String(128), nullable=False),
+    Column("visible_data_version", BigInteger, nullable=False),
+    Column("result_payload", JSON, nullable=False),
+    Column("created_at", precise_datetime, nullable=False),
+    Index("ix_tap_insights_query_project_created", "project_id", "created_at"),
 )
 
 
@@ -499,6 +530,94 @@ class SqlAlchemyReportLedger:
                 connection.execute(
                     select(func.count()).select_from(report_receipts)
                 ).scalar_one()
+            )
+
+    def save_query(self, record: QueryRecord) -> None:
+        with self._engine.begin() as connection:
+            connection.execute(
+                insert(insights_queries).values(
+                    query_id=record.query_id,
+                    project_id=record.project_id,
+                    metric_version=record.metric_version,
+                    filters={
+                        "source_ids": list(record.query.filters.source_ids),
+                        "run_ids": list(record.query.filters.run_ids),
+                        "environments": list(record.query.filters.environments),
+                        "configurations": list(record.query.filters.configurations),
+                    },
+                    from_date=record.query.from_date,
+                    to_date=record.query.to_date,
+                    timezone=record.query.timezone,
+                    as_of=record.query.as_of,
+                    projection_version=record.snapshot.projection_version,
+                    visible_data_version=record.snapshot.visible_data_version,
+                    result_payload=_query_result_payload(record),
+                    created_at=record.created_at,
+                )
+            )
+
+    def get_query(self, query_id: str) -> QueryRecord:
+        with self._engine.connect() as connection:
+            row = (
+                connection.execute(
+                    select(insights_queries).where(
+                        insights_queries.c.query_id == query_id
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            raise KeyError(query_id)
+        return _row_to_query_record(row)
+
+    def projection_snapshot_at(self, as_of: datetime) -> ProjectionSnapshot:
+        if as_of.utcoffset() is None:
+            raise ValueError("as_of must be timezone-aware")
+        requested = as_of.astimezone(UTC)
+        with self._engine.begin() as connection:
+            self._ensure_default_projection(connection)
+            versions = connection.execute(
+                select(insights_projection_versions)
+                .where(insights_projection_versions.c.activated_at.is_not(None))
+                .order_by(insights_projection_versions.c.activated_at.desc())
+            ).mappings()
+            selected = next(
+                (
+                    row
+                    for row in versions
+                    if _aware_utc(row["activated_at"]) <= requested
+                ),
+                None,
+            )
+            if selected is None:
+                raise KeyError("no projection was active at the requested as-of")
+            batches = connection.execute(
+                select(
+                    insights_projection_batches.c.data_version,
+                    insights_projection_batches.c.status,
+                    insights_projection_batches.c.completed_at,
+                )
+                .where(
+                    insights_projection_batches.c.projection_version
+                    == selected["projection_version"]
+                )
+                .order_by(insights_projection_batches.c.data_version)
+            ).mappings()
+            visible = 0
+            for batch in batches:
+                completed_at = batch["completed_at"]
+                if (
+                    int(batch["data_version"]) != visible + 1
+                    or batch["status"] != "complete"
+                    or completed_at is None
+                    or _aware_utc(completed_at) > requested
+                ):
+                    break
+                visible += 1
+            return ProjectionSnapshot(
+                projection_version=str(selected["projection_version"]),
+                visible_data_version=visible,
             )
 
     def projection_snapshot(
@@ -1162,3 +1281,186 @@ class SqlAlchemyReportLedger:
             missing_reasons=tuple(missing),
             first_attempt_eligible=bool(row["first_attempt_eligible"]),
         )
+
+
+def _aware_utc(value: datetime) -> datetime:
+    return (
+        value.replace(tzinfo=UTC)
+        if value.utcoffset() is None
+        else value.astimezone(UTC)
+    )
+
+
+def _query_result_payload(record: QueryRecord) -> dict[str, object]:
+    return {
+        "metrics": [_metric_payload(item) for item in record.metrics],
+        "trends": [
+            {
+                "local_date": point.local_date,
+                "metrics": [_metric_payload(item) for item in point.metrics],
+            }
+            for point in record.trends
+        ],
+        "runs": [
+            {
+                "run_id": item.run_id,
+                "source_id": item.source_id,
+                "environment": item.environment,
+                "configuration": item.configuration,
+                "started_at": (
+                    item.started_at.isoformat() if item.started_at is not None else None
+                ),
+                "instance_count": item.instance_count,
+                "evidence_refs": list(item.evidence_refs),
+            }
+            for item in record.runs
+        ],
+        "failures": [
+            {
+                "fact_key": item.fact_key,
+                "run_id": item.run_id,
+                "source_id": item.source_id,
+                "stable_test_id": item.stable_test_id,
+                "source_test_identity": item.source_test_identity,
+                "data_row": item.data_row,
+                "result": item.result,
+                "configuration": item.configuration,
+                "evidence_refs": list(item.evidence_refs),
+            }
+            for item in record.failures
+        ],
+        "attempts": [
+            {
+                "fact_key": item.fact_key,
+                "run_id": item.run_id,
+                "stable_test_id": item.stable_test_id,
+                "source_test_identity": item.source_test_identity,
+                "data_row": item.data_row,
+                "attempt": item.attempt,
+                "result": item.result,
+                "duration_seconds": item.duration_seconds,
+                "evidence_refs": list(item.evidence_refs),
+            }
+            for item in record.attempts
+        ],
+    }
+
+
+def _metric_payload(item: MetricValue) -> dict[str, object]:
+    return {
+        "metric_id": item.metric_id.value,
+        "numerator": item.numerator,
+        "denominator": item.denominator,
+        "value": item.value,
+        "completeness": item.completeness,
+        "missing_reasons": list(item.missing_reasons),
+        "evidence_refs": list(item.evidence_refs),
+    }
+
+
+def _row_to_query_record(row: RowMapping) -> QueryRecord:
+    filters = _json_value(row["filters"])
+    payload = _json_value(row["result_payload"])
+    query = MetricQuery(
+        metric_ids=tuple(MetricId(item["metric_id"]) for item in payload["metrics"]),
+        filters=QueryFilters(
+            source_ids=tuple(filters["source_ids"]),
+            run_ids=tuple(filters["run_ids"]),
+            environments=tuple(filters["environments"]),
+            configurations=tuple(filters["configurations"]),
+        ),
+        from_date=str(row["from_date"]),
+        to_date=str(row["to_date"]),
+        timezone=str(row["timezone"]),
+        as_of=_aware_utc(row["as_of"]),
+    )
+    return QueryRecord(
+        query_id=str(row["query_id"]),
+        project_id=str(row["project_id"]),
+        metric_version=str(row["metric_version"]),
+        query=query,
+        snapshot=ProjectionSnapshot(
+            projection_version=str(row["projection_version"]),
+            visible_data_version=int(row["visible_data_version"]),
+        ),
+        created_at=_aware_utc(row["created_at"]),
+        metrics=tuple(_metric_value(item) for item in payload["metrics"]),
+        trends=tuple(
+            TrendPoint(
+                local_date=str(point["local_date"]),
+                metrics=tuple(_metric_value(item) for item in point["metrics"]),
+            )
+            for point in payload["trends"]
+        ),
+        runs=tuple(
+            RunSummary(
+                run_id=str(item["run_id"]),
+                source_id=str(item["source_id"]),
+                environment=str(item["environment"]),
+                configuration=str(item["configuration"]),
+                started_at=(
+                    datetime.fromisoformat(item["started_at"])
+                    if item["started_at"] is not None
+                    else None
+                ),
+                instance_count=int(item["instance_count"]),
+                evidence_refs=tuple(item["evidence_refs"]),
+            )
+            for item in payload["runs"]
+        ),
+        failures=tuple(
+            FailureDetail(
+                fact_key=str(item["fact_key"]),
+                run_id=str(item["run_id"]),
+                source_id=str(item["source_id"]),
+                stable_test_id=item["stable_test_id"],
+                source_test_identity=str(item["source_test_identity"]),
+                data_row=item["data_row"],
+                result=cast(Literal["fail", "error"], item["result"]),
+                configuration=str(item["configuration"]),
+                evidence_refs=tuple(item["evidence_refs"]),
+            )
+            for item in payload["failures"]
+        ),
+        attempts=tuple(
+            AttemptDetail(
+                fact_key=str(item["fact_key"]),
+                run_id=str(item["run_id"]),
+                stable_test_id=item["stable_test_id"],
+                source_test_identity=str(item["source_test_identity"]),
+                data_row=item["data_row"],
+                attempt=(int(item["attempt"]) if item["attempt"] is not None else None),
+                result=str(item["result"]),
+                duration_seconds=(
+                    float(item["duration_seconds"])
+                    if item["duration_seconds"] is not None
+                    else None
+                ),
+                evidence_refs=tuple(item["evidence_refs"]),
+            )
+            for item in payload["attempts"]
+        ),
+    )
+
+
+def _metric_value(value: dict[str, Any]) -> MetricValue:
+    return MetricValue(
+        metric_id=MetricId(str(value["metric_id"])),
+        numerator=(int(value["numerator"]) if value["numerator"] is not None else None),
+        denominator=(
+            int(value["denominator"]) if value["denominator"] is not None else None
+        ),
+        value=float(value["value"]) if value["value"] is not None else None,
+        completeness=cast(
+            Literal["complete", "empty", "unavailable"], value["completeness"]
+        ),
+        missing_reasons=tuple(value["missing_reasons"]),
+        evidence_refs=tuple(value["evidence_refs"]),
+    )
+
+
+def _json_value(value: object) -> dict[str, Any]:
+    parsed = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(parsed, dict):
+        raise ValueError("stored query JSON must be an object")
+    return parsed

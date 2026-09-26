@@ -7,7 +7,7 @@ import secrets
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from starlette.concurrency import run_in_threadpool
 
 from tap_platform.access import (
@@ -16,6 +16,25 @@ from tap_platform.access import (
     authorize_project_action,
 )
 from tap_platform.insights.application.intake import ReportIntake, UploadTooLarge
+from tap_platform.insights.application.queries import (
+    InsightsQueryService,
+    QueryLimitExceeded,
+    QueryTimedOut,
+    QueryUnavailable,
+)
+from tap_platform.insights.contracts import (
+    AttemptPageContract,
+    FailurePageContract,
+    MetricCatalogContract,
+    MetricQueryRequest,
+    MetricQueryResponse,
+    RunPageContract,
+    catalog_contract,
+    attempt_page_contract,
+    failure_page_contract,
+    query_contract,
+    run_page_contract,
+)
 from tap_platform.insights.domain.reports import (
     ReportManifest,
     ReportReceipt,
@@ -90,8 +109,154 @@ def create_insights_router(
     report_ledger: ReceiptReader | None,
     report_objects: EvidenceReader | None,
     insights_authorizer: InsightsAuthorizer | None,
+    query_service: InsightsQueryService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/projects/{project_id}/insights")
+
+    @router.get("/metrics", response_model=MetricCatalogContract)
+    async def list_metrics(
+        project_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> MetricCatalogContract:
+        _authorize(
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.metrics.read",
+            resource_kind="metric-query",
+            resource_id=None,
+        )
+        return catalog_contract()
+
+    @router.post(
+        "/queries",
+        response_model=MetricQueryResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_query(
+        project_id: str,
+        request: MetricQueryRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> MetricQueryResponse:
+        _authorize(
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.metrics.read",
+            resource_kind="metric-query",
+            resource_id=None,
+        )
+        if query_service is None:
+            raise HTTPException(status_code=503, detail="insights query unavailable")
+        try:
+            record = await run_in_threadpool(
+                query_service.execute,
+                project_id=project_id,
+                query=request.to_domain(),
+            )
+        except QueryLimitExceeded as exc:
+            raise HTTPException(
+                status_code=422, detail="insights query limit exceeded"
+            ) from exc
+        except QueryTimedOut as exc:
+            raise HTTPException(
+                status_code=504, detail="insights query timed out"
+            ) from exc
+        except (QueryUnavailable, ValueError) as exc:
+            raise HTTPException(
+                status_code=503, detail="insights query unavailable"
+            ) from exc
+        return query_contract(record)
+
+    @router.get("/queries/{query_id}", response_model=MetricQueryResponse)
+    async def get_query(
+        project_id: str,
+        query_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> MetricQueryResponse:
+        _authorize(
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.metrics.read",
+            resource_kind="metric-query",
+            resource_id=query_id,
+        )
+        return query_contract(_historical(query_service, project_id, query_id))
+
+    @router.get("/runs", response_model=RunPageContract)
+    async def list_runs(
+        project_id: str,
+        query_id: str = Query(alias="queryId"),
+        cursor: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=100),
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> RunPageContract:
+        _authorize(
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.runs.read",
+            resource_kind="run",
+            resource_id=query_id,
+        )
+        return run_page_contract(
+            _historical(query_service, project_id, query_id),
+            cursor=cursor,
+            limit=limit,
+        )
+
+    @router.get(
+        "/runs/{run_id}/attempts",
+        response_model=AttemptPageContract,
+    )
+    async def list_run_attempts(
+        project_id: str,
+        run_id: str,
+        query_id: str = Query(alias="queryId"),
+        cursor: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=100),
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> AttemptPageContract:
+        _authorize(
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.runs.read",
+            resource_kind="run",
+            resource_id=run_id,
+        )
+        record = _historical(query_service, project_id, query_id)
+        if not any(item.run_id == run_id for item in record.runs):
+            raise HTTPException(status_code=404, detail="insights run not found")
+        return attempt_page_contract(
+            record,
+            run_id=run_id,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    @router.get("/failures", response_model=FailurePageContract)
+    async def list_failures(
+        project_id: str,
+        query_id: str = Query(alias="queryId"),
+        cursor: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=100),
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> FailurePageContract:
+        _authorize(
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.failures.read",
+            resource_kind="failure",
+            resource_id=query_id,
+        )
+        return failure_page_contract(
+            _historical(query_service, project_id, query_id),
+            cursor=cursor,
+            limit=limit,
+        )
 
     @router.post("/reports", status_code=status.HTTP_202_ACCEPTED)
     async def receive_report(
@@ -178,6 +343,15 @@ def create_insights_router(
         )
 
     return router
+
+
+def _historical(service: InsightsQueryService | None, project_id: str, query_id: str):
+    if service is None:
+        raise HTTPException(status_code=503, detail="insights query unavailable")
+    try:
+        return service.historical(project_id=project_id, query_id=query_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="insights query not found") from exc
 
 
 async def _bounded_request_chunks(request: Request, *, max_bytes: int) -> list[bytes]:

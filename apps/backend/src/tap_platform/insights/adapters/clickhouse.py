@@ -10,8 +10,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
+from tap_platform.insights.application.queries import QueryLimitExceeded, QueryLimits
+from tap_platform.insights.domain.metrics import MetricAttempt
 from tap_platform.insights.domain.projection import (
     ProjectedAttempt,
     ProjectionReservation,
@@ -94,12 +97,20 @@ class ClickHouseInsightsStore:
         return int(value[0]["count"])
 
     def effective_attempts(
-        self, snapshot: ProjectionSnapshot
+        self,
+        snapshot: ProjectionSnapshot,
+        *,
+        project_id: str | None = None,
+        limits: QueryLimits | None = None,
     ) -> list[ProjectedAttempt]:
-        selected = self._selected_markers(snapshot)
+        selected = self._selected_markers(
+            snapshot, project_id=project_id, limits=limits
+        )
         if not selected:
             return []
-        rows = self._visible_rows("attempt_facts", snapshot)
+        rows = self._visible_rows(
+            "attempt_facts", snapshot, project_id=project_id, limits=limits
+        )
         by_key: dict[str, dict[str, Any]] = {}
         checksums: dict[str, set[str]] = {}
         for row in rows:
@@ -138,9 +149,19 @@ class ClickHouseInsightsStore:
             {str(row["evidence_ref"]) for row in rows if row["fact_key"] == fact_key}
         )
 
-    def run_dimensions(self, snapshot: ProjectionSnapshot) -> list[RunDimension]:
-        selected = self._selected_markers(snapshot)
-        rows = self._visible_rows("run_dimensions", snapshot)
+    def run_dimensions(
+        self,
+        snapshot: ProjectionSnapshot,
+        *,
+        project_id: str | None = None,
+        limits: QueryLimits | None = None,
+    ) -> list[RunDimension]:
+        selected = self._selected_markers(
+            snapshot, project_id=project_id, limits=limits
+        )
+        rows = self._visible_rows(
+            "run_dimensions", snapshot, project_id=project_id, limits=limits
+        )
         dimensions: dict[tuple[str, ...], RunDimension] = {}
         checksums: dict[tuple[str, ...], set[str]] = {}
         for row in rows:
@@ -166,6 +187,8 @@ class ClickHouseInsightsStore:
                     build_id=_optional(row, "build_id"),
                     branch=_optional(row, "branch"),
                     business_cycle_id=_optional(row, "business_cycle_id"),
+                    started_at=_datetime(row, "started_at"),
+                    finished_at=_datetime(row, "finished_at"),
                 ),
             )
         if any(len(values) > 1 for values in checksums.values()):
@@ -181,6 +204,84 @@ class ClickHouseInsightsStore:
             ),
         )
 
+    def query_attempts(
+        self,
+        *,
+        snapshot: ProjectionSnapshot,
+        project_id: str,
+        limits: QueryLimits,
+    ) -> list[MetricAttempt]:
+        """Execute only the fixed, project-scoped effective-fact templates."""
+        try:
+            attempts = self.effective_attempts(
+                snapshot, project_id=project_id, limits=limits
+            )
+            dimensions = self.run_dimensions(
+                snapshot, project_id=project_id, limits=limits
+            )
+        except ClickHouseProjectionError as exc:
+            detail = str(exc).lower()
+            if "timeout" in detail or "time limit" in detail:
+                raise TimeoutError("ClickHouse query timed out") from exc
+            if any(
+                token in detail
+                for token in (
+                    "limit exceeded",
+                    "limit for rows",
+                    "too many rows",
+                    "too_many_rows",
+                    "memory limit",
+                )
+            ):
+                raise QueryLimitExceeded("ClickHouse query limit exceeded") from exc
+            raise
+        dimension_by_scope = {
+            (
+                item.project_id,
+                item.source_id,
+                item.external_run_id,
+                item.report_batch_id,
+                item.shard_id,
+            ): item
+            for item in dimensions
+        }
+        results: list[MetricAttempt] = []
+        for item in attempts:
+            dimension = dimension_by_scope.get(
+                (
+                    item.project_id,
+                    item.source_id,
+                    item.external_run_id,
+                    item.report_batch_id,
+                    item.shard_id,
+                )
+            )
+            results.append(
+                MetricAttempt(
+                    fact_key=item.fact_key,
+                    receipt_id=item.receipt_id,
+                    project_id=item.project_id,
+                    source_id=item.source_id,
+                    external_run_id=item.external_run_id,
+                    stable_test_id=item.stable_test_id,
+                    source_test_identity=item.source_test_identity,
+                    data_row=item.data_row,
+                    application_commit=item.application_commit,
+                    script_commit=item.script_commit,
+                    environment=item.environment,
+                    configuration=item.configuration,
+                    attempt=item.attempt,
+                    result=item.result,
+                    duration_seconds=item.duration_seconds,
+                    first_attempt_eligible=item.first_attempt_eligible,
+                    missing_reasons=item.missing_reasons,
+                    run_started_at=dimension.started_at
+                    if dimension is not None
+                    else None,
+                )
+            )
+        return results
+
     def effective_checksum(self, snapshot: ProjectionSnapshot) -> str:
         checksums = sorted(
             item.fact_checksum for item in self.effective_attempts(snapshot)
@@ -188,9 +289,18 @@ class ClickHouseInsightsStore:
         return hashlib.sha256("\n".join(checksums).encode()).hexdigest()
 
     def _selected_markers(
-        self, snapshot: ProjectionSnapshot
+        self,
+        snapshot: ProjectionSnapshot,
+        *,
+        project_id: str | None = None,
+        limits: QueryLimits | None = None,
     ) -> dict[tuple[str, ...], int]:
-        rows = self._visible_rows("report_batch_markers", snapshot)
+        rows = self._visible_rows(
+            "report_batch_markers",
+            snapshot,
+            project_id=project_id,
+            limits=limits,
+        )
         selected: dict[tuple[str, ...], int] = {}
         marker_checksums: dict[tuple[tuple[str, ...], int], set[str]] = {}
         for row in rows:
@@ -207,14 +317,44 @@ class ClickHouseInsightsStore:
         return selected
 
     def _visible_rows(
-        self, table: str, snapshot: ProjectionSnapshot
+        self,
+        table: str,
+        snapshot: ProjectionSnapshot,
+        *,
+        project_id: str | None = None,
+        limits: QueryLimits | None = None,
     ) -> list[dict[str, Any]]:
+        if table not in {
+            "attempt_facts",
+            "evidence_refs",
+            "report_batch_markers",
+            "run_dimensions",
+        }:
+            raise ValueError("ClickHouse query table is not allowlisted")
         projection_version = _quote(snapshot.projection_version)
+        project_clause = (
+            f" AND project_id = {_quote(project_id)}" if project_id is not None else ""
+        )
+        settings = ""
+        if limits is not None:
+            settings = (
+                " SETTINGS"
+                f" max_rows_to_read = {limits.max_rows_to_read},"
+                f" max_bytes_to_read = {limits.max_bytes_to_read},"
+                f" max_memory_usage = {limits.max_memory_bytes},"
+                f" max_result_rows = {limits.max_output_rows},"
+                f" max_result_bytes = {limits.max_output_bytes},"
+                f" max_execution_time = {limits.timeout_seconds},"
+                " max_threads = 1,"
+                " read_overflow_mode = 'throw',"
+                " result_overflow_mode = 'throw',"
+                " timeout_overflow_mode = 'throw'"
+            )
         return self._json_query(
             f"SELECT * FROM {table} "
             f"WHERE projection_version = {projection_version} "
             f"AND data_version <= {snapshot.visible_data_version} "
-            "FORMAT JSONEachRow"
+            f"{project_clause}{settings} FORMAT JSONEachRow"
         )
 
     @staticmethod
@@ -304,6 +444,16 @@ def _scope_key(value: dict[str, Any]) -> tuple[str, ...]:
 def _optional(value: dict[str, Any], field: str) -> str | None:
     item = value.get(field)
     return str(item) if item is not None else None
+
+
+def _datetime(value: dict[str, Any], field: str) -> datetime | None:
+    item = value.get(field)
+    if item is None:
+        return None
+    parsed = datetime.fromisoformat(str(item).replace("Z", "+00:00"))
+    if parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def _quote(value: str) -> str:

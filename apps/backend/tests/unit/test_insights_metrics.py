@@ -1,0 +1,314 @@
+from datetime import UTC, datetime
+import threading
+
+import pytest
+
+from tap_platform.insights.application.queries import (
+    InMemoryQueryHistory,
+    InsightsQueryService,
+    MetricQuery,
+    QueryFilters,
+    QueryLimitExceeded,
+    QueryLimits,
+)
+from tap_platform.insights.domain.projection import ProjectionSnapshot
+
+from tap_platform.insights.domain.metrics import (
+    MetricAttempt,
+    MetricId,
+    MetricWindow,
+    calculate_metrics,
+)
+
+
+def attempt(
+    *,
+    test_id: str,
+    attempt_no: int | None,
+    result: str,
+    title: str | None = None,
+    configuration: str = "browser=chromium",
+    first_attempt_eligible: bool = True,
+    run_id: str = "run-1",
+    started_at: datetime = datetime(2026, 9, 23, 16, tzinfo=UTC),
+) -> MetricAttempt:
+    return MetricAttempt(
+        fact_key=f"{run_id}:{test_id}:{configuration}:{attempt_no}",
+        receipt_id=f"receipt-{run_id}",
+        project_id="project-a",
+        source_id="ci-a",
+        external_run_id=run_id,
+        stable_test_id=test_id,
+        source_test_identity=title or test_id,
+        data_row=None,
+        application_commit="app-1",
+        script_commit="script-1",
+        environment="qa",
+        configuration=configuration,
+        attempt=attempt_no,
+        result=result,
+        duration_seconds=0.25,
+        first_attempt_eligible=first_attempt_eligible,
+        missing_reasons=() if first_attempt_eligible else ("missing-attempt-identity",),
+        run_started_at=started_at,
+    )
+
+
+def metric_map(attempts: list[MetricAttempt]):
+    results = calculate_metrics(
+        attempts,
+        metric_ids=tuple(MetricId),
+        window=MetricWindow(
+            start=datetime(2026, 9, 23, tzinfo=UTC),
+            end=datetime(2026, 9, 25, tzinfo=UTC),
+            timezone="Asia/Shanghai",
+        ),
+    )
+    return {result.metric_id: result for result in results}
+
+
+def test_oracle_uses_distinct_first_final_and_recovery_denominators() -> None:
+    """Merging recovery denominator with D would change the literal 1/2."""
+    results = metric_map(
+        [
+            attempt(test_id="a", attempt_no=1, result="pass"),
+            attempt(test_id="b", attempt_no=1, result="fail"),
+            attempt(test_id="b", attempt_no=2, result="pass"),
+            attempt(test_id="c", attempt_no=1, result="error"),
+            attempt(test_id="d", attempt_no=1, result="skipped"),
+        ]
+    )
+
+    assert (
+        results[MetricId.FIRST_PASS_RATE].numerator,
+        results[MetricId.FIRST_PASS_RATE].denominator,
+        results[MetricId.FIRST_PASS_RATE].value,
+    ) == (1, 3, 1 / 3)
+    assert (
+        results[MetricId.FINAL_PASS_RATE].numerator,
+        results[MetricId.FINAL_PASS_RATE].denominator,
+        results[MetricId.FINAL_PASS_RATE].value,
+    ) == (2, 3, 2 / 3)
+    assert (
+        results[MetricId.RETRY_RECOVERY_RATE].numerator,
+        results[MetricId.RETRY_RECOVERY_RATE].denominator,
+        results[MetricId.RETRY_RECOVERY_RATE].value,
+    ) == (1, 2, 0.5)
+    assert (
+        results[MetricId.RECOVERY_CONTRIBUTION_RATE].numerator,
+        results[MetricId.RECOVERY_CONTRIBUTION_RATE].denominator,
+        results[MetricId.RECOVERY_CONTRIBUTION_RATE].value,
+    ) == (1, 3, 1 / 3)
+    assert results[MetricId.SKIPPED_COUNT].numerator == 1
+
+
+def test_missing_first_history_makes_paired_metrics_unavailable_not_zero() -> None:
+    """Treating a final-only pass as attempt one would fabricate first-pass data."""
+    results = metric_map(
+        [
+            attempt(test_id="a", attempt_no=1, result="pass"),
+            attempt(
+                test_id="b",
+                attempt_no=None,
+                result="pass",
+                first_attempt_eligible=False,
+            ),
+        ]
+    )
+
+    for metric_id in (
+        MetricId.FIRST_PASS_RATE,
+        MetricId.FINAL_PASS_RATE,
+        MetricId.RETRY_RECOVERY_RATE,
+        MetricId.RECOVERY_CONTRIBUTION_RATE,
+    ):
+        result = results[metric_id]
+        assert result.completeness == "unavailable"
+        assert result.value is None
+        assert result.numerator is None
+        assert result.denominator is None
+        assert "missing-first-attempt-history" in result.missing_reasons
+
+
+def test_unknown_later_attempt_number_still_makes_paired_metrics_unavailable() -> None:
+    """A known attempt one does not make an unorderable later result safe to pair."""
+    results = metric_map(
+        [
+            attempt(test_id="b", attempt_no=1, result="fail"),
+            attempt(
+                test_id="b",
+                attempt_no=None,
+                result="pass",
+                first_attempt_eligible=False,
+            ),
+        ]
+    )
+
+    assert results[MetricId.FINAL_PASS_RATE].completeness == "unavailable"
+    assert results[MetricId.FINAL_PASS_RATE].value is None
+
+
+def test_zero_denominator_returns_null_and_empty_not_normal_zero() -> None:
+    """An all-skipped run must not be reported as a 0% pass rate."""
+    results = metric_map([attempt(test_id="d", attempt_no=1, result="skipped")])
+
+    first = results[MetricId.FIRST_PASS_RATE]
+    assert (first.numerator, first.denominator, first.value) == (0, 0, None)
+    assert first.completeness == "empty"
+    assert first.missing_reasons == ("zero-denominator",)
+    assert results[MetricId.SKIPPED_COUNT].value == 1.0
+
+
+def test_same_title_and_different_configurations_remain_distinct_instances() -> None:
+    """Grouping by display title or omitting configuration would collapse instances."""
+    results = metric_map(
+        [
+            attempt(
+                test_id="stable-a",
+                title="same title",
+                attempt_no=1,
+                result="pass",
+            ),
+            attempt(
+                test_id="stable-b",
+                title="same title",
+                attempt_no=1,
+                result="fail",
+            ),
+            attempt(
+                test_id="stable-a",
+                title="same title",
+                configuration="browser=firefox",
+                attempt_no=1,
+                result="error",
+            ),
+        ]
+    )
+
+    first = results[MetricId.FIRST_PASS_RATE]
+    assert (first.numerator, first.denominator) == (1, 3)
+
+
+def test_timezone_window_is_start_inclusive_and_end_exclusive() -> None:
+    """Comparing date strings instead of instants would move UTC boundary runs."""
+    results = calculate_metrics(
+        [
+            attempt(
+                test_id="before",
+                attempt_no=1,
+                result="fail",
+                started_at=datetime(2026, 9, 23, 15, 59, 59, tzinfo=UTC),
+            ),
+            attempt(
+                test_id="start",
+                attempt_no=1,
+                result="pass",
+                started_at=datetime(2026, 9, 23, 16, tzinfo=UTC),
+            ),
+            attempt(
+                test_id="end",
+                attempt_no=1,
+                result="fail",
+                started_at=datetime(2026, 9, 24, 16, tzinfo=UTC),
+            ),
+        ],
+        metric_ids=(MetricId.FIRST_PASS_RATE,),
+        window=MetricWindow.from_local_dates(
+            start_date="2026-09-24",
+            end_date="2026-09-25",
+            timezone="Asia/Shanghai",
+        ),
+    )
+
+    assert (results[0].numerator, results[0].denominator) == (1, 1)
+
+
+def test_concurrency_limit_rejects_second_query_instead_of_queueing_unbounded() -> None:
+    """Replacing nonblocking capacity with an unbounded wait would hide overload."""
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingFacts:
+        def query_attempts(self, **_: object) -> list[MetricAttempt]:
+            entered.set()
+            assert release.wait(timeout=5)
+            return []
+
+    service = InsightsQueryService(
+        facts=BlockingFacts(),
+        snapshots=lambda _as_of: ProjectionSnapshot(
+            projection_version="insights-v1", visible_data_version=0
+        ),
+        history=InMemoryQueryHistory(),
+        clock=lambda: datetime(2026, 9, 25, tzinfo=UTC),
+        limits=QueryLimits(
+            max_rows_to_read=100,
+            max_bytes_to_read=1000,
+            max_memory_bytes=1000,
+            max_concurrent_queries=1,
+            max_output_rows=10,
+            timeout_seconds=1,
+        ),
+    )
+    query = MetricQuery(
+        metric_ids=(MetricId.FIRST_PASS_RATE,),
+        filters=QueryFilters(),
+        from_date="2026-09-24",
+        to_date="2026-09-25",
+        timezone="UTC",
+        as_of=datetime(2026, 9, 25, tzinfo=UTC),
+    )
+    first = threading.Thread(
+        target=service.execute, kwargs={"project_id": "project-a", "query": query}
+    )
+    first.start()
+    assert entered.wait(timeout=2)
+    try:
+        with pytest.raises(QueryLimitExceeded, match="concurrency"):
+            service.execute(project_id="project-a", query=query)
+    finally:
+        release.set()
+        first.join(timeout=5)
+    assert not first.is_alive()
+
+
+def test_as_of_is_passed_to_snapshot_authority() -> None:
+    """Taking the latest watermark would make a historical as-of include late facts."""
+    seen: list[datetime] = []
+    as_of = datetime(2026, 9, 24, 12, tzinfo=UTC)
+    service = InsightsQueryService(
+        facts=type(
+            "EmptyFacts",
+            (),
+            {"query_attempts": lambda self, **kwargs: []},
+        )(),
+        snapshots=lambda requested: (
+            seen.append(requested)
+            or ProjectionSnapshot(
+                projection_version="insights-v1", visible_data_version=4
+            )
+        ),
+        history=InMemoryQueryHistory(),
+        clock=lambda: datetime(2026, 9, 25, tzinfo=UTC),
+        limits=QueryLimits(
+            max_rows_to_read=100,
+            max_bytes_to_read=1000,
+            max_memory_bytes=1000,
+            max_concurrent_queries=1,
+            max_output_rows=10,
+            timeout_seconds=1,
+        ),
+    )
+    query = MetricQuery(
+        metric_ids=(MetricId.FIRST_PASS_RATE,),
+        filters=QueryFilters(),
+        from_date="2026-09-24",
+        to_date="2026-09-25",
+        timezone="UTC",
+        as_of=as_of,
+    )
+
+    result = service.execute(project_id="project-a", query=query)
+
+    assert seen == [as_of]
+    assert result.snapshot.visible_data_version == 4

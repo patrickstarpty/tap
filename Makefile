@@ -24,7 +24,9 @@ check: ## lint, format-check, typecheck, architecture checks
 	uv run --project apps/tap-ai-backend mypy --explicit-package-bases --follow-imports=silent scripts/tapper_v0_gate.py
 	bash -n scripts/run-tapper-v0-gate.sh scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/build-tapper-object-store.sh
 	uv run --project apps/tap-ai-backend python scripts/export_contracts.py --check
+	uv run --project apps/backend python scripts/export_tap_contracts.py --check
 	corepack pnpm --filter @tap/ai-frontend run contracts:check
+	corepack pnpm --filter @tap/web run contracts:check
 	corepack pnpm --filter @tap/ai-frontend run check
 	$(MAKE) tap-backend-check
 	corepack pnpm --filter @tap/web run check
@@ -42,7 +44,9 @@ test: ## unit, integration, and contract tests
 
 contracts: ## export OpenAPI/SSE schema and generate TypeScript
 	uv run --project apps/tap-ai-backend python scripts/export_contracts.py
+	uv run --project apps/backend python scripts/export_tap_contracts.py
 	corepack pnpm --filter @tap/ai-frontend run contracts
+	corepack pnpm --filter @tap/web run contracts
 
 tap-ai-bootstrap: ## install only TAP AI frozen dependencies
 	uv sync --package tap-ai-backend --frozen --all-groups
@@ -83,9 +87,9 @@ tap-backend-dev: ## run TAP non-AI backend separately
 
 tap-backend-check: ## verify TAP boundary, migrations, backend code, and all tests
 	uv run --project apps/backend python scripts/check_backend_boundary.py --product tap
-	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests apps/backend/migrations scripts/rebuild-insights.py
-	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests apps/backend/migrations scripts/rebuild-insights.py
-	uv run --project apps/backend mypy apps/backend/src scripts/rebuild-insights.py
+	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests apps/backend/migrations scripts/rebuild-insights.py scripts/export_tap_contracts.py
+	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests apps/backend/migrations scripts/rebuild-insights.py scripts/export_tap_contracts.py
+	uv run --project apps/backend mypy apps/backend/src scripts/rebuild-insights.py scripts/export_tap_contracts.py
 	uv run --project apps/backend pytest apps/backend/tests -q
 
 tap-backend-migrate: ## migrate configured TAP MySQL without resetting data
