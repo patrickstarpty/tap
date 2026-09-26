@@ -1,0 +1,94 @@
+"""Credential-free, content-addressed report object storage adapter."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import tempfile
+from collections.abc import Iterable, Set
+from dataclasses import dataclass
+from pathlib import Path
+
+
+class ObjectTooLarge(ValueError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class StoredObject:
+    ref: str
+    checksum: str
+    size_bytes: int
+
+
+class FileReportObjectStore:
+    """An owned filesystem store suitable for an isolated TAP deployment."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root.resolve()
+        self._staging = self._root / ".staging"
+        self._raw = self._root / "raw"
+        self._staging.mkdir(parents=True, exist_ok=True)
+        self._raw.mkdir(parents=True, exist_ok=True)
+
+    def persist(self, chunks: Iterable[bytes], *, max_bytes: int) -> StoredObject:
+        digest = hashlib.sha256()
+        size = 0
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=self._staging, prefix="upload-"
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                for chunk in chunks:
+                    if not isinstance(chunk, bytes):
+                        raise TypeError("report chunks must be bytes")
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise ObjectTooLarge(
+                            f"report exceeds the {max_bytes}-byte upload limit"
+                        )
+                    digest.update(chunk)
+                    stream.write(chunk)
+                stream.flush()
+                os.fsync(stream.fileno())
+            checksum = digest.hexdigest()
+            relative = Path("raw") / checksum[:2] / f"{checksum}.xml"
+            destination = self._root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                temporary.unlink()
+            else:
+                os.replace(temporary, destination)
+            return StoredObject(relative.as_posix(), checksum, size)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+
+    def read(self, ref: str) -> bytes:
+        return self._resolve(ref).read_bytes()
+
+    def list_raw_objects(self) -> list[str]:
+        return sorted(
+            path.relative_to(self._root).as_posix()
+            for path in self._raw.rglob("*.xml")
+            if path.is_file()
+        )
+
+    def recover_orphans(self, *, referenced: Set[str]) -> list[str]:
+        removed: list[str] = []
+        for temporary in self._staging.iterdir():
+            if temporary.is_file():
+                temporary.unlink()
+                removed.append(f".staging/{temporary.name}")
+        for ref in self.list_raw_objects():
+            if ref not in referenced:
+                self._resolve(ref).unlink()
+                removed.append(ref)
+        return sorted(removed)
+
+    def _resolve(self, ref: str) -> Path:
+        candidate = (self._root / ref).resolve()
+        if self._root not in candidate.parents or not ref.startswith("raw/"):
+            raise ValueError("invalid report object reference")
+        return candidate

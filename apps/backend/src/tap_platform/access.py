@@ -70,6 +70,7 @@ _USER_ACTION_RESOURCE_KINDS = {
     "insights.failures.read": "failure",
     "insights.metrics.read": "metric-query",
     "insights.reports.create": "report",
+    "insights.reports.read": "report",
     "insights.runs.read": "run",
 }
 

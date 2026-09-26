@@ -20,13 +20,22 @@ async def assert_tap_surface(app: FastAPI) -> None:
         for route in app.routes
         if type(route) in (Route, APIRoute)
     ) == [
+        (
+            "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}",
+            ("GET",),
+        ),
+        ("/api/v1/projects/{project_id}/insights/reports", ("POST",)),
+        (
+            "/api/v1/projects/{project_id}/insights/reports/{receipt_id}",
+            ("GET",),
+        ),
         ("/docs", ("GET", "HEAD")),
         ("/docs/oauth2-redirect", ("GET", "HEAD")),
         ("/health/live", ("GET",)),
         ("/openapi.json", ("GET", "HEAD")),
         ("/redoc", ("GET", "HEAD")),
     ]
-    assert len(app.routes) == 5
+    assert len(app.routes) == 8
     for route in app.routes:
         if isinstance(route, APIRoute):
             assert route.endpoint.__module__.startswith("tap_platform.")
@@ -43,7 +52,10 @@ async def assert_tap_surface(app: FastAPI) -> None:
     assert ai_route.status_code == 404
     assert schema["info"]["title"] == "TAP API"
     assert {path: set(operations) for path, operations in schema["paths"].items()} == {
-        "/health/live": {"get"}
+        "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}": {"get"},
+        "/api/v1/projects/{project_id}/insights/reports": {"post"},
+        "/api/v1/projects/{project_id}/insights/reports/{receipt_id}": {"get"},
+        "/health/live": {"get"},
     }
 
 

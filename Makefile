@@ -5,6 +5,7 @@ export TAP_TAPPER_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
 .PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev legacy-tapper-codex-dev demo-e2e demo-down demo-reset
+.PHONY: tap-backend-check tap-backend-migrate
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
@@ -15,7 +16,6 @@ check: ## lint, format-check, typecheck, architecture checks
 	uv run --project apps/tap-ai-backend ruff check scripts/check_backend_boundary.py
 	uv run --project apps/tap-ai-backend ruff format --check scripts/check_backend_boundary.py
 	uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/architecture/test_product_boundary.py -q
-	uv run --project apps/backend pytest apps/backend/tests/test_app.py -q
 	uv run --project apps/tap-ai-backend ruff check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/tap-ai-backend ruff format --check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/tap-ai-backend mypy apps/tap-ai-backend/src/tap scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
@@ -24,8 +24,7 @@ check: ## lint, format-check, typecheck, architecture checks
 	uv run --project apps/tap-ai-backend python scripts/export_contracts.py --check
 	corepack pnpm --filter @tap/ai-frontend run contracts:check
 	corepack pnpm --filter @tap/ai-frontend run check
-	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests
-	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests
+	$(MAKE) tap-backend-check
 	corepack pnpm --filter @tap/web run check
 	$(MAKE) brand-check
 
@@ -79,6 +78,17 @@ tap-web-dev: ## run TAP non-AI frontend separately
 
 tap-backend-dev: ## run TAP non-AI backend separately
 	uv run --project apps/backend uvicorn tap_platform.app:app --host 127.0.0.1 --port 8001
+
+tap-backend-check: ## verify TAP boundary, migrations, backend code, and all tests
+	uv run --project apps/backend python scripts/check_backend_boundary.py --product tap
+	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests apps/backend/migrations
+	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests apps/backend/migrations
+	uv run --project apps/backend mypy apps/backend/src
+	uv run --project apps/backend pytest apps/backend/tests -q
+
+tap-backend-migrate: ## migrate configured TAP MySQL without resetting data
+	@set -eu; [ -n "$${TAP_DATABASE_URL:-}" ] || { echo "TAP_DATABASE_URL is required" >&2; exit 2; }; \
+	uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head
 
 TAP_QUALITY_KB_PROFILE ?= apps/tap-ai-backend/tests/fixtures/quality/kb/profile-v1.json
 TAP_QUALITY_KB_REPORT ?= .local/quality-kb/report.json

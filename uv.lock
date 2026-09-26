@@ -1441,28 +1441,38 @@ name = "tap-platform-backend"
 version = "0.1.0"
 source = { editable = "apps/backend" }
 dependencies = [
+    { name = "alembic" },
     { name = "fastapi" },
+    { name = "pymysql" },
+    { name = "sqlalchemy" },
     { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
+    { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = "==1.16.5" },
     { name = "fastapi", specifier = "==0.116.1" },
+    { name = "pymysql", specifier = "==1.1.2" },
+    { name = "sqlalchemy", specifier = "==2.0.43" },
     { name = "uvicorn", specifier = "==0.52.4" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = "==0.28.1" },
+    { name = "mypy", specifier = "==1.17.1" },
     { name = "pytest", specifier = "==8.4.1" },
     { name = "pytest-asyncio", specifier = "==1.1.0" },
+    { name = "ruff", specifier = "==0.12.10" },
 ]
 
 [[package]]

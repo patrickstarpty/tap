@@ -1,10 +1,57 @@
 """Standalone TAP backend entrypoint for non-AI modules."""
 
+import os
+from pathlib import Path
+
 from fastapi import FastAPI
+from sqlalchemy import create_engine
+
+from tap_platform.insights.adapters.mysql import SqlAlchemyReportLedger
+from tap_platform.insights.adapters.objects import FileReportObjectStore
+from tap_platform.insights.application.intake import ReportIntake
+from tap_platform.insights.http import (
+    EvidenceReader,
+    ReceiptReader,
+    create_insights_router,
+)
 
 
-def create_app() -> FastAPI:
+def create_app(
+    *,
+    report_intake: ReportIntake | None = None,
+    report_ledger: ReceiptReader | None = None,
+    report_objects: EvidenceReader | None = None,
+) -> FastAPI:
+    if report_intake is None and report_ledger is None and report_objects is None:
+        database_url = os.getenv("TAP_DATABASE_URL")
+        object_root = os.getenv("TAP_REPORT_OBJECT_ROOT")
+        if bool(database_url) != bool(object_root):
+            raise RuntimeError(
+                "TAP_DATABASE_URL and TAP_REPORT_OBJECT_ROOT must be configured together"
+            )
+        if database_url and object_root:
+            max_upload_bytes = int(
+                os.getenv("TAP_REPORT_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))
+            )
+            ledger = SqlAlchemyReportLedger(
+                create_engine(database_url, pool_pre_ping=True)
+            )
+            objects = FileReportObjectStore(Path(object_root))
+            report_ledger = ledger
+            report_objects = objects
+            report_intake = ReportIntake(
+                ledger=ledger,
+                objects=objects,
+                max_upload_bytes=max_upload_bytes,
+            )
     app = FastAPI(title="TAP API", version="0.1.0")
+    app.include_router(
+        create_insights_router(
+            report_intake=report_intake,
+            report_ledger=report_ledger,
+            report_objects=report_objects,
+        )
+    )
 
     @app.get("/health/live")
     async def live() -> dict[str, str]:
