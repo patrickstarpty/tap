@@ -98,10 +98,12 @@ export function InsightsWorkspace({
   adapter,
   projectId,
   initialQueryId,
+  tapperBaseUrl = "http://127.0.0.1:5173/",
 }: {
   adapter: InsightsDataAdapter;
   projectId: string;
   initialQueryId?: string;
+  tapperBaseUrl?: string;
 }) {
   const [catalog, setCatalog] = useState<MetricCatalog | null>(null);
   const [query, setQuery] = useState<MetricQueryResponse | null>(null);
@@ -349,7 +351,7 @@ export function InsightsWorkspace({
             </section>
             <section><h2>Failure groups</h2>{groupedFailures.length ? <table aria-label="Failure groups"><thead><tr><th>Final result</th><th>Instances</th></tr></thead><tbody>{groupedFailures.map((group) => <tr key={group.result}><td>{group.result}</td><td>{group.count}</td></tr>)}</tbody></table> : <p className="ti-empty">No final failures in this query scope.</p>}</section>
           </div>
-          {selectedRun ? detailsLoading ? <section className="ti-loading" aria-label="Loading run details"><i /><i /></section> : <RunDetails adapter={adapter} projectId={projectId} run={selectedRun} attempts={attempts} onClose={() => setSelectedRun(null)} /> : null}
+          {selectedRun ? detailsLoading ? <section className="ti-loading" aria-label="Loading run details"><i /><i /></section> : <RunDetails adapter={adapter} projectId={projectId} queryId={query.queryId} tapperBaseUrl={tapperBaseUrl} run={selectedRun} attempts={attempts} onClose={() => setSelectedRun(null)} /> : null}
         </>
       ) : null}
     </section>

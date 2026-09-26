@@ -454,6 +454,7 @@ export interface operations {
             query?: never;
             header?: {
                 Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
             };
             path: {
                 project_id: string;
@@ -492,6 +493,7 @@ export interface operations {
             };
             header?: {
                 Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
             };
             path: {
                 project_id: string;
@@ -525,6 +527,7 @@ export interface operations {
             query?: never;
             header?: {
                 Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
             };
             path: {
                 project_id: string;
@@ -558,6 +561,7 @@ export interface operations {
             query?: never;
             header?: {
                 Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
             };
             path: {
                 project_id: string;
@@ -595,6 +599,7 @@ export interface operations {
             query?: never;
             header?: {
                 Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
             };
             path: {
                 project_id: string;
@@ -630,6 +635,7 @@ export interface operations {
             header: {
                 "X-TAP-Report-Manifest": string;
                 Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
             };
             path: {
                 project_id: string;
@@ -665,6 +671,7 @@ export interface operations {
             query?: never;
             header?: {
                 Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
             };
             path: {
                 project_id: string;
@@ -701,6 +708,7 @@ export interface operations {
             query?: never;
             header?: {
                 Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
             };
             path: {
                 project_id: string;
@@ -741,6 +749,7 @@ export interface operations {
             };
             header?: {
                 Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
             };
             path: {
                 project_id: string;
@@ -778,6 +787,7 @@ export interface operations {
             };
             header?: {
                 Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
             };
             path: {
                 project_id: string;

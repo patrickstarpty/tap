@@ -14,6 +14,49 @@ export type ConversationTurnSummary =
 export type ConversationCitationPreview =
   components["schemas"]["CitationPreview"];
 
+export type InsightsHandoff = {
+  queryId: string;
+  resourceRefs: string[];
+  draft: string;
+};
+
+const HANDOFF_KEYS = new Set(["projectId", "queryId", "resourceRef", "draft"]);
+const HANDOFF_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+export function parseInsightsHandoff(
+  href: string,
+  authorizedProjectId: string,
+): InsightsHandoff | null {
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+  if (
+    [...url.searchParams.keys()].some((key) => !HANDOFF_KEYS.has(key)) ||
+    url.searchParams.getAll("projectId").length !== 1 ||
+    url.searchParams.get("projectId") !== authorizedProjectId ||
+    url.searchParams.getAll("queryId").length !== 1 ||
+    url.searchParams.getAll("draft").length !== 1
+  )
+    return null;
+  const queryId = url.searchParams.get("queryId") ?? "";
+  const draft = url.searchParams.get("draft") ?? "";
+  const resourceRefs = url.searchParams.getAll("resourceRef");
+  if (
+    !HANDOFF_ID.test(queryId) ||
+    draft.trim().length === 0 ||
+    draft.length > 500 ||
+    resourceRefs.length === 0 ||
+    resourceRefs.length > 20 ||
+    new Set(resourceRefs).size !== resourceRefs.length ||
+    resourceRefs.some((reference) => !HANDOFF_ID.test(reference))
+  )
+    return null;
+  return { queryId, resourceRefs, draft };
+}
+
 export class ConversationClientError extends Error {
   constructor(
     readonly status: number,

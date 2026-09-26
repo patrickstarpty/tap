@@ -29,6 +29,10 @@ async function expectProjectedReport(page: import("@playwright/test").Page) {
   await expect(details.getByText("Step details were not provided by this report.")).toHaveCount(2);
   await expect(details.getByText("No screenshot was attached to this attempt.")).toHaveCount(2);
   await expect(details.getByRole("button", { name: "Download raw report" })).toHaveCount(2);
+  const tapperLink = details.getByRole("link", { name: "Ask Tapper about this failure" });
+  await expect(tapperLink).toHaveAttribute("href", /queryId=[^&]+/u);
+  await expect(tapperLink).toHaveAttribute("href", /resourceRef=[^&]+/u);
+  await expect(tapperLink).not.toHaveAttribute("href", /(?:duration|numerator|denominator|value)=/u);
 }
 
 test("real JUnit changes authorized cards and details and survives owned restarts", async ({

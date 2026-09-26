@@ -1,6 +1,33 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ConversationClientError, createConversationClient } from "./client";
+import {
+  ConversationClientError,
+  createConversationClient,
+  parseInsightsHandoff,
+} from "./client";
+
+describe("parseInsightsHandoff", () => {
+  it("accepts only a number-free handoff for the current authorized project", () => {
+    const handoff = parseInsightsHandoff(
+      "https://tap-ai.example/?projectId=project-1&queryId=query-7&resourceRef=receipt-a&resourceRef=receipt-b&draft=Explain+this+failure",
+      "project-1",
+    );
+
+    expect(handoff).toEqual({
+      queryId: "query-7",
+      resourceRefs: ["receipt-a", "receipt-b"],
+      draft: "Explain this failure",
+    });
+  });
+
+  it.each([
+    "https://tap-ai.example/?projectId=other&queryId=query-7&resourceRef=receipt-a&draft=Explain",
+    "https://tap-ai.example/?projectId=project-1&queryId=query-7&resourceRef=receipt-a&draft=Explain&numerator=9",
+    "https://tap-ai.example/?projectId=project-1&queryId=query-7&draft=Explain",
+  ])("rejects widened, numeric, or incomplete handoff state", (href) => {
+    expect(parseInsightsHandoff(href, "project-1")).toBeNull();
+  });
+});
 
 describe("ConversationClient", () => {
   it("creates the first turn and appends later turns with stable idempotency keys", async () => {

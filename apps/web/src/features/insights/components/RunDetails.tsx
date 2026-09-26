@@ -9,17 +9,31 @@ import type {
 export function RunDetails({
   adapter,
   projectId,
+  queryId,
+  tapperBaseUrl,
   run,
   attempts,
   onClose,
 }: {
   adapter: InsightsDataAdapter;
   projectId: string;
+  queryId: string;
+  tapperBaseUrl: string;
   run: RunSummary;
   attempts: AttemptDetail[];
   onClose(): void;
 }) {
   const [evidenceError, setEvidenceError] = useState("");
+  const handoffUrl = new URL(tapperBaseUrl);
+  handoffUrl.searchParams.set("projectId", projectId);
+  handoffUrl.searchParams.set("queryId", queryId);
+  handoffUrl.searchParams.set(
+    "draft",
+    "Explain this failed test using authorized Insights and knowledge evidence.",
+  );
+  run.evidenceRefs.forEach((reference) =>
+    handoffUrl.searchParams.append("resourceRef", reference),
+  );
   const download = async (receiptId: string) => {
     try {
       const blob = await adapter.downloadEvidence(projectId, receiptId);
@@ -58,6 +72,19 @@ export function RunDetails({
         <button type="button" onClick={onClose}>Close details</button>
       </header>
       <p>Run → instance → data row → attempt → raw report</p>
+      <aside className="ti-tapper-handoff">
+        <div>
+          <strong>Investigate with governed context</strong>
+          <p>Opens a number-free draft. Tapper must re-query the saved scope and recheck evidence access before a verified answer.</p>
+        </div>
+        <a
+          href={handoffUrl.toString()}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          Ask Tapper about this failure
+        </a>
+      </aside>
       {attempts.length ? (
         <div className="ti-attempts">
           {instances.map(([key, instanceAttempts]) => (

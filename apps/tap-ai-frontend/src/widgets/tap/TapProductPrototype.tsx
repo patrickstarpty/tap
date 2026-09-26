@@ -44,6 +44,7 @@ import {
   useConversationStream,
   useCreateConversation,
 } from "../../features/conversations/api/queries";
+import { parseInsightsHandoff } from "../../features/conversations/api/client";
 import {
   createStreamState,
   isTargetTurnActive,
@@ -892,6 +893,20 @@ export function TapProductPrototype({
     activeCitation?.generation ?? 0,
   );
   const [messageDraft, setMessageDraft] = useState("");
+  const appliedInsightsHandoff = useRef(false);
+  useEffect(() => {
+    if (
+      !durable ||
+      projectId === null ||
+      appliedInsightsHandoff.current ||
+      messageDraft.length > 0
+    )
+      return;
+    const handoff = parseInsightsHandoff(window.location.href, projectId);
+    if (handoff === null) return;
+    appliedInsightsHandoff.current = true;
+    setMessageDraft(handoff.draft);
+  }, [durable, messageDraft.length, projectId]);
   const [localSources, setLocalSources] = useState<
     readonly Pick<LibrarySource, "id" | "name" | "type">[]
   >(() => initialSnapshot?.library?.localSources ?? []);

@@ -13,12 +13,14 @@ from starlette.concurrency import run_in_threadpool
 from tap_platform.access import (
     AccessPrincipal,
     InsightsResource,
+    authorize_insights_request,
     authorize_project_action,
 )
 from tap_platform.insights.application.intake import ReportIntake, UploadTooLarge
 from tap_platform.insights.application.queries import (
     InsightsQueryService,
     QueryLimitExceeded,
+    QueryRecord,
     QueryTimedOut,
     QueryUnavailable,
 )
@@ -63,6 +65,7 @@ class InsightsAuthorizer(Protocol):
         action: str,
         resource_kind: str,
         resource_id: str | None,
+        service_bearer_token: str | None,
     ) -> bool: ...
 
 
@@ -90,6 +93,7 @@ class BearerPrincipalAuthorizer:
         action: str,
         resource_kind: str,
         resource_id: str | None,
+        service_bearer_token: str | None = None,
     ) -> bool:
         if not secrets.compare_digest(bearer_token, self._token):
             return False
@@ -107,6 +111,61 @@ class BearerPrincipalAuthorizer:
         return decision.allowed
 
 
+class DualBearerInsightsAuthorizer:
+    """Validate an actual user and TAP AI service credential on every request."""
+
+    def __init__(
+        self,
+        *,
+        user_token: str,
+        user: AccessPrincipal,
+        service_token: str,
+        service: AccessPrincipal,
+        expected_user_audience: str,
+        expected_service_audience: str,
+    ) -> None:
+        if len(user_token) < 16 or len(service_token) < 16:
+            raise ValueError(
+                "dual bearer credentials must contain at least 16 characters"
+            )
+        self._user_token = user_token
+        self._user = user
+        self._service_token = service_token
+        self._service = service
+        self._expected_user_audience = expected_user_audience
+        self._expected_service_audience = expected_service_audience
+
+    def authorize(
+        self,
+        *,
+        bearer_token: str,
+        project_id: str,
+        action: str,
+        resource_kind: str,
+        resource_id: str | None,
+        service_bearer_token: str | None = None,
+    ) -> bool:
+        if (
+            service_bearer_token is None
+            or not secrets.compare_digest(bearer_token, self._user_token)
+            or not secrets.compare_digest(service_bearer_token, self._service_token)
+        ):
+            return False
+        return authorize_insights_request(
+            self._user,
+            self._service,
+            action,
+            InsightsResource(
+                project_id=project_id,
+                kind=resource_kind,
+                resource_id=resource_id,
+            ),
+            expected_user_audience=self._expected_user_audience,
+            expected_service_audience=self._expected_service_audience,
+            now=datetime.now(UTC),
+        ).allowed
+
+
 def create_insights_router(
     *,
     report_intake: ReportIntake | None,
@@ -122,6 +181,9 @@ def create_insights_router(
     async def list_metrics(
         project_id: str,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
     ) -> MetricCatalogContract:
         _authorize(
             insights_authorizer,
@@ -130,6 +192,7 @@ def create_insights_router(
             action="insights.metrics.read",
             resource_kind="metric-query",
             resource_id=None,
+            service_authorization=service_authorization,
         )
         return catalog_contract()
 
@@ -142,6 +205,9 @@ def create_insights_router(
         project_id: str,
         request: MetricQueryRequest,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
     ) -> MetricQueryResponse:
         _authorize(
             insights_authorizer,
@@ -150,6 +216,7 @@ def create_insights_router(
             action="insights.metrics.read",
             resource_kind="metric-query",
             resource_id=None,
+            service_authorization=service_authorization,
         )
         if query_service is None:
             raise HTTPException(status_code=503, detail="insights query unavailable")
@@ -182,6 +249,9 @@ def create_insights_router(
         project_id: str,
         query_id: str,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
     ) -> MetricQueryResponse:
         _authorize(
             insights_authorizer,
@@ -190,6 +260,7 @@ def create_insights_router(
             action="insights.metrics.read",
             resource_kind="metric-query",
             resource_id=query_id,
+            service_authorization=service_authorization,
         )
         return query_contract(_historical(query_service, project_id, query_id))
 
@@ -200,6 +271,9 @@ def create_insights_router(
         cursor: int = Query(default=0, ge=0),
         limit: int = Query(default=50, ge=1, le=100),
         authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
     ) -> RunPageContract:
         _authorize(
             insights_authorizer,
@@ -208,6 +282,7 @@ def create_insights_router(
             action="insights.runs.read",
             resource_kind="run",
             resource_id=query_id,
+            service_authorization=service_authorization,
         )
         if query_service is None:
             raise HTTPException(status_code=503, detail="insights query unavailable")
@@ -254,6 +329,9 @@ def create_insights_router(
         cursor: int = Query(default=0, ge=0),
         limit: int = Query(default=50, ge=1, le=100),
         authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
     ) -> AttemptPageContract:
         _authorize(
             insights_authorizer,
@@ -262,6 +340,7 @@ def create_insights_router(
             action="insights.runs.read",
             resource_kind="run",
             resource_id=run_id,
+            service_authorization=service_authorization,
         )
         if query_service is None:
             raise HTTPException(status_code=503, detail="insights query unavailable")
@@ -306,6 +385,9 @@ def create_insights_router(
         cursor: int = Query(default=0, ge=0),
         limit: int = Query(default=50, ge=1, le=100),
         authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
     ) -> FailurePageContract:
         _authorize(
             insights_authorizer,
@@ -314,6 +396,7 @@ def create_insights_router(
             action="insights.failures.read",
             resource_kind="failure",
             resource_id=query_id,
+            service_authorization=service_authorization,
         )
         if query_service is None:
             raise HTTPException(status_code=503, detail="insights query unavailable")
@@ -355,6 +438,9 @@ def create_insights_router(
         request: Request,
         x_tap_report_manifest: str = Header(alias="X-TAP-Report-Manifest"),
         authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
     ) -> dict[str, Any]:
         _authorize(
             insights_authorizer,
@@ -363,6 +449,7 @@ def create_insights_router(
             action="insights.reports.create",
             resource_kind="report",
             resource_id=None,
+            service_authorization=service_authorization,
         )
         if report_intake is None:
             raise HTTPException(status_code=503, detail="report intake unavailable")
@@ -391,6 +478,9 @@ def create_insights_router(
         project_id: str,
         receipt_id: str,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
     ) -> dict[str, Any]:
         _authorize(
             insights_authorizer,
@@ -399,6 +489,7 @@ def create_insights_router(
             action="insights.reports.read",
             resource_kind="report",
             resource_id=receipt_id,
+            service_authorization=service_authorization,
         )
         receipt = await _load_receipt(report_ledger, receipt_id)
         _authorize_receipt_project(project_id, receipt)
@@ -409,6 +500,9 @@ def create_insights_router(
         project_id: str,
         receipt_id: str,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
     ) -> dict[str, Any]:
         _authorize(
             insights_authorizer,
@@ -417,6 +511,7 @@ def create_insights_router(
             action="insights.reports.create",
             resource_kind="report",
             resource_id=receipt_id,
+            service_authorization=service_authorization,
         )
         receipt = await _load_receipt(report_ledger, receipt_id)
         _authorize_receipt_project(project_id, receipt)
@@ -431,6 +526,9 @@ def create_insights_router(
         project_id: str,
         receipt_id: str,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
     ) -> Response:
         _authorize(
             insights_authorizer,
@@ -439,6 +537,7 @@ def create_insights_router(
             action="insights.evidence.read",
             resource_kind="evidence",
             resource_id=receipt_id,
+            service_authorization=service_authorization,
         )
         if report_objects is None:
             raise HTTPException(status_code=503, detail="evidence store unavailable")
@@ -458,7 +557,9 @@ def create_insights_router(
     return router
 
 
-def _historical(service: InsightsQueryService | None, project_id: str, query_id: str):
+def _historical(
+    service: InsightsQueryService | None, project_id: str, query_id: str
+) -> QueryRecord:
     if service is None:
         raise HTTPException(status_code=503, detail="insights query unavailable")
     try:
@@ -499,8 +600,10 @@ def _authorize(
     action: str,
     resource_kind: str,
     resource_id: str | None,
+    service_authorization: str | None,
 ) -> None:
     bearer_token = _bearer_token(authorization)
+    service_bearer_token = _bearer_token(service_authorization)
     if (
         authorizer is None
         or bearer_token is None
@@ -510,6 +613,7 @@ def _authorize(
             action=action,
             resource_kind=resource_kind,
             resource_id=resource_id,
+            service_bearer_token=service_bearer_token,
         )
     ):
         raise HTTPException(status_code=403, detail="insights action denied")
