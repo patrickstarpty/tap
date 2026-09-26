@@ -3596,3 +3596,50 @@ def test_dev_launcher_keeps_stable_parser_state_after_child_exit(tmp_path):
     state = supervisor.parents[1] / ".tapper/parser-runtime/tap-tapper-demo"
     assert state.is_dir(), "deployment ownership state was discarded"
     assert (state / "cleanup.json").read_text() == "verified"
+
+
+def test_task14_acceptance_runner_lists_the_closed_joint_gate() -> None:
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh"), "--list"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        "tapper-fixture-journeys",
+        "insights-fixture-journey",
+        "tap-ai-fault-retention-matrix",
+        "tap-insights-fault-recovery-matrix",
+        "prototype-and-safe-handoff",
+    ]
+
+
+def test_task14_acceptance_runner_requires_explicit_opt_in_before_children(
+    tmp_path: Path,
+) -> None:
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    called = tmp_path / "called"
+    for command in ("make", "uv", "corepack", "docker"):
+        executable = stubs / command
+        executable.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "{command}" >> "{called}"\nexit 97\n',
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh")],
+        cwd=ROOT,
+        env=os.environ | {"PATH": f"{stubs}:{os.environ['PATH']}"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "TAP_RUN_TASK14_ACCEPTANCE=1" in completed.stderr
+    assert not called.exists()
