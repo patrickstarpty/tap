@@ -26,10 +26,17 @@ from tap_platform.insights.domain.metrics import (
     ReportCoverage,
 )
 from tap_platform.insights.domain.projection import (
+    FACT_SEMANTICS_VERSION,
     ProjectedAttempt,
     ProjectionReservation,
     ProjectionSnapshot,
     RunDimension,
+)
+from tap_platform.insights.domain.reports import (
+    ReportManifest,
+    TestAttemptFact,
+    logical_attempt_key,
+    attempt_content_checksum,
 )
 
 
@@ -115,12 +122,18 @@ class ClickHouseInsightsStore:
         query: MetricQuery | None = None,
         window: MetricWindow | None = None,
         deadline: float | None = None,
+        fact_semantics_version: int = FACT_SEMANTICS_VERSION,
+        preferred_receipts: frozenset[str] = frozenset(),
     ) -> list[ProjectedAttempt]:
+        if fact_semantics_version not in {1, 2, FACT_SEMANTICS_VERSION}:
+            raise ValueError("unsupported fact semantics version")
+        legacy_filters = fact_semantics_version == 1
         selected = self._selected_markers(
             snapshot,
             project_id=project_id,
             limits=_remaining_limits(limits, deadline),
             query=query,
+            legacy_filters=legacy_filters,
         )
         if not selected:
             return []
@@ -130,10 +143,20 @@ class ClickHouseInsightsStore:
             project_id=project_id,
             limits=_remaining_limits(limits, deadline),
             query=query,
-            window=None,
+            window=window if legacy_filters else None,
+            legacy_filters=legacy_filters,
         )
+        if fact_semantics_version == FACT_SEMANTICS_VERSION:
+            rows = self._normalize_legacy_rows(
+                rows,
+                snapshot=snapshot,
+                project_id=project_id,
+                query=query,
+                limits=_remaining_limits(limits, deadline),
+            )
         by_key: dict[str, dict[str, Any]] = {}
         checksums: dict[str, set[str]] = {}
+        origins: dict[str, set[str]] = {}
         winner_keys: dict[tuple[str, ...], set[str]] = {}
         for row in rows:
             scope = _scope_key(row)
@@ -144,9 +167,11 @@ class ClickHouseInsightsStore:
             scope = _scope_key(row)
             fact_key = str(row["fact_key"])
             correction = selected.get(scope, -1)
-            if correction > int(
-                row["correction_no"]
-            ) and fact_key not in winner_keys.get(scope, set()):
+            if (
+                not legacy_filters
+                and correction > int(row["correction_no"])
+                and fact_key not in winner_keys.get(scope, set())
+            ):
                 tombstones[fact_key] = max(tombstones.get(fact_key, -1), correction)
         for row in rows:
             scope = _scope_key(row)
@@ -156,18 +181,34 @@ class ClickHouseInsightsStore:
             if int(row["correction_no"]) <= tombstones.get(fact_key, -1):
                 continue
             previous = by_key.get(fact_key)
-            if previous is None or int(row["correction_no"]) > int(
-                previous["correction_no"]
+            if (
+                previous is None
+                or not legacy_filters
+                and int(row["correction_no"]) > int(previous["correction_no"])
             ):
                 by_key[fact_key] = row
                 checksums[fact_key] = {str(row["fact_checksum"])}
-            elif int(row["correction_no"]) == int(previous["correction_no"]):
+                origins[fact_key] = {str(row["receipt_id"])}
+            elif legacy_filters or int(row["correction_no"]) == int(
+                previous["correction_no"]
+            ):
                 checksums[fact_key].add(str(row["fact_checksum"]))
+                origins[fact_key].add(str(row["receipt_id"]))
+                if _canonical_origin(row, preferred_receipts) < _canonical_origin(
+                    previous, preferred_receipts
+                ):
+                    by_key[fact_key] = row
         conflicts = sorted(key for key, values in checksums.items() if len(values) > 1)
         if conflicts:
             raise ClickHouseProjectionError(
                 "same fact identity/correction has conflicting content: "
                 + ",".join(conflicts)
+            )
+        if fact_semantics_version == 2 and any(
+            len(values & preferred_receipts) > 1 for values in origins.values()
+        ):
+            raise ClickHouseProjectionError(
+                "historical per-fact provenance is ambiguous"
             )
         return sorted(
             (
@@ -203,7 +244,7 @@ class ClickHouseInsightsStore:
             {
                 str(row["evidence_ref"])
                 for row in rows
-                if row["fact_key"] == fact_key
+                if row["fact_key"] == (winner.origin_fact_key or fact_key)
                 and str(row["receipt_id"]) == winner.receipt_id
                 and int(row["correction_no"]) == winner.correction_no
             }
@@ -273,6 +314,26 @@ class ClickHouseInsightsStore:
         window: MetricWindow,
         limits: QueryLimits,
     ) -> list[MetricAttempt]:
+        return self.query_attempts_versioned(
+            snapshot=snapshot,
+            project_id=project_id,
+            query=query,
+            window=window,
+            limits=limits,
+            fact_semantics_version=FACT_SEMANTICS_VERSION,
+        )
+
+    def query_attempts_versioned(
+        self,
+        *,
+        snapshot: ProjectionSnapshot,
+        project_id: str,
+        query: MetricQuery,
+        window: MetricWindow,
+        limits: QueryLimits,
+        fact_semantics_version: int,
+        preferred_receipts: frozenset[str] = frozenset(),
+    ) -> list[MetricAttempt]:
         """Execute only the fixed, project-scoped effective-fact templates."""
         try:
             deadline = time.monotonic() + limits.timeout_seconds
@@ -283,6 +344,8 @@ class ClickHouseInsightsStore:
                 query=query,
                 window=window,
                 deadline=deadline,
+                fact_semantics_version=fact_semantics_version,
+                preferred_receipts=preferred_receipts,
             )
         except ClickHouseProjectionError as exc:
             detail = str(exc).lower()
@@ -416,6 +479,7 @@ class ClickHouseInsightsStore:
         project_id: str | None = None,
         limits: QueryLimits | None = None,
         query: MetricQuery | None = None,
+        legacy_filters: bool = False,
     ) -> dict[tuple[str, ...], int]:
         rows = self._visible_rows(
             "report_batch_markers",
@@ -423,6 +487,7 @@ class ClickHouseInsightsStore:
             project_id=project_id,
             limits=limits,
             query=query,
+            legacy_filters=legacy_filters,
         )
         selected: dict[tuple[str, ...], int] = {}
         marker_checksums: dict[tuple[tuple[str, ...], int], set[str]] = {}
@@ -448,6 +513,7 @@ class ClickHouseInsightsStore:
         limits: QueryLimits | None = None,
         query: MetricQuery | None = None,
         window: MetricWindow | None = None,
+        legacy_filters: bool = False,
     ) -> list[dict[str, Any]]:
         if table not in {
             "attempt_facts",
@@ -487,6 +553,7 @@ class ClickHouseInsightsStore:
             query,
             prefix=prefix,
             include_run_dimensions=table == "attempt_facts",
+            legacy_filters=legacy_filters,
         )
         window_clause = ""
         if table == "attempt_facts" and window is not None:
@@ -516,7 +583,8 @@ class ClickHouseInsightsStore:
             f"SELECT {select_clause} FROM {from_clause} "
             f"WHERE {prefix}projection_version = {projection_version} "
             f"AND {prefix}data_version <= {snapshot.visible_data_version} "
-            f"{project_clause}{scope_clause}{window_clause}{settings} FORMAT JSONEachRow",
+            f"{project_clause}{scope_clause}{window_clause} "
+            f"ORDER BY {prefix}data_version, {prefix}receipt_id{settings} FORMAT JSONEachRow",
             timeout_seconds=(limits.timeout_seconds if limits is not None else None),
         )
 
@@ -563,7 +631,49 @@ class ClickHouseInsightsStore:
             started_at=_datetime(row, "resolved_started_at"),
             build_id=_optional(row, "resolved_build_id"),
             branch=_optional(row, "resolved_branch"),
+            origin_fact_key=_optional(row, "origin_fact_key"),
         )
+
+    def _normalize_legacy_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        snapshot: ProjectionSnapshot,
+        project_id: str | None,
+        query: MetricQuery | None,
+        limits: QueryLimits | None,
+    ) -> list[dict[str, Any]]:
+        """Interpret old physical keys without changing immutable stored payloads."""
+        legacy = []
+        for row in rows:
+            manifest, fact = _logical_content(row)
+            key = logical_attempt_key(manifest, fact)
+            if key != str(row["fact_key"]):
+                legacy.append((row, manifest, fact, key))
+        if not legacy:
+            return rows
+        evidence_rows = self._visible_rows(
+            "evidence_refs", snapshot, project_id=project_id, query=query, limits=limits
+        )
+        evidence: dict[tuple[str, str], set[str]] = {}
+        for item in evidence_rows:
+            evidence.setdefault(
+                (str(item["receipt_id"]), str(item["fact_key"])), set()
+            ).add(str(item["evidence_ref"]))
+        from dataclasses import replace
+
+        for row, manifest, fact, key in legacy:
+            origin = str(row["fact_key"])
+            fact = replace(
+                fact,
+                evidence_refs=tuple(
+                    sorted(evidence.get((str(row["receipt_id"]), origin), ()))
+                ),
+            )
+            row["origin_fact_key"] = origin
+            row["fact_key"] = key
+            row["fact_checksum"] = attempt_content_checksum(manifest, fact)
+        return rows
 
     def _insert_rows(self, table: str, rows: tuple[dict[str, Any], ...]) -> None:
         if not rows:
@@ -650,20 +760,83 @@ def _query_scope_clause(
     *,
     prefix: str = "",
     include_run_dimensions: bool = False,
+    legacy_filters: bool = False,
 ) -> str:
     if query is None:
         return ""
     # Only immutable run identity may be pushed below correction selection.
-    fields = (
+    fields: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("source_id", query.filters.source_ids),
         ("external_run_id", query.filters.run_ids),
     )
+    if legacy_filters:
+        fields += (
+            ("environment", query.filters.environments),
+            ("configuration", query.filters.configurations),
+        )
     clause = "".join(
         f" AND {prefix}{field} IN ({','.join(_quote(value) for value in values)})"
         for field, values in fields
         if values
     )
+    if legacy_filters and include_run_dimensions:
+        clause += "".join(
+            f" AND run.{field} IN ({','.join(_quote(value) for value in values)})"
+            for field, values in (
+                ("build_id", query.filters.build_ids),
+                ("branch", query.filters.branches),
+            )
+            if values
+        )
     return clause
+
+
+def _canonical_origin(
+    row: dict[str, Any], preferred_receipts: frozenset[str]
+) -> tuple[bool, int, str]:
+    # data_version is the immutable MySQL reservation order, not CH merge order.
+    return (
+        bool(preferred_receipts) and str(row["receipt_id"]) not in preferred_receipts,
+        int(row["data_version"]),
+        str(row["receipt_id"]),
+    )
+
+
+def _logical_content(row: dict[str, Any]) -> tuple[ReportManifest, TestAttemptFact]:
+    manifest = ReportManifest(
+        project_id=str(row["project_id"]),
+        source_id=str(row["source_id"]),
+        external_run_id=str(row["external_run_id"]),
+        batch_id=str(row["report_batch_id"]),
+        shard_id=str(row["shard_id"]),
+        expected_shards=None,
+        contains_complete_attempts=False,
+        application_commit=str(row["application_commit"]),
+        script_commit=str(row["script_commit"]),
+        environment=str(row["environment"]),
+        configuration=str(row["configuration"]),
+        timezone=str(row["timezone"]),
+        started_at=_optional(row, "started_at"),
+        build_id=_optional(row, "resolved_build_id"),
+        branch=_optional(row, "resolved_branch"),
+    )
+    fact = TestAttemptFact(
+        source_test_identity=str(row["source_test_identity"]),
+        source_locator=str(row["source_locator"]),
+        stable_test_id=str(row["stable_test_id"])
+        if int(row["stable_test_id_present"])
+        else None,
+        data_row=str(row["data_row"]) if int(row["data_row_present"]) else None,
+        attempt=int(row["attempt"]) if int(row["attempt_present"]) else None,
+        result=str(row["result"]),
+        duration_seconds=float(row["duration_seconds"])
+        if row.get("duration_seconds") is not None
+        else None,
+        evidence_refs=(),
+        missing_reasons=tuple(str(item) for item in row["missing_reasons"]),
+        first_attempt_eligible=bool(row["first_attempt_eligible"]),
+    )
+    return manifest, fact
 
 
 def _matches_winner(

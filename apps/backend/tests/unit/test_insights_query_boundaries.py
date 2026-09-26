@@ -214,6 +214,10 @@ def test_clickhouse_query_template_binds_project_watermark_and_hard_limits(
         for sql in statements
     )
     assert any("ANY LEFT JOIN run_dimensions" in sql for sql in statements)
+    assert all(
+        "ORDER BY " in sql and "data_version, " in sql and "receipt_id" in sql
+        for sql in statements
+    )
 
 
 def test_snapshot_resolution_is_inside_end_to_end_timeout() -> None:
@@ -253,7 +257,11 @@ def test_snapshot_resolution_is_inside_end_to_end_timeout() -> None:
         service.execute(project_id="project-a", query=record().query)
 
 
-def test_historical_details_refuse_unknown_metric_semantics_version() -> None:
+@pytest.mark.parametrize(
+    "changes",
+    [{"metric_version": "insights-metrics-v0"}, {"fact_semantics_version": 999}],
+)
+def test_historical_details_refuse_unknown_metric_semantics_version(changes) -> None:
     """A historical query must never be reinterpreted by current detail code."""
     from tap_platform.insights.application.queries import (
         InMemoryQueryHistory,
@@ -261,7 +269,7 @@ def test_historical_details_refuse_unknown_metric_semantics_version() -> None:
     )
 
     history = InMemoryQueryHistory()
-    original = replace(record(), metric_version="insights-metrics-v0")
+    original = replace(record(), **changes)
     history.save_query(original)
     service = InsightsQueryService(
         facts=type("EmptyFacts", (), {"query_attempts": lambda self, **kwargs: []})(),

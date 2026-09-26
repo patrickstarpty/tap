@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from datetime import datetime
 
 
+PROJECTION_PAYLOAD_VERSION = 2
+FACT_SEMANTICS_VERSION = 3
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ProjectionSnapshot:
     projection_version: str
@@ -21,6 +25,7 @@ class ProjectionReservation:
     payload_checksum: str
     row_count: int
     complete: bool
+    payload_version: int = PROJECTION_PAYLOAD_VERSION
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -57,6 +62,7 @@ class ProjectedAttempt:
     started_at: datetime | None
     build_id: str | None = None
     branch: str | None = None
+    origin_fact_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

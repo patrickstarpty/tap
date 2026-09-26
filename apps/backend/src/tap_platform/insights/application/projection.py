@@ -12,6 +12,7 @@ from tap_platform.insights.adapters.clickhouse import (
 )
 from tap_platform.insights.adapters.junit import PARSER_VERSION, parse_junit
 from tap_platform.insights.domain.projection import (
+    PROJECTION_PAYLOAD_VERSION,
     ProjectionReservation,
     ProjectionSnapshot,
     RebuildResult,
@@ -40,6 +41,8 @@ class ProjectionLedger(Protocol):
         payload_checksum: str,
         row_count: int,
         projection_version: str | None = None,
+        payload_version: int = PROJECTION_PAYLOAD_VERSION,
+        compatible_payload_checksums: dict[int, str] | None = None,
     ) -> ProjectionReservation: ...
     def complete_projection_batch(
         self,
@@ -104,19 +107,26 @@ class ProjectionCoordinator:
         projection_version: str | None,
         mark_receipt_ready: bool,
     ) -> bool:
-        semantic = _semantic_projection(receipt, manifest, attempts)
-        payload_checksum = _checksum(semantic)
+        semantics = {
+            1: _semantic_projection_v1(receipt, manifest, attempts),
+            PROJECTION_PAYLOAD_VERSION: _semantic_projection(
+                receipt, manifest, attempts
+            ),
+        }
+        checksums = {version: _checksum(value) for version, value in semantics.items()}
         reservation = self._ledger.reserve_projection_batch(
             receipt_id=receipt.receipt_id,
-            payload_checksum=payload_checksum,
+            payload_checksum=checksums[PROJECTION_PAYLOAD_VERSION],
             row_count=len(attempts),
             projection_version=projection_version,
+            payload_version=PROJECTION_PAYLOAD_VERSION,
+            compatible_payload_checksums=checksums,
         )
         if reservation.complete:
             return False
         batch = _materialize_batch(
-            semantic=semantic,
-            payload_checksum=payload_checksum,
+            semantic=semantics[reservation.payload_version],
+            payload_checksum=reservation.payload_checksum,
             reservation=reservation,
         )
         self._store.append_details(batch)
@@ -286,6 +296,52 @@ def _semantic_projection(
     }
 
 
+def _semantic_projection_v1(
+    receipt: ReportReceipt,
+    manifest: ReportManifest,
+    attempts: list[TestAttemptFact],
+) -> SemanticProjection:
+    """Frozen fe736895 payload, used only to finish an exact existing reservation."""
+    semantic = _semantic_projection(receipt, manifest, attempts)
+    keys: dict[str, str] = {}
+    for row, fact in zip(semantic["attempts"], attempts, strict=True):
+        old_key = _checksum(
+            [
+                receipt.project_id,
+                receipt.source_id,
+                receipt.external_run_id,
+                receipt.batch_id,
+                receipt.shard_id,
+                manifest.application_commit,
+                manifest.script_commit,
+                manifest.environment,
+                manifest.configuration,
+                manifest.timezone,
+                receipt.correction_no,
+                fact.stable_test_id or fact.source_test_identity,
+                fact.data_row,
+                fact.attempt,
+            ]
+        )
+        keys[str(row["fact_key"])] = old_key
+        row["fact_key"] = old_key
+        del row["fact_checksum"]
+        row["fact_checksum"] = _checksum(row)
+    for row in semantic["evidence"]:
+        row["fact_key"] = keys[str(row["fact_key"])]
+        del row["evidence_checksum"]
+        row["evidence_checksum"] = _checksum(row)
+    run = semantic["run_dimension"]
+    for field in (
+        "expected_shards",
+        "contains_complete_attempts",
+        "dimension_checksum",
+    ):
+        del run[field]
+    run["dimension_checksum"] = _checksum(run)
+    return semantic
+
+
 def _materialize_batch(
     *,
     semantic: SemanticProjection,
@@ -299,18 +355,19 @@ def _materialize_batch(
     }
     scope = dict(semantic["scope"])
     marker = {**transport, **scope, "payload_checksum": payload_checksum}
-    marker.update(
-        {
-            field: semantic["run_dimension"][field]
-            for field in (
-                "expected_shards",
-                "contains_complete_attempts",
-                "started_at",
-                "build_id",
-                "branch",
-            )
-        }
-    )
+    if reservation.payload_version != 1:
+        marker.update(
+            {
+                field: semantic["run_dimension"][field]
+                for field in (
+                    "expected_shards",
+                    "contains_complete_attempts",
+                    "started_at",
+                    "build_id",
+                    "branch",
+                )
+            }
+        )
     marker["is_deleted"] = int(not semantic["attempts"])
     marker["marker_checksum"] = _checksum(marker)
 

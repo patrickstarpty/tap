@@ -11,10 +11,11 @@ import urllib.parse
 import urllib.request
 import uuid
 import re
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
@@ -35,6 +36,7 @@ from tap_platform.insights.application.queries import (
     MetricQuery,
     QueryFilters,
     QueryLimits,
+    QueryUnavailable,
 )
 from tap_platform.insights.domain.metrics import MetricId
 
@@ -403,6 +405,14 @@ def test_mysql_data_bearing_downgrade_retains_query_projection_and_report(
     try:
         with engine.begin() as connection:
             connection.execute(text("DELETE FROM tap_insights_queries"))
+        result = migrate("downgrade", "0003_insights_projection")
+        assert (
+            result.returncode != 0
+            and "projection authority requires retention" in result.stderr
+        )
+        assert ledger.projection_snapshot().visible_data_version == 1
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM tap_insights_projection_batches"))
         assert migrate("downgrade", "0003_insights_projection").returncode == 0
         result = migrate("downgrade", "0002_manifest_fingerprint")
         assert (
@@ -593,6 +603,337 @@ def project_manifest(ledger, objects, store, report_manifest, raw=None):
     for _ in range(4):
         worker.process_one(receipt.receipt_id)
     return ledger.get_receipt(receipt.receipt_id)
+
+
+def legacy_module(path: str, *, revision: str = "fe736895") -> ModuleType:
+    """Run the shipped pre-fix implementation, not a rewritten approximation."""
+    source = subprocess.run(
+        ["git", "show", f"{revision}:{path}"],
+        cwd=REPOSITORY_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    name = "legacy_" + revision + path.replace("/", "_").replace(".", "_")
+    module = ModuleType(name)
+    sys.modules[name] = module
+    exec(compile(source, path, "exec"), module.__dict__)
+    return module
+
+
+def migrate_projection_test(direction: str, revision: str) -> None:
+    assert_owned_isolated_runtime()
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", "alembic.ini", direction, revision],
+        cwd=REPOSITORY_ROOT / "apps" / "backend",
+        env=dict(os.environ, TAP_DATABASE_URL=MYSQL_URL),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize("interrupt_after_marker", [False, True])
+@pytest.mark.parametrize("legacy_revision", ["fe736895", "34e2f57"])
+def test_old_reserved_projection_recovers_after_upgrade_without_replacing_authority(
+    projection_runtime, monkeypatch, interrupt_after_marker, legacy_revision
+):
+    ledger, objects, store = projection_runtime
+    migrate_projection_test("downgrade", "0004_insights_queries")
+    old_mysql = legacy_module(
+        "apps/backend/src/tap_platform/insights/adapters/mysql.py",
+        revision=legacy_revision,
+    )
+    old_projection = legacy_module(
+        "apps/backend/src/tap_platform/insights/application/projection.py",
+        revision=legacy_revision,
+    )
+    legacy = old_mysql.SqlAlchemyReportLedger(ledger._engine)
+    receipt_id = map_to_projecting(legacy, objects, correction_no=0, raw=report())
+
+    def interrupted(*_args, **_kwargs):
+        raise RuntimeError("simulated old process interruption")
+
+    with monkeypatch.context() as patch:
+        if interrupt_after_marker:
+            patch.setattr(legacy, "complete_projection_batch", interrupted)
+        else:
+            patch.setattr(store, "append_details", interrupted)
+        with pytest.raises(RuntimeError, match="old process interruption"):
+            old_projection.ProjectionCoordinator(
+                ledger=legacy, store=store
+            ).project_receipt(receipt_id)
+    with ledger._engine.connect() as connection:
+        before = connection.execute(
+            text(
+                "SELECT projection_batch_id, data_version, payload_checksum FROM tap_insights_projection_batches"
+            )
+        ).one()
+    assert legacy.projection_snapshot().visible_data_version == 0
+    migrate_projection_test("upgrade", "head")
+    original_attempts = ledger.attempts_for(receipt_id)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            ledger,
+            "attempts_for",
+            lambda _id: [
+                replace(item, duration_seconds=99) for item in original_attempts
+            ],
+        )
+        with pytest.raises(ValueError, match="conflicting content"):
+            ProjectionCoordinator(ledger=ledger, store=store).project_receipt(
+                receipt_id
+            )
+    coordinator = ProjectionCoordinator(ledger=ledger, store=store)
+    assert coordinator.project_receipt(receipt_id)
+    assert not coordinator.project_receipt(receipt_id)
+    assert ledger.get_receipt(receipt_id).state == ReportState.READY
+    assert ledger.projection_snapshot().visible_data_version == 1
+    with ledger._engine.connect() as connection:
+        after = connection.execute(
+            text(
+                "SELECT projection_batch_id, data_version, payload_checksum FROM tap_insights_projection_batches"
+            )
+        ).one()
+    assert after == before
+    with ledger._engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT payload_version FROM tap_insights_projection_batches")
+        ).scalar_one() == (1 if legacy_revision == "fe736895" else 2)
+    assert len(store.effective_attempts(ledger.projection_snapshot())) == 2
+    # A current-format retransmission must not count the recovered v1 facts twice.
+    project_manifest(ledger, objects, store, replace(manifest(), batch_id="new-origin"))
+    assert len(store.effective_attempts(ledger.projection_snapshot())) == 2
+    ProjectionRebuilder(ledger=ledger, objects=objects, store=store).rebuild(
+        target_version="rebuild-upgrade"
+    )
+    rebuilt = store.effective_attempts(ledger.projection_snapshot())
+    assert len(rebuilt) == 2
+    assert {item.receipt_id for item in rebuilt} == {receipt_id}
+
+
+def test_equal_cross_batch_facts_keep_canonical_evidence_after_storage_reordering(
+    projection_runtime, monkeypatch
+):
+    ledger, objects, store = projection_runtime
+    first = project_manifest(ledger, objects, store, manifest())
+    second = project_manifest(
+        ledger, objects, store, replace(manifest(), batch_id="aaa-resend")
+    )
+    service = query_service(ledger, store)
+    record = service.execute(project_id=first.project_id, query=metric_query())
+    before = service.run_page(
+        project_id=first.project_id, query_id=record.query_id, cursor=0, limit=20
+    )
+    for table in (
+        "report_batch_markers",
+        "attempt_facts",
+        "evidence_refs",
+        "run_dimensions",
+        "configuration_dimensions",
+    ):
+        rows = store._json_query(
+            f"SELECT * FROM {table} ORDER BY data_version DESC FORMAT JSONEachRow"
+        )
+        clickhouse_admin(f"TRUNCATE TABLE {table}")
+        store._insert_rows(table, tuple(rows))
+    original = store._visible_rows
+
+    def reverse_rows(*args, **kwargs):
+        return sorted(
+            original(*args, **kwargs),
+            key=lambda row: int(row["data_version"]),
+            reverse=True,
+        )
+
+    monkeypatch.setattr(store, "_visible_rows", reverse_rows)
+    effective = store.effective_attempts(record.snapshot)
+    assert {item.receipt_id for item in effective} == {first.receipt_id}
+    assert second.receipt_id != first.receipt_id
+    assert (
+        service.run_page(
+            project_id=first.project_id, query_id=record.query_id, cursor=0, limit=20
+        )
+        == before
+    )
+    assert (
+        service.historical(project_id=first.project_id, query_id=record.query_id)
+        == record
+    )
+    ProjectionRebuilder(ledger=ledger, objects=objects, store=store).rebuild(
+        target_version="rebuild-canonical"
+    )
+    assert {
+        item.receipt_id
+        for item in store.effective_attempts(ledger.projection_snapshot())
+    } == {first.receipt_id}
+
+
+@pytest.mark.parametrize("mixed_origins", [False, True])
+def test_winner_first_query_backfill_keeps_its_recorded_evidence(
+    projection_runtime, monkeypatch, mixed_origins
+):
+    ledger, objects, store = projection_runtime
+    migrate_projection_test("downgrade", "0004_insights_queries")
+    old_mysql = legacy_module(
+        "apps/backend/src/tap_platform/insights/adapters/mysql.py", revision="34e2f57"
+    )
+    old_projection = legacy_module(
+        "apps/backend/src/tap_platform/insights/application/projection.py",
+        revision="34e2f57",
+    )
+    old_clickhouse = legacy_module(
+        "apps/backend/src/tap_platform/insights/adapters/clickhouse.py",
+        revision="34e2f57",
+    )
+    old_queries = legacy_module(
+        "apps/backend/src/tap_platform/insights/application/queries.py",
+        revision="34e2f57",
+    )
+    legacy = old_mysql.SqlAlchemyReportLedger(ledger._engine)
+    base = replace(manifest(), started_at="2026-09-24T00:00:00+00:00")
+    for report_manifest in (base, replace(base, batch_id="repeat")):
+        receipt = ReportIntake(ledger=legacy, objects=objects).receive(
+            report_manifest, [report()]
+        )
+        worker = ReportWorker(
+            ledger=legacy,
+            objects=objects,
+            projector=old_projection.ProjectionCoordinator(ledger=legacy, store=store),
+        )
+        for _ in range(4):
+            worker.process_one(receipt.receipt_id)
+    legacy_store = old_clickhouse.ClickHouseInsightsStore(
+        CLICKHOUSE_URL, username=CLICKHOUSE_USER, password=CLICKHOUSE_PASSWORD
+    )
+    original = legacy_store._visible_rows
+
+    def old_storage_order(*args, **kwargs):
+        return sorted(
+            original(*args, **kwargs),
+            key=lambda row: int(row["data_version"])
+            * (-1 if mixed_origins and row.get("attempt") == 1 else 1),
+            reverse=True,
+        )
+
+    monkeypatch.setattr(legacy_store, "_visible_rows", old_storage_order)
+    legacy_service = old_queries.InsightsQueryService(
+        facts=legacy_store,
+        snapshots=lambda _as_of: legacy.projection_snapshot(),
+        history=legacy,
+        clock=lambda: datetime.now(UTC),
+        limits=query_service(ledger, store)._limits,
+    )
+    record = legacy_service.execute(project_id=base.project_id, query=metric_query())
+    if not mixed_origins:
+        assert record.metrics[0].evidence_refs == (receipt.receipt_id,)
+    old_runs = legacy_service.run_page(
+        project_id=base.project_id, query_id=record.query_id, cursor=0, limit=20
+    )[1]
+    migrate_projection_test("upgrade", "head")
+    service = query_service(ledger, store)
+    assert ledger.get_query(record.query_id).fact_semantics_version == 2
+    late_legacy = legacy_service.execute(
+        project_id=base.project_id, query=metric_query()
+    )
+    assert ledger.get_query(late_legacy.query_id).fact_semantics_version == 2
+    if mixed_origins:
+        # Pre-version v2 did not persist a fact-to-receipt map. If its aggregate
+        # proves mixed duplicate origins, do not invent per-attempt provenance.
+        with pytest.raises(QueryUnavailable):
+            service.run_page(
+                project_id=base.project_id, query_id=record.query_id, cursor=0, limit=20
+            )
+        assert ledger.get_query(record.query_id).metrics == record.metrics
+        return
+    assert [
+        asdict(item)
+        for item in service.run_page(
+            project_id=base.project_id, query_id=record.query_id, cursor=0, limit=20
+        )[1]
+    ] == [asdict(item) for item in old_runs]
+    assert ledger.get_query(record.query_id).metrics == record.metrics
+
+
+def test_old_query_keeps_legacy_winner_filter_semantics_after_upgrade(
+    projection_runtime,
+):
+    ledger, objects, store = projection_runtime
+    migrate_projection_test("downgrade", "0004_insights_queries")
+    old_mysql = legacy_module(
+        "apps/backend/src/tap_platform/insights/adapters/mysql.py"
+    )
+    old_projection = legacy_module(
+        "apps/backend/src/tap_platform/insights/application/projection.py"
+    )
+    old_clickhouse = legacy_module(
+        "apps/backend/src/tap_platform/insights/adapters/clickhouse.py"
+    )
+    old_queries = legacy_module(
+        "apps/backend/src/tap_platform/insights/application/queries.py"
+    )
+    legacy = old_mysql.SqlAlchemyReportLedger(ledger._engine)
+    base = replace(manifest(), started_at="2026-09-24T00:00:00+00:00")
+    for report_manifest in (base, replace(base, correction_no=1, environment="new")):
+        receipt = ReportIntake(ledger=legacy, objects=objects).receive(
+            report_manifest, [report()]
+        )
+        worker = ReportWorker(
+            ledger=legacy,
+            objects=objects,
+            projector=old_projection.ProjectionCoordinator(ledger=legacy, store=store),
+        )
+        for _ in range(4):
+            worker.process_one(receipt.receipt_id)
+    legacy_store = old_clickhouse.ClickHouseInsightsStore(
+        CLICKHOUSE_URL, username=CLICKHOUSE_USER, password=CLICKHOUSE_PASSWORD
+    )
+    legacy_service = old_queries.InsightsQueryService(
+        facts=legacy_store,
+        snapshots=lambda _as_of: legacy.projection_snapshot(),
+        history=legacy,
+        clock=lambda: datetime.now(UTC),
+        limits=query_service(ledger, store)._limits,
+    )
+    record = legacy_service.execute(
+        project_id="isolated-project", query=metric_query(environments=("isolated",))
+    )
+    old_runs = legacy_service.run_page(
+        project_id=record.project_id, query_id=record.query_id, cursor=0, limit=20
+    )[1]
+    assert len(old_runs) == 1
+    assert record.metrics[0].denominator == 1
+    migrate_projection_test("upgrade", "head")
+    service = query_service(ledger, store)
+    historical_runs = service.run_page(
+        project_id=record.project_id, query_id=record.query_id, cursor=0, limit=20
+    )[1]
+    assert [asdict(item) for item in historical_runs] == [
+        asdict(item) for item in old_runs
+    ]
+    assert (
+        service.historical(
+            project_id=record.project_id, query_id=record.query_id
+        ).metrics
+        == record.metrics
+    )
+    current = service.execute(project_id=record.project_id, query=record.query)
+    assert current.metrics[0].denominator == 0
+    assert (
+        service.run_page(
+            project_id=record.project_id, query_id=current.query_id, cursor=0, limit=20
+        )[1]
+        == ()
+    )
+    ProjectionRebuilder(ledger=ledger, objects=objects, store=store).rebuild(
+        target_version="rebuild-legacy-history"
+    )
+    assert [
+        asdict(item)
+        for item in service.run_page(
+            project_id=record.project_id, query_id=record.query_id, cursor=0, limit=20
+        )[1]
+    ] == [asdict(item) for item in old_runs]
 
 
 def test_correction_winner_is_selected_before_mutable_filters_and_deletion(

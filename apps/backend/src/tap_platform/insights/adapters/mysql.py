@@ -55,6 +55,7 @@ from tap_platform.insights.domain.reports import (
     attempt_content_checksum,
 )
 from tap_platform.insights.domain.projection import (
+    PROJECTION_PAYLOAD_VERSION,
     ProjectionReservation,
     ProjectionSnapshot,
 )
@@ -205,6 +206,7 @@ insights_projection_batches = Table(
     ),
     Column("data_version", BigInteger, nullable=False),
     Column("payload_checksum", String(64), nullable=False),
+    Column("payload_version", Integer, nullable=False, server_default="0"),
     Column("row_count", BigInteger, nullable=False),
     Column("status", String(32), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
@@ -227,6 +229,7 @@ insights_queries = Table(
     Column("query_id", String(36), primary_key=True),
     Column("project_id", String(256), nullable=False),
     Column("metric_version", String(128), nullable=False),
+    Column("fact_semantics_version", Integer, nullable=False, server_default="0"),
     Column("filters", JSON, nullable=False),
     Column("from_date", String(10), nullable=False),
     Column("to_date", String(10), nullable=False),
@@ -640,6 +643,7 @@ class SqlAlchemyReportLedger:
                     query_id=record.query_id,
                     project_id=record.project_id,
                     metric_version=record.metric_version,
+                    fact_semantics_version=record.fact_semantics_version,
                     filters={
                         "source_ids": list(record.query.filters.source_ids),
                         "run_ids": list(record.query.filters.run_ids),
@@ -769,11 +773,21 @@ class SqlAlchemyReportLedger:
         payload_checksum: str,
         row_count: int,
         projection_version: str | None = None,
+        payload_version: int = PROJECTION_PAYLOAD_VERSION,
+        compatible_payload_checksums: dict[int, str] | None = None,
     ) -> ProjectionReservation:
         if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,127}", payload_checksum):
             raise ValueError("payload_checksum must be a bounded lowercase token")
         if row_count < 0:
             raise ValueError("row_count must be non-negative")
+        if payload_version != PROJECTION_PAYLOAD_VERSION:
+            raise ValueError("new reservations require the current payload version")
+        checksums = {
+            **(compatible_payload_checksums or {}),
+            payload_version: payload_checksum,
+        }
+        if not checksums.keys() <= {1, PROJECTION_PAYLOAD_VERSION}:
+            raise ValueError("unsupported compatible payload version")
         now = _now()
         with self._engine.begin() as connection:
             self._ensure_default_projection(connection)
@@ -821,12 +835,29 @@ class SqlAlchemyReportLedger:
                 .one_or_none()
             )
             if existing is not None:
-                if (
-                    existing["payload_checksum"] != payload_checksum
-                    or int(existing["row_count"]) != row_count
-                ):
+                recorded_version = int(existing["payload_version"])
+                matches = [
+                    version
+                    for version, checksum in checksums.items()
+                    if checksum == existing["payload_checksum"]
+                    and (recorded_version == 0 or recorded_version == version)
+                ]
+                if len(matches) != 1 or int(existing["row_count"]) != row_count:
                     raise ValueError("same projection receipt has conflicting content")
-                return self._row_to_projection_reservation(existing)
+                if recorded_version == 0:
+                    # Classify exact bytes only. Never replace a reservation's
+                    # checksum, data version, or batch identity during recovery.
+                    connection.execute(
+                        update(insights_projection_batches)
+                        .where(
+                            insights_projection_batches.c.projection_batch_id
+                            == existing["projection_batch_id"]
+                        )
+                        .values(payload_version=matches[0])
+                    )
+                return self._row_to_projection_reservation(
+                    {**existing, "payload_version": matches[0]}
+                )
             receipt_state = connection.execute(
                 select(report_receipts.c.state).where(
                     report_receipts.c.receipt_id == receipt_id
@@ -855,6 +886,7 @@ class SqlAlchemyReportLedger:
                     receipt_id=receipt_id,
                     data_version=data_version,
                     payload_checksum=payload_checksum,
+                    payload_version=payload_version,
                     row_count=row_count,
                     status="reserved",
                     created_at=now,
@@ -875,6 +907,7 @@ class SqlAlchemyReportLedger:
                 receipt_id=receipt_id,
                 data_version=data_version,
                 payload_checksum=payload_checksum,
+                payload_version=payload_version,
                 row_count=row_count,
                 complete=False,
             )
@@ -1133,12 +1166,8 @@ class SqlAlchemyReportLedger:
                     insights_projection_batches.c.data_version <= visible_data_version,
                 )
                 .order_by(
-                    report_receipts.c.project_id,
-                    report_receipts.c.source_id,
-                    report_receipts.c.external_run_id,
-                    report_receipts.c.batch_id,
-                    report_receipts.c.shard_id,
-                    report_receipts.c.correction_no,
+                    # Preserve the authoritative origin order during rebuild.
+                    insights_projection_batches.c.data_version,
                     report_receipts.c.receipt_id,
                 )
             ).mappings()
@@ -1181,7 +1210,9 @@ class SqlAlchemyReportLedger:
         )
 
     @staticmethod
-    def _row_to_projection_reservation(row: RowMapping) -> ProjectionReservation:
+    def _row_to_projection_reservation(
+        row: RowMapping | dict[str, Any],
+    ) -> ProjectionReservation:
         return ProjectionReservation(
             projection_batch_id=row["projection_batch_id"],
             projection_version=row["projection_version"],
@@ -1190,6 +1221,7 @@ class SqlAlchemyReportLedger:
             payload_checksum=row["payload_checksum"],
             row_count=int(row["row_count"]),
             complete=row["status"] == "complete",
+            payload_version=int(row["payload_version"]),
         )
 
     def _find_exact(
@@ -1507,6 +1539,10 @@ def _row_to_query_record(row: RowMapping) -> QueryRecord:
         query_id=str(row["query_id"]),
         project_id=str(row["project_id"]),
         metric_version=str(row["metric_version"]),
+        # A pre-version writer may finish during a rolling upgrade. Its immutable
+        # payload distinguishes the two shipped interpreters just as migration does.
+        fact_semantics_version=int(row["fact_semantics_version"])
+        or (2 if "report_coverage" in payload else 1),
         query=query,
         snapshot=ProjectionSnapshot(
             projection_version=str(row["projection_version"]),

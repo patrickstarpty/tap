@@ -23,7 +23,10 @@ from tap_platform.insights.domain.metrics import (
     calculate_metrics,
     ReportCoverage,
 )
-from tap_platform.insights.domain.projection import ProjectionSnapshot
+from tap_platform.insights.domain.projection import (
+    FACT_SEMANTICS_VERSION,
+    ProjectionSnapshot,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -137,6 +140,7 @@ class QueryRecord:
     metrics: tuple[MetricValue, ...]
     trends: tuple[TrendPoint, ...]
     report_coverage: tuple[ReportCoverage, ...] = ()
+    fact_semantics_version: int = FACT_SEMANTICS_VERSION
     # Old local records may contain details. New records persist only bounded
     # aggregate output; pages re-read this record's immutable snapshot and scope.
     runs: tuple[RunSummary, ...] = ()
@@ -373,6 +377,12 @@ class InsightsQueryService:
             window=record.query.window(),
             snapshot=record.snapshot,
             deadline=deadline,
+            fact_semantics_version=record.fact_semantics_version,
+            preferred_receipts=frozenset(
+                ref for metric in record.metrics for ref in metric.evidence_refs
+            )
+            if record.fact_semantics_version == 2
+            else frozenset(),
         )
         return record, attempts
 
@@ -384,17 +394,37 @@ class InsightsQueryService:
         window: MetricWindow,
         snapshot: ProjectionSnapshot,
         deadline: float,
+        fact_semantics_version: int = FACT_SEMANTICS_VERSION,
+        preferred_receipts: frozenset[str] = frozenset(),
     ) -> list[MetricAttempt]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise QueryTimedOut("insights query timed out")
+        if fact_semantics_version not in {1, 2, FACT_SEMANTICS_VERSION}:
+            raise QueryUnavailable("historical fact semantics unavailable")
         try:
-            attempts = self._facts.query_attempts(
+            versioned_reader = getattr(self._facts, "query_attempts_versioned", None)
+            if (
+                versioned_reader is None
+                and fact_semantics_version != FACT_SEMANTICS_VERSION
+            ):
+                raise QueryUnavailable("historical fact semantics unavailable")
+            reader = versioned_reader or self._facts.query_attempts
+            version_options = (
+                {
+                    "fact_semantics_version": fact_semantics_version,
+                    "preferred_receipts": preferred_receipts,
+                }
+                if versioned_reader is not None
+                else {}
+            )
+            attempts = reader(
                 snapshot=snapshot,
                 project_id=project_id,
                 query=query,
                 window=window,
                 limits=replace(self._limits, timeout_seconds=remaining),
+                **version_options,
             )
         except (QueryLimitExceeded, QueryTimedOut):
             raise
