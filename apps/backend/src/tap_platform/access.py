@@ -23,9 +23,15 @@ class AccessPrincipal:
     expires_at: datetime
     actions: frozenset[str]
     enabled: bool
+    authorization_version: str = "authz-1"
 
     def __post_init__(self) -> None:
-        for name in ("project_id", "principal_id", "audience"):
+        for name in (
+            "project_id",
+            "principal_id",
+            "audience",
+            "authorization_version",
+        ):
             _require_identifier(name, getattr(self, name))
         if self.principal_type not in {"user", "service"}:
             raise ValueError("principal_type must be user or service")

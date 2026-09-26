@@ -528,6 +528,7 @@ export interface operations {
             header?: {
                 Authorization?: string | null;
                 "X-TAP-Service-Authorization"?: string | null;
+                "X-TAP-Authorization-Version"?: string | null;
             };
             path: {
                 project_id: string;
@@ -562,6 +563,7 @@ export interface operations {
             header?: {
                 Authorization?: string | null;
                 "X-TAP-Service-Authorization"?: string | null;
+                "X-TAP-Authorization-Version"?: string | null;
             };
             path: {
                 project_id: string;
@@ -600,6 +602,7 @@ export interface operations {
             header?: {
                 Authorization?: string | null;
                 "X-TAP-Service-Authorization"?: string | null;
+                "X-TAP-Authorization-Version"?: string | null;
             };
             path: {
                 project_id: string;

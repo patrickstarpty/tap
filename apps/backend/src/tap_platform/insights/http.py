@@ -66,6 +66,7 @@ class InsightsAuthorizer(Protocol):
         resource_kind: str,
         resource_id: str | None,
         service_bearer_token: str | None,
+        authorization_version: str | None,
     ) -> bool: ...
 
 
@@ -94,6 +95,7 @@ class BearerPrincipalAuthorizer:
         resource_kind: str,
         resource_id: str | None,
         service_bearer_token: str | None = None,
+        authorization_version: str | None = None,
     ) -> bool:
         if not secrets.compare_digest(bearer_token, self._token):
             return False
@@ -113,6 +115,8 @@ class BearerPrincipalAuthorizer:
 
 class DualBearerInsightsAuthorizer:
     """Validate an actual user and TAP AI service credential on every request."""
+
+    _READ_ACTIONS = frozenset({"insights.metrics.read"})
 
     def __init__(
         self,
@@ -144,9 +148,12 @@ class DualBearerInsightsAuthorizer:
         resource_kind: str,
         resource_id: str | None,
         service_bearer_token: str | None = None,
+        authorization_version: str | None = None,
     ) -> bool:
         if (
-            service_bearer_token is None
+            action not in self._READ_ACTIONS
+            or authorization_version != self._user.authorization_version
+            or service_bearer_token is None
             or not secrets.compare_digest(bearer_token, self._user_token)
             or not secrets.compare_digest(service_bearer_token, self._service_token)
         ):
@@ -184,6 +191,9 @@ def create_insights_router(
         service_authorization: str | None = Header(
             default=None, alias="X-TAP-Service-Authorization"
         ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
     ) -> MetricCatalogContract:
         _authorize(
             insights_authorizer,
@@ -193,6 +203,7 @@ def create_insights_router(
             resource_kind="metric-query",
             resource_id=None,
             service_authorization=service_authorization,
+            authorization_version=authorization_version,
         )
         return catalog_contract()
 
@@ -208,6 +219,9 @@ def create_insights_router(
         service_authorization: str | None = Header(
             default=None, alias="X-TAP-Service-Authorization"
         ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
     ) -> MetricQueryResponse:
         _authorize(
             insights_authorizer,
@@ -217,6 +231,7 @@ def create_insights_router(
             resource_kind="metric-query",
             resource_id=None,
             service_authorization=service_authorization,
+            authorization_version=authorization_version,
         )
         if query_service is None:
             raise HTTPException(status_code=503, detail="insights query unavailable")
@@ -252,6 +267,9 @@ def create_insights_router(
         service_authorization: str | None = Header(
             default=None, alias="X-TAP-Service-Authorization"
         ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
     ) -> MetricQueryResponse:
         _authorize(
             insights_authorizer,
@@ -261,6 +279,7 @@ def create_insights_router(
             resource_kind="metric-query",
             resource_id=query_id,
             service_authorization=service_authorization,
+            authorization_version=authorization_version,
         )
         return query_contract(_historical(query_service, project_id, query_id))
 
@@ -601,6 +620,7 @@ def _authorize(
     resource_kind: str,
     resource_id: str | None,
     service_authorization: str | None,
+    authorization_version: str | None = None,
 ) -> None:
     bearer_token = _bearer_token(authorization)
     service_bearer_token = _bearer_token(service_authorization)
@@ -614,6 +634,7 @@ def _authorize(
             resource_kind=resource_kind,
             resource_id=resource_id,
             service_bearer_token=service_bearer_token,
+            authorization_version=authorization_version,
         )
     ):
         raise HTTPException(status_code=403, detail="insights action denied")

@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import re
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, TypeVar
 
 from tap.modules.ai.ports.insights import (
     AuthorizedEvidence,
     AuthorizedInsightsScope,
     FactWatermark,
     InsightsAuthorizationChanged,
+    InsightsBudgetExceeded,
     InsightsPort,
     InsightsQueryUnavailable,
     MetricFact,
@@ -107,12 +108,24 @@ class KnowledgeEvidencePort(Protocol):
         question: str,
     ) -> tuple[AuthorizedEvidence, ...]: ...
 
+    async def reauthorize(
+        self,
+        scope: AuthorizedInsightsScope,
+        evidence: tuple[AuthorizedEvidence, ...],
+    ) -> bool: ...
+
 
 GenerateExplanation = Callable[
-    [ExplanationRequest, tuple[MetricFact, ...], tuple[AuthorizedEvidence, ...]],
+    [
+        ExplanationRequest,
+        tuple[MetricFact, ...],
+        tuple[AuthorizedEvidence, ...],
+        int,
+    ],
     Awaitable[ProposedExplanation],
 ]
 Authorize = Callable[[AuthorizedInsightsScope, tuple[str, ...]], bool]
+_T = TypeVar("_T")
 
 
 class InsightsExplanationService:
@@ -146,12 +159,34 @@ class InsightsExplanationService:
         if not set(refs) <= set(scope.authorized_resource_refs) or not self._authorize(scope, refs):
             raise InsightsAuthorizationChanged("Insights explanation authorization changed")
         try:
-            if request.query_id is not None:
-                metrics = await self._insights.get_insights(scope, request.query_id)
-            elif request.metric_query is not None:
-                metrics = await self._insights.query_insights(scope, request.metric_query)
+            query_id = request.query_id
+            metric_query = request.metric_query
+            if query_id is not None:
+                metrics = await self._bounded(
+                    started,
+                    budget,
+                    lambda: self._insights.get_insights(scope, query_id),
+                )
+            elif metric_query is not None:
+                metrics = await self._bounded(
+                    started,
+                    budget,
+                    lambda: self._insights.query_insights(scope, metric_query),
+                )
             else:  # guarded by ExplanationRequest; retain a fail-closed type boundary.
                 raise InsightsQueryUnavailable("Insights query binding is missing")
+        except InsightsBudgetExceeded:
+            return self._delivery(
+                request,
+                query_id=None,
+                metric_version=None,
+                watermark=None,
+                as_of=None,
+                facts=(),
+                hypotheses=(),
+                missing=("Explanation budget was exhausted before metric verification.",),
+                stop_reason="budget-exhausted",
+            )
         except InsightsQueryUnavailable:
             return self._delivery(
                 request,
@@ -170,6 +205,12 @@ class InsightsExplanationService:
             raise InsightsQueryUnavailable("Insights query scope changed")
 
         facts = metrics.metrics
+        metric_evidence_refs = {reference for fact in facts for reference in fact.evidence_refs}
+        delivery_refs = tuple(sorted(metric_evidence_refs | set(refs)))
+        if not metric_evidence_refs <= set(scope.authorized_resource_refs) or not self._authorize(
+            scope, delivery_refs
+        ):
+            raise InsightsAuthorizationChanged("Insights metrics referenced unauthorized evidence")
         if (
             self._exhausted(started, budget)
             or budget.max_model_calls == 0
@@ -204,7 +245,24 @@ class InsightsExplanationService:
                 )
             if not self._authorize(scope, refs):
                 raise InsightsAuthorizationChanged("knowledge retrieval authorization changed")
-            evidence = await self._knowledge.retrieve(scope, refs, request.question)
+            try:
+                evidence = await self._bounded(
+                    started,
+                    budget,
+                    lambda: self._knowledge.retrieve(scope, refs, request.question),
+                )
+            except InsightsBudgetExceeded:
+                return self._delivery(
+                    request,
+                    query_id=metrics.query_id,
+                    metric_version=metrics.metric_version,
+                    watermark=metrics.fact_watermark,
+                    as_of=metrics.query.as_of,
+                    facts=facts,
+                    hypotheses=(),
+                    missing=("Explanation budget was exhausted before knowledge retrieval.",),
+                    stop_reason="budget-exhausted",
+                )
             tool_calls += 1
             if any(item.resource_ref not in refs for item in evidence):
                 raise InsightsAuthorizationChanged("knowledge retrieval widened resource scope")
@@ -221,7 +279,29 @@ class InsightsExplanationService:
                 missing=("Explanation budget was exhausted after evidence retrieval.",),
                 stop_reason="budget-exhausted",
             )
-        proposal = await self._generate(request, facts, evidence)
+        try:
+            proposal = await self._bounded(
+                started,
+                budget,
+                lambda: self._generate(
+                    request,
+                    facts,
+                    evidence,
+                    budget.max_cost_micros,
+                ),
+            )
+        except InsightsBudgetExceeded:
+            return self._delivery(
+                request,
+                query_id=metrics.query_id,
+                metric_version=metrics.metric_version,
+                watermark=metrics.fact_watermark,
+                as_of=metrics.query.as_of,
+                facts=facts,
+                hypotheses=(),
+                missing=("Explanation budget was exhausted before model completion.",),
+                stop_reason="budget-exhausted",
+            )
         if proposal.cost_micros > budget.max_cost_micros or self._exhausted(started, budget):
             return self._delivery(
                 request,
@@ -250,35 +330,40 @@ class InsightsExplanationService:
             evidence_by_id = {item.citation_id: item for item in evidence}
             if any(citation not in evidence_by_id for citation in proposal.citation_ids):
                 raise InsightsAuthorizationChanged("explanation cited unauthorized evidence")
-            uncertainty = re.compile(
-                r"\b(?:may|might|could|possibly|possible|possibility|plausible|"
-                r"associated|association|correlat(?:e|ed|ion))\b|(?:可能|或许|相关)",
-                re.IGNORECASE,
+            hypotheses = tuple(
+                "The cited evidence suggests a possible association worth investigating; "
+                f"causality is not established. [{citation}]"
+                for citation in proposal.citation_ids
             )
-            asserts_causality = any(
-                re.search(
-                    r"\b(?:caused|causes|resulted in|led to|the root cause (?:is|was))\b|"
-                    r"(?:导致|根因是|根本原因是)",
-                    text,
-                    re.IGNORECASE,
-                )
-                or uncertainty.search(text) is None
-                for text in proposal.hypotheses
+            missing = (
+                ("Additional information is required to evaluate the possible association.",)
+                if proposal.missing_information
+                else ()
             )
-            if asserts_causality:
-                hypotheses = ()
-                missing = (
-                    "The generated explanation asserted causality that the evidence did not prove.",
+        if evidence:
+            try:
+                evidence_is_current = await self._bounded(
+                    started,
+                    budget,
+                    lambda: self._knowledge.reauthorize(scope, evidence),
                 )
-            else:
-                hypotheses = tuple(
-                    f"{text} [{citation}]"
-                    for text, citation in zip(
-                        proposal.hypotheses, proposal.citation_ids, strict=True
-                    )
+            except InsightsBudgetExceeded:
+                return self._delivery(
+                    request,
+                    query_id=metrics.query_id,
+                    metric_version=metrics.metric_version,
+                    watermark=metrics.fact_watermark,
+                    as_of=metrics.query.as_of,
+                    facts=facts,
+                    hypotheses=(),
+                    missing=("Explanation budget was exhausted before evidence reauthorization.",),
+                    stop_reason="budget-exhausted",
                 )
-                missing = proposal.missing_information
-        if not self._authorize(scope, refs):
+            if not evidence_is_current:
+                raise InsightsAuthorizationChanged(
+                    "explanation evidence was withdrawn or changed version"
+                )
+        if not self._authorize(scope, delivery_refs):
             raise InsightsAuthorizationChanged(
                 "Insights explanation delivery authorization changed"
             )
@@ -296,6 +381,21 @@ class InsightsExplanationService:
 
     def _exhausted(self, started: float, budget: ExplanationBudget) -> bool:
         return self._monotonic() - started >= budget.max_seconds
+
+    async def _bounded(
+        self,
+        started: float,
+        budget: ExplanationBudget,
+        operation: Callable[[], Awaitable[_T]],
+    ) -> _T:
+        remaining = budget.max_seconds - (self._monotonic() - started)
+        if remaining <= 0:
+            raise InsightsBudgetExceeded("Insights explanation time budget exhausted")
+        try:
+            async with asyncio.timeout(remaining):
+                return await operation()
+        except TimeoutError as exc:
+            raise InsightsBudgetExceeded("Insights explanation time budget exhausted") from exc
 
     @staticmethod
     def _delivery(

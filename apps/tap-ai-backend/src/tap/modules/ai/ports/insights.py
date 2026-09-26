@@ -72,7 +72,7 @@ class AuthorizedInsightsScope:
         ):
             raise ValueError("insights scope requires a bounded delegated authorization")
         _identifier("authorization_version", self.authorization_version)
-        _identifiers("authorized_resource_refs", self.authorized_resource_refs, 100)
+        _identifiers("authorized_resource_refs", self.authorized_resource_refs, 1000)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -237,11 +237,13 @@ class MetricResult:
 class AuthorizedEvidence:
     citation_id: str
     resource_ref: str
+    evidence_version: str
     excerpt: str
 
     def __post_init__(self) -> None:
         _identifier("citation_id", self.citation_id)
         _identifier("resource_ref", self.resource_ref)
+        _identifier("evidence_version", self.evidence_version)
         if (
             not isinstance(self.excerpt, str)
             or not self.excerpt.strip()

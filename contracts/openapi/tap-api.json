@@ -998,6 +998,22 @@
               ],
               "title": "X-Tap-Service-Authorization"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-TAP-Authorization-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tap-Authorization-Version"
+            }
           }
         ],
         "responses": {
@@ -1068,6 +1084,22 @@
                 }
               ],
               "title": "X-Tap-Service-Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TAP-Authorization-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tap-Authorization-Version"
             }
           }
         ],
@@ -1158,6 +1190,22 @@
                 }
               ],
               "title": "X-Tap-Service-Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TAP-Authorization-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tap-Authorization-Version"
             }
           }
         ],

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -319,8 +320,14 @@ class StubInsights:
 
 
 class StubKnowledge:
-    def __init__(self, evidence: tuple[AuthorizedEvidence, ...]):
+    def __init__(
+        self,
+        evidence: tuple[AuthorizedEvidence, ...],
+        *,
+        deliverable: bool = True,
+    ):
         self.evidence = evidence
+        self.deliverable = deliverable
         self.calls = 0
 
     async def retrieve(self, _scope, resource_refs, _question):
@@ -328,12 +335,17 @@ class StubKnowledge:
         assert tuple(resource_refs) == ("receipt-a",)
         return self.evidence
 
+    async def reauthorize(self, _scope, evidence):
+        assert evidence == self.evidence
+        return self.deliverable
+
 
 @pytest.mark.asyncio
 async def test_handoff_requeries_the_historical_query_without_browser_metric_filters() -> None:
     insights = StubInsights(result())
 
-    async def generate(_request, _metrics, _evidence):
+    async def generate(_request, _metrics, _evidence, max_cost_micros):
+        assert max_cost_micros == 500
         return ProposedExplanation(
             "query-a",
             "insights-metrics-v1",
@@ -354,7 +366,7 @@ async def test_handoff_requeries_the_historical_query_without_browser_metric_fil
         clock=lambda: NOW,
         monotonic=lambda: 10.0,
     ).explain(
-        scope(authorized_resource_refs=()),
+        scope(),
         ExplanationRequest("conversation-a", "turn-a", "graph-a", "Explain", None, "query-a", ()),
         ExplanationBudget(1, 1, 30, 500),
     )
@@ -367,10 +379,14 @@ async def test_handoff_requeries_the_historical_query_without_browser_metric_fil
 @pytest.mark.asyncio
 async def test_explanation_delivers_verified_facts_and_audited_hypotheses() -> None:
     knowledge = StubKnowledge(
-        (AuthorizedEvidence("citation-a", "receipt-a", "Retry passed after cache clear."),)
+        (
+            AuthorizedEvidence(
+                "citation-a", "receipt-a", "revision-1", "Retry passed after cache clear."
+            ),
+        )
     )
 
-    async def generate(_request, _metrics, _evidence):
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
         return ProposedExplanation(
             query_id="query-a",
             metric_version="insights-metrics-v1",
@@ -410,9 +426,12 @@ async def test_explanation_delivers_verified_facts_and_audited_hypotheses() -> N
 
     assert [(fact.numerator, fact.denominator) for fact in delivery.facts] == [(1, 3), (2, 3)]
     assert delivery.hypotheses == (
-        "Cache state may be associated with the recovered retry. [citation-a]",
+        "The cited evidence suggests a possible association worth investigating; "
+        "causality is not established. [citation-a]",
     )
-    assert delivery.missing_information == ("Application logs were not supplied.",)
+    assert delivery.missing_information == (
+        "Additional information is required to evaluate the possible association.",
+    )
     assert delivery.query_id == "query-a"
     assert delivery.as_of == NOW
     assert delivery.fact_watermark == FactWatermark("insights-v1", 7)
@@ -457,13 +476,13 @@ async def test_explanation_delivers_verified_facts_and_audited_hypotheses() -> N
 async def test_tampered_numbers_or_old_watermark_cannot_cross_delivery(
     proposal: ProposedExplanation,
 ) -> None:
-    async def generate(_request, _metrics, _evidence):
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
         return proposal
 
     service = InsightsExplanationService(
         insights=StubInsights(result()),
         knowledge=StubKnowledge(
-            (AuthorizedEvidence("citation-a", "receipt-a", "A relevant source."),)
+            (AuthorizedEvidence("citation-a", "receipt-a", "revision-1", "A relevant source."),)
         ),
         generate=generate,
         authorize=lambda _scope, _refs: True,
@@ -488,15 +507,15 @@ async def test_tampered_numbers_or_old_watermark_cannot_cross_delivery(
 
 
 @pytest.mark.asyncio
-async def test_correlation_cannot_be_presented_as_confirmed_causality() -> None:
-    async def generate(_request, _metrics, _evidence):
+async def test_model_text_cannot_present_tampered_numbers_or_confirmed_causality() -> None:
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
         return ProposedExplanation(
             "query-a",
             "insights-metrics-v1",
             FactWatermark("insights-v1", 7),
             NOW,
             result().metrics,
-            ("The cache caused the failure.",),
+            ("Cache definitely triggered 99% of failures; it may recur.",),
             ("citation-a",),
             (),
             10,
@@ -505,7 +524,11 @@ async def test_correlation_cannot_be_presented_as_confirmed_causality() -> None:
     service = InsightsExplanationService(
         insights=StubInsights(result()),
         knowledge=StubKnowledge(
-            (AuthorizedEvidence("citation-a", "receipt-a", "Cache clear preceded retry."),)
+            (
+                AuthorizedEvidence(
+                    "citation-a", "receipt-a", "revision-1", "Cache clear preceded retry."
+                ),
+            )
         ),
         generate=generate,
         authorize=lambda _scope, _refs: True,
@@ -527,17 +550,55 @@ async def test_correlation_cannot_be_presented_as_confirmed_causality() -> None:
         ExplanationBudget(2, 1, 30, 500),
     )
 
-    assert delivery.hypotheses == ()
-    assert delivery.missing_information == (
-        "The generated explanation asserted causality that the evidence did not prove.",
+    assert delivery.hypotheses == (
+        "The cited evidence suggests a possible association worth investigating; "
+        "causality is not established. [citation-a]",
     )
+    assert "99" not in delivery.hypotheses[0]
+
+
+@pytest.mark.asyncio
+async def test_metric_evidence_outside_current_resource_scope_is_rejected() -> None:
+    unauthorized = result(
+        metrics=tuple(
+            MetricFact(
+                fact.metric_id,
+                fact.numerator,
+                fact.denominator,
+                fact.value,
+                fact.completeness,
+                fact.missing_reasons,
+                ("receipt-other",),
+            )
+            for fact in result().metrics
+        )
+    )
+
+    async def generate(*_args):
+        raise AssertionError("unauthorized facts reached the model")
+
+    service = InsightsExplanationService(
+        insights=StubInsights(unauthorized),
+        knowledge=StubKnowledge(()),
+        generate=generate,
+        authorize=lambda _scope, _refs: True,
+        clock=lambda: NOW,
+        monotonic=lambda: 10.0,
+    )
+
+    with pytest.raises(InsightsAuthorizationChanged, match="unauthorized evidence"):
+        await service.explain(
+            scope(),
+            ExplanationRequest("conversation-a", "turn-a", "graph-a", "Explain", query(), None, ()),
+            ExplanationBudget(1, 1, 30, 500),
+        )
 
 
 @pytest.mark.asyncio
 async def test_budget_exhaustion_preserves_verified_facts_and_stops() -> None:
     generated = False
 
-    async def generate(_request, _metrics, _evidence):
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
         nonlocal generated
         generated = True
         raise AssertionError("model should not be called")
@@ -564,15 +625,41 @@ async def test_budget_exhaustion_preserves_verified_facts_and_stops() -> None:
 
 
 @pytest.mark.asyncio
+async def test_model_call_is_canceled_at_the_fixed_time_budget() -> None:
+    canceled = False
+
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
+        nonlocal canceled
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            canceled = True
+            raise
+        raise AssertionError("unreachable")
+
+    service = InsightsExplanationService(
+        insights=StubInsights(result()),
+        knowledge=StubKnowledge(()),
+        generate=generate,
+        authorize=lambda _scope, _refs: True,
+        clock=lambda: NOW,
+        monotonic=lambda: 10.0,
+    )
+
+    delivery = await service.explain(
+        scope(),
+        ExplanationRequest("conversation-a", "turn-a", "graph-a", "Explain", query(), None, ()),
+        ExplanationBudget(1, 1, 1, 500),
+    )
+
+    assert canceled is True
+    assert delivery.facts == result().metrics
+    assert delivery.stop_reason == "budget-exhausted"
+
+
+@pytest.mark.asyncio
 async def test_withdrawn_citation_and_delivery_reauthorization_fail_closed() -> None:
-    authorization_checks = 0
-
-    def authorize(_scope, _refs):
-        nonlocal authorization_checks
-        authorization_checks += 1
-        return authorization_checks < 3
-
-    async def generate(_request, _metrics, _evidence):
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
         return ProposedExplanation(
             "query-a",
             "insights-metrics-v1",
@@ -588,8 +675,50 @@ async def test_withdrawn_citation_and_delivery_reauthorization_fail_closed() -> 
     service = InsightsExplanationService(
         insights=StubInsights(result()),
         knowledge=StubKnowledge(
-            (AuthorizedEvidence("citation-a", "receipt-a", "Withdrawn source."),)
+            (AuthorizedEvidence("citation-a", "receipt-a", "revision-1", "Withdrawn source."),),
+            deliverable=False,
         ),
+        generate=generate,
+        authorize=lambda _scope, _refs: True,
+        clock=lambda: NOW,
+        monotonic=lambda: 10.0,
+    )
+
+    with pytest.raises(InsightsAuthorizationChanged, match="withdrawn or changed version"):
+        await service.explain(
+            scope(),
+            ExplanationRequest(
+                "conversation-a", "turn-a", "graph-a", "Explain", query(), "query-a", ("receipt-a",)
+            ),
+            ExplanationBudget(2, 1, 30, 500),
+        )
+
+
+@pytest.mark.asyncio
+async def test_metric_evidence_is_reauthorized_again_before_delivery() -> None:
+    checks = 0
+
+    def authorize(_scope, refs):
+        nonlocal checks
+        checks += 1
+        return checks < 3 or refs == ()
+
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
+        return ProposedExplanation(
+            "query-a",
+            "insights-metrics-v1",
+            FactWatermark("insights-v1", 7),
+            NOW,
+            result().metrics,
+            (),
+            (),
+            (),
+            10,
+        )
+
+    service = InsightsExplanationService(
+        insights=StubInsights(result()),
+        knowledge=StubKnowledge(()),
         generate=generate,
         authorize=authorize,
         clock=lambda: NOW,
@@ -599,10 +728,8 @@ async def test_withdrawn_citation_and_delivery_reauthorization_fail_closed() -> 
     with pytest.raises(InsightsAuthorizationChanged, match="delivery"):
         await service.explain(
             scope(),
-            ExplanationRequest(
-                "conversation-a", "turn-a", "graph-a", "Explain", query(), "query-a", ("receipt-a",)
-            ),
-            ExplanationBudget(2, 1, 30, 500),
+            ExplanationRequest("conversation-a", "turn-a", "graph-a", "Explain", query(), None, ()),
+            ExplanationBudget(1, 1, 30, 500),
         )
 
 
