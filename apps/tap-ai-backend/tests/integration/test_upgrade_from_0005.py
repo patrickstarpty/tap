@@ -736,7 +736,7 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
             )
     finally:
         sync_engine.dispose()
-    owned_project_mysql.upgrade("0012a_conversation_governance")
+    owned_project_mysql.upgrade("head")
 
     async def scenario():
         engine = create_async_engine(
