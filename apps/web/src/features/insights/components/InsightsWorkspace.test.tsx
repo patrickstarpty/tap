@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
@@ -45,6 +45,7 @@ function query(queryId = "query-1"): MetricQueryResponse {
     asOf: "2026-09-26T08:00:00Z",
     createdAt: "2026-09-26T08:00:00Z",
     factWatermark: { projectionVersion: "insights-v1", visibleDataVersion: 4 },
+    reportCoverage: [],
     metrics: [
       completeMetric("first_pass_rate", 1 / 3, 1, 3),
       completeMetric("final_pass_rate", 2 / 3, 2, 3),
@@ -64,6 +65,16 @@ function query(queryId = "query-1"): MetricQueryResponse {
       },
     ],
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((fulfill, fail) => {
+    resolve = fulfill;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
 }
 
 function adapter(overrides: Partial<InsightsDataAdapter> = {}): InsightsDataAdapter {
@@ -158,6 +169,206 @@ function adapter(overrides: Partial<InsightsDataAdapter> = {}): InsightsDataAdap
 beforeEach(() => localStorage.clear());
 
 describe("real TAP Insights workspace", () => {
+  it("keeps the latest receipt-ready query and all its details when an earlier Apply finishes late", async () => {
+    const slowRuns = deferred<Awaited<ReturnType<InsightsDataAdapter["listRuns"]>>>();
+    const a = query("query-a");
+    const b = query("query-b");
+    b.metrics[0] = completeMetric("first_pass_rate", 0.75, 3, 4);
+    const run = (queryId: string) => ({
+      queryId,
+      nextCursor: null,
+      items: [{
+        runId: `run-${queryId}`,
+        externalRunId: `RUN-${queryId}`,
+        sourceId: "ci",
+        buildId: null,
+        branch: null,
+        environment: "qa",
+        configuration: "browser=chromium",
+        startedAt: null,
+        instanceCount: 1,
+        evidenceRefs: [],
+      }],
+    });
+    const failure = (queryId: string) => ({
+      queryId,
+      nextCursor: null,
+      items: [{
+        factKey: `failure-${queryId}`,
+        runId: `run-${queryId}`,
+        externalRunId: `RUN-${queryId}`,
+        sourceId: "ci",
+        stableTestId: "case-1",
+        sourceTestIdentity: "suite::case-1",
+        dataRow: null,
+        result: queryId === "query-b" ? "fail" as const : "error" as const,
+        configuration: "browser=chromium",
+        evidenceRefs: [],
+      }],
+    });
+    const receipt = {
+      receiptId: "receipt-ready",
+      projectId: "project-a",
+      sourceId: "ci",
+      externalRunId: "RUN-query-b",
+      batchId: "batch-1",
+      shardId: "1",
+      checksum: "checksum",
+      parserVersion: "junit-v1",
+      correctionNo: 0,
+      state: "ready" as const,
+      completeness: "complete" as const,
+      sizeBytes: 10,
+      conflictWithReceiptId: null,
+      failureReason: null,
+      evidenceUrl: "/evidence/receipt-ready",
+    };
+    const data = adapter({
+      createQuery: vi.fn()
+        .mockResolvedValueOnce(query())
+        .mockResolvedValueOnce(a)
+        .mockResolvedValueOnce(b),
+      listRuns: vi.fn((_: string, queryId: string) =>
+        queryId === "query-a" ? slowRuns.promise : Promise.resolve(run(queryId))),
+      listFailures: vi.fn((_: string, queryId: string) => Promise.resolve(failure(queryId))),
+      listAttempts: vi.fn((_: string, queryId: string, runId: string) => Promise.resolve({
+        queryId, runId, nextCursor: null,
+        items: [{
+          factKey: "attempt-b", externalRunId: "RUN-query-b", stableTestId: "case-b",
+          sourceTestIdentity: "suite::case-b", dataRow: null,
+          attempt: 1, result: "pass", durationSeconds: 1, evidenceRefs: [],
+        }],
+      })),
+      uploadReport: vi.fn().mockResolvedValue(receipt),
+      getReceipt: vi.fn().mockResolvedValue(receipt),
+    });
+    render(<InsightsWorkspace adapter={data} projectId="project-a" />);
+    await screen.findByText("RUN-query-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(data.listRuns).toHaveBeenCalledWith("project-a", "query-a"));
+
+    const intake = screen.getByText("Upload JUnit report").closest("details")!;
+    for (const [name, value] of Object.entries({
+      sourceId: "ci", externalRunId: "RUN-query-b", batchId: "batch-1", shardId: "1",
+      applicationCommit: "abc", scriptCommit: "def", environment: "qa",
+      configuration: "browser=chromium", startedAt: "2026-09-24T08:00",
+    })) {
+      fireEvent.change(intake.querySelector<HTMLInputElement>(`[name="${name}"]`)!, {
+        target: { value },
+      });
+    }
+    fireEvent.change(intake.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [new File(["<testsuite/>"] , "report.xml", { type: "application/xml" })] },
+    });
+    fireEvent.click(within(intake).getByRole("button", { name: "Upload report" }));
+
+    expect(await screen.findByText(/Query query-b/)).toBeVisible();
+    expect(screen.getByText("75.00%")).toBeVisible();
+    expect(within(screen.getByRole("table", { name: "Runs" })).getByText("RUN-query-b")).toBeVisible();
+    expect(within(screen.getByRole("table", { name: "Failure groups" })).getByText("fail")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open RUN-query-b" }));
+    expect(await screen.findByRole("region", { name: "Run RUN-query-b details" })).toHaveTextContent("suite::case-b");
+    await act(async () => slowRuns.resolve(run("query-a")));
+    expect(screen.getByText(/Query query-b/)).toBeVisible();
+    expect(screen.getByText("75.00%")).toBeVisible();
+    expect(within(screen.getByRole("table", { name: "Runs" })).getByText("RUN-query-b")).toBeVisible();
+    expect(screen.queryByText("RUN-query-a")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("table", { name: "Failure groups" })).getByText("fail")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Run RUN-query-b details" })).toHaveTextContent("suite::case-b");
+    expect(localStorage.getItem("tap.insights.query.project-a")).toBe("query-b");
+  });
+
+  it("ignores an older run's attempts and failure after a newer run opens", async () => {
+    const slowAttempts = deferred<Awaited<ReturnType<InsightsDataAdapter["listAttempts"]>>>();
+    const failedAttempts = deferred<Awaited<ReturnType<InsightsDataAdapter["listAttempts"]>>>();
+    let olderRequestCount = 0;
+    const data = adapter({
+      listRuns: vi.fn().mockResolvedValue({
+        queryId: "query-1", nextCursor: null,
+        items: ["a", "b"].map((id) => ({
+          runId: `run-${id}`, externalRunId: `RUN-${id}`, sourceId: "ci",
+          buildId: null, branch: null, environment: "qa",
+          configuration: "browser=chromium", startedAt: null,
+          instanceCount: 1, evidenceRefs: [],
+        })),
+      }),
+      listAttempts: vi.fn((_: string, queryId: string, runId: string) =>
+        runId === "run-a" ? (++olderRequestCount === 1 ? slowAttempts.promise : failedAttempts.promise) : Promise.resolve({
+          queryId, runId, nextCursor: null,
+          items: [{
+            factKey: "attempt-b", externalRunId: "RUN-b", stableTestId: "case-b",
+            sourceTestIdentity: "suite::case-b", dataRow: null,
+            attempt: 1, result: "pass", durationSeconds: 1,
+            evidenceRefs: [],
+          }],
+        })),
+    });
+    render(<InsightsWorkspace adapter={data} projectId="project-a" />);
+    await screen.findByText("RUN-a");
+    fireEvent.click(screen.getByRole("button", { name: "Open RUN-a" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open RUN-b" }));
+    expect(await screen.findByRole("region", { name: "Run RUN-b details" })).toHaveTextContent("suite::case-b");
+    await act(async () => slowAttempts.resolve({
+      queryId: "query-1", runId: "run-a", nextCursor: null,
+      items: [{
+        factKey: "attempt-a", externalRunId: "RUN-a", stableTestId: "case-a",
+        sourceTestIdentity: "suite::case-a", dataRow: null,
+        attempt: 1, result: "fail", durationSeconds: 2, evidenceRefs: [],
+      }],
+    }));
+    expect(screen.getByRole("region", { name: "Run RUN-b details" })).not.toHaveTextContent("suite::case-a");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open RUN-a" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open RUN-b" }));
+    expect(await screen.findByRole("region", { name: "Run RUN-b details" })).toHaveTextContent("suite::case-b");
+    await act(async () => failedAttempts.reject(new Error("older attempt failed")));
+    expect(screen.getByRole("region", { name: "Run RUN-b details" })).toHaveTextContent("suite::case-b");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the newer loading state when an older query fails", async () => {
+    const aRuns = deferred<Awaited<ReturnType<InsightsDataAdapter["listRuns"]>>>();
+    const bRuns = deferred<Awaited<ReturnType<InsightsDataAdapter["listRuns"]>>>();
+    const data = adapter({
+      createQuery: vi.fn()
+        .mockResolvedValueOnce(query())
+        .mockResolvedValueOnce(query("query-a"))
+        .mockResolvedValueOnce(query("query-b")),
+      listRuns: vi.fn((_: string, queryId: string) =>
+        queryId === "query-a" ? aRuns.promise : queryId === "query-b" ? bRuns.promise :
+          Promise.resolve({ queryId, nextCursor: null, items: [] })),
+      listFailures: vi.fn((_: string, queryId: string) =>
+        Promise.resolve({ queryId, nextCursor: null, items: [] })),
+    });
+    render(<InsightsWorkspace adapter={data} projectId="project-a" />);
+    await screen.findByText(/Query query-1/);
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(data.listRuns).toHaveBeenCalledWith("project-a", "query-a"));
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(data.listRuns).toHaveBeenCalledWith("project-a", "query-b"));
+
+    await act(async () => aRuns.reject(new Error("older query failed")));
+    expect(screen.getByRole("region", { name: "Loading insights" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await act(async () => bRuns.resolve({ queryId: "query-b", nextCursor: null, items: [] }));
+    expect(screen.getByText(/Query query-b/)).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Loading insights" })).not.toBeInTheDocument();
+  });
+
+  it("does not persist an unfinished query after unmount", async () => {
+    const runs = deferred<Awaited<ReturnType<InsightsDataAdapter["listRuns"]>>>();
+    const data = adapter({
+      listRuns: vi.fn(() => runs.promise),
+      listFailures: vi.fn().mockResolvedValue({ queryId: "query-1", nextCursor: null, items: [] }),
+    });
+    const view = render(<InsightsWorkspace adapter={data} projectId="project-a" />);
+    await waitFor(() => expect(data.listRuns).toHaveBeenCalledWith("project-a", "query-1"));
+    view.unmount();
+    await act(async () => runs.resolve({ queryId: "query-1", nextCursor: null, items: [] }));
+    expect(localStorage.getItem("tap.insights.query.project-a")).toBeNull();
+  });
+
   it("initializes one authoritative query under React strict effects", async () => {
     const data = adapter();
     render(
@@ -298,6 +509,38 @@ describe("real TAP Insights workspace", () => {
     expect(await screen.findByText("First-attempt history is unavailable.")).toBeVisible();
     expect(screen.getByText("No runs match this authorized query scope.")).toBeVisible();
     expect(screen.queryByText("0.00%")) .not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["partial", 2, "Partial report coverage: 1 of 2 shards received"],
+    ["unknown", null, "Report coverage unknown: expected shard count is unavailable"],
+  ] as const)("explains %s report coverage without showing a normal metric value", async (completeness, expectedShards, message) => {
+    const incomplete = Object.assign(query("coverage-query"), {
+      reportCoverage: [{
+        sourceId: "ci", externalRunId: "RUN-42", reportBatchId: "batch-1",
+        expectedShards, receivedShards: 1, completeness,
+        missingReasons: [completeness === "partial" ? "report-shards-missing" : "expected-shards-unknown"],
+      }],
+    });
+    incomplete.metrics = incomplete.metrics.map((value) => ({
+      ...value, numerator: null, denominator: null, value: null,
+      completeness: "unavailable" as const,
+      missingReasons: incomplete.reportCoverage[0]!.missingReasons,
+    }));
+    incomplete.trends = [];
+    const data = adapter({
+      createQuery: vi.fn().mockResolvedValue(incomplete),
+      listRuns: vi.fn().mockResolvedValue({ queryId: "coverage-query", items: [], nextCursor: null }),
+      listFailures: vi.fn().mockResolvedValue({ queryId: "coverage-query", items: [], nextCursor: null }),
+    });
+    render(<InsightsWorkspace adapter={data} projectId="project-a" />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent(message);
+    expect(screen.getByRole("status")).toHaveTextContent("ci / RUN-42 (batch batch-1)");
+    const cards = screen.getByRole("region", { name: "Authorized metrics" });
+    expect(within(cards).queryByText("0.00%")).not.toBeInTheDocument();
+    expect(within(cards).queryByText("33.33%")).not.toBeInTheDocument();
+    expect(within(cards).getAllByText("—")).toHaveLength(6);
   });
 
   it("exports and shares only the persisted project query", async () => {

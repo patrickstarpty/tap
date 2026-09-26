@@ -106,9 +106,14 @@ export function InsightsWorkspace({
   tapperBaseUrl?: string;
 }) {
   const [catalog, setCatalog] = useState<MetricCatalog | null>(null);
-  const [query, setQuery] = useState<MetricQueryResponse | null>(null);
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [failures, setFailures] = useState<FailureDetail[]>([]);
+  const [result, setResult] = useState<{
+    query: MetricQueryResponse;
+    runs: RunSummary[];
+    failures: FailureDetail[];
+  } | null>(null);
+  const query = result?.query ?? null;
+  const runs = result?.runs ?? [];
+  const failures = result?.failures ?? [];
   const [scope, setScope] = useState(defaultScope);
   const [draft, setDraft] = useState(scope);
   const [tableFilter, setTableFilter] = useState("");
@@ -117,7 +122,9 @@ export function InsightsWorkspace({
   const [selectedRun, setSelectedRun] = useState<RunSummary | null>(null);
   const [attempts, setAttempts] = useState<AttemptDetail[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
-  const initialized = useRef(false);
+  const mounted = useRef(false);
+  const loadGeneration = useRef(0);
+  const attemptGeneration = useRef(0);
   const receiptKey = `tap.insights.receipts.${projectId}`;
   const queryKey = `tap.insights.query.${projectId}`;
   const [knownReceiptIds, setKnownReceiptIds] = useState<string[]>(() => {
@@ -139,14 +146,13 @@ export function InsightsWorkspace({
         failurePage.queryId !== current.queryId
       )
         throw new Error("Insights detail scope mismatch");
-      setRuns(runPage.items);
-      setFailures(failurePage.items);
+      return { runs: runPage.items, failures: failurePage.items };
     },
     [adapter, projectId],
   );
 
   const create = useCallback(
-    async (nextScope: ScopeDraft) => {
+    async (nextScope: ScopeDraft, generation: number) => {
       const next = await adapter.createQuery(projectId, {
         metricIds: METRICS,
         filters: queryFilters(nextScope),
@@ -155,78 +161,97 @@ export function InsightsWorkspace({
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         asOf: new Date().toISOString(),
       });
+      if (!mounted.current || generation !== loadGeneration.current) return;
+      const details = await loadDetails(next);
+      if (!mounted.current || generation !== loadGeneration.current) return;
       localStorage.setItem(queryKey, next.queryId);
-      setQuery(next);
-      await loadDetails(next);
+      setResult({ query: next, ...details });
+      setScope(nextScope);
     },
     [adapter, loadDetails, projectId, queryKey],
   );
 
-  const initialize = useCallback(async () => {
+  const beginLoad = useCallback(() => {
+    const generation = ++loadGeneration.current;
+    ++attemptGeneration.current;
+    setSelectedRun(null);
+    setAttempts([]);
+    setDetailsLoading(false);
     setLoading(true);
     setError("");
+    return generation;
+  }, []);
+
+  const initialize = useCallback(async () => {
+    const generation = beginLoad();
     try {
       const definitions = await adapter.listMetrics(projectId);
+      if (!mounted.current || generation !== loadGeneration.current) return;
       setCatalog(definitions);
       const saved =
         initialQueryId ?? localStorage.getItem(queryKey) ?? undefined;
       if (saved) {
         try {
           const restored = await adapter.getQuery(projectId, saved);
-          setQuery(restored);
-          setScope({
+          if (!mounted.current || generation !== loadGeneration.current) return;
+          const details = await loadDetails(restored);
+          if (!mounted.current || generation !== loadGeneration.current) return;
+          const restoredScope = {
             from: restored.from,
             to: restored.to,
             build: restored.filters.buildIds?.[0] ?? "",
             branch: restored.filters.branches?.[0] ?? "",
             environment: restored.filters.environments?.[0] ?? "all",
-          });
-          setDraft({
-            from: restored.from,
-            to: restored.to,
-            build: restored.filters.buildIds?.[0] ?? "",
-            branch: restored.filters.branches?.[0] ?? "",
-            environment: restored.filters.environments?.[0] ?? "all",
-          });
-          await loadDetails(restored);
+          };
+          setResult({ query: restored, ...details });
+          setScope(restoredScope);
+          setDraft(restoredScope);
           return;
         } catch (cause) {
+          if (!mounted.current || generation !== loadGeneration.current) return;
           if (status(cause) !== 404) throw cause;
           localStorage.removeItem(queryKey);
         }
       }
-      await create(scope);
+      await create(scope, generation);
     } catch (cause) {
-      setError(errorCopy(cause));
+      if (mounted.current && generation === loadGeneration.current)
+        setError(errorCopy(cause));
     } finally {
-      setLoading(false);
+      if (mounted.current && generation === loadGeneration.current)
+        setLoading(false);
     }
-  }, [adapter, create, initialQueryId, loadDetails, projectId, queryKey, scope]);
+  }, [adapter, beginLoad, create, initialQueryId, loadDetails, projectId, queryKey, scope]);
 
   useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
+    mounted.current = true;
     void initialize();
+    return () => {
+      mounted.current = false;
+      ++loadGeneration.current;
+      ++attemptGeneration.current;
+    };
     // Initial server restore is intentionally a one-time lifecycle action.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const applyFilters = async () => {
-    setLoading(true);
-    setError("");
-    setScope(draft);
-    setSelectedRun(null);
+    const generation = beginLoad();
     try {
-      await create(draft);
+      await create(draft, generation);
     } catch (cause) {
-      setError(errorCopy(cause));
+      if (mounted.current && generation === loadGeneration.current)
+        setError(errorCopy(cause));
     } finally {
-      setLoading(false);
+      if (mounted.current && generation === loadGeneration.current)
+        setLoading(false);
     }
   };
 
   const openRun = async (run: RunSummary) => {
     if (!query) return;
+    const generation = ++attemptGeneration.current;
+    const queryGeneration = loadGeneration.current;
     setSelectedRun(run);
     setAttempts([]);
     setDetailsLoading(true);
@@ -236,13 +261,28 @@ export function InsightsWorkspace({
         query.queryId,
         run.runId,
       );
-      if (page.queryId !== query.queryId)
+      if (page.queryId !== query.queryId || page.runId !== run.runId)
         throw new Error("Insights attempt scope mismatch");
+      if (
+        !mounted.current ||
+        generation !== attemptGeneration.current ||
+        queryGeneration !== loadGeneration.current
+      ) return;
       setAttempts(page.items);
     } catch (cause) {
-      setError(errorCopy(cause));
+      if (
+        mounted.current &&
+        generation === attemptGeneration.current &&
+        queryGeneration === loadGeneration.current
+      )
+        setError(errorCopy(cause));
     } finally {
-      setDetailsLoading(false);
+      if (
+        mounted.current &&
+        generation === attemptGeneration.current &&
+        queryGeneration === loadGeneration.current
+      )
+        setDetailsLoading(false);
     }
   };
 
@@ -273,6 +313,10 @@ export function InsightsWorkspace({
       })).filter((item) => item.count > 0),
     [failures],
   );
+
+  const incompleteCoverage = query?.reportCoverage.filter(
+    (item) => item.completeness !== "complete",
+  ) ?? [];
 
   const exportCurrent = async () => {
     if (!query) return;
@@ -324,6 +368,19 @@ export function InsightsWorkspace({
       {!loading && !error && query ? (
         <>
           <div className="ti-query-meta">Query {query.queryId} · {query.metricVersion} · facts through {query.factWatermark.visibleDataVersion} · as of {new Date(query.asOf).toLocaleString()}</div>
+          {incompleteCoverage.length ? (
+            <section className="ti-coverage" role="status" aria-label="Report coverage">
+              <strong>Report coverage affects these metrics.</strong>
+              <ul>{incompleteCoverage.map((item) => (
+                <li key={`${item.sourceId}:${item.externalRunId}:${item.reportBatchId}`}>
+                  {item.completeness === "partial" && item.expectedShards !== null
+                    ? `Partial report coverage: ${item.receivedShards} of ${item.expectedShards} shards received`
+                    : "Report coverage unknown: expected shard count is unavailable"}
+                  {` for ${item.sourceId} / ${item.externalRunId} (batch ${item.reportBatchId}).`}
+                </li>
+              ))}</ul>
+            </section>
+          ) : null}
           <section className="ti-metrics" aria-label="Authorized metrics">
             {[
               ["first_pass_rate", "First-pass rate"],
@@ -351,7 +408,7 @@ export function InsightsWorkspace({
             </section>
             <section><h2>Failure groups</h2>{groupedFailures.length ? <table aria-label="Failure groups"><thead><tr><th>Final result</th><th>Instances</th></tr></thead><tbody>{groupedFailures.map((group) => <tr key={group.result}><td>{group.result}</td><td>{group.count}</td></tr>)}</tbody></table> : <p className="ti-empty">No final failures in this query scope.</p>}</section>
           </div>
-          {selectedRun ? detailsLoading ? <section className="ti-loading" aria-label="Loading run details"><i /><i /></section> : <RunDetails adapter={adapter} projectId={projectId} queryId={query.queryId} tapperBaseUrl={tapperBaseUrl} run={selectedRun} attempts={attempts} onClose={() => setSelectedRun(null)} /> : null}
+          {selectedRun ? detailsLoading ? <section className="ti-loading" aria-label="Loading run details"><i /><i /></section> : <RunDetails adapter={adapter} projectId={projectId} queryId={query.queryId} tapperBaseUrl={tapperBaseUrl} run={selectedRun} attempts={attempts} onClose={() => { ++attemptGeneration.current; setSelectedRun(null); }} /> : null}
         </>
       ) : null}
     </section>

@@ -1,60 +1,12 @@
 import type { components } from "../../../shared/api/generated/schema";
 
-type GeneratedMetricId = components["schemas"]["MetricId"];
-export type MetricId = GeneratedMetricId | "p95_duration_seconds";
-export type MetricCompleteness = "complete" | "empty" | "unavailable";
-
-export interface MetricResult {
-  metricId: MetricId;
-  numerator: number | null;
-  denominator: number | null;
-  value: number | null;
-  completeness: MetricCompleteness;
-  missingReasons: string[];
-  evidenceRefs: string[];
-}
-
-export interface MetricFilters {
-  sourceIds?: string[];
-  runIds?: string[];
-  buildIds?: string[];
-  branches?: string[];
-  environments?: string[];
-  configurations?: string[];
-}
-
-export interface MetricQueryRequest {
-  metricIds: MetricId[];
-  filters: MetricFilters;
-  from: string;
-  to: string;
-  timezone: string;
-  asOf: string;
-}
-
-export interface MetricQueryResponse {
-  queryId: string;
-  metricVersion: string;
-  filters: MetricFilters;
-  from: string;
-  to: string;
-  timezone: string;
-  asOf: string;
-  createdAt: string;
-  factWatermark: { projectionVersion: string; visibleDataVersion: number };
-  metrics: MetricResult[];
-  trends: Array<{ localDate: string; metrics: MetricResult[] }>;
-}
-
-export interface MetricCatalog {
-  items: Array<{
-    metricId: MetricId;
-    label: string;
-    unit: "ratio" | "count" | "seconds";
-    definition: string;
-    metricVersion: string;
-  }>;
-}
+export type MetricId = components["schemas"]["MetricId"];
+export type MetricResult = components["schemas"]["MetricResultContract"];
+export type MetricCompleteness = MetricResult["completeness"];
+export type MetricFilters = components["schemas"]["MetricFiltersContract"];
+export type MetricQueryRequest = components["schemas"]["MetricQueryRequest"];
+export type MetricQueryResponse = components["schemas"]["MetricQueryResponse"];
+export type MetricCatalog = components["schemas"]["MetricCatalogContract"];
 
 export interface RunSummary {
   runId: string;

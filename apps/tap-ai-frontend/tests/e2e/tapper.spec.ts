@@ -558,7 +558,11 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
     knowledgePath(page, "graph/query"),
     {
       headers: { Origin: ORIGIN },
-      data: { snapshotId: snapshot.items[0]!.snapshotId, query: "*", nodeLimit: 500 },
+      data: {
+        snapshotId: snapshot.items[0]!.snapshotId,
+        query: "*",
+        nodeLimit: 500,
+      },
     },
   );
   expect(publishedGraph.status()).toBe(200);
