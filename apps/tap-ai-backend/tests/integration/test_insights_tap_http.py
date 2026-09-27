@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import httpx
 import pytest
 from tap_platform.access import AccessPrincipal
-from tap_platform.app import create_app
 from tap_platform.insights.application.queries import (
     InMemoryQueryHistory,
     InsightsQueryService,
@@ -79,17 +79,21 @@ def _principal(kind: str) -> AccessPrincipal:
 
 
 def _tap_app(service: InsightsQueryService):
-    return create_app(
-        query_service=service,
-        insights_authorizer=DualBearerInsightsAuthorizer(
-            user_token="delegated-user-token-0001",
-            user=_principal("user"),
-            service_token="service-token-00000001",
-            service=_principal("service"),
-            expected_user_audience="tap",
-            expected_service_audience="tap-insights",
-        ),
-    )
+    # Other test imports may load a local .env; this in-memory app owns no report store.
+    with patch.dict("os.environ", {"TAP_DATABASE_URL": "", "TAP_REPORT_OBJECT_ROOT": ""}):
+        from tap_platform.app import create_app
+
+        return create_app(
+            query_service=service,
+            insights_authorizer=DualBearerInsightsAuthorizer(
+                user_token="delegated-user-token-0001",
+                user=_principal("user"),
+                service_token="service-token-00000001",
+                service=_principal("service"),
+                expected_user_audience="tap",
+                expected_service_audience="tap-insights",
+            ),
+        )
 
 
 def _scope() -> AuthorizedInsightsScope:
