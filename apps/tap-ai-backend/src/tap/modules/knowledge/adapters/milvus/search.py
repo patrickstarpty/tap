@@ -6,6 +6,7 @@ import hashlib
 import math
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Literal
 
 from tap.modules.access.domain.policy import ResourceGrant
@@ -77,6 +78,28 @@ class MilvusSearchAdapter(SearchPort):
         try:
             target = self._validate_execution(execution)
             owners = await self._load_owners(execution)
+            if execution.approved_item_scope is not None:
+                if self._owners is None:
+                    raise SearchUnavailable(
+                        "published search requires an authoritative chunk manifest"
+                    )
+                approved_chunk_ids = await self._owners.load_approved_chunk_ids(
+                    execution.approved_item_scope
+                )
+                execution = replace(execution, approved_chunk_ids=approved_chunk_ids)
+                if approved_chunk_ids == ():
+                    event = self._event(
+                        execution,
+                        outcome="success",
+                        physical_collection=None,
+                        started=started,
+                        provider_row_count=0,
+                        rejected_row_count=0,
+                        provider_request_ids=(),
+                        error_code=None,
+                    )
+                    await self._audit_sink.emit(event)
+                    return ()
             filter_expression = compile_milvus_filter(
                 execution,
                 SourceFamily.DOC,

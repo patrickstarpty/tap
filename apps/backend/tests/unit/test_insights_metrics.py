@@ -503,3 +503,78 @@ def test_as_of_is_passed_to_snapshot_authority() -> None:
 
     assert seen == [as_of]
     assert result.snapshot.visible_data_version == 4
+
+
+def test_daily_trends_scope_marker_coverage_and_include_zero_attempt_days(monkeypatch):
+    """An incomplete empty report must affect its own local day, not every day."""
+    import json
+    from tap_platform.insights.adapters.clickhouse import ClickHouseInsightsStore
+    from tap_platform.insights.application.queries import _trend_points
+
+    query = MetricQuery(
+        metric_ids=(MetricId.FIRST_PASS_RATE,),
+        filters=QueryFilters(),
+        from_date="2026-09-24",
+        to_date="2026-09-27",
+        timezone="Asia/Shanghai",
+        as_of=datetime(2026, 9, 27, tzinfo=UTC),
+    )
+    markers = []
+    for run_id, started_at, expected in (
+        ("run-1", "2026-09-23T16:00:00Z", 1),
+        ("empty-run", "2026-09-24T16:00:00Z", 2),
+        ("undated-run", None, 2),
+    ):
+        markers.append(
+            dict(
+                project_id="project-a",
+                source_id="ci-a",
+                external_run_id=run_id,
+                report_batch_id=run_id,
+                shard_id="1",
+                correction_no=0,
+                marker_checksum=run_id,
+                expected_shards=expected,
+                contains_complete_attempts=1,
+                started_at=started_at,
+            )
+        )
+    store = ClickHouseInsightsStore(
+        "http://127.0.0.1:38123/?database=tap_insights",
+        username="reader",
+        password="test",
+    )
+    monkeypatch.setattr(
+        store,
+        "_execute",
+        lambda *args, **kwargs: "\n".join(json.dumps(row) for row in markers).encode(),
+    )
+    coverage = store.query_report_coverage(
+        snapshot=ProjectionSnapshot(
+            projection_version="insights-v1", visible_data_version=3
+        ),
+        project_id="project-a",
+        query=query,
+        window=query.window(),
+        limits=QueryLimits(
+            max_rows_to_read=100,
+            max_bytes_to_read=100000,
+            max_memory_bytes=100000,
+            max_concurrent_queries=1,
+            max_output_rows=100,
+            timeout_seconds=1,
+        ),
+    )
+    trends = {
+        point.local_date: point.metrics[0]
+        for point in _trend_points(
+            [attempt(test_id="a", attempt_no=1, result="pass")],
+            query=query,
+            report_coverage=coverage,
+        )
+    }
+    assert trends["2026-09-24"].value == 1.0
+    assert trends["2026-09-24"].completeness == "complete"
+    assert trends["2026-09-25"].completeness == "unavailable"
+    assert "report-shards-missing" in trends["2026-09-25"].missing_reasons
+    assert trends["undated"].completeness == "unavailable"

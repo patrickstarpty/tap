@@ -696,3 +696,96 @@ def test_publish_and_withdraw_reject_stale_versions_and_expose_current_vs_histor
         assert await repository.get_publication(published.publication_id) == withdrawn
 
     run(scenario())
+
+
+def test_independent_publications_survive_publish_withdraw_and_expiry():
+    from tap.modules.access.domain.policy import AuthorizationDenied
+    from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+
+    async def scenario():
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        publications = []
+        for number in (1, 2):
+            candidate = review(
+                review_id=f"review-{number}",
+                source_revision_ids=(f"revision-{number}",),
+                approved_item_ids=(f"item-{number}",),
+                status=ReviewStatus.APPROVED,
+                reviewer_actor_id="reviewer",
+                expires_at=NOW + timedelta(hours=number),
+            )
+            await repository.add(candidate)
+            publications.append(
+                await application.publish_review(
+                    candidate.review_id,
+                    generation="generation-1",
+                    idempotency_key=f"pub-{number}",
+                    actor_id="publisher",
+                    expected_version=3,
+                    now=NOW,
+                )
+            )
+        authority = PublishedKnowledgeAuthority(repository, now=lambda: NOW)
+        first = await authority.authorize_selection("synthetic-commerce-project", ("revision-1",))
+        await authority.authorize_selection(
+            "synthetic-commerce-project", ("revision-1", "revision-2")
+        )
+        assert (
+            await application.current_publication_for_review(
+                await repository.get_review("review-1")
+            )
+        ) == publications[0]
+        replacement = review(
+            review_id="review-2-replacement",
+            source_revision_ids=("revision-2",),
+            approved_item_ids=("item-2",),
+            status=ReviewStatus.APPROVED,
+            reviewer_actor_id="reviewer",
+            expires_at=NOW + timedelta(hours=2),
+        )
+        await repository.add(replacement)
+        old_second = publications[1]
+        publications[1] = await application.publish_review(
+            replacement.review_id,
+            generation="generation-1",
+            idempotency_key="replacement-2",
+            actor_id="publisher",
+            expected_version=3,
+            now=NOW,
+        )
+        await authority.revalidate(first)
+        with pytest.raises(ReviewStateConflict, match="publication-not-current"):
+            await application.withdraw_publication(
+                old_second.publication_id,
+                idempotency_key="old-2",
+                actor_id="publisher",
+                expected_version=1,
+                now=NOW,
+            )
+        expired = PublishedKnowledgeAuthority(repository, now=lambda: NOW + timedelta(hours=1))
+        with pytest.raises(AuthorizationDenied):
+            await expired.authorize_selection("synthetic-commerce-project", ("revision-1",))
+        await expired.authorize_selection("synthetic-commerce-project", ("revision-2",))
+        await application.withdraw_publication(
+            publications[1].publication_id,
+            idempotency_key="withdraw-2",
+            actor_id="publisher",
+            expected_version=1,
+            now=NOW,
+        )
+        await authority.revalidate(first)
+        assert await repository.pending_projection_cleanup() == ()
+        with pytest.raises(AuthorizationDenied):
+            await authority.authorize_selection("synthetic-commerce-project", ("revision-2",))
+
+        await application.withdraw_publication(
+            publications[0].publication_id,
+            idempotency_key="withdraw-final",
+            actor_id="publisher",
+            expected_version=1,
+            now=NOW,
+        )
+        assert set(await repository.pending_projection_cleanup()) == {"generation-1"}
+
+    run(scenario())

@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -339,8 +340,85 @@ async def test_generation_context_rejects_changed_provider_model_mapping(
 
 
 @pytest.mark.asyncio
+async def test_explicit_retry_reissues_known_failed_model_call_once(owned_project_mysql) -> None:
+    class CorrectableProvider:
+        calls = 0
+
+        async def generate(self, context):
+            self.calls += 1
+            if self.calls == 1:
+                raise ValueError("completed provider response failed draft validation")
+            return replace(
+                _draft(),
+                test_plan_id=context.request.test_plan_id,
+                revision_id=context.request.revision_id,
+            ).with_recomputed_digest()
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        publication = await _seed_test_design_authority(sessions)
+        await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
+        repository = _repository(sessions)
+        request = _request(publication)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        await repository.request_generation(VALIDATION_SCOPE, request, now=now)
+        claim = (
+            await repository.claim_generation_jobs(
+                VALIDATION_SCOPE,
+                worker_id="retry-worker",
+                now=now,
+                lease_duration=timedelta(seconds=60),
+                limit=1,
+            )
+        )[0]
+        context = await repository.generation_context(VALIDATION_SCOPE, claim)
+        provider = CorrectableProvider()
+        generator = MysqlReconciledTestDesign(sessions, scope=VALIDATION_SCOPE, delegate=provider)
+        with pytest.raises(ValueError, match="draft validation"):
+            await generator.generate(context)
+        with pytest.raises(RuntimeError, match="previous model call failed"):
+            await generator.generate(context)
+        assert provider.calls == 1
+        await repository.fail_generation(
+            VALIDATION_SCOPE,
+            claim,
+            failure_code="invalid-draft",
+            now=now,
+        )
+        failed = await repository.get_generation_job(VALIDATION_SCOPE, request.job_id)
+        retried = await asyncio.gather(
+            *(
+                repository.retry_generation(
+                    VALIDATION_SCOPE,
+                    request.job_id,
+                    expected_version=failed.row_version,
+                    idempotency_key="retry-known-failure",
+                    now=now,
+                )
+                for _ in range(2)
+            )
+        )
+        assert retried[0] == retried[1]
+        result = await generator.generate(context)
+        await repository.retry_generation(
+            VALIDATION_SCOPE,
+            request.job_id,
+            expected_version=failed.row_version,
+            idempotency_key="retry-known-failure",
+            now=now,
+        )
+        assert await generator.generate(context) == result
+        assert provider.calls == 2
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_status", ["STARTED", "UNKNOWN"])
 async def test_unknown_provider_response_is_held_for_reconciliation_without_reissue(
     owned_project_mysql,
+    stored_status,
 ) -> None:
     class AmbiguousProvider:
         calls = 0
@@ -377,9 +455,30 @@ async def test_unknown_provider_response_is_held_for_reconciliation_without_reis
 
         with pytest.raises(GenerationResponseUnknown, match="reconciliation"):
             await generator.generate(context)
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(test_design_model_call)
+                .where(test_design_model_call.c.job_id == request.job_id)
+                .values(status=stored_status)
+            )
         with pytest.raises(GenerationResponseUnknown, match="reconciliation"):
             await generator.generate(context)
 
+        # Even if the job subsequently fails, its explicit retry must not erase
+        # an accepted call whose provider response remains unknown.
+        await repository.fail_generation(
+            VALIDATION_SCOPE, claim, failure_code="reconciliation-failed", now=now
+        )
+        failed = await repository.get_generation_job(VALIDATION_SCOPE, request.job_id)
+        await repository.retry_generation(
+            VALIDATION_SCOPE,
+            request.job_id,
+            expected_version=failed.row_version,
+            idempotency_key="retry-unknown-response",
+            now=now,
+        )
+        with pytest.raises(GenerationResponseUnknown, match="reconciliation"):
+            await generator.generate(context)
         assert provider.calls == 1
         async with sessions() as session:
             state = await session.scalar(
@@ -387,7 +486,7 @@ async def test_unknown_provider_response_is_held_for_reconciliation_without_reis
                     test_design_model_call.c.job_id == request.job_id
                 )
             )
-        assert state == "UNKNOWN"
+        assert state == stored_status
     finally:
         await engine.dispose()
 

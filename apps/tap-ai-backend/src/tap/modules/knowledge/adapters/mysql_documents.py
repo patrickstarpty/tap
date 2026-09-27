@@ -1100,6 +1100,39 @@ class MysqlDocumentRepository:
             raise DocumentStateChanged("Frozen selected facts changed")
         return current
 
+    async def load_approved_chunk_ids(
+        self, item_scope: tuple[tuple[str, tuple[str, ...]], ...]
+    ) -> tuple[str, ...] | None:
+        approved = {revision: set(items) for revision, items in item_scope}
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            knowledge_chunk_manifest.c.revision_id,
+                            knowledge_chunk_manifest.c.chunk_id,
+                            knowledge_chunk_manifest.c.anchor_json,
+                        ).where(
+                            *scope_predicates(knowledge_chunk_manifest, self._scope),
+                            knowledge_chunk_manifest.c.revision_id.in_(approved),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        chunk_ids = tuple(
+            sorted(
+                row["chunk_id"]
+                for row in rows
+                if json.loads(_canonical_json_object(row["anchor_json"])).get("inventoryItemId")
+                in approved[row["revision_id"]]
+            )
+        )
+        # Existing source/revision filters already cover a fully approved manifest.
+        # Avoid spending the bounded provider filter on thousands of redundant IDs.
+        return None if rows and len(chunk_ids) == len(rows) else chunk_ids
+
     async def load_ready_revisions(
         self, document_ids: tuple[str, ...]
     ) -> tuple[ReadyDocumentRevision, ...]:

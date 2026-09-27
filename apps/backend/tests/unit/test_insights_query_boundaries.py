@@ -23,7 +23,7 @@ from tap_platform.insights.application.queries import (
     QueryUnavailable,
     RunSummary,
 )
-from tap_platform.insights.domain.metrics import MetricId, MetricValue
+from tap_platform.insights.domain.metrics import MetricId, MetricValue, ReportCoverage
 from tap_platform.insights.domain.projection import ProjectionSnapshot
 
 
@@ -67,6 +67,18 @@ def record() -> QueryRecord:
                 completeness="complete",
                 missing_reasons=(),
                 evidence_refs=("receipt-a",),
+            ),
+        ),
+        report_coverage=(
+            ReportCoverage(
+                source_id="ci-a",
+                external_run_id="run-a",
+                report_batch_id="batch-a",
+                expected_shards=2,
+                received_shards=1,
+                completeness="partial",
+                missing_reasons=("report-shards-missing",),
+                local_dates=("2026-09-24",),
             ),
         ),
         trends=(),

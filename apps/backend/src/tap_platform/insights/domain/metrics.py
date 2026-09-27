@@ -33,6 +33,7 @@ class ReportCoverage:
     received_shards: int
     completeness: Literal["complete", "partial", "unknown"]
     missing_reasons: tuple[str, ...]
+    local_dates: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

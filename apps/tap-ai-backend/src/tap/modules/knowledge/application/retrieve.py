@@ -416,8 +416,23 @@ class AuthorizedRetrieval:
             for query_id, hits in per_query.items()
         }
         base = successful[0]
+        publication = base.publication
+        if self._publication_authority is not None:
+            publication = await self._publication_authority.authorize_selection(
+                policy.project_id,
+                tuple(
+                    sorted(
+                        {
+                            revision
+                            for run in successful
+                            if run.publication is not None
+                            for revision in run.publication.source_revision_ids
+                        }
+                    )
+                ),
+            )
         return replace(
-            base, response=replace(base.response, evidence=tuple(evidence))
+            base, response=replace(base.response, evidence=tuple(evidence)), publication=publication
         ), evidence_map
 
     async def _retrieve(
@@ -500,23 +515,32 @@ class AuthorizedRetrieval:
         self._validate_binding(current, plan, context_snapshot)
         if authorize is not None:
             await authorize()
+        publication = None
+        if self._publication_authority is not None:
+            publication = await self._publication_authority.authorize_selection(
+                current.project_id, tuple(resource.revision for resource in plan.resources)
+            )
         hits = await self._search.search(
             SearchExecution(
                 policy=current,
                 plan=plan,
                 context_snapshot=context_snapshot,
                 query_vector=embedding.vector,
+                approved_item_scope=None
+                if publication is None
+                else tuple(
+                    (revision, publication.for_revision(revision).approved_item_ids)
+                    for revision in sorted({resource.revision for resource in plan.resources})
+                ),
             )
         )
         current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
         if not all(self._hit_is_in_execution(hit, plan) for hit in hits):
             raise AuthorizationDenied("Search returned evidence outside bound execution")
-        publication = (
-            None
-            if self._publication_authority is None
-            else await self._publication_authority.authorize_hits(current.project_id, hits)
-        )
+        if self._publication_authority is not None and publication is not None:
+            await self._publication_authority.authorize_hits(current.project_id, hits)
+            await self._publication_authority.revalidate(publication)
         authorized_hits = hits
         family_order = {family: index for index, family in enumerate(SourceFamily)}
         ordered_hits = sorted(
@@ -726,6 +750,8 @@ class AuthorizedRetrieval:
         fused_score: float,
         publication: PublicationBinding | None,
     ) -> Evidence:
+        if publication is not None:
+            publication = publication.for_revision(hit.source.revision)
         return Evidence(
             family=hit.family,
             chunk_id=hit.chunk_id,

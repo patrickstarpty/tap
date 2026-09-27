@@ -167,8 +167,10 @@ async def test_historical_view_uses_current_authority_not_the_old_revision_autho
 class Search:
     def __init__(self, hits: tuple[SearchHit, ...]) -> None:
         self.hits = hits
+        self.executions = []
 
     async def search(self, execution):  # type: ignore[no-untyped-def]
+        self.executions.append(execution)
         return self.hits
 
 
@@ -238,8 +240,9 @@ async def test_two_revision_answer_carries_publication_provenance_and_rechecks_d
         ),
     )
     ids = iter(f"id-{index}" for index in range(20))
+    search = Search((hit,))
     knowledge = KnowledgeAPI(
-        search=Search((hit,)),
+        search=search,
         embeddings=models,
         answers=models,
         policy_verifier=CurrentPolicy(),
@@ -265,6 +268,10 @@ async def test_two_revision_answer_carries_publication_provenance_and_rechecks_d
 
     response = await knowledge.answer(request, policy)
 
+    assert search.executions[0].approved_item_scope == (
+        ("revision-1", ("item-1", "item-2")),
+        ("revision-2", ("item-1", "item-2")),
+    )
     assert response.citations[0].publication_id == "publication-1"
     assert response.citations[0].approval_digest == DIGEST
     assert response.citations[0].approved_item_id == "item-1"
@@ -324,3 +331,42 @@ async def test_graph_evidence_outside_the_approved_slice_fails_closed() -> None:
     )
 
     assert result.status is GraphContextStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_independent_publications_bind_each_hit_to_its_own_approval_and_generation():
+    first = _publication(source_revision_ids=("revision-1",), approved_item_ids=("item-1",))
+    second = _publication(
+        publication_id="publication-2",
+        review_id="review-2",
+        source_revision_ids=("revision-2",),
+        approved_item_ids=("item-2",),
+        generation="second-generation",
+    )
+
+    class Repository(PublicationRepository):
+        publications = (first, second)
+
+        async def current_publications(self):
+            return self.publications
+
+    repository = Repository(first)
+    authority = PublishedKnowledgeAuthority(repository, now=lambda: NOW)
+    binding = await authority.authorize_hits(
+        "project-1",
+        (
+            _hit("revision-1", "item-1"),
+            _hit("revision-2", "item-2", generation="second-generation"),
+        ),
+    )
+    assert binding.for_revision("revision-1").publication_id == "publication-1"
+    assert binding.for_revision("revision-2").publication_id == "publication-2"
+    with pytest.raises(AuthorizationDenied):
+        await authority.authorize_hits("project-1", (_hit("revision-1", "item-2"),))
+    with pytest.raises(AuthorizationDenied):
+        await authority.authorize_hits("project-1", (_hit("revision-2", "item-2"),))
+    selected_first = await authority.authorize_selection("project-1", ("revision-1",))
+    repository.publications = (first,)
+    await authority.revalidate(selected_first)
+    with pytest.raises(AuthorizationDenied):
+        await authority.revalidate(binding)

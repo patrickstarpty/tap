@@ -57,7 +57,6 @@ from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_parse_inventory,
 )
 from tap.modules.knowledge.adapters.mysql_review import (
-    _current_pointer_id,
     knowledge_current_publication,
     knowledge_publication,
 )
@@ -1256,35 +1255,17 @@ class MysqlTestPlanRepository:
             )
             return published
 
-    async def _assert_publish_authority(
+    async def _current_requirement_scope(
         self,
         session: AsyncSession,
         scope: ProjectScopeContext,
-        revision: TestPlanRevision,
+        source_revision_ids: set[str],
         now: datetime,
-    ) -> None:
-        if (
-            revision.requirement_scope_id is None
-            or revision.requirement_scope_version is None
-            or revision.requirement_scope_digest is None
-            or not revision.requirement_ids
-            or not revision.approved_knowledge_revision_ids
-            or revision.model_revision_id is None
-            or revision.agent_revision_id is None
-            or not revision.skill_revision_ids
-        ):
-            raise ValueError("test plan governance bindings are incomplete")
-        pointer = (
+    ) -> tuple[RequirementScopeSnapshot, set[tuple[str, str]]]:
+        publications = (
             (
                 await session.execute(
-                    select(
-                        knowledge_current_publication.c.publication_id,
-                        knowledge_publication.c.version,
-                        knowledge_publication.c.status,
-                        knowledge_publication.c.expires_at,
-                        knowledge_publication.c.source_revision_ids,
-                        knowledge_publication.c.approved_item_ids,
-                    )
+                    select(knowledge_publication)
                     .select_from(
                         knowledge_current_publication.join(
                             knowledge_publication,
@@ -1295,25 +1276,33 @@ class MysqlTestPlanRepository:
                     .where(
                         *scope_predicates(knowledge_current_publication, scope),
                         *scope_predicates(knowledge_publication, scope),
-                        knowledge_current_publication.c.pointer_id == _current_pointer_id(scope),
+                        knowledge_publication.c.status == "published",
+                        knowledge_publication.c.expires_at > _naive(now),
                     )
+                    .order_by(knowledge_publication.c.publication_id)
                     .with_for_update()
                 )
             )
             .mappings()
-            .one_or_none()
+            .all()
         )
-        if (
-            pointer is None
-            or pointer["publication_id"] != revision.requirement_scope_id
-            or pointer["version"] != revision.requirement_scope_version
-            or pointer["status"] != "published"
-            or pointer["expires_at"] <= now
-        ):
-            raise ValueError("test plan requirement scope is no longer current")
-        approved_versions = set(revision.approved_knowledge_revision_ids)
-        if not approved_versions <= set(pointer["source_revision_ids"]):
-            raise ValueError("test plan knowledge versions are no longer current")
+        selected = [
+            row
+            for row in publications
+            if source_revision_ids.intersection(row["source_revision_ids"])
+        ]
+        current_versions = {
+            revision_id for row in selected for revision_id in row["source_revision_ids"]
+        }
+        if not source_revision_ids or not source_revision_ids <= current_versions:
+            raise ValueError("generation publication authority is no longer current")
+        approved_items = {
+            (revision_id, item_id)
+            for row in selected
+            for revision_id in row["source_revision_ids"]
+            if revision_id in source_revision_ids
+            for item_id in row["approved_item_ids"]
+        }
         inventory = (
             (
                 await session.execute(
@@ -1332,7 +1321,7 @@ class MysqlTestPlanRepository:
                     .where(
                         *scope_predicates(knowledge_parse_inventory, scope),
                         *scope_predicates(knowledge_document_revision, scope),
-                        knowledge_parse_inventory.c.source_revision_id.in_(approved_versions),
+                        knowledge_parse_inventory.c.source_revision_id.in_(source_revision_ids),
                         knowledge_parse_inventory.c.attempt
                         == knowledge_document_revision.c.parse_inventory_attempt,
                         knowledge_parse_inventory.c.status == "parsed",
@@ -1347,18 +1336,53 @@ class MysqlTestPlanRepository:
             .mappings()
             .all()
         )
-        approved_items = set(pointer["approved_item_ids"])
-        current_scope = RequirementScopeSnapshot.create(
-            scope_id=pointer["publication_id"],
-            version=pointer["version"],
+        # Preserve existing single-publication snapshots. Multi-publication identity
+        # binds only the selected publications, so unrelated updates cannot stale it.
+        if len(selected) == 1:
+            scope_id, version = selected[0]["publication_id"], selected[0]["version"]
+        else:
+            material = json.dumps(
+                [(row["publication_id"], row["version"]) for row in selected],
+                separators=(",", ":"),
+            )
+            scope_id = "rs_" + hashlib.sha256(material.encode()).hexdigest()[:48]
+            version = 1
+        return RequirementScopeSnapshot.create(
+            scope_id=scope_id,
+            version=version,
             requirements=tuple(
                 RequirementScopeItem(row["item_id"], row["source_revision_id"], row["locator"])
                 for row in inventory
-                if row["item_id"] in approved_items
+                if (row["source_revision_id"], row["item_id"]) in approved_items
             ),
+        ), approved_items
+
+    async def _assert_publish_authority(
+        self,
+        session: AsyncSession,
+        scope: ProjectScopeContext,
+        revision: TestPlanRevision,
+        now: datetime,
+    ) -> None:
+        if (
+            revision.requirement_scope_id is None
+            or revision.requirement_scope_version is None
+            or revision.requirement_scope_digest is None
+            or not revision.requirement_ids
+            or not revision.approved_knowledge_revision_ids
+            or revision.model_revision_id is None
+            or revision.agent_revision_id is None
+            or not revision.skill_revision_ids
+        ):
+            raise ValueError("test plan governance bindings are incomplete")
+        approved_versions = set(revision.approved_knowledge_revision_ids)
+        current_scope, approved_items = await self._current_requirement_scope(
+            session, scope, approved_versions, now
         )
         if (
-            current_scope.content_digest != revision.requirement_scope_digest
+            current_scope.scope_id != revision.requirement_scope_id
+            or current_scope.version != revision.requirement_scope_version
+            or current_scope.content_digest != revision.requirement_scope_digest
             or tuple(item.requirement_id for item in current_scope.requirements)
             != revision.requirement_ids
         ):
@@ -1402,7 +1426,7 @@ class MysqlTestPlanRepository:
             if (
                 not isinstance(anchor, dict)
                 or anchor != (citation.anchor or {})
-                or anchor.get("inventoryItemId") not in approved_items
+                or (evidence["revision_id"], anchor.get("inventoryItemId")) not in approved_items
             ):
                 raise ValueError("test plan citation item is not currently approved")
         await self._assert_enabled_generation_assets(
@@ -1490,96 +1514,17 @@ class MysqlTestPlanRepository:
         scope: ProjectScopeContext,
         request: TestPlanGenerationRequest,
         now: datetime,
-    ) -> set[str]:
+    ) -> set[tuple[str, str]]:
         if request.requirement_scope is None:
             raise ValueError("generation Requirement Scope is missing")
-        pointer = (
-            (
-                await session.execute(
-                    select(
-                        knowledge_publication.c.publication_id,
-                        knowledge_publication.c.version,
-                        knowledge_publication.c.status,
-                        knowledge_publication.c.expires_at,
-                        knowledge_publication.c.source_revision_ids,
-                        knowledge_publication.c.approved_item_ids,
-                    )
-                    .select_from(
-                        knowledge_current_publication.join(
-                            knowledge_publication,
-                            knowledge_publication.c.publication_id
-                            == knowledge_current_publication.c.publication_id,
-                        )
-                    )
-                    .where(
-                        *scope_predicates(knowledge_current_publication, scope),
-                        *scope_predicates(knowledge_publication, scope),
-                        knowledge_current_publication.c.pointer_id == _current_pointer_id(scope),
-                    )
-                    .with_for_update()
-                )
-            )
-            .mappings()
-            .one_or_none()
-        )
         frozen_scope = request.requirement_scope
-        if (
-            pointer is None
-            or pointer["publication_id"] != frozen_scope.scope_id
-            or pointer["version"] != frozen_scope.version
-            or pointer["status"] != "published"
-            or pointer["expires_at"] <= _naive(now)
-            or not set(request.approved_knowledge_revision_ids)
-            <= set(pointer["source_revision_ids"])
-        ):
-            raise ValueError("generation publication authority is no longer current")
-        approved_items = set(pointer["approved_item_ids"])
-        inventory = (
-            (
-                await session.execute(
-                    select(
-                        knowledge_parse_inventory.c.item_id,
-                        knowledge_parse_inventory.c.source_revision_id,
-                        knowledge_parse_inventory.c.locator,
-                    )
-                    .select_from(
-                        knowledge_parse_inventory.join(
-                            knowledge_document_revision,
-                            knowledge_document_revision.c.revision_id
-                            == knowledge_parse_inventory.c.source_revision_id,
-                        )
-                    )
-                    .where(
-                        *scope_predicates(knowledge_parse_inventory, scope),
-                        *scope_predicates(knowledge_document_revision, scope),
-                        knowledge_parse_inventory.c.source_revision_id.in_(
-                            request.approved_knowledge_revision_ids
-                        ),
-                        knowledge_parse_inventory.c.attempt
-                        == knowledge_document_revision.c.parse_inventory_attempt,
-                        knowledge_parse_inventory.c.status == "parsed",
-                    )
-                    .order_by(
-                        knowledge_parse_inventory.c.source_revision_id,
-                        knowledge_parse_inventory.c.ordinal,
-                    )
-                    .with_for_update()
-                )
-            )
-            .mappings()
-            .all()
-        )
-        current_scope = RequirementScopeSnapshot.create(
-            scope_id=pointer["publication_id"],
-            version=pointer["version"],
-            requirements=tuple(
-                RequirementScopeItem(row["item_id"], row["source_revision_id"], row["locator"])
-                for row in inventory
-                if row["item_id"] in approved_items
-            ),
+        current_scope, approved_items = await self._current_requirement_scope(
+            session, scope, set(request.approved_knowledge_revision_ids), now
         )
         if (
-            current_scope.content_digest != frozen_scope.content_digest
+            current_scope.scope_id != frozen_scope.scope_id
+            or current_scope.version != frozen_scope.version
+            or current_scope.content_digest != frozen_scope.content_digest
             or current_scope.requirements != frozen_scope.requirements
         ):
             raise ValueError("generation Requirement Scope is no longer approved")
@@ -1883,87 +1828,18 @@ class MysqlTestPlanRepository:
             if not isinstance(model_alias, str):
                 raise ValueError("frozen Turn execution versions are incomplete")
             self._assert_model_alias(model_alias)
-            publication = (
-                (
-                    await session.execute(
-                        select(knowledge_publication)
-                        .select_from(
-                            knowledge_current_publication.join(
-                                knowledge_publication,
-                                knowledge_publication.c.publication_id
-                                == knowledge_current_publication.c.publication_id,
-                            )
-                        )
-                        .where(
-                            *scope_predicates(knowledge_current_publication, scope),
-                            *scope_predicates(knowledge_publication, scope),
-                            knowledge_current_publication.c.pointer_id
-                            == _current_pointer_id(scope),
-                            knowledge_publication.c.status == "published",
-                            knowledge_publication.c.expires_at > func.utc_timestamp(6),
-                        )
-                    )
-                )
-                .mappings()
-                .one_or_none()
-            )
-            if publication is None:
-                raise ValueError("generation requires a current approved knowledge publication")
             resources = frozen_input.get("resolved_resources", [])
-            selected_versions = {
-                item.get("revision_id")
-                for item in resources
-                if isinstance(item, dict) and isinstance(item.get("revision_id"), str)
-            }
             approved_versions = tuple(
-                item for item in publication["source_revision_ids"] if item in selected_versions
-            )
-            if not approved_versions:
-                raise ValueError("Turn resources are outside the current publication")
-            approved_item_ids = set(publication["approved_item_ids"])
-            inventory = (
-                (
-                    await session.execute(
-                        select(
-                            knowledge_parse_inventory.c.item_id,
-                            knowledge_parse_inventory.c.source_revision_id,
-                            knowledge_parse_inventory.c.locator,
-                        )
-                        .select_from(
-                            knowledge_parse_inventory.join(
-                                knowledge_document_revision,
-                                knowledge_document_revision.c.revision_id
-                                == knowledge_parse_inventory.c.source_revision_id,
-                            )
-                        )
-                        .where(
-                            *scope_predicates(knowledge_parse_inventory, scope),
-                            *scope_predicates(knowledge_document_revision, scope),
-                            knowledge_parse_inventory.c.source_revision_id.in_(approved_versions),
-                            knowledge_parse_inventory.c.attempt
-                            == knowledge_document_revision.c.parse_inventory_attempt,
-                            knowledge_parse_inventory.c.status == "parsed",
-                        )
-                        .order_by(
-                            knowledge_parse_inventory.c.source_revision_id,
-                            knowledge_parse_inventory.c.ordinal,
-                        )
-                    )
+                sorted(
+                    {
+                        item["revision_id"]
+                        for item in resources
+                        if isinstance(item, dict) and isinstance(item.get("revision_id"), str)
+                    }
                 )
-                .mappings()
-                .all()
             )
-            requirements = tuple(
-                RequirementScopeItem(row["item_id"], row["source_revision_id"], row["locator"])
-                for row in inventory
-                if row["item_id"] in approved_item_ids
-            )
-            if not requirements:
-                raise ValueError("current publication has no approved requirements for this Turn")
-            requirement_scope = RequirementScopeSnapshot.create(
-                scope_id=publication["publication_id"],
-                version=publication["version"],
-                requirements=requirements,
+            requirement_scope, _ = await self._current_requirement_scope(
+                session, scope, set(approved_versions), now
             )
             agent_revision_id = frozen_input.get("agent_revision_id")
             skill_revision_ids = frozen_input.get("skill_revision_ids")
@@ -2453,6 +2329,18 @@ class MysqlTestPlanRepository:
                 raise RevisionConflict("generation job version changed")
             if row["status"] != GenerationJobStatus.FAILED.value:
                 raise ValueError("only failed generation jobs can be retried")
+            # Only an explicit, versioned retry may reissue a known failed call.
+            # Keep accepted/unknown calls for reconciliation and successful results
+            # for replay. The job lock and write key make this reset atomic with
+            # requeueing, so replaying the command cannot erase a newer attempt.
+            await session.execute(
+                delete(test_design_model_call).where(
+                    *scope_predicates(test_design_model_call, scope),
+                    test_design_model_call.c.job_id == job_id,
+                    test_design_model_call.c.request_digest == row["request_digest"],
+                    test_design_model_call.c.status == "FAILED",
+                )
+            )
             await session.execute(
                 update(test_plan_generation_job)
                 .where(
@@ -2738,7 +2626,8 @@ class MysqlTestPlanRepository:
                     anchor = json.loads(raw_anchor) if isinstance(raw_anchor, str) else raw_anchor
                     if (
                         not isinstance(anchor, dict)
-                        or anchor.get("inventoryItemId") not in approved_items
+                        or (evidence["revision_id"], anchor.get("inventoryItemId"))
+                        not in approved_items
                     ):
                         raise ValueError("Answer Evidence citation is not currently approved")
                     if (

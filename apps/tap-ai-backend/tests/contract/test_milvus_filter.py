@@ -424,3 +424,11 @@ def test_milvus_filter_rejects_invalid_compiler_byte_bounds(max_bytes: object) -
             SourceFamily.DOC,
             max_bytes=max_bytes,  # type: ignore[arg-type]
         )
+
+
+def test_approved_chunk_filter_is_applied_before_ranking():
+    execution = replace(doc_execution(), approved_chunk_ids=("approved-chunk",))
+    expression = compile_milvus_filter(execution, SourceFamily.DOC, max_bytes=32768)
+    assert 'chunk_id in ["approved-chunk"]' in expression
+    empty = replace(execution, approved_chunk_ids=())
+    assert "chunk_id in []" in compile_milvus_filter(empty, SourceFamily.DOC, max_bytes=32768)

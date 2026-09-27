@@ -63,6 +63,7 @@ function ReviewWorkspace({
   onOpenAutomation?: () => void;
 }) {
   const [draft, setDraft] = useState(initial);
+  const [savedDraft, setSavedDraft] = useState(initial);
   const [reason, setReason] = useState("");
   const [conflict, setConflict] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -74,8 +75,14 @@ function ReviewWorkspace({
     () => validateDraft(draft, locale),
     [draft, locale],
   );
+  const hasUnsavedChanges =
+    JSON.stringify(draft) !== JSON.stringify(savedDraft);
+  const mutationPending =
+    update.isPending || review.isPending || publish.isPending;
+  const reviewBlocked = hasUnsavedChanges || mutationPending || conflict;
   const currentReview = (draft.reviewDecisions ?? []).at(-1);
   const canPublish =
+    !reviewBlocked &&
     draft.status === "DRAFT" &&
     !draft.needsReview &&
     draft.unknowns.length === 0 &&
@@ -84,18 +91,24 @@ function ReviewWorkspace({
     (currentReview.disposition === "ACCEPTED_UNCHANGED" ||
       currentReview.disposition === "ACCEPTED_MODIFIED");
   useEffect(() => {
-    if (initial.status !== draft.status) setDraft(initial);
+    if (initial.status !== draft.status) {
+      setDraft(initial);
+      setSavedDraft(initial);
+    }
   }, [draft.status, initial]);
 
   const save = async () => {
     setMessage(null);
-    if (validationErrors.length > 0) return;
+    if (validationErrors.length > 0 || mutationPending) return;
     try {
       const saved = await update.mutateAsync({
         plan: draft,
         key: commandKey("edit"),
       });
-      if (saved) setDraft(saved);
+      if (saved) {
+        setDraft(saved);
+        setSavedDraft(saved);
+      }
       setConflict(false);
       setMessage(locale === "zh" ? "草稿已保存。" : "Draft saved.");
     } catch (error) {
@@ -112,14 +125,17 @@ function ReviewWorkspace({
   const decide = async (
     disposition: "ACCEPTED_UNCHANGED" | "ACCEPTED_MODIFIED" | "REJECTED",
   ) => {
-    if (!reason.trim()) return;
+    if (!reason.trim() || reviewBlocked) return;
     const reviewed = await review.mutateAsync({
       plan: draft,
       disposition,
       reason: reason.trim(),
       key: commandKey("review"),
     });
-    if (reviewed) setDraft(reviewed);
+    if (reviewed) {
+      setDraft(reviewed);
+      setSavedDraft(reviewed);
+    }
   };
 
   return (
@@ -172,7 +188,7 @@ function ReviewWorkspace({
         <Alert
           type="warning"
           showIcon
-          message={
+          title={
             locale === "zh"
               ? "服务端草稿已更新；你的未发送修改仍保留。"
               : "The server draft changed; your unsent edits are preserved."
@@ -182,6 +198,7 @@ function ReviewWorkspace({
               onClick={async () => {
                 const latest = await reload();
                 if (latest) {
+                  setSavedDraft(latest);
                   setDraft((unsent) => ({
                     ...latest,
                     title: unsent.title,
@@ -215,6 +232,7 @@ function ReviewWorkspace({
             <span>{locale === "zh" ? "计划目标" : "Plan objective"}</span>
             <Input.TextArea
               aria-label={locale === "zh" ? "计划目标" : "Plan objective"}
+              disabled={mutationPending}
               value={draft.objective}
               onChange={(event) =>
                 setDraft((current) => ({
@@ -236,6 +254,7 @@ function ReviewWorkspace({
                     </span>
                     <Input
                       aria-label={`${locale === "zh" ? "预期结果" : "Expected result"} ${step.stepId}`}
+                      disabled={mutationPending}
                       value={step.expectedResult ?? ""}
                       onChange={(event) =>
                         setDraft((current) => {
@@ -257,6 +276,7 @@ function ReviewWorkspace({
               <span>{locale === "zh" ? "假设" : "Assumption"}</span>
               <Input.TextArea
                 aria-label={`${locale === "zh" ? "假设" : "Assumption"} ${assumption.factId}`}
+                disabled={mutationPending}
                 value={assumption.text}
                 onChange={(event) =>
                   setDraft((current) => {
@@ -277,6 +297,7 @@ function ReviewWorkspace({
                 {unknown.text}
               </span>
               <Button
+                disabled={mutationPending}
                 onClick={() =>
                   setDraft((current) => ({
                     ...current,
@@ -310,6 +331,7 @@ function ReviewWorkspace({
               </span>
               <Select
                 aria-label={`${locale === "zh" ? "覆盖缺口处置" : "Coverage gap disposition"} ${gap.gapId}`}
+                disabled={mutationPending}
                 value={gap.severity}
                 options={[
                   {
@@ -347,7 +369,11 @@ function ReviewWorkspace({
               {error}
             </p>
           ))}
-          <Button loading={update.isPending} onClick={() => void save()}>
+          <Button
+            disabled={mutationPending}
+            loading={update.isPending}
+            onClick={() => void save()}
+          >
             {locale === "zh" ? "保存草稿" : "Save draft"}
           </Button>
         </section>
@@ -361,6 +387,13 @@ function ReviewWorkspace({
           aria-label={locale === "zh" ? "业务评审" : "Business review"}
         >
           <h2>{locale === "zh" ? "业务评审" : "Business review"}</h2>
+          {hasUnsavedChanges ? (
+            <p role="status">
+              {locale === "zh"
+                ? "请先保存草稿修改，再评审或发布。"
+                : "Save your draft changes before reviewing or publishing."}
+            </p>
+          ) : null}
           <Input.TextArea
             aria-label={locale === "zh" ? "评审理由" : "Review reason"}
             value={reason}
@@ -373,20 +406,20 @@ function ReviewWorkspace({
           />
           <div className="tap-plan-review-actions">
             <Button
-              disabled={!reason.trim()}
+              disabled={!reason.trim() || reviewBlocked}
               onClick={() => void decide("ACCEPTED_UNCHANGED")}
             >
               {locale === "zh" ? "原样采纳" : "Accept unchanged"}
             </Button>
             <Button
-              disabled={!reason.trim()}
+              disabled={!reason.trim() || reviewBlocked}
               onClick={() => void decide("ACCEPTED_MODIFIED")}
             >
               {locale === "zh" ? "修改后采纳" : "Accept modified"}
             </Button>
             <Button
               danger
-              disabled={!reason.trim()}
+              disabled={!reason.trim() || reviewBlocked}
               onClick={() => void decide("REJECTED")}
             >
               {locale === "zh" ? "拒绝" : "Reject"}

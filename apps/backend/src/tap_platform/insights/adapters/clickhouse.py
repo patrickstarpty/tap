@@ -14,6 +14,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from tap_platform.insights.application.queries import (
     MetricQuery,
@@ -468,6 +469,19 @@ class ClickHouseInsightsStore:
                     if reasons
                     else "complete",
                     missing_reasons=tuple(reasons),
+                    local_dates=tuple(
+                        sorted(
+                            {
+                                started.astimezone(ZoneInfo(query.timezone))
+                                .date()
+                                .isoformat()
+                                if (started := _datetime(item, "started_at"))
+                                is not None
+                                else "undated"
+                                for item in shards
+                            }
+                        )
+                    ),
                 )
             )
         return tuple(coverage)

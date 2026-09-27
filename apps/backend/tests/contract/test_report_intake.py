@@ -652,3 +652,42 @@ def test_manifest_refuses_fabricated_completeness_or_attempt_identity() -> None:
         manifest(expected_shards=0)
     with pytest.raises(ValueError, match="correction_no"):
         manifest(correction_no=-1)
+
+
+@pytest.mark.parametrize("field", ["started_at", "finished_at"])
+@pytest.mark.parametrize(
+    "timestamp", ["not-a-date", "2026-09-24", "2026-09-24T08:00:00"]
+)
+def test_intake_rejects_invalid_or_timezone_ambiguous_timestamps(
+    runtime, field, timestamp
+):
+    ledger, objects, intake = runtime
+    client = TestClient(
+        create_app(
+            report_intake=intake,
+            report_ledger=ledger,
+            report_objects=objects,
+            insights_authorizer=authorizer("project-one"),
+        )
+    )
+    value = {**manifest().to_dict(), field: timestamp}
+    response = client.post(
+        "/api/v1/projects/project-one/insights/reports",
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "X-TAP-Report-Manifest": json.dumps(value),
+        },
+        content=junit(case()),
+    )
+    assert response.status_code == 422
+    assert ledger.count_receipts() == 0
+    assert objects.list_raw_objects() == []
+
+
+@pytest.mark.parametrize(
+    "timestamp", ["2026-09-24T08:00:00Z", "2026-09-24T08:00:00+08:00"]
+)
+def test_manifest_preserves_explicit_timestamp_offsets(timestamp):
+    value = manifest(started_at=timestamp, finished_at=timestamp)
+    assert value.started_at == timestamp
+    assert value.finished_at == timestamp

@@ -1442,6 +1442,7 @@ def _query_result_payload(record: QueryRecord) -> dict[str, object]:
                 "report_batch_id": item.report_batch_id,
                 "expected_shards": item.expected_shards,
                 "received_shards": item.received_shards,
+                "local_dates": list(item.local_dates),
                 "completeness": item.completeness,
                 "missing_reasons": list(item.missing_reasons),
             }
@@ -1552,7 +1553,11 @@ def _row_to_query_record(row: RowMapping) -> QueryRecord:
         metrics=tuple(_metric_value(item) for item in payload["metrics"]),
         report_coverage=tuple(
             ReportCoverage(
-                **{**item, "missing_reasons": tuple(item["missing_reasons"])}
+                **{
+                    **item,
+                    "missing_reasons": tuple(item["missing_reasons"]),
+                    "local_dates": tuple(item.get("local_dates", ())),
+                }
             )
             for item in payload.get("report_coverage", [])
         ),

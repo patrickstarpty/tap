@@ -365,3 +365,175 @@ async def test_publish_revalidates_projection_generation_inside_commit_transacti
         assert await repository.current_publication() is None
     finally:
         await engine.dispose()
+
+
+async def test_independent_document_publications_remain_current_and_withdraw_separately(
+    owned_project_mysql,
+):
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select
+
+    from tap.entrypoints.tapper_runtime import create_project_audit
+    from tap.modules.knowledge.adapters.mysql_documents import (
+        MysqlDocumentRepository,
+        knowledge_chunk_manifest,
+    )
+    from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        await seed_authority(sessions)
+        second_item = ParseInventoryItem.create(
+            source_revision_id="rev_mysql_other",
+            kind=ITEM.kind,
+            locator=ITEM.locator,
+            status=ITEM.status,
+            artifact_digest=ITEM.artifact_digest,
+        )
+        async with sessions() as session, session.begin():
+            document = dict((await session.execute(select(knowledge_document))).mappings().one())
+            revision = dict(
+                (await session.execute(select(knowledge_document_revision))).mappings().one()
+            )
+            inventory = dict(
+                (await session.execute(select(knowledge_parse_inventory))).mappings().one()
+            )
+            document.update(
+                document_id="doc_mysql_other", current_revision_id=None, dedupe_key=DIGEST_C
+            )
+            await session.execute(insert(knowledge_document).values(**document))
+            revision.update(
+                revision_id="rev_mysql_other",
+                document_id="doc_mysql_other",
+                parse_inventory_digest=parse_inventory_digest((second_item,)),
+            )
+            await session.execute(insert(knowledge_document_revision).values(**revision))
+            await session.execute(
+                update(knowledge_document)
+                .where(knowledge_document.c.document_id == "doc_mysql_other")
+                .values(current_revision_id="rev_mysql_other")
+            )
+            inventory.update(
+                inventory_row_id="inventory-other",
+                source_revision_id="rev_mysql_other",
+                item_id=second_item.item_id,
+            )
+            await session.execute(insert(knowledge_parse_inventory).values(**inventory))
+        repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        impacts = AsyncMock(wraps=repository._mark_test_plan_impacts)
+        repository._mark_test_plan_impacts = impacts
+        application = KnowledgeReviewApplication(repository, ReadyProjection())
+        first_review = approved_review()
+        second_review = replace(
+            first_review,
+            review_id="krv_mysql_other",
+            source_revision_ids=("rev_mysql_other",),
+            inventory_digest=parse_inventory_digest((second_item,)),
+            approved_item_ids=(second_item.item_id,),
+            dependency_digest=review_dependency_digest(
+                (("rev_mysql_other", DIGEST_A, DIGEST_C, DIGEST_C),)
+            ),
+        )
+        publications = []
+        for number, candidate in enumerate((first_review, second_review)):
+            await repository.create_review(candidate)
+            publications.append(
+                await application.publish_review(
+                    candidate.review_id,
+                    generation="generation-001",
+                    idempotency_key=f"independent-{number}",
+                    actor_id="publisher",
+                    expected_version=4,
+                    now=NOW + timedelta(seconds=number),
+                )
+            )
+        impacts.assert_not_called()
+        replacement = replace(second_review, review_id="krv_mysql_other_replacement")
+        await repository.create_review(replacement)
+        publications[1] = await application.publish_review(
+            replacement.review_id,
+            generation="generation-001",
+            idempotency_key="replace-other",
+            actor_id="publisher",
+            expected_version=4,
+            now=NOW + timedelta(seconds=2),
+        )
+        assert impacts.call_count == 1
+        assert impacts.call_args.kwargs["invalidated_source_revision_ids"] == {"rev_mysql_other"}
+        restarted = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+        authority = PublishedKnowledgeAuthority(restarted, now=lambda: NOW)
+        await authority.authorize_selection(
+            VALIDATION_SCOPE.project_id, ("rev_mysql_001", "rev_mysql_other")
+        )
+        assert {item.revision_id for item in await restarted.list_published_sources(now=NOW)} == {
+            "rev_mysql_001",
+            "rev_mysql_other",
+        }
+        assert (
+            await KnowledgeReviewApplication(
+                restarted, ReadyProjection()
+            ).current_publication_for_review(first_review)
+            == publications[0]
+        )
+        await application.withdraw_publication(
+            publications[1].publication_id,
+            idempotency_key="withdraw-independent",
+            actor_id="publisher",
+            expected_version=1,
+            now=NOW + timedelta(minutes=1),
+        )
+        await authority.authorize_selection(VALIDATION_SCOPE.project_id, ("rev_mysql_001",))
+        assert [item.revision_id for item in await restarted.list_published_sources(now=NOW)] == [
+            "rev_mysql_001"
+        ]
+        assert await restarted.pending_projection_cleanup() == ()
+        async with sessions() as session, session.begin():
+            await session.execute(
+                insert(knowledge_chunk_manifest),
+                [
+                    {
+                        **scope_values(VALIDATION_SCOPE),
+                        "chunk_id": f"chunk-{name}",
+                        "logical_chunk_id": f"logical-{name}",
+                        "revision_id": "rev_mysql_001",
+                        "ordinal": ordinal,
+                        "root_id": "doc_mysql_publication",
+                        "parent_id": None,
+                        "anchor_json": {"type": "document", "inventoryItemId": item_id},
+                        "chunk_content_hash": DIGEST_A,
+                        "embedding_model_version": "model-1",
+                        "index_version": "generation-001",
+                        "created_at": NOW.replace(tzinfo=None),
+                    }
+                    for ordinal, (name, item_id) in enumerate(
+                        (("approved", ITEM.item_id), ("excluded", "excluded-item"))
+                    )
+                ],
+            )
+        documents = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        assert await documents.load_approved_chunk_ids((("rev_mysql_001", (ITEM.item_id,)),)) == (
+            "chunk-approved",
+        )
+        assert (
+            await documents.load_approved_chunk_ids(
+                (("rev_mysql_001", (ITEM.item_id, "excluded-item")),)
+            )
+            is None
+        )
+        assert await documents.load_approved_chunk_ids((("rev_mysql_001", ()),)) == ()
+        await application.withdraw_publication(
+            publications[0].publication_id,
+            idempotency_key="withdraw-last",
+            actor_id="publisher",
+            expected_version=1,
+            now=NOW + timedelta(minutes=2),
+        )
+        assert set(await restarted.pending_projection_cleanup()) == {"generation-001"}
+
+    finally:
+        await engine.dispose()

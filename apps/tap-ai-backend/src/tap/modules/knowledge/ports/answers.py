@@ -245,6 +245,10 @@ class AnswerSnapshotRepository(Protocol):
         self, selected: tuple[tuple[str, str, str], ...]
     ) -> tuple[ReadyDocumentRevision, ...]: ...
 
+    async def load_approved_chunk_ids(
+        self, item_scope: tuple[tuple[str, tuple[str, ...]], ...]
+    ) -> tuple[str, ...] | None: ...
+
     async def load_ready_revisions(
         self, document_ids: tuple[str, ...]
     ) -> tuple[ReadyDocumentRevision, ...]: ...

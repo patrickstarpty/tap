@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 
 import pytest
@@ -281,6 +282,128 @@ async def test_generation_from_turn_rejects_non_design_capable_model_alias(
                 objective="Design checkout tests",
                 idempotency_key="reject-codex-test-design",
                 now=datetime(2026, 9, 13, 12, 1),
+            )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_generation_scope_combines_current_publications_without_cross_authorizing_items(
+    owned_project_mysql,
+) -> None:
+    from datetime import timedelta
+
+    from tap.modules.knowledge.adapters.mysql_documents import (
+        knowledge_document,
+        knowledge_document_revision,
+        knowledge_parse_inventory,
+    )
+    from tap.modules.knowledge.adapters.mysql_review import (
+        knowledge_current_publication,
+        knowledge_publication,
+    )
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        publication = await _seed_test_design_authority(sessions)
+        await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
+        async with sessions() as session, session.begin():
+            for table, changes in (
+                (
+                    knowledge_document,
+                    {
+                        "document_id": "doc_second",
+                        "current_revision_id": None,
+                        "dedupe_key": "sha256:" + "f" * 64,
+                    },
+                ),
+                (
+                    knowledge_document_revision,
+                    {"revision_id": "rev_second", "document_id": "doc_second"},
+                ),
+                (
+                    knowledge_parse_inventory,
+                    {
+                        "inventory_row_id": "inventory_second",
+                        "source_revision_id": "rev_second",
+                        "item_id": "item_second",
+                    },
+                ),
+                (
+                    knowledge_publication,
+                    {
+                        "publication_id": "pub_second",
+                        "source_revision_ids": ["rev_second"],
+                        "approved_item_ids": ["item_second"],
+                    },
+                ),
+                (
+                    knowledge_current_publication,
+                    {"pointer_id": "pointer_second", "publication_id": "pub_second"},
+                ),
+            ):
+                row = dict((await session.execute(select(table))).mappings().one())
+                row.update(changes)
+                await session.execute(insert(table).values(**row))
+            first_item = dict(
+                (
+                    await session.execute(
+                        select(knowledge_parse_inventory).where(
+                            knowledge_parse_inventory.c.source_revision_id
+                            == publication.source_revision_ids[0]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            first_item.update(
+                inventory_row_id="inventory_crossed", item_id="item_second", ordinal=1
+            )
+            await session.execute(insert(knowledge_parse_inventory).values(**first_item))
+            original = (await session.execute(select(turn_input_snapshot.c.snapshot))).scalar_one()
+            await session.execute(
+                update(turn_input_snapshot).values(
+                    snapshot={
+                        **original,
+                        "resolved_resources": [
+                            {"revision_id": revision_id}
+                            for revision_id in (*publication.source_revision_ids, "rev_second")
+                        ],
+                    }
+                )
+            )
+        repository = _repository(sessions)
+        job = await repository.request_generation_from_turn(
+            VALIDATION_SCOPE,
+            conversation_id="conversation_checkout",
+            turn_id="turn_checkout",
+            objective="Cover both documents",
+            idempotency_key="multi-publication-generation",
+            now=NOW,
+        )
+        assert job.request.approved_knowledge_revision_ids == tuple(
+            sorted((*publication.source_revision_ids, "rev_second"))
+        )
+        assert {
+            (item.source_revision_id, item.requirement_id)
+            for item in job.request.requirement_scope.requirements
+        } == {
+            (publication.source_revision_ids[0], publication.approved_item_ids[0]),
+            ("rev_second", "item_second"),
+        }
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(knowledge_publication)
+                .where(knowledge_publication.c.publication_id == "pub_second")
+                .values(expires_at=NOW.replace(tzinfo=None) - timedelta(seconds=1))
+            )
+        with pytest.raises(ValueError, match="current"):
+            await repository.request_generation(
+                VALIDATION_SCOPE,
+                replace(job.request, idempotency_key="expired-multi-publication"),
+                now=NOW,
             )
     finally:
         await engine.dispose()

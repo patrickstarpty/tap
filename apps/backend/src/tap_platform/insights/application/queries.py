@@ -628,6 +628,11 @@ def _trend_points(
             by_day["undated"].append(item)
         elif window.contains(item.run_started_at):
             by_day[item.run_started_at.astimezone(zone).date().isoformat()].append(item)
+    coverage_by_day: dict[str, list[ReportCoverage]] = defaultdict(list)
+    for coverage in report_coverage:
+        for local_date in coverage.local_dates or ("undated",):
+            coverage_by_day[local_date].append(coverage)
+            by_day.setdefault(local_date, [])
     return tuple(
         TrendPoint(
             local_date=local_date,
@@ -635,7 +640,7 @@ def _trend_points(
                 items,
                 metric_ids=query.metric_ids,
                 window=window,
-                report_coverage=report_coverage,
+                report_coverage=tuple(coverage_by_day[local_date]),
             ),
         )
         for local_date, items in sorted(by_day.items())

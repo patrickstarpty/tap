@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -98,6 +99,15 @@ class ReportManifest:
             optional_value = getattr(self, name)
             if optional_value is not None:
                 _require_identifier(name, optional_value)
+        for name in ("started_at", "finished_at"):
+            value = getattr(self, name)
+            if value is not None:
+                try:
+                    parsed = datetime.fromisoformat(value)
+                except ValueError as exc:
+                    raise ValueError(f"{name} must be an ISO-8601 timestamp") from exc
+                if parsed.utcoffset() is None:
+                    raise ValueError(f"{name} must include a timezone offset")
         for source_identity, stable_id in self.external_test_id_mapping:
             _require_identifier("mapping source identity", source_identity)
             _require_identifier("mapping stable test id", stable_id)

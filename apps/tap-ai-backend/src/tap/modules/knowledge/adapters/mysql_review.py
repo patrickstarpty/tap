@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Literal, cast
@@ -1005,7 +1004,7 @@ class MysqlKnowledgeReviewRepository:
                 .mappings()
                 .all()
             )
-            current_row = (
+            current_rows = (
                 (
                     await session.execute(
                         select(knowledge_publication)
@@ -1022,17 +1021,16 @@ class MysqlKnowledgeReviewRepository:
                         )
                         .where(
                             *scope_predicates(knowledge_publication, self._scope),
-                            knowledge_current_publication.c.pointer_id
-                            == _current_pointer_id(self._scope),
+                            *scope_predicates(knowledge_current_publication, self._scope),
                             knowledge_publication.c.status == "published",
                         )
                     )
                 )
                 .mappings()
-                .one_or_none()
+                .all()
             )
 
-        current = None if current_row is None else _publication(current_row)
+        current_by_review = {row["review_id"]: _publication(row) for row in current_rows}
         values: list[KnowledgeReviewListItemRead] = []
         for revision in revisions:
             review_decisions = tuple(
@@ -1077,9 +1075,7 @@ class MysqlKnowledgeReviewRepository:
             review_revision_rows = tuple(
                 row for row in revision_rows if row["revision_id"] in revision.source_revision_ids
             )
-            review_current = (
-                current if current is not None and current.review_id == revision.review_id else None
-            )
+            review_current = current_by_review.get(revision.review_id)
             values.append(
                 KnowledgeReviewListItemRead(
                     review=KnowledgeReviewRead(
@@ -1655,7 +1651,9 @@ class MysqlKnowledgeReviewRepository:
         command_key: str,
         command_digest: str,
     ) -> KnowledgePublication:
-        pointer_id = _current_pointer_id(self._scope)
+        pointer_id = scoped_outbox_id(
+            self._scope, kind="knowledge-current-publication", identity=publication.publication_id
+        )
         async with self._sessions() as session, session.begin():
             await self._lock_project(session)
             locked_review = (
@@ -1678,7 +1676,7 @@ class MysqlKnowledgeReviewRepository:
             replay = await self._locked_command(session, command_key, command_digest)
             if replay is not None:
                 return replay
-            previous = (
+            current_rows = (
                 (
                     await session.execute(
                         select(knowledge_publication)
@@ -1692,14 +1690,44 @@ class MysqlKnowledgeReviewRepository:
                         .where(
                             *scope_predicates(knowledge_current_publication, self._scope),
                             *scope_predicates(knowledge_publication, self._scope),
-                            knowledge_current_publication.c.pointer_id == pointer_id,
                         )
                         .with_for_update()
                     )
                 )
                 .mappings()
-                .one_or_none()
+                .all()
             )
+            document_rows = (
+                (
+                    await session.execute(
+                        select(
+                            knowledge_document_revision.c.revision_id,
+                            knowledge_document_revision.c.document_id,
+                        ).where(
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_document_revision.c.revision_id.in_(
+                                set(publication.source_revision_ids)
+                                | {
+                                    rev
+                                    for row in current_rows
+                                    for rev in row["source_revision_ids"]
+                                }
+                            ),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            documents = {row["revision_id"]: row["document_id"] for row in document_rows}
+            replacing_documents = {documents[rev] for rev in publication.source_revision_ids}
+            previous_rows = [
+                row
+                for row in current_rows
+                if any(
+                    documents.get(rev) in replacing_documents for rev in row["source_revision_ids"]
+                )
+            ]
             if (
                 locked_review is None
                 or locked_review["version"] != expected_version
@@ -1742,7 +1770,9 @@ class MysqlKnowledgeReviewRepository:
             await session.execute(
                 delete(knowledge_current_publication).where(
                     *scope_predicates(knowledge_current_publication, self._scope),
-                    knowledge_current_publication.c.pointer_id == pointer_id,
+                    knowledge_current_publication.c.publication_id.in_(
+                        [row["publication_id"] for row in previous_rows]
+                    ),
                 )
             )
             await session.execute(
@@ -1753,11 +1783,9 @@ class MysqlKnowledgeReviewRepository:
                     updated_at=_naive_utc(publication.published_at),
                 )
             )
-            if previous is not None and previous["publication_id"] != publication.publication_id:
+            for previous in previous_rows:
                 await self._mark_test_plan_impacts(
                     session,
-                    allowed_source_revision_ids=set(publication.source_revision_ids),
-                    allowed_item_ids=set(publication.approved_item_ids),
                     invalidated_source_revision_ids=set(previous["source_revision_ids"]),
                     reason="approved knowledge publication replaced",
                     key_prefix=f"replace:{command_key}",
@@ -1811,11 +1839,16 @@ class MysqlKnowledgeReviewRepository:
     async def current_publication(
         self, project_id: str | None = None
     ) -> KnowledgePublication | None:
+        values = await self.current_publications(project_id)
+        return max(values, key=lambda item: (item.published_at, item.publication_id), default=None)
+
+    async def current_publications(
+        self, project_id: str | None = None
+    ) -> tuple[KnowledgePublication, ...]:
         if project_id is not None and project_id != self._scope.project_id:
-            return None
-        pointer_id = _current_pointer_id(self._scope)
+            return ()
         async with self._sessions() as session:
-            row = (
+            rows = (
                 (
                     await session.execute(
                         select(knowledge_publication)
@@ -1832,15 +1865,15 @@ class MysqlKnowledgeReviewRepository:
                         )
                         .where(
                             *scope_predicates(knowledge_publication, self._scope),
-                            knowledge_current_publication.c.pointer_id == pointer_id,
+                            *scope_predicates(knowledge_current_publication, self._scope),
                             knowledge_publication.c.status == "published",
                         )
                     )
                 )
                 .mappings()
-                .one_or_none()
+                .all()
             )
-        return None if row is None else _publication(row)
+        return tuple(_publication(row) for row in rows)
 
     async def list_publications(self, review_id: str) -> tuple[KnowledgePublication, ...]:
         async with self._sessions() as session:
@@ -1895,7 +1928,16 @@ class MysqlKnowledgeReviewRepository:
         )
 
     async def list_published_sources(self, *, now: datetime) -> tuple[PublishedSourceRecord, ...]:
-        pointer_id = _current_pointer_id(self._scope)
+        records: list[PublishedSourceRecord] = []
+        for publication in await self.current_publications():
+            records.extend(
+                await self._published_source_records(publication.publication_id, now=now)
+            )
+        return tuple(sorted(records, key=lambda item: item.revision_id))
+
+    async def _published_source_records(
+        self, publication_id: str, *, now: datetime
+    ) -> tuple[PublishedSourceRecord, ...]:
         async with self._sessions() as session, session.begin():
             await self._lock_project(session)
             publication_row = (
@@ -1915,7 +1957,8 @@ class MysqlKnowledgeReviewRepository:
                         )
                         .where(
                             *scope_predicates(knowledge_publication, self._scope),
-                            knowledge_current_publication.c.pointer_id == pointer_id,
+                            knowledge_current_publication.c.publication_id == publication_id,
+                            *scope_predicates(knowledge_current_publication, self._scope),
                             knowledge_publication.c.status == "published",
                         )
                     )
@@ -2143,7 +2186,6 @@ class MysqlKnowledgeReviewRepository:
         command_digest: str,
     ) -> KnowledgePublication:
         assert publication.withdrawn_at is not None
-        pointer_id = _current_pointer_id(self._scope)
         async with self._sessions() as session, session.begin():
             await self._lock_project(session)
             locked_publication = (
@@ -2176,7 +2218,7 @@ class MysqlKnowledgeReviewRepository:
                 select(knowledge_current_publication.c.publication_id)
                 .where(
                     *scope_predicates(knowledge_current_publication, self._scope),
-                    knowledge_current_publication.c.pointer_id == pointer_id,
+                    knowledge_current_publication.c.publication_id == publication.publication_id,
                 )
                 .with_for_update()
             )
@@ -2184,8 +2226,6 @@ class MysqlKnowledgeReviewRepository:
                 raise ReviewStateConflict("publication-not-current")
             await self._mark_test_plan_impacts(
                 session,
-                allowed_source_revision_ids=set(),
-                allowed_item_ids=set(),
                 invalidated_source_revision_ids=set(publication.source_revision_ids),
                 reason="approved knowledge publication withdrawn",
                 key_prefix=f"withdraw:{command_key}",
@@ -2211,7 +2251,6 @@ class MysqlKnowledgeReviewRepository:
             await session.execute(
                 delete(knowledge_current_publication).where(
                     *scope_predicates(knowledge_current_publication, self._scope),
-                    knowledge_current_publication.c.pointer_id == pointer_id,
                     knowledge_current_publication.c.publication_id == publication.publication_id,
                 )
             )
@@ -2278,8 +2317,6 @@ class MysqlKnowledgeReviewRepository:
         self,
         session: AsyncSession,
         *,
-        allowed_source_revision_ids: set[str],
-        allowed_item_ids: set[str],
         invalidated_source_revision_ids: set[str],
         reason: str,
         key_prefix: str,
@@ -2291,7 +2328,7 @@ class MysqlKnowledgeReviewRepository:
             (
                 await session.execute(
                     text(
-                        "SELECT c.revision_id,c.source_revision_id,c.anchor_json "
+                        "SELECT c.revision_id,c.source_revision_id "
                         "FROM test_plan_citation c JOIN test_plan_revision r "
                         "ON r.project_id=c.project_id AND r.revision_id=c.revision_id "
                         "WHERE c.enterprise_id=:enterprise_id AND c.project_id=:project_id "
@@ -2308,15 +2345,7 @@ class MysqlKnowledgeReviewRepository:
         )
         impacted: set[tuple[str, str]] = set()
         for row in rows:
-            anchor = row["anchor_json"]
-            if isinstance(anchor, str):
-                anchor = json.loads(anchor)
-            item_id = anchor.get("inventoryItemId") if isinstance(anchor, dict) else None
-            if (
-                row["source_revision_id"] in invalidated_source_revision_ids
-                or row["source_revision_id"] not in allowed_source_revision_ids
-                or item_id not in allowed_item_ids
-            ):
+            if row["source_revision_id"] in invalidated_source_revision_ids:
                 impacted.add((row["revision_id"], row["source_revision_id"]))
         for revision_id, source_revision_id in sorted(impacted):
             callback_key = f"{key_prefix}:{source_revision_id}"
@@ -2365,7 +2394,21 @@ class MysqlKnowledgeReviewRepository:
             rows = (
                 await session.execute(
                     select(knowledge_publication_cleanup.c.generation)
-                    .where(*scope_predicates(knowledge_publication_cleanup, self._scope))
+                    .where(
+                        *scope_predicates(knowledge_publication_cleanup, self._scope),
+                        knowledge_publication_cleanup.c.generation.not_in(
+                            select(knowledge_publication.c.generation)
+                            .join(
+                                knowledge_current_publication,
+                                knowledge_current_publication.c.publication_id
+                                == knowledge_publication.c.publication_id,
+                            )
+                            .where(
+                                *scope_predicates(knowledge_current_publication, self._scope),
+                                *scope_predicates(knowledge_publication, self._scope),
+                            )
+                        ),
+                    )
                     .order_by(knowledge_publication_cleanup.c.created_at)
                 )
             ).scalars()

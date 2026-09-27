@@ -38,6 +38,7 @@ _FILTER_FIELDS = frozenset(
         "root_id",
         "parent_id",
         "logical_chunk_id",
+        "chunk_id",
     }
 )
 _CLASSIFICATION_RANK = {
@@ -160,6 +161,13 @@ def compile_milvus_filter(
         clauses.append(f"({_ExpressionBuilder.any_of(resource_clauses)})")
     elif owners is not None:
         raise SearchBoundsExceeded("owned projection requires explicit selected scope")
+
+    if execution.approved_chunk_ids is not None:
+        clauses.append(
+            _ExpressionBuilder.string_membership("chunk_id", execution.approved_chunk_ids)
+            if execution.approved_chunk_ids
+            else "chunk_id in []"
+        )
 
     expression = _ExpressionBuilder.all_of(clauses)
     if len(expression.encode("utf-8")) > max_bytes:

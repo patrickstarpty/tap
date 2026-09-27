@@ -231,6 +231,9 @@ class KnowledgeReviewRepository(Protocol):
     async def current_publication(
         self, project_id: str | None = None
     ) -> KnowledgePublication | None: ...
+    async def current_publications(
+        self, project_id: str | None = None
+    ) -> tuple[KnowledgePublication, ...]: ...
     async def list_publications(self, review_id: str) -> tuple[KnowledgePublication, ...]: ...
     async def publication_page(
         self, review_id: str, *, limit: int, after_publication_id: str | None
@@ -466,10 +469,14 @@ class KnowledgeReviewApplication:
     async def current_publication_for_review(
         self, revision: KnowledgeReviewRevision
     ) -> KnowledgePublication | None:
-        publication = await self._repository.current_publication(revision.project_id)
-        if publication is None or publication.review_id != revision.review_id:
-            return None
-        return publication
+        return next(
+            (
+                item
+                for item in await self._repository.current_publications(revision.project_id)
+                if item.review_id == revision.review_id
+            ),
+            None,
+        )
 
     async def publication_generation(self, revision: KnowledgeReviewRevision) -> str | None:
         discover = getattr(self._projection, "generation_for", None)
@@ -920,14 +927,19 @@ class InMemoryKnowledgeReviewRepository:
         child_limit: int,
     ) -> tuple[KnowledgeReviewListItemRead, ...]:
         current_by_project = {
-            revision.project_id: await self.current_publication(revision.project_id)
+            revision.project_id: await self.current_publications(revision.project_id)
             for revision in revisions
         }
         values: list[KnowledgeReviewListItemRead] = []
         for revision in revisions:
-            current = current_by_project[revision.project_id]
-            if current is not None and current.review_id != revision.review_id:
-                current = None
+            current = next(
+                (
+                    item
+                    for item in current_by_project[revision.project_id]
+                    if item.review_id == revision.review_id
+                ),
+                None,
+            )
             values.append(
                 KnowledgeReviewListItemRead(
                     review=KnowledgeReviewRead(
@@ -1128,7 +1140,13 @@ class InMemoryKnowledgeReviewRepository:
                 current, status=ReviewStatus.PUBLISHED, version=current.version + 1
             )
             self._publications[publication.publication_id] = publication
-            self._current[publication.project_id] = publication.publication_id
+            for key, identity in tuple(self._current.items()):
+                previous = self._publications[identity]
+                if previous.project_id == publication.project_id and set(
+                    previous.source_revision_ids
+                ).intersection(publication.source_revision_ids):
+                    del self._current[key]
+            self._current[publication.publication_id] = publication.publication_id
             self._commands[command_key] = (command_digest, publication)
             return publication
 
@@ -1138,12 +1156,17 @@ class InMemoryKnowledgeReviewRepository:
     async def current_publication(
         self, project_id: str | None = None
     ) -> KnowledgePublication | None:
-        if project_id is None:
-            identities = tuple(self._current.values())
-            identity = identities[0] if len(identities) == 1 else None
-        else:
-            identity = self._current.get(project_id)
-        return None if identity is None else self._publications[identity]
+        values = await self.current_publications(project_id)
+        return max(values, key=lambda item: (item.published_at, item.publication_id), default=None)
+
+    async def current_publications(
+        self, project_id: str | None = None
+    ) -> tuple[KnowledgePublication, ...]:
+        return tuple(
+            self._publications[identity]
+            for identity in self._current.values()
+            if project_id is None or self._publications[identity].project_id == project_id
+        )
 
     async def list_publications(self, review_id: str) -> tuple[KnowledgePublication, ...]:
         return tuple(
@@ -1204,10 +1227,12 @@ class InMemoryKnowledgeReviewRepository:
                 raise ReviewNotFound("publication-not-found")
             if current.version != expected_version:
                 raise ReviewStateConflict("revision-conflict")
-            if self._current.get(publication.project_id) != publication.publication_id:
+            if publication.publication_id not in self._current.values():
                 raise ReviewStateConflict("publication-not-current")
             self._publications[publication.publication_id] = publication
-            del self._current[publication.project_id]
+            for key, identity in tuple(self._current.items()):
+                if identity == publication.publication_id:
+                    del self._current[key]
             review = self._reviews.get(publication.review_id)
             if review is not None:
                 self._reviews[publication.review_id] = replace(
@@ -1218,7 +1243,8 @@ class InMemoryKnowledgeReviewRepository:
             return publication
 
     async def pending_projection_cleanup(self) -> tuple[str, ...]:
-        return tuple(self._cleanup)
+        active = {item.generation for item in await self.current_publications()}
+        return tuple(generation for generation in self._cleanup if generation not in active)
 
 
 def _expected_version(review: KnowledgeReviewRevision, expected: int) -> None:
