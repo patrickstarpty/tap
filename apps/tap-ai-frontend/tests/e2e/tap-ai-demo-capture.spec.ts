@@ -118,6 +118,7 @@ test("captures a restored Insights explanation before and after refresh", async 
   page,
 }) => {
   await page.unroute("**/api/v1/**");
+  let denied = false;
   const summary = {
     conversationId: "conversation-capture",
     title: "Investigate test failure",
@@ -150,6 +151,13 @@ test("captures a restored Insights explanation before and after refresh", async 
         "/insights/explanations/conversation-capture/turns/turn-capture",
       )
     ) {
+      if (denied) {
+        await route.fulfill({
+          status: 403,
+          json: { detail: "Authorization withdrawn" },
+        });
+        return;
+      }
       body = {
         queryId: "query-capture",
         metricVersion: "insights-metrics-v1",
@@ -234,4 +242,21 @@ test("captures a restored Insights explanation before and after refresh", async 
   await page.reload();
   await expect(panel).toContainText("Permission change history is needed.");
   expect(await capture(page, "08-insights-after-refresh")).toBe(first);
+  denied = true;
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  const forbidden = page.waitForResponse(
+    (response) =>
+      response.url().includes("/insights/explanations/") &&
+      response.status() === 403,
+  );
+  await page
+    .getByRole("button", { name: "Investigate test failure", exact: true })
+    .click();
+  await forbidden;
+  await expect(page.getByRole("alert")).toContainText("unavailable");
+  await expect(panel).toHaveCount(0);
+  await expect(
+    page.getByText("Request timed out before retry passed.", { exact: true }),
+  ).toHaveCount(0);
+  await capture(page, "09-insights-withdrawn");
 });

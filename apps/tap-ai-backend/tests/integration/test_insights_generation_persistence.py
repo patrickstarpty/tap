@@ -166,6 +166,7 @@ async def test_insights_turn_reload_and_checkpoint_reclaim_preserve_result_and_a
             "resourceRefs": ["report-1"],
             "knowledgeSearchPerformed": False,
             "knowledgeSources": [],
+            "knowledgeCitations": [],
         }
         async with sessions() as session:
             run = (

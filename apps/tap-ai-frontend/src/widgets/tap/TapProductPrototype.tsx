@@ -417,8 +417,15 @@ function DurableInsightsResponse({
         : false;
     },
     retry: false,
+    refetchOnMount: "always",
   });
-  if (explanation.data !== undefined && "facts" in explanation.data) {
+  if (
+    explanation.isSuccess &&
+    explanation.isFetchedAfterMount &&
+    !explanation.isFetching &&
+    explanation.data !== undefined &&
+    "facts" in explanation.data
+  ) {
     return (
       <InsightsExplanationPanel
         question={turn.prompt}
@@ -427,7 +434,11 @@ function DurableInsightsResponse({
       />
     );
   }
-  if (explanation.data?.state === "canceled") {
+  const state =
+    explanation.data !== undefined && "state" in explanation.data
+      ? explanation.data.state
+      : undefined;
+  if (state === "canceled") {
     return (
       <p role="status">
         {turn.locale === "zh"
@@ -436,11 +447,7 @@ function DurableInsightsResponse({
       </p>
     );
   }
-  if (
-    explanation.isError ||
-    explanation.data?.state === "failed" ||
-    explanation.data?.state === "abstained"
-  ) {
+  if (explanation.isError || state === "failed" || state === "abstained") {
     return (
       <p role="alert">
         {turn.locale === "zh"

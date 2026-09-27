@@ -19,6 +19,8 @@ it("sends a report handoff with its query and receipts, then shows verified Insi
     "/?projectId=project-test&queryId=query-a&resourceRef=receipt-a&draft=Explain+this+failure",
   );
   const sent: Request[] = [];
+  let denied = false;
+  let releaseDenial: (() => void) | undefined;
   vi.stubGlobal("fetch", async (request: Request) => {
     if (request.url.endsWith("/insights/explanations")) {
       sent.push(request);
@@ -34,6 +36,12 @@ it("sends a report handoff with its query and receipts, then shows verified Insi
     if (
       request.url.endsWith("/insights/explanations/conversation-a/turns/turn-a")
     ) {
+      if (denied) {
+        await new Promise<void>((resolve) => {
+          releaseDenial = resolve;
+        });
+        return new Response("", { status: 403 });
+      }
       return new Response(
         JSON.stringify({
           queryId: "query-a",
@@ -192,11 +200,32 @@ it("sends a report handoff with its query and receipts, then shows verified Insi
     screen.getByRole("region", { name: "Insights explanation" }),
   ).toHaveTextContent("Assertion failed");
   unmount();
-  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, { api });
+  const restored = renderKnowledgeApp(
+    <TapProductPrototype conversationSource="api" />,
+    { api },
+  );
   expect(await screen.findByText(/Request timeout may/)).toBeVisible();
   expect(screen.getByText(/Permission mismatch may/)).toBeVisible();
   expect(screen.getByText("Please provide HTTP 403 logs.")).toBeVisible();
   expect(sent).toHaveLength(1);
+  // Keep the successful query cached while reopening after authorization changes.
+  restored.unmount();
+  denied = true;
+  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    api,
+    queryClient: restored.queryClient,
+  });
+  await waitFor(() => expect(releaseDenial).toBeDefined());
+  expect(
+    screen.queryByRole("region", { name: "Insights explanation" }),
+  ).toBeNull();
+  releaseDenial!();
+  expect(await screen.findByRole("alert")).toHaveTextContent("unavailable");
+  expect(
+    screen.queryByRole("region", { name: "Insights explanation" }),
+  ).toBeNull();
+  expect(screen.queryByText(/Request timeout may/)).toBeNull();
+  expect(screen.queryByText("Assertion failed")).toBeNull();
 });
 
 it("keeps the report question available when explanation authorization fails", async () => {
