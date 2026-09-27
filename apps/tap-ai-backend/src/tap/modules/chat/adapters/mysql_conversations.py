@@ -483,6 +483,8 @@ class MysqlConversationRepository:
                 ),
                 acl_digest=raw.get("acl_digest", "sha256:" + "0" * 64),
                 retrieval_policy_digest=raw["retrieval_policy_digest"],
+                insights_query_id=raw.get("insights_query_id"),
+                insights_report_refs=tuple(raw.get("insights_report_refs", [])),
             )
             input_value = TurnInputSnapshot(
                 snapshot["snapshot_id"],
@@ -516,6 +518,7 @@ class MysqlConversationRepository:
                 raw["graph_snapshot_id"],
                 tuple(CitationEvidence(**c) for c in raw["citations"]),
                 tuple(raw["diagnostics"]),
+                raw.get("insights_explanation"),
             )
             answer = AnswerEvidenceSnapshot(
                 answer_row["snapshot_id"],
@@ -1189,7 +1192,11 @@ class MysqlConversationRepository:
             self.sessions,
             scope=self.scope,
             defer_completion=True,
-            budget={"maxModelCalls": 1, "maxSeconds": 60, "maxCostMicros": 0},
+            budget={
+                "maxModelCalls": 1,
+                "maxSeconds": 60,
+                "maxCostMicros": 3_000_000 if turn.input_snapshot.value.insights_query_id else 0,
+            },
             fence=GraphFence(
                 table=chat_turn,
                 identity_column=chat_turn.c.turn_id,

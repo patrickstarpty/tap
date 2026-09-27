@@ -12,11 +12,23 @@ from typing import Any
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
-from tap.contracts.http import ResourceMode, ResourceRef, RetrievalAnswerRequest, SourceFamily
+from tap.contracts.http import (
+    InsightsExplanationResult,
+    ResourceMode,
+    ResourceRef,
+    RetrievalAnswerRequest,
+    SourceFamily,
+)
 from tap.contracts.problems import build_problem
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable, GraphCheckpointUnavailable
+from tap.modules.ai.domain.models import ModelGatewayRejected, ModelGatewayUnavailable
+from tap.modules.ai.ports.insights import (
+    InsightsAuthorizationChanged,
+    InsightsBudgetExceeded,
+    InsightsQueryUnavailable,
+)
 from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
@@ -30,7 +42,7 @@ from tap.modules.chat.domain.conversations import (
 
 
 def _evidence_checkpoint(evidence: AnswerEvidence) -> dict[str, object]:
-    return {
+    result: dict[str, object] = {
         "answer": evidence.answer,
         "outcome": evidence.outcome,
         "retrievalSummary": {
@@ -49,6 +61,9 @@ def _evidence_checkpoint(evidence: AnswerEvidence) -> dict[str, object]:
         ],
         "diagnostics": list(evidence.diagnostics),
     }
+    if evidence.insights_explanation is not None:
+        result["insightsExplanation"] = evidence.insights_explanation
+    return result
 
 
 def _evidence_from_checkpoint(raw: object) -> AnswerEvidence:
@@ -74,6 +89,7 @@ def _evidence_from_checkpoint(raw: object) -> AnswerEvidence:
             if isinstance(item, dict)
         ),
         diagnostics=tuple(str(item) for item in raw.get("diagnostics", [])),
+        insights_explanation=raw.get("insightsExplanation"),
     )
 
 
@@ -82,6 +98,7 @@ class GenerationWorker:
     conversations: Any
     knowledge: Any
     checkpointer: BaseCheckpointSaver | None = None
+    insights_explanation: Any | None = None
     lease_duration: timedelta = timedelta(seconds=60)
     renew_interval_seconds: float = 20.0
     max_checkpoint_attempts: int = 3
@@ -100,6 +117,7 @@ class GenerationWorker:
         for conversation_id, turn in claimed:
             answer_response = None
             active_plan = None
+            insights_query_id = getattr(turn.input_snapshot.value, "insights_query_id", None)
             planner = getattr(self.knowledge, "answer_planner", None)
             renew = getattr(self.conversations.repository, "renew_processing_lease", None)
 
@@ -214,6 +232,8 @@ class GenerationWorker:
             try:
 
                 async def classify(_state):
+                    if insights_query_id is not None:
+                        return {"reasoning_mode": "workflow"}
                     if planner is None:
                         return {"reasoning_mode": "direct"}
                     authorize_planning = getattr(self.knowledge, "authorize_planning", None)
@@ -235,6 +255,104 @@ class GenerationWorker:
 
                 async def execute(_state):
                     nonlocal active_plan
+                    if insights_query_id is not None:
+                        if self.insights_explanation is None:
+                            raise RuntimeError("Insights explanation runtime is unavailable")
+                        result = await self.insights_explanation.explain(
+                            self.conversations.scope,
+                            insights_query_id,
+                            turn.input_snapshot.value.insights_report_refs,
+                            turn.input_snapshot.value.message,
+                            conversation_id=conversation_id,
+                            turn_id=turn.turn_id,
+                            selected_knowledge=turn.input_snapshot.value.resolved_resources,
+                        )
+                        if result.get("queryId") != insights_query_id:
+                            raise InsightsQueryUnavailable(
+                                "Insights result changed the historical query ID"
+                            )
+                        try:
+                            InsightsExplanationResult.model_validate(result)
+                        except ValueError as exc:
+                            raise InsightsQueryUnavailable(
+                                "Insights result does not satisfy the response contract"
+                            ) from exc
+                        evidence = AnswerEvidence(
+                            "Insights interpretation",
+                            "completed",
+                            RetrievalSummary("completed", trace_id=insights_query_id),
+                            GraphContextStatus.NOT_REQUESTED,
+                            insights_explanation=dict(result),
+                        )
+                        audit = {
+                            "conversationId": conversation_id,
+                            "turnId": turn.turn_id,
+                            "graphRunId": turn.turn_id,
+                            "tool": "insights.query",
+                            "queryId": insights_query_id,
+                            "metricVersion": result.get("metricVersion"),
+                            "resourceRefs": list(turn.input_snapshot.value.insights_report_refs),
+                            "knowledgeSearchPerformed": result.get(
+                                "knowledgeSearchPerformed", False
+                            )
+                            is True,
+                            "knowledgeSources": [
+                                {
+                                    "sourceId": item.source_id,
+                                    "revisionId": item.revision_id,
+                                    "sourceContentHash": item.source_content_hash,
+                                }
+                                for item in turn.input_snapshot.value.resolved_resources
+                            ],
+                            "knowledgeCitations": [
+                                {
+                                    "citationId": item.get("citationId"),
+                                    "sourceId": item.get("sourceId"),
+                                    "revisionId": item.get("revisionId"),
+                                    "chunkId": item.get("chunkId"),
+                                    "publicationId": item.get("publicationId"),
+                                    "approvalDigest": item.get("approvalDigest"),
+                                }
+                                for item in result.get("evidenceExcerpts", [])
+                                if isinstance(item, dict) and item.get("sourceId")
+                            ],
+                        }
+                        audit_events = [
+                            {
+                                "type": "context.assembled",
+                                "payload": {
+                                    "sourceCount": len(turn.input_snapshot.value.resolved_resources)
+                                },
+                            },
+                            {"type": "stage.completed", "payload": audit},
+                        ]
+                        if audit["knowledgeSearchPerformed"]:
+                            audit_events.append(
+                                {
+                                    "type": "stage.completed",
+                                    "payload": {
+                                        "stage": "knowledge.search",
+                                        "conversationId": conversation_id,
+                                        "turnId": turn.turn_id,
+                                        "graphRunId": turn.turn_id,
+                                        "queryId": insights_query_id,
+                                        "sourceIds": [
+                                            item.source_id
+                                            for item in turn.input_snapshot.value.resolved_resources
+                                        ],
+                                    },
+                                }
+                            )
+                        return {
+                            "result": {
+                                "evidence": _evidence_checkpoint(evidence),
+                                "terminalEvent": {
+                                    "type": "turn.completed",
+                                    "payload": {"insightsAudit": audit},
+                                },
+                                "streamEvents": audit_events,
+                            }
+                        }
                     if planner is not None:
                         active_plan = AnswerPlan.from_dict(_state["answer_plan"])
                         active_plan.validate_binding(planning_input(turn.input_snapshot))
@@ -297,7 +415,11 @@ class GenerationWorker:
                     else self.checkpointer or InMemorySaver()
                 )
                 graph = InteractionGraph(
-                    graph_version="fast-chat-v1",
+                    graph_version=(
+                        "insights-explanation-v1"
+                        if insights_query_id is not None
+                        else "fast-chat-v1"
+                    ),
                     state_schema_version=1,
                     checkpointer=checkpointer,
                     classify=classify,
@@ -336,12 +458,25 @@ class GenerationWorker:
                     raise
                 result = state.get("result", {})
                 evidence = _evidence_from_checkpoint(result.get("evidence"))
+                if insights_query_id is not None and evidence.outcome == "completed":
+                    if self.insights_explanation is None or evidence.insights_explanation is None:
+                        raise InsightsAuthorizationChanged("Insights result was not persisted")
+                    await asyncio.wait_for(
+                        self.insights_explanation.reauthorize_result(
+                            self.conversations.scope,
+                            insights_query_id,
+                            turn.input_snapshot.value.insights_report_refs,
+                            turn.input_snapshot.value.resolved_resources,
+                            evidence.insights_explanation,
+                        ),
+                        timeout=20,
+                    )
                 if evidence.outcome not in {"failed", "canceled"}:
                     await require_authorized()
                     authorize_completed = getattr(
                         self.knowledge, "authorize_completed_answer", None
                     )
-                    if authorize_completed is not None:
+                    if authorize_completed is not None and insights_query_id is None:
                         await authorize_completed(turn.input_snapshot, evidence)
                 raw_terminal = result.get("terminalEvent")
                 raw_stream_events = result.get("streamEvents", ())
@@ -361,6 +496,13 @@ class GenerationWorker:
                     terminal_event=terminal_event,
                     stream_events=persisted_stream_events,
                 )
+            except InsightsAuthorizationChanged:
+                if insights_query_id is None:
+                    raise
+                try:
+                    await fail_turn()
+                except (ConversationConflict, PermissionError):
+                    continue
             except PermissionError:
                 # The graph fence proves another worker owns the Turn.
                 continue
@@ -390,6 +532,20 @@ class GenerationWorker:
                 except (ConversationConflict, PermissionError):
                     # Cancellation or lease reclaim won the terminal-state race.
                     continue
+            except (
+                InsightsBudgetExceeded,
+                InsightsQueryUnavailable,
+                ModelGatewayRejected,
+                ModelGatewayUnavailable,
+                RuntimeError,
+                TimeoutError,
+            ):
+                if insights_query_id is None:
+                    raise
+                try:
+                    await fail_turn()
+                except (ConversationConflict, PermissionError):
+                    continue
         return len(claimed)
 
 
@@ -403,7 +559,9 @@ async def main() -> None:
     if conversations is None or knowledge is None:
         await runtime.aclose()
         raise RuntimeError("generation worker composition is unavailable")
-    worker = GenerationWorker(conversations, knowledge)
+    worker = GenerationWorker(
+        conversations, knowledge, insights_explanation=runtime.http_services.insights_explanation
+    )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for event in (signal.SIGINT, signal.SIGTERM):

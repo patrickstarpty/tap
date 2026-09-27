@@ -906,6 +906,77 @@ class ChatTurnAccepted(ContractModel):
     state: Literal["queued"]
 
 
+class InsightsExplanationRequest(ContractModel):
+    query_id: Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
+    resource_refs: Annotated[
+        list[Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]],
+        Field(min_length=1, max_length=20),
+    ]
+    question: Annotated[str, Field(strict=True, min_length=1, max_length=500)]
+    conversation_id: str | None = None
+    source_revision_ids: Annotated[list[str], Field(max_length=20)] = []
+    document_revision_ids: Annotated[list[str], Field(max_length=20)] = []
+
+    @field_validator("question")
+    @classmethod
+    def nonblank_question(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("question must be nonblank")
+        return value
+
+    @field_validator("resource_refs")
+    @classmethod
+    def unique_resource_refs(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("resource refs must be unique")
+        return values
+
+
+class InsightsExplanationFact(ContractModel):
+    metric_id: str
+    numerator: int | None
+    denominator: int | None
+    value: float | None
+    completeness: Literal["complete", "empty", "unavailable"]
+    missing_reasons: list[str]
+    evidence_refs: list[str]
+
+
+class InsightsEvidenceExcerpt(ContractModel):
+    citation_id: str
+    text: str
+    evidence_version: str | None = None
+    source_id: str | None = None
+    revision_id: str | None = None
+    chunk_id: str | None = None
+    source_content_hash: str | None = None
+    chunk_content_hash: str | None = None
+    publication_id: str | None = None
+    approval_digest: str | None = None
+    approved_item_id: str | None = None
+    page: int | None = None
+
+
+class InsightsExplanationResult(ContractModel):
+    query_id: str | None
+    metric_version: str | None
+    as_of: datetime | None
+    fact_watermark: dict[str, object] | None = None
+    knowledge_search_performed: bool = False
+    facts: list[InsightsExplanationFact]
+    report_coverage: list[dict[str, object]]
+    hypotheses: list[str]
+    evidence_excerpts: list[InsightsEvidenceExcerpt]
+    missing_information: list[str]
+    stop_reason: Literal["completed", "budget-exhausted", "insights-unavailable"]
+
+
+class InsightsExplanationAccepted(ContractModel):
+    conversation_id: str
+    turn_id: str
+    state: Literal["queued", "running", "completed", "abstained", "canceled", "failed"]
+
+
 class ConversationCreateRequest(ContractModel):
     message: Annotated[str, Field(strict=True, min_length=1, max_length=20_000)]
     model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
@@ -942,6 +1013,7 @@ class ConversationTurnInputView(ContractModel):
     agent_label: str | None = None
     skill_revision_ids: list[str]
     skill_labels: list[str]
+    insights_query_id: str | None = None
 
 
 class ConversationTurnSummary(ContractModel):

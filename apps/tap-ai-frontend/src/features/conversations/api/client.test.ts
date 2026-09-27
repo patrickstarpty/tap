@@ -30,6 +30,72 @@ describe("parseInsightsHandoff", () => {
 });
 
 describe("ConversationClient", () => {
+  it("sends the authorized Insights handoff as a closed explanation request", async () => {
+    const fetcher = vi.fn(async (request: Request) => {
+      void request;
+      return new Response(
+        JSON.stringify({
+          conversationId: "conversation-7",
+          turnId: "turn-7",
+          state: "queued",
+        }),
+        { status: 202, headers: { "content-type": "application/json" } },
+      );
+    });
+    const client = createConversationClient({
+      projectId: "project-1",
+      fetch: fetcher,
+    });
+
+    const accepted = await client.explainInsights(
+      {
+        queryId: "query-7",
+        resourceRefs: ["receipt-a"],
+        question: "Why did this fail?",
+      },
+      "insights-request-7",
+    );
+
+    expect(accepted).toEqual({
+      conversationId: "conversation-7",
+      turnId: "turn-7",
+      state: "queued",
+    });
+    const request = fetcher.mock.calls[0]?.[0] as Request;
+    expect(request.url).toContain("/projects/project-1/insights/explanations");
+    expect(request.headers.get("idempotency-key")).toBe("insights-request-7");
+    expect(await request.json()).toEqual({
+      queryId: "query-7",
+      resourceRefs: ["receipt-a"],
+      question: "Why did this fail?",
+    });
+  });
+  it("reads a durable Insights turn by conversation and turn ID", async () => {
+    const fetcher = vi.fn(async (request: Request) => {
+      void request;
+      return new Response(
+        JSON.stringify({
+          conversationId: "conversation-7",
+          turnId: "turn-7",
+          state: "running",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const client = createConversationClient({
+      projectId: "project-1",
+      fetch: fetcher,
+    });
+
+    expect(
+      await client.getInsightsExplanation("conversation-7", "turn-7"),
+    ).toMatchObject({
+      state: "running",
+    });
+    expect((fetcher.mock.calls[0]?.[0] as Request).url).toContain(
+      "/projects/project-1/insights/explanations/conversation-7/turns/turn-7",
+    );
+  });
   it("creates the first turn and appends later turns with stable idempotency keys", async () => {
     const fetcher = vi.fn(async (request: Request) => {
       void request;

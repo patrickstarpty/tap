@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -74,6 +75,7 @@ class ProposedExplanation:
     citation_ids: tuple[str, ...]
     missing_information: tuple[str, ...]
     cost_micros: int
+    evidence_quotes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -82,10 +84,69 @@ class ProposedExplanation:
             or self.cost_micros < 0
         ):
             raise ValueError("proposal time and cost must be bounded")
-        if len(self.hypotheses) > 10 or len(self.citation_ids) > 20:
+        if (
+            len(self.hypotheses) > 10
+            or len(self.citation_ids) > 20
+            or len(self.missing_information) > 10
+        ):
             raise ValueError("proposal content must be bounded")
         if len(self.hypotheses) != len(self.citation_ids):
             raise ValueError("every hypothesis requires one citation")
+        if self.evidence_quotes and len(self.evidence_quotes) != len(self.hypotheses):
+            raise ValueError("every evidence quote must match one hypothesis")
+
+
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+_PERCENT = re.compile(r"\d+(?:[.,]\d+)?\s*%|百分之[零一二三四五六七八九十百千\d]+")
+_METRIC_NAME = re.compile(
+    r"\b(?:first[-_ ]pass|final[-_ ]pass|retry[-_ ]recovery|"
+    r"recovery[-_ ]contribution|skipped[-_ ]count|p95[-_ ]duration)\b"
+    r"|(?:首轮通过率|首次通过率|最终通过率|重试恢复率|恢复贡献率|跳过数|P95)",
+    re.IGNORECASE,
+)
+_CERTAIN_CAUSE = re.compile(
+    r"\b(?:definitely|certainly|proven|proved|confirmed|always|inevitably)\b"
+    r"|\b(?:is|was)\s+the\s+(?:root\s+)?cause\b"
+    r"|(?:必然|确定|明确导致|证实|证明|直接导致|必定|根因是|原因是)",
+    re.IGNORECASE,
+)
+_CAUSAL_VERB = re.compile(
+    r"\b(?:caused|triggered|led to|resulted in|because of|due to)\b"
+    r"|(?:导致|造成|引发)",
+    re.IGNORECASE,
+)
+_POSSIBILITY = re.compile(
+    r"\b(?:may|might|could|possibly|potentially)\b|(?:可能|也许|或许|疑似)", re.IGNORECASE
+)
+_MISSING_REQUEST = re.compile(
+    r"\b(?:need|needed|required|missing|unavailable|provide|supplied|requested)\b"
+    r"|(?:需要|缺少|未提供|请提供|待确认)",
+    re.IGNORECASE,
+)
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_HAN = re.compile(r"[\u3400-\u9fff]")
+
+
+def _safe_proposal_text(text: str, *, quote: str = "") -> bool:
+    """Keep interpretations bounded and leave authoritative numeric claims to MetricFact."""
+    if not isinstance(text, str) or not text.strip() or len(text) > 500 or _CONTROL.search(text):
+        return False
+    if _CERTAIN_CAUSE.search(text) or _PERCENT.search(text):
+        return False
+    if _NUMBER.search(text) and _METRIC_NAME.search(text):
+        return False
+    for causal_verb in _CAUSAL_VERB.finditer(text):
+        clause = re.split(r"[.!?。！？;；,，]", text[: causal_verb.start()])[-1]
+        if not _POSSIBILITY.search(clause):
+            return False
+    return all(number in _NUMBER.findall(quote) for number in _NUMBER.findall(text))
+
+
+def _safe_missing_request(text: str) -> bool:
+    # Missing statements need no fixed phrasing; numeric dates or codes require request wording.
+    if _NUMBER.search(text):
+        return _safe_proposal_text(text, quote=text) and bool(_MISSING_REQUEST.search(text))
+    return _safe_proposal_text(text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +161,7 @@ class ExplanationDelivery:
     missing_information: tuple[str, ...]
     audit: dict[str, str | None]
     stop_reason: Literal["completed", "budget-exhausted", "insights-unavailable"]
+    selected_citation_ids: tuple[str, ...] = ()
 
 
 class KnowledgeEvidencePort(Protocol):
@@ -333,6 +395,7 @@ class InsightsExplanationService:
             and proposal.metric_claims == facts
         )
         missing: tuple[str, ...]
+        selected_citation_ids: tuple[str, ...] = ()
         if not snapshot_matches:
             missing = ("The generated explanation did not match the authorized metric snapshot.",)
             hypotheses: tuple[str, ...] = ()
@@ -340,15 +403,42 @@ class InsightsExplanationService:
             evidence_by_id = {item.citation_id: item for item in evidence}
             if any(citation not in evidence_by_id for citation in proposal.citation_ids):
                 raise InsightsAuthorizationChanged("explanation cited unauthorized evidence")
-            hypotheses = tuple(
-                "The cited evidence suggests a possible association worth investigating; "
-                f"causality is not established. [{citation}]"
-                for citation in proposal.citation_ids
+            accepted: list[str] = []
+            citations: list[str] = []
+            rejected = False
+            for index, (hypothesis, citation) in enumerate(
+                zip(proposal.hypotheses, proposal.citation_ids, strict=True)
+            ):
+                quote = (
+                    proposal.evidence_quotes[index] if index < len(proposal.evidence_quotes) else ""
+                )
+                if (
+                    not quote
+                    or len(quote) > 500
+                    or quote not in evidence_by_id[citation].excerpt
+                    or not _safe_proposal_text(hypothesis, quote=quote)
+                ):
+                    rejected = True
+                    continue
+                qualifier = (
+                    "这只是待验证的假设，因果关系尚未确立。"
+                    if _HAN.search(hypothesis)
+                    else "This is a hypothesis, not an established cause."
+                )
+                accepted.append(f"{hypothesis.strip()} {qualifier} [{citation}]")
+                citations.append(citation)
+            hypotheses = tuple(accepted)
+            selected_citation_ids = tuple(citations)
+            safe_missing = tuple(
+                item.strip() for item in proposal.missing_information if _safe_missing_request(item)
             )
             missing = (
-                ("Additional information is required to evaluate the possible association.",)
-                if proposal.missing_information
-                else ()
+                *safe_missing,
+                *(
+                    ("Proposed explanation content could not be verified against its citation.",)
+                    if rejected
+                    else ()
+                ),
             )
         if evidence:
             try:
@@ -389,6 +479,7 @@ class InsightsExplanationService:
             hypotheses=hypotheses,
             missing=missing,
             stop_reason="completed",
+            selected_citation_ids=selected_citation_ids,
         )
 
     def _exhausted(self, started: float, budget: ExplanationBudget) -> bool:
@@ -422,6 +513,7 @@ class InsightsExplanationService:
         hypotheses: tuple[str, ...],
         missing: tuple[str, ...],
         stop_reason: Literal["completed", "budget-exhausted", "insights-unavailable"],
+        selected_citation_ids: tuple[str, ...] = (),
     ) -> ExplanationDelivery:
         return ExplanationDelivery(
             query_id=query_id,
@@ -453,4 +545,5 @@ class InsightsExplanationService:
                 "queryId": query_id,
             },
             stop_reason=stop_reason,
+            selected_citation_ids=selected_citation_ids,
         )

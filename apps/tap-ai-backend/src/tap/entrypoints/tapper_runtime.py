@@ -12,7 +12,8 @@ import platform
 import re
 import shutil
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 from urllib.parse import urlsplit
@@ -165,11 +166,59 @@ class TapperSettings:
     project_id: str = _FIXED_PROJECT
     group_id: str = _FIXED_GROUP
     environment: str = _FIXED_ENVIRONMENT
+    insights_base_url: str = ""
+    insights_delegated_user_token: str = field(default="", repr=False)
+    insights_service_token: str = field(default="", repr=False)
+    insights_authorization_version: str = ""
+    insights_expires_at: str = ""
+    insights_max_micros_per_token: int = 0
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, str]) -> TapperSettings:
         if not isinstance(values, Mapping):
             raise TypeError("Tapper settings require a string mapping")
+        insight_names = (
+            "TAP_INSIGHTS_BASE_URL",
+            "TAP_INSIGHTS_DELEGATED_USER_TOKEN",
+            "TAP_INSIGHTS_SERVICE_TOKEN",
+            "TAP_INSIGHTS_DELEGATED_PROJECT_ID",
+            "TAP_INSIGHTS_DELEGATED_EXPIRES_AT",
+            "TAP_INSIGHTS_AUTHORIZATION_VERSION",
+            "TAP_INSIGHTS_MAX_MICROS_PER_TOKEN",
+        )
+        configured_insights = any(values.get(name) for name in insight_names)
+        if configured_insights:
+            if not all(values.get(name) for name in insight_names):
+                raise ValueError(
+                    "Insights explanation requires all server-side delegation settings"
+                )
+            if values["TAP_INSIGHTS_DELEGATED_PROJECT_ID"] != _FIXED_PROJECT:
+                raise ValueError("Insights delegation must match the fixed Tapper project")
+            if (
+                len(values["TAP_INSIGHTS_DELEGATED_USER_TOKEN"]) < 16
+                or len(values["TAP_INSIGHTS_SERVICE_TOKEN"]) < 16
+            ):
+                raise ValueError("Insights delegation credentials must be bounded")
+            expires = datetime.fromisoformat(values["TAP_INSIGHTS_DELEGATED_EXPIRES_AT"])
+            if expires.utcoffset() is None or expires <= datetime.now(UTC):
+                raise ValueError("Insights delegation must have a future expiry")
+            price = int(values["TAP_INSIGHTS_MAX_MICROS_PER_TOKEN"])
+            if not 1 <= price <= 1000:
+                raise ValueError("Insights token price ceiling is outside the bound")
+            url = urlsplit(values["TAP_INSIGHTS_BASE_URL"])
+            if (
+                url.scheme != "http"
+                or url.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or url.username
+                or url.password
+                or url.query
+                or url.fragment
+            ):
+                raise ValueError("Insights runtime must target loopback HTTP")
+            if _IDENTITY.fullmatch(values["TAP_INSIGHTS_AUTHORIZATION_VERSION"]) is None:
+                raise ValueError("Insights authorization version must be bounded")
+        else:
+            price = 0
         backend = _fixed_choice(
             values,
             "TAPPER_MODEL_BACKEND",
@@ -443,6 +492,12 @@ class TapperSettings:
                 "tap-local-Provisioner1!",
             ),
             e2e_mode=demo_mode == "e2e",
+            insights_base_url=values.get("TAP_INSIGHTS_BASE_URL", ""),
+            insights_delegated_user_token=values.get("TAP_INSIGHTS_DELEGATED_USER_TOKEN", ""),
+            insights_service_token=values.get("TAP_INSIGHTS_SERVICE_TOKEN", ""),
+            insights_authorization_version=values.get("TAP_INSIGHTS_AUTHORIZATION_VERSION", ""),
+            insights_expires_at=values.get("TAP_INSIGHTS_DELEGATED_EXPIRES_AT", ""),
+            insights_max_micros_per_token=price,
         )
 
 
@@ -718,6 +773,54 @@ async def create_api_runtime(
             review_sessions=async_sessionmaker(engine, expire_on_commit=False),
             corpus_version=settings.corpus_version,
         )
+        if settings.insights_base_url:
+            if (
+                services.insights_knowledge_search is None
+                or services.insights_publication_authority is None
+            ):
+                raise ValueError("Insights knowledge evidence authority is unavailable")
+            from tap.interfaces.http.insights_explanation_runtime import (
+                ConfiguredInsightsExplanation,
+            )
+            from tap.modules.ai.adapters.published_knowledge import PublishedKnowledgeEvidence
+            from tap.modules.ai.adapters.tap_insights import (
+                ServiceIdentity,
+                TapInsightsAdapter,
+                TapInsightsConfig,
+            )
+            from tap.modules.knowledge.application.answers import AnswerService
+            from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+
+            expiry = datetime.fromisoformat(settings.insights_expires_at)
+            insights_adapter = TapInsightsAdapter(
+                TapInsightsConfig(base_url=settings.insights_base_url),
+                service_identity=lambda: ServiceIdentity(
+                    authorization=settings.insights_service_token,
+                    audience="tap-insights",
+                    expires_at=expiry,
+                ),
+                clock=lambda: datetime.now(UTC),
+            )
+            resources.push(insights_adapter)
+            services = replace(
+                services,
+                insights_explanation=ConfiguredInsightsExplanation(
+                    insights=insights_adapter,
+                    gateway=embeddings.gateway,
+                    model_alias=embeddings.chat_alias,
+                    project_id=settings.project_id,
+                    delegated_user_token=settings.insights_delegated_user_token,
+                    authorization_version=settings.insights_authorization_version,
+                    max_micros_per_token=settings.insights_max_micros_per_token,
+                    knowledge_evidence_factory=lambda selection: PublishedKnowledgeEvidence(
+                        searches=cast(AnswerService, services.insights_knowledge_search),
+                        publication_authority=cast(
+                            PublishedKnowledgeAuthority, services.insights_publication_authority
+                        ),
+                        selection=selection,
+                    ),
+                ),
+            )
         return TapperApiRuntime(
             http_services=services,
             quality_models=embeddings,
@@ -1654,6 +1757,8 @@ def _assemble_http_services(
         graph=graph,
         test_plans=test_plans,
         knowledge_reviews=knowledge_reviews,
+        insights_knowledge_search=answer_service,
+        insights_publication_authority=publication_authority,
     )
 
 

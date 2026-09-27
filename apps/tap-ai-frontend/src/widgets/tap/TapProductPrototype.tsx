@@ -1,4 +1,5 @@
 import { Button } from "antd";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -43,8 +44,14 @@ import {
   useConversationList,
   useConversationStream,
   useCreateConversation,
+  useConversationClient,
 } from "../../features/conversations/api/queries";
-import { parseInsightsHandoff } from "../../features/conversations/api/client";
+import {
+  parseInsightsHandoff,
+  type InsightsHandoff,
+  type InsightsExplanationResult,
+  type ConversationClient,
+} from "../../features/conversations/api/client";
 import {
   createStreamState,
   isTargetTurnActive,
@@ -291,9 +298,171 @@ export function AnswerProgress({
   );
 }
 
+function InsightsExplanationPanel({
+  question,
+  result,
+  locale,
+}: {
+  question: string;
+  result: InsightsExplanationResult;
+  locale: Locale;
+}) {
+  const english = locale === "en";
+  const percentMetrics = new Set([
+    "first_pass_rate",
+    "final_pass_rate",
+    "retry_recovery_rate",
+    "recovery_contribution_rate",
+  ]);
+  return (
+    <section
+      className="tap-turn-context"
+      role="region"
+      aria-label="Insights explanation"
+    >
+      <h2>{english ? "Report investigation" : "报告调查"}</h2>
+      <p>{question}</p>
+      <p>
+        {english ? "Verified Insights facts" : "已核实的 Insights 指标"} ·{" "}
+        {result.queryId} · {result.metricVersion}
+      </p>
+      {result.asOf ? (
+        <p>
+          {english ? "As of" : "截至"} {new Date(result.asOf).toLocaleString()}
+        </p>
+      ) : null}
+      <ul>
+        {result.facts.map((fact) => (
+          <li key={fact.metricId}>
+            <strong>{fact.metricId.replaceAll("_", " ")}: </strong>
+            {fact.completeness === "complete" && fact.value !== null
+              ? percentMetrics.has(fact.metricId)
+                ? `${(fact.value * 100).toFixed(1).replace(/\.0$/, "")}%`
+                : String(fact.value)
+              : english
+                ? "Unavailable"
+                : "不可用"}
+            {fact.completeness === "complete" &&
+            percentMetrics.has(fact.metricId) &&
+            fact.numerator !== null &&
+            fact.denominator !== null
+              ? ` (${fact.numerator}/${fact.denominator})`
+              : null}
+            {fact.completeness !== "complete" && fact.missingReasons.length > 0
+              ? ` · ${fact.missingReasons.join("; ")}`
+              : null}
+          </li>
+        ))}
+      </ul>
+      {result.hypotheses.length > 0 ? (
+        <div>
+          <h3>{english ? "Possible associations" : "可能的关联"}</h3>
+          <ul>
+            {result.hypotheses.map((item, index) => (
+              <li key={`${index}-${item}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {result.evidenceExcerpts.length > 0 ? (
+        <div>
+          <h3>{english ? "Referenced evidence" : "引用依据"}</h3>
+          <ul>
+            {result.evidenceExcerpts.map((item) => (
+              <li key={item.citationId}>
+                <strong>[{item.citationId}]</strong> <q>{item.text}</q>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {result.missingInformation.length > 0 ? (
+        <div>
+          <h3>{english ? "Missing information" : "缺失信息"}</h3>
+          <ul>
+            {result.missingInformation.map((item, index) => (
+              <li key={`${index}-${item}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function DurableInsightsResponse({
+  client,
+  conversationId,
+  turn,
+}: {
+  client: ConversationClient;
+  conversationId: string;
+  turn: AssistantTurn;
+}) {
+  const explanation = useQuery({
+    queryKey: [
+      "insights-explanation",
+      client.projectId,
+      conversationId,
+      turn.id,
+    ],
+    queryFn: ({ signal }) =>
+      client.getInsightsExplanation(conversationId, turn.id, signal),
+    refetchInterval: (query) => {
+      const value = query.state.data;
+      return value !== undefined &&
+        "state" in value &&
+        (value.state === "queued" || value.state === "running")
+        ? 1_000
+        : false;
+    },
+    retry: false,
+  });
+  if (explanation.data !== undefined && "facts" in explanation.data) {
+    return (
+      <InsightsExplanationPanel
+        question={turn.prompt}
+        result={explanation.data}
+        locale={turn.locale}
+      />
+    );
+  }
+  if (explanation.data?.state === "canceled") {
+    return (
+      <p role="status">
+        {turn.locale === "zh"
+          ? "报告解读已停止。"
+          : "Report investigation stopped."}
+      </p>
+    );
+  }
+  if (
+    explanation.isError ||
+    explanation.data?.state === "failed" ||
+    explanation.data?.state === "abstained"
+  ) {
+    return (
+      <p role="alert">
+        {turn.locale === "zh"
+          ? "报告解读暂不可用，请稍后重试。"
+          : "The report explanation is unavailable. Please try again."}
+      </p>
+    );
+  }
+  return (
+    <p role="status">
+      {turn.locale === "zh"
+        ? "正在核对报告和证据…"
+        : "Checking the report and evidence…"}
+    </p>
+  );
+}
+
 function AssistantResponse({
   contentCopy,
   turn,
+  insightsClient,
+  conversationId,
   onOpenCitation,
   onRetryConversation,
   onGenerateTestPlan,
@@ -301,6 +470,8 @@ function AssistantResponse({
 }: {
   contentCopy: PrototypeCopy;
   turn: AssistantTurn;
+  insightsClient?: ConversationClient | null;
+  conversationId?: string;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
   onRetryConversation: () => void;
   onGenerateTestPlan?: () => void;
@@ -314,6 +485,28 @@ function AssistantResponse({
     );
   }
   if (turn.intent === "answer") {
+    if (
+      turn.insightsQueryId !== undefined &&
+      insightsClient != null &&
+      conversationId !== undefined
+    ) {
+      return (
+        <DurableInsightsResponse
+          client={insightsClient}
+          conversationId={conversationId}
+          turn={turn}
+        />
+      );
+    }
+    if (turn.insightsExplanation !== undefined) {
+      return (
+        <InsightsExplanationPanel
+          question={turn.prompt}
+          result={turn.insightsExplanation}
+          locale={turn.locale}
+        />
+      );
+    }
     if (turn.status === "canceled") {
       return <p role="status">Generation stopped.</p>;
     }
@@ -766,6 +959,8 @@ export function TapProductPrototype({
     () =>
       initialSnapshot?.activeConversationId ?? (durable ? "draft" : "chat-1"),
   );
+  const insightsClient = useConversationClient(durable ? projectId : null);
+  const queryClient = useQueryClient();
   const conversationList = useConversationList(durable ? projectId : null);
   const conversationDetail = useConversationDetail(
     durable ? projectId : null,
@@ -807,14 +1002,22 @@ export function TapProductPrototype({
     conversationDetail.data?.turns.find(
       (turn) => turn.turnId === streamTargetTurnId,
     )?.state ?? null;
+  const detailTargetIsInsights =
+    conversationDetail.data?.turns.some(
+      (turn) =>
+        turn.turnId === streamTargetTurnId &&
+        (turn.input as { insightsQueryId?: string | null }).insightsQueryId !=
+          null,
+    ) ?? false;
   const shouldStartConversationStream =
-    requestedTarget !== null ||
-    isTargetTurnActive({
-      detailStatus: detailTargetStatus,
-      recoveredState: recoveredStreamState,
-      streamState: createStreamState(),
-      targetTurnId: streamTargetTurnId,
-    });
+    !detailTargetIsInsights &&
+    (requestedTarget !== null ||
+      isTargetTurnActive({
+        detailStatus: detailTargetStatus,
+        recoveredState: recoveredStreamState,
+        streamState: createStreamState(),
+        targetTurnId: streamTargetTurnId,
+      }));
   const conversationStream = useConversationStream(
     durable ? projectId : null,
     durable && activeConversationId !== "draft" ? activeConversationId : null,
@@ -893,6 +1096,16 @@ export function TapProductPrototype({
     activeCitation?.generation ?? 0,
   );
   const [messageDraft, setMessageDraft] = useState("");
+  const [insightsHandoff, setInsightsHandoff] =
+    useState<InsightsHandoff | null>(null);
+  const [insightsError, setInsightsError] = useState("");
+  const pendingInsightsKey = useRef<{ signature: string; key: string } | null>(
+    null,
+  );
+  const [localInsightsTurn, setLocalInsightsTurn] = useState<{
+    conversationId: string;
+    turn: AssistantTurn;
+  } | null>(null);
   const appliedInsightsHandoff = useRef(false);
   useEffect(() => {
     if (
@@ -905,6 +1118,7 @@ export function TapProductPrototype({
     const handoff = parseInsightsHandoff(window.location.href, projectId);
     if (handoff === null) return;
     appliedInsightsHandoff.current = true;
+    setInsightsHandoff(handoff);
     setMessageDraft(handoff.draft);
   }, [durable, messageDraft.length, projectId]);
   const [localSources, setLocalSources] = useState<
@@ -1022,6 +1236,13 @@ export function TapProductPrototype({
     if (!durable || conversationList.data === undefined) return;
     const summaries = conversationList.data.pages.flatMap((page) => page.items);
     setConversations((current) => {
+      if (
+        summaries.length === 0 &&
+        current.some(
+          (item) => item.id === activeConversationId && item.id !== "draft",
+        )
+      )
+        return current;
       const restored = summaries.map((summary) => {
         const existing = current.find(
           (item) => item.id === summary.conversationId,
@@ -1046,6 +1267,9 @@ export function TapProductPrototype({
     if (!durable || conversationDetail.data === undefined) return;
     const turns: AssistantTurn[] = conversationDetail.data.turns.map((turn) => {
       const resolvedResources = turn.input.resolvedResources ?? [];
+      const insightsQueryId = (
+        turn.input as { insightsQueryId?: string | null }
+      ).insightsQueryId;
       const streamed = latestTurnState(
         turn.turnId,
         recoveredStreamState,
@@ -1057,6 +1281,7 @@ export function TapProductPrototype({
         locale,
         modelId: turn.input.modelAlias,
         prompt: turn.input.message,
+        ...(insightsQueryId == null ? {} : { insightsQueryId }),
         sourceReferences: resolvedResources.map((item) => ({
           id: item.sourceId,
           name: item.label,
@@ -1124,6 +1349,15 @@ export function TapProductPrototype({
             }
           : conversation,
       ),
+    );
+    setLocalInsightsTurn((current) =>
+      current !== null &&
+      current.conversationId === conversationDetail.data.conversationId &&
+      conversationDetail.data.turns.some(
+        (turn) => turn.turnId === current.turn.id,
+      )
+        ? null
+        : current,
     );
   }, [
     conversationDetail.data,
@@ -1370,6 +1604,14 @@ export function TapProductPrototype({
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
     ) ?? conversations[0]!;
+  const displayedConversation =
+    localInsightsTurn === null ||
+    localInsightsTurn.conversationId !== activeConversation.id
+      ? activeConversation
+      : {
+          ...activeConversation,
+          turns: [...activeConversation.turns, localInsightsTurn.turn],
+        };
   const generateTestPlan = (
     conversation: Conversation,
     turn: AssistantTurn,
@@ -1428,6 +1670,9 @@ export function TapProductPrototype({
 
   const createNewChat = () => {
     setMessageDraft("");
+    setInsightsHandoff(null);
+    setInsightsError("");
+    setLocalInsightsTurn(null);
     const id = durable ? "draft" : `chat-${nextConversationId.current++}`;
     pendingFocusTarget.current = {
       kind: "selector",
@@ -1446,6 +1691,9 @@ export function TapProductPrototype({
   const selectConversation = (conversationId: string) => {
     if (conversationId !== activeConversationId) {
       setMessageDraft("");
+      setInsightsHandoff(null);
+      setInsightsError("");
+      setLocalInsightsTurn(null);
     }
     pendingFocusTarget.current = {
       kind: "selector",
@@ -1498,12 +1746,102 @@ export function TapProductPrototype({
   const sendMessage = async (prompt: string): Promise<boolean> => {
     if (
       durable &&
-      (knowledgeClient === null ||
-        createConversationMutation.isPending ||
+      (createConversationMutation.isPending ||
         appendConversationMutation.isPending ||
         sendInFlight.current)
     )
       return false;
+    if (durable && insightsHandoff !== null) {
+      if (insightsClient === null) return false;
+      sendInFlight.current = true;
+      setSendPending(true);
+      setInsightsError("");
+      try {
+        if (knowledgeClient === null) return false;
+        const published = await knowledgeClient.listPublishedSources();
+        const selected = published.items.filter((item) =>
+          activeConversation.selectedSourceIds.includes(item.sourceId),
+        );
+        const request = {
+          queryId: insightsHandoff.queryId,
+          resourceRefs: insightsHandoff.resourceRefs,
+          question: prompt,
+          ...(activeConversation.id === "draft"
+            ? {}
+            : { conversationId: activeConversation.id }),
+          sourceRevisionIds: selected.map((item) => item.revisionId),
+          documentRevisionIds: [],
+        };
+        const signature = JSON.stringify(request);
+        const storageKey = `tap:insights-pending:${projectId}`;
+        let pending = pendingInsightsKey.current;
+        if (pending === null) {
+          try {
+            pending = JSON.parse(
+              window.sessionStorage.getItem(storageKey) ?? "null",
+            ) as typeof pending;
+          } catch {
+            pending = null;
+          }
+        }
+        if (pending?.signature !== signature) {
+          pending = { signature, key: crypto.randomUUID() };
+          window.sessionStorage.setItem(storageKey, JSON.stringify(pending));
+        }
+        pendingInsightsKey.current = pending;
+        const accepted = await insightsClient.explainInsights(
+          request,
+          pending.key,
+        );
+        window.sessionStorage.removeItem(storageKey);
+        pendingInsightsKey.current = null;
+        setLocalInsightsTurn({
+          conversationId: accepted.conversationId,
+          turn: {
+            id: accepted.turnId,
+            intent: "answer",
+            locale,
+            modelId: activeConversation.modelId,
+            prompt,
+            sourceReferences: selected.map((item) => ({
+              id: item.sourceId,
+              name: item.sourceName,
+              origin: "knowledge-base" as const,
+            })),
+            insightsQueryId: insightsHandoff.queryId,
+            status: accepted.state,
+          },
+        });
+        setConversations((current) => [
+          { ...activeConversation, id: accepted.conversationId },
+          ...current.filter(
+            (item) =>
+              item.id !== "draft" && item.id !== accepted.conversationId,
+          ),
+        ]);
+        setActiveConversationId(accepted.conversationId);
+        void queryClient.invalidateQueries({
+          queryKey: ["conversations", projectId],
+        });
+        const handoffUrl = new URL(window.location.href);
+        for (const key of ["queryId", "resourceRef", "draft"])
+          handoffUrl.searchParams.delete(key);
+        window.history.replaceState(window.history.state, "", handoffUrl);
+        setInsightsHandoff(null);
+        return true;
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        setInsightsError(
+          status === 403
+            ? "You no longer have access to this report explanation."
+            : "The report explanation is unavailable. Please try again.",
+        );
+        return false;
+      } finally {
+        sendInFlight.current = false;
+        setSendPending(false);
+      }
+    }
     const intent = detectIntent(prompt);
     const sourceReferences = answerSources
       .filter((source) =>
@@ -1748,11 +2086,14 @@ export function TapProductPrototype({
             <TapperChat
               projectId={projectId}
               agents={agents}
-              conversation={activeConversation}
+              conversation={displayedConversation}
               copy={copy}
               isInert={compactSourcesDrawerOpen}
               message={messageDraft}
-              onMessageChange={setMessageDraft}
+              onMessageChange={(value) => {
+                setMessageDraft(value);
+                setInsightsError("");
+              }}
               onModelChange={(modelId: ModelId) =>
                 updateActiveConversation((conversation) => ({
                   ...conversation,
@@ -1760,6 +2101,7 @@ export function TapProductPrototype({
                 }))
               }
               onSend={sendMessage}
+              sendError={insightsError}
               sending={
                 sendPending ||
                 createConversationMutation.isPending ||
@@ -1805,6 +2147,8 @@ export function TapProductPrototype({
                 <AssistantResponse
                   contentCopy={PROTOTYPE_COPY[turn.locale]}
                   turn={turn}
+                  insightsClient={insightsClient}
+                  conversationId={durable ? activeConversation.id : undefined}
                   activityEvents={
                     durable
                       ? (conversationEvents.data?.items ?? []).filter(

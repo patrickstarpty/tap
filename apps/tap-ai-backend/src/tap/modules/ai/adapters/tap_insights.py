@@ -121,6 +121,46 @@ class TapInsightsAdapter:
             raise InsightsQueryUnavailable("TAP Insights contract changed query ID")
         return result
 
+    async def get_evidence(
+        self, scope: AuthorizedInsightsScope, receipt_id: str, *, max_bytes: int = 20_000
+    ) -> bytes:
+        if _IDENTIFIER.fullmatch(receipt_id) is None or not 1 <= max_bytes <= 1_000_000:
+            raise InsightsQueryUnavailable("TAP Insights evidence request is invalid")
+        identity = self._service_identity()
+        if identity.expires_at <= self._clock():
+            raise InsightsAuthorizationChanged("TAP Insights service identity expired")
+        path = (
+            f"/api/v1/projects/{quote(scope.context.project_id, safe='')}/insights/evidence/"
+            f"{quote(receipt_id, safe='')}"
+        )
+        try:
+            async with self._client.stream(
+                "GET",
+                self._config.base_url.rstrip("/") + path,
+                headers={
+                    "Authorization": f"Bearer {scope.user_authorization}",
+                    "X-TAP-Service-Authorization": f"Bearer {identity.authorization}",
+                    "X-TAP-Authorization-Version": scope.authorization_version,
+                },
+                timeout=self._config.timeout_seconds,
+            ) as response:
+                if response.status_code in {401, 403}:
+                    raise InsightsAuthorizationChanged(
+                        "TAP Insights evidence authorization changed"
+                    )
+                if response.status_code != 200:
+                    raise InsightsQueryUnavailable("TAP Insights evidence unavailable")
+                chunks: list[bytes] = []
+                received = 0
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if received > max_bytes:
+                        raise InsightsQueryUnavailable("TAP Insights evidence is too large")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise InsightsQueryUnavailable("TAP Insights evidence unavailable") from exc
+
     async def _request(
         self,
         scope: AuthorizedInsightsScope,

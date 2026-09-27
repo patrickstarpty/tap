@@ -15,6 +15,7 @@ from tap_platform.insights.application.intake import ReportIntake
 from tap_platform.insights.application.queries import InsightsQueryService, QueryLimits
 from tap_platform.insights.http import (
     BearerPrincipalAuthorizer,
+    DualBearerInsightsAuthorizer,
     EvidenceReader,
     InsightsAuthorizer,
     ReceiptReader,
@@ -128,6 +129,48 @@ def create_app(
 
 
 def _authorizer_from_environment() -> InsightsAuthorizer | None:
+    report = _report_authorizer_from_environment()
+    delegated = _delegated_authorizer_from_environment()
+    if report is not None and delegated is not None:
+        return _CombinedInsightsAuthorizer(report=report, delegated=delegated)
+    return report or delegated
+
+
+class _CombinedInsightsAuthorizer:
+    def __init__(
+        self, *, report: InsightsAuthorizer, delegated: InsightsAuthorizer
+    ) -> None:
+        self._report = report
+        self._delegated = delegated
+
+    def authorize(
+        self,
+        *,
+        bearer_token: str,
+        project_id: str,
+        action: str,
+        resource_kind: str,
+        resource_id: str | None,
+        service_bearer_token: str | None,
+        authorization_version: str | None,
+    ) -> bool:
+        authorizer = (
+            self._delegated
+            if service_bearer_token is not None or authorization_version is not None
+            else self._report
+        )
+        return authorizer.authorize(
+            bearer_token=bearer_token,
+            project_id=project_id,
+            action=action,
+            resource_kind=resource_kind,
+            resource_id=resource_id,
+            service_bearer_token=service_bearer_token,
+            authorization_version=authorization_version,
+        )
+
+
+def _report_authorizer_from_environment() -> InsightsAuthorizer | None:
     token = os.getenv("TAP_REPORT_ACCESS_TOKEN")
     project_id = os.getenv("TAP_REPORT_PROJECT_ID")
     expires_at_value = os.getenv("TAP_REPORT_TOKEN_EXPIRES_AT")
@@ -167,6 +210,61 @@ def _authorizer_from_environment() -> InsightsAuthorizer | None:
         token=token,
         principal=principal,
         expected_audience="tap",
+    )
+
+
+def _delegated_authorizer_from_environment() -> InsightsAuthorizer | None:
+    names = (
+        "TAP_INSIGHTS_DELEGATED_USER_TOKEN",
+        "TAP_INSIGHTS_SERVICE_TOKEN",
+        "TAP_INSIGHTS_DELEGATED_PROJECT_ID",
+        "TAP_INSIGHTS_DELEGATED_EXPIRES_AT",
+        "TAP_INSIGHTS_AUTHORIZATION_VERSION",
+    )
+    values = {name: os.getenv(name) for name in names}
+    if not any(values.values()):
+        return None
+    if not all(values.values()):
+        raise RuntimeError(
+            "TAP Insights delegated authorization settings must be configured together"
+        )
+    user_token = values["TAP_INSIGHTS_DELEGATED_USER_TOKEN"]
+    service_token = values["TAP_INSIGHTS_SERVICE_TOKEN"]
+    project_id = values["TAP_INSIGHTS_DELEGATED_PROJECT_ID"]
+    expiry = values["TAP_INSIGHTS_DELEGATED_EXPIRES_AT"]
+    version = values["TAP_INSIGHTS_AUTHORIZATION_VERSION"]
+    assert user_token and service_token and project_id and expiry and version
+    try:
+        expires_at = datetime.fromisoformat(expiry)
+    except ValueError as exc:
+        raise RuntimeError(
+            "TAP_INSIGHTS_DELEGATED_EXPIRES_AT must be ISO-8601"
+        ) from exc
+    return DualBearerInsightsAuthorizer(
+        user_token=user_token,
+        user=AccessPrincipal(
+            project_id=project_id,
+            principal_id="delegated-insights-user",
+            principal_type="user",
+            audience="tap",
+            expires_at=expires_at,
+            actions=frozenset({"insights.metrics.read", "insights.evidence.read"}),
+            enabled=True,
+            authorization_version=version,
+        ),
+        service_token=service_token,
+        service=AccessPrincipal(
+            project_id=project_id,
+            principal_id="tap-ai-insights-service",
+            principal_type="service",
+            audience="tap-insights",
+            expires_at=expires_at,
+            actions=frozenset({"insights.invoke"}),
+            enabled=True,
+            authorization_version=version,
+        ),
+        expected_user_audience="tap",
+        expected_service_audience="tap-insights",
     )
 
 

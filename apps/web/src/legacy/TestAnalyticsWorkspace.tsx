@@ -6,7 +6,7 @@ import {
   PlusOutlined,
   ShareAltOutlined,
 } from "@ant-design/icons";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AccessibleDialog } from "./AccessibleDialog";
 import {
   createInsightsClient,
@@ -137,11 +137,78 @@ const browserInsightsClient = createInsightsClient({
   token: () => window.__TAP_INSIGHTS_ACCESS_TOKEN__,
 });
 
+function InsightsEntry({
+  adapter,
+  locale,
+  onConnect,
+}: {
+  adapter?: InsightsDataAdapter;
+  locale: Locale;
+  onConnect: (projectId: string, adapter: InsightsDataAdapter) => void;
+}) {
+  const [projectId, setProjectId] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState("");
+  const t = (zh: string, en: string) => locale === "zh" ? zh : en;
+
+  async function connect(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (checking) return;
+    const project = projectId.trim();
+    const token = accessToken.trim();
+    if (!project || !token) {
+      setError(t("请输入项目 ID 和访问令牌。", "Enter a project ID and access token."));
+      return;
+    }
+    const client = adapter ?? createInsightsClient({ token: () => token });
+    setChecking(true);
+    setError("");
+    try {
+      await client.listMetrics(project);
+      onConnect(project, client);
+    } catch (cause) {
+      const status = (cause as { status?: number }).status;
+      setError(
+        status === 401
+          ? t("请检查访问令牌后重试。", "Check your access token and try again.")
+          : status === 403
+            ? t("此凭证无权访问所选项目。", "This credential cannot access the selected project.")
+            : t("无法打开该项目的分析，请重试。", "Could not open this project's Insights. Try again."),
+      );
+      setAccessToken("");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return (
+    <section className="ti-workspace ti-entry">
+      <h1>Test Insights</h1>
+      <p>{t("输入项目 ID 和授权访问令牌以查看分析。", "Enter your project and its authorized access token to view Insights.")}</p>
+      <form onSubmit={(event) => void connect(event)}>
+        <label>
+          {t("项目 ID", "Project ID")}
+          <input value={projectId} onChange={(event) => setProjectId(event.target.value)} required autoComplete="off" />
+        </label>
+        <label>
+          {t("访问令牌", "Access token")}
+          <input type="password" value={accessToken} onChange={(event) => setAccessToken(event.target.value)} required autoComplete="off" />
+        </label>
+        {error ? <p className="ti-error" role="alert">{error}</p> : null}
+        <button className="ti-primary" type="submit" disabled={checking}>
+          {checking ? t("正在验证权限…", "Checking access…") : t("打开分析", "Open Insights")}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 export function TestAnalyticsWorkspace({
   locale = "zh",
   initialPlanId,
   reviewPrototype = false,
-  insightsAdapter = browserInsightsClient,
+  insightsAdapter,
   projectId,
   initialQueryId,
 }: {
@@ -152,21 +219,25 @@ export function TestAnalyticsWorkspace({
   projectId?: string;
   initialQueryId?: string;
 }) {
-  const runtimeProjectId = projectId ?? window.__TAP_PROJECT_ID__;
+  const [connection, setConnection] = useState<{
+    projectId: string;
+    adapter: InsightsDataAdapter;
+  } | null>(null);
+  const runtimeProjectId = projectId ?? window.__TAP_PROJECT_ID__ ?? connection?.projectId;
   if (!reviewPrototype && !runtimeProjectId)
-    return (
-      <section className="ti-workspace">
-        <h1>Test Insights</h1>
-        <p className="ti-error" role="alert">Project context is unavailable.</p>
-      </section>
-    );
+    return <InsightsEntry adapter={insightsAdapter} locale={locale} onConnect={(selectedProjectId, adapter) =>
+      setConnection({ projectId: selectedProjectId, adapter })
+    } />;
   if (!reviewPrototype && runtimeProjectId)
     return (
-      <InsightsWorkspace
-        adapter={insightsAdapter}
-        projectId={runtimeProjectId}
-        initialQueryId={initialQueryId}
-      />
+      <div className="ti-runtime">
+        {connection ? <button type="button" onClick={() => setConnection(null)}>{locale === "zh" ? "切换项目" : "Change project"}</button> : null}
+        <InsightsWorkspace
+          adapter={insightsAdapter ?? connection?.adapter ?? browserInsightsClient}
+          projectId={runtimeProjectId}
+          initialQueryId={initialQueryId}
+        />
+      </div>
     );
   return (
     <PrototypeAnalyticsWorkspace

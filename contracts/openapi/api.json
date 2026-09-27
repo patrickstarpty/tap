@@ -1311,6 +1311,17 @@
             "title": "Documentrevisionids",
             "type": "array"
           },
+          "insightsQueryId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Insightsqueryid"
+          },
           "message": {
             "title": "Message",
             "type": "string"
@@ -2589,6 +2600,419 @@
         ],
         "title": "IngestionStage",
         "type": "string"
+      },
+      "InsightsEvidenceExcerpt": {
+        "additionalProperties": false,
+        "properties": {
+          "approvalDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approvaldigest"
+          },
+          "approvedItemId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approveditemid"
+          },
+          "chunkContentHash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunkcontenthash"
+          },
+          "chunkId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunkid"
+          },
+          "citationId": {
+            "title": "Citationid",
+            "type": "string"
+          },
+          "evidenceVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidenceversion"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "publicationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publicationid"
+          },
+          "revisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revisionid"
+          },
+          "sourceContentHash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcecontenthash"
+          },
+          "sourceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceid"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "citationId",
+          "text"
+        ],
+        "title": "InsightsEvidenceExcerpt",
+        "type": "object"
+      },
+      "InsightsExplanationAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "title": "Conversationid",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "abstained",
+              "canceled",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "turnId": {
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversationId",
+          "turnId",
+          "state"
+        ],
+        "title": "InsightsExplanationAccepted",
+        "type": "object"
+      },
+      "InsightsExplanationFact": {
+        "additionalProperties": false,
+        "properties": {
+          "completeness": {
+            "enum": [
+              "complete",
+              "empty",
+              "unavailable"
+            ],
+            "title": "Completeness",
+            "type": "string"
+          },
+          "denominator": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Denominator"
+          },
+          "evidenceRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "metricId": {
+            "title": "Metricid",
+            "type": "string"
+          },
+          "missingReasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missingreasons",
+            "type": "array"
+          },
+          "numerator": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Numerator"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "metricId",
+          "numerator",
+          "denominator",
+          "value",
+          "completeness",
+          "missingReasons",
+          "evidenceRefs"
+        ],
+        "title": "InsightsExplanationFact",
+        "type": "object"
+      },
+      "InsightsExplanationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversationid"
+          },
+          "documentRevisionIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Documentrevisionids",
+            "type": "array"
+          },
+          "queryId": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Queryid",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "resourceRefs": {
+            "items": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Resourcerefs",
+            "type": "array"
+          },
+          "sourceRevisionIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Sourcerevisionids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queryId",
+          "resourceRefs",
+          "question"
+        ],
+        "title": "InsightsExplanationRequest",
+        "type": "object"
+      },
+      "InsightsExplanationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "asOf": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asof"
+          },
+          "evidenceExcerpts": {
+            "items": {
+              "$ref": "#/components/schemas/InsightsEvidenceExcerpt"
+            },
+            "title": "Evidenceexcerpts",
+            "type": "array"
+          },
+          "factWatermark": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factwatermark"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/InsightsExplanationFact"
+            },
+            "title": "Facts",
+            "type": "array"
+          },
+          "hypotheses": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hypotheses",
+            "type": "array"
+          },
+          "knowledgeSearchPerformed": {
+            "default": false,
+            "title": "Knowledgesearchperformed",
+            "type": "boolean"
+          },
+          "metricVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metricversion"
+          },
+          "missingInformation": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missinginformation",
+            "type": "array"
+          },
+          "queryId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queryid"
+          },
+          "reportCoverage": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Reportcoverage",
+            "type": "array"
+          },
+          "stopReason": {
+            "enum": [
+              "completed",
+              "budget-exhausted",
+              "insights-unavailable"
+            ],
+            "title": "Stopreason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "queryId",
+          "metricVersion",
+          "asOf",
+          "facts",
+          "reportCoverage",
+          "hypotheses",
+          "evidenceExcerpts",
+          "missingInformation",
+          "stopReason"
+        ],
+        "title": "InsightsExplanationResult",
+        "type": "object"
       },
       "KnowledgePublicationDetail": {
         "additionalProperties": false,
@@ -9957,6 +10381,171 @@
         "summary": "Citation",
         "tags": [
           "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/insights/explanations": {
+      "post": {
+        "operationId": "insights_explain_report",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InsightsExplanationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsightsExplanationAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Explain",
+        "tags": [
+          "insights-explanations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/insights/explanations/{conversation_id}/turns/{turn_id}": {
+      "get": {
+        "operationId": "insights_get_explanation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/InsightsExplanationResult"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InsightsExplanationAccepted"
+                    }
+                  ],
+                  "title": "Response Insights Get Explanation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsightsExplanationAccepted"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Explanation",
+        "tags": [
+          "insights-explanations"
         ]
       }
     },

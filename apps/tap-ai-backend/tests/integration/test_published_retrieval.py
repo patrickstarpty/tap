@@ -156,12 +156,39 @@ async def test_historical_view_uses_current_authority_not_the_old_revision_autho
     repository = PublicationRepository(_publication())
     authority = PublishedKnowledgeAuthority(repository, now=lambda: NOW)
 
-    binding = await authority.authorize_historical_access("project-1")
+    binding = await authority.authorize_historical_access("project-1", "revision-1")
 
     assert "historical-revision" not in binding.source_revision_ids
     repository.publication = None
     with pytest.raises(AuthorizationDenied):
-        await authority.authorize_historical_access("project-1")
+        await authority.authorize_historical_access("project-1", "revision-1")
+
+
+@pytest.mark.asyncio
+async def test_historical_access_rejects_withdrawn_source_when_another_remains_published() -> None:
+    class IndependentPublications:
+        def __init__(self) -> None:
+            self.publications = (
+                _publication(publication_id="publication-1", source_revision_ids=("revision-1",)),
+                _publication(publication_id="publication-2", source_revision_ids=("revision-2",)),
+            )
+
+        async def current_publications(self) -> tuple[KnowledgePublication, ...]:
+            return self.publications
+
+    repository = IndependentPublications()
+    authority = PublishedKnowledgeAuthority(repository, now=lambda: NOW)
+    assert (
+        await authority.authorize_historical_access("project-1", "revision-1")
+    ).publication_id == "publication-1"
+
+    repository.publications = (repository.publications[1],)
+
+    with pytest.raises(AuthorizationDenied):
+        await authority.authorize_historical_access("project-1", "revision-1")
+    assert (
+        await authority.authorize_historical_access("project-1", "revision-2")
+    ).publication_id == "publication-2"
 
 
 class Search:

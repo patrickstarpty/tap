@@ -422,6 +422,25 @@ async def test_historical_query_rejects_a_different_query_id() -> None:
     await client.aclose()
 
 
+@pytest.mark.asyncio
+async def test_evidence_read_uses_dual_bearer_and_rejects_oversized_report() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=b"<testsuite><failure>failed</failure></testsuite>")
+
+    client = adapter(httpx.MockTransport(handle))
+    raw = await client.get_evidence(scope(), "receipt-a", max_bytes=100)
+    assert raw == b"<testsuite><failure>failed</failure></testsuite>"
+    assert seen[0].url.path.endswith("/projects/project-a/insights/evidence/receipt-a")
+    assert seen[0].headers["authorization"] == "Bearer delegated-user-token-0001"
+    assert seen[0].headers["x-tap-service-authorization"] == "Bearer service-token-00000001"
+    with pytest.raises(InsightsQueryUnavailable, match="too large"):
+        await client.get_evidence(scope(), "receipt-a", max_bytes=8)
+    await client.aclose()
+
+
 class StubInsights:
     def __init__(self, value: MetricResult | Exception):
         self.value = value
@@ -574,6 +593,7 @@ async def test_explanation_delivers_verified_facts_and_audited_hypotheses() -> N
             citation_ids=("citation-a",),
             missing_information=("Application logs were not supplied.",),
             cost_micros=200,
+            evidence_quotes=("Retry passed after cache clear.",),
         )
 
     service = InsightsExplanationService(
@@ -600,12 +620,10 @@ async def test_explanation_delivers_verified_facts_and_audited_hypotheses() -> N
 
     assert [(fact.numerator, fact.denominator) for fact in delivery.facts] == [(1, 3), (2, 3)]
     assert delivery.hypotheses == (
-        "The cited evidence suggests a possible association worth investigating; "
-        "causality is not established. [citation-a]",
+        "Cache state may be associated with the recovered retry. "
+        "This is a hypothesis, not an established cause. [citation-a]",
     )
-    assert delivery.missing_information == (
-        "Additional information is required to evaluate the possible association.",
-    )
+    assert delivery.missing_information == ("Application logs were not supplied.",)
     assert delivery.query_id == "query-a"
     assert delivery.as_of == NOW
     assert delivery.fact_watermark == FactWatermark("insights-v1", 7)
@@ -617,6 +635,224 @@ async def test_explanation_delivers_verified_facts_and_audited_hypotheses() -> N
         "queryId": "query-a",
     }
     assert knowledge.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("hypotheses", "quotes", "missing"),
+    [
+        (
+            (
+                "A request timeout may be associated with the recovered retry.",
+                "A permission configuration mismatch may be associated with the access failure.",
+            ),
+            (
+                "Request timed out before retry succeeded.",
+                "Permission configuration mismatch denied access.",
+            ),
+            ("Request timing trace is needed.", "Permission change history is needed."),
+        ),
+        (
+            ("请求超时可能与重试恢复有关。", "权限配置不一致可能与访问失败有关。"),
+            ("请求超时后重试通过。", "权限配置不一致导致访问拒绝。"),
+            ("需要请求时序日志。", "需要权限变更记录。"),
+        ),
+    ],
+)
+async def test_distinct_grounded_hypotheses_and_missing_materials_survive(
+    hypotheses: tuple[str, str], quotes: tuple[str, str], missing: tuple[str, str]
+) -> None:
+    evidence = (
+        AuthorizedEvidence("citation-timeout", "receipt-a", "revision-1", quotes[0]),
+        AuthorizedEvidence("citation-permission", "receipt-a", "revision-1", quotes[1]),
+    )
+
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
+        return ProposedExplanation(
+            "query-a",
+            "insights-metrics-v1",
+            FactWatermark("insights-v1", 7),
+            NOW,
+            result().metrics,
+            hypotheses,
+            ("citation-timeout", "citation-permission"),
+            missing,
+            10,
+            evidence_quotes=quotes,
+        )
+
+    delivery = await InsightsExplanationService(
+        insights=StubInsights(result()),
+        knowledge=StubKnowledge(evidence),
+        generate=generate,
+        authorize=lambda _scope, _refs: True,
+        clock=lambda: NOW,
+        monotonic=lambda: 10.0,
+    ).explain(
+        scope(),
+        ExplanationRequest(
+            "conversation-a", "turn-a", "graph-a", "Explain failures", query(), None, ("receipt-a",)
+        ),
+        ExplanationBudget(2, 1, 30, 500),
+    )
+
+    assert all(text in output for text, output in zip(hypotheses, delivery.hypotheses, strict=True))
+    assert delivery.hypotheses[0] != delivery.hypotheses[1]
+    assert "[citation-timeout]" in delivery.hypotheses[0]
+    assert "[citation-permission]" in delivery.hypotheses[1]
+    if hypotheses[0].startswith("请求"):
+        assert "这只是待验证的假设" in delivery.hypotheses[0]
+        assert "This is a hypothesis" not in delivery.hypotheses[0]
+    assert delivery.missing_information == missing
+    assert delivery.selected_citation_ids == ("citation-timeout", "citation-permission")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("hypothesis", "quote"),
+    [
+        (
+            "A 99% first-pass rate may be associated with the retry.",
+            "Retry passed after cache clear.",
+        ),
+        ("Cache state may be associated with retry.", "A fabricated report sentence."),
+        ("缓存明确导致了全部失败。", "Retry passed after cache clear."),
+        ("缓存导致访问失败。", "Retry passed after cache clear."),
+        ("Cache state is the root cause of failure.", "Retry passed after cache clear."),
+        ("根因是缓存状态。", "Retry passed after cache clear."),
+        ("The first-pass rate may be 3.", "The report records 3 retry attempts."),
+    ],
+)
+async def test_unsupported_numeric_causal_or_forged_quote_is_not_delivered(
+    hypothesis: str, quote: str
+) -> None:
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
+        return ProposedExplanation(
+            "query-a",
+            "insights-metrics-v1",
+            FactWatermark("insights-v1", 7),
+            NOW,
+            result().metrics,
+            (hypothesis,),
+            ("citation-a",),
+            (),
+            10,
+            evidence_quotes=(quote,),
+        )
+
+    delivery = await InsightsExplanationService(
+        insights=StubInsights(result()),
+        knowledge=StubKnowledge(
+            (
+                AuthorizedEvidence(
+                    "citation-a",
+                    "receipt-a",
+                    "revision-1",
+                    "Retry passed after cache clear. The report records 3 retry attempts.",
+                ),
+            )
+        ),
+        generate=generate,
+        authorize=lambda _scope, _refs: True,
+        clock=lambda: NOW,
+        monotonic=lambda: 10.0,
+    ).explain(
+        scope(),
+        ExplanationRequest(
+            "conversation-a", "turn-a", "graph-a", "Explain", query(), None, ("receipt-a",)
+        ),
+        ExplanationBudget(2, 1, 30, 500),
+    )
+
+    assert delivery.hypotheses == ()
+    assert delivery.selected_citation_ids == ()
+    assert delivery.facts == result().metrics
+    assert any("could not be verified" in item for item in delivery.missing_information)
+
+
+@pytest.mark.asyncio
+async def test_report_quantity_can_survive_without_rewriting_authoritative_rate() -> None:
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
+        return ProposedExplanation(
+            "query-a",
+            "insights-metrics-v1",
+            FactWatermark("insights-v1", 7),
+            NOW,
+            result().metrics,
+            ("The 3 retry attempts may be associated with the eventual recovery.",),
+            ("citation-a",),
+            (),
+            10,
+            evidence_quotes=("The report records 3 retry attempts before success.",),
+        )
+
+    delivery = await InsightsExplanationService(
+        insights=StubInsights(result()),
+        knowledge=StubKnowledge(
+            (
+                AuthorizedEvidence(
+                    "citation-a",
+                    "receipt-a",
+                    "revision-1",
+                    "The report records 3 retry attempts before success.",
+                ),
+            )
+        ),
+        generate=generate,
+        authorize=lambda _scope, _refs: True,
+        clock=lambda: NOW,
+        monotonic=lambda: 10.0,
+    ).explain(
+        scope(),
+        ExplanationRequest(
+            "conversation-a", "turn-a", "graph-a", "Explain", query(), None, ("receipt-a",)
+        ),
+        ExplanationBudget(2, 1, 30, 500),
+    )
+
+    assert "3 retry attempts" in delivery.hypotheses[0]
+    assert delivery.facts == result().metrics
+
+
+@pytest.mark.asyncio
+async def test_concrete_missing_material_request_keeps_status_and_date() -> None:
+    async def generate(_request, _metrics, _evidence, _max_cost_micros):
+        return ProposedExplanation(
+            "query-a",
+            "insights-metrics-v1",
+            FactWatermark("insights-v1", 7),
+            NOW,
+            result().metrics,
+            (),
+            (),
+            (
+                "Please provide HTTP 403 logs.",
+                "请提供 2026-09-27 的权限日志。",
+                "The token issue time is unknown.",
+                "令牌签发时间未知。",
+            ),
+            10,
+        )
+
+    delivery = await InsightsExplanationService(
+        insights=StubInsights(result()),
+        knowledge=StubKnowledge(()),
+        generate=generate,
+        authorize=lambda _scope, _refs: True,
+        clock=lambda: NOW,
+        monotonic=lambda: 10.0,
+    ).explain(
+        scope(),
+        ExplanationRequest("conversation-a", "turn-a", "graph-a", "Explain", query(), None, ()),
+        ExplanationBudget(1, 1, 30, 500),
+    )
+
+    assert delivery.missing_information == (
+        "Please provide HTTP 403 logs.",
+        "请提供 2026-09-27 的权限日志。",
+        "The token issue time is unknown.",
+        "令牌签发时间未知。",
+    )
 
 
 @pytest.mark.asyncio
@@ -693,6 +929,7 @@ async def test_model_text_cannot_present_tampered_numbers_or_confirmed_causality
             ("citation-a",),
             (),
             10,
+            evidence_quotes=("Cache clear preceded retry.",),
         )
 
     service = InsightsExplanationService(
@@ -724,11 +961,9 @@ async def test_model_text_cannot_present_tampered_numbers_or_confirmed_causality
         ExplanationBudget(2, 1, 30, 500),
     )
 
-    assert delivery.hypotheses == (
-        "The cited evidence suggests a possible association worth investigating; "
-        "causality is not established. [citation-a]",
-    )
-    assert "99" not in delivery.hypotheses[0]
+    assert delivery.hypotheses == ()
+    assert delivery.selected_citation_ids == ()
+    assert any("could not be verified" in item for item in delivery.missing_information)
 
 
 @pytest.mark.asyncio

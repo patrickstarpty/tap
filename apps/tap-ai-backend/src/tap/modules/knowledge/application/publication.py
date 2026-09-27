@@ -93,10 +93,12 @@ class PublishedKnowledgeAuthority:
             raise AuthorizationDenied("evidence is outside the current publication")
         return binding
 
-    async def authorize_historical_access(self, project_id: str) -> PublicationBinding:
-        """Require current Project publication authority without trusting an old snapshot."""
+    async def authorize_historical_access(
+        self, project_id: str, source_revision_id: str
+    ) -> PublicationBinding:
+        """Require current authority for the cited source without trusting an old snapshot."""
 
-        return await self._current(project_id)
+        return await self._current(project_id, (source_revision_id,))
 
     async def revalidate(self, expected: PublicationBinding) -> PublicationBinding:
         current = await self._current(expected.project_id, expected.source_revision_ids)

@@ -11,12 +11,12 @@ const accessToken = process.env.TAP_REPORT_ACCESS_TOKEN ?? "task12-e2e-access-to
 
 test.use({ storageState: phase === "upload" ? undefined : authState });
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript((token) => {
-    window.__TAP_INSIGHTS_ACCESS_TOKEN__ = token;
-    window.__TAP_PROJECT_ID__ = "project-a";
-  }, accessToken);
-});
+async function openInsights(page: import("@playwright/test").Page) {
+  await page.goto("/?module=test-analytics");
+  await page.getByRole("textbox", { name: "Project ID" }).fill("project-a");
+  await page.getByLabel("Access token").fill(accessToken);
+  await page.getByRole("button", { name: "Open Insights" }).click();
+}
 
 async function expectProjectedReport(page: import("@playwright/test").Page) {
   await expect(page.getByRole("heading", { name: "Test Insights" })).toBeVisible();
@@ -46,7 +46,7 @@ test("real JUnit changes authorized cards and details and survives owned restart
     if (request.method() === "POST" && request.url().endsWith("/insights/queries"))
       queryPosts += 1;
   });
-  await page.goto("/?module=test-analytics");
+  await openInsights(page);
 
   if (phase === "upload") {
     await expect(page.getByText("No runs match this authorized query scope.")).toBeVisible();

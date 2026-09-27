@@ -1,4 +1,5 @@
 import type { RetrievalAnswerResponse } from "../../../features/knowledge/api/types";
+import type { InsightsExplanationResult } from "../../../features/conversations/api/client";
 
 export type Locale = "en" | "zh";
 
@@ -37,6 +38,8 @@ export interface AssistantTurn {
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
   response?: RetrievalAnswerResponse | null;
+  insightsExplanation?: InsightsExplanationResult;
+  insightsQueryId?: string;
   status?:
     "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
   error?: string | null;

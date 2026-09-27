@@ -204,6 +204,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/insights/explanations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Explain */
+        post: operations["insights_explain_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/insights/explanations/{conversation_id}/turns/{turn_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Explanation */
+        get: operations["insights_get_explanation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/knowledge/answers": {
         parameters: {
             query?: never;
@@ -1426,6 +1460,8 @@ export interface components {
             agentRevisionId?: string | null;
             /** Documentrevisionids */
             documentRevisionIds: string[];
+            /** Insightsqueryid */
+            insightsQueryId?: string | null;
             /** Message */
             message: string;
             /** Modelalias */
@@ -1857,6 +1893,121 @@ export interface components {
          * @enum {string}
          */
         IngestionStage: "stored" | "parsing" | "chunking" | "embedding" | "publishing" | "ready";
+        /** InsightsEvidenceExcerpt */
+        InsightsEvidenceExcerpt: {
+            /** Approvaldigest */
+            approvalDigest?: string | null;
+            /** Approveditemid */
+            approvedItemId?: string | null;
+            /** Chunkcontenthash */
+            chunkContentHash?: string | null;
+            /** Chunkid */
+            chunkId?: string | null;
+            /** Citationid */
+            citationId: string;
+            /** Evidenceversion */
+            evidenceVersion?: string | null;
+            /** Page */
+            page?: number | null;
+            /** Publicationid */
+            publicationId?: string | null;
+            /** Revisionid */
+            revisionId?: string | null;
+            /** Sourcecontenthash */
+            sourceContentHash?: string | null;
+            /** Sourceid */
+            sourceId?: string | null;
+            /** Text */
+            text: string;
+        };
+        /** InsightsExplanationAccepted */
+        InsightsExplanationAccepted: {
+            /** Conversationid */
+            conversationId: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
+            /** Turnid */
+            turnId: string;
+        };
+        /** InsightsExplanationFact */
+        InsightsExplanationFact: {
+            /**
+             * Completeness
+             * @enum {string}
+             */
+            completeness: "complete" | "empty" | "unavailable";
+            /** Denominator */
+            denominator: number | null;
+            /** Evidencerefs */
+            evidenceRefs: string[];
+            /** Metricid */
+            metricId: string;
+            /** Missingreasons */
+            missingReasons: string[];
+            /** Numerator */
+            numerator: number | null;
+            /** Value */
+            value: number | null;
+        };
+        /** InsightsExplanationRequest */
+        InsightsExplanationRequest: {
+            /** Conversationid */
+            conversationId?: string | null;
+            /**
+             * Documentrevisionids
+             * @default []
+             */
+            documentRevisionIds?: string[];
+            /** Queryid */
+            queryId: string;
+            /** Question */
+            question: string;
+            /** Resourcerefs */
+            resourceRefs: string[];
+            /**
+             * Sourcerevisionids
+             * @default []
+             */
+            sourceRevisionIds?: string[];
+        };
+        /** InsightsExplanationResult */
+        InsightsExplanationResult: {
+            /** Asof */
+            asOf: string | null;
+            /** Evidenceexcerpts */
+            evidenceExcerpts: components["schemas"]["InsightsEvidenceExcerpt"][];
+            /** Factwatermark */
+            factWatermark?: {
+                [key: string]: unknown;
+            } | null;
+            /** Facts */
+            facts: components["schemas"]["InsightsExplanationFact"][];
+            /** Hypotheses */
+            hypotheses: string[];
+            /**
+             * Knowledgesearchperformed
+             * @default false
+             */
+            knowledgeSearchPerformed?: boolean;
+            /** Metricversion */
+            metricVersion: string | null;
+            /** Missinginformation */
+            missingInformation: string[];
+            /** Queryid */
+            queryId: string | null;
+            /** Reportcoverage */
+            reportCoverage: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Stopreason
+             * @enum {string}
+             */
+            stopReason: "completed" | "budget-exhausted" | "insights-unavailable";
+        };
         /** KnowledgePublicationDetail */
         KnowledgePublicationDetail: {
             /** Approvaldigest */
@@ -4783,6 +4934,103 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    insights_explain_report: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InsightsExplanationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsightsExplanationAccepted"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    insights_get_explanation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                turn_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsightsExplanationResult"] | components["schemas"]["InsightsExplanationAccepted"];
+                };
+            };
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsightsExplanationAccepted"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

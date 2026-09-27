@@ -326,6 +326,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
         "agentLabel": None,
         "skillRevisionIds": [],
         "skillLabels": [],
+        "insightsQueryId": None,
     }
     serialized = json.dumps(detail.json())
     for forbidden in ("acl", "instruction", "credential", "provider", "system"):

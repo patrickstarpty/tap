@@ -95,6 +95,8 @@ function classifyRequest(
   const exactTask9Read =
     (parsed.pathname === sourcePath && parsed.search === "?limit=50") ||
     exactSourceRead ||
+    (parsed.pathname === `${projectPath}/knowledge/published-sources` &&
+      parsed.search === "") ||
     ([`${projectPath}/ai/agents`, `${projectPath}/ai/skills`].includes(
       parsed.pathname,
     ) &&

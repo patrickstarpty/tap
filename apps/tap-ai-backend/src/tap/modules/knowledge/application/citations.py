@@ -136,7 +136,9 @@ class CitationResolver:
         if authority is not None:
             try:
                 if historical:
-                    publication = await authority.authorize_historical_access(self.scope.project_id)
+                    publication = await authority.authorize_historical_access(
+                        self.scope.project_id, lookup.citation.revision_id
+                    )
                 else:
                     publication = await authority.authorize_evidence(
                         self.scope.project_id,

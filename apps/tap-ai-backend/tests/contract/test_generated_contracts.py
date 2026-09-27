@@ -220,6 +220,9 @@ def test_check_detects_extra_owned_artifacts_and_preserves_unowned_files(tmp_pat
     export_contracts(tmp_path)
     unowned = tmp_path / "events/notes.md"
     unowned.write_text("keep me")
+    tap_contract = tmp_path / "openapi/tap-api.json"
+    tap_contract.write_text("{}")
+    assert export_contracts(tmp_path, check=True).returncode == 0
     extra = tmp_path / "events/obsolete.schema.json"
     extra.write_text("{}")
     result = export_contracts(tmp_path, check=True, require_success=False)
@@ -228,6 +231,7 @@ def test_check_detects_extra_owned_artifacts_and_preserves_unowned_files(tmp_pat
     export_contracts(tmp_path)
     assert extra.exists()  # Never silently delete an unexpected artifact.
     assert unowned.read_text() == "keep me"
+    assert tap_contract.read_text() == "{}"
 
 
 def test_exported_problem_component_matches_runtime_and_all_refs_resolve(tmp_path: Path) -> None:

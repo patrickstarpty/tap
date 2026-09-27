@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import {
   displayExecutionLog,
@@ -7,7 +7,7 @@ import {
 import { TestAnalyticsWorkspace } from "./TestAnalyticsWorkspace";
 import type { InsightsDataAdapter } from "../features/insights/api/client";
 
-it("does not fall back to the prototype project when runtime context is missing", () => {
+it("asks for a project and credential when runtime context is missing", () => {
   const data = { listMetrics: vi.fn() } as unknown as InsightsDataAdapter;
   render(
     <TestAnalyticsWorkspace
@@ -16,11 +16,96 @@ it("does not fall back to the prototype project when runtime context is missing"
       projectId={undefined}
     />,
   );
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "Project context is unavailable.",
-  );
+  expect(screen.getByRole("textbox", { name: "Project ID" })).toBeVisible();
+  expect(screen.getByLabelText("Access token")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Open Insights" })).toBeVisible();
   expect(data.listMetrics).not.toHaveBeenCalled();
   expect(screen.queryByText("Life insurance")).not.toBeInTheDocument();
+});
+
+it("validates the entered project through the authorized Insights API", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce({
+    ok: true,
+    json: async () => ({ metrics: [], dimensions: [] }),
+  }).mockResolvedValue({
+    ok: false,
+    status: 503,
+    statusText: "Unavailable",
+    json: async () => ({ detail: "Unavailable" }),
+  });
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    render(<TestAnalyticsWorkspace locale="en" />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Project ID" }), {
+      target: { value: "project-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "authorized-secret-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open Insights" }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    expect(fetcher.mock.calls[0]?.[0]).toBe("/api/v1/projects/project-a/insights/metrics");
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
+      credentials: "same-origin",
+      headers: { Authorization: "Bearer authorized-secret-token" },
+    });
+    expect(await screen.findByText("Project ·")).toBeVisible();
+    expect(window.location.href).not.toContain("authorized-secret-token");
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("keeps invalid credentials on the entry form", async () => {
+  const fetcher = vi.fn().mockResolvedValue({
+    ok: false,
+    status: 401,
+    statusText: "Unauthorized",
+    json: async () => ({ detail: "Unauthorized" }),
+  });
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    render(<TestAnalyticsWorkspace locale="en" />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Project ID" }), {
+      target: { value: "project-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "incorrect-secret-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open Insights" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Check your access token");
+    expect(screen.getByLabelText("Access token")).toHaveValue("");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("rejects whitespace credentials before making an Insights request", () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    render(<TestAnalyticsWorkspace locale="en" />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Project ID" }), {
+      target: { value: "  " },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open Insights" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a project ID and access token.");
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("uses the selected Chinese locale for the credential entry", () => {
+  render(<TestAnalyticsWorkspace locale="zh" />);
+  expect(screen.getByRole("textbox", { name: "项目 ID" })).toBeVisible();
+  expect(screen.getByLabelText("访问令牌")).toBeVisible();
+  expect(screen.getByRole("button", { name: "打开分析" })).toBeVisible();
 });
 
 it("renders the BrowserStack dashboard composition", () => {

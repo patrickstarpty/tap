@@ -212,6 +212,9 @@ class HttpServices:
     graph: GraphStorePort | None = None
     test_plans: TestPlanApplication | None = None
     knowledge_reviews: KnowledgeReviewHttpService | None = None
+    insights_explanation: object | None = None
+    insights_knowledge_search: object | None = None
+    insights_publication_authority: object | None = None
 
 
 class GraphUnavailable(Exception):

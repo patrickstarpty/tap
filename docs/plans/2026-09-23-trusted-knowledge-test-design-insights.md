@@ -455,6 +455,12 @@ uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/contract/t
 
 **出口：** 页面与 AI 对同一 query ID 给出相同数值、分母与截至时间；知识解释有原文依据，相关性不被写成确定因果；AI 无发布、重跑或外部工单写入权限。
 
+**UAT 修复记录（2026-09-27）：** 解读接口接受带幂等键的请求，创建或追加实际 Conversation/Turn，将历史 query ID、报告引用和服务端解析的知识选择冻结到 Turn 输入。现有 GenerationWorker 执行 `insights-explanation-v1`，复用租约、MySQL checkpoint 与原子终态写入；结果快照及完成事件保留实际 Conversation/Turn/GraphRun、只读工具和 query ID 的关联。旧会话未携带新增字段时沿用原快照摘要格式。前端通过会话中的 Turn 读取解读，恢复执行与读取结果时重新验证报告事实和当前知识发布权限。
+
+知识检索使用当前获准发布项及冻结的来源版本，保存原文和发布溯源；未选择知识来源时不会声称完成知识检索。模型的具体假设和补充材料保留为独立条目，假设须附匹配引用的原文摘录；数值事实来自历史查询，不能由模型覆盖。受控模型输出的回归测试和本地数据库恢复测试只证明上述运行链路，不代替真实模型语义质量、真实样本、独立人审或业务签收；Task 13 与 M4 的验收状态仍待复验。
+
+本次开发验证：`make check` 通过；独立临时数据库下 `make test` 为 TAP AI 后端 `3532 passed, 235 skipped`、TAP AI 前端 `447 passed`、TAP 后端 `116 passed, 35 skipped`、Web `88 passed`。另行启用的 MySQL 恢复/原子写入 5 项和浏览器采集 4 项通过；解读刷新前后截图一致。跳过项不计为验收通过，本记录不替代联合业务 UAT。
+
 ### Task 14：联合验收、保留式发布与交付记录
 
 **文件：** 修改隔离 E2E runner、`README.md` 对应实现入口与状态、相关专题；新增执行当日命名的 `docs/reviews/` 记录及索引。只有实际完成时才更新本计划状态，不能用写完计划代替实现完成。

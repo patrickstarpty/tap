@@ -49,6 +49,7 @@ interface TapperChatProps {
   onCancel?: (turnId: string) => void;
   cancelError?: boolean;
   sending?: boolean;
+  sendError?: string;
   onToggleAgent: (agentId: string) => void;
   onToggleSkill: (skillId: string) => void;
   onToggleSource: (sourceId: string) => void;
@@ -118,6 +119,7 @@ export function TapperChat({
   onCancel,
   cancelError = false,
   sending = false,
+  sendError = "",
   onToggleAgent,
   onToggleSkill,
   onToggleSource,
@@ -699,7 +701,11 @@ export function TapperChat({
           </Button>
         ) : null}
       </div>
-      {submitError ? (
+      {sendError ? (
+        <p className="tap-context-notice" role="alert">
+          {sendError}
+        </p>
+      ) : submitError ? (
         <p className="tap-context-notice" role="alert">
           Message was not sent. Your draft is still here. Check the connection
           and try again.

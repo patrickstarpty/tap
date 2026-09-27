@@ -29,7 +29,9 @@ test.beforeEach(async ({ page }) => {
         ],
       };
     } else if (
-      /\/(ai\/(agents|skills)|conversations|knowledge\/sources)$/u.test(path)
+      /\/(ai\/(agents|skills)|conversations|knowledge\/(sources|published-sources))$/u.test(
+        path,
+      )
     ) {
       body = { items: [], nextCursor: null };
     } else {
@@ -110,4 +112,126 @@ test("captures Library graph and document views", async ({ page }) => {
   await page.getByRole("tab", { name: "Documents", exact: true }).click();
   await expect(page.getByRole("tabpanel", { name: "Documents" })).toBeVisible();
   expect(await capture(page, "06-documents")).not.toBe(graph);
+});
+
+test("captures a restored Insights explanation before and after refresh", async ({
+  page,
+}) => {
+  await page.unroute("**/api/v1/**");
+  const summary = {
+    conversationId: "conversation-capture",
+    title: "Investigate test failure",
+    createdAt: "2026-09-25T08:00:00Z",
+    updatedAt: "2026-09-25T08:00:00Z",
+  };
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let body: unknown;
+    if (path === "/api/v1/runtime-mode") {
+      body = {
+        mode: "validation",
+        identityMode: "validation",
+        projectId: "project-capture",
+        actorId: "actor-capture",
+      };
+    } else if (path.endsWith("/ai/models")) {
+      body = {
+        defaultAlias: "tapper-chat",
+        items: [
+          {
+            alias: "tapper-chat",
+            displayName: "Capture model",
+            capabilities: ["chat"],
+          },
+        ],
+      };
+    } else if (
+      path.endsWith(
+        "/insights/explanations/conversation-capture/turns/turn-capture",
+      )
+    ) {
+      body = {
+        queryId: "query-capture",
+        metricVersion: "insights-metrics-v1",
+        asOf: "2026-09-25T08:00:00Z",
+        facts: [
+          {
+            metricId: "first_pass_rate",
+            numerator: 1,
+            denominator: 2,
+            value: 0.5,
+            completeness: "complete",
+            missingReasons: [],
+            evidenceRefs: ["receipt-capture"],
+          },
+        ],
+        reportCoverage: [],
+        hypotheses: [
+          "Request timeout may be associated with retry recovery. [receipt-capture]",
+          "Permission mismatch may be associated with access failure. [source-capture]",
+        ],
+        evidenceExcerpts: [
+          {
+            citationId: "receipt-capture",
+            text: "Request timed out before retry passed.",
+          },
+          {
+            citationId: "source-capture",
+            text: "Permission configuration mismatch denied access.",
+          },
+        ],
+        missingInformation: [
+          "Please provide HTTP 403 logs.",
+          "Permission change history is needed.",
+        ],
+        stopReason: "completed",
+      };
+    } else if (path.endsWith("/conversations")) {
+      body = { items: [summary], nextCursor: null };
+    } else if (path.endsWith("/conversations/conversation-capture")) {
+      body = {
+        ...summary,
+        turns: [
+          {
+            turnId: "turn-capture",
+            state: "completed",
+            attempt: 1,
+            inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
+            answerEvidenceSnapshotDigest: null,
+            input: {
+              message: "Why did this run fail?",
+              modelAlias: "tapper-chat",
+              sourceRevisionIds: [],
+              documentRevisionIds: [],
+              resolvedResources: [],
+              agentRevisionId: null,
+              agentLabel: null,
+              skillRevisionIds: [],
+              skillLabels: [],
+              insightsQueryId: "query-capture",
+            },
+          },
+        ],
+      };
+    } else if (path.endsWith("/conversations/conversation-capture/events")) {
+      body = { items: [], nextCursor: null };
+    } else if (
+      /\/(ai\/(agents|skills)|knowledge\/(sources|publications))$/u.test(path)
+    ) {
+      body = { items: [], nextCursor: null };
+    } else {
+      body = { items: [], nextCursor: null };
+    }
+    await route.fulfill({ json: body });
+  });
+  await page.goto("/?projectId=project-capture");
+  const panel = page.getByRole("region", { name: "Insights explanation" });
+  await expect(panel).toContainText("50% (1/2)");
+  await expect(panel).toContainText("Request timeout may be associated");
+  await expect(panel).toContainText("Permission mismatch may be associated");
+  await expect(panel).toContainText("Please provide HTTP 403 logs.");
+  const first = await capture(page, "07-insights-restored");
+  await page.reload();
+  await expect(panel).toContainText("Permission change history is needed.");
+  expect(await capture(page, "08-insights-after-refresh")).toBe(first);
 });

@@ -97,7 +97,11 @@ class BearerPrincipalAuthorizer:
         service_bearer_token: str | None = None,
         authorization_version: str | None = None,
     ) -> bool:
-        if not secrets.compare_digest(bearer_token, self._token):
+        if (
+            service_bearer_token is not None
+            or authorization_version is not None
+            or not secrets.compare_digest(bearer_token, self._token)
+        ):
             return False
         decision = authorize_project_action(
             self._principal,
@@ -116,7 +120,7 @@ class BearerPrincipalAuthorizer:
 class DualBearerInsightsAuthorizer:
     """Validate an actual user and TAP AI service credential on every request."""
 
-    _READ_ACTIONS = frozenset({"insights.metrics.read"})
+    _READ_ACTIONS = frozenset({"insights.metrics.read", "insights.evidence.read"})
 
     def __init__(
         self,
@@ -293,6 +297,9 @@ def create_insights_router(
         service_authorization: str | None = Header(
             default=None, alias="X-TAP-Service-Authorization"
         ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
     ) -> RunPageContract:
         _authorize(
             insights_authorizer,
@@ -302,6 +309,7 @@ def create_insights_router(
             resource_kind="run",
             resource_id=query_id,
             service_authorization=service_authorization,
+            authorization_version=authorization_version,
         )
         if query_service is None:
             raise HTTPException(status_code=503, detail="insights query unavailable")
@@ -351,6 +359,9 @@ def create_insights_router(
         service_authorization: str | None = Header(
             default=None, alias="X-TAP-Service-Authorization"
         ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
     ) -> AttemptPageContract:
         _authorize(
             insights_authorizer,
@@ -360,6 +371,7 @@ def create_insights_router(
             resource_kind="run",
             resource_id=run_id,
             service_authorization=service_authorization,
+            authorization_version=authorization_version,
         )
         if query_service is None:
             raise HTTPException(status_code=503, detail="insights query unavailable")
@@ -407,6 +419,9 @@ def create_insights_router(
         service_authorization: str | None = Header(
             default=None, alias="X-TAP-Service-Authorization"
         ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
     ) -> FailurePageContract:
         _authorize(
             insights_authorizer,
@@ -416,6 +431,7 @@ def create_insights_router(
             resource_kind="failure",
             resource_id=query_id,
             service_authorization=service_authorization,
+            authorization_version=authorization_version,
         )
         if query_service is None:
             raise HTTPException(status_code=503, detail="insights query unavailable")
@@ -460,6 +476,9 @@ def create_insights_router(
         service_authorization: str | None = Header(
             default=None, alias="X-TAP-Service-Authorization"
         ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
     ) -> dict[str, Any]:
         _authorize(
             insights_authorizer,
@@ -469,6 +488,7 @@ def create_insights_router(
             resource_kind="report",
             resource_id=None,
             service_authorization=service_authorization,
+            authorization_version=authorization_version,
         )
         if report_intake is None:
             raise HTTPException(status_code=503, detail="report intake unavailable")
@@ -500,6 +520,9 @@ def create_insights_router(
         service_authorization: str | None = Header(
             default=None, alias="X-TAP-Service-Authorization"
         ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
     ) -> dict[str, Any]:
         _authorize(
             insights_authorizer,
@@ -509,6 +532,7 @@ def create_insights_router(
             resource_kind="report",
             resource_id=receipt_id,
             service_authorization=service_authorization,
+            authorization_version=authorization_version,
         )
         receipt = await _load_receipt(report_ledger, receipt_id)
         _authorize_receipt_project(project_id, receipt)
@@ -522,6 +546,9 @@ def create_insights_router(
         service_authorization: str | None = Header(
             default=None, alias="X-TAP-Service-Authorization"
         ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
     ) -> dict[str, Any]:
         _authorize(
             insights_authorizer,
@@ -531,6 +558,7 @@ def create_insights_router(
             resource_kind="report",
             resource_id=receipt_id,
             service_authorization=service_authorization,
+            authorization_version=authorization_version,
         )
         receipt = await _load_receipt(report_ledger, receipt_id)
         _authorize_receipt_project(project_id, receipt)
@@ -548,6 +576,9 @@ def create_insights_router(
         service_authorization: str | None = Header(
             default=None, alias="X-TAP-Service-Authorization"
         ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
     ) -> Response:
         _authorize(
             insights_authorizer,
@@ -557,6 +588,7 @@ def create_insights_router(
             resource_kind="evidence",
             resource_id=receipt_id,
             service_authorization=service_authorization,
+            authorization_version=authorization_version,
         )
         if report_objects is None:
             raise HTTPException(status_code=503, detail="evidence store unavailable")

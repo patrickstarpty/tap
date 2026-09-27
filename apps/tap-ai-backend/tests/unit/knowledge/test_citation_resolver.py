@@ -301,6 +301,44 @@ def test_historical_resolution_keeps_exact_evidence_after_source_deletion() -> N
     asyncio.run(scenario())
 
 
+def test_historical_citation_of_withdrawn_source_is_stale_before_artifact_reads() -> None:
+    async def scenario() -> None:
+        lookup, normalized, chunks, _prefix, _content, _suffix = fixtures()
+        repository = MemoryCitationRepository(lookup)
+        artifacts = MemoryArtifacts(normalized, chunks)
+        now = datetime.now(UTC)
+
+        class Publications:
+            async def current_publications(self) -> tuple[KnowledgePublication, ...]:
+                return (
+                    KnowledgePublication(
+                        publication_id="unrelated-publication",
+                        project_id=VALIDATION_SCOPE.project_id,
+                        review_id="unrelated-review",
+                        review_version=2,
+                        approval_digest="sha256:" + "b" * 64,
+                        source_revision_ids=("unrelated-revision",),
+                        approved_item_ids=("unrelated-item",),
+                        generation="unrelated-generation",
+                        published_by="reviewer",
+                        published_at=now - timedelta(minutes=1),
+                        expires_at=now + timedelta(minutes=1),
+                    ),
+                )
+
+        citation_resolver = CitationResolver(
+            repository=repository,
+            artifacts=artifacts,
+            publication_authority=PublishedKnowledgeAuthority(Publications()),
+        )
+
+        with pytest.raises(CitationStale):
+            await citation_resolver.resolve_historical("citation-a")
+        assert artifacts.reads == []
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("mode", ["missing", "orphan", "unselected", "corrupt"])
 def test_snapshot_ownership_or_selection_failure_is_stale_before_blob_io(mode: str) -> None:
     async def scenario() -> None:
