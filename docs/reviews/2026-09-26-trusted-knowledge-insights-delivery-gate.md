@@ -63,3 +63,19 @@
 | M4 联合解释与交付 | 只读跨产品工具、事实/假设/缺失分离、恢复/隔离与安全交接 `PASS` | **PENDING**：依赖 M1/M3 且完整范围还依赖 M2；生产身份、安全、运维、发布签字均未取得。 |
 
 因此本轮不改变 [可信知识、Graph 与测试设计质量重新验收](2026-09-26-trusted-knowledge-graph-test-design-gate.md) 的 `NOT RUN / PENDING` 结论，不关闭 [V2/V3 更正门禁](2026-09-14-v2-v3-gate-correction.md)，不放行 V4，也不把 RFC-011 标为 `implemented`。
+
+## 2026-09-27 后续 UAT 复验
+
+在代码提交 `7f36ae55604ba4c07b28129fe579bdc9337d44fe` 上重跑联合隔离门禁。本次仍使用仓库合成脱敏资料、本地 fake 模型和 JUnit fixture；自造样本不构成真实业务来源、真实模型质量或独立人审证据。忽略目录中的本地收据为 `task14-acceptance-v2`，SHA-256 为 `c41294c17d97fc957c4371f639048ee465755dbdf922b87f5f7f308346ad676e`，其五阶段均记录 `pass`：
+
+| 阶段 | 本次结果 | 耗时 |
+| --- | --- | ---: |
+| Tapper 资料、问答与测试设计旅程 | 29 个持久化断言通过；应用和 Compose 重启通过 | 533 秒 |
+| JUnit → Insights 旅程 | 上传、查询、钻取及两次重启后的浏览器检查通过 | 41 秒 |
+| TAP AI 故障与旧数据保留矩阵 | 65 passed、3 skipped；skip 不计作业务通过 | 1146 秒 |
+| TAP Insights 故障、投影与备份恢复矩阵 | 34 passed | 67 秒 |
+| 原型与只读安全交接 | TAP AI 72 passed、Web 9 passed | 11 秒 |
+
+补充定向回归：TAP AI Insights 后端 69 passed、3 skipped；TAP 双 HTTP 边界 8 passed；TAP AI Insights 页面 3 passed，TAP Insights 页面 21 passed。`make check` 在该提交退出码为 0；`git diff --check` 通过。联合 runner 清理后，两个本次运行的 Compose 项目均无容器或网络残留，分别保留 5 个带项目标签的数据/备份卷。TAP Insights 迁移实际到 `0005_insights_semantics`；上文的 `0004_insights_queries` 为前次收据对应的历史记录。本次未重跑 `make test`，上文的全量失败记录不改写。
+
+**结论不变：隔离结构 UAT PASS；M1–M4 真实业务 Gate 仍为 PENDING。** 新增可信知识的 100 份真实文件/200 问 producer 尚不存在；V2/V3 需要真实模型候选与具名逐例复核；Insights 需要获授权的外部 CI 原报告及来源语义；生产身份、签名硬件规模、备份目标和业务/运维/安全签字均未取得。计划继续保持 `active`。
