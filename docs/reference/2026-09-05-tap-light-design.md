@@ -1,10 +1,10 @@
 # TAP 浅色视觉规范
 
-创建：2026-09-05。适用：TAP 全平台、Tapper 智能工作区及后续平台实现。用户确认参考富卫 FWD，采用 Codex / Manus 式清晰、简约、浅色的操作体验。此处是 TAP 的应用规范，不声称是 FWD 官方设计系统。
+创建：2026-09-05。适用：TAP 全平台、Tapper 智能工作区及后续平台实现。用户确认采用 Codex / Manus 式清晰、简约、浅色的操作体验。此处是 TAP 的应用规范。
 
 ## 品牌与视觉方向
 
-TAP 为平台；Tapper 为智能工作区与 AI Agent 入口，沿用已有 mark/wordmark。FWD 的橙色与暖白作为视觉参考，不替换 TAP 品牌、不使用 FWD Logo。使用[富卫官方品牌材料](https://www.fwd.com/en/playmyway/)作为参考来源。
+TAP 为平台；Tapper 为智能工作区与 AI Agent 入口，沿用已有 mark/wordmark。橙色与暖白用于 TAP 自有视觉语言，沿用现有 TAP 品牌资源。
 
 ## 语义色与字型
 

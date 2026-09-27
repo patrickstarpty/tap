@@ -442,7 +442,7 @@ describe("Tap product prototype interactions", () => {
     await user.click(screen.getByRole("button", { name: "Library" }));
     expect(
       screen.queryByRole("button", {
-        name: /FWD HK full demo|Examples loaded|Load examples/,
+        name: /Sample full demo|Examples loaded|Load examples/,
       }),
     ).not.toBeInTheDocument();
     expect(

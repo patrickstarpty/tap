@@ -15,7 +15,7 @@ export interface PrototypeSnapshot {
   library?: {
     open: boolean;
     examplesLoaded: boolean;
-    fwdLoaded: boolean;
+    sampleLoaded: boolean;
     localSources: readonly Pick<LibrarySource, "id" | "name" | "type">[];
   };
 }
@@ -122,7 +122,7 @@ export function readPrototypeSnapshot(
       ? {
           open: value.library.open === true,
           examplesLoaded: value.library.examplesLoaded === true,
-          fwdLoaded: value.library.fwdLoaded === true,
+          sampleLoaded: value.library.sampleLoaded === true,
           localSources: Array.isArray(value.library.localSources)
             ? value.library.localSources
                 .filter(

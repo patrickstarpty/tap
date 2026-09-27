@@ -59,7 +59,7 @@ related-adrs:
 
 平台名固定为 **TAP**，智能工作区与 AI Agent 入口固定为 **Tapper**。本次在 RFC-010 已完成的命名迁移上继续实施；现行技术路径使用 `tapper`、`TAPPER_*` / `TAP_TAPPER_*`，稳定的 `tap` package、provider-neutral HTTP API 和业务表不因品牌再次改名。AI Agent 是 Tapper 的分析/生成能力，Execution Agent 仍指 Jenkins Pipeline Agent，两者不可混用。
 
-用户已确认 TAP 整体采用富卫 FWD 启发的浅色风格，并以 Codex / Manus 的简约工作界面为体验参考。界面使用暖白画布、白色内容面、深灰文字与克制的橙色强调；科技感由排版、细线图标、图谱与及时状态反馈表达。此前已确认原型中的所有工作区和后续 V0–P1 页面共用[浅色视觉规范](../reference/2026-09-05-tap-fwd-light-design.md)，不得只更改首页或默认主题而留下紫色/深色编辑区。
+用户已确认 TAP 整体采用已确认的浅色风格，并以 Codex / Manus 的简约工作界面为体验参考。界面使用暖白画布、白色内容面、深灰文字与克制的橙色强调；科技感由排版、细线图标、图谱与及时状态反馈表达。此前已确认原型中的所有工作区和后续 V0–P1 页面共用[浅色视觉规范](../reference/2026-09-05-tap-light-design.md)，不得只更改首页或默认主题而留下紫色/深色编辑区。
 
 这次视觉交付以此前已确认的 TAP 产品交互原型为唯一基线，旧独立知识页不作为改造对象；平台实施从 V0 Task 1 开始。视觉完成、Tapper 更名完成与 V0 功能验收是独立事实，不能互相替代；VG、真实依赖和生产门禁保持原约束。
 
@@ -1323,7 +1323,7 @@ Mobile、SSO、Azure DevOps、Git Sync、专用 Graph DB 和 Kubernetes HA 只�
 
 - 产品交互事实源：[RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。冲突范围以本 RFC 为准：`AUT-003` 的 Web Provider 从 Azure DevOps 改为 Jenkins，其 Mobile 部分以及 `AUT-005` 的 Web/Mobile 类型推断、`AUT-007` 全部后移到 P1 之后；`AUT-008` 保留 AI Agent 与 Pipeline Agent 分离，但首个 Pipeline Provider 改为 Jenkins。`ATH-008` 与最近一次消息上键召回语义继续有效。
 - 当前实现与进度入口：[Tapper 开发者指南](../reference/2026-09-13-tapper-developer-guide.md)和[实施计划状态表](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md#执行状态2026-09-13)；RFC-005 仅记录最初本地知识切片。
-- 当前 Backend 装配入口：[`tapper_runtime.py`](../../apps/tap-ai-backend/src/tap/entrypoints/tapper_runtime.py)；Knowledge 模块：[`apps/backend/src/tap/modules/knowledge/`](../../apps/backend/src/tap/modules/knowledge/)。
+- 当前 Backend 装配入口：[`tapper_runtime.py`](../../apps/tap-ai-backend/src/tap/entrypoints/tapper_runtime.py)；Knowledge 模块：`apps/backend/src/tap/modules/knowledge/`。
 - 当前默认 Web 产品壳：[`TapperPage.tsx`](../../apps/tap-ai-frontend/src/pages/TapperPage.tsx) 与 [`TapProductPrototype.tsx`](../../apps/tap-ai-frontend/src/widgets/tap/TapProductPrototype.tsx)；真实 API client/state 分布在 `apps/web/src/features/{runtime,knowledge,conversations,graph,testManagement}/`，旧 [`TapperWorkspace.tsx`](../../apps/tap-ai-frontend/src/widgets/tapper/TapperWorkspace.tsx)只保留兼容用途。
 - Milvus 实验证据：[Milvus 本地检索实验评审](../reviews/2026-08-27-milvus-local-search-experiment.md)。
 - 文档治理：[TAP 文档治理规范](../reference/2026-08-22-document-governance.md)。

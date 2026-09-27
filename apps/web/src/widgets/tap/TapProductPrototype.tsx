@@ -54,7 +54,7 @@ import {
 } from "./prototype/CatalogWorkspace";
 import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
-import { FWD_REPRESENTATIVE_SOURCES } from "./prototype/fwdKnowledge";
+import { SAMPLE_REPRESENTATIVE_SOURCES } from "./prototype/sampleKnowledge";
 import { SAMPLE_FILES } from "./prototype/sampleFiles";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import {
@@ -579,7 +579,7 @@ export function TapProductPrototype() {
       library: {
         open: activeModule === "library",
         examplesLoaded: true,
-        fwdLoaded: true,
+        sampleLoaded: true,
         localSources,
       },
     });
@@ -657,7 +657,7 @@ export function TapProductPrototype() {
     () => [
       ...review.sources,
       ...SAMPLE_FILES,
-      ...FWD_REPRESENTATIVE_SOURCES,
+      ...SAMPLE_REPRESENTATIVE_SOURCES,
       ...localSources.map((source) => ({
         ...source,
         origin: "page-local" as const,
@@ -738,7 +738,8 @@ export function TapProductPrototype() {
       if (isNarrowViewport) setSidebarCollapsed(true);
       return;
     }
-    if (module === "test-management" || module === "test-analytics") setSelectedPlanId(null);
+    if (module === "test-management" || module === "test-analytics")
+      setSelectedPlanId(null);
     if (module === "low-code") setAutomationView({ kind: "library" });
     setActiveModule(module);
     setSidebarCollapsed(true);

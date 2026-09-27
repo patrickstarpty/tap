@@ -5,7 +5,7 @@
 ## 基线与范围
 
 - Planning baseline：`a54ab433eae52500683a5ff6ff9d79466a30e1ca`；父工作区计划、RFC-009、架构、核心契约和 ADR-020–025 无差异后，创建 `codex/tapper-platform-v0` 独立 worktree。
-- [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与[实施计划](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md)补充 TAP / Tapper 品牌层级、当前运行命名空间、FWD 浅色规则和启动交付边界。计划保持 `active`，不把 55 项平台任务整体标为完成。
+- [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与[实施计划](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md)补充 TAP / Tapper 品牌层级、当前运行命名空间、TAP 浅色规则和启动交付边界。计划保持 `active`，不把 55 项平台任务整体标为完成。
 - 视觉唯一基线是此前确认的 `TapProductPrototype`：双层导航、Tapper 对话、Library/Graph、Agent/Skills、Test Management、Low Code Automation。用户明确要求不基于旧独立知识页改造；临时旧页检查入口已删除，旧 `.tapper-*` 专属样式修改已撤回。
 - V0 Task 1 的实现提交：`ad3cf99`。没有更改 API、生成合同、迁移 revision、默认服务配置或生产边界。
 
@@ -13,7 +13,7 @@
 
 ### 现有 TAP 产品原型
 
-共享 CSS tokens 与 Ant Design theme 使用暖白、白色、深灰与克制橙色。主要按钮以深墨文字搭配橙色；欢迎和工作区标题使用无衬线。图谱、代码与日志使用浅色，保留图谱社区色与业务状态语义。组件细节与规则记录在 [DESIGN.md](../../apps/web/DESIGN.md) 和[视觉规范](../reference/2026-09-05-tap-fwd-light-design.md)。
+共享 CSS tokens 与 Ant Design theme 使用暖白、白色、深灰与克制橙色。主要按钮以深墨文字搭配橙色；欢迎和工作区标题使用无衬线。图谱、代码与日志使用浅色，保留图谱社区色与业务状态语义。组件细节与规则记录在 [DESIGN.md](../../apps/tap-ai-frontend/DESIGN.md) 和[视觉规范](../reference/2026-09-05-tap-light-design.md)。
 
 来源面板在 1100px 以下默认收起为抽屉，避免三栏挤压输入区；导航在 640px 以下延续原有抽屉。新测试先证明 1024px 下来源仍常驻导致失败，再验证展开、inert、Escape 与焦点恢复。保留双语、模型、会话、上下文、资产链接和模拟执行行为。
 

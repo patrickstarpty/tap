@@ -611,7 +611,7 @@ export function KnowledgeGraph({
                   const showName =
                     !document ||
                     sources.length <= 5 ||
-                    (node.id.startsWith("source-fwd-") &&
+                    (node.id.startsWith("source-sample-") &&
                       [
                         "new-business",
                         "servicing",
