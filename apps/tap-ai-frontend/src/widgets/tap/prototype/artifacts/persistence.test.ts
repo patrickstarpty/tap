@@ -101,7 +101,7 @@ describe("prototype persistence", () => {
       library: {
         open: true,
         examplesLoaded: true,
-        fwdLoaded: true,
+        sampleLoaded: true,
         localSources: [
           { id: "local-source-4", name: "My notes.md", type: "MD" },
         ],
@@ -115,7 +115,7 @@ describe("prototype persistence", () => {
           library: {
             open: "true",
             examplesLoaded: false,
-            fwdLoaded: true,
+            sampleLoaded: true,
             localSources: [
               null,
               { id: "bad", name: 123 },

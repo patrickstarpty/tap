@@ -1,6 +1,6 @@
 import type { PrototypeCopy } from "./copy";
 import type { LibrarySource } from "./model";
-import { FWD_REPRESENTATIVE_EDGES } from "./fwdKnowledge";
+import { SAMPLE_REPRESENTATIVE_EDGES } from "./sampleKnowledge";
 
 export type GraphCommunity =
   | "sources"
@@ -241,34 +241,34 @@ export function buildKnowledgeGraph(
   );
   const linksFor = (source: LibrarySource): [string, string][] => {
     const representativeLinks: Record<string, [string, string][]> = {
-      "fwd-product-vprime": [
+      "sample-product-savings-01": [
         ["coverage", c.defines],
         ["policy", c.describes],
       ],
-      "fwd-nb-issue": [
+      "sample-nb-issue": [
         ["new-business", c.describes],
         ["policy", c.creates],
       ],
-      "fwd-ps-beneficiary": [
+      "sample-ps-beneficiary": [
         ["policy-servicing", c.describes],
         ["approval", c.requires],
       ],
-      "fwd-cl-medical": [
+      "sample-cl-medical": [
         ["claims", c.describes],
         ["risk-assessment", c.informs],
       ],
-      "fwd-system-policy": [
+      "sample-system-policy": [
         ["codebase", c.describes],
         ["policy", c.supports],
       ],
-      "fwd-code-beneficiary": [
+      "sample-code-beneficiary": [
         ["codebase", c.describes],
         ["beneficiary", c.supports],
       ],
-      "fwd-test-beneficiary-retry": [["test-cases", c.describes]],
-      "fwd-automation-beneficiary": [["execution", c.drives]],
-      "fwd-run-servicing": [["execution", c.records]],
-      "fwd-defect-duplicate": [["defect", c.describes]],
+      "sample-test-beneficiary-retry": [["test-cases", c.describes]],
+      "sample-automation-beneficiary": [["execution", c.drives]],
+      "sample-run-servicing": [["execution", c.records]],
+      "sample-defect-duplicate": [["defect", c.describes]],
     };
     if (representativeLinks[source.id]) return representativeLinks[source.id]!;
     const name = source.name.toLowerCase();
@@ -331,7 +331,9 @@ export function buildKnowledgeGraph(
         id: `source-${source.id}`,
         label: source.name,
         secondary: source.type,
-        community: source.id.startsWith("fwd-") ? cluster.community : "sources",
+        community: source.id.startsWith("sample-")
+          ? cluster.community
+          : "sources",
         kind: "document",
         degree: 0,
         x:
@@ -350,16 +352,16 @@ export function buildKnowledgeGraph(
       );
     });
   const sourceIds = new Set(sources.map((source) => source.id));
-  for (const edge of FWD_REPRESENTATIVE_EDGES) {
+  for (const edge of SAMPLE_REPRESENTATIVE_EDGES) {
     if (
-      !sourceIds.has(`fwd-${edge.source}`) ||
-      !sourceIds.has(`fwd-${edge.target}`)
+      !sourceIds.has(`sample-${edge.source}`) ||
+      !sourceIds.has(`sample-${edge.target}`)
     )
       continue;
     edges.push({
-      id: `fwd-${edge.id}`,
-      source: `source-fwd-${edge.source}`,
-      target: `source-fwd-${edge.target}`,
+      id: `sample-${edge.id}`,
+      source: `source-sample-${edge.source}`,
+      target: `source-sample-${edge.target}`,
       label: edge.relation,
       provenance: "inferred",
     });

@@ -1,17 +1,17 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { FwdKnowledgeGraph } from "./FwdKnowledgeGraph";
-import { FWD_SOURCES } from "./fwdKnowledge";
+import { SampleKnowledgeGraph } from "./SampleKnowledgeGraph";
+import { SAMPLE_SOURCES } from "./sampleKnowledge";
 
-describe("FWD knowledge exploration", () => {
+describe("Sample knowledge exploration", () => {
   it("searches business knowledge and follows its implementation without leaving the graph", async () => {
     const user = userEvent.setup();
     render(
-      <FwdKnowledgeGraph
+      <SampleKnowledgeGraph
         chinese={false}
         query="beneficiary"
-        sources={FWD_SOURCES}
+        sources={SAMPLE_SOURCES}
       />,
     );
     const results = screen.getByRole("region", { name: "Search results" });
@@ -21,7 +21,7 @@ describe("FWD knowledge exploration", () => {
       }),
     );
     const details = screen.getByRole("region", { name: "Node details" });
-    expect(within(details).getByText("Public source")).toBeVisible();
+    expect(within(details).getByText("Demo model")).toBeVisible();
     await user.click(
       within(details).getByRole("button", { name: /beneficiary.ts/ }),
     );
@@ -39,7 +39,11 @@ describe("FWD knowledge exploration", () => {
   it("browses a business group and opens its knowledge without a separate journey", async () => {
     const user = userEvent.setup();
     render(
-      <FwdKnowledgeGraph chinese={false} query="" sources={FWD_SOURCES} />,
+      <SampleKnowledgeGraph
+        chinese={false}
+        query=""
+        sources={SAMPLE_SOURCES}
+      />,
     );
     await user.click(screen.getByRole("button", { name: /^Claims\s*\d+/ }));
     const group = screen.getByRole("region", { name: "Topic groups" });
@@ -53,7 +57,7 @@ describe("FWD knowledge exploration", () => {
       ),
     ).toBeVisible();
     expect(
-      screen.getByRole("group", { name: "FWD HK knowledge graph" }),
+      screen.getByRole("group", { name: "Sample knowledge graph" }),
     ).toBeVisible();
     expect(screen.getByText(/illustrative, not executed/i)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Overview" }));

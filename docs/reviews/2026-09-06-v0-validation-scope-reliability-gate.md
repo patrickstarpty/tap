@@ -4,7 +4,7 @@
 
 ## 验收范围
 
-V0 建立固定 Validation Actor/Project、实时共同授权、Project 数据/HTTP/Origin 隔离、统一事件与 Problem、同事务 Audit/Outbox、有界恢复、独立对象存储和容器解析。此前确认的 FWD 浅色产品原型保持为入口，Library 实际上传和 Project API 持久验证均纳入确定性浏览器旅程。
+V0 建立固定 Validation Actor/Project、实时共同授权、Project 数据/HTTP/Origin 隔离、统一事件与 Problem、同事务 Audit/Outbox、有界恢复、独立对象存储和容器解析。此前确认的 TAP 浅色产品原型保持为入口，Library 实际上传和 Project API 持久验证均纳入确定性浏览器旅程。
 
 本门禁不代表企业登录/RBAC、多项目切换、持久 Conversation、Source ledger、模型质量、Graph、Test Design、Recorder、Jenkins 或生产就绪。固定 Actor 不代表真实个人身份；Milvus 本地 doc 不代表企业 Azure 四索引。只有本门禁通过才进入 V1。
 

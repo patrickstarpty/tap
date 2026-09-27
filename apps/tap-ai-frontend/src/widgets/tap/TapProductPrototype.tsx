@@ -25,7 +25,7 @@ import {
 } from "./prototype/CatalogWorkspace";
 import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
-import { FWD_REPRESENTATIVE_SOURCES } from "./prototype/fwdKnowledge";
+import { SAMPLE_REPRESENTATIVE_SOURCES } from "./prototype/sampleKnowledge";
 import { SAMPLE_FILES } from "./prototype/sampleFiles";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import { AccessibleDialog } from "./prototype/AccessibleDialog";
@@ -1431,7 +1431,7 @@ export function TapProductPrototype({
       library: {
         open: activeModule === "library",
         examplesLoaded: true,
-        fwdLoaded: true,
+        sampleLoaded: true,
         localSources,
       },
     });
@@ -1590,7 +1590,7 @@ export function TapProductPrototype({
         : [
             ...documentSources,
             ...SAMPLE_FILES,
-            ...FWD_REPRESENTATIVE_SOURCES,
+            ...SAMPLE_REPRESENTATIVE_SOURCES,
             ...localSources.map((source) => ({
               ...source,
               origin: "page-local" as const,

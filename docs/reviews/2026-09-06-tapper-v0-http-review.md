@@ -8,7 +8,7 @@
 - HTTP 从可信 ScopeProvider 与共同 AuthorizationPolicy 取得固定验证范围，并核对实际 Document/Answer/Citation repository 的绑定。Project 不匹配、Header/Cookie/query/JSON/multipart 中的身份覆盖均在业务和 Provider I/O 前拒绝。
 - 所有 mutation 校验精确 Origin，允许值仅来自已验证的 loopback 配置；拒绝 missing/null/duplicate/malformed/wrong-port，忽略 Host/forwarded 的权威性。纯 ASGI 中间件保留 cancellation，拒绝响应的 body/header correlation 一致。
 - Web 取得服务端 runtime DTO 后才创建 Project Knowledge client；URL、query/mutation key、optimistic overlay 均包含 Project。延迟完成的旧 Project mutation 不会写入新 Project cache。
-- 沿用 `App → TapperPage → TapProductPrototype` 的 FWD 浅色页面。验证提示永久显示“操作统一记录到固定 Validation Actor，不代表个人身份”；连接中/失败时保留导航，禁用服务器依赖。手机 rail/drawer 与提示区不重叠。旧 TapperWorkspace 仅更新调用兼容签名。
+- 沿用 `App → TapperPage → TapProductPrototype` 的 TAP 浅色页面。验证提示永久显示“操作统一记录到固定 Validation Actor，不代表个人身份”；连接中/失败时保留导航，禁用服务器依赖。手机 rail/drawer 与提示区不重叠。旧 TapperWorkspace 仅更新调用兼容签名。
 
 ## 验证证据
 

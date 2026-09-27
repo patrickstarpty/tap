@@ -14,25 +14,25 @@ import {
   PlusOutlined,
 } from "@ant-design/icons";
 import {
-  FWD_GROUPS,
-  FWD_KNOWLEDGE,
-  FWD_REVIEW_DATE,
-  FWD_SOURCES,
-  getFwdNeighborhood,
-  type FwdGroup,
-  type FwdNode,
-} from "./fwdKnowledge";
+  SAMPLE_GROUPS,
+  SAMPLE_KNOWLEDGE,
+  SAMPLE_REVIEW_DATE,
+  SAMPLE_SOURCES,
+  getSampleNeighborhood,
+  type SampleGroup,
+  type SampleNode,
+} from "./sampleKnowledge";
 import type { LibrarySource } from "./model";
 import { PROTOTYPE_COPY } from "./copy";
-import "./FwdKnowledgeGraph.css";
+import "./SampleKnowledgeGraph.css";
 
 const W = 1520,
   H = 1380;
-const nodeMap = new Map(FWD_KNOWLEDGE.nodes.map((n) => [n.id, n]));
-const groupMap = new Map(FWD_GROUPS.map((g) => [g.id, g]));
+const nodeMap = new Map(SAMPLE_KNOWLEDGE.nodes.map((n) => [n.id, n]));
+const groupMap = new Map(SAMPLE_GROUPS.map((g) => [g.id, g]));
 const positions = new Map<string, { x: number; y: number }>();
-for (const group of FWD_GROUPS) {
-  const members = FWD_KNOWLEDGE.nodes.filter((n) => n.group === group.id);
+for (const group of SAMPLE_GROUPS) {
+  const members = SAMPLE_KNOWLEDGE.nodes.filter((n) => n.group === group.id);
   const hubs = members.filter((n) => n.hub),
     leaves = members.filter((n) => !n.hub);
   hubs.forEach((n, i) =>
@@ -53,7 +53,7 @@ for (const group of FWD_GROUPS) {
     });
   });
 }
-const kindLabels: Record<FwdNode["kind"], [string, string]> = {
+const kindLabels: Record<SampleNode["kind"], [string, string]> = {
   product: ["Product / series", "产品／系列"],
   topic: ["Topic", "主题"],
   process: ["Business process", "业务流程"],
@@ -68,7 +68,7 @@ const kindLabels: Record<FwdNode["kind"], [string, string]> = {
 const short = (s: string, max = 31) =>
   s.length > max ? s.slice(0, max - 1) + "…" : s;
 
-export function FwdKnowledgeGraph({
+export function SampleKnowledgeGraph({
   chinese,
   query,
   sources,
@@ -86,7 +86,7 @@ export function FwdKnowledgeGraph({
     if (detailsRef.current) detailsRef.current.scrollTop = 0;
   }, [selected]);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [group, setGroup] = useState<FwdGroup | null>(null);
+  const [group, setGroup] = useState<SampleGroup | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [hops, setHops] = useState(1);
   const [zoom, setZoom] = useState(1);
@@ -103,15 +103,15 @@ export function FwdKnowledgeGraph({
   useEffect(() => {
     if (window.matchMedia("(max-width: 640px)").matches) {
       const canvas =
-        workspace.current?.querySelector<HTMLElement>(".tap-fwd-canvas");
+        workspace.current?.querySelector<HTMLElement>(".tap-sample-canvas");
       if (canvas)
         canvas.scrollLeft = (canvas.scrollWidth - canvas.clientWidth) / 2;
     }
   }, [focus, group]);
   const q = query.trim().toLowerCase();
   const permitted = new Set(sources.map((s) => s.id));
-  const baseNodes = FWD_KNOWLEDGE.nodes.filter(
-    (n) => !n.path || permitted.has(`fwd-${n.id}`),
+  const baseNodes = SAMPLE_KNOWLEDGE.nodes.filter(
+    (n) => !n.path || permitted.has(`sample-${n.id}`),
   );
   const searchResults = baseNodes
     .filter((n) => !group || n.group === group)
@@ -121,27 +121,29 @@ export function FwdKnowledgeGraph({
       ),
     );
   const focusIds = useMemo(
-    () => (focus ? getFwdNeighborhood(FWD_KNOWLEDGE, focus, hops) : null),
+    () => (focus ? getSampleNeighborhood(SAMPLE_KNOWLEDGE, focus, hops) : null),
     [focus, hops],
   );
   const visible = baseNodes.filter(
     (n) => (!group || n.group === group) && (!focusIds || focusIds.has(n.id)),
   );
   const visibleIds = new Set(visible.map((n) => n.id));
-  const links = FWD_KNOWLEDGE.edges.filter(
+  const links = SAMPLE_KNOWLEDGE.edges.filter(
     (e) => visibleIds.has(e.source) && visibleIds.has(e.target),
   );
   const selectedNode = selected ? nodeMap.get(selected) : undefined;
   const active = hovered ?? selected;
-  const near = active ? getFwdNeighborhood(FWD_KNOWLEDGE, active, 1) : null;
-  const related = FWD_KNOWLEDGE.edges.filter(
+  const near = active
+    ? getSampleNeighborhood(SAMPLE_KNOWLEDGE, active, 1)
+    : null;
+  const related = SAMPLE_KNOWLEDGE.edges.filter(
     (e) => e.source === selected || e.target === selected,
   );
   const pointMap = useMemo(() => {
     if (!focus) return positions;
     const result = new Map<string, { x: number; y: number }>();
     result.set(focus, { x: W / 2, y: H / 2 });
-    const others = FWD_KNOWLEDGE.nodes.filter(
+    const others = SAMPLE_KNOWLEDGE.nodes.filter(
       (n) => focusIds?.has(n.id) && n.id !== focus,
     );
     others.forEach((n, i) => {
@@ -222,16 +224,16 @@ export function FwdKnowledgeGraph({
     }
   };
   const download = selectedNode
-    ? FWD_SOURCES.find((s) => s.id === `fwd-${selectedNode.id}`)
+    ? SAMPLE_SOURCES.find((s) => s.id === `sample-${selectedNode.id}`)
     : undefined;
-  const publicCount = FWD_KNOWLEDGE.nodes.filter(
-    (n) => n.provenance === "public",
-  ).length;
   return (
-    <div ref={workspace} className="tap-fwd-knowledge">
-      <div className="tap-fwd-workspace" data-details={Boolean(selectedNode)}>
-        <aside className="tap-fwd-nav">
-          <button type="button" className="tap-fwd-overview" onClick={reset}>
+    <div ref={workspace} className="tap-sample-knowledge">
+      <div
+        className="tap-sample-workspace"
+        data-details={Boolean(selectedNode)}
+      >
+        <aside className="tap-sample-nav">
+          <button type="button" className="tap-sample-overview" onClick={reset}>
             <AimOutlined aria-hidden="true" /> {t("Overview", "总览")}
           </button>
           {q || group ? (
@@ -267,8 +269,8 @@ export function FwdKnowledgeGraph({
           ) : (
             <>
               <h3>{libraryCopy.communities}</h3>
-              <div className="tap-fwd-layers">
-                {FWD_GROUPS.map((g) => (
+              <div className="tap-sample-layers">
+                {SAMPLE_GROUPS.map((g) => (
                   <button
                     key={g.id}
                     type="button"
@@ -286,30 +288,26 @@ export function FwdKnowledgeGraph({
                   </button>
                 ))}
               </div>
-              <div className="tap-fwd-source-key">
+              <div className="tap-sample-source-key">
                 <h3>{libraryCopy.provenance}</h3>
                 <p>
-                  <i /> {t("Public references", "公开资料")}{" "}
-                  <strong>{publicCount}</strong>
-                </p>
-                <p>
                   <i data-demo /> {t("Demo models", "演示建模")}{" "}
-                  <strong>{FWD_KNOWLEDGE.nodes.length - publicCount}</strong>
+                  <strong>{SAMPLE_KNOWLEDGE.nodes.length}</strong>
                 </p>
                 <small>
-                  {t("Reviewed", "核对日期")} {FWD_REVIEW_DATE}
+                  {t("Prepared", "编制日期")} {SAMPLE_REVIEW_DATE}
                   <br />
                   {t(
-                    "Directory entries include series and online versions; not a count of unique contracts.",
-                    "目录含产品系列及网上版本，不等同于独立保单产品数。",
+                    "All product entries are synthetic examples.",
+                    "所有产品条目均为合成示例。",
                   )}
                 </small>
               </div>
             </>
           )}
         </aside>
-        <figure className="tap-fwd-figure">
-          <div className="tap-fwd-tools">
+        <figure className="tap-sample-figure">
+          <div className="tap-sample-tools">
             <span>
               {visible.length} {t("visible", "个可见节点")}
             </span>
@@ -372,7 +370,7 @@ export function FwdKnowledgeGraph({
             </p>
           )}
           {focus && (
-            <div className="tap-fwd-focus-bar">
+            <div className="tap-sample-focus-bar">
               <span>
                 {t("Connections around", "聚焦节点")}{" "}
                 <strong>{short(nodeMap.get(focus)!.label)}</strong>
@@ -390,10 +388,10 @@ export function FwdKnowledgeGraph({
               </label>
             </div>
           )}
-          <div className="tap-fwd-canvas">
+          <div className="tap-sample-canvas">
             <svg
               role="group"
-              aria-label="FWD HK knowledge graph"
+              aria-label="Sample knowledge graph"
               viewBox={`${box.x} ${box.y} ${box.width} ${box.height}`}
               onPointerDown={startPan}
               onPointerMove={movePan}
@@ -404,14 +402,14 @@ export function FwdKnowledgeGraph({
                 transform={`translate(${box.x + box.width / 2} ${box.y + box.height / 2}) scale(${zoom}) translate(${-box.x - box.width / 2 + pan.x} ${-box.y - box.height / 2 + pan.y})`}
               >
                 {!focus &&
-                  FWD_GROUPS.filter(
+                  SAMPLE_GROUPS.filter(
                     (g) =>
                       (!group || g.id === group) &&
                       visible.some((n) => n.group === g.id),
                   ).map((g) => (
                     <g
                       key={g.id}
-                      className="tap-fwd-cluster"
+                      className="tap-sample-cluster"
                       style={{ "--cluster-color": g.color } as CSSProperties}
                     >
                       <ellipse cx={g.x} cy={g.y} rx={235} ry={170} />
@@ -428,7 +426,7 @@ export function FwdKnowledgeGraph({
                     return (
                       <g key={e.id}>
                         <path
-                          className="tap-fwd-edge"
+                          className="tap-sample-edge"
                           data-active={linked}
                           data-muted={Boolean(active) && !linked}
                           data-public={e.provenance === "public"}
@@ -439,7 +437,7 @@ export function FwdKnowledgeGraph({
                         />
                         {focus && linked && visible.length < 20 && (
                           <text
-                            className="tap-fwd-relation-label"
+                            className="tap-sample-relation-label"
                             x={(a.x + b.x) / 2}
                             y={(a.y + b.y) / 2 - 22}
                             textAnchor="middle"
@@ -472,7 +470,7 @@ export function FwdKnowledgeGraph({
                   return (
                     <g
                       key={n.id}
-                      className="tap-fwd-node"
+                      className="tap-sample-node"
                       role="button"
                       tabIndex={0}
                       aria-label={n.label}
@@ -494,20 +492,20 @@ export function FwdKnowledgeGraph({
                       style={{ "--node-color": color } as CSSProperties}
                     >
                       <circle
-                        className="tap-fwd-hit"
+                        className="tap-sample-hit"
                         cx={p.x}
                         cy={p.y}
                         r={radius + 10}
                       />
                       <circle
-                        className="tap-fwd-halo"
+                        className="tap-sample-halo"
                         cx={p.x}
                         cy={p.y}
                         r={radius + 7}
                       />
                       {n.kind === "code" || n.kind === "automation" ? (
                         <rect
-                          className="tap-fwd-core"
+                          className="tap-sample-core"
                           x={p.x - radius}
                           y={p.y - radius}
                           width={radius * 2}
@@ -516,7 +514,7 @@ export function FwdKnowledgeGraph({
                         />
                       ) : (
                         <circle
-                          className="tap-fwd-core"
+                          className="tap-sample-core"
                           cx={p.x}
                           cy={p.y}
                           r={radius}
@@ -527,7 +525,7 @@ export function FwdKnowledgeGraph({
                           x={p.x}
                           y={p.y + radius + 23}
                           textAnchor="middle"
-                          className="tap-fwd-node-label"
+                          className="tap-sample-node-label"
                         >
                           {short(n.label, activeNode ? 48 : 29)}
                         </text>
@@ -548,7 +546,7 @@ export function FwdKnowledgeGraph({
         {selectedNode && (
           <aside
             ref={detailsRef}
-            className="tap-fwd-details"
+            className="tap-sample-details"
             role="region"
             aria-label={libraryCopy.nodeDetails}
           >
@@ -565,33 +563,33 @@ export function FwdKnowledgeGraph({
                 <CloseOutlined aria-hidden="true" />
               </button>
             </header>
-            <span className="tap-fwd-kind">
+            <span className="tap-sample-kind">
               {kindLabels[selectedNode.kind][chinese ? 1 : 0]}
             </span>
             <h2>{selectedNode.label}</h2>
             <span
-              className="tap-fwd-badge"
+              className="tap-sample-badge"
               data-public={selectedNode.provenance === "public"}
             >
               {selectedNode.provenance === "public"
-                ? t("Public source", "公开资料")
+                ? t("Public source", "合成示例")
                 : t("Demo model", "演示建模")}
             </span>
-            <p className="tap-fwd-detail-summary">
+            <p className="tap-sample-detail-summary">
               {selectedNode.kind === "code" ||
               selectedNode.kind === "automation"
                 ? t(
-                    "Illustrative source file linked to business requirements and tests. This is not FWD's internal codebase.",
-                    "与业务和测试关联的示例文件，并非 FWD 内部代码库。",
+                    "Illustrative source file linked to business requirements and tests. It is not production code.",
+                    "与业务和测试关联的示例文件，并非生产代码。",
                   )
                 : selectedNode.content
                     .replace(/^# [^\n]+\n+/, "")
                     .split("\n\n")[0]}
             </p>
             {selectedNode.path && (
-              <code className="tap-fwd-path">{selectedNode.path}</code>
+              <code className="tap-sample-path">{selectedNode.path}</code>
             )}
-            <div className="tap-fwd-detail-actions">
+            <div className="tap-sample-detail-actions">
               <button
                 type="button"
                 onClick={() => {
@@ -619,14 +617,14 @@ export function FwdKnowledgeGraph({
                 </a>
               )}
             </div>
-            <details className="tap-fwd-content">
+            <details className="tap-sample-content">
               <summary>{t("Knowledge content", "知识内容")}</summary>
               <pre>{selectedNode.content}</pre>
             </details>
             <h3>
               {t("Relationships", "关联关系")} <small>{related.length}</small>
             </h3>
-            <ul className="tap-fwd-relations">
+            <ul className="tap-sample-relations">
               {related.map((e) => {
                 const outgoing = e.source === selected;
                 const other = nodeMap.get(outgoing ? e.target : e.source)!;
@@ -650,19 +648,10 @@ export function FwdKnowledgeGraph({
           </aside>
         )}
       </div>
-      <p className="tap-fwd-footnote">
-        <a
-          className="tap-fwd-pack"
-          href="/prototype-files/fwd-hk-knowledge-demo.zip"
-          download="fwd-hk-knowledge-demo.zip"
-        >
-          {t("Download knowledge pack", "下载知识包")}
-        </a>
-        {" · "}
-
+      <p className="tap-sample-footnote">
         {t(
-          "Scope: FWD HK public product directory and online references, checked 6 Sep 2026. Series may contain multiple versions. Availability is directory-listed, not independently confirmed for every channel. System architecture, code, rules, tests and traces are curated demo models.",
-          "范围：2026-09-06 核对的 FWD HK 官网目录及网上产品资料，系列可能包含多个版本；目录列示不代表已逐一确认各渠道在售状态。系统架构、代码、规则、测试和执行链路均为人工编排的演示模型。",
+          "Scope: synthetic product, process and system records for graph exploration. Rules, tests and traces are curated demo models.",
+          "范围：用于图谱探索的合成产品、流程和系统资料；规则、测试和执行链路均为演示模型。",
         )}
       </p>
     </div>

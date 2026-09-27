@@ -49,11 +49,11 @@ date: 2026-09-04
 
 用户已要求在启动交付后继续实施；从 V0 Task 2A 起按本计划顺序执行，每项以实际测试和 Review 更新进度。
 
-本次实际证据：[原型浅色改造与 V0 启动验收](../reviews/2026-09-05-tap-fwd-and-v0-start-review.md)。
+本次实际证据：[原型浅色改造与 V0 启动验收](../reviews/2026-09-05-tap-light-and-v0-start-review.md)。
 
-### UI：全平台 FWD 浅色视觉统一
+### UI：全平台 TAP 浅色视觉统一
 
-**Spec:** [浅色视觉规范](../reference/2026-09-05-tap-fwd-light-design.md)。
+**Spec:** [浅色视觉规范](../reference/2026-09-05-tap-light-design.md)。
 
 **Files:** `apps/web/src/app/theme.ts`、`apps/web/src/app/styles.css`、`apps/web/src/widgets/tap/TapProductPrototype.css`、`apps/web/src/widgets/tap/TapProductPrototype.tsx`、`apps/web/src/widgets/tap/TapProductPrototype.interactions.test.tsx`、`apps/web/PRODUCT.md`、`apps/web/DESIGN.md`、`docs/assets/prototype-demo/` 与客户演示指南。
 
@@ -84,7 +84,7 @@ date: 2026-09-04
 - 所有 Problem Details `type` 使用契约中登记的绝对 HTTPS URI，并固定 HTTP status、`correlationId`、工作流失败的封闭 `failureStage` 与 `retryable`；日志与公开错误不得包含凭据、Provider 请求正文或敏感内容。
 - Backend domain 不依赖 FastAPI、Pydantic HTTP DTO、SQLAlchemy、Redis、MinIO、Milvus、LiteLLM、Playwright、Jenkins 或 subprocess。跨 bounded context 只调用公开 application API/Port。
 - Web 保持 `app/pages → widgets → features → shared`，Feature 不导入 Prototype 状态。所有公开 DTO 从 Backend 生成到 `contracts/openapi/api.json` 和 `apps/web/src/shared/api/generated/schema.ts`，不得手写镜像类型。
-- 所有后续 UI 接入均以 `App → TapperPage → TapProductPrototype` 及其已确认的 FWD 浅色子组件为产品基线。旧 `TapperWorkspace` 仅保留必要调用兼容，不作为页面替换、视觉参照或验收入口。
+- 所有后续 UI 接入均以 `App → TapperPage → TapProductPrototype` 及其已确认的 TAP 浅色子组件为产品基线。旧 `TapperWorkspace` 仅保留必要调用兼容，不作为页面替换、视觉参照或验收入口。
 - 所有 Project 业务表从创建时就有非空 `project_id` 与 Actor/Origin 字段；所有 Repository 查询强制 Project filter。客户端不能传入 actor、role、enterprise 或权威 scope。
 - V0–VG 只允许固定 Validation Enterprise/Project/Actor、验证数据、验证 Secret 和非生产目标；只能绑定 loopback 或受控企业内网。Validation build/configuration 不得晋级 Staging/Production。
 - AI、Graph、Recorder 与 Copilot 只产生 Draft/Proposal。Published Revision 必须经过确定性验证与人工发布；Published/Superseded 不可编辑。

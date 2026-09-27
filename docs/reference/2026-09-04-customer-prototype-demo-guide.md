@@ -12,7 +12,7 @@
 
 ## 2026-09-06 交互更新与截图说明
 
-2026-09-06 原型沿用[浅色视觉规范](2026-09-05-tap-fwd-light-design.md)，新增 Listening/Aha 啄木鸟形象、常驻折叠图标栏、跨页面悬浮助手，以及默认打开的 Knowledge Graph 搜索工作区。品牌方案见 [Tapper LOGO 与助手形象设计提案](../proposals/2026-09-06-tapper-icon-design-proposal.md)。
+2026-09-06 原型沿用[浅色视觉规范](2026-09-05-tap-light-design.md)，新增 Listening/Aha 啄木鸟形象、常驻折叠图标栏、跨页面悬浮助手，以及默认打开的 Knowledge Graph 搜索工作区。品牌方案见 [Tapper LOGO 与助手形象设计提案](../proposals/2026-09-06-tapper-icon-design-proposal.md)。
 
 本文 **44 张截图均于 2026-09-06 从当时的原型以 2× 像素密度采集**，包含 Listening 品牌、`Agents` 导航、`Documents` 标签、折叠图标栏，以及图谱搜索、悬浮助手上下文、Aha 未读状态和会话交接。截图统一为 **2560×1440 无损 PNG**，页面布局视口保持 1280×720，可点击图片查看原尺寸细节。截图使用隔离浏览器和确定性示例数据，不连接真实执行服务；Mobile 与 ADO 屏幕只代表遗留交互探索。
 

@@ -1,7 +1,7 @@
-import products from "./fwdProducts.json";
+import products from "./sampleProducts.json";
 import type { LibrarySource } from "./model";
 
-export type FwdGroup =
+export type SampleGroup =
   | "products"
   | "new-business"
   | "servicing"
@@ -11,7 +11,7 @@ export type FwdGroup =
   | "tests"
   | "automation"
   | "evidence";
-export type FwdKind =
+export type SampleKind =
   | "product"
   | "topic"
   | "process"
@@ -22,11 +22,11 @@ export type FwdKind =
   | "automation"
   | "execution"
   | "defect";
-export interface FwdNode {
+export interface SampleNode {
   id: string;
   label: string;
-  group: FwdGroup;
-  kind: FwdKind;
+  group: SampleGroup;
+  kind: SampleKind;
   provenance: "public" | "demo";
   content: string;
   sourceUrl?: string;
@@ -34,20 +34,20 @@ export interface FwdNode {
   category?: string;
   hub?: boolean;
 }
-export interface FwdEdge {
+export interface SampleEdge {
   id: string;
   source: string;
   target: string;
   relation: string;
   provenance: "public" | "demo";
 }
-export interface FwdData {
-  nodes: FwdNode[];
-  edges: FwdEdge[];
+export interface SampleData {
+  nodes: SampleNode[];
+  edges: SampleEdge[];
 }
-export const FWD_REVIEW_DATE = "2026-09-06";
-export const FWD_GROUPS: {
-  id: FwdGroup;
+export const SAMPLE_REVIEW_DATE = "2026-09-06";
+export const SAMPLE_GROUPS: {
+  id: SampleGroup;
   en: string;
   zh: string;
   color: string;
@@ -113,21 +113,18 @@ export const FWD_GROUPS: {
     y: 1140,
   },
 ];
-const publicSupport = "https://www.fwd.com.hk/online-insurance/support/en/";
-const support = "https://www.fwd.com.hk/en/support/";
-const claims = "https://www.fwd.com.hk/en/claims/";
 const demoNotice =
-  "TAP demonstration model. Not FWD internal documentation, source code or production behavior. No real customer data. ";
-const nodes: FwdNode[] = [];
-const edges: FwdEdge[] = [];
-function add(node: FwdNode) {
+  "TAP demonstration model using synthetic product and process records. No real customer data. ";
+const nodes: SampleNode[] = [];
+const edges: SampleEdge[] = [];
+function add(node: SampleNode) {
   nodes.push(node);
 }
 function link(
   source: string,
   target: string,
   relation: string,
-  provenance: FwdEdge["provenance"] = "demo",
+  provenance: SampleEdge["provenance"] = "demo",
 ) {
   edges.push({
     id: `${source}:${relation}:${target}`,
@@ -153,45 +150,28 @@ for (const [id, label] of Object.entries(families)) {
     group: "products",
     kind: "topic",
     hub: true,
-    provenance: "public",
-    sourceUrl: "https://www.fwd.com.hk/en/products/",
-    content: `Public catalogue grouping: ${label}. Product and series names were checked against the FWD HK public directory on ${FWD_REVIEW_DATE}. Grouping is curated for browsing; it is not a sales eligibility decision.`,
+    provenance: "demo",
+    sourceUrl: undefined,
+    content: `Synthetic catalogue grouping: ${label}. Products and series are synthetic demonstration records. Grouping is curated for browsing; it is not a sales eligibility decision.`,
   });
 }
 const online = [
+  ["life-online-01", "Sample Online Life Plan", "life-protection"],
   [
-    "myterm-plus",
-    "MyTerm Plus Term Life Insurance Plan",
-    "life-protection",
-    "term-life",
-  ],
-  [
-    "mycover",
-    "MyCover Critical Illness Plan",
+    "critical-online-01",
+    "Sample Online Critical Illness Plan",
     "critical-illness",
-    "term-critical-illness",
   ],
-  ["mymillion", "MyMillion Medical Plan", "medical-cover", "mymillion-medical"],
-  [
-    "healthy-plus",
-    "Healthy Plus Refundable Hospital Income Plan",
-    "medical-cover",
-    "healthy-plus",
-  ],
-  [
-    "mysafe",
-    "MySafe Accident Protection Plan",
-    "accident",
-    "mysafe-accident-protection-plan",
-  ],
-].map(([id, name, category, path]) => ({
-  id: id!,
-  name: name!,
-  category: category!,
-  url: `https://www.fwd.com.hk/online-insurance/${path}/en/`,
-  listedOn: "https://www.fwd.com.hk/online-insurance/en/",
-  availability:
-    "Online product referenced by the official online catalogue; this may be a version within a series, not an additional distinct insurance contract.",
+  ["medical-online-01", "Sample Online Medical Plan", "medical-cover"],
+  ["hospital-online-01", "Sample Online Hospital Plan", "medical-cover"],
+  ["accident-online-01", "Sample Online Accident Plan", "accident"],
+].map(([id, name, category]) => ({
+  id,
+  name,
+  category,
+  url: "",
+  listedOn: "",
+  availability: "Synthetic online product record for graph demonstration.",
 }));
 for (const p of [...products, ...online]) {
   add({
@@ -200,43 +180,45 @@ for (const p of [...products, ...online]) {
     group: "products",
     kind: "product",
     category: p.category,
-    provenance: "public",
-    sourceUrl: p.url,
+    provenance: "demo",
+    sourceUrl: undefined,
     path: `products/${p.id}.md`,
-    content: `# ${p.name}\n\nPublic product / series reference · reviewed ${FWD_REVIEW_DATE}\n\nCategory: ${families[p.category]}\nSource: ${p.url}\nDirectory: ${p.listedOn}\n\n${p.availability}\n\nThis record indexes the product and its public page. It does not reproduce policy wording or confirm suitability, eligibility, exclusions, rates or benefits. Lifecycle and software links in this demo are illustrative mappings, not verified product-specific processing rules.`,
+    content: `# ${p.name}\n\nSynthetic product / series record\n\nCategory: ${families[p.category]}\n${p.availability}\n\nThis record models a sample product. It does not reproduce policy wording or confirm suitability, eligibility, exclusions, rates or benefits. Lifecycle and software links in this demo are illustrative mappings, not verified product-specific processing rules.`,
   });
-  link(`family-${p.category}`, `product-${p.id}`, "includes", "public");
+  link(`family-${p.category}`, `product-${p.id}`, "includes", "demo");
 }
-link("product-myterm", "product-myterm-plus", "online version", "public");
+link(
+  "product-life-protection-01",
+  "product-life-online-01",
+  "online version",
+  "demo",
+);
 const domains = [
   [
     "new-business",
     "New business",
-    publicSupport,
-    "Public online support describes application confirmation, identity documents, payment and access to issued policies. The detailed stages below are a demonstration decomposition, except where a public reference is explicitly attached.",
+    "The sample journey includes application confirmation, identity documents, payment and access to issued policies. The detailed stages below are a demonstration decomposition, with synthetic examples.",
   ],
   [
     "servicing",
     "Policy servicing",
-    support,
-    "FWD public customer support offers policy information, beneficiary and contact changes, payment options and investment instructions. Detailed validation, approval and system design in this graph is illustrative.",
+    "The sample servicing model includes policy information, beneficiary and contact changes, payment options and investment instructions. Detailed validation, approval and system design in this graph is illustrative.",
   ],
   [
     "claims",
     "Claims",
-    claims,
-    "The public claims guide branches by policy and claim type and asks the customer to prepare the relevant documents. This graph models intake, review and settlement for demonstration; no claims decision or service promise is implied.",
+    "The sample claims journey branches by policy and claim type and asks the customer to prepare the relevant documents. This graph models intake, review and settlement for demonstration; no claims decision or service promise is implied.",
   ],
 ] as const;
-for (const [id, label, url, content] of domains)
+for (const [id, label, content] of domains)
   add({
     id: `domain-${id}`,
     label,
     group: id,
     kind: "topic",
     hub: true,
-    provenance: "public",
-    sourceUrl: url,
+    provenance: "demo",
+    sourceUrl: undefined,
     content,
   });
 for (const p of [...products, ...online]) {
@@ -244,8 +226,8 @@ for (const p of [...products, ...online]) {
   link(`product-${p.id}`, "domain-servicing", "policy lifecycle");
   link(`product-${p.id}`, "domain-claims", "claim context");
 }
-// Public facts are deliberately small; detailed operating rules remain explicit demo assumptions.
-const processes: [string, string, FwdGroup, string, string?][] = [
+// All workflow details below are synthetic demo assumptions.
+const processes: [string, string, SampleGroup, string][] = [
   [
     "nb-needs",
     "Needs & product selection",
@@ -256,77 +238,67 @@ const processes: [string, string, FwdGroup, string, string?][] = [
     "nb-identity",
     "Identity & consent",
     "new-business",
-    "The online application FAQ asks for an HKID card and a credit card. The demo verifies the presence of identity evidence and consent; it does not perform real identity verification.",
-    publicSupport,
+    "The sample application asks for identity evidence, consent and a payment method. The demo checks their presence; it does not perform real identity verification.",
   ],
   [
     "nb-disclosure",
     "Health declaration",
     "new-business",
-    "The online FAQ directs applicants with uncertain health conditions to an adviser. The demo preserves the original answer and routes uncertainty for review, with no medical underwriting decision.",
-    publicSupport,
+    "The sample application routes uncertain health declarations for review. The demo preserves the original answer and makes no medical underwriting decision.",
   ],
   [
     "nb-underwriting",
     "Underwriting review",
     "new-business",
-    "Demo workflow: a reviewer inspects declared information, requests missing evidence and records a reasoned decision. No FWD underwriting manual or actual decision rules were supplied.",
+    "Demo workflow: a reviewer inspects declared information, requests missing evidence and records a reasoned decision. No real underwriting manual or decision rules are represented.",
   ],
   [
     "nb-payment",
     "Initial premium payment",
     "new-business",
-    "The online FAQ mentions credit-card payment during application. Duplicate payment callbacks and delayed authorisation are demo engineering scenarios.",
-    publicSupport,
+    "The sample application models an initial card payment. Duplicate callbacks and delayed authorisation are demo engineering scenarios.",
   ],
   [
     "nb-issue",
     "Policy issuance",
     "new-business",
-    "The public FAQ says submitted applications receive confirmation with a reference number and issued policy documents can be viewed in eServices. Confirmation is not modeled as automatic acceptance.",
-    publicSupport,
+    "The sample workflow creates a reference number after submission and makes issued policy documents available in the demo portal. Confirmation is not automatic acceptance.",
   ],
   [
     "nb-delivery",
     "Policy delivery & acknowledgement",
     "new-business",
-    "The public support page lists acknowledgement of policy receipt. Demo records document version, receipt timestamp and customer acknowledgement separately.",
-    publicSupport,
+    "The sample workflow includes acknowledgement of policy receipt. Demo records document version, receipt timestamp and customer acknowledgement separately.",
   ],
   [
     "ps-beneficiary",
     "Change beneficiary",
     "servicing",
-    "FWD public support lists beneficiary change as an eServices function. Allocation totals, stale-version handling, approval and idempotency in this graph are demonstration assumptions, not published FWD rules.",
-    publicSupport,
+    "The sample servicing model includes beneficiary changes through a demo portal. Allocation totals, stale-version handling, approval and idempotency are demonstration assumptions, not production rules.",
   ],
   [
     "ps-contact",
     "Update contact information",
     "servicing",
-    "FWD public support lists contact-information changes. Demo tests validation, verification and protection against cross-policy access.",
-    publicSupport,
+    "The sample servicing model includes contact-information changes. Demo tests validation, verification and protection against cross-policy access.",
   ],
   [
     "ps-payment",
     "Change payment option",
     "servicing",
-    "FWD public support lists changing payment options. The demo models scheduling, mandate state and a duplicate-update guard.",
-    publicSupport,
+    "The sample servicing model includes changing payment options. The demo models scheduling, mandate state and a duplicate-update guard.",
   ],
   [
     "ps-statement",
     "Policy documents & statements",
     "servicing",
-    "Issued policy documents can be checked through eServices. The demo authorises each document download against its policy owner.",
-    publicSupport,
+    "The demo portal provides policy documents and authorises each download against its policy owner.",
   ],
   [
     "ps-investment",
     "Switch investment instruction",
     "servicing",
-    "The public support page lists switching or changing investment instructions. This feature is not assumed to apply to every product in the catalogue.",
-    support,
+    "The sample workflow includes switching or changing investment instructions. This feature is not assumed to apply to every product in the catalogue.",
   ],
   [
     "ps-withdrawal",
@@ -344,42 +316,37 @@ const processes: [string, string, FwdGroup, string, string?][] = [
     "cl-intake",
     "Claim intake",
     "claims",
-    "The public claims guide starts with selection of policy and claim type. Demo records the claim context without changing a policy balance.",
-    claims,
+    "The sample claims workflow starts with selection of policy and claim type. Demo records the claim context without changing a policy balance.",
   ],
   [
     "cl-medical",
     "Medical claim documents",
     "claims",
-    "The claims guide separates medical claim paths. Use the current official path to identify required evidence. Receipt completeness and upload retry are demo test scenarios.",
-    claims,
+    "The sample claims workflow separates medical claim paths and asks for evidence. Receipt completeness and upload retry are demo test scenarios.",
   ],
   [
     "cl-critical",
     "Critical illness claim",
     "claims",
-    "The official claims selector includes critical illness. Exact diagnoses, definitions and exclusions remain governed by the applicable policy; the demo tests routing and evidence completeness only.",
-    claims,
+    "The sample claim selector includes a critical illness path. The demo tests routing and evidence completeness without modeling real diagnoses, definitions or exclusions.",
   ],
   [
     "cl-death",
     "Death claim",
     "claims",
-    "The official claims selector includes death claims. The demo models claimant authority, required evidence review and an auditable decision; no real entitlement calculation is represented.",
-    claims,
+    "The sample claim selector includes a death claim path. The demo models claimant authority, evidence review and an auditable decision without calculating real entitlement.",
   ],
   [
     "cl-accident",
     "Accident claim",
     "claims",
-    "Accident claim paths appear in the official claims selector. The demo distinguishes expense, disability and death contexts before requesting evidence.",
-    claims,
+    "The sample claim selector includes accident paths for expense, disability and death contexts before requesting evidence.",
   ],
   [
     "cl-coverage",
     "Coverage & policy check",
     "claims",
-    "Demo validates policy identity and sends effective-date and coverage questions to a versioned review service. It does not implement a real FWD coverage determination.",
+    "Demo validates policy identity and sends effective-date and coverage questions to a versioned review service. It does not implement a real coverage determination.",
   ],
   [
     "cl-assessment",
@@ -400,16 +367,16 @@ const processes: [string, string, FwdGroup, string, string?][] = [
     "Demo reopens an evidence review without overwriting the original decision or audit trail. Appeals policies and legal deadlines are not supplied.",
   ],
 ];
-for (const [id, label, group, content, url] of processes) {
+for (const [id, label, group, content] of processes) {
   add({
     id,
     label,
     group,
     kind: "process",
-    provenance: url ? "public" : "demo",
-    sourceUrl: url,
+    provenance: "demo",
+    sourceUrl: undefined,
     path: `business/${id}.md`,
-    content: url ? content : demoNotice + content,
+    content: demoNotice + content,
   });
   link(`domain-${group}`, id, "contains stage");
 }
@@ -439,15 +406,15 @@ link("ps-beneficiary", "cl-death", "affects claimant context");
 link("nb-disclosure", "cl-assessment", "provides declared evidence");
 link("ps-payment", "nb-payment", "shares payment mandate");
 for (const id of [
-  "vprime",
-  "vfamily",
-  "vcare",
-  "one-n-all-medical-insurance-plan",
+  "medical-cover-01",
+  "medical-cover-02",
+  "vhis-01",
+  "medical-online-01",
 ])
   link(`product-${id}`, "cl-medical", "demo claim route");
-link("product-mycover", "cl-critical", "demo claim route");
-link("product-myterm-plus", "cl-death", "demo claim route");
-link("product-mysafe", "cl-accident", "demo claim route");
+link("product-critical-online-01", "cl-critical", "demo claim route");
+link("product-life-online-01", "cl-death", "demo claim route");
+link("product-accident-online-01", "cl-accident", "demo claim route");
 const systems: [string, string, string, string[]][] = [
   [
     "portal",
@@ -534,7 +501,7 @@ for (const [id, label, content, processIds] of systems) {
     content:
       demoNotice +
       content +
-      "\n\nBoundary: this is an illustrative module, not a discovered FWD repository or vendor platform.\nData: synthetic references only.\nObservability: correlate requestId, policyId and revision; redact customer information.",
+      "\n\nBoundary: this is an illustrative module, not a discovered repository or vendor platform.\nData: synthetic references only.\nObservability: correlate requestId, policyId and revision; redact customer information.",
   });
   for (const process of processIds) link(process, `system-${id}`, "served by");
 }
@@ -839,7 +806,7 @@ for (const s of scenarios) {
       kind: "test",
       provenance: "demo",
       path: `test-cases/${s.key}-${suffix}.md`,
-      content: `# ${s.label}: ${title}\n\n${demoNotice}\n\nPriority: ${suffix === "valid" ? "P1" : "P0"}\nPrecondition: authorised demo user and an isolated synthetic policy.\nInput: ${s.field} = ${value}\nSteps: open ${s.process}; submit the request${suffix === "retry" ? "; retry with the same requestId" : ""}; inspect response, stored revision and audit events.\nExpected: ${expected}\nEvidence: redacted response, before/after revision and correlated event IDs.\nStatus: designed; no real FWD execution performed.`,
+      content: `# ${s.label}: ${title}\n\n${demoNotice}\n\nPriority: ${suffix === "valid" ? "P1" : "P0"}\nPrecondition: authorised demo user and an isolated synthetic policy.\nInput: ${s.field} = ${value}\nSteps: open ${s.process}; submit the request${suffix === "retry" ? "; retry with the same requestId" : ""}; inspect response, stored revision and audit events.\nExpected: ${expected}\nEvidence: redacted response, before/after revision and correlated event IDs.\nStatus: designed; no real execution performed.`,
     });
     link(id, s.process, "validates");
     link(id, codeId, "covers");
@@ -852,7 +819,7 @@ for (const s of scenarios) {
     kind: "automation",
     provenance: "demo",
     path: `demo-insurance/tests/${s.key}.spec.ts`,
-    content: `// ${demoNotice}\n// Executable unit-test sketch for the adjacent demo handler; not a FWD integration test.\nimport { expect, test } from "vitest";\nimport { handle } from "../services/${s.system}/${s.key}";\n\ntest("${s.label}: valid input", () => {\n  expect(handle({requestId:"demo-${s.key}-valid",${s.field}:${JSON.stringify(s.valid)}}).status).toBe("accepted_for_demo_review");\n});\ntest("${s.label}: invalid input", () => {\n  expect(() => handle({requestId:"demo-${s.key}-invalid",${s.field}:${JSON.stringify(s.invalid)}})).toThrow();\n});\ntest("${s.label}: repeated submission", () => {\n  const input = {requestId:"demo-${s.key}-retry",${s.field}:${JSON.stringify(s.valid)}};\n  expect(handle(input)).toBe(handle(input));\n});\n`,
+    content: `// ${demoNotice}\n// Executable unit-test sketch for the adjacent demo handler; not an integration test.\nimport { expect, test } from "vitest";\nimport { handle } from "../services/${s.system}/${s.key}";\n\ntest("${s.label}: valid input", () => {\n  expect(handle({requestId:"demo-${s.key}-valid",${s.field}:${JSON.stringify(s.valid)}}).status).toBe("accepted_for_demo_review");\n});\ntest("${s.label}: invalid input", () => {\n  expect(() => handle({requestId:"demo-${s.key}-invalid",${s.field}:${JSON.stringify(s.invalid)}})).toThrow();\n});\ntest("${s.label}: repeated submission", () => {\n  const input = {requestId:"demo-${s.key}-retry",${s.field}:${JSON.stringify(s.valid)}};\n  expect(handle(input)).toBe(handle(input));\n});\n`,
   });
   for (const suffix of ["valid", "boundary", "retry"])
     link(`test-${s.key}-${suffix}`, autoId, "automated by");
@@ -919,7 +886,7 @@ for (const [id, label, keys] of suites) {
         scripts: keys,
         scenarioCount: keys.length * 3,
         meaning:
-          "An illustrative historical run record for graph exploration. It is not a result from running these downloaded snippets or any FWD environment.",
+          "An illustrative historical run record for graph exploration. It is not a result from running the example snippets in a live environment.",
       },
       null,
       2,
@@ -990,7 +957,7 @@ for (const [id, label, key, suite, detail] of defects) {
     kind: "defect",
     provenance: "demo",
     path: `evidence/DEMO-${id}.md`,
-    content: `# DEMO finding: ${label}\n\n${demoNotice}\n\n${detail}\n\nStatus: illustrative historical finding, not an observed FWD defect.\nInvestigation: reproduce in an isolated fixture, inspect the request ID and event count, add a regression test, and review transaction boundaries.\nThe adjacent code sketch illustrates one guard; it is not a production fix.`,
+    content: `# DEMO finding: ${label}\n\n${demoNotice}\n\n${detail}\n\nStatus: illustrative historical finding, not an observed production defect.\nInvestigation: reproduce in an isolated fixture, inspect the request ID and event count, add a regression test, and review transaction boundaries.\nThe adjacent code sketch illustrates one guard; it is not a production fix.`,
   });
   link(`run-${suite}`, `defect-${id}`, "illustrates finding");
   link(`defect-${id}`, `code-${key}`, "investigates");
@@ -1059,9 +1026,9 @@ for (const [id, label, process, detail] of ruleItems) {
   });
   link(process, `rule-${id}`, "constrained by");
 }
-export const FWD_KNOWLEDGE: FwdData = { nodes, edges };
-export function getFwdNeighborhood(
-  data: FwdData,
+export const SAMPLE_KNOWLEDGE: SampleData = { nodes, edges };
+export function getSampleNeighborhood(
+  data: SampleData,
   id: string,
   hops: number,
 ): Set<string> {
@@ -1079,23 +1046,23 @@ export function getFwdNeighborhood(
   }
   return result;
 }
-export const FWD_SOURCES: readonly LibrarySource[] = nodes
+export const SAMPLE_SOURCES: readonly LibrarySource[] = nodes
   .filter((n) => n.path)
   .map((n) => ({
-    id: `fwd-${n.id}`,
+    id: `sample-${n.id}`,
     name: n.path!.split("/").pop()!,
     type: n.path!.split(".").pop()!.toUpperCase(),
     origin: "page-local",
     status: "ready",
     isExample: true,
-    description: `FWD HK · ${n.provenance === "public" ? "Public reference" : "Demo model"} · ${n.label} · ${n.path}`,
+    description: `Synthetic demo · ${n.label} · ${n.path}`,
     preview: { text: n.content },
     downloadUrl: `data:text/plain;charset=utf-8,${encodeURIComponent(n.content)}`,
   }));
 
 // A small built-in selection for the original Library graph.
 const representativeIds = new Set([
-  "product-vprime",
+  "product-savings-01",
   "nb-issue",
   "ps-beneficiary",
   "cl-medical",
@@ -1106,10 +1073,10 @@ const representativeIds = new Set([
   "run-servicing",
   "defect-duplicate",
 ]);
-export const FWD_REPRESENTATIVE_SOURCES = FWD_SOURCES.filter((source) =>
-  representativeIds.has(source.id.slice(4)),
+export const SAMPLE_REPRESENTATIVE_SOURCES = SAMPLE_SOURCES.filter((source) =>
+  representativeIds.has(source.id.slice("sample-".length)),
 ).map((source) => {
-  const node = nodes.find((node) => `fwd-${node.id}` === source.id)!;
+  const node = nodes.find((node) => `sample-${node.id}` === source.id)!;
   return {
     ...source,
     name:
@@ -1118,7 +1085,7 @@ export const FWD_REPRESENTATIVE_SOURCES = FWD_SOURCES.filter((source) =>
         : `${node.label.replace(" · demo run", "")}.${source.type.toLowerCase()}`,
   };
 });
-export const FWD_REPRESENTATIVE_EDGES = edges.filter(
+export const SAMPLE_REPRESENTATIVE_EDGES = edges.filter(
   (edge) =>
     representativeIds.has(edge.source) && representativeIds.has(edge.target),
 );

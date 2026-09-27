@@ -2,11 +2,11 @@
 
 <!-- impeccable:design-schema 1 -->
 
-Updated: 2026-09-06. Applies to the TAP product shell, Tapper, Library/Graph, Agent/Skills, Test Management, Automation. Product truth: [PRODUCT.md](PRODUCT.md). Approved visual brief: [TAP light design](../../docs/reference/2026-09-05-tap-fwd-light-design.md).
+Updated: 2026-09-06. Applies to the TAP product shell, Tapper, Library/Graph, Agent/Skills, Test Management, Automation. Product truth: [PRODUCT.md](PRODUCT.md). Approved visual brief: [TAP light design](../../docs/reference/2026-09-05-tap-light-design.md).
 
 ## Direction
 
-A light, quiet working interface inspired by FWD's warm orange identity and the clarity of Codex / Manus. TAP is the platform; Tapper is its intelligent workspace. Use the approved Listening woodpecker avatar with the existing ink SVG wordmark. Technology is expressed through precise typography, graph relationships, code, evidence, and useful interaction states.
+A light, quiet working interface using warm orange accents and the clarity of Codex / Manus. TAP is the platform; Tapper is its intelligent workspace. Use the approved Listening woodpecker avatar with the existing ink SVG wordmark. Technology is expressed through precise typography, graph relationships, code, evidence, and useful interaction states.
 
 ## Tokens
 

@@ -50,4 +50,4 @@ legacy Source ID 为 `src_` 加 `sha256("legacy-source-v1\0" + project_id + "\0"
 
 失败启动留下的 lock-only state/空 socket 目录保留为失败记录，没有 association 或遗留容器，不伪造为成功执行。历史 V0 的 `mysql_operations.py` 对 Governance adapter 的直接依赖仍作为最终 whole-branch review 的已知项，本任务不宣称全模块边界已经修复。
 
-Source 公共 API/Picker、canonical Milvus 物理迁移属于 Task6A；统一 Gateway/全上下文脱敏属于 Task7；持久 Conversation 与真实界面接入属于后续任务。未执行真实模型、共享 Milvus operator/cutover 或新V1质量门禁。当前已批准的 FWD 产品原型保持为后续接入基线。
+Source 公共 API/Picker、canonical Milvus 物理迁移属于 Task6A；统一 Gateway/全上下文脱敏属于 Task7；持久 Conversation 与真实界面接入属于后续任务。未执行真实模型、共享 Milvus operator/cutover 或新V1质量门禁。当前已批准的 TAP 产品原型保持为后续接入基线。

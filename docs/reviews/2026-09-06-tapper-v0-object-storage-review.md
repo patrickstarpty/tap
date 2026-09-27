@@ -7,7 +7,7 @@
 - 平台 ObjectStorePort 提供有界 staging、摘要晋级、清单/内容校验、删除和 Project 范围清理。KnowledgeArtifactStore 组合该 Port；两种 Knowledge artifact 实现共享 conformance，保留 Azure 的 server-copy、取消与完整性状态机及 98 项既有契约测试。旧 Azure Adapter 不被称为实现了新的通用平台 Port。
 - opaque ObjectRef 绑定 store、可信 Project namespace 与 manifest digest；内部 `art1` locator 另绑定 Revision/kind。清单与内容摘要分别核验，物理 endpoint/bucket/key 不进入公共 API。相同内容的不同 Revision 使用不同逻辑 slot；所有存活清单与删除目标校验完毕后才操作 Provider。缺 payload 不等于缺 manifest，确实缺 manifest 才保留幂等删除。
 - 新模板明确选择独立 TAP MinIO；未设置 provider 的旧配置保留 Azure。旧 locator 原字节不变，仅在显式 legacy Azure 配置启用时读取、删除及恢复 reservation；新上传写入 MinIO，无隐式 SQL/数据迁移。混合删除不宣称跨 Provider 原子事务。Operator 实际 Scope 校验与既有 Milvus 全局锁、发布空档保护保持。
-- 已确认的 FWD 浅色产品原型继续作为入口。Library 发送实际 File、显示服务端状态，缺可信 runtime Project 时禁用上传。浏览器验证上传/状态，正式 Project API 验证 Answer/Citation/digest/删除和重启；完整 Conversation/history UI 留在 Task 9。
+- 已确认的 TAP 浅色产品原型继续作为入口。Library 发送实际 File、显示服务端状态，缺可信 runtime Project 时禁用上传。浏览器验证上传/状态，正式 Project API 验证 Answer/Citation/digest/删除和重启；完整 Conversation/history UI 留在 Task 9。
 
 ## 构建与取消边界
 

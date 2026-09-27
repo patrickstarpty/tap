@@ -4,7 +4,7 @@
 
 ## 实现范围
 
-应用通过 async DocumentParserPort/私有 Unix socket 调用独立宿主监督进程，Ingestion 继续使用既有 lease/heartbeat settlement。只有监督进程具有固定本机 Docker 控制能力；每次解析创建新的无网络容器，不在 API/Worker 内同步解析。已确认的 FWD 浅色 TapProductPrototype/Library 继续作为上传入口。
+应用通过 async DocumentParserPort/私有 Unix socket 调用独立宿主监督进程，Ingestion 继续使用既有 lease/heartbeat settlement。只有监督进程具有固定本机 Docker 控制能力；每次解析创建新的无网络容器，不在 API/Worker 内同步解析。已确认的 TAP 浅色 TapProductPrototype/Library 继续作为上传入口。
 
 监督进程严格读取一个 Compose job service，映射全部固定设置到明确 attach 的 docker create，并在实际 CID 上再次核验。容器非 root、只读、无 host mount/端口/Docker socket/Secret；固定 1 CPU、512 MiB 内存与 swap、16 PID、32 MiB tmpfs、64 fd。PID1 独立寿命 35 秒、解析预算 25 秒；child CPU 8/10 秒、地址空间 384 MiB。成功、失败或取消都等待容器实际停止/删除及本地 CLI/pipe 回收；最多 15 秒无法确认清理则保留 unresolved 并拒绝新任务。同宿主用户和 Docker 管理员仍是可信边界。
 
