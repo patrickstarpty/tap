@@ -467,6 +467,8 @@ uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/contract/t
 
 **状态（2026-09-26）：** `active`。合成脱敏 fixture 的隔离结构门禁与交付记录已完成；真实业务资料、外部 CI、真实模型、生产身份、签名硬件规模和具名业务/运维/安全签字未提供，M1–M4 业务 Gate 均保持 `PENDING`，计划不标 `completed`。详见 [联合交付门禁](../reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md)。
 
+**2026-09-27 替代验收口径：** M1–M4 的隔离模拟业务 UAT 已按五阶段联合收据判 `PASS`，可用于本机隔离演示与开发交接；真实业务 Gate 仍分别为 `PENDING`，不等同于真实质量、团队试点或生产放行。计划继续保持 `active`，详见上述联合交付门禁的逐批次结论。
+
 **输入/输出：** 消费 Task 1–13 的已验证产物、真实质量报告及冻结样本；产出每批次 Gate Review、保留式发布清单、恢复记录和产品验收结论。
 
 - [ ] 在隔离环境完成三条真实旅程：资料上传→核对/独立复核→发布→问答/引用；确认需求→生成→编辑/冲突恢复→业务评审→发布；真实报告→账本→ClickHouse→查询/钻取→AI 解读。
