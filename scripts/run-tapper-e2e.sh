@@ -54,6 +54,7 @@ unset TAP_RUN_PAID_EMBEDDING_RESEARCH
 unset TAPPER_OBJECT_STORE_PROVIDER TAPPER_S3_ENDPOINT TAPPER_S3_BUCKET TAPPER_S3_REGION
 unset TAPPER_S3_ACCESS_KEY TAPPER_S3_SECRET_KEY TAPPER_S3_STORE_ID TAPPER_S3_PORT
 unset TAPPER_LEGACY_AZURE_ENABLED TAPPER_OBJECT_STORE_IMAGE DOCKER_HOST
+unset TAPPER_E2E_OWNERSHIP_FILE
 
 tapper_e2e_state_root="${TMPDIR:-/tmp}"
 tapper_e2e_state_dir=""
@@ -330,6 +331,7 @@ tapper_e2e_state_dir="$(mktemp -d "$tapper_e2e_state_root/tap-tapper-e2e.XXXXXX"
   exit 2
 }
 chmod 700 "$tapper_e2e_state_dir"
+export TAPPER_E2E_OWNERSHIP_FILE="$tapper_e2e_state_dir/database-owner.json"
 export TAPPER_E2E_STATE_FILE="$tapper_e2e_state_dir/state.json"
 export TAPPER_E2E_HOSTILE_DIR="$tapper_e2e_state_dir/hostile"
 uv run --project apps/tap-ai-backend python "$tapper_e2e_script_dir/build-hostile-document-fixtures.py" "$TAPPER_E2E_HOSTILE_DIR"
@@ -339,6 +341,31 @@ readonly TAPPER_OBJECT_STORE_IMAGE
 
 bootstrap_middleware() {
   compose up -d --wait --wait-timeout 180
+  mysql_container="$(docker --context "$docker_context" ps --no-trunc --filter label=com.docker.compose.project=tap-tapper-e2e --filter label=com.docker.compose.service=mysql --format '{{.ID}}')"
+  TAPPER_E2E_MYSQL_CONTAINER_ID="$mysql_container" TAPPER_E2E_DOCKER_CONTEXT="$docker_context" python3 - <<'PY'
+import hashlib
+import json
+import os
+import re
+
+container_id = os.environ["TAPPER_E2E_MYSQL_CONTAINER_ID"]
+if re.fullmatch(r"[0-9a-f]{64}", container_id) is None:
+    raise SystemExit("Tapper E2E cannot identify its owned MySQL container.")
+path = os.environ["TAPPER_E2E_OWNERSHIP_FILE"]
+temporary_path = path + ".new"
+payload = {
+    "project": os.environ["TAP_TAPPER_COMPOSE_PROJECT"],
+    "databaseUrlSha256": hashlib.sha256(os.environ["TAP_DATABASE_URL"].encode()).hexdigest(),
+    "hostPort": int(os.environ["MYSQL_PORT"]),
+    "runnerPid": os.getppid(),
+    "mysqlContainerId": container_id,
+    "dockerContext": os.environ["TAPPER_E2E_DOCKER_CONTEXT"],
+}
+descriptor = os.open(temporary_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+os.replace(temporary_path, path)
+PY
   object_container="$(docker --context "$docker_context" ps --filter label=com.docker.compose.project=tap-tapper-e2e --filter label=com.docker.compose.service=tap-minio --format '{{.ID}}')"
   "$tapper_e2e_script_dir/build-tapper-object-store.sh" verify-container "$object_container"
   uv run --project apps/tap-ai-backend alembic -c apps/tap-ai-backend/alembic.ini upgrade head

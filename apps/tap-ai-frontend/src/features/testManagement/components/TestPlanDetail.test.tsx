@@ -78,6 +78,16 @@ it("presents a grounded draft as readable cases and evidence", () => {
               severity: "CRITICAL",
             },
           ],
+          requirementIds: Array.from(
+            { length: 10 },
+            (_, index) => `requirement_${index + 1}`,
+          ),
+          coveredRequirementIds: Array.from(
+            { length: 6 },
+            (_, index) => `requirement_${index + 1}`,
+          ),
+          coverageDenominator: 10,
+          coveredRequirementCount: 6,
         } as never
       }
     />,
@@ -106,4 +116,5 @@ it("presents a grounded draft as readable cases and evidence", () => {
     ),
   ).toBeVisible();
   expect(screen.getByText(/rev_secret/)).not.toBeVisible();
+  expect(screen.getByText("6 / 10")).toBeVisible();
 });

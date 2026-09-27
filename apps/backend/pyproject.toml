@@ -3,10 +3,22 @@ name = "tap-platform-backend"
 version = "0.1.0"
 description = "TAP non-AI backend application"
 requires-python = "==3.13.12"
-dependencies = ["fastapi==0.116.1", "uvicorn==0.52.4"]
+dependencies = [
+  "alembic==1.16.5",
+  "fastapi==0.116.1",
+  "pymysql==1.1.2",
+  "sqlalchemy==2.0.43",
+  "uvicorn==0.52.4",
+]
 
 [dependency-groups]
-dev = ["httpx==0.28.1", "pytest==8.4.1", "pytest-asyncio==1.1.0"]
+dev = [
+  "httpx==0.28.1",
+  "mypy==1.17.1",
+  "pytest==8.4.1",
+  "pytest-asyncio==1.1.0",
+  "ruff==0.12.10",
+]
 
 [build-system]
 requires = ["hatchling==1.27.0"]
@@ -17,3 +29,12 @@ packages = ["src/tap_platform"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unused_ignores = true
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88

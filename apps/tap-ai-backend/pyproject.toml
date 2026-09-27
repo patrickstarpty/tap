@@ -23,6 +23,7 @@ dependencies = [
   "aiobotocore==3.9.1",
   "botocore==1.43.75",
   "uvicorn==0.52.4",
+  "langgraph==1.2.12",
 ]
 
 [tool.uv.sources]

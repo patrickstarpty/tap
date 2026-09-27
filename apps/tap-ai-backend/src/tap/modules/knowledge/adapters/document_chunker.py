@@ -47,6 +47,11 @@ class StructuralChunker:
                 continue
             chunks.extend(self._chunk_block(artifact, block))
         if not chunks:
+            reasons = {item.reason for item in artifact.parse_inventory}
+            if "ocr-required" in reasons:
+                raise DocumentParseRejected("ocr-required")
+            if "invalid-encoding" in reasons:
+                raise DocumentParseRejected("invalid-document")
             raise DocumentParseRejected("empty-document")
         if len(chunks) > self._max_chunks:
             raise DocumentParseRejected("document-too-complex")
@@ -99,6 +104,8 @@ class StructuralChunker:
         }
         if block.page is not None:
             anchor["page"] = block.page
+        if block.inventory_item_id is not None:
+            anchor["inventoryItemId"] = block.inventory_item_id
         anchor_json = json.dumps(anchor, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         chunk_hash = canonical_sha256(content.encode("utf-8"))
         return ChunkDraft(

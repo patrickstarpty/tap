@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Annotated, Literal, Self
 
@@ -119,6 +120,48 @@ class DocumentStatus(str, Enum):
     READY = "ready"
     FAILED = "failed"
     DELETING = "deleting"
+
+
+class KnowledgeReviewStatus(str, Enum):
+    DRAFT = "draft"
+    CHECKING = "checking"
+    REVIEWING = "reviewing"
+    APPROVED = "approved"
+    PUBLISHED = "published"
+    NEEDS_REVIEW = "needs_review"
+    EXPIRED = "expired"
+    WITHDRAWN = "withdrawn"
+
+
+class KnowledgeReviewAction(str, Enum):
+    EDIT = "edit"
+    SUBMIT = "submit"
+    RETURN = "return"
+    APPROVE = "approve"
+    PUBLISH = "publish"
+    WITHDRAW = "withdraw"
+    READ_ORIGINAL = "read_original"
+
+
+class KnowledgeReviewCheckKind(str, Enum):
+    SCOPE = "scope"
+    TERM = "term"
+    AMOUNT = "amount"
+    UNIT = "unit"
+    EXCEPTION = "exception"
+
+
+class KnowledgeReviewDecisionStatus(str, Enum):
+    ACCEPTED = "accepted"
+    BLOCKED = "blocked"
+    EXCLUDED = "excluded"
+
+
+class ParseInventoryItemStatus(str, Enum):
+    PARSED = "parsed"
+    FAILED = "failed"
+    NEEDS_REVIEW = "needs_review"
+    EXCLUDED = "excluded"
 
 
 class IngestionStage(str, Enum):
@@ -239,6 +282,169 @@ class DocumentAccepted(ContractModel):
     duplicate: bool
 
 
+class KnowledgeReviewSummary(ContractModel):
+    review_id: ShortIdentifier
+    status: KnowledgeReviewStatus
+    version: Annotated[StrictInt, Field(ge=1)]
+    reviewer_actor_id: ShortIdentifier | None = None
+    expires_at: TimestampValue
+    approval_digest: CanonicalSha256
+
+
+class KnowledgeReviewOpenRequest(ContractModel):
+    source_revision_id: ShortIdentifier
+
+
+class KnowledgePublishRequest(ContractModel):
+    generation: ShortIdentifier
+
+
+class KnowledgePublicationDetail(ContractModel):
+    publication_id: ShortIdentifier
+    review_id: ShortIdentifier
+    review_version: Annotated[StrictInt, Field(ge=1)]
+    version: Annotated[StrictInt, Field(ge=1)]
+    status: Literal["published", "withdrawn"]
+    generation: ShortIdentifier
+    approval_digest: CanonicalSha256
+    source_revision_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=100)]
+    approved_item_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=10_000)]
+    published_at: TimestampValue
+    expires_at: TimestampValue
+    withdrawn_by: ShortIdentifier | None = None
+    withdrawn_at: TimestampValue | None = None
+
+
+class KnowledgeReviewInventoryItem(ContractModel):
+    source_revision_id: ShortIdentifier
+    item_id: ShortIdentifier
+    attempt: Annotated[StrictInt, Field(ge=1)]
+    kind: Literal["document", "page", "paragraph", "heading", "table", "image", "list", "code"]
+    locator: Annotated[str, Field(strict=True, min_length=1, max_length=1_024)]
+    status: ParseInventoryItemStatus
+    artifact_digest: CanonicalSha256
+    reason: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = None
+    decision_actor_id: ShortIdentifier | None = None
+
+
+class KnowledgeReviewInventory(ContractModel):
+    items: Annotated[list[KnowledgeReviewInventoryItem], Field(max_length=100)]
+    total_count: Annotated[StrictInt, Field(ge=0)]
+    parsed_count: Annotated[StrictInt, Field(ge=0)]
+    failed_count: Annotated[StrictInt, Field(ge=0)]
+    needs_review_count: Annotated[StrictInt, Field(ge=0)]
+    excluded_count: Annotated[StrictInt, Field(ge=0)]
+    next_cursor: ShortIdentifier | None = None
+
+
+class KnowledgeReviewItemDecisionDetail(ContractModel):
+    decision_id: ShortIdentifier
+    decision_digest: CanonicalSha256
+    item_id: ShortIdentifier
+    check_kind: KnowledgeReviewCheckKind
+    status: KnowledgeReviewDecisionStatus
+    note: Annotated[str, Field(strict=True, min_length=1, max_length=1_000)]
+    actor_id: ShortIdentifier
+    review_version: Annotated[StrictInt, Field(ge=2)]
+    decided_at: TimestampValue
+
+
+class KnowledgeReviewHistoryDetail(ContractModel):
+    review_version: Annotated[StrictInt, Field(ge=1)]
+    action: ShortIdentifier
+    actor_id: ShortIdentifier
+    occurred_at: TimestampValue
+    item_id: ShortIdentifier | None = None
+    decision_id: ShortIdentifier | None = None
+    decision_digest: CanonicalSha256 | None = None
+
+
+class KnowledgeReviewDecisionPage(ContractModel):
+    items: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=100)]
+    total_count: Annotated[StrictInt, Field(ge=0)]
+    next_cursor: Annotated[StrictInt, Field(ge=1)] | None = None
+
+
+class KnowledgeReviewHistoryPage(ContractModel):
+    items: Annotated[list[KnowledgeReviewHistoryDetail], Field(max_length=100)]
+    total_count: Annotated[StrictInt, Field(ge=0)]
+    next_cursor: Annotated[StrictInt, Field(ge=1)] | None = None
+
+
+class KnowledgePublicationPage(ContractModel):
+    items: Annotated[list[KnowledgePublicationDetail], Field(max_length=100)]
+    total_count: Annotated[StrictInt, Field(ge=0)]
+    next_cursor: ShortIdentifier | None = None
+
+
+class KnowledgePublicationTarget(ContractModel):
+    status: Literal["ready", "unavailable"]
+    generation: ShortIdentifier | None = None
+    reason: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = None
+
+
+class KnowledgeReviewDetail(KnowledgeReviewSummary):
+    source_revision_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=100)]
+    editor_actor_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=100)]
+    blocking_item_ids: Annotated[list[ShortIdentifier], Field(max_length=10_000)]
+    approved_item_ids: Annotated[list[ShortIdentifier], Field(max_length=10_000)]
+    inventory: KnowledgeReviewInventory
+    decisions: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=500)]
+    decision_history: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=100)]
+    decision_history_total_count: Annotated[StrictInt, Field(ge=0)]
+    decision_history_next_cursor: Annotated[StrictInt, Field(ge=1)] | None = None
+    history: Annotated[list[KnowledgeReviewHistoryDetail], Field(max_length=100)]
+    history_total_count: Annotated[StrictInt, Field(ge=0)]
+    history_next_cursor: Annotated[StrictInt, Field(ge=1)] | None = None
+    publication_ids: Annotated[list[ShortIdentifier], Field(max_length=100)]
+    publication_total_count: Annotated[StrictInt, Field(ge=0)]
+    publication_next_cursor: ShortIdentifier | None = None
+    current_publication: KnowledgePublicationDetail | None = None
+    publication_target: KnowledgePublicationTarget
+    allowed_actions: Annotated[list[KnowledgeReviewAction], Field(max_length=7)]
+
+
+class KnowledgeReviewPage(ContractModel):
+    items: Annotated[list[KnowledgeReviewDetail], Field(max_length=100)]
+    next_cursor: ShortIdentifier | None = None
+
+
+class KnowledgeReviewDecisionRequest(ContractModel):
+    check_kind: KnowledgeReviewCheckKind
+    status: KnowledgeReviewDecisionStatus
+    note: Annotated[str, Field(strict=True, min_length=1, max_length=1_000)]
+
+
+class KnowledgeReviewPreview(ContractModel):
+    availability: Literal["available", "unavailable", "unsupported"]
+    excerpt: Annotated[str, Field(strict=True, max_length=4_000)] | None = None
+    reason: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = None
+
+
+class KnowledgeReviewItemComparison(ContractModel):
+    review_id: ShortIdentifier
+    item_id: ShortIdentifier
+    original: KnowledgeReviewPreview
+    extracted: KnowledgeReviewPreview
+
+
+class PublishedKnowledgeSource(ContractModel):
+    source_id: Annotated[str, Field(strict=True, pattern=r"^src_[0-9a-f]{32}$")]
+    document_id: ShortIdentifier
+    revision_id: ShortIdentifier
+    source_name: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
+    filename: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
+    publication_id: ShortIdentifier
+    expires_at: TimestampValue
+    approved_item_count: Annotated[StrictInt, Field(ge=0, le=10_000)]
+    inventory_item_count: Annotated[StrictInt, Field(ge=0, le=10_000)]
+    partial: bool
+
+
+class PublishedKnowledgeSourcePage(ContractModel):
+    items: Annotated[list[PublishedKnowledgeSource], Field(max_length=100)]
+
+
 class DocumentPage(ContractModel):
     items: Annotated[list[DocumentSummary], Field(max_length=50)]
     next_cursor: Annotated[str, Field(strict=True, min_length=1, max_length=512)] | None = None
@@ -355,6 +561,7 @@ class DocumentAnchor(ContractModel):
     bbox: Annotated[list[BoundingBoxCoordinate], Field(min_length=4, max_length=4)] | None = None
     start_offset: NonNegativeAnchorInteger | None = None
     end_offset: NonNegativeAnchorInteger | None = None
+    inventory_item_id: ShortIdentifier | None = None
 
     @model_validator(mode="after")
     def validate_ordered_offsets(self) -> Self:
@@ -569,6 +776,9 @@ class RetrievalHit(ContractModel):
     acl_decision_id: str = Field(min_length=1)
     schema_version: str = Field(min_length=1)
     embedding_model_version: str = Field(min_length=1)
+    publication_id: ShortIdentifier | None = None
+    approval_digest: CanonicalSha256 | None = None
+    approved_item_id: ShortIdentifier | None = None
 
     @model_validator(mode="after")
     def validate_index_family(self) -> Self:
@@ -586,6 +796,9 @@ class RetrievalCitation(ContractModel):
     chunk_content_hash: CanonicalSha256
     content_role: ContentRole
     derived_from_chunk_ids: list[str] | None = None
+    publication_id: ShortIdentifier | None = None
+    approval_digest: CanonicalSha256 | None = None
+    approved_item_id: ShortIdentifier | None = None
 
     @model_validator(mode="after")
     def validate_internal_source_family(self, info: ValidationInfo) -> Self:
@@ -693,6 +906,77 @@ class ChatTurnAccepted(ContractModel):
     state: Literal["queued"]
 
 
+class InsightsExplanationRequest(ContractModel):
+    query_id: Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
+    resource_refs: Annotated[
+        list[Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]],
+        Field(min_length=1, max_length=20),
+    ]
+    question: Annotated[str, Field(strict=True, min_length=1, max_length=500)]
+    conversation_id: str | None = None
+    source_revision_ids: Annotated[list[str], Field(max_length=20)] = []
+    document_revision_ids: Annotated[list[str], Field(max_length=20)] = []
+
+    @field_validator("question")
+    @classmethod
+    def nonblank_question(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("question must be nonblank")
+        return value
+
+    @field_validator("resource_refs")
+    @classmethod
+    def unique_resource_refs(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("resource refs must be unique")
+        return values
+
+
+class InsightsExplanationFact(ContractModel):
+    metric_id: str
+    numerator: int | None
+    denominator: int | None
+    value: float | None
+    completeness: Literal["complete", "empty", "unavailable"]
+    missing_reasons: list[str]
+    evidence_refs: list[str]
+
+
+class InsightsEvidenceExcerpt(ContractModel):
+    citation_id: str
+    text: str
+    evidence_version: str | None = None
+    source_id: str | None = None
+    revision_id: str | None = None
+    chunk_id: str | None = None
+    source_content_hash: str | None = None
+    chunk_content_hash: str | None = None
+    publication_id: str | None = None
+    approval_digest: str | None = None
+    approved_item_id: str | None = None
+    page: int | None = None
+
+
+class InsightsExplanationResult(ContractModel):
+    query_id: str | None
+    metric_version: str | None
+    as_of: datetime | None
+    fact_watermark: dict[str, object] | None = None
+    knowledge_search_performed: bool = False
+    facts: list[InsightsExplanationFact]
+    report_coverage: list[dict[str, object]]
+    hypotheses: list[str]
+    evidence_excerpts: list[InsightsEvidenceExcerpt]
+    missing_information: list[str]
+    stop_reason: Literal["completed", "budget-exhausted", "insights-unavailable"]
+
+
+class InsightsExplanationAccepted(ContractModel):
+    conversation_id: str
+    turn_id: str
+    state: Literal["queued", "running", "completed", "abstained", "canceled", "failed"]
+
+
 class ConversationCreateRequest(ContractModel):
     message: Annotated[str, Field(strict=True, min_length=1, max_length=20_000)]
     model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
@@ -729,6 +1013,7 @@ class ConversationTurnInputView(ContractModel):
     agent_label: str | None = None
     skill_revision_ids: list[str]
     skill_labels: list[str]
+    insights_query_id: str | None = None
 
 
 class ConversationTurnSummary(ContractModel):
@@ -788,6 +1073,10 @@ class ConversationEventItem(ContractModel):
         "turn.failed",
         "conversation.turn.requested",
         "conversation.turn.completed",
+        "test-plan.generation.waiting",
+        "test-plan.generation.result_ready",
+        "test-plan.generation.failed",
+        "test-plan.generation.canceled",
     ]
     payload: dict[str, object]
     occurred_at: TimestampValue
@@ -865,11 +1154,6 @@ class GraphPathRequest(ContractModel):
 class TestPlanGenerationRequestBody(ContractModel):
     conversation_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     turn_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
-    input_snapshot_digest: CanonicalSha256
-    answer_evidence_snapshot_digest: CanonicalSha256
-    model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
-    agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
-    skill_revision_ids: Annotated[list[str], Field(min_length=1, max_length=16)]
     objective: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
 
 
@@ -877,8 +1161,11 @@ class TestPlanGenerationAccepted(ContractModel):
     job_id: str
     test_plan_id: str
     revision_id: str
-    status: Literal["PENDING", "RUNNING", "DRAFT_READY", "FAILED"]
+    status: Literal["PENDING", "RUNNING", "WAITING", "DRAFT_READY", "FAILED", "CANCELED"]
+    progress: Literal["queued", "running", "waiting", "completed", "failed", "canceled"]
+    failure_code: str | None = None
     deep_link: str
+    row_version: StrictInt
 
 
 class TestPlanStepView(ContractModel):
@@ -888,6 +1175,8 @@ class TestPlanStepView(ContractModel):
     text: str
     expected_result: str | None = None
     critical: bool
+    citation_ids: list[str] = []
+    unknown_ids: list[str] = []
 
 
 class TestPlanScenarioView(ContractModel):
@@ -904,6 +1193,7 @@ class TestPlanCaseView(ContractModel):
     objective: str
     critical: bool
     scenarios: list[TestPlanScenarioView]
+    covered_requirement_ids: list[str] = []
 
 
 class TestPlanCitationView(ContractModel):
@@ -914,12 +1204,26 @@ class TestPlanCitationView(ContractModel):
     content_digest: CanonicalSha256
     claim_text: str
     origin: Literal["SOURCE", "GRAPH_EXTRACTED"]
+    evidence_preview_url: str | None = None
+    anchor: dict[str, object] | None = None
+
+
+class TestPlanEvidencePreview(ContractModel):
+    citation_id: str
+    source_revision_id: str
+    document_revision_id: str
+    chunk_id: str
+    content_digest: CanonicalSha256
+    claim_text: str
+    origin: Literal["SOURCE", "GRAPH_EXTRACTED", "GRAPH_INFERRED"]
+    anchor: dict[str, object]
 
 
 class TestPlanTextFactView(ContractModel):
     fact_id: str
     text: str
     graph_edge_id: str | None = None
+    requirement_ref: str | None = None
 
 
 class TestPlanCoverageGapView(ContractModel):
@@ -927,6 +1231,29 @@ class TestPlanCoverageGapView(ContractModel):
     requirement_ref: str
     reason: str
     severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+
+
+class TestPlanReviewDecisionView(ContractModel):
+    decision_id: str
+    disposition: Literal["PENDING", "ACCEPTED_UNCHANGED", "ACCEPTED_MODIFIED", "REJECTED"]
+    reason: str
+    actor_id: str
+    reviewed_content_digest: CanonicalSha256
+    created_at: datetime | None = None
+
+
+class TestPlanReviewRequest(ContractModel):
+    disposition: Literal["PENDING", "ACCEPTED_UNCHANGED", "ACCEPTED_MODIFIED", "REJECTED"]
+    reason: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
+
+
+class TestPlanReviewSummaryView(ContractModel):
+    reviewed_count: StrictInt
+    unchanged_count: StrictInt
+    modified_count: StrictInt
+    rejected_count: StrictInt
+    unchanged_adoption_rate: float | None
+    total_adoption_rate: float | None
 
 
 class TestPlanRevisionView(ContractModel):
@@ -949,6 +1276,23 @@ class TestPlanRevisionView(ContractModel):
     assumptions: list[TestPlanTextFactView]
     unknowns: list[TestPlanTextFactView]
     coverage_gaps: list[TestPlanCoverageGapView]
+    requirement_scope_id: str | None = None
+    requirement_scope_version: StrictInt | None = None
+    requirement_scope_digest: CanonicalSha256 | None = None
+    requirement_ids: list[str] = []
+    covered_requirement_ids: list[str] = []
+    coverage_denominator: StrictInt = 0
+    covered_requirement_count: StrictInt = 0
+    approved_knowledge_revision_ids: list[str] = []
+    model_revision_id: str | None = None
+    agent_revision_id: str | None = None
+    skill_revision_ids: list[str] = []
+    author_actor_id: str | None = None
+    strict_review_required: bool = False
+    generated_content_digest: CanonicalSha256 | None = None
+    review_decisions: list[TestPlanReviewDecisionView] = []
+    needs_review: bool = False
+    needs_review_reason: str | None = None
     deep_link: str
 
 

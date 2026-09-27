@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 
@@ -9,9 +10,11 @@ from tap.modules.chat.application.conversations import (
 )
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
+    AnswerEvidenceSnapshot,
     GraphContextStatus,
     RetrievalSummary,
     TurnInput,
+    TurnInputSnapshot,
 )
 
 
@@ -29,6 +32,39 @@ def _input(message: str = "What changed?") -> TurnInput:
         skill_revision_digests=("sha256:" + "b" * 64,),
         retrieval_policy_digest="sha256:" + "c" * 64,
     )
+
+
+def test_pre_insights_snapshot_hashes_remain_loadable_and_new_content_is_bound():
+    # Digests captured from the pre-Insights persisted format at 6ef806e.
+    value = TurnInput("Explain", "actor-1", "validation", "tapper-chat")
+    now = datetime(2026, 9, 27, tzinfo=UTC)
+    original = TurnInputSnapshot(
+        "input-1",
+        "project-1",
+        "turn-1",
+        value,
+        "sha256:1cf8c481155c488bef9bc86c9c1cf7350cea1a5163b6d50d00d4a0c4fb763931",
+        now,
+    )
+    answer = AnswerEvidenceSnapshot(
+        "answer-1",
+        "project-1",
+        "turn-1",
+        original.digest,
+        AnswerEvidence(
+            "Grounded", "completed", RetrievalSummary("completed"), GraphContextStatus.NOT_REQUESTED
+        ),
+        "sha256:398af4f45ba60c85d478ac9ae25c93518f5eadaf8177e556e9c8ca08cf6d7e7b",
+        "sha256:1c6a41d85f7a007bae6cfe6092d5c97837afc4ffc0eecae47fcd9cf52d816574",
+        now,
+    )
+    with pytest.raises(ValueError, match="digest"):
+        replace(
+            original,
+            value=replace(value, insights_query_id="query-1", insights_report_refs=("report-1",)),
+        )
+    with pytest.raises(ValueError, match="digest"):
+        replace(answer, value=replace(answer.value, insights_explanation={"queryId": "query-1"}))
 
 
 @pytest.mark.asyncio

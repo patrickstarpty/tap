@@ -63,6 +63,7 @@ class DocumentAnchor:
     bbox: tuple[float, ...] = ()
     start_offset: int | None = None
     end_offset: int | None = None
+    inventory_item_id: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -77,6 +78,7 @@ class DocumentAnchor:
         _optional_strict_int("document page", self.page, minimum=1)
         _optional_strict_int("document start offset", self.start_offset, minimum=0)
         _optional_strict_int("document end offset", self.end_offset, minimum=0)
+        _optional_bounded_string("document inventory item", self.inventory_item_id, maximum=128)
         if (
             not isinstance(self.bbox, tuple)
             or len(self.bbox) not in {0, 4}
@@ -170,7 +172,7 @@ def anchor_authorization_key(anchor: StructuralAnchor) -> str:
         headings = "/".join(anchor.heading_path)
         bbox = ",".join(str(value) for value in anchor.bbox)
         return (
-            f"document:{headings}:{anchor.page or ''}:{bbox}:"
+            f"document:{anchor.inventory_item_id or ''}:{headings}:{anchor.page or ''}:{bbox}:"
             f"{anchor.start_offset if anchor.start_offset is not None else ''}:"
             f"{anchor.end_offset if anchor.end_offset is not None else ''}"
         )
@@ -308,6 +310,7 @@ class QueryPlan:
     redaction_version: str
     embedding_model_id: str
     embedding_dimension: int
+    answer_plan_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -508,9 +511,14 @@ class Evidence:
     provider_request_id: str | None = None
     root_id: str | None = None
     parent_id: str | None = None
+    publication_id: str | None = None
+    approval_digest: str | None = None
+    approved_item_id: str | None = None
 
     def __post_init__(self) -> None:
         _digest("evidence chunk content hash", self.chunk_content_hash)
+        if self.approval_digest is not None:
+            _digest("evidence approval digest", self.approval_digest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -534,11 +542,16 @@ class Citation:
     chunk_content_hash: str
     content_role: ContentRole
     derived_from_chunk_ids: tuple[str, ...] = ()
+    publication_id: str | None = None
+    approval_digest: str | None = None
+    approved_item_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.family, SourceFamily):
             raise TypeError("citation family must be closed")
         _digest("citation chunk content hash", self.chunk_content_hash)
+        if self.approval_digest is not None:
+            _digest("citation approval digest", self.approval_digest)
 
 
 @dataclass(frozen=True, slots=True)

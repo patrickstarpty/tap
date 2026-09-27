@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { writeConversationState } from "./fixtureBuilder";
+import { preparePublishedFixture } from "./publicationFixture";
 
 const ORIGIN = "http://127.0.0.1:15173";
 
@@ -58,6 +59,7 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     (item) => item.status === "ready",
   );
   expect(revision).toBeDefined();
+  preparePublishedFixture([revision!.revisionId]);
 
   const [agentsResponse, skillsResponse, modelsResponse] = await Promise.all([
     page.request.get(`${root}/ai/agents`),

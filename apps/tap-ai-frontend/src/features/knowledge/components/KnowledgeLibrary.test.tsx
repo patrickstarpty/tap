@@ -19,6 +19,22 @@ import { KnowledgeClientError } from "../api/client";
 import { KnowledgeLibrary } from "./KnowledgeLibrary";
 
 describe("KnowledgeLibrary", () => {
+  it("shows the separate business review state for an ingested document", async () => {
+    const user = userEvent.setup();
+    const ready = document({ status: "ready", stage: "ready" });
+    renderKnowledgeApp(<KnowledgeLibrary />, {
+      api: fakeKnowledgeClient()
+        .withDocuments([ready])
+        .withDetail(documentDetail({ ...ready })),
+    });
+
+    await user.click(await screen.findByRole("row", { name: /handbook\.md/u }));
+    expect(
+      await screen.findByRole("heading", { name: "业务审核" }),
+    ).toBeVisible();
+    expect(screen.getByText("未关联审核记录")).toBeVisible();
+  });
+
   it("shows one clear add-source action in an empty library", async () => {
     renderKnowledgeApp(<KnowledgeLibrary />, { api: fakeKnowledgeClient() });
 

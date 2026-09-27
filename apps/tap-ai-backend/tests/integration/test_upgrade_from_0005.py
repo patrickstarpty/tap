@@ -169,6 +169,24 @@ def test_0014_test_management_revision_is_literal_and_registered():
     assert validate_revision("0014_test_management") == "0014_test_management"
 
 
+def test_0015_parse_inventory_revision_is_literal_and_registered():
+    from scripts.migration_support import validate_revision
+
+    assert validate_revision("0015_parse_inventory") == "0015_parse_inventory"
+
+
+def test_0016_knowledge_review_revision_is_literal_and_registered():
+    from scripts.migration_support import validate_revision
+
+    assert validate_revision("0016_knowledge_review") == "0016_knowledge_review"
+
+
+def test_0017_publication_expiry_revision_is_literal_and_registered():
+    from scripts.migration_support import validate_revision
+
+    assert validate_revision("0017_publication_expiry") == "0017_publication_expiry"
+
+
 def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_authority(
     owned_project_mysql,
 ):
@@ -184,7 +202,7 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
     from tap.modules.ai.domain.assets import AssetRevisionRejected
     from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
 
-    owned_project_mysql.downgrade("0005_projection_lineage")
+    owned_project_mysql.rebuild("0005_projection_lineage")
     sync_engine = create_engine(owned_project_mysql.url)
     try:
         with sync_engine.begin() as connection:
@@ -504,7 +522,7 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
     from tap.modules.ai.domain.assets import AssetRevisionRejected
     from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 
-    owned_project_mysql.downgrade("0005_projection_lineage")
+    owned_project_mysql.rebuild("0005_projection_lineage")
     sync_engine = create_engine(owned_project_mysql.url)
     try:
         with sync_engine.begin() as connection:
@@ -608,7 +626,9 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
         monkeypatch.setattr(tapper_runtime, "_create_blob", lambda _settings: Resource())
         monkeypatch.setattr(tapper_runtime, "_create_database", create_database)
         monkeypatch.setattr(tapper_runtime, "_create_redis", lambda _settings: Resource())
-        monkeypatch.setattr(tapper_runtime, "_create_embeddings", lambda _settings: model)
+        monkeypatch.setattr(
+            tapper_runtime, "_create_embeddings", lambda _settings, **_kwargs: model
+        )
         monkeypatch.setattr(tapper_runtime, "_create_search", create_search)
         monkeypatch.setattr(tapper_runtime, "_create_models_probe_client", lambda _settings: None)
         monkeypatch.setattr(tapper_runtime, "_create_readiness", lambda **_kwargs: object())
@@ -690,7 +710,7 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
     from tap.modules.knowledge.ports.answers import DocumentStateChanged
     from tests.conftest import validation_http_services
 
-    owned_project_mysql.downgrade("0005_projection_lineage")
+    owned_project_mysql.rebuild("0005_projection_lineage")
     sync_engine = create_engine(owned_project_mysql.url)
     try:
         with sync_engine.begin() as connection:
@@ -716,7 +736,7 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
             )
     finally:
         sync_engine.dispose()
-    owned_project_mysql.upgrade("0012a_conversation_governance")
+    owned_project_mysql.upgrade("head")
 
     async def scenario():
         engine = create_async_engine(
@@ -865,7 +885,7 @@ def test_0010_corruption_partial_state_multisource_and_downgrade_guards(owned_pr
     spec = importlib.util.spec_from_file_location("source_migration_fixture", migration_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    owned_project_mysql.downgrade("0005_projection_lineage")
+    owned_project_mysql.rebuild("0005_projection_lineage")
     engine = create_engine(owned_project_mysql.url)
     try:
         with engine.begin() as connection:

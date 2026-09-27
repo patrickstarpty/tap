@@ -46,25 +46,39 @@ class GraphJobRequest:
         chunks_locator: str,
         extraction_profile_digest: str,
         model_alias: str,
+        source_revision_ids: tuple[str, ...] | None = None,
+        document_revision_ids: tuple[str, ...] | None = None,
     ) -> GraphJobRequest:
         scope = require_project_scope(scope)
         if not revision_id or not chunks_locator or not model_alias:
             raise ValueError("graph job request identities must be nonblank")
         if _DIGEST.fullmatch(extraction_profile_digest) is None:
             raise ValueError("graph extraction profile digest must be canonical")
+        sources = tuple(sorted(source_revision_ids or (revision_id,)))
+        documents = tuple(sorted(document_revision_ids or sources))
+        if revision_id not in sources or not sources or not documents:
+            raise ValueError("graph job must bind its complete revision selection")
         material = json.dumps(
-            [scope.project_id, revision_id, chunks_locator, extraction_profile_digest, model_alias],
+            [
+                scope.project_id,
+                revision_id,
+                sources,
+                documents,
+                chunks_locator,
+                extraction_profile_digest,
+                model_alias,
+            ],
             separators=(",", ":"),
         )
         request_digest = "sha256:" + hashlib.sha256(material.encode()).hexdigest()
         suffix = hashlib.sha256(
-            json.dumps([scope.project_id, revision_id], separators=(",", ":")).encode()
+            json.dumps([scope.project_id, revision_id, sources], separators=(",", ":")).encode()
         ).hexdigest()[:32]
         snapshot = GraphSnapshot.create(
             snapshot_id=f"grs_{suffix}",
             project_id=scope.project_id,
-            source_revision_ids=(revision_id,),
-            document_revision_ids=(revision_id,),
+            source_revision_ids=sources,
+            document_revision_ids=documents,
         )
         return cls(
             f"grj_{suffix}",

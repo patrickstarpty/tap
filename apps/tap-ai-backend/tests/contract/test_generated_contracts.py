@@ -180,6 +180,10 @@ def test_exporter_emits_closed_retrieval_intent_and_complete_chat_event_union(
         "turn.degraded",
         "turn.canceled",
         "turn.failed",
+        "test-plan.generation.waiting",
+        "test-plan.generation.result_ready",
+        "test-plan.generation.failed",
+        "test-plan.generation.canceled",
     }
     answer_claim = event_schema["$defs"]["AnswerClaim"]
     assert set(answer_claim["required"]) == {
@@ -198,8 +202,9 @@ def test_exporter_emits_private_events_and_problem_registry_without_public_leak(
     internal = json.loads((tmp_path / "events/project-event.schema.json").read_bytes())
     problems = json.loads((tmp_path / "problem-types.json").read_bytes())
     types = {variant["properties"]["event_type"]["const"] for variant in internal["oneOf"]}
-    assert len(types) == 23
+    assert len(types) == 27
     assert "conversation.turn.requested" in types
+    assert "ai.graph-run.checkpointed" in types
     assert any(
         problem["type"] == "https://tap.example/problems/scope-mismatch"
         for problem in problems["problems"]
@@ -215,6 +220,9 @@ def test_check_detects_extra_owned_artifacts_and_preserves_unowned_files(tmp_pat
     export_contracts(tmp_path)
     unowned = tmp_path / "events/notes.md"
     unowned.write_text("keep me")
+    tap_contract = tmp_path / "openapi/tap-api.json"
+    tap_contract.write_text("{}")
+    assert export_contracts(tmp_path, check=True).returncode == 0
     extra = tmp_path / "events/obsolete.schema.json"
     extra.write_text("{}")
     result = export_contracts(tmp_path, check=True, require_success=False)
@@ -223,6 +231,7 @@ def test_check_detects_extra_owned_artifacts_and_preserves_unowned_files(tmp_pat
     export_contracts(tmp_path)
     assert extra.exists()  # Never silently delete an unexpected artifact.
     assert unowned.read_text() == "keep me"
+    assert tap_contract.read_text() == "{}"
 
 
 def test_exported_problem_component_matches_runtime_and_all_refs_resolve(tmp_path: Path) -> None:

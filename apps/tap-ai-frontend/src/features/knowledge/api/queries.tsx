@@ -91,6 +91,8 @@ export const knowledgeKeys = {
   all: ["knowledge"] as const,
   sources: (projectId: string | null) =>
     ["knowledge", projectId, "sources"] as const,
+  publishedSources: (projectId: string | null) =>
+    ["knowledge", projectId, "published-sources"] as const,
   source: (projectId: string, sourceId: string) =>
     ["knowledge", projectId, "source", sourceId] as const,
   documents: (projectId: string | null) =>
@@ -102,6 +104,26 @@ export const knowledgeKeys = {
   citation: (projectId: string, citationId: string, generation = 0) =>
     ["knowledge", projectId, "citations", citationId, generation] as const,
 };
+
+export function usePublishedSourcesQuery(projectId: string | null) {
+  const client = useContext(KnowledgeClientContext);
+  return useQuery({
+    queryKey: knowledgeKeys.publishedSources(projectId),
+    enabled:
+      projectId !== null && client !== null && client.projectId === projectId,
+    queryFn: ({ signal }) => {
+      if (
+        projectId === null ||
+        client === null ||
+        client.projectId !== projectId
+      )
+        throw new Error("A matching project client is required.");
+      return client.listPublishedSources(signal);
+    },
+    staleTime: 0,
+    refetchInterval: 5_000,
+  });
+}
 
 export function useSourceListQuery(projectId: string | null) {
   const client = useContext(KnowledgeClientContext);

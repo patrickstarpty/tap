@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
+from xml.parsers import expat
 
 from docx import Document
 from docx.table import Table
@@ -30,6 +31,16 @@ from tap.modules.knowledge.domain.documents import (
     NormalizedBlock,
     canonical_sha256,
     validate_filename_media_type,
+)
+from tap.modules.knowledge.domain.parse_inventory import (
+    MAX_ORIGINAL_EXCERPT_BYTES,
+    OriginalExcerptRange,
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
+    failed_document_inventory,
+    parse_inventory_digest,
+    parser_config_digest,
 )
 from tap.modules.knowledge.ports.documents import DocumentParser
 
@@ -55,6 +66,7 @@ class _BlockBuilder:
         heading_path: tuple[str, ...],
         *,
         page: int | None = None,
+        inventory_item_id: str | None = None,
     ) -> None:
         clean = _normalize_text(text).strip("\n")
         if not clean:
@@ -80,9 +92,48 @@ class _BlockBuilder:
                 paragraph_index=self._paragraph_index,
                 start_offset=start,
                 end_offset=self._cursor,
+                inventory_item_id=inventory_item_id,
             )
         )
         self._paragraph_index += 1
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingTextBlock:
+    kind: BlockKind
+    content: str
+    locator: str
+    heading_path: tuple[str, ...]
+    source_span: tuple[int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _XmlTextNode:
+    text: str
+    start_byte: int
+    end_byte: int
+
+
+@dataclass(frozen=True, slots=True)
+class _PdfToken:
+    kind: str
+    start_byte: int
+    end_byte: int
+    safe_text: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceProvenance:
+    source: DocumentSource
+    digest: str
+
+    @classmethod
+    def create(cls, source: DocumentSource) -> _SourceProvenance:
+        return cls(source=source, digest=canonical_sha256(source.content))
+
+    @property
+    def revision_id(self) -> str:
+        return str(self.source.revision_id or self.digest)
 
 
 class ParserRegistry:
@@ -115,6 +166,7 @@ class PdfParser:
     """Extract page text only; image-only and encrypted PDFs deliberately fail closed."""
 
     def parse(self, source: DocumentSource) -> NormalizedArtifact:
+        provenance = _SourceProvenance.create(source)
         for setting in (
             "MAX_DECLARED_STREAM_LENGTH",
             "MAX_ARRAY_BASED_STREAM_OUTPUT_LENGTH",
@@ -132,12 +184,14 @@ class PdfParser:
             raise DocumentParseRejected("document-too-complex")
         decoded_total = 0
         builder = _BlockBuilder()
+        inventory: list[ParseInventoryItem] = []
         heading_path: tuple[str, ...] = ()
-        extracted = False
         for page_number, page in enumerate(reader.pages, start=1):
             contents = page.get_contents()
+            page_bytes = b""
             if contents is not None:
-                decoded_size = len(contents.get_data())
+                page_bytes = contents.get_data()
+                decoded_size = len(page_bytes)
                 decoded_total += decoded_size
                 if decoded_size > 8 * 1024 * 1024 or decoded_total > 32 * 1024 * 1024:
                     raise DocumentParseRejected("document-too-complex")
@@ -145,33 +199,90 @@ class PdfParser:
             text = _normalize_text(raw).strip()
             if "\0" in text:
                 raise DocumentParseRejected("invalid-document")
+            content_bounds = _pdf_content_stream_bounds(reader, page, source.content, page_bytes)
+            original_excerpt = (
+                _pdf_text_operator_excerpt(provenance, page_bytes, text, content_bounds)
+                if text and content_bounds is not None
+                else None
+            )
+            page_item = _inventory_item(
+                provenance,
+                ParseInventoryKind.PAGE,
+                f"page:{page_number}",
+                ParseInventoryStatus.PARSED if text else ParseInventoryStatus.FAILED,
+                text.encode("utf-8") if text else page_bytes,
+                reason=None if text else "ocr-required",
+                original_excerpt=original_excerpt,
+            )
+            inventory.append(page_item)
+            try:
+                images = tuple(page.images)
+            except Exception:
+                images = ()
+            for image_number, image in enumerate(images, start=1):
+                inventory.append(
+                    _inventory_item(
+                        provenance,
+                        ParseInventoryKind.IMAGE,
+                        f"page:{page_number}/image:{image_number}",
+                        ParseInventoryStatus.NEEDS_REVIEW,
+                        image.data,
+                        reason="image-not-text-extracted",
+                    )
+                )
             if not text:
                 continue
-            extracted = True
             lines = [line.strip() for line in text.split("\n") if line.strip()]
             if not lines:
                 continue
             if not heading_path:
                 heading_path = (lines[0],)
-                builder.add(BlockKind.HEADING, lines[0], heading_path, page=page_number)
+                builder.add(
+                    BlockKind.HEADING,
+                    lines[0],
+                    heading_path,
+                    page=page_number,
+                    inventory_item_id=page_item.item_id,
+                )
                 lines = lines[1:]
             for line in lines:
-                builder.add(BlockKind.PARAGRAPH, line, heading_path, page=page_number)
-        if not extracted:
-            raise DocumentParseRejected("ocr-required")
-        return _artifact(source, builder.blocks)
+                builder.add(
+                    BlockKind.PARAGRAPH,
+                    line,
+                    heading_path,
+                    page=page_number,
+                    inventory_item_id=page_item.item_id,
+                )
+        if not inventory:
+            inventory.extend(
+                failed_document_inventory(
+                    provenance.revision_id,
+                    provenance.digest,
+                    "empty-document",
+                )
+            )
+        return _artifact(provenance, builder.blocks, inventory)
 
 
 class DocxParser:
     """Parse a DOCX only after checking its ZIP envelope for unsafe expansion or paths."""
 
     def parse(self, source: DocumentSource) -> NormalizedArtifact:
+        provenance = _SourceProvenance.create(source)
         _validate_docx_zip(source.content)
+        document_xml_bounds = _stored_zip_member_bounds(source.content, "word/document.xml")
+        with zipfile.ZipFile(io.BytesIO(source.content)) as archive:
+            document_xml = archive.read("word/document.xml")
+        paragraph_nodes = _docx_body_paragraph_nodes(document_xml)
         document = Document(io.BytesIO(source.content))
         builder = _BlockBuilder()
+        inventory: list[ParseInventoryItem] = []
         headings: list[str] = []
+        paragraph_number = 0
+        table_number = 0
         for child in document.element.body.iterchildren():
             if child.tag.endswith("}p"):
+                paragraph_number += 1
                 paragraph = Paragraph(child, document)
                 text = _normalize_text(paragraph.text).strip()
                 if "\0" in text:
@@ -179,13 +290,48 @@ class DocxParser:
                 if not text:
                     continue
                 level = _heading_level(paragraph)
+                kind = (
+                    ParseInventoryKind.HEADING
+                    if level is not None
+                    else ParseInventoryKind.PARAGRAPH
+                )
+                nodes = (
+                    paragraph_nodes[paragraph_number - 1]
+                    if paragraph_number <= len(paragraph_nodes)
+                    else ()
+                )
+                item = _inventory_item(
+                    provenance,
+                    kind,
+                    f"paragraph:{paragraph_number}",
+                    ParseInventoryStatus.PARSED,
+                    text.encode("utf-8"),
+                    original_excerpt=_docx_paragraph_excerpt(
+                        provenance,
+                        document_xml_bounds,
+                        nodes,
+                        text,
+                    ),
+                )
+                inventory.append(item)
                 if level is not None:
                     headings = headings[: level - 1]
                     headings.append(text)
-                    builder.add(BlockKind.HEADING, text, tuple(headings))
+                    builder.add(
+                        BlockKind.HEADING,
+                        text,
+                        tuple(headings),
+                        inventory_item_id=item.item_id,
+                    )
                 else:
-                    builder.add(BlockKind.PARAGRAPH, text, tuple(headings))
+                    builder.add(
+                        BlockKind.PARAGRAPH,
+                        text,
+                        tuple(headings),
+                        inventory_item_id=item.item_id,
+                    )
             elif child.tag.endswith("}tbl"):
+                table_number += 1
                 table = Table(child, document)
                 rows = [
                     "\t".join(_normalize_text(cell.text).strip() for cell in row.cells)
@@ -194,19 +340,88 @@ class DocxParser:
                 text = "\n".join(row for row in rows if row)
                 if "\0" in text:
                     raise DocumentParseRejected("invalid-document")
-                builder.add(BlockKind.TABLE_TEXT, text, tuple(headings))
-        return _artifact(source, builder.blocks)
+                item = _inventory_item(
+                    provenance,
+                    ParseInventoryKind.TABLE,
+                    f"table:{table_number}",
+                    ParseInventoryStatus.PARSED if text else ParseInventoryStatus.FAILED,
+                    text.encode("utf-8"),
+                    reason=None if text else "empty-table",
+                )
+                inventory.append(item)
+                builder.add(
+                    BlockKind.TABLE_TEXT,
+                    text,
+                    tuple(headings),
+                    inventory_item_id=item.item_id,
+                )
+        with zipfile.ZipFile(io.BytesIO(source.content)) as archive:
+            image_names = sorted(
+                name
+                for name in archive.namelist()
+                if name.startswith("word/media/") and not name.endswith("/")
+            )
+            for image_number, name in enumerate(image_names, start=1):
+                inventory.append(
+                    _inventory_item(
+                        provenance,
+                        ParseInventoryKind.IMAGE,
+                        f"image:{image_number}:{PurePosixPath(name).name}",
+                        ParseInventoryStatus.NEEDS_REVIEW,
+                        archive.read(name),
+                        reason="image-not-text-extracted",
+                    )
+                )
+        if not inventory:
+            inventory.extend(
+                failed_document_inventory(
+                    provenance.revision_id,
+                    provenance.digest,
+                    "empty-document",
+                )
+            )
+        return _artifact(provenance, builder.blocks, inventory)
 
 
 class MarkdownParser:
     """Retain headings, fenced code, lists, and pipe-table regions as addressable text."""
 
     def parse(self, source: DocumentSource) -> NormalizedArtifact:
-        text = _decode_text(source.content)
+        provenance = _SourceProvenance.create(source)
+        try:
+            text = _decode_text(source.content)
+        except UnicodeError:
+            return _failed_text_artifact(provenance, "invalid-encoding")
         builder = _BlockBuilder()
+        inventory: list[ParseInventoryItem] = []
+        pending: list[_PendingTextBlock] = []
         headings: list[str] = []
         lines = text.split("\n")
+        line_starts: list[int] = []
+        cursor = 0
+        for line_number, line in enumerate(lines):
+            line_starts.append(cursor)
+            cursor += len(line) + (1 if line_number < len(lines) - 1 else 0)
         index = 0
+
+        def add(
+            kind: BlockKind,
+            content: str,
+            locator: str,
+            *,
+            source_start: int,
+            source_end: int,
+        ) -> None:
+            pending.append(
+                _PendingTextBlock(
+                    kind,
+                    content,
+                    locator,
+                    tuple(headings),
+                    (source_start, source_end),
+                )
+            )
+
         while index < len(lines):
             line = lines[index]
             match = _ATX_HEADING.match(line)
@@ -215,7 +430,13 @@ class MarkdownParser:
                 title = match.group(2).strip()
                 headings = headings[: level - 1]
                 headings.append(title)
-                builder.add(BlockKind.HEADING, title, tuple(headings))
+                add(
+                    BlockKind.HEADING,
+                    title,
+                    f"line:{index + 1}:heading",
+                    source_start=line_starts[index],
+                    source_end=line_starts[index] + len(line),
+                )
                 index += 1
                 continue
             fence = _FENCE.match(line)
@@ -226,21 +447,39 @@ class MarkdownParser:
                     end += 1
                 if end < len(lines):
                     end += 1
-                builder.add(BlockKind.CODE, "\n".join(lines[index:end]), tuple(headings))
+                add(
+                    BlockKind.CODE,
+                    "\n".join(lines[index:end]),
+                    f"line:{index + 1}:code",
+                    source_start=line_starts[index],
+                    source_end=line_starts[end - 1] + len(lines[end - 1]),
+                )
                 index = end
                 continue
             if _is_table_start(lines, index):
                 end = index + 2
                 while end < len(lines) and "|" in lines[end] and lines[end].strip():
                     end += 1
-                builder.add(BlockKind.TABLE_TEXT, "\n".join(lines[index:end]), tuple(headings))
+                add(
+                    BlockKind.TABLE_TEXT,
+                    "\n".join(lines[index:end]),
+                    f"line:{index + 1}:table",
+                    source_start=line_starts[index],
+                    source_end=line_starts[end - 1] + len(lines[end - 1]),
+                )
                 index = end
                 continue
             if _LIST.match(line):
                 end = index + 1
                 while end < len(lines) and _LIST.match(lines[end]):
                     end += 1
-                builder.add(BlockKind.LIST, "\n".join(lines[index:end]), tuple(headings))
+                add(
+                    BlockKind.LIST,
+                    "\n".join(lines[index:end]),
+                    f"line:{index + 1}:list",
+                    source_start=line_starts[index],
+                    source_end=line_starts[end - 1] + len(lines[end - 1]),
+                )
                 index = end
                 continue
             if not line.strip():
@@ -256,20 +495,90 @@ class MarkdownParser:
                 and not _is_table_start(lines, end)
             ):
                 end += 1
-            builder.add(BlockKind.PARAGRAPH, "\n".join(lines[index:end]), tuple(headings))
+            add(
+                BlockKind.PARAGRAPH,
+                "\n".join(lines[index:end]),
+                f"line:{index + 1}:paragraph",
+                source_start=line_starts[index],
+                source_end=line_starts[end - 1] + len(lines[end - 1]),
+            )
             index = end
-        return _artifact(source, builder.blocks)
+        excerpts = _text_original_excerpts(
+            provenance,
+            text,
+            [item.source_span for item in pending],
+        )
+        for block, original_excerpt in zip(pending, excerpts, strict=True):
+            item = _inventory_item(
+                provenance,
+                _inventory_kind(block.kind),
+                block.locator,
+                ParseInventoryStatus.PARSED,
+                _normalize_text(block.content).strip("\n").encode("utf-8"),
+                original_excerpt=original_excerpt,
+            )
+            inventory.append(item)
+            builder.add(
+                block.kind,
+                block.content,
+                block.heading_path,
+                inventory_item_id=item.item_id,
+            )
+        if not pending:
+            return _failed_text_artifact(provenance, "empty-document")
+        return _artifact(provenance, builder.blocks, inventory)
 
 
 class TextParser:
     """Split normalized plain text into ordered Unicode paragraphs."""
 
     def parse(self, source: DocumentSource) -> NormalizedArtifact:
-        text = _decode_text(source.content)
+        provenance = _SourceProvenance.create(source)
+        try:
+            text = _decode_text(source.content)
+        except UnicodeError:
+            return _failed_text_artifact(provenance, "invalid-encoding")
         builder = _BlockBuilder()
-        for paragraph in re.split(r"\n[ \t]*\n+", text):
-            builder.add(BlockKind.PARAGRAPH, paragraph.strip(), ())
-        return _artifact(source, builder.blocks)
+        inventory: list[ParseInventoryItem] = []
+        paragraphs: list[tuple[int, str, tuple[int, int]]] = []
+        separators = tuple(re.finditer(r"\n[ \t]*\n+", text))
+        starts = (0, *(match.end() for match in separators))
+        ends = (*(match.start() for match in separators), len(text))
+        for paragraph_number, (start, end) in enumerate(zip(starts, ends, strict=True), start=1):
+            paragraph = text[start:end]
+            clean = paragraph.strip()
+            if not clean:
+                continue
+            leading = len(paragraph) - len(paragraph.lstrip())
+            trailing = len(paragraph) - len(paragraph.rstrip())
+            clean_end = end - trailing if trailing else end
+            paragraphs.append((paragraph_number, clean, (start + leading, clean_end)))
+        excerpts = _text_original_excerpts(
+            provenance,
+            text,
+            [span for _, _, span in paragraphs],
+        )
+        for (paragraph_number, clean, _), original_excerpt in zip(
+            paragraphs, excerpts, strict=True
+        ):
+            item = _inventory_item(
+                provenance,
+                ParseInventoryKind.PARAGRAPH,
+                f"paragraph:{paragraph_number}",
+                ParseInventoryStatus.PARSED,
+                clean.encode("utf-8"),
+                original_excerpt=original_excerpt,
+            )
+            inventory.append(item)
+            builder.add(
+                BlockKind.PARAGRAPH,
+                clean,
+                (),
+                inventory_item_id=item.item_id,
+            )
+        if not inventory:
+            return _failed_text_artifact(provenance, "empty-document")
+        return _artifact(provenance, builder.blocks, inventory)
 
 
 PARSERS: Mapping[MediaType, DocumentParser] = {
@@ -280,17 +589,544 @@ PARSERS: Mapping[MediaType, DocumentParser] = {
 }
 
 
-def _artifact(source: DocumentSource, blocks: list[NormalizedBlock]) -> NormalizedArtifact:
-    if not blocks:
-        raise DocumentParseRejected("empty-document")
+def _artifact(
+    provenance: _SourceProvenance,
+    blocks: list[NormalizedBlock],
+    inventory: list[ParseInventoryItem],
+) -> NormalizedArtifact:
+    source = provenance.source
+    items = tuple(inventory)
     return NormalizedArtifact(
         filename=source.filename,
         media_type=source.media_type,
-        source_hash=canonical_sha256(source.content),
+        source_hash=provenance.digest,
         blocks=tuple(blocks),
         document_id=source.document_id,
         revision_id=source.revision_id,
+        parse_inventory=items,
+        parser_config_digest=parser_config_digest(source.media_type.value),
+        parse_inventory_digest=parse_inventory_digest(items),
     )
+
+
+def _failed_text_artifact(provenance: _SourceProvenance, reason: str) -> NormalizedArtifact:
+    items = failed_document_inventory(
+        provenance.revision_id,
+        provenance.digest,
+        reason,
+        locator="document:text",
+    )
+    return _artifact(provenance, [], list(items))
+
+
+def _inventory_item(
+    provenance: _SourceProvenance,
+    kind: ParseInventoryKind,
+    locator: str,
+    status: ParseInventoryStatus,
+    content: bytes,
+    *,
+    reason: str | None = None,
+    original_excerpt: OriginalExcerptRange | None = None,
+) -> ParseInventoryItem:
+    return ParseInventoryItem.create(
+        source_revision_id=provenance.revision_id,
+        kind=kind,
+        locator=locator,
+        status=status,
+        reason=reason,
+        artifact_digest=canonical_sha256(content),
+        original_excerpt=original_excerpt,
+        original_alignment_reason=(
+            None
+            if original_excerpt is not None
+            else (
+                "source-text-not-stably-addressable"
+                if status is ParseInventoryStatus.PARSED
+                else "item-original-not-text"
+            )
+        ),
+    )
+
+
+def _source_excerpt(
+    provenance: _SourceProvenance, start_byte: int, end_byte: int
+) -> OriginalExcerptRange | None:
+    source = provenance.source
+    if start_byte < 0 or end_byte <= start_byte or end_byte > len(source.content):
+        return None
+    bounded_end = min(end_byte, start_byte + MAX_ORIGINAL_EXCERPT_BYTES)
+    excerpt = bytes(source.content[start_byte:bounded_end])
+    while excerpt:
+        try:
+            excerpt.decode("utf-8")
+            break
+        except UnicodeDecodeError as error:
+            if error.start < len(excerpt) - 4:
+                return None
+            excerpt = excerpt[:-1]
+    if not excerpt:
+        return None
+    return OriginalExcerptRange(
+        source_digest=provenance.digest,
+        start_byte=start_byte,
+        end_byte=start_byte + len(excerpt),
+        excerpt_digest=canonical_sha256(excerpt),
+    )
+
+
+def _text_original_excerpts(
+    provenance: _SourceProvenance,
+    normalized_text: str,
+    spans: list[tuple[int, int]],
+) -> list[OriginalExcerptRange | None]:
+    """Map parser-node character spans to source bytes in one forward pass."""
+    if not spans:
+        return []
+    raw_text = provenance.source.content.decode("utf-8")
+    boundaries = sorted({value for span in spans for value in span})
+    byte_at: dict[int, int] = {}
+    boundary_index = 0
+    normalized_cursor = 0
+    byte_cursor = 0
+    raw_cursor = 0
+
+    def record_segment(value: str, raw_value: str, *, direct_ascii: bool) -> bool:
+        nonlocal boundary_index, normalized_cursor, byte_cursor
+        normalized_end = normalized_cursor + len(value)
+        byte_end = byte_cursor + len(raw_value.encode("utf-8"))
+        if normalized_text[normalized_cursor:normalized_end] != value:
+            return False
+        while boundary_index < len(boundaries) and boundaries[boundary_index] <= normalized_end:
+            boundary = boundaries[boundary_index]
+            if boundary == normalized_cursor:
+                byte_at[boundary] = byte_cursor
+            elif boundary == normalized_end:
+                byte_at[boundary] = byte_end
+            elif direct_ascii:
+                byte_at[boundary] = byte_cursor + boundary - normalized_cursor
+            boundary_index += 1
+        normalized_cursor = normalized_end
+        byte_cursor = byte_end
+        return True
+
+    while raw_cursor < len(raw_text):
+        character = raw_text[raw_cursor]
+        if character == "\r":
+            end = (
+                raw_cursor + 2
+                if raw_text[raw_cursor : raw_cursor + 2] == "\r\n"
+                else raw_cursor + 1
+            )
+            raw_value = raw_text[raw_cursor:end]
+            if not record_segment("\n", raw_value, direct_ascii=False):
+                return [None] * len(spans)
+            raw_cursor = end
+            continue
+        next_is_combining = raw_cursor + 1 < len(raw_text) and bool(
+            unicodedata.combining(raw_text[raw_cursor + 1])
+        )
+        if character.isascii() and not next_is_combining:
+            end = raw_cursor + 1
+            while (
+                end < len(raw_text)
+                and raw_text[end].isascii()
+                and raw_text[end] != "\r"
+                and not (end + 1 < len(raw_text) and unicodedata.combining(raw_text[end + 1]))
+            ):
+                end += 1
+            raw_value = raw_text[raw_cursor:end]
+            if not record_segment(raw_value, raw_value, direct_ascii=True):
+                return [None] * len(spans)
+            raw_cursor = end
+            continue
+        end = raw_cursor + 1
+        while end < len(raw_text) and unicodedata.combining(raw_text[end]):
+            end += 1
+        raw_value = raw_text[raw_cursor:end]
+        value = unicodedata.normalize("NFC", raw_value)
+        if not record_segment(value, raw_value, direct_ascii=False):
+            return [None] * len(spans)
+        raw_cursor = end
+    if normalized_cursor != len(normalized_text) or boundary_index != len(boundaries):
+        return [None] * len(spans)
+    return [
+        (
+            _source_excerpt(provenance, byte_at[start], byte_at[end])
+            if start in byte_at and end in byte_at
+            else None
+        )
+        for start, end in spans
+    ]
+
+
+def _pdf_content_stream_bounds(
+    reader: PdfReader,
+    page: object,
+    content: bytes,
+    decoded_stream: bytes,
+) -> tuple[int, int] | None:
+    try:
+        reference = page.raw_get("/Contents")  # type: ignore[attr-defined]
+        if not isinstance(reference, IndirectObject):
+            return None
+        offset = reader.xref[reference.generation][reference.idnum]
+    except (AttributeError, KeyError, TypeError):
+        return None
+    start = _pdf_stream_data_start(content, offset)
+    if start is None:
+        return None
+    end = start + len(decoded_stream)
+    if content[start:end] != decoded_stream:
+        return None
+    return start, end
+
+
+def _pdf_stream_data_start(content: bytes, offset: int) -> int | None:
+    """Locate a direct stream only after parsing the xref-target object's dictionary."""
+    limit = min(len(content), offset + 64 * 1024)
+    cursor = _pdf_skip_space_and_comments(content, offset, limit)
+    integer_end = _pdf_skip_unsigned_integer(content, cursor, limit)
+    if integer_end is None:
+        return None
+    cursor = _pdf_skip_space_and_comments(content, integer_end, limit)
+    integer_end = _pdf_skip_unsigned_integer(content, cursor, limit)
+    if integer_end is None:
+        return None
+    cursor = _pdf_skip_space_and_comments(content, integer_end, limit)
+    if content[cursor : cursor + 3] != b"obj":
+        return None
+    cursor = _pdf_skip_space_and_comments(content, cursor + 3, limit)
+    if content[cursor : cursor + 2] != b"<<":
+        return None
+    cursor += 2
+    depth = 1
+    while cursor < limit and depth:
+        value = content[cursor]
+        if value == ord("%"):
+            cursor = _pdf_skip_comment(content, cursor, limit)
+        elif value == ord("("):
+            string_end = _pdf_skip_literal_string(content, cursor, limit)
+            if string_end is None:
+                return None
+            cursor = string_end
+        elif content[cursor : cursor + 2] == b"<<":
+            depth += 1
+            cursor += 2
+        elif content[cursor : cursor + 2] == b">>":
+            depth -= 1
+            cursor += 2
+        elif value == ord("<"):
+            string_end = _pdf_skip_hex_string(content, cursor, limit)
+            if string_end is None:
+                return None
+            cursor = string_end
+        else:
+            cursor += 1
+    if depth:
+        return None
+    cursor = _pdf_skip_space_and_comments(content, cursor, limit)
+    if content[cursor : cursor + 6] != b"stream":
+        return None
+    cursor += 6
+    if content[cursor : cursor + 2] == b"\r\n":
+        return cursor + 2
+    if content[cursor : cursor + 1] in {b"\r", b"\n"}:
+        return cursor + 1
+    return None
+
+
+def _pdf_skip_space_and_comments(content: bytes, cursor: int, limit: int) -> int:
+    whitespace = b"\x00\t\n\x0c\r "
+    while cursor < limit:
+        if content[cursor] in whitespace:
+            cursor += 1
+        elif content[cursor] == ord("%"):
+            cursor = _pdf_skip_comment(content, cursor, limit)
+        else:
+            break
+    return cursor
+
+
+def _pdf_skip_comment(content: bytes, cursor: int, limit: int) -> int:
+    while cursor < limit and content[cursor] not in b"\r\n":
+        cursor += 1
+    return cursor
+
+
+def _pdf_skip_unsigned_integer(content: bytes, cursor: int, limit: int) -> int | None:
+    start = cursor
+    while cursor < limit and ord("0") <= content[cursor] <= ord("9"):
+        cursor += 1
+    return cursor if cursor > start else None
+
+
+def _pdf_skip_literal_string(content: bytes, cursor: int, limit: int) -> int | None:
+    cursor += 1
+    depth = 1
+    while cursor < limit:
+        value = content[cursor]
+        if value == ord("\\"):
+            cursor += 1
+            if cursor < limit and content[cursor : cursor + 2] == b"\r\n":
+                cursor += 2
+            elif cursor < limit:
+                cursor += 1
+        elif value == ord("("):
+            depth += 1
+            cursor += 1
+        elif value == ord(")"):
+            depth -= 1
+            cursor += 1
+            if depth == 0:
+                return cursor
+        else:
+            cursor += 1
+    return None
+
+
+def _pdf_skip_hex_string(content: bytes, cursor: int, limit: int) -> int | None:
+    cursor += 1
+    while cursor < limit:
+        if content[cursor] == ord(">"):
+            return cursor + 1
+        cursor += 1
+    return None
+
+
+def _pdf_tokens(content: bytes) -> tuple[_PdfToken, ...] | None:
+    tokens: list[_PdfToken] = []
+    index = 0
+    whitespace = b"\x00\t\n\x0c\r "
+    delimiters = b"()<>[]{}/%"
+    while index < len(content):
+        value = content[index]
+        if value in whitespace:
+            index += 1
+            continue
+        if value == ord("%"):
+            index = _pdf_skip_comment(content, index, len(content))
+            continue
+        if value == ord("("):
+            start = index + 1
+            index += 1
+            depth = 1
+            safe = True
+            while index < len(content) and depth:
+                current = content[index]
+                if current == ord("\\"):
+                    safe = False
+                    index += 2
+                    continue
+                if current == ord("("):
+                    depth += 1
+                elif current == ord(")"):
+                    depth -= 1
+                    if depth == 0:
+                        tokens.append(_PdfToken("literal", start, index, safe))
+                        index += 1
+                        break
+                index += 1
+            if depth:
+                return None
+            continue
+        if value in b"[]":
+            tokens.append(_PdfToken(chr(value), index, index + 1))
+            index += 1
+            continue
+        if value in b"<>/{":
+            end = index + 1
+            while end < len(content) and content[end] not in whitespace + delimiters:
+                end += 1
+            tokens.append(_PdfToken("other", index, end))
+            index = end
+            continue
+        end = index + 1
+        while end < len(content) and content[end] not in whitespace + delimiters:
+            end += 1
+        try:
+            kind = content[index:end].decode("ascii")
+        except UnicodeDecodeError:
+            kind = "other"
+        if kind == "BI":
+            return None
+        tokens.append(_PdfToken(kind, index, end))
+        index = end
+    return tuple(tokens)
+
+
+def _pdf_text_operator_excerpt(
+    provenance: _SourceProvenance,
+    decoded_stream: bytes,
+    extracted_text: str,
+    stream_bounds: tuple[int, int],
+) -> OriginalExcerptRange | None:
+    in_text = False
+    previous: _PdfToken | None = None
+    array_literals: list[_PdfToken] | None = None
+    closed_array: tuple[_PdfToken, ...] | None = None
+    shown: list[_PdfToken | None] = []
+    tokens = _pdf_tokens(decoded_stream)
+    if tokens is None:
+        return None
+    for token in tokens:
+        if token.kind == "BT":
+            in_text = True
+        elif token.kind == "ET":
+            in_text = False
+        elif token.kind == "[" and in_text:
+            array_literals = []
+            closed_array = None
+        elif token.kind == "]" and array_literals is not None:
+            closed_array = tuple(array_literals)
+            array_literals = None
+        elif token.kind == "literal" and array_literals is not None:
+            array_literals.append(token)
+        elif in_text and token.kind == "Tj":
+            shown.append(previous if previous is not None and previous.kind == "literal" else None)
+        elif in_text and token.kind == "TJ":
+            shown.append(
+                closed_array[0] if closed_array is not None and len(closed_array) == 1 else None
+            )
+        elif in_text and token.kind in {"'", '"'}:
+            shown.append(None)
+        previous = token
+    if len(shown) != 1 or shown[0] is None or not shown[0].safe_text:
+        return None
+    token = shown[0]
+    raw = decoded_stream[token.start_byte : token.end_byte]
+    try:
+        displayed = _normalize_text(raw.decode("utf-8")).strip()
+    except UnicodeDecodeError:
+        return None
+    if displayed != extracted_text:
+        return None
+    absolute_start = stream_bounds[0] + token.start_byte
+    return _source_excerpt(provenance, absolute_start, absolute_start + len(raw))
+
+
+def _docx_body_paragraph_nodes(document_xml: bytes) -> tuple[tuple[_XmlTextNode, ...], ...]:
+    parser = expat.ParserCreate(namespace_separator="|")
+    stack: list[str] = []
+    paragraphs: list[tuple[_XmlTextNode, ...]] = []
+    paragraph: list[_XmlTextNode] | None = None
+    run: list[_XmlTextNode] | None = None
+    run_hidden = False
+    text_start: int | None = None
+    text_parts: list[str] = []
+
+    def local(name: str) -> str:
+        return name.rsplit("|", 1)[-1]
+
+    def start_element(name: str, _attributes: Mapping[str, str]) -> None:
+        nonlocal paragraph, run, run_hidden, text_start, text_parts
+        element = local(name)
+        parent = stack[-1] if stack else None
+        stack.append(element)
+        if element == "p" and parent == "body":
+            paragraph = []
+        elif element == "r" and paragraph is not None:
+            run = []
+            run_hidden = False
+        elif element == "vanish" and run is not None:
+            run_hidden = True
+        elif element == "t" and run is not None:
+            text_start = _xml_start_tag_content_start(document_xml, parser.CurrentByteIndex)
+            if text_start is None:
+                raise ValueError("DOCX text tag is unbounded")
+            text_parts = []
+
+    def character_data(value: str) -> None:
+        if text_start is not None:
+            text_parts.append(value)
+
+    def end_element(name: str) -> None:
+        nonlocal paragraph, run, text_start, text_parts
+        element = local(name)
+        if element == "t" and run is not None and text_start is not None:
+            run.append(_XmlTextNode("".join(text_parts), text_start, parser.CurrentByteIndex))
+            text_start = None
+            text_parts = []
+        elif element == "r" and paragraph is not None and run is not None:
+            if not run_hidden:
+                paragraph.extend(run)
+            run = None
+        elif element == "p" and paragraph is not None:
+            paragraphs.append(tuple(paragraph))
+            paragraph = None
+        stack.pop()
+
+    parser.StartElementHandler = start_element
+    parser.CharacterDataHandler = character_data
+    parser.EndElementHandler = end_element
+    parser.ExternalEntityRefHandler = lambda *_args: 0
+    parser.Parse(document_xml, True)
+    return tuple(paragraphs)
+
+
+def _xml_start_tag_content_start(content: bytes, start: int) -> int | None:
+    limit = min(len(content), start + 64 * 1024)
+    quote: int | None = None
+    cursor = start
+    while cursor < limit:
+        value = content[cursor]
+        if quote is not None:
+            if value == quote:
+                quote = None
+        elif value in {ord('"'), ord("'")}:
+            quote = value
+        elif value == ord(">"):
+            return cursor + 1
+        cursor += 1
+    return None
+
+
+def _docx_paragraph_excerpt(
+    provenance: _SourceProvenance,
+    document_xml_bounds: tuple[int, int] | None,
+    nodes: tuple[_XmlTextNode, ...],
+    extracted_text: str,
+) -> OriginalExcerptRange | None:
+    if document_xml_bounds is None or len(nodes) != 1:
+        return None
+    node = nodes[0]
+    if _normalize_text(node.text).strip() != extracted_text:
+        return None
+    start = document_xml_bounds[0] + node.start_byte
+    end = document_xml_bounds[0] + node.end_byte
+    if end > document_xml_bounds[1]:
+        return None
+    return _source_excerpt(provenance, start, end)
+
+
+def _stored_zip_member_bounds(content: bytes, member: str) -> tuple[int, int] | None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            info = archive.getinfo(member)
+            if info.compress_type != zipfile.ZIP_STORED:
+                return None
+            header = info.header_offset
+            if content[header : header + 4] != b"PK\x03\x04":
+                return None
+            name_length = int.from_bytes(content[header + 26 : header + 28], "little")
+            extra_length = int.from_bytes(content[header + 28 : header + 30], "little")
+            start = header + 30 + name_length + extra_length
+            end = start + info.file_size
+            if content[start:end] != archive.read(info):
+                return None
+            return start, end
+    except (KeyError, ValueError, zipfile.BadZipFile):
+        return None
+
+
+def _inventory_kind(kind: BlockKind) -> ParseInventoryKind:
+    return {
+        BlockKind.HEADING: ParseInventoryKind.HEADING,
+        BlockKind.PARAGRAPH: ParseInventoryKind.PARAGRAPH,
+        BlockKind.LIST: ParseInventoryKind.LIST,
+        BlockKind.CODE: ParseInventoryKind.CODE,
+        BlockKind.TABLE_TEXT: ParseInventoryKind.TABLE,
+    }[kind]
 
 
 def _normalize_text(value: str) -> str:

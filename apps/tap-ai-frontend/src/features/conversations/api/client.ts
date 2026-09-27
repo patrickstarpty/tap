@@ -13,6 +13,59 @@ export type ConversationTurnSummary =
   components["schemas"]["ConversationTurnSummary"];
 export type ConversationCitationPreview =
   components["schemas"]["CitationPreview"];
+export type InsightsExplanationRequest =
+  components["schemas"]["InsightsExplanationRequest"] & {
+    conversationId?: string;
+    sourceRevisionIds?: string[];
+    documentRevisionIds?: string[];
+  };
+export type InsightsExplanationResult =
+  components["schemas"]["InsightsExplanationResult"];
+export type InsightsExplanationAccepted =
+  components["schemas"]["InsightsExplanationAccepted"];
+
+export type InsightsHandoff = {
+  queryId: string;
+  resourceRefs: string[];
+  draft: string;
+};
+
+const HANDOFF_KEYS = new Set(["projectId", "queryId", "resourceRef", "draft"]);
+const HANDOFF_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+export function parseInsightsHandoff(
+  href: string,
+  authorizedProjectId: string,
+): InsightsHandoff | null {
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+  if (
+    [...url.searchParams.keys()].some((key) => !HANDOFF_KEYS.has(key)) ||
+    url.searchParams.getAll("projectId").length !== 1 ||
+    url.searchParams.get("projectId") !== authorizedProjectId ||
+    url.searchParams.getAll("queryId").length !== 1 ||
+    url.searchParams.getAll("draft").length !== 1
+  )
+    return null;
+  const queryId = url.searchParams.get("queryId") ?? "";
+  const draft = url.searchParams.get("draft") ?? "";
+  const resourceRefs = url.searchParams.getAll("resourceRef");
+  if (
+    !HANDOFF_ID.test(queryId) ||
+    draft.trim().length === 0 ||
+    draft.length > 500 ||
+    resourceRefs.length === 0 ||
+    resourceRefs.length > 20 ||
+    new Set(resourceRefs).size !== resourceRefs.length ||
+    resourceRefs.some((reference) => !HANDOFF_ID.test(reference))
+  )
+    return null;
+  return { queryId, resourceRefs, draft };
+}
 
 export class ConversationClientError extends Error {
   constructor(
@@ -51,6 +104,16 @@ export interface ConversationClient {
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<ConversationAccepted>;
+  explainInsights(
+    input: InsightsExplanationRequest,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<InsightsExplanationAccepted>;
+  getInsightsExplanation(
+    conversationId: string,
+    turnId: string,
+    signal?: AbortSignal,
+  ): Promise<InsightsExplanationAccepted | InsightsExplanationResult>;
   cancel(
     conversationId: string,
     turnId: string,
@@ -140,6 +203,7 @@ export function createConversationClient({
   if (projectId.trim().length === 0)
     throw new Error("A project ID is required.");
   const root = `${baseUrl || baseOrigin()}/api/v1/projects/${encodeURIComponent(projectId)}/conversations`;
+  const projectRoot = `${baseUrl || baseOrigin()}/api/v1/projects/${encodeURIComponent(projectId)}`;
   const request = async <T>(path: string, init?: RequestInit) =>
     checkedJson<T>(await fetcher(new Request(`${root}${path}`, init)));
   const write = (
@@ -175,6 +239,29 @@ export function createConversationClient({
       request<ConversationAccepted>(
         `/${encodeURIComponent(id)}/turns`,
         write(body, key, signal),
+      ),
+    explainInsights: async (input, idempotencyKey, signal) =>
+      checkedJson<InsightsExplanationAccepted>(
+        await fetcher(
+          new Request(`${projectRoot}/insights/explanations`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "idempotency-key": idempotencyKey,
+            },
+            body: JSON.stringify(input),
+            signal,
+          }),
+        ),
+      ),
+    getInsightsExplanation: async (conversationId, turnId, signal) =>
+      checkedJson<InsightsExplanationAccepted | InsightsExplanationResult>(
+        await fetcher(
+          new Request(
+            `${projectRoot}/insights/explanations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}`,
+            { signal },
+          ),
+        ),
       ),
     cancel: (id, turnId, signal) =>
       request<ConversationTurnSummary>(

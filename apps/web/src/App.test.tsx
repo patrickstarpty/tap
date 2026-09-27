@@ -237,7 +237,7 @@ describe("TAP non-AI application", () => {
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Test Analytics" }));
     expect(
-      screen.getByRole("heading", { name: "Demo Dashboard" }),
+      screen.getByRole("heading", { name: "Test Insights" }),
     ).toBeVisible();
   });
 

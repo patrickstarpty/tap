@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { preparePublishedFixture } from "./publicationFixture";
 
 const ORIGIN = "http://127.0.0.1:15173";
 let cleanupSourceId: string | null = null;
@@ -79,6 +80,7 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
       { timeout: 45_000 },
     )
     .not.toBe("");
+  preparePublishedFixture([sourceRevisionId]);
 
   const agents = (await (
     await page.request.get(`${root}/ai/agents`)
@@ -105,7 +107,6 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
     conversationId: string;
     turnId: string;
   };
-  let inputSnapshotDigest = "";
   let answerEvidenceSnapshotDigest = "";
   await expect
     .poll(
@@ -123,7 +124,6 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
         };
         const turn = detail.turns[0];
         if (turn?.state === "completed") {
-          inputSnapshotDigest = turn.inputSnapshotDigest;
           answerEvidenceSnapshotDigest =
             turn.answerEvidenceSnapshotDigest ?? "";
         }
@@ -133,22 +133,18 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
     )
     .not.toBe("");
 
-  const generation = await page.request.post(`${root}/test-plans/generations`, {
-    headers: {
-      Origin: ORIGIN,
-      "Idempotency-Key": `test-plan-generation-${marker}`,
-    },
-    data: {
-      conversationId: accepted.conversationId,
-      turnId: accepted.turnId,
-      inputSnapshotDigest,
-      answerEvidenceSnapshotDigest,
-      modelAlias: "tapper-chat",
-      agentRevisionId: agents.items[0]!.revisionId,
-      skillRevisionIds: [skills.items[0]!.revisionId],
-      objective: "Verify successful card checkout",
-    },
-  });
+  await page.goto("/");
+  const generationResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/test-plans/generations"),
+  );
+  await page
+    .getByRole("button", {
+      name: /Generate Test Plan draft|生成测试计划草稿/u,
+    })
+    .click();
+  const generation = await generationResponse;
   expect(generation.status(), `generation: ${await generation.text()}`).toBe(
     202,
   );
@@ -158,25 +154,45 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
     revisionId: string;
     deepLink: string;
   };
-  await expect
-    .poll(
-      async () => {
-        const status = (await (
-          await page.request.get(`${root}/test-plans/generations/${job.jobId}`)
-        ).json()) as { status: string };
-        return status.status;
-      },
-      { timeout: 45_000 },
-    )
-    .toBe("DRAFT_READY");
-
-  await page.goto(job.deepLink);
+  const openDraft = page.getByRole("button", {
+    name: /Open generated draft|打开生成的草稿/u,
+  });
+  await expect(openDraft).toBeVisible({ timeout: 45_000 });
+  await openDraft.click();
   await expect(
     page.getByRole("heading", { name: "Generated Test Plan" }),
   ).toBeVisible();
   await expect(
     page.getByText(/1 source citations|1 条来源依据/u),
   ).toBeVisible();
+  await page
+    .getByLabel(/Plan objective|计划目标/u)
+    .fill("Verify successful card checkout and review failures");
+  const save = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response
+        .url()
+        .endsWith(`/test-plans/${job.testPlanId}/revisions/${job.revisionId}`),
+  );
+  await page.getByRole("button", { name: /Save draft|保存草稿/u }).click();
+  expect((await save).status()).toBe(200);
+  await page
+    .getByLabel(/Review reason|评审理由/u)
+    .fill("Reviewed the requirement, BDD result, and approved evidence.");
+  const review = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response
+        .url()
+        .endsWith(
+          `/test-plans/${job.testPlanId}/revisions/${job.revisionId}/reviews`,
+        ),
+  );
+  await page
+    .getByRole("button", { name: /Accept modified|修改后采纳/u })
+    .click();
+  expect((await review).status()).toBe(200);
   const publish = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -189,7 +205,11 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
   await page
     .getByRole("button", { name: /Approve and publish|批准并发布/u })
     .click();
-  expect((await publish).status()).toBe(200);
+  const publishResponse = await publish;
+  expect(
+    publishResponse.status(),
+    `publish: ${await publishResponse.text()}`,
+  ).toBe(200);
   await expect(
     page.getByRole("button", { name: /Published|已发布/u }),
   ).toBeDisabled();

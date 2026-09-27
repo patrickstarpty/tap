@@ -102,7 +102,8 @@ class RecordingAuditSink(SearchAuditSink):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("version", ("doc-schema-v1", "doc-schema-v2"))
-async def test_owned_search_reads_exact_frozen_tuple_and_maps_both_profiles(version):
+@pytest.mark.parametrize("approved_only", (False, True))
+async def test_owned_search_reads_exact_frozen_tuple_and_maps_both_profiles(version, approved_only):
     import json
     from types import SimpleNamespace
 
@@ -127,6 +128,10 @@ async def test_owned_search_reads_exact_frozen_tuple_and_maps_both_profiles(vers
         async def load_current_source_revisions(self, selected):
             assert selected == ((owner.source_id, owner.revision_id, owner.source_content_hash),)
             return (owner,)
+
+        async def load_approved_chunk_ids(self, item_scope):
+            assert item_scope == ((owner.revision_id, ("approved-item",)),)
+            return (row["chunk_id"],)
 
     execution = doc_execution()
     resource = ResolvedResourceRef(
@@ -177,7 +182,15 @@ async def test_owned_search_reads_exact_frozen_tuple_and_maps_both_profiles(vers
     adapter = MilvusSearchAdapter(
         config(targets={SourceFamily.DOC: target}), reader, audit, owners=Owners()
     )
+    if approved_only:
+        execution = replace(
+            execution, approved_item_scope=((owner.revision_id, ("approved-item",)),)
+        )
     hits = await adapter.search(execution)
+    if approved_only:
+        assert (
+            f'chunk_id in ["{row["chunk_id"]}"]' in reader.requests[0].channels[0].filter_expression
+        )
     assert len(hits) == 1 and hits[0].source.source_id == owner.source_id
     assert hits[0].chunk_id == row["chunk_id"]
     assert "project_id" in reader.requests[0].output_fields

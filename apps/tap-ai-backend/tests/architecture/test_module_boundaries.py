@@ -14,6 +14,9 @@ KNOWLEDGE = BACKEND_SOURCE / "modules" / "knowledge"
 ACCESS = BACKEND_SOURCE / "modules" / "access"
 TEST_MANAGEMENT = BACKEND_SOURCE / "modules" / "test_management"
 CHAT_API_SYMBOLS = {
+    "AuthorizedAnswerExecution",
+    "AuthorizedAnswerQuery",
+    "get_template",
     "AnswerRequest",
     "AnswerResponse",
     "KnowledgeAPI",

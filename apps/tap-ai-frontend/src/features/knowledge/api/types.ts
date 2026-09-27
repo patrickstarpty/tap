@@ -14,6 +14,25 @@ export type SourcePage = components["schemas"]["SourcePage"];
 export type SourceDetail = components["schemas"]["SourceDetail"];
 export type SourceAccepted = components["schemas"]["SourceAccepted"];
 export type SourceRetryRequest = components["schemas"]["SourceRetryRequest"];
+export type KnowledgeReviewDetail =
+  components["schemas"]["KnowledgeReviewDetail"];
+export type KnowledgeReviewPage = components["schemas"]["KnowledgeReviewPage"];
+export type KnowledgeReviewInventory =
+  components["schemas"]["KnowledgeReviewInventory"];
+export type KnowledgeReviewDecisionPage =
+  components["schemas"]["KnowledgeReviewDecisionPage"];
+export type KnowledgeReviewHistoryPage =
+  components["schemas"]["KnowledgeReviewHistoryPage"];
+export type KnowledgePublicationPage =
+  components["schemas"]["KnowledgePublicationPage"];
+export type KnowledgeReviewItemComparison =
+  components["schemas"]["KnowledgeReviewItemComparison"];
+export type KnowledgeReviewDecisionRequest =
+  components["schemas"]["KnowledgeReviewDecisionRequest"];
+export type KnowledgePublicationDetail =
+  components["schemas"]["KnowledgePublicationDetail"];
+export type PublishedKnowledgeSourcePage =
+  components["schemas"]["PublishedKnowledgeSourcePage"];
 export type IngestionStage = components["schemas"]["IngestionStage"];
 export type RetrievalAnswerRequest =
   components["schemas"]["RetrievalAnswerRequest"];
@@ -31,6 +50,68 @@ export interface ListDocumentsInput {
 
 export interface KnowledgeClient {
   readonly projectId: string;
+  listReviews(input: {
+    sourceRevisionId?: string;
+    afterReviewId?: string;
+    limit?: number;
+    signal?: AbortSignal;
+  }): Promise<KnowledgeReviewPage>;
+  openDocumentReview(
+    documentId: string,
+    sourceRevisionId: string,
+    idempotencyKey: string,
+  ): Promise<KnowledgeReviewDetail>;
+  getReview(
+    reviewId: string,
+    signal?: AbortSignal,
+  ): Promise<KnowledgeReviewDetail>;
+  listReviewInventory(
+    reviewId: string,
+    afterItemId?: string,
+  ): Promise<KnowledgeReviewInventory>;
+  listReviewDecisionHistory(
+    reviewId: string,
+    afterVersion?: number,
+  ): Promise<KnowledgeReviewDecisionPage>;
+  listReviewHistory(
+    reviewId: string,
+    afterVersion?: number,
+  ): Promise<KnowledgeReviewHistoryPage>;
+  listReviewPublications(
+    reviewId: string,
+    afterPublicationId?: string,
+  ): Promise<KnowledgePublicationPage>;
+  compareReviewItem(
+    reviewId: string,
+    itemId: string,
+  ): Promise<KnowledgeReviewItemComparison>;
+  decideReviewItem(
+    reviewId: string,
+    itemId: string,
+    version: number,
+    body: KnowledgeReviewDecisionRequest,
+  ): Promise<KnowledgeReviewDetail>;
+  transitionReview(
+    reviewId: string,
+    action: "submit" | "return" | "approve",
+    version: number,
+  ): Promise<
+    KnowledgeReviewDetail | components["schemas"]["KnowledgeReviewSummary"]
+  >;
+  publishReview(
+    reviewId: string,
+    version: number,
+    generation: string,
+    key?: string,
+  ): Promise<KnowledgePublicationDetail>;
+  withdrawPublication(
+    publicationId: string,
+    version: number,
+    key?: string,
+  ): Promise<KnowledgePublicationDetail>;
+  listPublishedSources(
+    signal?: AbortSignal,
+  ): Promise<PublishedKnowledgeSourcePage>;
   listSources(input: ListDocumentsInput): Promise<SourcePage>;
   getSource(sourceId: string, signal?: AbortSignal): Promise<SourceDetail>;
   uploadSource(

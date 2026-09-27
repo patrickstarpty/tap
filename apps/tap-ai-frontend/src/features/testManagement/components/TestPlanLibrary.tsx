@@ -2,7 +2,11 @@ import { FileTextOutlined } from "@ant-design/icons";
 import { Button, Input, Spin } from "antd";
 import { useEffect, useRef, useState } from "react";
 
-import { useTestPlanGeneration, useTestPlans } from "../api/queries";
+import {
+  useRetryTestPlanGeneration,
+  useTestPlanGeneration,
+  useTestPlans,
+} from "../api/queries";
 
 const COPY = {
   en: {
@@ -29,6 +33,10 @@ const COPY = {
       "The Test Plan draft could not be generated. Try again from Tapper.",
     generationStatusFailed:
       "Generation status could not be loaded. Refresh to try again.",
+    generationCanceled: "Test Plan generation was canceled.",
+    retry: "Retry generation",
+    result: "Open generated draft",
+    generate: "Generate from latest answer",
   },
   zh: {
     heading: "测试管理",
@@ -51,6 +59,10 @@ const COPY = {
     generating: "正在生成测试计划草稿，可能需要一分钟。",
     generationFailed: "测试计划草稿生成失败，请返回 Tapper 重试。",
     generationStatusFailed: "暂时无法获取生成进度，请刷新页面重试。",
+    generationCanceled: "测试计划生成已取消。",
+    retry: "重试生成",
+    result: "打开生成的草稿",
+    generate: "从最新回答生成",
   },
 } as const;
 
@@ -76,6 +88,7 @@ export function TestPlanLibrary({
   onGoTapper,
   generationJobId = null,
   generationError = null,
+  onGenerateFromLatest,
 }: {
   projectId: string;
   locale: "en" | "zh";
@@ -83,9 +96,11 @@ export function TestPlanLibrary({
   onGoTapper: () => void;
   generationJobId?: string | null;
   generationError?: string | null;
+  onGenerateFromLatest?: () => void;
 }) {
   const plans = useTestPlans(projectId);
   const generation = useTestPlanGeneration(projectId, generationJobId);
+  const retry = useRetryTestPlanGeneration(projectId);
   const refreshedJob = useRef<string | null>(null);
   const [query, setQuery] = useState("");
   const text = COPY[locale];
@@ -113,6 +128,11 @@ export function TestPlanLibrary({
           <h1 id="test-management-heading">{text.heading}</h1>
           <p>{text.description}</p>
         </div>
+        {onGenerateFromLatest ? (
+          <Button type="primary" onClick={onGenerateFromLatest}>
+            {text.generate}
+          </Button>
+        ) : null}
       </header>
       {plans.isPending ? <Spin tip={text.loading} /> : null}
       {plans.isError ? <p role="alert">{text.error}</p> : null}
@@ -121,12 +141,41 @@ export function TestPlanLibrary({
         <p role="alert">{text.generationStatusFailed}</p>
       ) : null}
       {generation.data?.status === "FAILED" ? (
-        <p role="alert">{text.generationFailed}</p>
+        <div role="alert">
+          <p>{text.generationFailed}</p>
+          <Button
+            loading={retry.isPending}
+            onClick={() =>
+              generationJobId === null
+                ? undefined
+                : retry.mutate({
+                    jobId: generationJobId,
+                    rowVersion: generation.data!.rowVersion,
+                    key: `retry-${crypto.randomUUID()}`,
+                  })
+            }
+          >
+            {text.retry}
+          </Button>
+        </div>
+      ) : null}
+      {generation.data?.status === "CANCELED" ? (
+        <p role="status">{text.generationCanceled}</p>
+      ) : null}
+      {generation.data?.status === "DRAFT_READY" ? (
+        <Button
+          onClick={() =>
+            onOpen(generation.data!.testPlanId, generation.data!.revisionId)
+          }
+        >
+          {text.result}
+        </Button>
       ) : null}
       {generationJobId !== null &&
       !generation.isError &&
       generation.data?.status !== "DRAFT_READY" &&
-      generation.data?.status !== "FAILED" ? (
+      generation.data?.status !== "FAILED" &&
+      generation.data?.status !== "CANCELED" ? (
         <p role="status">{text.generating}</p>
       ) : null}
       {!plans.isPending && !plans.isError ? (
@@ -146,8 +195,8 @@ export function TestPlanLibrary({
           generationJobId !== null &&
           !generation.isError &&
           generation.data?.status !== "FAILED" &&
-          generation.data?.status !== "DRAFT_READY" ? null : items.length ===
-            0 ? (
+          generation.data?.status !== "DRAFT_READY" &&
+          generation.data?.status !== "CANCELED" ? null : items.length === 0 ? (
             <div className="tap-data-workspace">
               <FileTextOutlined aria-hidden="true" />
               <h2>{plans.data?.length ? text.noMatch : text.empty}</h2>

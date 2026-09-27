@@ -37,6 +37,7 @@ from tap.platform.storage.objects import (
     StagingRef,
     StagingScavengeReceipt,
     VerifiedObject,
+    VerifiedObjectRange,
 )
 
 _P = ParamSpec("_P")
@@ -92,6 +93,34 @@ def _content_type(value: str) -> None:
         or re.fullmatch(r"[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+", value) is None
     ):
         raise _ArgumentValueError("object content type is invalid")
+
+
+def _provider_identity(value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping) or set(value) not in (
+        {"etag"},
+        {"etag", "versionId"},
+    ):
+        raise ObjectIntegrityError("object provider identity is invalid")
+    etag = value.get("etag")
+    version_id = value.get("versionId")
+    if (
+        not isinstance(etag, str)
+        or not 1 <= len(etag) <= 512
+        or any(ord(character) < 32 for character in etag)
+        or (
+            version_id is not None
+            and (
+                not isinstance(version_id, str)
+                or not 1 <= len(version_id) <= 512
+                or any(ord(character) < 32 for character in version_id)
+            )
+        )
+    ):
+        raise ObjectIntegrityError("object provider identity is invalid")
+    return {
+        "etag": etag,
+        **({"versionId": version_id} if isinstance(version_id, str) else {}),
+    }
 
 
 def _boundary(operation: Callable[_P, Awaitable[_T]]) -> Callable[_P, Coroutine[Any, Any, _T]]:
@@ -454,15 +483,24 @@ class S3ObjectStore(ObjectStorePort):
         data, _ = await self._read(self._manifest_key(parts), maximum=16384)
         try:
             manifest = json.loads(data)
+            version = manifest.get("v")
+            expected_keys = {
+                "v",
+                "identity",
+                "attributes",
+                "sha256",
+                "size",
+                "contentType",
+            } | ({"providerIdentity"} if version == 2 else set())
             if (
                 _hash(data) != parts[3]
                 or _canonical(manifest) != data
-                or set(manifest) != {"v", "identity", "attributes", "sha256", "size", "contentType"}
+                or set(manifest) != expected_keys
             ):
                 raise ValueError
             if (
-                type(manifest["v"]) is not int
-                or manifest["v"] != 1
+                type(version) is not int
+                or version not in {1, 2}
                 or not _HEX.fullmatch(manifest["sha256"])
             ):
                 raise ValueError
@@ -471,9 +509,78 @@ class S3ObjectStore(ObjectStorePort):
             _identity(manifest["identity"])
             _attributes(manifest["attributes"])
             _content_type(manifest["contentType"])
+            if version == 2:
+                _provider_identity(manifest["providerIdentity"])
         except (ValueError, TypeError, KeyError):
             raise ObjectIntegrityError("object manifest is invalid") from None
         return cast(Mapping[str, Any], manifest)
+
+    async def _read_range(
+        self,
+        key: str,
+        *,
+        start_byte: int,
+        end_byte: int,
+        total_size: int,
+        provider_identity: Mapping[str, str],
+    ) -> bytes:
+        expected = end_byte - start_byte
+        identity = _provider_identity(provider_identity)
+        try:
+            result = await self._call(
+                "get_object",
+                Key=key,
+                Range=f"bytes={start_byte}-{end_byte - 1}",
+                IfMatch=identity["etag"],
+                **({"VersionId": identity["versionId"]} if "versionId" in identity else {}),
+            )
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") in _MISSING:
+                raise ObjectMissingError("object does not exist") from None
+            if error.response.get("Error", {}).get("Code") in {
+                "PreconditionFailed",
+                "412",
+                "InvalidRequest",
+                "NotImplemented",
+            }:
+                raise ObjectUnavailable("conditional object range read is unavailable") from None
+            raise ObjectUnavailable("object range read failed") from None
+        body = result.get("Body")
+        try:
+            if (
+                result.get("ETag") != identity["etag"]
+                or ("versionId" in identity and result.get("VersionId") != identity["versionId"])
+                or result.get("ContentRange") != f"bytes {start_byte}-{end_byte - 1}/{total_size}"
+            ):
+                raise ObjectUnavailable("conditional object range identity is unavailable")
+            if result.get("ContentLength") != expected:
+                raise ObjectIntegrityError("object range length differs")
+            chunks = bytearray()
+            while len(chunks) < expected:
+                deadline = _DEADLINE.get()
+                remaining = (
+                    self._config.timeout_seconds
+                    if deadline is None
+                    else deadline - asyncio.get_running_loop().time()
+                )
+                part = await self._bounded(body.read(expected - len(chunks)), remaining)
+                if not isinstance(part, bytes) or len(chunks) + len(part) > expected:
+                    raise ObjectIntegrityError("object range exceeds bound")
+                if not part:
+                    break
+                chunks.extend(part)
+            deadline = _DEADLINE.get()
+            remaining = (
+                self._config.timeout_seconds
+                if deadline is None
+                else deadline - asyncio.get_running_loop().time()
+            )
+            if len(chunks) != expected or await self._bounded(body.read(1), remaining):
+                raise ObjectIntegrityError("object range length differs")
+            return bytes(chunks)
+        finally:
+            if body is not None:
+                body.close()
 
     @_boundary
     async def describe_verified(self, ref: ObjectRef) -> ObjectDescriptor:
@@ -507,7 +614,41 @@ class S3ObjectStore(ObjectStorePort):
             raise ObjectIntegrityError("object digest differs")
         return VerifiedObject(data, "sha256:" + digest, size, content_type, identity, attributes)
 
-    async def _put_immutable(self, key: str, data: bytes, content_type: str) -> None:
+    @_boundary
+    async def read_verified_range(
+        self, ref: ObjectRef, *, start_byte: int, end_byte: int
+    ) -> VerifiedObjectRange:
+        if (
+            not isinstance(ref, ObjectRef)
+            or type(start_byte) is not int
+            or type(end_byte) is not int
+            or start_byte < 0
+            or end_byte <= start_byte
+            or end_byte - start_byte > 16_000
+        ):
+            raise _ArgumentValueError("object range is outside the bound")
+        manifest = await self._manifest(ref)
+        if end_byte > manifest["size"]:
+            raise ObjectIntegrityError("object range exceeds immutable size")
+        if manifest["v"] != 2:
+            raise ObjectUnavailable("object range provider identity is unavailable")
+        data = await self._read_range(
+            self._payload_key(manifest),
+            start_byte=start_byte,
+            end_byte=end_byte,
+            total_size=manifest["size"],
+            provider_identity=manifest["providerIdentity"],
+        )
+        return VerifiedObjectRange(
+            data=data,
+            sha256="sha256:" + manifest["sha256"],
+            size=manifest["size"],
+            content_type=manifest["contentType"],
+            identity=manifest["identity"],
+            attributes=tuple(sorted(manifest["attributes"].items())),
+        )
+
+    async def _put_immutable(self, key: str, data: bytes, content_type: str) -> dict[str, str]:
         try:
             await self._call(
                 "put_object",
@@ -525,9 +666,19 @@ class S3ObjectStore(ObjectStorePort):
                 "409",
             }:
                 raise ObjectUnavailable("object immutable publication failed") from None
-        readback, _ = await self._read(key, maximum=max(len(data), 1))
+        readback, properties = await self._read(key, maximum=max(len(data), 1))
         if readback != data:
             raise ObjectIntegrityError("object immutable publication conflicts")
+        return _provider_identity(
+            {
+                "etag": properties.get("ETag"),
+                **(
+                    {"versionId": properties["VersionId"]}
+                    if isinstance(properties.get("VersionId"), str)
+                    else {}
+                ),
+            }
+        )
 
     @_boundary
     async def promote(
@@ -554,16 +705,19 @@ class S3ObjectStore(ObjectStorePort):
         if verified.sha256 != expected_sha256 or verified.size != staged.size:
             raise ObjectIntegrityError("staging facts differ")
         manifest = {
-            "v": 1,
+            "v": 2,
             "identity": identity,
             "attributes": dict(attributes),
             "sha256": expected_sha256.removeprefix("sha256:"),
             "size": staged.size,
             "contentType": staged.content_type,
         }
+        provider_identity = await self._put_immutable(
+            self._payload_key(manifest), verified.data, staged.content_type
+        )
+        manifest["providerIdentity"] = provider_identity
         data = _canonical(manifest)
         ref = ObjectRef(f"obj1.{self._store}.{self._namespace}.{_hash(data)}")
-        await self._put_immutable(self._payload_key(manifest), verified.data, staged.content_type)
         await self._put_immutable(self._identity_key(manifest), data, "application/json")
         await self._put_immutable(self._manifest_key(self._parse(ref)), data, "application/json")
         return ref

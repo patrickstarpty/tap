@@ -73,6 +73,11 @@ def test_real_ai_product_has_no_tap_imports():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_real_tap_product_has_no_ai_imports():
+    result = run_guard(ROOT, "tap")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_guard_fails_closed_for_missing_product_source(tmp_path: Path):
     result = run_guard(tmp_path, "ai")
     assert result.returncode == 1

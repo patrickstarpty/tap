@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,14 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.domain.models import text_digest
 from tap.modules.test_management.domain.models import (
     TestPlanGenerationRequest as GenerationRequest,
+)
+from tap.quality.evidence import (
+    candidate_digest as evidence_candidate_digest,
+)
+from tap.quality.evidence import (
+    candidate_run_id,
+    canonical_digest,
+    reviewed_candidate_digest,
 )
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -65,6 +74,7 @@ def _profile() -> dict:
                     "title": "Create record",
                     "objective": intent,
                     "critical": True,
+                    "coveredRequirementIds": [],
                     "scenarios": [
                         {
                             "scenarioId": f"scenario_{suffix}",
@@ -78,6 +88,8 @@ def _profile() -> dict:
                                     "text": "a valid request",
                                     "expectedResult": None,
                                     "critical": False,
+                                    "citationIds": [],
+                                    "unknownIds": [],
                                 },
                                 {
                                     "stepId": f"when_{suffix}",
@@ -86,6 +98,8 @@ def _profile() -> dict:
                                     "text": "the request is approved",
                                     "expectedResult": None,
                                     "critical": False,
+                                    "citationIds": [],
+                                    "unknownIds": [],
                                 },
                                 {
                                     "stepId": f"then_{suffix}",
@@ -94,6 +108,8 @@ def _profile() -> dict:
                                     "text": "an immutable record is created",
                                     "expectedResult": "one immutable record exists",
                                     "critical": True,
+                                    "citationIds": [],
+                                    "unknownIds": [],
                                 },
                             ],
                         }
@@ -109,11 +125,19 @@ def _profile() -> dict:
                     "contentDigest": text_digest(source),
                     "claimText": source,
                     "origin": "SOURCE",
+                    "anchor": None,
                 }
             ],
             "assumptions": [],
             "unknowns": [],
             "coverageGaps": [],
+            "requirementScope": None,
+            "generationVersions": {
+                "approvedKnowledgeRevisionIds": [],
+                "modelRevisionId": None,
+                "agentRevisionId": None,
+                "skillRevisionIds": [],
+            },
         }
         output_digest = (
             "sha256:"
@@ -181,7 +205,7 @@ def _profile() -> dict:
                 ],
             }
         )
-    return {
+    profile = {
         "schemaVersion": "quality-test-profile-v1",
         "profileId": "QUALITY-TEST-01",
         "dataset": {
@@ -194,9 +218,122 @@ def _profile() -> dict:
             "actualModel": "provider/model",
             "agentRevisionId": "validation-test-design-agent-v1",
             "skillRevisionIds": ["validation-test-design-skill-v1"],
+            **_evaluator().current_bindings(),
         },
         "cases": cases,
     }
+    dataset_material = {
+        "profileId": profile["profileId"],
+        "version": profile["dataset"]["version"],
+        "cases": [
+            {
+                "caseId": item["caseId"],
+                "intent": item["intent"],
+                "source": item["source"],
+                "criticalRequirements": item["criticalRequirements"],
+            }
+            for item in cases
+        ],
+    }
+    config_material = {
+        "minimumBusinessIntents": 50,
+        "schemaAndBdd": "100%",
+        "unsupportedSourceFacts": 0,
+        "criticalRequirementCoverage": ">=90%",
+        "withoutCriticalCorrection": ">=80%",
+    }
+    model_material = {
+        key: profile["bindings"][key]
+        for key in (
+            "modelAlias",
+            "actualModel",
+            "agentRevisionId",
+            "skillRevisionIds",
+        )
+    }
+    model_material.update(_evaluator().current_bindings())
+
+    def digest(value):
+        return (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(
+                    value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode()
+            ).hexdigest()
+        )
+
+    dataset_digest = digest(dataset_material)
+    config_digest = digest(config_material)
+    model_digest = digest(model_material)
+    evidence_cases = []
+    for item in cases:
+        observation = item["observation"]
+        receipt = observation["providerReceipt"]
+        provider_receipt = {
+            "provider": receipt["provider"],
+            "model": receipt["model"],
+            "providerRequestId": receipt["providerRequestId"],
+            "requestDigest": receipt["requestDigest"],
+            "outputDigest": observation["outputDigest"],
+        }
+        receipt_digest = canonical_digest(provider_receipt)
+        case_candidate_digest = evidence_candidate_digest(
+            case_id=item["caseId"],
+            request_id=receipt["providerRequestId"],
+            request_digest=receipt["requestDigest"],
+            receipt_digest=receipt_digest,
+            output_digest=observation["outputDigest"],
+            dataset_digest=dataset_digest,
+            config_digest=config_digest,
+            model_digest=model_digest,
+        )
+        review_result = _evaluator().review_result(item)
+        evidence_cases.append(
+            {
+                "caseId": item["caseId"],
+                "status": "completed",
+                "executionMode": "real",
+                "requestId": receipt["providerRequestId"],
+                "requestDigest": receipt["requestDigest"],
+                "providerReceipt": provider_receipt,
+                "receiptDigest": receipt_digest,
+                "output": observation["generatedOutput"],
+                "outputDigest": observation["outputDigest"],
+                "datasetDigest": dataset_digest,
+                "configDigest": config_digest,
+                "modelDigest": model_digest,
+                "candidateDigest": case_candidate_digest,
+                "reviewedOutputDigest": observation["outputDigest"],
+                "reviewResult": review_result,
+                "reviewJudgments": [
+                    {
+                        "reviewer": "patrick",
+                        "approved": True,
+                        "reviewRunId": "pending",
+                    }
+                ],
+            }
+        )
+    run_id = candidate_run_id(evidence_cases)
+    for case in evidence_cases:
+        case["reviewJudgments"][0]["reviewRunId"] = run_id
+        case["reviewedCandidateDigest"] = reviewed_candidate_digest(
+            candidate_digest_value=case["candidateDigest"],
+            review_result=case["reviewResult"],
+            review_judgments=case["reviewJudgments"],
+        )
+    profile["runEvidence"] = {
+        "schemaVersion": "quality-candidate-evidence-v1",
+        "runId": run_id,
+        "runStatus": "completed",
+        "executionMode": "real",
+        "datasetDigest": dataset_digest,
+        "configDigest": config_digest,
+        "modelDigest": model_digest,
+        "cases": evidence_cases,
+    }
+    return profile
 
 
 def test_quality_test_thresholds_pass_complete_observations() -> None:
@@ -315,6 +452,45 @@ def test_real_gate_requires_per_case_provider_receipts() -> None:
         module.evaluate(profile, real=True)
 
 
+def test_real_gate_requires_dataset_config_model_and_current_run_evidence() -> None:
+    module = _evaluator()
+    profile = _profile()
+    profile["bindings"].update(module.current_bindings())
+    profile.pop("runEvidence")
+
+    with pytest.raises(ValueError, match="candidate batch"):
+        module.evaluate(profile, real=True)
+
+
+def test_real_gate_rejects_post_review_score_mutation() -> None:
+    module = _evaluator()
+    profile = _profile()
+    profile["cases"][0]["observation"]["unsupportedFactCount"] = 1
+
+    with pytest.raises(ValueError, match="review result"):
+        module.evaluate(profile, real=True)
+
+
+def test_real_gate_rejects_root_output_that_differs_from_reviewed_batch() -> None:
+    module = _evaluator()
+    profile = _profile()
+    target = profile["cases"][0]
+    replacement = profile["cases"][1]["observation"]
+    target_observation = target["observation"]
+    for name in ("generatedOutput", "outputDigest", "reviewedOutputDigest"):
+        target_observation[name] = deepcopy(replacement[name])
+    target_observation["providerReceipt"]["outputDigest"] = target_observation["outputDigest"]
+    target_observation["candidateDigest"] = module._candidate_digest(
+        target,
+        request_digest=target_observation["providerReceipt"]["requestDigest"],
+        output_digest=target_observation["outputDigest"],
+    )
+    target_observation["reviewedCaseDigest"] = target_observation["candidateDigest"]
+
+    with pytest.raises(ValueError, match="reviewed batch"):
+        module.evaluate(profile, real=True)
+
+
 def test_real_gate_rejects_review_for_changed_critical_requirements() -> None:
     module = _evaluator()
     profile = _profile()
@@ -340,12 +516,14 @@ def test_real_make_target_uses_validated_model_timeout(tmp_path: Path) -> None:
         {
             "PATH": f"{tmp_path}:{environment['PATH']}",
             "TAP_RUN_QUALITY_TEST_01": "1",
+            "TAP_QUALITY_TEST_DATASET_AUTHORIZATION": "approved:test-dataset-v1",
+            "TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION": "approved:test-model-run-v1",
             "TAP_TEST_TIMEOUT_LOG": str(log),
         }
     )
 
     subprocess.run(
-        ["make", "--no-print-directory", "quality-test-design-real"],
+        ["make", "--no-print-directory", "quality-test-design-candidate-real"],
         cwd=ROOT,
         env=environment,
         check=True,
@@ -442,3 +620,62 @@ def test_real_runner_reinvokes_and_invalidates_review_for_changed_requirements(
         "model": "model",
         "providerRequestId": "provider-request-001",
     }
+
+
+def test_real_runner_never_reuses_prefilled_review_for_identical_output(monkeypatch) -> None:
+    module = _runner()
+
+    class Gateway:
+        async def generate_structured(self, request):
+            return SimpleNamespace(
+                actual_provider="provider",
+                actual_model="model",
+                provider_request_id="provider-request-current",
+            )
+
+    class Models:
+        gateway = Gateway()
+
+        async def aclose(self):
+            return None
+
+    profile = _profile()
+    profile["cases"] = profile["cases"][:1]
+    original_output = profile["cases"][0]["observation"]["generatedOutput"]
+
+    class Revision:
+        content_digest = profile["cases"][0]["observation"]["outputDigest"]
+
+        def canonical_content(self):
+            return original_output
+
+    class Generator:
+        def __init__(self, gateway, *, timeout_seconds):
+            self.gateway = gateway
+
+        async def generate(self, context):
+            await self.gateway.generate_structured(context.request)
+            return Revision()
+
+    monkeypatch.setattr(
+        module.TapperSettings,
+        "from_mapping",
+        lambda _mapping: SimpleNamespace(model_timeout_seconds=60, chat_alias="tapper-chat"),
+    )
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, max_retries: Models())
+    monkeypatch.setattr(module, "ModelGatewayTestDesign", Generator)
+    monkeypatch.setattr(module, "validate_draft_structure", lambda _revision: None)
+
+    result = asyncio.run(module.run(profile))
+
+    assert result["dataset"]["reviewStatus"] == "pending"
+    assert result["cases"][0]["reviewerJudgments"] == []
+    assert "reviewedOutputDigest" not in result["cases"][0]["observation"]
+    assert result["runEvidence"]["runStatus"] == "awaiting_review"
+    assert result["runEvidence"]["cases"][0]["reviewJudgments"] == []
+
+
+def test_real_runner_always_reads_authorized_profile_not_existing_observations() -> None:
+    source = (ROOT / "scripts" / "run-quality-test-design-candidate.py").read_text(encoding="utf-8")
+
+    assert "arguments.observations if arguments.observations.exists()" not in source

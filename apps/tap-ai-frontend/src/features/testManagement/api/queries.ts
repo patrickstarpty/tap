@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import {
   createTestPlanClient,
   type TestPlanGenerationRequest,
+  type TestPlanReviewDisposition,
   type TestPlanRevision,
 } from "./client";
 
@@ -31,7 +32,8 @@ export function useTestPlanGeneration(projectId: string, jobId: string | null) {
     enabled: jobId !== null,
     refetchInterval: (query) =>
       query.state.data?.status === "DRAFT_READY" ||
-      query.state.data?.status === "FAILED"
+      query.state.data?.status === "FAILED" ||
+      query.state.data?.status === "CANCELED"
         ? false
         : 2000,
   });
@@ -63,18 +65,82 @@ export function useGenerateTestPlan(projectId: string) {
   });
 }
 
+export function useRetryTestPlanGeneration(projectId: string) {
+  const client = useMemo(() => createTestPlanClient(projectId), [projectId]);
+  const cache = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      rowVersion,
+      key,
+    }: {
+      jobId: string;
+      rowVersion: number;
+      key: string;
+    }) => client.retry(jobId, rowVersion, key),
+    onSuccess: (job) => {
+      cache.setQueryData(testPlanKeys.generation(projectId, job.jobId), job);
+    },
+  });
+}
+
+function writePlanCache(
+  cache: ReturnType<typeof useQueryClient>,
+  projectId: string,
+  plan: TestPlanRevision,
+) {
+  cache.setQueryData(
+    testPlanKeys.revision(projectId, plan.testPlanId, plan.revisionId),
+    plan,
+  );
+  void cache.invalidateQueries({ queryKey: testPlanKeys.all(projectId) });
+}
+
+export function useUpdateTestPlan(projectId: string) {
+  const client = useMemo(() => createTestPlanClient(projectId), [projectId]);
+  const cache = useQueryClient();
+  return useMutation({
+    mutationFn: ({ plan, key }: { plan: TestPlanRevision; key: string }) =>
+      client.update(plan, key),
+    onSuccess: (plan) => writePlanCache(cache, projectId, plan),
+  });
+}
+
+export function useReviewTestPlan(projectId: string) {
+  const client = useMemo(() => createTestPlanClient(projectId), [projectId]);
+  const cache = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      plan,
+      disposition,
+      reason,
+      key,
+    }: {
+      plan: TestPlanRevision;
+      disposition: TestPlanReviewDisposition;
+      reason: string;
+      key: string;
+    }) => client.review(plan, disposition, reason, key),
+    onSuccess: (plan) => writePlanCache(cache, projectId, plan),
+  });
+}
+
+export function useForkTestPlan(projectId: string) {
+  const client = useMemo(() => createTestPlanClient(projectId), [projectId]);
+  const cache = useQueryClient();
+  return useMutation({
+    mutationFn: ({ plan, key }: { plan: TestPlanRevision; key: string }) =>
+      client.fork(plan, key),
+    onSuccess: (plan) => writePlanCache(cache, projectId, plan),
+  });
+}
+
 export function usePublishTestPlan(projectId: string) {
   const client = useMemo(() => createTestPlanClient(projectId), [projectId]);
   const cache = useQueryClient();
   return useMutation({
     mutationFn: ({ plan, key }: { plan: TestPlanRevision; key: string }) =>
       client.publish(plan, key),
-    onSuccess: (plan) => {
-      cache.setQueryData(
-        testPlanKeys.revision(projectId, plan.testPlanId, plan.revisionId),
-        plan,
-      );
-      void cache.invalidateQueries({ queryKey: testPlanKeys.all(projectId) });
-    },
+    onSuccess: (plan) => writePlanCache(cache, projectId, plan),
   });
 }

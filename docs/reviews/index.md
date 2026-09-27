@@ -39,3 +39,5 @@
 - [BrowserStack Test Management / Jira App 逐页分析](2026-09-17-browserstack-test-management-page-analysis.md)：269 篇正文、22 个跳转与 4 个坏链；独立用例库、评审、手工执行、Jira 及来源迁移的能力边界与设计映射。
 - [BrowserStack Test Insights 逐页分析](2026-09-17-browserstack-test-insights-page-analysis.md)：Reporting & Analytics / QEI 共 252 个正文 URL 已读（精确去重 251 份），另列 35 个跳转与 1 个坏链；执行诊断、五类质量分析、接口和 SDK 限制及设计映射。
 - [BrowserStack Load Testing 逐页分析](2026-09-17-browserstack-load-testing-page-analysis.md)：128 篇正文、11 个旧跳转与 3 个坏链；记录 API/浏览器/混合模式、负载语义、统计与执行边界，并映射 k6/Playwright 目标设计。
+- [可信知识、Graph 与测试设计质量重新验收](2026-09-26-trusted-knowledge-graph-test-design-gate.md)：真实验收 `NOT RUN / PENDING`；确定性 anti-forgery 与证据绑定已补齐，但缺真实数据集、模型执行和具名 reviewer 授权，新增可信知识、V2、V3 均未关闭 Gate。
+- [可信知识、测试设计与基础 Insights 联合交付门禁](2026-09-26-trusted-knowledge-insights-delivery-gate.md)：M1–M4 隔离模拟业务 UAT `PASS`，适用于本机演示与开发交接；真实业务 Gate 均 `PENDING`，计划保持 `active`。

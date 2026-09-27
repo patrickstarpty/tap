@@ -85,7 +85,7 @@ export const COPY = {
   citationLoading: "正在核验原文",
   closeCitation: "关闭原文",
   retryCitation: "重新核验",
-  citationStale: "引用已失效，来源可能已经变化，请重新提交问题。",
+  citationStale: "引用已失效：来源可能已撤回或版本已变化，请重新提交问题。",
   citationUnavailable: "原文暂时无法核验，请稍后重试。",
   citationInvalid: "原文校验失败，请重新提交问题。",
   citationGenericFailure: "原文核验未完成，请稍后重试。",
@@ -106,7 +106,7 @@ export const CITATION_EN = {
   close: "Close",
   retryCitation: "Retry verification",
   citationStale:
-    "This citation no longer resolves to its original source revision. Ask again using a ready source.",
+    "This citation no longer resolves to its original source revision. The source may have been withdrawn; ask again using a published source.",
   citationUnavailable: "Source text is temporarily unavailable. Try again.",
   citationInvalid: "The source preview does not match the citation. Ask again.",
   citationGenericFailure: "Source text could not be checked. Try again.",

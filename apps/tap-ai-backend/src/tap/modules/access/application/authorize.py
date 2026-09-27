@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
+from tap.modules.access.domain.authorization import (
+    AuthorizationDecision,
+    ProjectPrincipal,
+    ResourceRef,
+)
 from tap.modules.access.domain.policy import (
     CLASSIFICATIONS_THROUGH,
     AuthorizationDenied,
@@ -12,6 +19,51 @@ from tap.modules.access.domain.policy import (
     VerifiedSubjectFacts,
     _new_retrieval_policy_context,
 )
+
+_PROJECT_ACTION_RESOURCE_KINDS = {
+    "knowledge.citation.read": "knowledge-citation",
+    "knowledge.evidence.read": "knowledge-evidence",
+    "knowledge.original.read": "knowledge-original",
+    "knowledge.publish": "knowledge-publication",
+    "knowledge.review.approve": "knowledge-review",
+    "knowledge.review.edit": "knowledge-review",
+    "test-plans.review": "test-plan",
+}
+
+
+def authorize_project_action(
+    principal: ProjectPrincipal,
+    action: str,
+    resource: ResourceRef,
+    *,
+    expected_audience: str,
+    now: datetime,
+    separation_actor_id: str | None = None,
+) -> AuthorizationDecision:
+    """Authorize one current project action without trusting caller-provided scope."""
+    if not isinstance(principal, ProjectPrincipal) or not isinstance(resource, ResourceRef):
+        return AuthorizationDecision(False, "invalid-authority")
+    if not principal.enabled:
+        return AuthorizationDecision(False, "principal-disabled")
+    if principal.expires_at <= now:
+        return AuthorizationDecision(False, "principal-expired")
+    if principal.audience != expected_audience:
+        return AuthorizationDecision(False, "audience-mismatch")
+    if (principal.enterprise_id, principal.project_id) != (
+        resource.enterprise_id,
+        resource.project_id,
+    ):
+        return AuthorizationDecision(False, "scope-mismatch")
+    if action not in principal.actions:
+        return AuthorizationDecision(False, "action-not-allowed")
+    expected_kind = _PROJECT_ACTION_RESOURCE_KINDS.get(action)
+    if expected_kind is None:
+        return AuthorizationDecision(False, "action-not-allowed")
+    if resource.kind != expected_kind:
+        return AuthorizationDecision(False, "resource-kind-mismatch")
+    if action == "knowledge.review.approve" and principal.actor_id == separation_actor_id:
+        return AuthorizationDecision(False, "separation-of-duties")
+    return AuthorizationDecision(True, "project-action-allowed")
 
 
 def _validate_search_in_value(value: str) -> None:

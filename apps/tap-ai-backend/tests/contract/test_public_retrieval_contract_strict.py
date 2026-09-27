@@ -159,6 +159,9 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "aclDecisionId",
             "schemaVersion",
             "embeddingModelVersion",
+            "publicationId",
+            "approvalDigest",
+            "approvedItemId",
         },
     ),
     (
@@ -172,6 +175,9 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "chunkContentHash",
             "contentRole",
             "derivedFromChunkIds",
+            "publicationId",
+            "approvalDigest",
+            "approvedItemId",
         },
     ),
     (RetrievalClaim, {"claimId", "text", "answerStart", "answerEnd", "citationIds"}),
@@ -212,7 +218,15 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
 ANCHOR_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
     (
         DocumentAnchor,
-        {"type", "headingPath", "page", "bbox", "startOffset", "endOffset"},
+        {
+            "type",
+            "headingPath",
+            "page",
+            "bbox",
+            "startOffset",
+            "endOffset",
+            "inventoryItemId",
+        },
     ),
     (CodeAnchor, {"type", "repo", "path", "symbol", "lineStart", "lineEnd"}),
     (BddAnchor, {"type", "featureId", "scenarioId", "stepId"}),

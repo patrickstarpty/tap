@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
 
@@ -65,6 +67,10 @@ class AnswerOperations(Protocol):
 
     async def answer_frozen(self, *args, **kwargs) -> AnswerResponse: ...
 
+    async def authorize_frozen_selection(self, revisions) -> None: ...
+
+    async def resolve_conversation_selection(self, revision_ids): ...
+
 
 class CitationOperations(Protocol):
     @property
@@ -73,6 +79,8 @@ class CitationOperations(Protocol):
     async def resolve(self, citation_id: str) -> CitationPreviewResult: ...
 
     async def resolve_historical(self, citation_id: str) -> CitationPreviewResult: ...
+
+    async def authorize_current(self, citation_id: str) -> None: ...
 
 
 class SearchOperations(Protocol):
@@ -96,6 +104,7 @@ class KnowledgeHttpService:
         corpus_version: str = "tapper-demo-v1",
         graph_enricher=None,
         models: Any | None = None,
+        answer_planner: Any | None = None,
     ) -> None:
         if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
             raise ValueError("unsupported projection corpus")
@@ -107,6 +116,7 @@ class KnowledgeHttpService:
         self._corpus_version = corpus_version
         self._graph_enricher = graph_enricher
         self._models = models
+        self.answer_planner = answer_planner
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -203,7 +213,86 @@ class KnowledgeHttpService:
             raise KnowledgeRuntimeUnavailable
         return await resolver(revision_ids)
 
-    async def answer_conversation(self, request: RetrievalAnswerRequest, frozen_input):
+    async def answer_conversation(
+        self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None
+    ):
+        remaining = None if answer_plan is None else answer_plan.deadline_at - time.time()
+        if remaining is not None and remaining <= 0:
+            raise TimeoutError("persisted answer budget exhausted")
+        async with asyncio.timeout(remaining):
+            return await self._answer_conversation(
+                request, frozen_input, answer_plan=answer_plan, authorize=authorize
+            )
+
+    async def authorize_planning(self, snapshot) -> None:
+        from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
+
+        if snapshot.project_id != self.scope.project_id:
+            raise AuthorizationDenied("scope-mismatch")
+        if snapshot.value.resolved_resources:
+            await self._answers.authorize_frozen_selection(
+                tuple(
+                    ReadyDocumentRevision(
+                        item.document_id, item.revision_id, item.source_content_hash, item.source_id
+                    )
+                    for item in snapshot.value.resolved_resources
+                )
+            )
+
+    async def authorize_completed_answer(self, snapshot, evidence) -> None:
+        """Reopen trusted authority for a checkpointed answer before delivery."""
+        from tap.modules.chat.domain.conversations import content_digest
+
+        if snapshot.project_id != self.scope.project_id:
+            raise AuthorizationDenied("scope-mismatch")
+        frozen = snapshot.value.resolved_resources
+        if frozen:
+            try:
+                current, policy = await self._answers.resolve_conversation_selection(
+                    tuple(item.revision_id for item in frozen)
+                )
+                if {
+                    (item.source_id, item.document_id, item.revision_id, item.source_content_hash)
+                    for item in current
+                } != {
+                    (item.source_id, item.document_id, item.revision_id, item.source_content_hash)
+                    for item in frozen
+                }:
+                    raise AuthorizationDenied("frozen revision selection changed")
+                if (
+                    snapshot.value.acl_digest != policy.acl_digest
+                    or snapshot.value.retrieval_policy_digest
+                    != content_digest(
+                        {
+                            "decisionId": policy.decision_id,
+                            "policyVersion": policy.policy_version,
+                            "corpusVersion": policy.active_corpus_version,
+                        }
+                    )
+                ):
+                    raise AuthorizationDenied("frozen retrieval policy changed")
+                await self._answers.authorize_frozen_selection(current)
+            except asyncio.CancelledError:
+                raise
+            except AuthorizationDenied:
+                raise
+            except Exception as error:
+                raise AuthorizationDenied(
+                    "checkpoint selection authorization unavailable"
+                ) from error
+        elif evidence.citations:
+            raise AuthorizationDenied("citation is outside frozen resources")
+        for citation in evidence.citations:
+            try:
+                await self._citations.authorize_current(citation.citation_snapshot_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                raise AuthorizationDenied("checkpoint citation authorization changed") from error
+
+    async def _answer_conversation(
+        self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None
+    ):
         from tap.modules.chat.domain.conversations import content_digest
         from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
         from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
@@ -230,6 +319,41 @@ class KnowledgeHttpService:
             )
         )
         governance = self._generation_governance(frozen_input)
+        answer_input = None
+        if answer_plan is not None:
+            from tap.modules.chat.domain.answer_plan import PlanningInput
+
+            answer_plan.validate_binding(
+                PlanningInput(
+                    project_id=self.scope.project_id,
+                    turn_id=answer_plan.turn_id,
+                    input_digest=content_digest(
+                        frozen_input.material(
+                            project_id=self.scope.project_id, turn_id=answer_plan.turn_id
+                        )
+                    ),
+                    acl_digest=frozen_input.acl_digest,
+                    policy_digest=frozen_input.retrieval_policy_digest,
+                    original_question=request.query,
+                    model_alias=frozen_input.model_alias,
+                    source_ids=tuple(item.source_id for item in frozen_input.resolved_resources),
+                )
+            )
+            if authorize is not None:
+                await authorize()
+            if answer_plan.route != "retrieve":
+                from tap.modules.knowledge.application.answer_templates import assemble_answer
+
+                answer_input = assemble_answer(
+                    template_id=answer_plan.template_id,
+                    template_version=answer_plan.template_version,
+                    template_digest=answer_plan.template_digest,
+                    original_question=answer_plan.original_question,
+                    standalone_question=answer_plan.standalone_query,
+                    evidence_map={},
+                    output_requirements=answer_plan.output_requirements,
+                    missing_fields=answer_plan.missing,
+                )
         if not revisions:
             if self._models is None:
                 raise ValueError("model-only conversation runtime is unavailable")
@@ -242,11 +366,20 @@ class KnowledgeHttpService:
                 or frozen_input.retrieval_policy_digest != expected_policy
             ):
                 raise ValueError("accepted model-only authority changed")
+            if answer_plan is not None and answer_plan.route != "direct":
+                return self._stopped_answer(answer_plan, answer_input)
             generation = await self._models.chat(
                 request.query,
                 model_alias=frozen_input.model_alias,
                 governance=governance,
+                **(
+                    {"answer_plan_id": answer_plan.plan_id, "answer_input": answer_input}
+                    if answer_plan is not None
+                    else {}
+                ),
             )
+            if authorize is not None:
+                await authorize()
             identity = generation.gateway_call_id or generation.provider_request_id or uuid4().hex
             return RetrievalAnswerResponse(
                 trace_id=identity,
@@ -272,6 +405,34 @@ class KnowledgeHttpService:
             )
         ):
             raise ValueError("accepted retrieval authority changed")
+        if answer_plan is not None and answer_plan.route != "retrieve":
+            await self._answers.authorize_frozen_selection(revisions)
+            if answer_plan.route != "direct":
+                return self._stopped_answer(answer_plan, answer_input)
+            if self._models is None:
+                raise ValueError("direct answer model is unavailable")
+            generation = await self._models.chat(
+                request.query,
+                model_alias=frozen_input.model_alias,
+                governance=governance,
+                answer_plan_id=answer_plan.plan_id,
+                answer_input=answer_input,
+            )
+            if authorize is not None:
+                await authorize()
+            return RetrievalAnswerResponse(
+                trace_id=answer_plan.plan_id,
+                query_plan_id=answer_plan.plan_id,
+                context_snapshot_id=answer_plan.plan_id,
+                corpus_version=self._corpus_version,
+                retrieval_profile_id="direct-chat-v1",
+                degraded_mode=False,
+                answer=generation.text,
+                abstained=False,
+                claims=[],
+                citations=[],
+                graph_context_status="NOT_SELECTED",
+            )
         domain_request = answer_request_from_http(request)
         graph_context = None
         if self._graph_enricher is not None:
@@ -287,6 +448,11 @@ class KnowledgeHttpService:
             governance=governance,
             graph_context=() if graph_context is None else graph_context.facts,
             model_alias=frozen_input.model_alias,
+            **(
+                {"answer_execution": self._execution(answer_plan), "authorize": authorize}
+                if answer_plan is not None
+                else {}
+            ),
         )
         return answer_response_to_http(
             response,
@@ -295,6 +461,31 @@ class KnowledgeHttpService:
                 "UNAVAILABLE" if graph_context is None else graph_context.status.value,
             ),
             graph_snapshot_id=None if graph_context is None else graph_context.snapshot_id,
+        )
+
+    @staticmethod
+    def _execution(plan):
+        from tap.modules.chat.application.plan_answer import authorized_execution
+
+        return authorized_execution(plan)
+
+    def _stopped_answer(self, plan, answer_input):
+        if plan.route in {"insights", "file_analysis"}:
+            answer = "所需的指标或完整文件分析能力尚不可用，无法提供可靠的统计结果。"
+        else:
+            answer = answer_input.context["clarificationQuestion"] or "请补充回答所需的信息。"
+        return RetrievalAnswerResponse(
+            trace_id=plan.plan_id,
+            query_plan_id=plan.plan_id,
+            context_snapshot_id=plan.plan_id,
+            corpus_version=self._corpus_version,
+            retrieval_profile_id="direct-chat-v1",
+            degraded_mode=False,
+            answer=answer,
+            abstained=False,
+            claims=[],
+            citations=[],
+            graph_context_status="NOT_SELECTED",
         )
 
     @staticmethod
@@ -371,6 +562,7 @@ class KnowledgeHttpService:
                     bbox=list(anchor.bbox) or None,
                     start_offset=anchor.start_offset,
                     end_offset=anchor.end_offset,
+                    inventory_item_id=anchor.inventory_item_id,
                 )
             ),
             quote=preview.quote,

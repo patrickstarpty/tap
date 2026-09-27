@@ -9,6 +9,12 @@ from enum import Enum
 from hashlib import sha256
 from os.path import splitext
 
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    ParseInventoryStatus,
+    parse_inventory_digest,
+)
+
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_NORMALIZED_CHARACTERS = 8_000_000
 MAX_CHUNKS_PER_DOCUMENT = 10_000
@@ -103,6 +109,7 @@ class NormalizedBlock:
     paragraph_index: int
     start_offset: int
     end_offset: int
+    inventory_item_id: str | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -136,6 +143,10 @@ class NormalizedBlock:
             raise ValueError("normalized block offsets must be ordered non-empty code-point bounds")
         if self.end_offset - self.start_offset != len(self.text):
             raise ValueError("normalized block offsets must match Unicode code-point length")
+        if self.inventory_item_id is not None and (
+            not isinstance(self.inventory_item_id, str) or not self.inventory_item_id.strip()
+        ):
+            raise ValueError("normalized block inventory identity must be nonblank")
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +160,9 @@ class NormalizedArtifact:
     document_id: DocumentId | None = None
     revision_id: RevisionId | None = None
     schema: str = NORMALIZED_ARTIFACT_SCHEMA
+    parse_inventory: tuple[ParseInventoryItem, ...] = ()
+    parser_config_digest: str | None = None
+    parse_inventory_digest: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.filename, str) or not self.filename:
@@ -164,6 +178,23 @@ class NormalizedArtifact:
             raise TypeError("normalized artifact blocks must be immutable normalized blocks")
         if (self.document_id is None) != (self.revision_id is None):
             raise ValueError("normalized artifact source identity must be complete")
+        if self.parse_inventory:
+            if self.parse_inventory_digest is None:
+                raise ValueError("parse inventory requires its artifact digest")
+            if self.parser_config_digest is None and any(
+                item.status is not ParseInventoryStatus.NEEDS_REVIEW
+                or item.reason != "historical-unreviewed"
+                for item in self.parse_inventory
+            ):
+                raise ValueError("current parse inventory requires its configuration digest")
+            if self.parse_inventory_digest != parse_inventory_digest(self.parse_inventory):
+                raise ValueError("parse inventory digest differs from its immutable items")
+            if self.revision_id is not None and any(
+                item.source_revision_id != str(self.revision_id) for item in self.parse_inventory
+            ):
+                raise ValueError("parse inventory belongs to a different source revision")
+        elif self.parser_config_digest is not None or self.parse_inventory_digest is not None:
+            raise ValueError("parse inventory digests cannot exist without inventory items")
         if sum(len(block.text) for block in self.blocks) > MAX_NORMALIZED_CHARACTERS:
             raise DocumentParseRejected("document-too-complex")
         block_ids: set[str] = set()
@@ -177,6 +208,22 @@ class NormalizedArtifact:
                 raise ValueError("normalized artifact paragraph indices must be contiguous")
             block_ids.add(block.block_id)
             previous_end = block.end_offset
+        if self.parse_inventory:
+            inventory = {item.item_id: item for item in self.parse_inventory}
+            for block in self.blocks:
+                item = (
+                    None
+                    if block.inventory_item_id is None
+                    else inventory.get(block.inventory_item_id)
+                )
+                if item is None or (
+                    item.status is not ParseInventoryStatus.PARSED
+                    and not (
+                        item.status is ParseInventoryStatus.NEEDS_REVIEW
+                        and item.reason == "historical-unreviewed"
+                    )
+                ):
+                    raise ValueError("normalized block must bind to one parsed inventory item")
 
 
 @dataclass(frozen=True, slots=True)

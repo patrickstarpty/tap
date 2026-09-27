@@ -13,6 +13,13 @@ from tap.modules.knowledge.domain.documents import (
     canonical_sha256,
     revision_id_for,
 )
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
+    parse_inventory_digest,
+    parser_config_digest,
+)
 from tap.modules.knowledge.ports.documents import DeletionTarget
 from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure
 
@@ -35,6 +42,14 @@ class Upload:
 
 
 def normalized_artifact():
+    inventory_item = ParseInventoryItem.create(
+        source_revision_id=REVISION,
+        kind=ParseInventoryKind.PARAGRAPH,
+        locator="paragraph:0",
+        status=ParseInventoryStatus.PARSED,
+        artifact_digest=SOURCE_HASH,
+    )
+    inventory = (inventory_item,)
     return NormalizedArtifact(
         filename="policy.md",
         media_type=MediaType.MARKDOWN,
@@ -51,8 +66,12 @@ def normalized_artifact():
                 paragraph_index=0,
                 start_offset=0,
                 end_offset=14,
+                inventory_item_id=inventory_item.item_id,
             ),
         ),
+        parse_inventory=inventory,
+        parser_config_digest=parser_config_digest(MediaType.MARKDOWN.value),
+        parse_inventory_digest=parse_inventory_digest(inventory),
     )
 
 
@@ -87,6 +106,27 @@ async def exercise_artifact_round_trip(store):
     chunk_ref = await store.write_chunks(REVISION, chunks)
     embedding_ref = await store.write_embeddings(REVISION, vectors, source_content_hash=SOURCE_HASH)
     assert await store.read_original(original) == PAYLOAD
+    excerpt = PAYLOAD[7:13]
+    assert (
+        await store.read_original_excerpt(
+            original,
+            revision_id=REVISION,
+            source_digest=SOURCE_HASH,
+            start_byte=7,
+            end_byte=13,
+            excerpt_digest=canonical_sha256(excerpt),
+        )
+        == excerpt
+    )
+    with pytest.raises(ArtifactIntegrityFailure):
+        await store.read_original_excerpt(
+            original,
+            revision_id=REVISION,
+            source_digest=SOURCE_HASH,
+            start_byte=7,
+            end_byte=13,
+            excerpt_digest="sha256:" + "0" * 64,
+        )
     assert await store.read_normalized(normalized) == normalized_artifact()
     assert await store.read_chunks(chunk_ref) == chunks
     assert await store.read_embeddings(embedding_ref) == vectors

@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 
 EXPECTED_TABLES = {
+    "ai_graph_run",
+    "ai_graph_checkpoint",
+    "ai_graph_checkpoint_write",
+    "ai_graph_settlement",
     "test_plan",
     "test_plan_revision",
     "test_case",
@@ -19,6 +23,10 @@ EXPECTED_TABLES = {
     "test_plan_unknown",
     "test_plan_coverage_gap",
     "test_plan_generation_job",
+    "test_design_model_call",
+    "test_plan_review_decision",
+    "test_plan_source_impact",
+    "test_plan_write_command",
     "graph_snapshot",
     "graph_snapshot_revision",
     "graph_active_snapshot",
@@ -57,6 +65,14 @@ EXPECTED_TABLES = {
     "knowledge_document_revision",
     "knowledge_ingestion_job",
     "knowledge_chunk_manifest",
+    "knowledge_parse_inventory",
+    "knowledge_review_revision",
+    "knowledge_review_item_decision",
+    "knowledge_review_history",
+    "knowledge_publication",
+    "knowledge_current_publication",
+    "knowledge_review_command",
+    "knowledge_publication_cleanup",
     "knowledge_answer_snapshot",
     "knowledge_citation_snapshot",
     "knowledge_projection_state",
@@ -115,6 +131,23 @@ def test_projection_metadata_preserves_existing_migration_constraints() -> None:
         assert str(metadata.tables[table_name].c[column_name].server_default.arg).lower() == (
             "current_timestamp(6)"
         )
+
+
+def test_review_cursor_queries_have_scoped_composite_indexes() -> None:
+    from tap.platform.db.registry import load_authoritative_metadata
+
+    metadata = load_authoritative_metadata()
+    expected = {
+        "knowledge_review_item_decision": (
+            "project_id",
+            "review_id",
+            "review_version",
+        ),
+        "knowledge_publication": ("project_id", "review_id", "publication_id"),
+    }
+    for table_name, columns in expected.items():
+        indexes = {tuple(index.columns.keys()) for index in metadata.tables[table_name].indexes}
+        assert columns in indexes, (table_name, columns, indexes)
 
 
 def test_all_business_metadata_requires_project_scope_and_parent_consistency() -> None:

@@ -6,6 +6,10 @@ import type {
   DocumentStageSnapshot,
   DocumentSummary,
   KnowledgeClient,
+  KnowledgeReviewDetail,
+  KnowledgeReviewItemComparison,
+  KnowledgePublicationDetail,
+  PublishedKnowledgeSourcePage,
   RetrievalAnswerRequest,
   RetrievalAnswerResponse,
   SourceSummary,
@@ -197,6 +201,19 @@ function pendingOperation<T>(ignoreAbort = false): PendingOperation<T> {
 }
 
 export interface FakeKnowledgeClient extends KnowledgeClient {
+  withReviews(items: KnowledgeReviewDetail[]): FakeKnowledgeClient;
+  withOpenReview(item: KnowledgeReviewDetail): FakeKnowledgeClient;
+  withComparison(item: KnowledgeReviewItemComparison): FakeKnowledgeClient;
+  withPublishedSources(page: PublishedKnowledgeSourcePage): FakeKnowledgeClient;
+  withPublicationHistory(
+    items: KnowledgePublicationDetail[],
+  ): FakeKnowledgeClient;
+  reviewCommands: Array<{ action: string; version: number; itemId?: string }>;
+  openReviewCalls: Array<{
+    documentId: string;
+    sourceRevisionId: string;
+    key: string;
+  }>;
   listCalls: number;
   listInputs: Array<{ cursor?: string; limit: number }>;
   listSignals: Array<AbortSignal | undefined>;
@@ -243,6 +260,11 @@ export function fakeKnowledgeClient(
   projectId = "project-test",
 ): FakeKnowledgeClient {
   let documents: DocumentSummary[] = [];
+  let reviews: KnowledgeReviewDetail[] = [];
+  let openReviewResult: KnowledgeReviewDetail | null = null;
+  let publishedSources: PublishedKnowledgeSourcePage = { items: [] };
+  let publicationHistory: KnowledgePublicationDetail[] = [];
+  const comparisons = new Map<string, KnowledgeReviewItemComparison>();
   const detailById = new Map<string, DocumentDetail>();
   const listQueue: DocumentSummary[][] = [];
   let duplicateDocument: DocumentSummary | undefined;
@@ -264,6 +286,188 @@ export function fakeKnowledgeClient(
 
   const api: FakeKnowledgeClient = {
     projectId,
+    reviewCommands: [],
+    openReviewCalls: [],
+    withReviews(items) {
+      reviews = items;
+      return api;
+    },
+    withOpenReview(item) {
+      openReviewResult = item;
+      return api;
+    },
+    async openDocumentReview(documentId, sourceRevisionId, key) {
+      api.openReviewCalls.push({ documentId, sourceRevisionId, key });
+      if (openReviewResult === null)
+        throw new Error("Unknown fixture open review");
+      reviews = [openReviewResult];
+      return openReviewResult;
+    },
+    withComparison(item) {
+      comparisons.set(item.itemId, item);
+      return api;
+    },
+    withPublishedSources(page) {
+      publishedSources = page;
+      return api;
+    },
+    withPublicationHistory(items) {
+      publicationHistory = items;
+      return api;
+    },
+    async listReviews({ sourceRevisionId }) {
+      return {
+        items: reviews.filter(
+          (item) =>
+            sourceRevisionId === undefined ||
+            item.sourceRevisionIds.includes(sourceRevisionId),
+        ),
+        nextCursor: null,
+      };
+    },
+    async getReview(reviewId) {
+      const item = reviews.find((candidate) => candidate.reviewId === reviewId);
+      if (!item) throw new Error("Unknown fixture review");
+      return item;
+    },
+    async listReviewInventory(reviewId) {
+      return (await api.getReview(reviewId)).inventory;
+    },
+    async listReviewDecisionHistory(reviewId) {
+      const review = await api.getReview(reviewId);
+      return {
+        items: review.decisionHistory,
+        nextCursor: review.decisionHistoryNextCursor,
+        totalCount: review.decisionHistoryTotalCount,
+      };
+    },
+    async listReviewHistory(reviewId) {
+      const review = await api.getReview(reviewId);
+      return {
+        items: review.history,
+        nextCursor: review.historyNextCursor,
+        totalCount: review.historyTotalCount,
+      };
+    },
+    async listReviewPublications() {
+      return {
+        items: publicationHistory,
+        nextCursor: null,
+        totalCount: publicationHistory.length,
+      };
+    },
+    async compareReviewItem(_reviewId, itemId) {
+      const item = comparisons.get(itemId);
+      if (!item) throw new Error("Unknown fixture comparison");
+      return item;
+    },
+    async decideReviewItem(reviewId, itemId, version, body) {
+      api.reviewCommands.push({ action: "edit", version, itemId });
+      const review = await api.getReview(reviewId);
+      const decision = {
+        ...body,
+        itemId,
+        reviewVersion: version + 1,
+        actorId: "editor",
+        decidedAt: NOW,
+        decisionId: `decision-${version + 1}`,
+        decisionDigest: SOURCE_HASH,
+      };
+      reviews = reviews.map((item) =>
+        item.reviewId === reviewId
+          ? {
+              ...item,
+              version: version + 1,
+              decisions: [
+                ...item.decisions.filter((value) => value.itemId !== itemId),
+                decision,
+              ],
+              decisionHistory: [...item.decisionHistory, decision],
+              history: [
+                ...item.history,
+                {
+                  action: "decision",
+                  actorId: "editor",
+                  itemId,
+                  occurredAt: NOW,
+                  reviewVersion: version + 1,
+                },
+              ],
+            }
+          : item,
+      );
+      return api.getReview(review.reviewId);
+    },
+    async transitionReview(reviewId, action, version) {
+      api.reviewCommands.push({ action, version });
+      reviews = reviews.map((item) =>
+        item.reviewId === reviewId
+          ? {
+              ...item,
+              version: version + 1,
+              status:
+                action === "submit"
+                  ? "reviewing"
+                  : action === "return"
+                    ? "checking"
+                    : "approved",
+            }
+          : item,
+      );
+      return api.getReview(reviewId);
+    },
+    async publishReview(reviewId, version, generation) {
+      api.reviewCommands.push({ action: "publish", version });
+      const review = await api.getReview(reviewId);
+      const publication = {
+        publicationId: "pub-1",
+        reviewId,
+        reviewVersion: version,
+        version: 1,
+        status: "published" as const,
+        generation,
+        approvalDigest: review.approvalDigest,
+        sourceRevisionIds: review.sourceRevisionIds,
+        approvedItemIds: review.approvedItemIds,
+        publishedAt: NOW,
+        expiresAt: review.expiresAt,
+      };
+      reviews = reviews.map((item) =>
+        item.reviewId === reviewId
+          ? {
+              ...item,
+              version: version + 1,
+              status: "published",
+              currentPublication: publication,
+            }
+          : item,
+      );
+      return publication;
+    },
+    async withdrawPublication(publicationId, version) {
+      api.reviewCommands.push({ action: "withdraw", version });
+      const review = reviews.find(
+        (item) => item.currentPublication?.publicationId === publicationId,
+      );
+      if (!review?.currentPublication)
+        throw new Error("Unknown fixture publication");
+      const publication = {
+        ...review.currentPublication,
+        status: "withdrawn" as const,
+        version: version + 1,
+        withdrawnAt: NOW,
+        withdrawnBy: "publisher",
+      };
+      reviews = reviews.map((item) =>
+        item.reviewId === review.reviewId
+          ? { ...item, status: "withdrawn", currentPublication: null }
+          : item,
+      );
+      return publication;
+    },
+    async listPublishedSources() {
+      return publishedSources;
+    },
     async listSources(input) {
       const page = await api.listDocuments(input);
       return {

@@ -30,6 +30,8 @@ const COPY = {
     caseCount: "cases",
     evidenceCount: "source citations",
     gapCount: "coverage gaps",
+    coverage: "Requirement coverage",
+    needsReview: "Source changed — review this draft again",
   },
   zh: {
     status: {
@@ -55,6 +57,8 @@ const COPY = {
     caseCount: "个用例",
     evidenceCount: "条来源依据",
     gapCount: "个覆盖缺口",
+    coverage: "需求覆盖",
+    needsReview: "来源已变更，请重新评审此草稿",
   },
 } as const;
 
@@ -72,6 +76,11 @@ export function TestPlanDetail({
     <article className="tap-plan-detail" aria-labelledby="test-plan-title">
       <header className="tap-plan-detail-header">
         <span className="tap-plan-status">{text.status[plan.status]}</span>
+        {plan.needsReview ? (
+          <span className="tap-plan-needs-review" role="status">
+            {text.needsReview}
+          </span>
+        ) : null}
         <h1 id="test-plan-title">{readable(plan.title)}</h1>
         <p>{plan.objective}</p>
         <div
@@ -86,6 +95,12 @@ export function TestPlanDetail({
           </span>
           <span>
             <strong>{plan.coverageGaps.length}</strong> {text.gapCount}
+          </span>
+          <span aria-label={text.coverage}>
+            <strong>
+              {plan.coveredRequirementCount} / {plan.coverageDenominator}
+            </strong>{" "}
+            {text.coverage}
           </span>
         </div>
       </header>
@@ -181,6 +196,17 @@ export function TestPlanDetail({
                     {citation.sourceRevisionId} · {citation.documentRevisionId}{" "}
                     · {citation.chunkId}
                   </code>
+                  {citation.evidencePreviewUrl ? (
+                    <a
+                      href={citation.evidencePreviewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {locale === "zh"
+                        ? "定位历史证据"
+                        : "Locate historical evidence"}
+                    </a>
+                  ) : null}
                 </details>
               </div>
             </article>

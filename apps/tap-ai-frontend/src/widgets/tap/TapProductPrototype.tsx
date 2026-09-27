@@ -1,9 +1,11 @@
 import { Button } from "antd";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   useDocumentListQuery,
   useSourceListQuery,
+  usePublishedSourcesQuery,
   useUploadSourceMutation,
   useSourceDetailQuery,
   useRetrySourceMutation,
@@ -42,7 +44,14 @@ import {
   useConversationList,
   useConversationStream,
   useCreateConversation,
+  useConversationClient,
 } from "../../features/conversations/api/queries";
+import {
+  parseInsightsHandoff,
+  type InsightsHandoff,
+  type InsightsExplanationResult,
+  type ConversationClient,
+} from "../../features/conversations/api/client";
 import {
   createStreamState,
   isTargetTurnActive,
@@ -51,6 +60,7 @@ import {
 } from "../../features/conversations/model/stream";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
+import { KnowledgeReview } from "../../features/knowledge/components/KnowledgeReview";
 import {
   appendTurn,
   createConversation,
@@ -288,9 +298,178 @@ export function AnswerProgress({
   );
 }
 
+function InsightsExplanationPanel({
+  question,
+  result,
+  locale,
+}: {
+  question: string;
+  result: InsightsExplanationResult;
+  locale: Locale;
+}) {
+  const english = locale === "en";
+  const percentMetrics = new Set([
+    "first_pass_rate",
+    "final_pass_rate",
+    "retry_recovery_rate",
+    "recovery_contribution_rate",
+  ]);
+  return (
+    <section
+      className="tap-turn-context"
+      role="region"
+      aria-label="Insights explanation"
+    >
+      <h2>{english ? "Report investigation" : "报告调查"}</h2>
+      <p>{question}</p>
+      <p>
+        {english ? "Verified Insights facts" : "已核实的 Insights 指标"} ·{" "}
+        {result.queryId} · {result.metricVersion}
+      </p>
+      {result.asOf ? (
+        <p>
+          {english ? "As of" : "截至"} {new Date(result.asOf).toLocaleString()}
+        </p>
+      ) : null}
+      <ul>
+        {result.facts.map((fact) => (
+          <li key={fact.metricId}>
+            <strong>{fact.metricId.replaceAll("_", " ")}: </strong>
+            {fact.completeness === "complete" && fact.value !== null
+              ? percentMetrics.has(fact.metricId)
+                ? `${(fact.value * 100).toFixed(1).replace(/\.0$/, "")}%`
+                : String(fact.value)
+              : english
+                ? "Unavailable"
+                : "不可用"}
+            {fact.completeness === "complete" &&
+            percentMetrics.has(fact.metricId) &&
+            fact.numerator !== null &&
+            fact.denominator !== null
+              ? ` (${fact.numerator}/${fact.denominator})`
+              : null}
+            {fact.completeness !== "complete" && fact.missingReasons.length > 0
+              ? ` · ${fact.missingReasons.join("; ")}`
+              : null}
+          </li>
+        ))}
+      </ul>
+      {result.hypotheses.length > 0 ? (
+        <div>
+          <h3>{english ? "Possible associations" : "可能的关联"}</h3>
+          <ul>
+            {result.hypotheses.map((item, index) => (
+              <li key={`${index}-${item}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {result.evidenceExcerpts.length > 0 ? (
+        <div>
+          <h3>{english ? "Referenced evidence" : "引用依据"}</h3>
+          <ul>
+            {result.evidenceExcerpts.map((item) => (
+              <li key={item.citationId}>
+                <strong>[{item.citationId}]</strong> <q>{item.text}</q>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {result.missingInformation.length > 0 ? (
+        <div>
+          <h3>{english ? "Missing information" : "缺失信息"}</h3>
+          <ul>
+            {result.missingInformation.map((item, index) => (
+              <li key={`${index}-${item}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function DurableInsightsResponse({
+  client,
+  conversationId,
+  turn,
+}: {
+  client: ConversationClient;
+  conversationId: string;
+  turn: AssistantTurn;
+}) {
+  const explanation = useQuery({
+    queryKey: [
+      "insights-explanation",
+      client.projectId,
+      conversationId,
+      turn.id,
+    ],
+    queryFn: ({ signal }) =>
+      client.getInsightsExplanation(conversationId, turn.id, signal),
+    refetchInterval: (query) => {
+      const value = query.state.data;
+      return value !== undefined &&
+        "state" in value &&
+        (value.state === "queued" || value.state === "running")
+        ? 1_000
+        : false;
+    },
+    retry: false,
+    refetchOnMount: "always",
+  });
+  if (
+    explanation.isSuccess &&
+    explanation.isFetchedAfterMount &&
+    !explanation.isFetching &&
+    explanation.data !== undefined &&
+    "facts" in explanation.data
+  ) {
+    return (
+      <InsightsExplanationPanel
+        question={turn.prompt}
+        result={explanation.data}
+        locale={turn.locale}
+      />
+    );
+  }
+  const state =
+    explanation.data !== undefined && "state" in explanation.data
+      ? explanation.data.state
+      : undefined;
+  if (state === "canceled") {
+    return (
+      <p role="status">
+        {turn.locale === "zh"
+          ? "报告解读已停止。"
+          : "Report investigation stopped."}
+      </p>
+    );
+  }
+  if (explanation.isError || state === "failed" || state === "abstained") {
+    return (
+      <p role="alert">
+        {turn.locale === "zh"
+          ? "报告解读暂不可用，请稍后重试。"
+          : "The report explanation is unavailable. Please try again."}
+      </p>
+    );
+  }
+  return (
+    <p role="status">
+      {turn.locale === "zh"
+        ? "正在核对报告和证据…"
+        : "Checking the report and evidence…"}
+    </p>
+  );
+}
+
 function AssistantResponse({
   contentCopy,
   turn,
+  insightsClient,
+  conversationId,
   onOpenCitation,
   onRetryConversation,
   onGenerateTestPlan,
@@ -298,6 +477,8 @@ function AssistantResponse({
 }: {
   contentCopy: PrototypeCopy;
   turn: AssistantTurn;
+  insightsClient?: ConversationClient | null;
+  conversationId?: string;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
   onRetryConversation: () => void;
   onGenerateTestPlan?: () => void;
@@ -311,6 +492,28 @@ function AssistantResponse({
     );
   }
   if (turn.intent === "answer") {
+    if (
+      turn.insightsQueryId !== undefined &&
+      insightsClient != null &&
+      conversationId !== undefined
+    ) {
+      return (
+        <DurableInsightsResponse
+          client={insightsClient}
+          conversationId={conversationId}
+          turn={turn}
+        />
+      );
+    }
+    if (turn.insightsExplanation !== undefined) {
+      return (
+        <InsightsExplanationPanel
+          question={turn.prompt}
+          result={turn.insightsExplanation}
+          locale={turn.locale}
+        />
+      );
+    }
     if (turn.status === "canceled") {
       return <p role="status">Generation stopped.</p>;
     }
@@ -492,6 +695,7 @@ function ProjectLibraryWorkspace({
   const upload = useUploadSourceMutation(projectId);
   const uploadIntents = useRef(new WeakMap<File, string>());
   const [inspected, setInspected] = useState<string | null>(null);
+  const [reviewDocumentId, setReviewDocumentId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
   const detail = useSourceDetailQuery(projectId, inspected);
@@ -508,6 +712,7 @@ function ProjectLibraryWorkspace({
   const close = () => {
     if (!busy) {
       setInspected(null);
+      setReviewDocumentId(null);
       setConfirmDelete(false);
       retry.reset();
       deletion.reset();
@@ -545,7 +750,7 @@ function ProjectLibraryWorkspace({
             sources.find((source) => source.id === inspected)?.name ??
             copy.sources.heading
           }
-          className="tap-add-source-dialog"
+          className="tap-add-source-dialog tap-review-dialog"
           opener={opener.current}
           onClose={close}
         >
@@ -587,6 +792,23 @@ function ProjectLibraryWorkspace({
                       {item.status} · {item.stage}
                     </p>
                     <small>{item.revisionId}</small>
+                    <Button
+                      aria-label={`Review ${item.filename}`}
+                      aria-expanded={reviewDocumentId === item.documentId}
+                      onClick={() =>
+                        setReviewDocumentId((current) =>
+                          current === item.documentId ? null : item.documentId,
+                        )
+                      }
+                    >
+                      审核记录
+                    </Button>
+                    {reviewDocumentId === item.documentId ? (
+                      <KnowledgeReview
+                        documentId={item.documentId}
+                        sourceRevisionId={item.revisionId}
+                      />
+                    ) : null}
                     {item.errorCode != null && <p>{item.errorCode}</p>}
                     {item.status === "failed" && (
                       <Button
@@ -673,6 +895,9 @@ export function TapProductPrototype({
   const durable = conversationSource === "api";
   const knowledgeClient = useOptionalKnowledgeClient();
   const sourcesQuery = useSourceListQuery(projectId);
+  const publishedSourcesQuery = usePublishedSourcesQuery(
+    durable ? projectId : null,
+  );
   const documentsQuery = useDocumentListQuery(durable ? null : projectId);
   const [initialSnapshot] = useState(() =>
     typeof window === "undefined"
@@ -709,13 +934,14 @@ export function TapProductPrototype({
   );
   const selectionProject = useRef(projectId);
   useEffect(() => {
+    if (!durable) return;
     const changedProject = selectionProject.current !== projectId;
     selectionProject.current = projectId;
-    if (!changedProject && !sourcesQuery.isSuccess) return;
+    if (!changedProject && !publishedSourcesQuery.isSuccess) return;
     const readyIds = new Set(
-      (sourcesQuery.data?.items ?? [])
-        .filter((source) => source.readyCount > 0)
-        .map((source) => source.sourceId),
+      (publishedSourcesQuery.data?.items ?? []).map(
+        (source) => source.sourceId,
+      ),
     );
     setConversations((current) => {
       let changed = false;
@@ -730,11 +956,18 @@ export function TapProductPrototype({
       });
       return changed ? next : current;
     });
-  }, [projectId, sourcesQuery.data, sourcesQuery.isSuccess]);
+  }, [
+    durable,
+    projectId,
+    publishedSourcesQuery.data,
+    publishedSourcesQuery.isSuccess,
+  ]);
   const [activeConversationId, setActiveConversationId] = useState(
     () =>
       initialSnapshot?.activeConversationId ?? (durable ? "draft" : "chat-1"),
   );
+  const insightsClient = useConversationClient(durable ? projectId : null);
+  const queryClient = useQueryClient();
   const conversationList = useConversationList(durable ? projectId : null);
   const conversationDetail = useConversationDetail(
     durable ? projectId : null,
@@ -776,14 +1009,22 @@ export function TapProductPrototype({
     conversationDetail.data?.turns.find(
       (turn) => turn.turnId === streamTargetTurnId,
     )?.state ?? null;
+  const detailTargetIsInsights =
+    conversationDetail.data?.turns.some(
+      (turn) =>
+        turn.turnId === streamTargetTurnId &&
+        (turn.input as { insightsQueryId?: string | null }).insightsQueryId !=
+          null,
+    ) ?? false;
   const shouldStartConversationStream =
-    requestedTarget !== null ||
-    isTargetTurnActive({
-      detailStatus: detailTargetStatus,
-      recoveredState: recoveredStreamState,
-      streamState: createStreamState(),
-      targetTurnId: streamTargetTurnId,
-    });
+    !detailTargetIsInsights &&
+    (requestedTarget !== null ||
+      isTargetTurnActive({
+        detailStatus: detailTargetStatus,
+        recoveredState: recoveredStreamState,
+        streamState: createStreamState(),
+        targetTurnId: streamTargetTurnId,
+      }));
   const conversationStream = useConversationStream(
     durable ? projectId : null,
     durable && activeConversationId !== "draft" ? activeConversationId : null,
@@ -825,6 +1066,19 @@ export function TapProductPrototype({
   } | null>(() => (durable ? durableTestPlanPath() : null));
   const [generationJobId, setGenerationJobId] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!durable || projectId === null) return;
+    setGenerationJobId(
+      window.sessionStorage.getItem(`tap:test-plan-generation:${projectId}`),
+    );
+  }, [durable, projectId]);
+  useEffect(() => {
+    if (!durable || projectId === null || generationJobId === null) return;
+    window.sessionStorage.setItem(
+      `tap:test-plan-generation:${projectId}`,
+      generationJobId,
+    );
+  }, [durable, generationJobId, projectId]);
   const [agents, setAgents] = useState<readonly CatalogItem[]>(() =>
     durable ? [] : BUILT_IN_AGENTS,
   );
@@ -833,6 +1087,7 @@ export function TapProductPrototype({
   );
   const sendInFlight = useRef(false);
   const [sendPending, setSendPending] = useState(false);
+  const citationTrigger = useRef<HTMLElement | null>(null);
   const [activeCitation, setActiveCitation] = useState<{
     citation: NonNullable<AssistantTurn["response"]>["citations"][number];
     conversationId: string | null;
@@ -848,6 +1103,31 @@ export function TapProductPrototype({
     activeCitation?.generation ?? 0,
   );
   const [messageDraft, setMessageDraft] = useState("");
+  const [insightsHandoff, setInsightsHandoff] =
+    useState<InsightsHandoff | null>(null);
+  const [insightsError, setInsightsError] = useState("");
+  const pendingInsightsKey = useRef<{ signature: string; key: string } | null>(
+    null,
+  );
+  const [localInsightsTurn, setLocalInsightsTurn] = useState<{
+    conversationId: string;
+    turn: AssistantTurn;
+  } | null>(null);
+  const appliedInsightsHandoff = useRef(false);
+  useEffect(() => {
+    if (
+      !durable ||
+      projectId === null ||
+      appliedInsightsHandoff.current ||
+      messageDraft.length > 0
+    )
+      return;
+    const handoff = parseInsightsHandoff(window.location.href, projectId);
+    if (handoff === null) return;
+    appliedInsightsHandoff.current = true;
+    setInsightsHandoff(handoff);
+    setMessageDraft(handoff.draft);
+  }, [durable, messageDraft.length, projectId]);
   const [localSources, setLocalSources] = useState<
     readonly Pick<LibrarySource, "id" | "name" | "type">[]
   >(() => initialSnapshot?.library?.localSources ?? []);
@@ -963,6 +1243,13 @@ export function TapProductPrototype({
     if (!durable || conversationList.data === undefined) return;
     const summaries = conversationList.data.pages.flatMap((page) => page.items);
     setConversations((current) => {
+      if (
+        summaries.length === 0 &&
+        current.some(
+          (item) => item.id === activeConversationId && item.id !== "draft",
+        )
+      )
+        return current;
       const restored = summaries.map((summary) => {
         const existing = current.find(
           (item) => item.id === summary.conversationId,
@@ -987,6 +1274,9 @@ export function TapProductPrototype({
     if (!durable || conversationDetail.data === undefined) return;
     const turns: AssistantTurn[] = conversationDetail.data.turns.map((turn) => {
       const resolvedResources = turn.input.resolvedResources ?? [];
+      const insightsQueryId = (
+        turn.input as { insightsQueryId?: string | null }
+      ).insightsQueryId;
       const streamed = latestTurnState(
         turn.turnId,
         recoveredStreamState,
@@ -998,6 +1288,7 @@ export function TapProductPrototype({
         locale,
         modelId: turn.input.modelAlias,
         prompt: turn.input.message,
+        ...(insightsQueryId == null ? {} : { insightsQueryId }),
         sourceReferences: resolvedResources.map((item) => ({
           id: item.sourceId,
           name: item.label,
@@ -1065,6 +1356,15 @@ export function TapProductPrototype({
             }
           : conversation,
       ),
+    );
+    setLocalInsightsTurn((current) =>
+      current !== null &&
+      current.conversationId === conversationDetail.data.conversationId &&
+      conversationDetail.data.turns.some(
+        (turn) => turn.turnId === current.turn.id,
+      )
+        ? null
+        : current,
     );
   }, [
     conversationDetail.data,
@@ -1234,6 +1534,26 @@ export function TapProductPrototype({
       sourcesQuery.data?.items,
     ],
   );
+  const publishedItems = useMemo<readonly LibrarySource[]>(() => {
+    const grouped = new Map<string, LibrarySource>();
+    for (const source of publishedSourcesQuery.data?.items ?? []) {
+      const prior = grouped.get(source.sourceId);
+      grouped.set(source.sourceId, {
+        id: source.sourceId,
+        name: source.sourceName,
+        origin: "knowledge-base",
+        type: prior
+          ? "SOURCE"
+          : (source.filename.split(".").pop()?.toUpperCase() ?? "FILE"),
+        status: "ready",
+        description:
+          source.partial || prior?.description.includes("部分范围可用")
+            ? "已发布 · 部分范围可用"
+            : "已发布",
+      });
+    }
+    return [...grouped.values()];
+  }, [publishedSourcesQuery.data?.items]);
   const documentSources = useMemo<readonly LibrarySource[]>(
     () =>
       (documentsQuery.data?.items ?? []).map((document) => ({
@@ -1286,10 +1606,63 @@ export function TapProductPrototype({
       sourceItems,
     ],
   );
+  const answerSources = durable ? publishedItems : sources;
   const activeConversation =
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
     ) ?? conversations[0]!;
+  const displayedConversation =
+    localInsightsTurn === null ||
+    localInsightsTurn.conversationId !== activeConversation.id
+      ? activeConversation
+      : {
+          ...activeConversation,
+          turns: [...activeConversation.turns, localInsightsTurn.turn],
+        };
+  const generateTestPlan = (
+    conversation: Conversation,
+    turn: AssistantTurn,
+  ) => {
+    if (
+      projectId === null ||
+      turn.response === null ||
+      turn.response === undefined ||
+      turn.answerEvidenceSnapshotDigest == null ||
+      turn.inputSnapshotDigest === undefined ||
+      turn.agentRevisionId == null ||
+      turn.skillRevisionIds === undefined
+    )
+      return;
+    const api = createTestPlanClient(projectId);
+    setGenerationJobId(null);
+    window.sessionStorage.removeItem(`tap:test-plan-generation:${projectId}`);
+    setGenerationError(null);
+    void api
+      .generate(
+        {
+          conversationId: conversation.id,
+          turnId: turn.id,
+          objective: `为“${turn.prompt}”设计测试计划`,
+        },
+        crypto.randomUUID(),
+      )
+      .then((job) => {
+        setGenerationJobId(job.jobId);
+        setSelectedDurablePlan(null);
+        setActiveModule("test-management");
+        setSidebarCollapsed(true);
+      })
+      .catch(() => {
+        setGenerationError(
+          locale === "zh"
+            ? "无法启动测试计划生成，请返回 Tapper 重试。"
+            : "Test Plan generation could not start. Try again from Tapper.",
+        );
+        setSelectedDurablePlan(null);
+        setActiveModule("test-management");
+        setSidebarCollapsed(true);
+      });
+  };
   const updateActiveConversation = (
     update: (conversation: Conversation) => Conversation,
   ) => {
@@ -1304,6 +1677,9 @@ export function TapProductPrototype({
 
   const createNewChat = () => {
     setMessageDraft("");
+    setInsightsHandoff(null);
+    setInsightsError("");
+    setLocalInsightsTurn(null);
     const id = durable ? "draft" : `chat-${nextConversationId.current++}`;
     pendingFocusTarget.current = {
       kind: "selector",
@@ -1322,6 +1698,9 @@ export function TapProductPrototype({
   const selectConversation = (conversationId: string) => {
     if (conversationId !== activeConversationId) {
       setMessageDraft("");
+      setInsightsHandoff(null);
+      setInsightsError("");
+      setLocalInsightsTurn(null);
     }
     pendingFocusTarget.current = {
       kind: "selector",
@@ -1374,14 +1753,104 @@ export function TapProductPrototype({
   const sendMessage = async (prompt: string): Promise<boolean> => {
     if (
       durable &&
-      (knowledgeClient === null ||
-        createConversationMutation.isPending ||
+      (createConversationMutation.isPending ||
         appendConversationMutation.isPending ||
         sendInFlight.current)
     )
       return false;
+    if (durable && insightsHandoff !== null) {
+      if (insightsClient === null) return false;
+      sendInFlight.current = true;
+      setSendPending(true);
+      setInsightsError("");
+      try {
+        if (knowledgeClient === null) return false;
+        const published = await knowledgeClient.listPublishedSources();
+        const selected = published.items.filter((item) =>
+          activeConversation.selectedSourceIds.includes(item.sourceId),
+        );
+        const request = {
+          queryId: insightsHandoff.queryId,
+          resourceRefs: insightsHandoff.resourceRefs,
+          question: prompt,
+          ...(activeConversation.id === "draft"
+            ? {}
+            : { conversationId: activeConversation.id }),
+          sourceRevisionIds: selected.map((item) => item.revisionId),
+          documentRevisionIds: [],
+        };
+        const signature = JSON.stringify(request);
+        const storageKey = `tap:insights-pending:${projectId}`;
+        let pending = pendingInsightsKey.current;
+        if (pending === null) {
+          try {
+            pending = JSON.parse(
+              window.sessionStorage.getItem(storageKey) ?? "null",
+            ) as typeof pending;
+          } catch {
+            pending = null;
+          }
+        }
+        if (pending?.signature !== signature) {
+          pending = { signature, key: crypto.randomUUID() };
+          window.sessionStorage.setItem(storageKey, JSON.stringify(pending));
+        }
+        pendingInsightsKey.current = pending;
+        const accepted = await insightsClient.explainInsights(
+          request,
+          pending.key,
+        );
+        window.sessionStorage.removeItem(storageKey);
+        pendingInsightsKey.current = null;
+        setLocalInsightsTurn({
+          conversationId: accepted.conversationId,
+          turn: {
+            id: accepted.turnId,
+            intent: "answer",
+            locale,
+            modelId: activeConversation.modelId,
+            prompt,
+            sourceReferences: selected.map((item) => ({
+              id: item.sourceId,
+              name: item.sourceName,
+              origin: "knowledge-base" as const,
+            })),
+            insightsQueryId: insightsHandoff.queryId,
+            status: accepted.state,
+          },
+        });
+        setConversations((current) => [
+          { ...activeConversation, id: accepted.conversationId },
+          ...current.filter(
+            (item) =>
+              item.id !== "draft" && item.id !== accepted.conversationId,
+          ),
+        ]);
+        setActiveConversationId(accepted.conversationId);
+        void queryClient.invalidateQueries({
+          queryKey: ["conversations", projectId],
+        });
+        const handoffUrl = new URL(window.location.href);
+        for (const key of ["queryId", "resourceRef", "draft"])
+          handoffUrl.searchParams.delete(key);
+        window.history.replaceState(window.history.state, "", handoffUrl);
+        setInsightsHandoff(null);
+        return true;
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        setInsightsError(
+          status === 403
+            ? "You no longer have access to this report explanation."
+            : "The report explanation is unavailable. Please try again.",
+        );
+        return false;
+      } finally {
+        sendInFlight.current = false;
+        setSendPending(false);
+      }
+    }
     const intent = detectIntent(prompt);
-    const sourceReferences = sources
+    const sourceReferences = answerSources
       .filter((source) =>
         activeConversation.selectedSourceIds.includes(source.id),
       )
@@ -1392,27 +1861,28 @@ export function TapProductPrototype({
       try {
         if (knowledgeClient === null) return false;
         const api = knowledgeClient;
+        const currentPublished = await api.listPublishedSources();
         const readySourceIds = new Set(
-          sourceItems
-            .filter((item) => item.status === "ready")
-            .map((item) => item.id),
+          currentPublished.items.map((item) => item.sourceId),
         );
         const allowedAgentIds = new Set(agents.map((item) => item.id));
         const allowedSkillIds = new Set(skills.map((item) => item.id));
         const futureSourceIds = activeConversation.selectedSourceIds.filter(
           (id) => readySourceIds.has(id),
         );
-        const selectedDetails = await Promise.all(
-          futureSourceIds.map((id) => api.getSource(id)),
-        );
+        const currentSourceReferences = currentPublished.items
+          .filter((item) => futureSourceIds.includes(item.sourceId))
+          .map((item) => ({
+            id: item.sourceId,
+            name: item.sourceName,
+            origin: "knowledge-base" as const,
+          }));
         const input = {
           message: prompt,
           modelAlias: activeConversation.modelId,
-          sourceRevisionIds: selectedDetails.flatMap((detail) =>
-            detail.documents.items
-              .filter((item) => item.status === "ready")
-              .map((item) => item.revisionId),
-          ),
+          sourceRevisionIds: currentPublished.items
+            .filter((item) => futureSourceIds.includes(item.sourceId))
+            .map((item) => item.revisionId),
           documentRevisionIds: [],
           agentRevisionId:
             activeConversation.selectedAgentIds.find((id) =>
@@ -1446,9 +1916,9 @@ export function TapProductPrototype({
             locale,
             modelId: activeConversation.modelId,
             prompt,
-            sourceReferences,
+            sourceReferences: currentSourceReferences,
             contextLabels: [
-              ...sourceReferences.map((item) => item.name),
+              ...currentSourceReferences.map((item) => item.name),
               ...agents
                 .filter((item) =>
                   activeConversation.selectedAgentIds.includes(item.id),
@@ -1623,11 +2093,14 @@ export function TapProductPrototype({
             <TapperChat
               projectId={projectId}
               agents={agents}
-              conversation={activeConversation}
+              conversation={displayedConversation}
               copy={copy}
               isInert={compactSourcesDrawerOpen}
               message={messageDraft}
-              onMessageChange={setMessageDraft}
+              onMessageChange={(value) => {
+                setMessageDraft(value);
+                setInsightsError("");
+              }}
               onModelChange={(modelId: ModelId) =>
                 updateActiveConversation((conversation) => ({
                   ...conversation,
@@ -1635,6 +2108,7 @@ export function TapProductPrototype({
                 }))
               }
               onSend={sendMessage}
+              sendError={insightsError}
               sending={
                 sendPending ||
                 createConversationMutation.isPending ||
@@ -1680,6 +2154,8 @@ export function TapProductPrototype({
                 <AssistantResponse
                   contentCopy={PROTOTYPE_COPY[turn.locale]}
                   turn={turn}
+                  insightsClient={insightsClient}
+                  conversationId={durable ? activeConversation.id : undefined}
                   activityEvents={
                     durable
                       ? (conversationEvents.data?.items ?? []).filter(
@@ -1687,11 +2163,12 @@ export function TapProductPrototype({
                         )
                       : []
                   }
-                  onOpenCitation={(citationId) => {
+                  onOpenCitation={(citationId, trigger) => {
                     const citation = turn.response?.citations.find(
                       (item) => item.citationId === citationId,
                     );
                     if (citation !== undefined) {
+                      citationTrigger.current = trigger;
                       setSourcesCollapsed(false);
                       setActiveCitation((current) => ({
                         citation,
@@ -1714,43 +2191,9 @@ export function TapProductPrototype({
                     turn.answerEvidenceSnapshotDigest != null &&
                     turn.inputSnapshotDigest !== undefined &&
                     turn.agentRevisionId != null &&
-                    (turn.skillRevisionIds?.length ?? 0) > 0
-                      ? () => {
-                          const api = createTestPlanClient(projectId);
-                          setGenerationJobId(null);
-                          setGenerationError(null);
-                          void api
-                            .generate(
-                              {
-                                conversationId: activeConversation.id,
-                                turnId: turn.id,
-                                inputSnapshotDigest: turn.inputSnapshotDigest!,
-                                answerEvidenceSnapshotDigest:
-                                  turn.answerEvidenceSnapshotDigest!,
-                                modelAlias: turn.modelId,
-                                agentRevisionId: turn.agentRevisionId!,
-                                skillRevisionIds: [...turn.skillRevisionIds!],
-                                objective: `为“${turn.prompt}”设计测试计划`,
-                              },
-                              crypto.randomUUID(),
-                            )
-                            .then((job) => {
-                              setGenerationJobId(job.jobId);
-                              setSelectedDurablePlan(null);
-                              setActiveModule("test-management");
-                              setSidebarCollapsed(true);
-                            })
-                            .catch(() => {
-                              setGenerationError(
-                                locale === "zh"
-                                  ? "无法启动测试计划生成，请返回 Tapper 重试。"
-                                  : "Test Plan generation could not start. Try again from Tapper.",
-                              );
-                              setSelectedDurablePlan(null);
-                              setActiveModule("test-management");
-                              setSidebarCollapsed(true);
-                            });
-                        }
+                    (turn.skillRevisionIds?.length ?? 0) > 0 &&
+                    (turn.response?.citations.length ?? 0) > 0
+                      ? () => generateTestPlan(activeConversation, turn)
                       : undefined
                   }
                 />
@@ -1780,15 +2223,26 @@ export function TapProductPrototype({
                   historicalQuery={
                     durable ? historicalCitationQuery : undefined
                   }
+                  returnFocusTo={citationTrigger.current}
                   onClose={() => setActiveCitation(null)}
                 />
               ) : (
                 <KnowledgeSourcesPanel
                   copy={copy}
-                  isLoading={projectId !== null && sourcesQuery.isPending}
-                  isError={sourcesQuery.isError}
+                  isLoading={
+                    durable
+                      ? publishedSourcesQuery.isPending
+                      : projectId !== null && sourcesQuery.isPending
+                  }
+                  isError={
+                    durable
+                      ? publishedSourcesQuery.isError
+                      : sourcesQuery.isError
+                  }
                   onRetry={() => {
-                    void sourcesQuery.refetch();
+                    void (
+                      durable ? publishedSourcesQuery : sourcesQuery
+                    ).refetch();
                   }}
                   onCollapse={dismissKnowledgeSources}
                   onToggleSource={(sourceId) =>
@@ -1801,7 +2255,7 @@ export function TapProductPrototype({
                     }))
                   }
                   selectedSourceIds={activeConversation.selectedSourceIds}
-                  sources={sources}
+                  sources={answerSources}
                 />
               )}
             </div>
@@ -1872,6 +2326,20 @@ export function TapProductPrototype({
               locale={locale}
               generationJobId={generationJobId}
               generationError={generationError}
+              onGenerateFromLatest={() => {
+                const latest = [...activeConversation.turns]
+                  .reverse()
+                  .find(
+                    (turn) =>
+                      turn.status === "completed" &&
+                      turn.answerEvidenceSnapshotDigest != null &&
+                      turn.inputSnapshotDigest !== undefined &&
+                      turn.agentRevisionId != null &&
+                      (turn.skillRevisionIds?.length ?? 0) > 0 &&
+                      (turn.response?.citations.length ?? 0) > 0,
+                  );
+                if (latest) generateTestPlan(activeConversation, latest);
+              }}
               onGoTapper={() => {
                 setActiveModule("tapper");
                 setSidebarCollapsed(isNarrowViewport);
@@ -1894,6 +2362,21 @@ export function TapProductPrototype({
               onBack={() => {
                 window.history.pushState(null, "", "/");
                 setSelectedDurablePlan(null);
+              }}
+              onOpenRevision={(planId, revisionId) => {
+                window.history.pushState(
+                  null,
+                  "",
+                  `/test-management/${encodeURIComponent(planId)}/revisions/${encodeURIComponent(revisionId)}`,
+                );
+                setSelectedDurablePlan({ planId, revisionId });
+              }}
+              onOpenAutomation={() => {
+                window.history.pushState(
+                  null,
+                  "",
+                  `/automation/new?testPlan=${encodeURIComponent(selectedDurablePlan.planId)}`,
+                );
               }}
             />
           )

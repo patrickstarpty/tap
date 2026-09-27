@@ -21,6 +21,12 @@ from tap.modules.knowledge.domain.documents import (
     chunk_id_for,
     logical_chunk_id_for,
 )
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    failed_document_inventory,
+    parse_inventory_digest,
+    parser_config_digest,
+)
 from tap.modules.knowledge.domain.sources import chunk_manifest_digest, projection_digest
 from tap.modules.knowledge.ports.documents import (
     ArtifactStore,
@@ -135,11 +141,15 @@ class _SafeStageError(Exception):
         self.exception_type = exception_type
         self.document_id: str | None = None
         self.revision_id: str | None = None
+        self.media_type: str | None = None
+        self.source_content_hash: str | None = None
         super().__init__(code)
 
     def bind(self, work: IngestionWork) -> None:
         self.document_id = work.document_id
         self.revision_id = work.revision_id
+        self.media_type = work.media_type
+        self.source_content_hash = work.source_content_hash
 
 
 def _log_stage_failure(job: ClaimedIngestionJob, error: _SafeStageError, started_ns: int) -> None:
@@ -228,6 +238,22 @@ class IngestionWorker:
                 continue
             except _SafeStageError as error:
                 try:
+                    inventory: tuple[ParseInventoryItem, ...] = ()
+                    config_digest = inventory_digest = None
+                    if job.kind is JobKind.INGESTION and error.stage is JobStage.PARSING:
+                        if (
+                            error.revision_id is None
+                            or error.source_content_hash is None
+                            or error.media_type is None
+                        ):
+                            raise RuntimeError("parsing failure is missing durable source facts")
+                        inventory = failed_document_inventory(
+                            error.revision_id,
+                            error.source_content_hash,
+                            error.code,
+                        )
+                        config_digest = parser_config_digest(error.media_type)
+                        inventory_digest = parse_inventory_digest(inventory)
                     if job.kind is JobKind.DELETION:
                         await self._repository.retry_job(
                             JobRetry(
@@ -246,6 +272,9 @@ class IngestionWorker:
                                 expected_stage=error.stage,
                                 error_code=error.code,
                                 failed_at=self._clock.now(),
+                                parse_inventory=inventory,
+                                parser_config_digest=config_digest,
+                                parse_inventory_digest=inventory_digest,
                             )
                         )
                 except JobLeaseLost:
@@ -341,12 +370,27 @@ class IngestionWorker:
                 raise _SafeStageError(
                     stage, "invalid-document", "parser-rejected", "contract-error"
                 )
+            if (
+                not normalized.parse_inventory
+                or normalized.parser_config_digest is None
+                or normalized.parse_inventory_digest is None
+            ):
+                raise _SafeStageError(
+                    stage, "invalid-document", "parser-rejected", "contract-error"
+                )
             locator = await self._artifact_write(
                 job,
                 stage,
                 lambda: self._artifacts.write_normalized(work.revision_id, normalized),
             )
-            await self._commit(job, stage, normalized_locator=locator)
+            await self._commit(
+                job,
+                stage,
+                normalized_locator=locator,
+                parse_inventory=normalized.parse_inventory,
+                parser_config_digest=normalized.parser_config_digest,
+                parse_inventory_digest=normalized.parse_inventory_digest,
+            )
             return
         if stage is JobStage.CHUNKING:
             normalized_locator = _required_locator(work.normalized_locator, stage)
@@ -629,6 +673,9 @@ class IngestionWorker:
         chunk_count: int | None = None,
         chunk_manifest_digest: str | None = None,
         projection_digest: str | None = None,
+        parse_inventory: tuple[ParseInventoryItem, ...] = (),
+        parser_config_digest: str | None = None,
+        parse_inventory_digest: str | None = None,
     ) -> None:
         await self._repository.commit_stage(
             JobStageCommit(
@@ -643,6 +690,9 @@ class IngestionWorker:
                 chunk_count=chunk_count,
                 chunk_manifest_digest=chunk_manifest_digest,
                 projection_digest=projection_digest,
+                parse_inventory=parse_inventory,
+                parser_config_digest=parser_config_digest,
+                parse_inventory_digest=parse_inventory_digest,
             )
         )
 

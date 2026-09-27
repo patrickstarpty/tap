@@ -12,9 +12,16 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from tap.modules.knowledge.ports.errors import AnswerUnavailable, ModelUnavailable
+from tap.quality.evidence import (
+    candidate_digest,
+    candidate_run_id,
+    canonical_digest,
+    reviewed_candidate_digest,
+)
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts" / "evaluate-quality-kb.py"
+TRUSTED_SCRIPT = ROOT / "scripts" / "evaluate-quality-kb-trusted.py"
 RUNNER = ROOT / "scripts" / "run-quality-kb-real.py"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "quality" / "kb"
 APPROVAL_CONTENT = {
@@ -70,6 +77,10 @@ def _evaluator() -> ModuleType:
 
 def _runner() -> ModuleType:
     return _module(RUNNER, "run_quality_kb_real")
+
+
+def _trusted_evaluator() -> ModuleType:
+    return _module(TRUSTED_SCRIPT, "evaluate_quality_kb_trusted")
 
 
 def _sha(character: str) -> str:
@@ -2105,3 +2116,326 @@ def test_offline_evaluator_never_needs_provider_configuration(tmp_path: Path) ->
     assert completed.returncode == 1
     assert "cases=0 (required 100)" in completed.stderr
     assert "provider" not in completed.stderr.casefold()
+
+
+def _trusted_profile() -> dict[str, object]:
+    documents = [
+        {
+            "fileId": f"file-{index:03d}",
+            "mediaType": "application/pdf" if index % 2 else "text/markdown",
+            "split": "tuning" if index < 50 else "acceptance",
+        }
+        for index in range(100)
+    ]
+    topics = ("amount", "percentage", "date", "condition", "exception", "unit")
+    cases = []
+    for index in range(200):
+        no_answer_or_conflict = index % 5 == 0
+        cases.append(
+            {
+                "caseId": f"trusted-{index:03d}",
+                "fileId": f"file-{50 + index % 50:03d}",
+                "topic": topics[index % len(topics)],
+                "retrievalRelevantAt50": 1,
+                "retrievalRelevantTotal": 1,
+                "top10EvidenceCovered": 1,
+                "top10EvidenceTotal": 1,
+                "correctAndSufficient": True,
+                "citationLocated": True,
+                "requiresNoAnswerOrConflict": no_answer_or_conflict,
+                "noAnswerOrConflictCorrect": no_answer_or_conflict,
+                "criticalFactErrorCount": 0,
+            }
+        )
+    return {
+        "schemaVersion": "quality-kb-trusted-profile-v1",
+        "profileId": "QUALITY-KB-TRUSTED-01",
+        "dataset": {"version": "unit-v1", "reviewStatus": "pending"},
+        "bindings": {
+            "modelAlias": "tapper-chat",
+            "actualModel": "provider/model",
+            "promptDigest": "sha256:" + "a" * 64,
+            "schemaDigest": "sha256:" + "b" * 64,
+            "evaluatorDigest": "sha256:" + "c" * 64,
+        },
+        "legacyV1Metrics": {
+            "leakageCount": 0,
+            "anchorResolved": 100,
+            "anchorTotal": 100,
+            "groundedSupported": 100,
+            "groundedTotal": 100,
+            "retrievalRelevantAt10": 90,
+            "retrievalRelevantTotal": 100,
+            "abstainCorrect": 90,
+            "abstainTotal": 100,
+        },
+        "documents": documents,
+        "cases": cases,
+    }
+
+
+def _reviewed_trusted_profile() -> dict[str, object]:
+    module = _trusted_evaluator()
+    profile = _trusted_profile()
+    profile["dataset"]["reviewStatus"] = "approved"
+    profile["bindings"]["evaluatorDigest"] = module._evaluator_digest(TRUSTED_SCRIPT)
+    legacy_metrics = {
+        "actualCaseCount": 100,
+        "skippedCaseCount": 0,
+        **profile["legacyV1Metrics"],
+        "projectNegativeCount": 2,
+        "sourceNegativeCount": 2,
+    }
+    threshold_names = (
+        "minimumCases",
+        "zeroSkipped",
+        "zeroLeakage",
+        "zeroCacheHits",
+        "anchorResolution",
+        "groundedClaimCitationPrecision",
+        "retrievalRecallAt10",
+        "abstainAccuracy",
+    )
+    legacy_report = {
+        "schemaVersion": "quality-kb-report-v2",
+        "profileId": "QUALITY-KB-01",
+        "status": "pass",
+        "datasetVersion": "legacy-v1",
+        "datasetDigest": "sha256:" + "d" * 64,
+        "evaluatorDigest": module._evaluator_digest(SCRIPT),
+        "configDigest": "sha256:" + "e" * 64,
+        "bindings": {
+            "promptDigest": "sha256:" + "1" * 64,
+            "schemaDigest": "sha256:" + "2" * 64,
+            "policyDigest": "sha256:" + "3" * 64,
+            "approvalDigest": "sha256:" + "4" * 64,
+        },
+        "approvedRoutes": [
+            {
+                "operation": "structured",
+                "actualProvider": "provider",
+                "actualModel": "model",
+            }
+        ],
+        "approvedMappingDigest": "sha256:" + "4" * 64,
+        "approvedMappingArtifact": "approval-record:unit",
+        "capturedActualIdentities": [{"provider": "provider", "model": "model"}],
+        "execution": {
+            "providerCallBudget": 500,
+            "providerCalls": 100,
+            "cacheHits": 0,
+            "retryCount": 0,
+            "maxRetriesPerCase": 2,
+        },
+        "metrics": legacy_metrics,
+        "thresholds": {
+            name: {"actual": 100, "required": 100, "passed": True} for name in threshold_names
+        },
+        "failures": [],
+        "cases": [
+            {
+                "caseId": f"legacy-{index:03d}",
+                "caseType": "answerable",
+                "status": "evaluated",
+            }
+            for index in range(100)
+        ],
+    }
+    legacy_evidence = {
+        "report": legacy_report,
+        "reportDigest": canonical_digest(legacy_report),
+    }
+    profile["legacyV1Evidence"] = legacy_evidence
+    acceptance_cases = profile["cases"]
+    dataset_material = {
+        "profileId": profile["profileId"],
+        "version": profile["dataset"]["version"],
+        "documents": profile["documents"],
+        "acceptanceCases": acceptance_cases,
+        "legacyV1Evidence": legacy_evidence,
+    }
+    config_material = {
+        "legacyV1Thresholds": {
+            "leakage": 0,
+            "anchor": "100%",
+            "precision": "100%",
+            "recallAt10": ">=90%",
+            "abstain": ">=90%",
+        },
+        "trustedThresholds": {
+            "recallAt50": ">=95%",
+            "top10Evidence": ">=90%",
+            "correctSufficient": ">=90%",
+            "citationLocation": ">=98%",
+            "noAnswerConflict": ">=95%",
+            "criticalFactErrors": 0,
+            "minimumAcceptanceQuestions": 200,
+            "topics": sorted({"amount", "percentage", "date", "condition", "exception", "unit"}),
+        },
+    }
+    dataset_digest = canonical_digest(dataset_material)
+    config_digest = canonical_digest(config_material)
+    model_digest = canonical_digest(profile["bindings"])
+    evidence_cases = []
+    for index, case in enumerate(acceptance_cases):
+        output = {
+            "answer": f"reviewed answer {index}",
+            "citations": [f"file:{case['fileId']}"],
+        }
+        output_digest = canonical_digest(output)
+        request_digest = canonical_digest(
+            {"caseId": case["caseId"], "question": f"question {index}"}
+        )
+        request_id = f"trusted-request-{index:03d}"
+        receipt = {
+            "provider": "provider",
+            "model": "model",
+            "providerRequestId": request_id,
+            "requestDigest": request_digest,
+            "outputDigest": output_digest,
+        }
+        receipt_digest = canonical_digest(receipt)
+        evidence_cases.append(
+            {
+                "caseId": case["caseId"],
+                "status": "completed",
+                "executionMode": "real",
+                "requestId": request_id,
+                "requestDigest": request_digest,
+                "providerReceipt": receipt,
+                "receiptDigest": receipt_digest,
+                "output": output,
+                "outputDigest": output_digest,
+                "datasetDigest": dataset_digest,
+                "configDigest": config_digest,
+                "modelDigest": model_digest,
+                "candidateDigest": candidate_digest(
+                    case_id=case["caseId"],
+                    request_id=request_id,
+                    request_digest=request_digest,
+                    receipt_digest=receipt_digest,
+                    output_digest=output_digest,
+                    dataset_digest=dataset_digest,
+                    config_digest=config_digest,
+                    model_digest=model_digest,
+                ),
+                "reviewedOutputDigest": output_digest,
+                "reviewResult": module.review_result(case),
+                "reviewJudgments": [
+                    {
+                        "reviewer": "named-kb-reviewer",
+                        "approved": True,
+                        "reviewRunId": "pending",
+                    }
+                ],
+            }
+        )
+    run_id = candidate_run_id(evidence_cases)
+    for evidence_case in evidence_cases:
+        evidence_case["reviewJudgments"][0]["reviewRunId"] = run_id
+        evidence_case["reviewedCandidateDigest"] = reviewed_candidate_digest(
+            candidate_digest_value=evidence_case["candidateDigest"],
+            review_result=evidence_case["reviewResult"],
+            review_judgments=evidence_case["reviewJudgments"],
+        )
+    profile["runEvidence"] = {
+        "schemaVersion": "quality-candidate-evidence-v1",
+        "runId": run_id,
+        "runStatus": "completed",
+        "executionMode": "real",
+        "datasetDigest": dataset_digest,
+        "configDigest": config_digest,
+        "modelDigest": model_digest,
+        "cases": evidence_cases,
+    }
+    return profile
+
+
+def test_trusted_knowledge_reports_v1_and_new_topic_metrics_separately() -> None:
+    report = _trusted_evaluator().evaluate(_trusted_profile())
+
+    assert report["passed"] is True
+    assert report["legacyV1Metrics"]["retrievalRecallAt10"]["actual"] == "90/100"
+    assert report["trustedKnowledgeMetrics"]["retrievalRecallAt50"]["actual"] == ("200/200")
+    assert report["trustedKnowledgeMetrics"]["citationLocation"]["required"] == (">=98%")
+
+
+def test_trusted_knowledge_real_gate_requires_current_reviewed_outputs() -> None:
+    profile = _trusted_profile()
+    profile["dataset"]["reviewStatus"] = "approved"
+    profile["bindings"]["evaluatorDigest"] = _trusted_evaluator()._evaluator_digest(TRUSTED_SCRIPT)
+
+    with pytest.raises(ValueError, match="legacy V1 evidence|candidate batch"):
+        _trusted_evaluator().evaluate(profile, real=True)
+
+
+def test_trusted_knowledge_real_gate_rejects_prebuilt_model_identity() -> None:
+    profile = _trusted_profile()
+    profile["dataset"]["reviewStatus"] = "approved"
+    profile["bindings"]["actualModel"] = "prebuilt/model"
+
+    with pytest.raises(ValueError, match="real model"):
+        _trusted_evaluator().evaluate(profile, real=True)
+
+
+def test_trusted_knowledge_real_contract_accepts_fully_bound_synthetic_evidence() -> None:
+    assert _trusted_evaluator().evaluate(_reviewed_trusted_profile(), real=True)["passed"] is True
+
+
+def test_trusted_knowledge_real_contract_rejects_post_review_metric_mutation() -> None:
+    profile = _reviewed_trusted_profile()
+    profile["cases"][0]["correctAndSufficient"] = False
+
+    with pytest.raises(ValueError, match="datasetDigest|review result"):
+        _trusted_evaluator().evaluate(profile, real=True)
+
+
+def test_trusted_knowledge_real_contract_binds_legacy_v1_report() -> None:
+    profile = _reviewed_trusted_profile()
+    profile["legacyV1Metrics"]["leakageCount"] = 1
+
+    with pytest.raises(ValueError, match="legacy V1 report"):
+        _trusted_evaluator().evaluate(profile, real=True)
+
+
+def test_trusted_knowledge_rejects_counter_only_legacy_v1_evidence() -> None:
+    profile = _reviewed_trusted_profile()
+    profile["legacyV1Evidence"]["report"] = profile["legacyV1Metrics"]
+    profile["legacyV1Evidence"]["reportDigest"] = canonical_digest(profile["legacyV1Metrics"])
+
+    with pytest.raises(ValueError, match="quality-kb-report-v2"):
+        _trusted_evaluator().evaluate(profile, real=True)
+
+
+def test_trusted_knowledge_rejects_tuning_acceptance_file_overlap() -> None:
+    profile = _trusted_profile()
+    profile["documents"].append(
+        {
+            "fileId": "file-000",
+            "mediaType": "text/plain",
+            "split": "acceptance",
+        }
+    )
+
+    with pytest.raises(ValueError, match="split by file"):
+        _trusted_evaluator().evaluate(profile)
+
+
+def test_new_metrics_cannot_hide_a_legacy_v1_failure() -> None:
+    profile = _trusted_profile()
+    profile["legacyV1Metrics"]["leakageCount"] = 1
+
+    report = _trusted_evaluator().evaluate(profile)
+
+    assert report["legacyV1Metrics"]["zeroLeakage"]["passed"] is False
+    assert all(metric["passed"] for metric in report["trustedKnowledgeMetrics"].values())
+    assert report["passed"] is False
+
+
+def test_trusted_metrics_require_acceptance_questions() -> None:
+    profile = _trusted_profile()
+    for case in profile["cases"]:
+        case["fileId"] = "file-000"
+
+    with pytest.raises(ValueError, match="acceptance"):
+        _trusted_evaluator().evaluate(profile)

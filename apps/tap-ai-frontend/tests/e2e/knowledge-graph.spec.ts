@@ -1,4 +1,5 @@
 import { expect, test, type Route } from "@playwright/test";
+import { preparePublishedFixture } from "./publicationFixture";
 
 const ORIGIN = "http://127.0.0.1:15173";
 
@@ -45,6 +46,7 @@ test("ready knowledge is published as a bounded grounded graph", async ({
       { timeout: 45_000 },
     )
     .not.toBe("");
+  preparePublishedFixture([revisionId]);
 
   let snapshotId = "";
   await expect

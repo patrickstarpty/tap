@@ -233,6 +233,7 @@ def _turn(value):
             agent_label=frozen.agent_label or frozen.agent_revision_id,
             skill_revision_ids=list(frozen.skill_revision_ids),
             skill_labels=list(frozen.skill_labels or frozen.skill_revision_ids),
+            insights_query_id=frozen.insights_query_id,
         ),
     )
 

@@ -1000,13 +1000,14 @@ async def _verify_composed_runtime(
 def _canonical_anchor_hash(value: object) -> str:
     item = _exact_mapping(
         value,
-        {"bbox", "endOffset", "headingPath", "page", "startOffset", "type"},
+        {"bbox", "endOffset", "headingPath", "inventoryItemId", "page", "startOffset", "type"},
         "citation-anchor-shape",
     )
     _require(item["type"] == "document", "citation-anchor-type")
     canonical = {
         "type": "document",
         "headingPath": item["headingPath"],
+        "inventoryItemId": item["inventoryItemId"],
         "page": item["page"],
         "bbox": item["bbox"],
         "startOffset": item["startOffset"],
@@ -1153,6 +1154,24 @@ def _closed_state_payload() -> dict[str, object]:
 def _write_closed_state(path: Path, value: object) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
     path.chmod(0o600)
+
+
+def test_canonical_anchor_hash_matches_approved_inventory_item_and_rejects_unknown_fields() -> None:
+    anchor = {
+        "type": "document",
+        "headingPath": None,
+        "inventoryItemId": "item-approved-1",
+        "page": None,
+        "bbox": None,
+        "startOffset": None,
+        "endOffset": None,
+    }
+
+    assert _canonical_anchor_hash(anchor) == (
+        "sha256:36359b02c43187d6e4affb4ed4dc1d1619f441d241f146e20f2f8b83cacd7d92"
+    )
+    with pytest.raises(VerificationFailure, match="citation-anchor-shape"):
+        _canonical_anchor_hash({**anchor, "unexpected": "unapproved"})
 
 
 def test_verifier_state_loader_accepts_only_sanitized_ids_and_hashes(tmp_path: Path) -> None:

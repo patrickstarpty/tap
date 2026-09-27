@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Mapping, Protocol
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.test_management.domain.models import (
     TestPlanGenerationJob,
@@ -26,6 +28,10 @@ class TestDesignGenerator(Protocol):
     async def generate(self, context: TestDesignContext) -> TestPlanRevision: ...
 
 
+class GenerationResponseUnknown(RuntimeError):
+    """The provider may have accepted a call whose response was not durably recorded."""
+
+
 @dataclass(frozen=True, slots=True)
 class ClaimedTestDesignJob:
     job: TestPlanGenerationJob
@@ -33,6 +39,8 @@ class ClaimedTestDesignJob:
 
 
 class TestDesignJobStore(Protocol):
+    def graph_checkpointer(self, claim: ClaimedTestDesignJob) -> BaseCheckpointSaver: ...
+
     async def claim_generation_jobs(
         self,
         scope: ProjectScopeContext,
@@ -46,6 +54,19 @@ class TestDesignJobStore(Protocol):
     async def generation_context(
         self, scope: ProjectScopeContext, claim: ClaimedTestDesignJob
     ) -> TestDesignContext: ...
+
+    async def generation_waiting_reason(
+        self, scope: ProjectScopeContext, claim: ClaimedTestDesignJob
+    ) -> str | None: ...
+
+    async def renew_generation_job(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedTestDesignJob,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None: ...
 
     async def complete_generation(
         self,
@@ -62,5 +83,14 @@ class TestDesignJobStore(Protocol):
         claim: ClaimedTestDesignJob,
         *,
         failure_code: str,
+        now: datetime,
+    ) -> None: ...
+
+    async def wait_generation(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedTestDesignJob,
+        *,
+        reason: str,
         now: datetime,
     ) -> None: ...

@@ -920,6 +920,7 @@ def _parse_anchor(raw: object, maximum_bytes: int) -> StructuralAnchor:
             "bbox",
             "startOffset",
             "endOffset",
+            "inventoryItemId",
         },
         "code": {"type", "repo", "path", "symbol", "lineStart", "lineEnd"},
         "bdd": {"type", "featureId", "scenarioId", "stepId"},
@@ -957,6 +958,7 @@ def _parse_anchor(raw: object, maximum_bytes: int) -> StructuralAnchor:
             bbox=tuple(float(item) for item in bbox_value),
             start_offset=_optional_int(value, "startOffset", minimum=0),
             end_offset=_optional_int(value, "endOffset", minimum=0),
+            inventory_item_id=_anchor_optional_string(value, "inventoryItemId", maximum=128),
         )
     if anchor_type == "code":
         return CodeAnchor(

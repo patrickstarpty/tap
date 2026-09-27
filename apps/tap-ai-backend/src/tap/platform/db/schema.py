@@ -45,6 +45,9 @@ PROJECT_PARENT_LINKS: dict[str, tuple[tuple[str, str, str, str | None], ...]] = 
         ("document_id", "knowledge_document", "document_id", None),
         ("source_id", "knowledge_source", "source_id", None),
     ),
+    "knowledge_parse_inventory": (
+        ("source_revision_id", "knowledge_document_revision", "revision_id", None),
+    ),
     "knowledge_ingestion_job": (
         ("revision_id", "knowledge_document_revision", "revision_id", None),
     ),
@@ -65,6 +68,20 @@ PROJECT_PARENT_LINKS: dict[str, tuple[tuple[str, str, str, str | None], ...]] = 
     ),
     "knowledge_projection_lineage": (
         ("alias_name", "knowledge_projection_state", "alias_name", None),
+    ),
+    "knowledge_publication": (("review_id", "knowledge_review_revision", "review_id", None),),
+    "knowledge_review_item_decision": (
+        ("review_id", "knowledge_review_revision", "review_id", None),
+    ),
+    "knowledge_review_history": (
+        ("review_id", "knowledge_review_revision", "review_id", None),
+        ("decision_id", "knowledge_review_item_decision", "decision_id", None),
+    ),
+    "knowledge_current_publication": (
+        ("publication_id", "knowledge_publication", "publication_id", None),
+    ),
+    "knowledge_publication_cleanup": (
+        ("publication_id", "knowledge_publication", "publication_id", None),
     ),
 }
 

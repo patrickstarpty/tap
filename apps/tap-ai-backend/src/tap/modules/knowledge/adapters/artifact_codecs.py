@@ -26,12 +26,21 @@ from tap.modules.knowledge.domain.documents import (
     logical_chunk_id_for,
     revision_id_for,
 )
+from tap.modules.knowledge.domain.parse_inventory import (
+    OriginalExcerptRange,
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
+    historical_unreviewed_inventory,
+    parse_inventory_digest,
+)
 from tap.modules.knowledge.ports.documents import EmbeddingArtifact
 from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure
 
 _SAFE_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,512}\Z")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
-_NORMALIZED_SCHEMA = "normalized-v1"
+_NORMALIZED_SCHEMA = "normalized-v2"
+_LEGACY_NORMALIZED_SCHEMA = "normalized-v1"
 _CHUNKS_SCHEMA = "chunks-v1"
 _EMBEDDINGS_SCHEMA = "embeddings-v1"
 _MAX_BLOCKS = 100_000
@@ -61,32 +70,67 @@ def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -
         != revision_id
     ):
         raise ArtifactIntegrityError("normalized artifact identity does not match revision")
-    payload = {
-        "blocks": [
-            {
-                "blockId": block.block_id,
-                "endOffset": block.end_offset,
-                "headingPath": list(block.heading_path),
-                "kind": BlockKind(block.kind).value,
-                "page": block.page,
-                "paragraphIndex": block.paragraph_index,
-                "startOffset": block.start_offset,
-                "text": block.text,
-            }
-            for block in artifact.blocks
-        ],
+    inventory_enabled = bool(artifact.parse_inventory and artifact.parser_config_digest is not None)
+    blocks: list[dict[str, object]] = []
+    for block in artifact.blocks:
+        encoded_block: dict[str, object] = {
+            "blockId": block.block_id,
+            "endOffset": block.end_offset,
+            "headingPath": list(block.heading_path),
+            "kind": BlockKind(block.kind).value,
+            "page": block.page,
+            "paragraphIndex": block.paragraph_index,
+            "startOffset": block.start_offset,
+            "text": block.text,
+        }
+        if inventory_enabled:
+            encoded_block["inventoryItemId"] = block.inventory_item_id
+        blocks.append(encoded_block)
+    payload: dict[str, object] = {
+        "blocks": blocks,
         "documentId": str(artifact.document_id),
         "filename": artifact.filename,
         "mediaType": artifact.media_type.value,
         "normalizedSchema": artifact.schema,
     }
+    if inventory_enabled:
+        payload.update(
+            {
+                "parseInventory": [
+                    {
+                        "artifactDigest": item.artifact_digest,
+                        "decisionActorId": item.decision_actor_id,
+                        "itemId": item.item_id,
+                        "kind": item.kind.value,
+                        "locator": item.locator,
+                        "reason": item.reason,
+                        "sourceRevisionId": item.source_revision_id,
+                        "status": item.status.value,
+                        "originalAlignmentReason": item.original_alignment_reason,
+                        "originalExcerpt": (
+                            None
+                            if item.original_excerpt is None
+                            else {
+                                "endByte": item.original_excerpt.end_byte,
+                                "excerptDigest": item.original_excerpt.excerpt_digest,
+                                "sourceDigest": item.original_excerpt.source_digest,
+                                "startByte": item.original_excerpt.start_byte,
+                            }
+                        ),
+                    }
+                    for item in artifact.parse_inventory
+                ],
+                "parseInventoryDigest": artifact.parse_inventory_digest,
+                "parserConfigDigest": artifact.parser_config_digest,
+            }
+        )
     payload_bytes = _canonical_line(payload)
     envelope = {
         "blockCount": len(artifact.blocks),
         "payload": payload,
         "payloadSha256": canonical_sha256(payload_bytes),
         "revisionId": revision_id,
-        "schemaVersion": _NORMALIZED_SCHEMA,
+        "schemaVersion": _NORMALIZED_SCHEMA if inventory_enabled else _LEGACY_NORMALIZED_SCHEMA,
         "sourceContentHash": artifact.source_hash,
     }
     return _canonical_line(envelope)
@@ -106,38 +150,49 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
                 "sourceContentHash",
             },
         )
+        schema_version = envelope["schemaVersion"]
         if (
-            envelope["schemaVersion"] != _NORMALIZED_SCHEMA
+            schema_version not in {_NORMALIZED_SCHEMA, _LEGACY_NORMALIZED_SCHEMA}
             or envelope["revisionId"] != expected_revision
         ):
             raise ValueError
         source_hash = _digest(envelope["sourceContentHash"])
         payload = _mapping(envelope["payload"])
+        legacy = schema_version == _LEGACY_NORMALIZED_SCHEMA
         _exact_keys(
             payload,
-            {"blocks", "documentId", "filename", "mediaType", "normalizedSchema"},
+            {"blocks", "documentId", "filename", "mediaType", "normalizedSchema"}
+            if legacy
+            else {
+                "blocks",
+                "documentId",
+                "filename",
+                "mediaType",
+                "normalizedSchema",
+                "parseInventory",
+                "parseInventoryDigest",
+                "parserConfigDigest",
+            },
         )
         if canonical_sha256(_canonical_line(payload)) != _digest(envelope["payloadSha256"]):
             raise ValueError
-        raw_blocks = _sequence(payload["blocks"], maximum=_MAX_BLOCKS)
+        raw_blocks = _sequence(payload["blocks"], maximum=_MAX_BLOCKS, allow_empty=not legacy)
         if envelope["blockCount"] != len(raw_blocks):
             raise ValueError
         blocks = []
         for raw in raw_blocks:
             block = _mapping(raw)
-            _exact_keys(
-                block,
-                {
-                    "blockId",
-                    "endOffset",
-                    "headingPath",
-                    "kind",
-                    "page",
-                    "paragraphIndex",
-                    "startOffset",
-                    "text",
-                },
-            )
+            block_keys = {
+                "blockId",
+                "endOffset",
+                "headingPath",
+                "kind",
+                "page",
+                "paragraphIndex",
+                "startOffset",
+                "text",
+            }
+            _exact_keys(block, block_keys if legacy else block_keys | {"inventoryItemId"})
             heading = _sequence(block["headingPath"], maximum=32, allow_empty=True)
             blocks.append(
                 NormalizedBlock(
@@ -149,11 +204,37 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
                     paragraph_index=_integer(block["paragraphIndex"], minimum=0),
                     start_offset=_integer(block["startOffset"], minimum=0),
                     end_offset=_integer(block["endOffset"], minimum=1),
+                    inventory_item_id=None
+                    if legacy
+                    else _optional_text(block["inventoryItemId"], maximum=128),
                 )
             )
         document_id = DocumentId(_text(payload["documentId"], maximum=256))
         if str(revision_id_for(document_id, source_hash, PARSER_VERSION)) != expected_revision:
             raise ValueError
+        if legacy:
+            inventory = historical_unreviewed_inventory(expected_revision, source_hash)
+            blocks = [
+                NormalizedBlock(
+                    block_id=block.block_id,
+                    kind=block.kind,
+                    text=block.text,
+                    heading_path=block.heading_path,
+                    page=block.page,
+                    paragraph_index=block.paragraph_index,
+                    start_offset=block.start_offset,
+                    end_offset=block.end_offset,
+                    inventory_item_id=inventory[0].item_id,
+                )
+                for block in blocks
+            ]
+            config_digest = None
+            inventory_artifact_digest = parse_inventory_digest(inventory)
+        else:
+            raw_inventory = _sequence(payload["parseInventory"], maximum=_MAX_BLOCKS)
+            inventory = tuple(_inventory_item(raw) for raw in raw_inventory)
+            config_digest = _digest(payload["parserConfigDigest"])
+            inventory_artifact_digest = _digest(payload["parseInventoryDigest"])
         return NormalizedArtifact(
             filename=_text(payload["filename"], maximum=1024),
             media_type=MediaType(_text(payload["mediaType"], maximum=128)),
@@ -162,6 +243,9 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
             document_id=document_id,
             revision_id=RevisionId(expected_revision),
             schema=_text(payload["normalizedSchema"], maximum=128),
+            parse_inventory=inventory,
+            parser_config_digest=config_digest,
+            parse_inventory_digest=inventory_artifact_digest,
         )
     except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as error:
         raise ArtifactIntegrityError("normalized artifact integrity check failed") from error
@@ -359,6 +443,50 @@ def _chunk_payload(chunk: ChunkDraft, revision_id: str) -> dict[str, object]:
     }
 
 
+def _inventory_item(value: object) -> ParseInventoryItem:
+    item = _mapping(value)
+    legacy_keys = {
+        "artifactDigest",
+        "decisionActorId",
+        "itemId",
+        "kind",
+        "locator",
+        "reason",
+        "sourceRevisionId",
+        "status",
+    }
+    current_keys = legacy_keys | {"originalAlignmentReason", "originalExcerpt"}
+    if frozenset(item) not in {frozenset(legacy_keys), frozenset(current_keys)}:
+        raise ValueError("object fields differ from the closed schema")
+    raw_excerpt = item.get("originalExcerpt")
+    original_excerpt = None
+    if raw_excerpt is not None:
+        excerpt = _mapping(raw_excerpt)
+        _exact_keys(excerpt, {"endByte", "excerptDigest", "sourceDigest", "startByte"})
+        original_excerpt = OriginalExcerptRange(
+            source_digest=_digest(excerpt["sourceDigest"]),
+            start_byte=_integer(excerpt["startByte"], minimum=0),
+            end_byte=_integer(excerpt["endByte"], minimum=1),
+            excerpt_digest=_digest(excerpt["excerptDigest"]),
+        )
+    return ParseInventoryItem(
+        source_revision_id=_text(item["sourceRevisionId"], maximum=256),
+        item_id=_text(item["itemId"], maximum=128),
+        kind=ParseInventoryKind(_text(item["kind"], maximum=32)),
+        locator=_text(item["locator"], maximum=1024),
+        status=ParseInventoryStatus(_text(item["status"], maximum=32)),
+        artifact_digest=_digest(item["artifactDigest"]),
+        reason=_optional_text(item["reason"], maximum=128),
+        decision_actor_id=_optional_text(item["decisionActorId"], maximum=128),
+        original_excerpt=original_excerpt,
+        original_alignment_reason=(
+            _optional_text(item.get("originalAlignmentReason"), maximum=128)
+            if "originalAlignmentReason" in item
+            else None
+        ),
+    )
+
+
 def _chunk_from_payload(
     value: Mapping[str, object], source_hash: str, expected_revision: str
 ) -> ChunkDraft:
@@ -477,6 +605,10 @@ def _text(value: object, *, maximum: int) -> str:
     ):
         raise ValueError("artifact text is outside the bound")
     return value
+
+
+def _optional_text(value: object, *, maximum: int) -> str | None:
+    return None if value is None else _text(value, maximum=maximum)
 
 
 def _digest(value: object) -> str:

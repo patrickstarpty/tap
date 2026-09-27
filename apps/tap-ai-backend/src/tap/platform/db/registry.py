@@ -4,6 +4,7 @@ from sqlalchemy import MetaData
 
 from tap.modules.access.adapters.mysql import actor_principal, enterprise, project
 from tap.modules.ai.adapters.mysql import ai_agent, ai_agent_revision, skill, skill_revision
+from tap.modules.ai.adapters.mysql_checkpointer import AI_GRAPH_TABLES
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn, turn_snapshot
 from tap.modules.chat.adapters.mysql_conversations import (
     conversation,
@@ -22,6 +23,7 @@ from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document,
     knowledge_document_revision,
     knowledge_ingestion_job,
+    knowledge_parse_inventory,
     knowledge_source,
     knowledge_source_command,
     knowledge_source_legacy_map,
@@ -33,6 +35,7 @@ from tap.modules.knowledge.adapters.mysql_projection import (
     knowledge_projection_lineage,
     knowledge_projection_state,
 )
+from tap.modules.knowledge.adapters.mysql_review import KNOWLEDGE_REVIEW_TABLES
 from tap.modules.test_management.adapters.mysql import TEST_MANAGEMENT_TABLES
 from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
 
@@ -55,6 +58,7 @@ BUSINESS_TABLES = (
     knowledge_document,
     knowledge_document_revision,
     knowledge_ingestion_job,
+    knowledge_parse_inventory,
     knowledge_chunk_manifest,
     knowledge_source,
     knowledge_source_command,
@@ -66,10 +70,12 @@ BUSINESS_TABLES = (
     knowledge_projection_fence,
     knowledge_projection_cleanup,
     knowledge_projection_lineage,
+    *KNOWLEDGE_REVIEW_TABLES,
     ai_agent,
     ai_agent_revision,
     skill,
     skill_revision,
+    *AI_GRAPH_TABLES,
     *GRAPH_TABLES,
     *TEST_MANAGEMENT_TABLES,
 )

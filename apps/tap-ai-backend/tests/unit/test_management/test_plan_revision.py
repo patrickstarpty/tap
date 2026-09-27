@@ -74,6 +74,7 @@ def _revision() -> PlanRevision:
                                 "the order is confirmed",
                                 "An immutable order confirmation is shown.",
                                 True,
+                                ("tpc_checkout_requirement",),
                             ),
                         ),
                     ),
@@ -154,7 +155,21 @@ def test_publish_validation_rejects_inferred_graph_as_fact() -> None:
         citation_id="tpc_inferred",
         origin=CitationOrigin.GRAPH_INFERRED,
     )
-    changed = replace(revision, citations=(inferred,)).with_recomputed_digest()
+    scenario = revision.cases[0].scenarios[0]
+    steps = tuple(
+        replace(step, citation_ids=("tpc_inferred",)) if step.citation_ids else step
+        for step in scenario.steps
+    )
+    changed = replace(
+        revision,
+        citations=(inferred,),
+        cases=(
+            replace(
+                revision.cases[0],
+                scenarios=(replace(scenario, steps=steps),),
+            ),
+        ),
+    ).with_recomputed_digest()
 
     with pytest.raises(ValueError, match="INFERRED"):
         validate_publishable(changed)
@@ -230,7 +245,9 @@ async def test_published_revision_is_forked_as_a_new_draft() -> None:
             assert scope == VALIDATION_SCOPE
             return replace(revision, created_at=now)
 
-        async def publish_revision(self, scope, revision_id, expected_version, validation_digest):
+        async def publish_revision(
+            self, scope, revision_id, expected_version, validation_digest, idempotency_key
+        ):
             raise AssertionError("publication is not part of forking")
 
     created = await PlanService(Repository()).fork_revision(

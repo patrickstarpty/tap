@@ -1,0 +1,160 @@
+{
+  "schemaVersion": "report-intake-development-fixtures-v1",
+  "contractVersion": "insights-intake-v1",
+  "evidenceKind": "synthetic-development-fixture",
+  "realGateStatus": "pending-real-input",
+  "source": {
+    "projectId": "synthetic-commerce-project",
+    "sourceId": "synthetic-ci-checkout",
+    "jobId": "synthetic-checkout-regression",
+    "timezone": "UTC"
+  },
+  "reportFieldMapping": [
+    {"field": "externalRunId", "source": "manifest", "availability": "required"},
+    {"field": "batchId", "source": "manifest", "availability": "required"},
+    {"field": "shardId", "source": "manifest", "availability": "required"},
+    {"field": "stableTestId", "source": "testcase/property[@name='tap.test_id']", "availability": "required-for-mapping"},
+    {"field": "dataRow", "source": "testcase/property[@name='tap.data_row']", "availability": "nullable"},
+    {"field": "attempt", "source": "testcase/property[@name='tap.attempt']", "availability": "nullable-no-inference"},
+    {"field": "applicationCommit", "source": "manifest", "availability": "required"},
+    {"field": "scriptCommit", "source": "manifest", "availability": "required"},
+    {"field": "environment", "source": "manifest", "availability": "required"}
+  ],
+  "approvalRoleMatrix": [
+    {"principalId": "synthetic-ci-uploader", "actions": ["reports:create", "reports:read-own"]},
+    {"principalId": "synthetic-insights-reader", "actions": ["metrics:read", "evidence:read"]},
+    {"principalId": "synthetic-insights-admin", "actions": ["reports:correct", "mappings:review"]}
+  ],
+  "performanceBudget": {
+    "status": "development-target-not-measured",
+    "attempts": 1000000,
+    "windowDays": 90,
+    "concurrency": 10,
+    "summaryP95Seconds": 2,
+    "drilldownP95Seconds": 3,
+    "hardwareProfile": "pending-signed-environment"
+  },
+  "modelBudget": {
+    "status": "development-target-not-authorized",
+    "callsPerExplanation": 3,
+    "wallClockSeconds": 30,
+    "costCurrency": "USD",
+    "costLimit": null
+  },
+  "reports": [
+    {
+      "scenario": "success",
+      "reportFile": "reports/success.xml",
+      "sha256": "d73011be5a100aaaec226bad0b9dfc9eb8c7356c258b2bd321939c3fa29320a1",
+      "manifest": {
+        "projectId": "synthetic-commerce-project",
+        "sourceId": "synthetic-ci-checkout",
+        "externalRunId": "synthetic-run-success-001",
+        "batchId": "synthetic-batch-success-001",
+        "shardId": "1",
+        "expectedShards": 1,
+        "receivedShards": ["1"],
+        "completeness": "complete",
+        "containsCompleteAttempts": true,
+        "applicationCommit": "synthetic-app-001",
+        "scriptCommit": "synthetic-tests-001",
+        "environment": "synthetic-staging",
+        "configuration": "browser=chromium;locale=en-US",
+        "startedAt": "2026-09-23T01:00:00Z",
+        "finishedAt": "2026-09-23T01:01:00Z"
+      }
+    },
+    {
+      "scenario": "failure",
+      "reportFile": "reports/failure.xml",
+      "sha256": "5a9e34a387326f4c44509c7b9809708cc1b7c85b43787cdf3ec43ff799854c3b",
+      "manifest": {
+        "projectId": "synthetic-commerce-project",
+        "sourceId": "synthetic-ci-checkout",
+        "externalRunId": "synthetic-run-failure-001",
+        "batchId": "synthetic-batch-failure-001",
+        "shardId": "1",
+        "expectedShards": 1,
+        "receivedShards": ["1"],
+        "completeness": "complete",
+        "containsCompleteAttempts": true,
+        "applicationCommit": "synthetic-app-002",
+        "scriptCommit": "synthetic-tests-001",
+        "environment": "synthetic-staging",
+        "configuration": "browser=chromium;locale=en-US",
+        "startedAt": "2026-09-23T02:00:00Z",
+        "finishedAt": "2026-09-23T02:01:00Z"
+      }
+    },
+    {
+      "scenario": "retry",
+      "reportFile": "reports/retry.xml",
+      "sha256": "661f9d2579536470fd357e0bbb6d6e7c28f1b2eb1a330f94b279ea64d78e804e",
+      "manifest": {
+        "projectId": "synthetic-commerce-project",
+        "sourceId": "synthetic-ci-checkout",
+        "externalRunId": "synthetic-run-retry-001",
+        "batchId": "synthetic-batch-retry-001",
+        "shardId": "1",
+        "expectedShards": 1,
+        "receivedShards": ["1"],
+        "completeness": "complete",
+        "containsCompleteAttempts": true,
+        "applicationCommit": "synthetic-app-003",
+        "scriptCommit": "synthetic-tests-001",
+        "environment": "synthetic-staging",
+        "configuration": "browser=chromium;locale=en-US",
+        "startedAt": "2026-09-23T03:00:00Z",
+        "finishedAt": "2026-09-23T03:01:00Z"
+      }
+    },
+    {
+      "scenario": "parameterized",
+      "reportFile": "reports/parameterized.xml",
+      "sha256": "c608f421b87b9e2c66262207cb34cf781cd3e90dfd3775df7481fafc29f24419",
+      "manifest": {
+        "projectId": "synthetic-commerce-project",
+        "sourceId": "synthetic-ci-checkout",
+        "externalRunId": "synthetic-run-parameterized-001",
+        "batchId": "synthetic-batch-parameterized-001",
+        "shardId": "1",
+        "expectedShards": 1,
+        "receivedShards": ["1"],
+        "completeness": "complete",
+        "containsCompleteAttempts": true,
+        "applicationCommit": "synthetic-app-004",
+        "scriptCommit": "synthetic-tests-001",
+        "environment": "synthetic-staging",
+        "configuration": "browser=chromium;locale=en-US",
+        "startedAt": "2026-09-23T04:00:00Z",
+        "finishedAt": "2026-09-23T04:01:00Z"
+      }
+    },
+    {
+      "scenario": "partial",
+      "reportFile": "reports/partial.xml",
+      "sha256": "9219a533b36725676be2fe11b925d1ef41b222aee2ee54b343e7aeccd67dfe07",
+      "manifest": {
+        "projectId": "synthetic-commerce-project",
+        "sourceId": "synthetic-ci-checkout",
+        "externalRunId": "synthetic-run-partial-001",
+        "batchId": "synthetic-batch-partial-001",
+        "shardId": "1",
+        "expectedShards": 2,
+        "receivedShards": ["1"],
+        "completeness": "partial",
+        "containsCompleteAttempts": false,
+        "applicationCommit": "synthetic-app-005",
+        "scriptCommit": "synthetic-tests-001",
+        "environment": "synthetic-staging",
+        "configuration": "browser=chromium;locale=en-US",
+        "startedAt": "2026-09-23T05:00:00Z",
+        "finishedAt": null
+      }
+    }
+  ],
+  "limitations": [
+    "These reports are deterministic development fixtures, not real CI evidence.",
+    "Real source semantics, retention, credentials, reviewer sign-off, and performance hardware remain pending."
+  ]
+}

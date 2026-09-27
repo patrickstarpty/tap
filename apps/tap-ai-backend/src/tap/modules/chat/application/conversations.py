@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from uuid import uuid4
 
@@ -49,6 +49,7 @@ class ConversationRepository(Protocol):
         event: ConversationEvent,
         lease_token: str | None = None,
         terminal_event: ConversationEvent | None = None,
+        stream_events: tuple[ConversationEvent, ...] = (),
     ) -> ConversationTurn: ...
     async def append_stream_event(
         self,
@@ -64,6 +65,14 @@ class ConversationRepository(Protocol):
         citation_id: str,
         citation_digest: str,
     ) -> bool: ...
+    async def renew_processing_lease(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        lease_token: str,
+        *,
+        lease_duration: timedelta,
+    ) -> None: ...
 
 
 class InMemoryConversationRepository:
@@ -128,6 +137,7 @@ class InMemoryConversationRepository:
         event,
         lease_token=None,
         terminal_event=None,
+        stream_events=(),
     ):
         conversation = await self.load(conversation_id)
         current = next((turn for turn in conversation.turns if turn.turn_id == turn_id), None)
@@ -150,18 +160,31 @@ class InMemoryConversationRepository:
             turns=tuple(turns),
             events=(
                 *conversation.events,
+                *tuple(
+                    replace(
+                        stream_event,
+                        sequence=len(conversation.events) + offset,
+                        turn_id=turn_id,
+                    )
+                    for offset, stream_event in enumerate(stream_events, start=1)
+                ),
                 *(
                     (
                         replace(
                             terminal_event,
-                            sequence=len(conversation.events) + 1,
+                            sequence=len(conversation.events) + len(stream_events) + 1,
                             turn_id=turn_id,
                         ),
                     )
                     if terminal_event
                     else ()
                 ),
-                replace(event, sequence=len(conversation.events) + (2 if terminal_event else 1)),
+                replace(
+                    event,
+                    sequence=(
+                        len(conversation.events) + len(stream_events) + (2 if terminal_event else 1)
+                    ),
+                ),
             ),
             updated_at=event.occurred_at,
         )
@@ -193,6 +216,15 @@ class InMemoryConversationRepository:
                 for item in turn.answer_snapshot.value.citations
             )
         )
+
+    async def renew_processing_lease(
+        self, conversation_id, turn_id, lease_token, *, lease_duration
+    ):
+        del lease_token, lease_duration
+        conversation = await self.load(conversation_id)
+        turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
+        if turn is None or turn.state in {"completed", "abstained", "failed", "canceled"}:
+            raise ConversationConflict("generation lease lost")
 
 
 class ConversationService:
@@ -335,6 +367,7 @@ class ConversationService:
         *,
         lease_token: str | None = None,
         terminal_event: tuple[str, dict[str, object]] | None = None,
+        stream_events: tuple[tuple[str, dict[str, object]], ...] = (),
     ) -> ConversationTurn:
         conversation = await self.load(conversation_id)
         turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
@@ -366,6 +399,10 @@ class ConversationService:
             if terminal_event is None
             else ConversationEvent(uuid4().hex, 1, terminal_event[0], terminal_event[1], now)
         )
+        persisted_stream_events = tuple(
+            ConversationEvent(uuid4().hex, 1, event_type, payload, now)
+            for event_type, payload in stream_events
+        )
         return await self.repository.complete(
             conversation_id,
             turn_id,
@@ -373,6 +410,7 @@ class ConversationService:
             event,
             lease_token=lease_token,
             terminal_event=stream_event,
+            stream_events=persisted_stream_events,
         )
 
     async def emit(

@@ -1,4 +1,5 @@
 import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,6 +11,27 @@ import { renderKnowledgeApp } from "../testing/renderKnowledgeApp";
 import { CitationViewer } from "./CitationViewer";
 
 describe("CitationViewer", () => {
+  it("returns focus to the citation trigger when closed", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Open citation";
+    document.body.append(trigger);
+    trigger.focus();
+    renderKnowledgeApp(
+      <CitationViewer
+        active={{
+          citation: retrievalCitation("citation-a"),
+          generation: 1,
+          id: "citation-a",
+        }}
+        returnFocusTo={trigger}
+        onClose={() => undefined}
+      />,
+      { api: fakeKnowledgeClient() },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "关闭原文" }));
+    expect(trigger).toHaveFocus();
+    trigger.remove();
+  });
   it("uses English UI copy and identifies a stale historical source", () => {
     renderKnowledgeApp(
       <CitationViewer
@@ -36,6 +58,7 @@ describe("CitationViewer", () => {
     );
     expect(screen.getByRole("heading", { name: "Source text" })).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("no longer resolves");
+    expect(screen.getByRole("alert")).toHaveTextContent("withdrawn");
     expect(screen.queryByText("原文核验未完成")).not.toBeInTheDocument();
   });
   it("accepts a governed preview when Source and Document identities differ", async () => {

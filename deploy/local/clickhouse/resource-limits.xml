@@ -1,0 +1,19 @@
+<clickhouse>
+  <max_thread_pool_size>256</max_thread_pool_size>
+  <background_schedule_pool_size>16</background_schedule_pool_size>
+  <background_buffer_flush_schedule_pool_size>8</background_buffer_flush_schedule_pool_size>
+  <background_message_broker_schedule_pool_size>8</background_message_broker_schedule_pool_size>
+  <background_distributed_schedule_pool_size>8</background_distributed_schedule_pool_size>
+  <storage_configuration>
+    <disks>
+      <insights_backups>
+        <type>local</type>
+        <path>/var/lib/clickhouse-backups/</path>
+      </insights_backups>
+    </disks>
+  </storage_configuration>
+  <backups>
+    <allowed_disk>insights_backups</allowed_disk>
+    <allowed_path>backups/</allowed_path>
+  </backups>
+</clickhouse>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="synthetic-checkout-success" tests="2" failures="0" errors="0" skipped="0" time="1.4">
+  <testcase classname="checkout.Authorization" name="approved_card[visa-us]" time="0.8">
+    <properties><property name="tap.test_id" value="checkout-card"/><property name="tap.data_row" value="visa-us"/><property name="tap.attempt" value="1"/></properties>
+  </testcase>
+  <testcase classname="checkout.Authorization" name="approved_wallet[paypal-eu]" time="0.6">
+    <properties><property name="tap.test_id" value="checkout-wallet"/><property name="tap.data_row" value="paypal-eu"/><property name="tap.attempt" value="1"/></properties>
+  </testcase>
+</testsuite>

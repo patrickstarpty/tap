@@ -1,3 +1,35 @@
+.ti-entry {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.ti-entry h1 { margin: 0; }
+.ti-entry > p { margin: 0; color: #626b68; }
+.ti-entry form {
+  display: grid;
+  gap: 16px;
+  width: min(100%, 420px);
+  margin-top: 12px;
+}
+.ti-entry label { display: grid; gap: 6px; font-weight: 650; }
+.ti-entry input { padding: 0 12px; }
+.ti-entry button { justify-self: start; }
+.ti-entry .ti-error { margin: 0; }
+.ti-runtime { background: #faf9f6; }
+.ti-runtime > button {
+  margin: 16px 0 0 clamp(18px, 3vw, 42px);
+  min-height: 44px;
+  border: 1px solid #c4cbc5;
+  border-radius: 9px;
+  background: #fff;
+  color: #232b2b;
+  cursor: pointer;
+  padding: 7px 12px;
+  font: inherit;
+}
+.ti-runtime > button:focus-visible { outline: 3px solid #a9470b; outline-offset: 2px; }
+
 .bs-dashboard {
   --bs-blue: var(--tap-accent, #166bdb);
   --bs-line: var(--tap-line, #dfe3e8);

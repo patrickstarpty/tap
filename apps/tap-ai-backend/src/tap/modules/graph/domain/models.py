@@ -149,8 +149,9 @@ class Evidence:
             required = {"type", "startOffset", "endOffset", "headingPath"}
             start, end = anchor.get("startOffset"), anchor.get("endOffset")
             headings, page = anchor.get("headingPath"), anchor.get("page")
+            inventory_item_id = anchor.get("inventoryItemId")
             if (
-                not required <= set(anchor) <= required | {"page"}
+                not required <= set(anchor) <= required | {"page", "inventoryItemId"}
                 or not isinstance(start, int)
                 or isinstance(start, bool)
                 or not isinstance(end, int)
@@ -159,6 +160,14 @@ class Evidence:
                 or not isinstance(headings, list)
                 or len(headings) > 32
                 or not all(isinstance(item, str) and len(item) <= 512 for item in headings)
+                or (
+                    inventory_item_id is not None
+                    and (
+                        not isinstance(inventory_item_id, str)
+                        or not inventory_item_id
+                        or len(inventory_item_id) > 128
+                    )
+                )
                 or (
                     page is not None
                     and (
@@ -238,6 +247,12 @@ class GraphSnapshotDraft:
             raise ValueError("graph fact belongs to a different snapshot")
         if any(item.snapshot_id != snapshot_id for item in self.evidence):
             raise ValueError("graph fact belongs to a different snapshot")
+        if any(
+            item.source_revision_id not in self.snapshot.source_revision_ids
+            or item.document_revision_id not in self.snapshot.document_revision_ids
+            for item in self.evidence
+        ):
+            raise ValueError("graph evidence is outside the snapshot revision selection")
         if any(item.snapshot_id != snapshot_id for item in self.provenance):
             raise ValueError("graph fact belongs to a different snapshot")
         node_ids = {item.node_id for item in self.nodes}

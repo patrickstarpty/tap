@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, cast
 
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
@@ -15,6 +16,12 @@ from tap.modules.access.domain.policy import (
     PolicyUnavailable,
     ResourceGrant,
     RetrievalPolicyContext,
+)
+from tap.modules.knowledge.application.answer_templates import assemble_answer
+from tap.modules.knowledge.application.planned_answer import AuthorizedAnswerExecution
+from tap.modules.knowledge.application.publication import (
+    PublicationBinding,
+    PublishedKnowledgeAuthority,
 )
 from tap.modules.knowledge.domain.models import (
     AbstentionReason,
@@ -48,6 +55,7 @@ from tap.modules.knowledge.domain.models import (
     anchor_authorization_key,
     context_snapshot_binds_query_plan,
 )
+from tap.modules.knowledge.ports.errors import ModelUnavailable, SearchUnavailable
 from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
     Embedding,
@@ -112,6 +120,7 @@ class _RetrievalRun:
     plan: QueryPlan
     context_snapshot: ContextSnapshot
     policy: RetrievalPolicyContext
+    publication: PublicationBinding | None = None
 
 
 def _resolve_generated_claims(
@@ -170,6 +179,7 @@ class AuthorizedRetrieval:
         policy_verifier: CurrentPolicyVerificationPort,
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str],
+        publication_authority: PublishedKnowledgeAuthority | None = None,
     ) -> None:
         self._search = search
         if models is not None:
@@ -185,6 +195,7 @@ class AuthorizedRetrieval:
         self._policy_verifier = policy_verifier
         self._redactor = redactor
         self._id_factory = id_factory
+        self._publication_authority = publication_authority
 
     async def search(
         self,
@@ -202,8 +213,37 @@ class AuthorizedRetrieval:
         governance=None,
         graph_context: tuple[Mapping[str, object], ...] = (),
         model_alias: str | None = None,
+        answer_execution: AuthorizedAnswerExecution | None = None,
+        authorize=None,
     ) -> AnswerResponse:
-        run = await self._retrieve(request.as_search_request(), policy, frozen_policy=frozen_policy)
+        answer_input = None
+        missing = False
+        if authorize is not None:
+            await authorize()
+        if answer_execution is None:
+            run = await self._retrieve(
+                request.as_search_request(), policy, frozen_policy=frozen_policy
+            )
+        else:
+            run, evidence_map = await self._planned_retrieval(
+                request.as_search_request(),
+                policy,
+                answer_execution,
+                frozen_policy=frozen_policy,
+                authorize=authorize,
+            )
+            answer_input = assemble_answer(
+                template_id=answer_execution.template_id,
+                template_version=answer_execution.template_version,
+                template_digest=answer_execution.template_digest,
+                original_question=request.query,
+                standalone_question=answer_execution.standalone_question,
+                evidence_map=evidence_map,
+                output_requirements=answer_execution.output_requirements,
+                queries=answer_execution.queries,
+            )
+            answer_input.context["planId"] = answer_execution.plan_id
+            missing = bool(answer_input.context["missingEvidence"])
         required = tuple(
             resource for resource in run.plan.resources if resource.mode is ResourceMode.REQUIRED
         )
@@ -214,18 +254,31 @@ class AuthorizedRetrieval:
             return self._abstain(run.response, missing_reason)
         if self._has_conflicting_sources(run.response.evidence):
             return self._abstain(run.response, AbstentionReason.CONFLICTING_SOURCES)
+        if self._publication_authority is not None and run.publication is not None:
+            await self._publication_authority.revalidate(run.publication)
         current = run.policy if frozen_policy else await self._verify_current(run.policy)
         self._validate_binding(current, run.plan, run.context_snapshot)
+        if authorize is not None:
+            await authorize()
+        generation_query = (
+            (await self._redactor.redact(request.query)).sanitized_text
+            if answer_execution is not None
+            else run.plan.sanitized_query
+        )
         generation = (
             await cast(Any, self._answers).answer(
-                run.plan.sanitized_query,
+                generation_query,
                 run.response.evidence,
                 run.response.retrieval_profile_id.value,
                 governance=governance,
                 graph_context=graph_context,
                 model_alias=model_alias,
+                **({"answer_input": answer_input} if answer_input is not None else {}),
             )
-            if governance is not None or graph_context or model_alias is not None
+            if governance is not None
+            or graph_context
+            or model_alias is not None
+            or answer_input is not None
             else await self._answers.answer(
                 run.plan.sanitized_query,
                 run.response.evidence,
@@ -233,7 +286,11 @@ class AuthorizedRetrieval:
             )
         )
         current = current if frozen_policy else await self._verify_current(current)
+        if authorize is not None:
+            await authorize()
         self._validate_binding(current, run.plan, run.context_snapshot)
+        if self._publication_authority is not None and run.publication is not None:
+            await self._publication_authority.revalidate(run.publication)
         claims = _resolve_generated_claims(
             generation,
             run.response.evidence,
@@ -256,7 +313,127 @@ class AuthorizedRetrieval:
             citations=tuple(self._citation(item) for item in run.response.evidence),
             embedding_provenance=run.response.embedding_provenance,
             answer_provenance=self._generation_provenance(generation),
+            degraded_mode=missing,
+            degradation_reasons=("partial-evidence",) if missing else (),
         )
+
+    async def _planned_retrieval(self, request, policy, execution, *, frozen_policy, authorize):
+        if (
+            execution.project_id != policy.project_id
+            or execution.acl_digest != policy.acl_digest
+            or execution.original_question != request.query
+        ):
+            raise AuthorizationDenied("answer plan authority changed")
+        allowed_sources = {item.source_id for item in request.resource_refs}
+        if any(not set(item.source_ids) <= allowed_sources for item in execution.queries):
+            raise AuthorizationDenied("answer plan expands selected sources")
+        profile = PROFILES[request.answer_mode]
+        candidates = min(profile.candidate_limit, execution.candidate_limit)
+        evidence_limit = min(profile.final_result_limit, execution.evidence_limit)
+        count = len(execution.queries)
+        if candidates < count:
+            raise ValueError("shared candidate budget exhausted")
+        results = {}
+        pending = {item.id: item for item in execution.queries}
+
+        async def retrieve_query(query, allocation):
+            if authorize is not None:
+                await authorize()
+            if any(
+                results.get(identity) is None or not results[identity].response.evidence
+                for identity in query.depends_on
+            ):
+                return None
+            try:
+                return await self._retrieve(
+                    replace(
+                        request,
+                        query=query.text,
+                        top_k=allocation,
+                        resource_refs=tuple(
+                            ref
+                            for ref in request.resource_refs
+                            if ref.source_id in query.source_ids
+                        ),
+                    ),
+                    policy,
+                    frozen_policy=frozen_policy,
+                    answer_plan_id=execution.plan_id,
+                    authorize=authorize,
+                )
+            except (SearchUnavailable, ModelUnavailable):
+                return None
+
+        allocations = {
+            item.id: candidates // count + (index < candidates % count)
+            for index, item in enumerate(execution.queries)
+        }
+        while pending:
+            ready = [item for item in pending.values() if set(item.depends_on) <= set(results)]
+            if not ready:
+                raise ValueError("invalid answer dependency graph")
+            tasks = [
+                asyncio.create_task(retrieve_query(item, allocations[item.id])) for item in ready
+            ]
+            try:
+                runs = await asyncio.gather(*tasks)
+            except BaseException:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+            for item, run in zip(ready, runs, strict=True):
+                results[item.id] = run
+                del pending[item.id]
+        successful = [run for run in results.values() if run is not None]
+        if not successful:
+            raise SearchUnavailable("all planned queries unavailable")
+        evidence = []
+        labels = {}
+        per_query = {}
+        for item in execution.queries:
+            run = results[item.id]
+            if run is not None:
+                if self._publication_authority is not None and run.publication is not None:
+                    await self._publication_authority.revalidate(run.publication)
+            per_query[item.id] = () if run is None else run.response.evidence
+        # Round-robin by rank reserves coverage across necessary subquestions before
+        # taking another result from any one question; deduplication shares that capacity.
+        for rank in range(max(map(len, per_query.values()), default=0)):
+            for hits in per_query.values():
+                if rank < len(hits):
+                    hit = hits[rank]
+                    identity = (hit.source.source_id, hit.source.revision, hit.chunk_id)
+                    if identity not in labels and len(evidence) < evidence_limit:
+                        labels[identity] = f"S{len(evidence) + 1}"
+                        evidence.append(replace(hit, evidence_label=labels[identity]))
+        evidence_map = {
+            query_id: tuple(
+                labels[identity]
+                for hit in hits
+                if (identity := (hit.source.source_id, hit.source.revision, hit.chunk_id)) in labels
+            )
+            for query_id, hits in per_query.items()
+        }
+        base = successful[0]
+        publication = base.publication
+        if self._publication_authority is not None:
+            publication = await self._publication_authority.authorize_selection(
+                policy.project_id,
+                tuple(
+                    sorted(
+                        {
+                            revision
+                            for run in successful
+                            if run.publication is not None
+                            for revision in run.publication.source_revision_ids
+                        }
+                    )
+                ),
+            )
+        return replace(
+            base, response=replace(base.response, evidence=tuple(evidence)), publication=publication
+        ), evidence_map
 
     async def _retrieve(
         self,
@@ -264,6 +441,8 @@ class AuthorizedRetrieval:
         policy: RetrievalPolicyContext,
         *,
         frozen_policy: bool = False,
+        answer_plan_id: str | None = None,
+        authorize=None,
     ) -> _RetrievalRun:
         if (
             frozen_policy
@@ -305,6 +484,7 @@ class AuthorizedRetrieval:
             redaction_version=redaction.redaction_version,
             embedding_model_id=self._embeddings.embedding_model_id,
             embedding_dimension=self._embeddings.embedding_dimension,
+            answer_plan_id=answer_plan_id,
         )
         context_snapshot = ContextSnapshot(
             context_snapshot_id=self._id_factory(),
@@ -327,22 +507,40 @@ class AuthorizedRetrieval:
 
         current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
+        if authorize is not None:
+            await authorize()
         embedding = await self._embeddings.embed(plan.sanitized_query)
         self._validate_embedding(embedding, plan)
         current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
+        if authorize is not None:
+            await authorize()
+        publication = None
+        if self._publication_authority is not None:
+            publication = await self._publication_authority.authorize_selection(
+                current.project_id, tuple(resource.revision for resource in plan.resources)
+            )
         hits = await self._search.search(
             SearchExecution(
                 policy=current,
                 plan=plan,
                 context_snapshot=context_snapshot,
                 query_vector=embedding.vector,
+                approved_item_scope=None
+                if publication is None
+                else tuple(
+                    (revision, publication.for_revision(revision).approved_item_ids)
+                    for revision in sorted({resource.revision for resource in plan.resources})
+                ),
             )
         )
         current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
         if not all(self._hit_is_in_execution(hit, plan) for hit in hits):
             raise AuthorizationDenied("Search returned evidence outside bound execution")
+        if self._publication_authority is not None and publication is not None:
+            await self._publication_authority.authorize_hits(current.project_id, hits)
+            await self._publication_authority.revalidate(publication)
         authorized_hits = hits
         family_order = {family: index for index, family in enumerate(SourceFamily)}
         ordered_hits = sorted(
@@ -360,6 +558,7 @@ class AuthorizedRetrieval:
                 position,
                 current.decision_id,
                 self._fused_score(hit, plan.resources, profile),
+                publication,
             )
             for position, hit in enumerate(
                 ordered_hits[: min(profile.final_result_limit, candidate_limit)],
@@ -380,6 +579,7 @@ class AuthorizedRetrieval:
             plan=plan,
             context_snapshot=context_snapshot,
             policy=current,
+            publication=publication,
         )
 
     async def _verify_current(
@@ -548,7 +748,10 @@ class AuthorizedRetrieval:
         position: int,
         acl_decision_id: str,
         fused_score: float,
+        publication: PublicationBinding | None,
     ) -> Evidence:
+        if publication is not None:
+            publication = publication.for_revision(hit.source.revision)
         return Evidence(
             family=hit.family,
             chunk_id=hit.chunk_id,
@@ -568,6 +771,13 @@ class AuthorizedRetrieval:
             score=fused_score,
             derived_from_chunk_ids=hit.derived_from_chunk_ids,
             provider_request_id=hit.provider_request_id,
+            publication_id=None if publication is None else publication.publication_id,
+            approval_digest=None if publication is None else publication.approval_digest,
+            approved_item_id=(
+                hit.source.anchor.inventory_item_id
+                if publication is not None and isinstance(hit.source.anchor, DocumentAnchor)
+                else None
+            ),
         )
 
     @staticmethod
@@ -662,6 +872,9 @@ class AuthorizedRetrieval:
             chunk_content_hash=evidence.chunk_content_hash,
             content_role=evidence.content_role,
             derived_from_chunk_ids=evidence.derived_from_chunk_ids,
+            publication_id=evidence.publication_id,
+            approval_digest=evidence.approval_digest,
+            approved_item_id=evidence.approved_item_id,
         )
 
     @staticmethod

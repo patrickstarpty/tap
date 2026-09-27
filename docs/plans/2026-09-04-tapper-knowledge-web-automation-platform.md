@@ -7,7 +7,7 @@ date: 2026-09-04
 
 > **2026-09-15 应用边界附注**：本计划后文的 `apps/backend`、`apps/web` 和 `@tap/web` 字面量路径记录了拆分前的任务执行，不能直接用于新任务。当前 V0–V3 的 AI 实现和验证入口已迁到 `apps/tap-ai-backend`、`apps/tap-ai-frontend` 与 `@tap/ai-frontend`；低代码与测试分析原型留在 TAP `apps/web`。V4 起涉及 TAP 非 AI 业务和跨产品关联时，先按 [TAP AI 产品边界](../architecture/2026-09-15-tap-ai-product-boundary.md) 更新精确文件与合同，再执行对应任务；里程碑门禁顺序及现有 Review 结论不因目录迁移而变化。
 
-> **2026-09-22 主动 Agent 目标附注**：[RFC-011 主动 Agent](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#2-主动-agent) 将主动测试运营列为 draft 功能目标。第一批随统一图/知识/测试管理建设受信事件、项目工作记忆、持久化准入与建议收件箱；第二批依赖真实 TAP Run/Insights 和领域 API 接回归建议、失败跟进、批准执行及反馈。默认仅自动分析/独立待审草稿，低风险预授权另行验收；验收包括重复/乱序/重启、自触发抑制、过期批准、撤权、暂停取消和实际建议质量。该附注不重排本计划 V0–VG/P0/P1 门禁，不把新增目标记为已完成任务；团队试点仍须先通过身份与项目授权。
+> **2026-09-22 主动 Agent 目标附注**：[RFC-011 主动 Agent](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#2-主动-agent) 将主动测试运营列为已接受功能目标（2026-09-23 确认审批通过）。第一批随统一图/知识/测试管理建设受信事件、项目工作记忆、持久化准入与建议收件箱；第二批依赖真实 TAP Run/Insights 和领域 API 接回归建议、失败跟进、批准执行及反馈。默认仅自动分析/独立待审草稿，低风险预授权另行验收；验收包括重复/乱序/重启、自触发抑制、过期批准、撤权、暂停取消和实际建议质量。该附注不重排本计划 V0–VG/P0/P1 门禁，不把新增目标记为已完成任务；团队试点仍须先通过身份与项目授权。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

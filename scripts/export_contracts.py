@@ -100,10 +100,12 @@ def write_or_check(output_directory: Path, *, check: bool) -> int:
     if check:
         # Only these namespaces/extensions belong to this exporter; never treat
         # documentation or unrelated contracts as generated output to remove.
-        owned = set(output_directory.glob("openapi/*.json")) | set(
-            output_directory.glob("events/*.schema.json")
+        owned = set((output_directory / "events").glob("*.schema.json"))
+        owned.update(
+            path
+            for path in (output_directory / "openapi").glob("*.json")
+            if path.name != "tap-api.json"
         )
-        owned |= {output_directory / "problem-types.json"}
         mismatches.extend(
             sorted(
                 path.relative_to(output_directory)

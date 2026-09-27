@@ -30,20 +30,25 @@ def citation_evidence_digest(
     source_content_hash: str,
     chunk_content_hash: str,
     anchor: object,
+    claim_text: str | None = None,
+    origin: str | None = None,
 ) -> str:
-    return content_digest(
-        {
-            "citationId": citation_id,
-            "traceId": trace_id,
-            "sourceId": source_id,
-            "documentId": document_id,
-            "revisionId": revision_id,
-            "chunkId": chunk_id,
-            "sourceContentHash": source_content_hash,
-            "chunkContentHash": chunk_content_hash,
-            "anchor": anchor,
-        }
-    )
+    material: dict[str, object] = {
+        "citationId": citation_id,
+        "traceId": trace_id,
+        "sourceId": source_id,
+        "documentId": document_id,
+        "revisionId": revision_id,
+        "chunkId": chunk_id,
+        "sourceContentHash": source_content_hash,
+        "chunkContentHash": chunk_content_hash,
+        "anchor": anchor,
+    }
+    # New governed evidence binds the exact cited claim and provenance. Keeping
+    # legacy rows' material unchanged preserves historical snapshot verification.
+    if claim_text is not None or origin is not None:
+        material.update({"claimText": claim_text, "origin": origin})
+    return content_digest(material)
 
 
 class GraphContextStatus(StrEnum):
@@ -100,6 +105,8 @@ class TurnInput:
     skill_instruction_template_digests: tuple[str, ...] = ()
     acl_digest: str = "sha256:" + "0" * 64
     retrieval_policy_digest: str = "sha256:" + "0" * 64
+    insights_query_id: str | None = None
+    insights_report_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.message, str) or not self.message.strip():
@@ -187,6 +194,15 @@ class TurnInput:
                 raise ValueError("agent output schema digest differs from frozen content")
         if set(self.agent_tool_allowlist) - {"knowledge.search", "knowledge.answer"}:
             raise ValueError("agent tool authority is outside the closed allowlist")
+        if self.insights_query_id is None and self.insights_report_refs:
+            raise ValueError("Insights report refs require a historical query")
+        if self.insights_query_id is not None and (
+            not self.insights_query_id.strip()
+            or not self.insights_report_refs
+            or len(self.insights_report_refs) > 20
+            or len(set(self.insights_report_refs)) != len(self.insights_report_refs)
+        ):
+            raise ValueError("Insights query and report refs must be bounded")
 
     def material(self, *, project_id: str, turn_id: str) -> dict[str, object]:
         value = asdict(self)
@@ -198,6 +214,9 @@ class TurnInput:
         for item in value["resolved_resources"]:
             resources.append({key: fact for key, fact in item.items() if fact is not None})
         value["resolved_resources"] = resources
+        if self.insights_query_id is None:
+            value.pop("insights_query_id")
+            value.pop("insights_report_refs")
         return {"projectId": project_id, "turnId": turn_id, **value}
 
 
@@ -265,6 +284,7 @@ class AnswerEvidence:
     graph_snapshot_id: str | None = None
     citations: tuple[CitationEvidence, ...] = ()
     diagnostics: tuple[str, ...] = ()
+    insights_explanation: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.outcome not in {"completed", "abstained", "canceled", "failed"}:
@@ -295,7 +315,7 @@ class AnswerEvidenceSnapshot:
             "turnId": self.turn_id,
             "inputSnapshotDigest": self.input_snapshot_digest,
             "answerDigest": answer_digest,
-            "evidence": asdict(self.value),
+            "evidence": self._evidence_material(self.value),
         }
         if self.answer_digest != answer_digest or self.digest != content_digest(material):
             raise ValueError("answer evidence snapshot digest does not match bound facts")
@@ -303,6 +323,13 @@ class AnswerEvidenceSnapshot:
             raise ValueError("answer evidence must bind a canonical input digest")
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("snapshot timestamp must be UTC-aware")
+
+    @classmethod
+    def _evidence_material(cls, value: AnswerEvidence) -> dict[str, object]:
+        material = asdict(value)
+        if value.insights_explanation is None:
+            material.pop("insights_explanation")
+        return material
 
     @classmethod
     def create(
@@ -321,7 +348,7 @@ class AnswerEvidenceSnapshot:
             "turnId": turn_id,
             "inputSnapshotDigest": input_digest,
             "answerDigest": answer_digest,
-            "evidence": asdict(value),
+            "evidence": cls._evidence_material(value),
         }
         return cls(
             snapshot_id,
@@ -362,6 +389,10 @@ class ConversationEvent:
             "turn.failed",
             "conversation.turn.requested",
             "conversation.turn.completed",
+            "test-plan.generation.waiting",
+            "test-plan.generation.result_ready",
+            "test-plan.generation.failed",
+            "test-plan.generation.canceled",
         }:
             raise ValueError("unknown conversation event")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))

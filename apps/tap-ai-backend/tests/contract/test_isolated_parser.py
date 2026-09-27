@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import shutil
 import struct
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -95,6 +98,7 @@ def test_e2e_manifest_preserves_restart_and_security_journeys():
             "tests/e2e/tapper.spec.ts",
             "tests/e2e/knowledge-upload-security.spec.ts",
             "tests/e2e/knowledge-conversation.spec.ts",
+            "tests/e2e/knowledge-review.spec.ts",
             "tests/e2e/tapper-test-plan.spec.ts",
             "tests/e2e/knowledge-graph.spec.ts",
         ],
@@ -104,8 +108,6 @@ def test_e2e_manifest_preserves_restart_and_security_journeys():
 
 
 def test_parser_build_verify_fails_closed_without_receipt(tmp_path):
-    import subprocess
-
     root = Path(__file__).resolve().parents[4]
     script = root / "scripts/build-tapper-parser.sh"
     assert script.is_file(), "pinned minimal parser image builder is missing"
@@ -116,6 +118,35 @@ def test_parser_build_verify_fails_closed_without_receipt(tmp_path):
     )
     assert result.returncode != 0
     assert "receipt" in result.stderr.lower()
+
+
+def test_parser_build_inputs_start_worker_protocol_from_staged_sources(tmp_path):
+    root = Path(__file__).resolve().parents[4]
+    inputs = json.loads((root / "deploy/parser/build-inputs.json").read_text())
+    staged = tmp_path / "src"
+    for name in inputs["sources"]:
+        destination = staged / Path(name).relative_to("apps/tap-ai-backend/src")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(root / name, destination)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "from tap.modules.knowledge.adapters import parser_protocol; "
+            "print(parser_protocol.PARSER_VERSION)",
+            str(staged),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == PARSER_VERSION
 
 
 def test_e2e_manifest_rejects_missing_spec_and_native_skip(tmp_path):
@@ -155,7 +186,7 @@ async def test_parser_control_distinguishes_clean_half_close_from_truncation(dat
 
 def native_journey():
     return {
-        "stats": {"expected": 5, "unexpected": 0, "flaky": 0, "skipped": 0},
+        "stats": {"expected": 6, "unexpected": 0, "flaky": 0, "skipped": 0},
         "suites": [
             {
                 "specs": [
@@ -177,6 +208,7 @@ def native_journey():
                 "tapper.spec.ts",
                 "knowledge-upload-security.spec.ts",
                 "knowledge-conversation.spec.ts",
+                "knowledge-review.spec.ts",
                 "tapper-test-plan.spec.ts",
                 "knowledge-graph.spec.ts",
             ]
@@ -208,7 +240,7 @@ def test_native_e2e_report_rejects_nonpassing_or_incomplete_evidence(drift):
     if drift == "unexpected":
         native["suites"][0]["specs"][0]["file"] = "other.spec.ts"
     if drift == "count":
-        native["stats"]["expected"] = 6
+        native["stats"]["expected"] = 7
     if drift == "error":
         native["errors"] = [{"message": "private error"}]
     with pytest.raises(ValueError):
@@ -236,10 +268,11 @@ def test_native_e2e_projection_preserves_identity_and_discards_content():
         "tests/e2e/tapper.spec.ts",
         "tests/e2e/knowledge-upload-security.spec.ts",
         "tests/e2e/knowledge-conversation.spec.ts",
+        "tests/e2e/knowledge-review.spec.ts",
         "tests/e2e/tapper-test-plan.spec.ts",
         "tests/e2e/knowledge-graph.spec.ts",
     }
-    assert result["counts"]["passed"] == 5
+    assert result["counts"]["passed"] == 6
     assert "private canary" not in json.dumps(result)
 
 

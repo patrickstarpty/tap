@@ -64,8 +64,80 @@ class GapSeverity(StrEnum):
 class GenerationJobStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    WAITING = "WAITING"
     DRAFT_READY = "DRAFT_READY"
     FAILED = "FAILED"
+    CANCELED = "CANCELED"
+
+
+class ReviewDisposition(StrEnum):
+    PENDING = "PENDING"
+    ACCEPTED_UNCHANGED = "ACCEPTED_UNCHANGED"
+    ACCEPTED_MODIFIED = "ACCEPTED_MODIFIED"
+    REJECTED = "REJECTED"
+
+
+@dataclass(frozen=True, slots=True)
+class RequirementScopeItem:
+    requirement_id: str
+    source_revision_id: str
+    locator: str
+
+    def __post_init__(self) -> None:
+        _identifier("requirement_id", self.requirement_id)
+        _identifier("requirement source revision", self.source_revision_id)
+        _text("requirement locator", self.locator, 512)
+
+
+@dataclass(frozen=True, slots=True)
+class RequirementScopeSnapshot:
+    scope_id: str
+    version: int
+    requirements: tuple[RequirementScopeItem, ...]
+    content_digest: str
+
+    def __post_init__(self) -> None:
+        _identifier("requirement scope id", self.scope_id)
+        if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version < 1:
+            raise ValueError("requirement scope version must be positive")
+        if not self.requirements:
+            raise ValueError("requirement scope must contain requirements")
+        ids = [item.requirement_id for item in self.requirements]
+        if len(ids) != len(set(ids)):
+            raise ValueError("requirement scope identities must be unique")
+        if _DIGEST.fullmatch(self.content_digest) is None:
+            raise ValueError("requirement scope digest must be canonical")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        scope_id: str,
+        version: int,
+        requirements: tuple[RequirementScopeItem, ...],
+    ) -> RequirementScopeSnapshot:
+        material = json.dumps(
+            {
+                "scopeId": scope_id,
+                "version": version,
+                "requirements": [
+                    {
+                        "requirementId": item.requirement_id,
+                        "sourceRevisionId": item.source_revision_id,
+                        "locator": item.locator,
+                    }
+                    for item in requirements
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return cls(
+            scope_id,
+            version,
+            requirements,
+            "sha256:" + hashlib.sha256(material.encode()).hexdigest(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +148,8 @@ class TestPlanStep:
     text: str
     expected_result: str | None = None
     critical: bool = False
+    citation_ids: tuple[str, ...] = ()
+    unknown_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _identifier("step_id", self.step_id)
@@ -88,6 +162,14 @@ class TestPlanStep:
             _text("expected result", self.expected_result)
         if not isinstance(self.critical, bool):
             raise TypeError("critical must be boolean")
+        for name, values in (
+            ("step citation", self.citation_ids),
+            ("step unknown", self.unknown_ids),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"{name} identities must be unique")
+            for value in values:
+                _identifier(name, value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +194,7 @@ class TestCase:
     objective: str
     critical: bool
     scenarios: tuple[TestScenario, ...]
+    covered_requirement_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _identifier("case_id", self.case_id)
@@ -121,6 +204,10 @@ class TestCase:
         _text("case objective", self.objective)
         if not isinstance(self.critical, bool):
             raise TypeError("critical must be boolean")
+        if len(self.covered_requirement_ids) != len(set(self.covered_requirement_ids)):
+            raise ValueError("covered requirement identities must be unique")
+        for value in self.covered_requirement_ids:
+            _identifier("covered requirement", value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +219,7 @@ class TestPlanCitation:
     content_digest: str
     claim_text: str
     origin: CitationOrigin
+    anchor: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -146,6 +234,8 @@ class TestPlanCitation:
         _text("citation claim", self.claim_text)
         if not isinstance(self.origin, CitationOrigin):
             raise TypeError("citation origin must be explicit")
+        if self.anchor is not None and not isinstance(self.anchor, dict):
+            raise TypeError("citation anchor must be an object")
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,10 +255,13 @@ class TestPlanAssumption:
 class TestPlanUnknown:
     unknown_id: str
     text: str
+    requirement_ref: str | None = None
 
     def __post_init__(self) -> None:
         _identifier("unknown_id", self.unknown_id)
         _text("unknown", self.text)
+        if self.requirement_ref is not None:
+            _text("unknown requirement", self.requirement_ref, 512)
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +280,42 @@ class TestPlanCoverageGap:
 
 
 @dataclass(frozen=True, slots=True)
+class TestPlanReviewDecision:
+    decision_id: str
+    disposition: ReviewDisposition
+    reason: str
+    actor_id: str
+    reviewed_content_digest: str
+    created_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        _identifier("review decision id", self.decision_id)
+        if not isinstance(self.disposition, ReviewDisposition):
+            raise TypeError("review disposition must be explicit")
+        _text("review reason", self.reason)
+        _identifier("review actor", self.actor_id)
+        if _DIGEST.fullmatch(self.reviewed_content_digest) is None:
+            raise ValueError("reviewed content digest must be canonical")
+
+
+@dataclass(frozen=True, slots=True)
+class TestPlanReviewSummary:
+    reviewed_count: int
+    unchanged_count: int
+    modified_count: int
+    rejected_count: int
+
+    @property
+    def unchanged_adoption_rate(self) -> float | None:
+        return self.unchanged_count / self.reviewed_count if self.reviewed_count else None
+
+    @property
+    def total_adoption_rate(self) -> float | None:
+        adopted = self.unchanged_count + self.modified_count
+        return adopted / self.reviewed_count if self.reviewed_count else None
+
+
+@dataclass(frozen=True, slots=True)
 class TestPlanGenerationRequest:
     job_id: str
     test_plan_id: str
@@ -202,6 +331,10 @@ class TestPlanGenerationRequest:
     objective: str
     idempotency_key: str
     request_digest: str
+    requirement_scope: RequirementScopeSnapshot | None = None
+    approved_knowledge_revision_ids: tuple[str, ...] = ()
+    model_revision_id: str | None = None
+    strict_review_required: bool = False
 
     @classmethod
     def create(
@@ -217,6 +350,10 @@ class TestPlanGenerationRequest:
         skill_revision_ids: tuple[str, ...],
         objective: str,
         idempotency_key: str,
+        requirement_scope: RequirementScopeSnapshot | None = None,
+        approved_knowledge_revision_ids: tuple[str, ...] = (),
+        model_revision_id: str | None = None,
+        strict_review_required: bool = False,
     ) -> TestPlanGenerationRequest:
         for name, value in (
             ("project_id", project_id),
@@ -239,6 +376,18 @@ class TestPlanGenerationRequest:
             raise ValueError("generation skill revisions must be nonempty and unique")
         for value in skill_revision_ids:
             _identifier("skill_revision_id", value)
+        if requirement_scope is not None and not isinstance(
+            requirement_scope, RequirementScopeSnapshot
+        ):
+            raise TypeError("requirement scope must be an immutable snapshot")
+        if len(approved_knowledge_revision_ids) != len(set(approved_knowledge_revision_ids)):
+            raise ValueError("approved knowledge revisions must be unique")
+        for value in approved_knowledge_revision_ids:
+            _identifier("approved knowledge revision", value)
+        if model_revision_id is not None:
+            _identifier("model_revision_id", model_revision_id)
+        if not isinstance(strict_review_required, bool):
+            raise TypeError("strict review requirement must be boolean")
         _text("generation objective", objective)
         material = json.dumps(
             {
@@ -252,6 +401,12 @@ class TestPlanGenerationRequest:
                 "skillRevisionIds": list(skill_revision_ids),
                 "objective": objective,
                 "idempotencyKey": idempotency_key,
+                "requirementScopeDigest": (
+                    requirement_scope.content_digest if requirement_scope is not None else None
+                ),
+                "approvedKnowledgeRevisionIds": list(approved_knowledge_revision_ids),
+                "modelRevisionId": model_revision_id,
+                "strictReviewRequired": strict_review_required,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -259,20 +414,24 @@ class TestPlanGenerationRequest:
         digest = "sha256:" + hashlib.sha256(material.encode()).hexdigest()
         suffix = digest.removeprefix("sha256:")[:32]
         return cls(
-            f"tpj_{suffix}",
-            f"tp_{suffix}",
-            f"tpr_{suffix}",
-            project_id,
-            conversation_id,
-            turn_id,
-            input_snapshot_digest,
-            answer_evidence_snapshot_digest,
-            model_alias,
-            agent_revision_id,
-            skill_revision_ids,
-            objective,
-            idempotency_key,
-            digest,
+            job_id=f"tpj_{suffix}",
+            test_plan_id=f"tp_{suffix}",
+            revision_id=f"tpr_{suffix}",
+            project_id=project_id,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            input_snapshot_digest=input_snapshot_digest,
+            answer_evidence_snapshot_digest=answer_evidence_snapshot_digest,
+            model_alias=model_alias,
+            agent_revision_id=agent_revision_id,
+            skill_revision_ids=skill_revision_ids,
+            objective=objective,
+            idempotency_key=idempotency_key,
+            request_digest=digest,
+            requirement_scope=requirement_scope,
+            approved_knowledge_revision_ids=approved_knowledge_revision_ids,
+            model_revision_id=model_revision_id,
+            strict_review_required=strict_review_required,
         )
 
 
@@ -287,12 +446,15 @@ class TestPlanGenerationJob:
     lease_token: str | None = None
     lease_expires_at: datetime | None = None
     failure_code: str | None = None
+    row_version: int = 1
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, GenerationJobStatus):
             raise TypeError("generation status must be explicit")
         if self.attempt_count < 0:
             raise ValueError("generation attempt count cannot be negative")
+        if type(self.row_version) is not int or self.row_version < 1:
+            raise ValueError("generation row version must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,6 +480,20 @@ class TestPlanRevision:
     validation_digest: str | None = None
     created_at: datetime | None = None
     published_at: datetime | None = None
+    requirement_scope_id: str | None = None
+    requirement_scope_version: int | None = None
+    requirement_scope_digest: str | None = None
+    requirement_ids: tuple[str, ...] = ()
+    approved_knowledge_revision_ids: tuple[str, ...] = ()
+    model_revision_id: str | None = None
+    agent_revision_id: str | None = None
+    skill_revision_ids: tuple[str, ...] = ()
+    author_actor_id: str | None = None
+    strict_review_required: bool = False
+    generated_content_digest: str | None = None
+    review_decisions: tuple[TestPlanReviewDecision, ...] = ()
+    needs_review: bool = False
+    needs_review_reason: str | None = None
 
     def __post_init__(self) -> None:
         _identifier("test_plan_id", self.test_plan_id)
@@ -342,6 +518,51 @@ class TestPlanRevision:
             raise ValueError("content digest must be canonical")
         if self.validation_digest is not None and _DIGEST.fullmatch(self.validation_digest) is None:
             raise ValueError("validation digest must be canonical")
+        if self.requirement_scope_id is not None:
+            _identifier("requirement scope id", self.requirement_scope_id)
+            if (
+                self.requirement_scope_version is None
+                or self.requirement_scope_version < 1
+                or self.requirement_scope_digest is None
+                or _DIGEST.fullmatch(self.requirement_scope_digest) is None
+            ):
+                raise ValueError("requirement scope binding must be complete")
+        elif any(
+            value is not None
+            for value in (self.requirement_scope_version, self.requirement_scope_digest)
+        ):
+            raise ValueError("requirement scope binding must be complete")
+        if len(self.requirement_ids) != len(set(self.requirement_ids)):
+            raise ValueError("requirement identities must be unique")
+        for value in self.requirement_ids:
+            _identifier("requirement", value)
+        for name, values in (
+            ("approved knowledge revision", self.approved_knowledge_revision_ids),
+            ("skill revision", self.skill_revision_ids),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"{name} identities must be unique")
+            for value in values:
+                _identifier(name, value)
+        for revision_name, revision_value in (
+            ("model revision", self.model_revision_id),
+            ("agent revision", self.agent_revision_id),
+        ):
+            if revision_value is not None:
+                _identifier(revision_name, revision_value)
+        if self.author_actor_id is not None:
+            _identifier("draft author", self.author_actor_id)
+        if not isinstance(self.strict_review_required, bool):
+            raise TypeError("strict review requirement must be boolean")
+        if (
+            self.generated_content_digest is not None
+            and _DIGEST.fullmatch(self.generated_content_digest) is None
+        ):
+            raise ValueError("generated content digest must be canonical")
+        if self.needs_review_reason is not None:
+            _text("needs review reason", self.needs_review_reason, 512)
+        if self.needs_review != (self.needs_review_reason is not None):
+            raise ValueError("needs-review state and reason must change together")
 
     @classmethod
     def create(
@@ -362,6 +583,13 @@ class TestPlanRevision:
         coverage_gaps: tuple[TestPlanCoverageGap, ...],
         origin: IdentityOrigin,
         adopted_from_revision_id: str | None = None,
+        requirement_scope: RequirementScopeSnapshot | None = None,
+        author_actor_id: str | None = None,
+        strict_review_required: bool = False,
+        approved_knowledge_revision_ids: tuple[str, ...] = (),
+        model_revision_id: str | None = None,
+        agent_revision_id: str | None = None,
+        skill_revision_ids: tuple[str, ...] = (),
     ) -> TestPlanRevision:
         provisional = cls(
             test_plan_id,
@@ -381,8 +609,25 @@ class TestPlanRevision:
             origin,
             adopted_from_revision_id,
             "sha256:" + "0" * 64,
+            requirement_scope_id=(requirement_scope.scope_id if requirement_scope else None),
+            requirement_scope_version=(requirement_scope.version if requirement_scope else None),
+            requirement_scope_digest=(
+                requirement_scope.content_digest if requirement_scope else None
+            ),
+            requirement_ids=(
+                tuple(item.requirement_id for item in requirement_scope.requirements)
+                if requirement_scope
+                else ()
+            ),
+            author_actor_id=author_actor_id,
+            strict_review_required=strict_review_required,
+            approved_knowledge_revision_ids=approved_knowledge_revision_ids,
+            model_revision_id=model_revision_id,
+            agent_revision_id=agent_revision_id,
+            skill_revision_ids=skill_revision_ids,
         )
-        return provisional.with_recomputed_digest()
+        created = provisional.with_recomputed_digest()
+        return replace(created, generated_content_digest=created.content_digest)
 
     def canonical_content(self) -> dict[str, object]:
         return {
@@ -398,6 +643,7 @@ class TestPlanRevision:
                     "title": case.title,
                     "objective": case.objective,
                     "critical": case.critical,
+                    "coveredRequirementIds": list(case.covered_requirement_ids),
                     "scenarios": [
                         {
                             "scenarioId": scenario.scenario_id,
@@ -411,6 +657,8 @@ class TestPlanRevision:
                                     "text": step.text,
                                     "expectedResult": step.expected_result,
                                     "critical": step.critical,
+                                    "citationIds": list(step.citation_ids),
+                                    "unknownIds": list(step.unknown_ids),
                                 }
                                 for step in scenario.steps
                             ],
@@ -429,6 +677,7 @@ class TestPlanRevision:
                     "contentDigest": item.content_digest,
                     "claimText": item.claim_text,
                     "origin": item.origin.value,
+                    "anchor": item.anchor,
                 }
                 for item in self.citations
             ],
@@ -441,7 +690,12 @@ class TestPlanRevision:
                 for item in self.assumptions
             ],
             "unknowns": [
-                {"unknownId": item.unknown_id, "text": item.text} for item in self.unknowns
+                {
+                    "unknownId": item.unknown_id,
+                    "text": item.text,
+                    "requirementRef": item.requirement_ref,
+                }
+                for item in self.unknowns
             ],
             "coverageGaps": [
                 {
@@ -452,7 +706,42 @@ class TestPlanRevision:
                 }
                 for item in self.coverage_gaps
             ],
+            "requirementScope": (
+                None
+                if self.requirement_scope_id is None
+                else {
+                    "scopeId": self.requirement_scope_id,
+                    "version": self.requirement_scope_version,
+                    "contentDigest": self.requirement_scope_digest,
+                    "requirementIds": list(self.requirement_ids),
+                }
+            ),
+            "generationVersions": {
+                "approvedKnowledgeRevisionIds": list(self.approved_knowledge_revision_ids),
+                "modelRevisionId": self.model_revision_id,
+                "agentRevisionId": self.agent_revision_id,
+                "skillRevisionIds": list(self.skill_revision_ids),
+            },
         }
+
+    @property
+    def coverage_denominator(self) -> int:
+        return len(self.requirement_ids)
+
+    @property
+    def covered_requirement_ids(self) -> tuple[str, ...]:
+        covered = {
+            requirement_id for case in self.cases for requirement_id in case.covered_requirement_ids
+        }
+        return tuple(item for item in self.requirement_ids if item in covered)
+
+    @property
+    def covered_requirement_count(self) -> int:
+        return len(self.covered_requirement_ids)
+
+    @property
+    def current_review_decision(self) -> TestPlanReviewDecision | None:
+        return self.review_decisions[-1] if self.review_decisions else None
 
     def compute_content_digest(self) -> str:
         material = json.dumps(
@@ -495,4 +784,9 @@ class TestPlanRevision:
             validation_digest=None,
             created_at=None,
             published_at=None,
+            author_actor_id=None,
+            generated_content_digest=self.content_digest,
+            review_decisions=(),
+            needs_review=False,
+            needs_review_reason=None,
         )

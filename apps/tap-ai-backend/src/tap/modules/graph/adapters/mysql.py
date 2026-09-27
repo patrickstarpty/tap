@@ -451,7 +451,10 @@ class MysqlGraphStore:
                 .mappings()
                 .one_or_none()
             )
-        return None if row is None else _snapshot(row)
+        if row is None:
+            return None
+        snapshot = _snapshot(row)
+        return snapshot if snapshot.source_revision_ids == tuple(sorted(source_ids)) else None
 
     async def get_snapshot(
         self, scope: ProjectScopeContext, snapshot_id: str

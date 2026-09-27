@@ -4,13 +4,22 @@ import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 import type { AssistantTurn, LibrarySource, Locale } from "./model";
 import "./DocumentReview.css";
 
-type DocumentState = "processing" | "failed" | "review" | "published";
+type DocumentState =
+  | "processing"
+  | "failed"
+  | "review"
+  | "reviewing"
+  | "approved"
+  | "published"
+  | "withdrawn";
 type Document = {
   id: string;
   name: string;
   version: string;
   state: DocumentState;
   checks: boolean[];
+  revision: number;
+  history: { action: string; revision: number; actorId: string }[];
 };
 const initial: Document[] = [
   {
@@ -18,21 +27,37 @@ const initial: Document[] = [
     name: "Life underwriting guide · v1.2.md",
     version: "v1.2",
     state: "review",
-    checks: [false, false, false],
+    checks: [false, false, false, false],
+    revision: 1,
+    history: [],
   },
   {
     id: "underwriting-scan",
     name: "Underwriting rules — scanned.pdf",
     version: "v1.0",
     state: "failed",
-    checks: [false, false, false],
+    checks: [false, false, false, false],
+    revision: 1,
+    history: [],
+  },
+  {
+    id: "health-disclosure-approved",
+    name: "Health disclosure policy · approved.md",
+    version: "v1.0",
+    state: "approved",
+    checks: [true, true, true, true],
+    revision: 3,
+    history: [
+      { action: "submitted", revision: 2, actorId: "Content editor" },
+      { action: "approved", revision: 3, actorId: "Independent reviewer" },
+    ],
   },
 ];
 export function useDocumentReview(locale: Locale) {
   const [documents, setDocuments] = useState<Document[]>(() => {
     try {
       const saved: unknown = JSON.parse(
-        localStorage.getItem("tap.prototype.document-reviews.v1") ?? "null",
+        localStorage.getItem("tap.prototype.document-reviews.v3") ?? "null",
       );
       if (
         Array.isArray(saved) &&
@@ -42,10 +67,31 @@ export function useDocumentReview(locale: Locale) {
             typeof d.id === "string" &&
             typeof d.name === "string" &&
             typeof d.version === "string" &&
-            ["processing", "failed", "review", "published"].includes(d.state) &&
+            [
+              "processing",
+              "failed",
+              "review",
+              "reviewing",
+              "approved",
+              "published",
+              "withdrawn",
+            ].includes(d.state) &&
             Array.isArray(d.checks) &&
-            d.checks.length === 3 &&
-            d.checks.every((value: unknown) => typeof value === "boolean"),
+            d.checks.length === 4 &&
+            d.checks.every((value: unknown) => typeof value === "boolean") &&
+            Number.isInteger(d.revision) &&
+            Array.isArray(d.history) &&
+            d.history.every(
+              (event: unknown) =>
+                typeof event === "object" &&
+                event !== null &&
+                "action" in event &&
+                typeof event.action === "string" &&
+                "revision" in event &&
+                Number.isInteger(event.revision) &&
+                "actorId" in event &&
+                typeof event.actorId === "string",
+            ),
         )
       )
         return saved;
@@ -57,7 +103,7 @@ export function useDocumentReview(locale: Locale) {
   useEffect(() => {
     try {
       localStorage.setItem(
-        "tap.prototype.document-reviews.v1",
+        "tap.prototype.document-reviews.v3",
         JSON.stringify(documents),
       );
     } catch {
@@ -101,16 +147,47 @@ export function useDocumentReview(locale: Locale) {
             ? t("Published", "已发布")
             : d.state === "review"
               ? t("Ready for review", "待核对")
-              : d.state === "failed"
-                ? t("Text extraction failed", "文本提取失败")
-                : t("Processing document", "正在处理资料"),
+              : d.state === "reviewing"
+                ? t("Awaiting independent review", "待独立复核")
+                : d.state === "approved"
+                  ? t("Approved, awaiting publication", "已批准，待发布")
+                  : d.state === "withdrawn"
+                    ? t("Publication withdrawn", "发布已撤回")
+                    : d.state === "failed"
+                      ? t("Text extraction failed", "文本提取失败")
+                      : t("Processing document", "正在处理资料"),
       })),
     [documents, locale],
   );
   const selected = documents.find((d) => d.id === inspected);
   function update(patch: Partial<Document>) {
     setDocuments((current) =>
-      current.map((d) => (d.id === inspected ? { ...d, ...patch } : d)),
+      current.map((d) => {
+        if (d.id !== inspected) return d;
+        const changedState =
+          patch.state !== undefined && patch.state !== d.state;
+        return {
+          ...d,
+          ...patch,
+          revision: changedState ? d.revision + 1 : d.revision,
+          history: changedState
+            ? [
+                ...d.history,
+                {
+                  action: patch.state!,
+                  revision: d.revision + 1,
+                  actorId:
+                    patch.state === "reviewing"
+                      ? "Content editor"
+                      : patch.state === "published" ||
+                          patch.state === "withdrawn"
+                        ? "Publisher"
+                        : "Independent reviewer",
+                },
+              ]
+            : d.history,
+        };
+      }),
     );
   }
   function inspect(id: string, trigger?: HTMLElement) {
@@ -126,7 +203,9 @@ export function useDocumentReview(locale: Locale) {
         name,
         version: "v1.0",
         state: "processing",
-        checks: [false, false, false],
+        checks: [false, false, false, false],
+        revision: 1,
+        history: [],
       },
     ]);
   }
@@ -162,13 +241,35 @@ export function DocumentReview({
         <div>
           <h2>{d.name}</h2>
           <p>
-            {d.version} · {t("Knowledge library", "知识库")}
+            {d.version} · {t("Knowledge library", "知识库")} ·{" "}
+            {t("Review revision", "审核修订")} {d.revision}
           </p>
         </div>
         <Button aria-label={t("Close", "关闭")} onClick={review.close}>
           {t("Close", "关闭")}
         </Button>
       </header>
+      <p className="tap-document-status-line">
+        {t("Extraction", "解析")}：
+        {d.state === "processing"
+          ? t("Processing", "处理中")
+          : d.state === "failed"
+            ? t("Failed", "失败")
+            : t("Ready", "就绪")}
+        {" · "}
+        {t("Business review", "业务审核")}：
+        {d.state === "review"
+          ? t("Checking", "核对中")
+          : d.state === "reviewing"
+            ? t("Awaiting independent review", "待独立复核")
+            : d.state === "approved"
+              ? t("Approved", "已批准")
+              : d.state === "published"
+                ? t("Published", "已发布")
+                : d.state === "withdrawn"
+                  ? t("Withdrawn", "已撤回")
+                  : t("Not started", "未开始")}
+      </p>
       {d.state === "processing" ? (
         <div className="tap-document-state" role="status">
           <h3>{t("Processing document…", "正在处理资料…")}</h3>
@@ -203,7 +304,7 @@ export function DocumentReview({
                     review.update({
                       name: file.name,
                       state: "processing",
-                      checks: [false, false, false],
+                      checks: [false, false, false, false],
                     });
                 }}
               />
@@ -249,6 +350,12 @@ export function DocumentReview({
                   "原文位置：第 4 节，段落 1–3",
                 )}
               </small>
+              <p className="tap-document-issue">
+                {t(
+                  "Review item: section 4, paragraph 2 · amount, scope and exception",
+                  "核对项：第 4 节第 2 段 · 金额、范围与例外",
+                )}
+              </p>
               <div className="tap-document-checks">
                 {[
                   [
@@ -257,12 +364,16 @@ export function DocumentReview({
                   ],
                   ["Source locations are correct", "原文位置准确"],
                   ["Version and scope are correct", "版本与适用范围正确"],
+                  [
+                    "Conditions and exceptions match the original",
+                    "条件与例外和原文一致",
+                  ],
                 ].map(([en, zh], i) => (
                   <label key={en}>
                     <input
                       type="checkbox"
                       checked={d.checks[i]}
-                      disabled={d.state === "published"}
+                      disabled={d.state !== "review"}
                       onChange={(event) =>
                         review.update({
                           checks: d.checks.map((checked, index) =>
@@ -277,6 +388,24 @@ export function DocumentReview({
               </div>
             </section>
           </div>
+          <section
+            className="tap-document-history"
+            aria-label={t("Review history", "审核记录")}
+          >
+            <h3>{t("Review history", "审核记录")}</h3>
+            {d.history.length === 0 ? (
+              <p>{t("No decisions yet", "暂无核对记录")}</p>
+            ) : (
+              <ol>
+                {d.history.map((event) => (
+                  <li key={event.revision}>
+                    {t("Revision", "修订")} {event.revision} · {event.action} ·{" "}
+                    {event.actorId}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
           <footer>
             {d.state === "published" ? (
               <>
@@ -292,21 +421,48 @@ export function DocumentReview({
                 >
                   {t("Ask Tapper", "向 Tapper 提问")}
                 </Button>
+                <Button
+                  danger
+                  onClick={() => review.update({ state: "withdrawn" })}
+                >
+                  {t("Withdraw", "撤回")}
+                </Button>
+              </>
+            ) : d.state === "withdrawn" ? (
+              <span role="status">
+                {t("Publication withdrawn", "发布已撤回")}
+              </span>
+            ) : d.state === "reviewing" ? (
+              <span role="status">
+                {t("Awaiting independent review", "待独立复核")} ·{" "}
+                {t("Handed off to reviewer", "已移交复核人")}
+              </span>
+            ) : d.state === "approved" ? (
+              <>
+                <span role="status">
+                  {t("Approved; ready to publish", "已批准，待发布")}
+                </span>
+                <Button
+                  type="primary"
+                  onClick={() => review.update({ state: "published" })}
+                >
+                  {t("Publish", "发布")}
+                </Button>
               </>
             ) : (
               <>
                 <span>
                   {t(
-                    `${d.checks.filter(Boolean).length} of 3 checks completed`,
-                    `已核对 ${d.checks.filter(Boolean).length} / 3 项`,
+                    `${d.checks.filter(Boolean).length} of 4 checks completed`,
+                    `已核对 ${d.checks.filter(Boolean).length} / 4 项`,
                   )}
                 </span>
                 <Button
                   type="primary"
                   disabled={!d.checks.every(Boolean)}
-                  onClick={() => review.update({ state: "published" })}
+                  onClick={() => review.update({ state: "reviewing" })}
                 >
-                  {t("Publish", "发布")}
+                  {t("Submit for review", "提交复核")}
                 </Button>
               </>
             )}

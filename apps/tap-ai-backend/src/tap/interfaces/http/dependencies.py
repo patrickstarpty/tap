@@ -18,6 +18,16 @@ from tap.contracts.http import (
     HealthComponentName,
     HealthComponentState,
     HealthRemediationCode,
+    KnowledgePublicationDetail,
+    KnowledgePublicationPage,
+    KnowledgeReviewDecisionPage,
+    KnowledgeReviewDetail,
+    KnowledgeReviewHistoryPage,
+    KnowledgeReviewInventory,
+    KnowledgeReviewItemComparison,
+    KnowledgeReviewPage,
+    KnowledgeReviewSummary,
+    PublishedKnowledgeSourcePage,
     ReadyHealth,
     RetrievalAnswerRequest,
     RetrievalAnswerResponse,
@@ -86,6 +96,67 @@ class ReadinessHttpService(Protocol):
     async def check(self) -> ReadyHealth: ...
 
 
+class KnowledgeReviewHttpService(Protocol):
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
+    async def resolve_open_review(self, document_id: str, source_revision_id: str) -> str: ...
+    async def list_reviews(
+        self,
+        source_revision_id: str | None,
+        limit: int = 50,
+        after_review_id: str | None = None,
+    ) -> KnowledgeReviewPage: ...
+    async def open_review(
+        self,
+        document_id: str,
+        source_revision_id: str,
+        authorized_review_id: str,
+        key: str,
+    ) -> KnowledgeReviewDetail: ...
+    async def get_review(self, review_id: str) -> KnowledgeReviewDetail: ...
+    async def get_review_inventory(
+        self, review_id: str, limit: int = 100, after_item_id: str | None = None
+    ) -> KnowledgeReviewInventory: ...
+    async def list_review_decision_history(
+        self, review_id: str, limit: int = 100, after_version: int | None = None
+    ) -> KnowledgeReviewDecisionPage: ...
+    async def list_review_history(
+        self, review_id: str, limit: int = 100, after_version: int | None = None
+    ) -> KnowledgeReviewHistoryPage: ...
+    async def list_review_publications(
+        self,
+        review_id: str,
+        limit: int = 100,
+        after_publication_id: str | None = None,
+    ) -> KnowledgePublicationPage: ...
+    async def get_publication(self, publication_id: str) -> KnowledgePublicationDetail: ...
+    async def get_current_publication(self) -> KnowledgePublicationDetail: ...
+    async def list_published_sources(self) -> PublishedKnowledgeSourcePage: ...
+    async def compare_review_item(
+        self, review_id: str, item_id: str
+    ) -> KnowledgeReviewItemComparison: ...
+    async def update_item_decision(
+        self, review_id: str, item_id: str, body: dict[str, object], expected_version: int
+    ) -> KnowledgeReviewDetail: ...
+    async def return_review(
+        self, review_id: str, expected_version: int
+    ) -> KnowledgeReviewDetail: ...
+    async def submit_review(
+        self, review_id: str, expected_version: int
+    ) -> KnowledgeReviewDetail: ...
+
+    async def approve_review(
+        self, review_id: str, expected_version: int
+    ) -> KnowledgeReviewSummary: ...
+    async def publish_review(
+        self, review_id: str, generation: str, expected_version: int, key: str
+    ) -> KnowledgePublicationDetail: ...
+    async def withdraw_publication(
+        self, publication_id: str, expected_version: int, key: str
+    ) -> KnowledgePublicationDetail: ...
+
+
 class ModelCatalogHttpService(Protocol):
     @property
     def default_alias(self) -> str: ...
@@ -140,6 +211,10 @@ class HttpServices:
     conversations: ConversationService | None = None
     graph: GraphStorePort | None = None
     test_plans: TestPlanApplication | None = None
+    knowledge_reviews: KnowledgeReviewHttpService | None = None
+    insights_explanation: object | None = None
+    insights_knowledge_search: object | None = None
+    insights_publication_authority: object | None = None
 
 
 class GraphUnavailable(Exception):
@@ -165,6 +240,14 @@ def test_plan_service(request: Request) -> TestPlanApplication:
 def knowledge_service(request: Request) -> KnowledgeHttpService:
     services = getattr(request.app.state, "http_services", None)
     service = services.knowledge if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def knowledge_review_service(request: Request) -> KnowledgeReviewHttpService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.knowledge_reviews if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service
@@ -215,3 +298,36 @@ def source_command_key(
             ]
         )
     return idempotency_key
+
+
+def review_expected_version(request: Request, if_match: str = Header()) -> int:
+    values = request.headers.getlist("if-match")
+    if (
+        len(values) != 1
+        or len(if_match) > 12
+        or not if_match.startswith('"')
+        or not if_match.endswith('"')
+    ):
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("header", "if-match"),
+                    "msg": "If-Match must contain one quoted positive review version",
+                    "input": if_match,
+                }
+            ]
+        )
+    raw = if_match[1:-1]
+    if not raw.isascii() or not raw.isdigit() or raw.startswith("0"):
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("header", "if-match"),
+                    "msg": "If-Match must contain one quoted positive review version",
+                    "input": if_match,
+                }
+            ]
+        )
+    return int(raw)

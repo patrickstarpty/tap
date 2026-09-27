@@ -15,7 +15,12 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from pymilvus.decorators import _log_rpc_error
+
+_environment_before_pymilvus_import = dict(os.environ)
+_log_rpc_error = importlib.import_module("pymilvus.decorators")._log_rpc_error
+os.environ.clear()
+os.environ.update(_environment_before_pymilvus_import)
+del _environment_before_pymilvus_import
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -732,7 +737,7 @@ case " $* " in
 import json, os
 names=['persistence.spec.ts']
 if os.environ['TAPPER_E2E_PHASE']=='journey':
-    names=['tapper.spec.ts','knowledge-upload-security.spec.ts','knowledge-conversation.spec.ts','knowledge-graph.spec.ts','tapper-test-plan.spec.ts']
+    names=['tapper.spec.ts','knowledge-upload-security.spec.ts','knowledge-conversation.spec.ts','knowledge-review.spec.ts','knowledge-graph.spec.ts','tapper-test-plan.spec.ts']
 print(json.dumps({
     'stats':{'expected':len(names),'unexpected':0,'flaky':0,'skipped':0},
     'suites':[{'specs':[{'file':name,'title':'fixed '+name,'tests':[{
@@ -811,6 +816,9 @@ case " $* " in
   *" context inspect "*)
     printf 'context|inspect\n' >> "$TAPPER_E2E_STUB_LOG"
     printf 'unix:///tmp/docker.sock\n'
+    ;;
+  *" ps --no-trunc --filter "*"com.docker.compose.service=mysql"*)
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
     ;;
   *" ps --filter "*) printf 'owned-object-container\n' ;;
   *" compose "*)
@@ -2362,6 +2370,8 @@ def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> N
         assert all(str(item).startswith("127.0.0.1:") for item in service.get("ports", []))
     assert set(config["volumes"]) == {
         "azurite-data",
+        "clickhouse-insights-backups",
+        "clickhouse-insights-data",
         "tapper-object-data",
         "milvus-data",
         "milvus-etcd-data",
@@ -3593,3 +3603,343 @@ def test_dev_launcher_keeps_stable_parser_state_after_child_exit(tmp_path):
     state = supervisor.parents[1] / ".tapper/parser-runtime/tap-tapper-demo"
     assert state.is_dir(), "deployment ownership state was discarded"
     assert (state / "cleanup.json").read_text() == "verified"
+
+
+def test_task14_acceptance_runner_lists_the_closed_joint_gate() -> None:
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh"), "--list"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        "tapper-fixture-journeys",
+        "insights-fixture-journey",
+        "tap-ai-fault-retention-matrix",
+        "tap-insights-fault-recovery-matrix",
+        "prototype-and-safe-handoff",
+    ]
+
+
+def test_task14_prototype_capture_waits_for_the_selected_module_and_disables_animations() -> None:
+    source = (ROOT / "apps/web/tests/e2e/insights-report.spec.ts").read_text()
+
+    assert 'name: "Test Analytics"' in source
+    assert "exact: true" in source
+    assert 'toHaveAttribute("aria-current", "page")' in source
+    assert 'animations: "disabled"' in source
+
+
+def test_demo_command_contract_import_restores_the_caller_environment() -> None:
+    program = """
+import json
+import os
+import runpy
+import sys
+
+before = dict(os.environ)
+runpy.run_path(sys.argv[1])
+after = dict(os.environ)
+print(json.dumps({
+    "added": sorted(set(after) - set(before)),
+    "changed": sorted(name for name in before if after.get(name) != before[name]),
+}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", program, str(Path(__file__).resolve())],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {"added": [], "changed": []}
+
+
+def test_task14_acceptance_runner_requires_explicit_opt_in_before_children(
+    tmp_path: Path,
+) -> None:
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    called = tmp_path / "called"
+    for command in ("make", "uv", "corepack", "docker"):
+        executable = stubs / command
+        executable.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "{command}" >> "{called}"\nexit 97\n',
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh")],
+        cwd=ROOT,
+        env=os.environ | {"PATH": f"{stubs}:{os.environ['PATH']}"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "TAP_RUN_TASK14_ACCEPTANCE=1" in completed.stderr
+    assert not called.exists()
+
+
+def _task14_acceptance_stub_environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    calls = tmp_path / "calls.log"
+    for command in ("make", "uv", "corepack"):
+        executable = stubs / command
+        executable.write_text(
+            f'#!/bin/sh\nprintf "%s %s\\n" "{command}" "$*" >> "{calls}"\n'
+            + (
+                "printf 'insights_project=%s preserve=%s token=%s screenshots=%s\\n' "
+                '"$TAP_INSIGHTS_E2E_PROJECT" "$TAP_INSIGHTS_E2E_PRESERVE_VOLUMES" '
+                '"$TAP_REPORT_ACCESS_TOKEN" "$TAP_INSIGHTS_E2E_SCREENSHOTS" '
+                f'>> "{calls}"\n'
+                "printf 'journey_mysql=%s journey_admin=%s\\n' "
+                '"$MYSQL_PASSWORD" "$CLICKHOUSE_ADMIN_PASSWORD" '
+                f'>> "{calls}"\n'
+                if command == "make"
+                else ""
+            )
+            + "exit 0\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+
+    docker = stubs / "docker"
+    active = tmp_path / "matrix-active"
+    docker.write_text(
+        "#!/bin/sh\n"
+        f'printf "docker %s project=%s\\n" "$*" "${{COMPOSE_PROJECT_NAME:-}}" >> "{calls}"\n'
+        'case "$*" in\n'
+        '  *"compose"*"up"*)\n'
+        f'    : > "{active}"\n'
+        "    printf 'mysql=%s admin=%s writer=%s reader=%s\\n' "
+        '"$MYSQL_PASSWORD" "$CLICKHOUSE_ADMIN_PASSWORD" '
+        '"$TAP_CLICKHOUSE_WRITER_PASSWORD" "$TAP_CLICKHOUSE_READER_PASSWORD"\n'
+        "    ;;\n"
+        '  *"volume ls"*)\n'
+        f'    if [ -f "{active}" ]; then\n'
+        "      printf '%s\\n' "
+        '"${COMPOSE_PROJECT_NAME:-unknown}_mysql-data" '
+        '"${COMPOSE_PROJECT_NAME:-unknown}_clickhouse-data" '
+        '"${COMPOSE_PROJECT_NAME:-unknown}_clickhouse-backup"\n'
+        "    fi\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    artifact_root = tmp_path / "tap-task14.fixture"
+    return (
+        os.environ
+        | {
+            "PATH": f"{stubs}:{os.environ['PATH']}",
+            "TMPDIR": str(tmp_path),
+            "TAP_RUN_TASK14_ACCEPTANCE": "1",
+            "TAP_TASK14_ARTIFACT_ROOT": str(artifact_root),
+        },
+        calls,
+    )
+
+
+def test_task14_acceptance_runner_uses_ephemeral_redacted_credentials_and_preserves_owned_volumes(
+    tmp_path: Path,
+) -> None:
+    environment, calls = _task14_acceptance_stub_environment(tmp_path)
+    artifact_root = Path(environment["TAP_TASK14_ARTIFACT_ROOT"])
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh")],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    receipt = (artifact_root / "acceptance-receipt.tsv").read_text()
+    phase_log = (artifact_root / "tap-insights-fault-recovery-matrix.log").read_text()
+    commands = calls.read_text()
+    assert "task14-matrix" not in receipt + phase_log + completed.stdout + completed.stderr
+    assert "mysql=[REDACTED]" in phase_log
+    assert "admin=[REDACTED]" in phase_log
+    assert "writer=[REDACTED]" in phase_log
+    assert "reader=[REDACTED]" in phase_log
+    assert commands.index("make --no-print-directory parser-build") < commands.index(
+        "make --no-print-directory demo-e2e"
+    )
+    project_lines = [line for line in commands.splitlines() if "compose" in line]
+    assert project_lines
+    projects = {line.rsplit("project=", 1)[1] for line in project_lines}
+    assert len(projects) == 1
+    project = projects.pop()
+    assert project.startswith("tap-insights-task14-")
+    assert project != "tap-insights-task14-matrix"
+    assert f"insights_project={project}-journey" in commands
+    assert "preserve=1" in commands
+    assert "token=task12-e2e-access-token" not in commands
+    assert "journey_mysql=task12-e2e" not in commands
+    assert "journey_admin=task12-e2e-admin" not in commands
+    assert f"screenshots={artifact_root}/screenshots" in commands
+    assert " down -v" not in commands
+    assert " down --remove-orphans" in commands
+    assert f"preserved_volume\t{project}\t{project}_clickhouse-backup" in receipt
+
+
+def test_task14_acceptance_runner_rejects_artifacts_outside_owned_roots(
+    tmp_path: Path,
+) -> None:
+    environment, calls = _task14_acceptance_stub_environment(tmp_path)
+    environment["TAP_TASK14_ARTIFACT_ROOT"] = str(tmp_path / "unowned")
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh")],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "refusing unsafe Task 14 artifact path" in completed.stderr
+    assert not calls.exists()
+
+
+def test_task14_acceptance_runner_never_cleans_preexisting_matrix_resources(
+    tmp_path: Path,
+) -> None:
+    environment, calls = _task14_acceptance_stub_environment(tmp_path)
+    (tmp_path / "matrix-active").touch()
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh")],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "refusing to reuse existing Task 14 Insights resources" in completed.stdout
+    assert " down " not in calls.read_text()
+
+
+def test_task14_acceptance_runner_stops_when_parser_rebuild_fails(
+    tmp_path: Path,
+) -> None:
+    environment, calls = _task14_acceptance_stub_environment(tmp_path)
+    make = Path(environment["PATH"].split(":", 1)[0]) / "make"
+    make.write_text(
+        "#!/bin/sh\n"
+        f'printf "make %s\\n" "$*" >> "{calls}"\n'
+        'case "$*" in\n'
+        '  *"parser-build"*) exit 71 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    make.chmod(0o755)
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh")],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    commands = calls.read_text()
+    assert "parser-build" in commands
+    assert "demo-e2e" not in commands
+
+
+def test_task14_acceptance_runner_stops_when_matrix_ownership_preflight_fails(
+    tmp_path: Path,
+) -> None:
+    environment, calls = _task14_acceptance_stub_environment(tmp_path)
+    docker = Path(environment["PATH"].split(":", 1)[0]) / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        f'printf "docker %s\\n" "$*" >> "{calls}"\n'
+        'case "$*" in\n'
+        '  *"ps -aq"*) exit 75 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-task14-acceptance.sh")],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    commands = calls.read_text()
+    assert "ps -aq" in commands
+    assert " compose " not in f" {commands}"
+
+
+def test_insights_e2e_cleans_owned_resources_after_partial_compose_up_failure(
+    tmp_path: Path,
+) -> None:
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    calls = tmp_path / "calls.log"
+    docker = stubs / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        f'printf "docker %s\\n" "$*" >> "{calls}"\n'
+        'case "$*" in\n'
+        '  *"compose"*"up"*) exit 73 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    artifact_root = tmp_path / "tap-task14.insights"
+    project = f"tap-insights-task14-{os.urandom(6).hex()}-journey"
+    lsof = stubs / "lsof"
+    lsof.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    lsof.chmod(0o755)
+
+    completed = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts/run-tap-insights-e2e.sh")],
+        cwd=ROOT,
+        env=os.environ
+        | {
+            "PATH": f"{stubs}:{os.environ['PATH']}",
+            "TMPDIR": str(tmp_path),
+            "TAP_INSIGHTS_E2E_PROJECT": project,
+            "TAP_INSIGHTS_E2E_PRESERVE_VOLUMES": "1",
+            "TAP_INSIGHTS_E2E_ARTIFACTS": str(artifact_root),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 73
+    commands = calls.read_text()
+    assert f"-p {project}" in commands
+    assert " compose " in f" {commands}"
+    assert " up -d --wait --wait-timeout 180 mysql clickhouse" in commands
+    assert " down --remove-orphans" in commands
+    assert " down -v" not in commands

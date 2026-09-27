@@ -1,9 +1,12 @@
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.graph.adapters.mysql import MysqlGraphStore
 from tap.modules.graph.application.extraction import GraphExtractionService
 from tap.modules.graph.application.queries import InMemoryGraphStore
 from tap.modules.graph.domain.extraction import GraphExtractionRequest
+from tap.modules.graph.domain.jobs import GraphJobRequest
 from tap.modules.graph.domain.models import (
     Evidence,
     GraphEdge,
@@ -81,3 +84,118 @@ async def test_duplicate_worker_delivery_reuses_the_same_published_snapshot():
     replay = await service.execute(request)
     assert first == replay
     assert extractor.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_active_snapshot_binds_the_complete_revision_selection_digest():
+    store = InMemoryGraphStore()
+    snapshot = GraphSnapshot.create(
+        snapshot_id="snapshot-selection",
+        project_id=VALIDATION_SCOPE.project_id,
+        source_revision_ids=("source-revision-2", "source-revision-1"),
+        document_revision_ids=("document-revision-2", "document-revision-1"),
+    )
+    await store.publish(
+        VALIDATION_SCOPE,
+        GraphSnapshotDraft(
+            snapshot,
+            (
+                GraphNode(
+                    "node-selection", "snapshot-selection", "Selection", "ENTITY", "selection"
+                ),
+            ),
+            (),
+            (),
+            (),
+        ),
+    )
+
+    active = await store.active_snapshot(
+        VALIDATION_SCOPE,
+        ("source-revision-1", "source-revision-2"),
+    )
+
+    assert active is not None
+    assert active.source_revision_ids == ("source-revision-1", "source-revision-2")
+    assert active.document_revision_ids == ("document-revision-1", "document-revision-2")
+    assert await store.active_snapshot(VALIDATION_SCOPE, ("source-revision-1",)) is None
+
+
+def test_graph_job_snapshot_is_created_for_the_complete_normalized_selection():
+    request = GraphJobRequest.create(
+        scope=VALIDATION_SCOPE,
+        revision_id="source-revision-2",
+        source_revision_ids=("source-revision-2", "source-revision-1"),
+        document_revision_ids=("document-revision-2", "document-revision-1"),
+        chunks_locator="blob://chunks/revision-2.json",
+        extraction_profile_digest="sha256:" + "b" * 64,
+        model_alias="tapper-graph",
+    )
+
+    assert request.snapshot.source_revision_ids == (
+        "source-revision-1",
+        "source-revision-2",
+    )
+    assert request.snapshot.document_revision_ids == (
+        "document-revision-1",
+        "document-revision-2",
+    )
+
+
+@pytest.mark.asyncio
+async def test_mysql_restart_reads_only_the_exact_multi_revision_snapshot(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    snapshot = GraphSnapshot.create(
+        snapshot_id="snapshot-multi-revision",
+        project_id=VALIDATION_SCOPE.project_id,
+        source_revision_ids=("source-revision-2", "source-revision-1"),
+        document_revision_ids=("document-revision-2", "document-revision-1"),
+    )
+    try:
+        await MysqlGraphStore(sessions).publish(
+            VALIDATION_SCOPE,
+            GraphSnapshotDraft(
+                snapshot,
+                (
+                    GraphNode(
+                        "node-multi-revision",
+                        snapshot.snapshot_id,
+                        "Selection",
+                        "ENTITY",
+                        "selection",
+                    ),
+                ),
+                (),
+                (),
+                (),
+            ),
+        )
+
+        restarted = MysqlGraphStore(sessions)
+
+        active = await restarted.active_snapshot(
+            VALIDATION_SCOPE,
+            ("source-revision-1", "source-revision-2"),
+        )
+        assert active is not None
+        assert active.snapshot_id == snapshot.snapshot_id
+        assert active.source_revision_ids == (
+            "source-revision-1",
+            "source-revision-2",
+        )
+        assert active.document_revision_ids == (
+            "document-revision-1",
+            "document-revision-2",
+        )
+        assert (
+            await restarted.active_snapshot(
+                VALIDATION_SCOPE,
+                ("source-revision-1",),
+            )
+            is None
+        )
+    finally:
+        await engine.dispose()

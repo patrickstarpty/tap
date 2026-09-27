@@ -1,10 +1,12 @@
 # RFC-011 开发参考：测试管理与执行设计
 
-本文形成于 2026-09-22，是 [RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 的 `draft` 配套技术说明；不是新 RFC、已接受架构或实施完成声明。以下为目标约束，当前状态仍以 [V2/V3 更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md) 和代码为准。
+本文形成于 2026-09-22，是 [RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 的配套技术说明；RFC 于 2026-09-23 确认审批通过，状态为 `accepted`。以下为已接受方案的目标约束，不是实施完成声明；当前状态仍以 [V2/V3 更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md) 和代码为准。
 
 相关专题：[AI、主动 Agent 与知识](2026-09-22-rfc-011-ai-knowledge-design.md)、[Insights、契约与恢复](2026-09-22-rfc-011-insights-contracts-design.md)。TAP AI 管知识、测试设计与手工执行；TAP 管自动化/负载执行及 Test Insights，两者不互写业务表。
 
-> **范围标注（2026-09-22）：本专题为后续目标设计，详细设计待补，不在近期知识问答与基础 Test Insights 的交付范围内。** 当前内容定义资产、流程、选型与验收约束，尚未形成各阶段可直接执行的完整接口、数据迁移、设备/执行池调度和实施任务。测试管理、Web、Android/iOS、负载测试启动前须分别补齐；基础 Insights 先接已有 CI 或外部真实报告，不等待自建执行能力。
+> **范围更新（2026-09-23）：近期增加既有测试设计闭环的收口，但不扩成完整测试管理或自动化。** 本轮包含需求范围确认、已有 Test Plan/BDD 草稿生成、编辑/冲突恢复、业务评审、人工发布和 V2/V3 门禁复验；独立用例库、三模板迁移、手工执行周期、Jira 写入及 Web/App/负载执行继续后置。基础 Insights 先接外部报告，不等待自建执行能力。
+
+2026-09-26 的 [Task 14 联合交付门禁](../reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md) 已在隔离 fixture 中复验需求冻结、草稿生成、编辑/冲突恢复、独立评审、发布、重启与旧数据升级。真实模型质量、具名业务 reviewer、独立用例库、手工执行和 Web/App/负载执行仍未由该门禁放行。
 
 ## 测试管理
 
@@ -29,6 +31,8 @@
 | 覆盖 | 需求→用例→本次执行→缺陷可追溯，分别显示需求覆盖、自动化比例、验证结果；仅有脚本不代表验证，来源变化标待复核 |
 
 生成前必须确认完整需求清单、范围及版本；覆盖分母用该清单，不能用检索命中的条款替代全部需求。未覆盖和待澄清项保留。新建页同时提供手工/导入/AI，不强迫先聊天；左侧目录/筛选、中间列表/步骤、右侧详情/来源/缺陷。长任务可恢复、部分导入逐行报错，权限不足与无数据分开，保留键盘路径和文字状态。
+
+本轮开发输入复用 [`trusted-checkout-v1.json`](../../apps/tap-ai-backend/tests/fixtures/quality/requirements/trusted-checkout-v1.json) 的 `scopeId`、稳定 `requirementId`、来源修订和定位。生成输入必须冻结该快照和已批准知识版本，输出仍落现有 Plan/Revision 与内嵌 BDD 用例；合成快照只用于契约和故障测试，真实业务覆盖、人审质量及发布结论继续待验证。
 
 ### 评审、导入与 Jira
 

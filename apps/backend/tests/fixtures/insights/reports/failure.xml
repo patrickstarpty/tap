@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="synthetic-checkout-failure" tests="1" failures="1" errors="0" skipped="0" time="0.9">
+  <testcase classname="checkout.Authorization" name="declined_card[expired-us]" time="0.9">
+    <properties><property name="tap.test_id" value="checkout-declined-card"/><property name="tap.data_row" value="expired-us"/><property name="tap.attempt" value="1"/></properties>
+    <failure type="AssertionError" message="synthetic expected decline reason">synthetic redacted stack</failure>
+  </testcase>
+</testsuite>

@@ -41,7 +41,10 @@ export function App() {
 
 function TapApplication() {
   const [section, setSection] = useState<"automation" | "analytics">(
-    "automation",
+    new URLSearchParams(window.location.search).get("module") ===
+      "test-analytics"
+      ? "analytics"
+      : "automation",
   );
   const [state, dispatch] = useReducer(
     artifactReducer,
@@ -85,7 +88,13 @@ function TapApplication() {
           }}
         />
         {section === "analytics" ? (
-          <TestAnalyticsWorkspace locale="en" />
+          <TestAnalyticsWorkspace
+            locale="en"
+            initialQueryId={
+              new URLSearchParams(window.location.search).get("queryId") ??
+              undefined
+            }
+          />
         ) : (
           <AutomationWorkspace
             state={state}

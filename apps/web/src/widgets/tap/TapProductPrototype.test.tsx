@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { TapProductPrototype } from "./TapProductPrototype";
 beforeEach(() => {
@@ -46,7 +46,7 @@ it("places document review inside the existing Library", () => {
   ).toBeVisible();
 });
 
-it("requires review before publishing and preserves the published source after reload", () => {
+it("hands submitted work to an independent reviewer and only publishes an approved fixture", () => {
   const view = render(<TapProductPrototype />);
   fireEvent.click(screen.getByRole("button", { name: "Library" }));
   fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
@@ -55,24 +55,91 @@ it("requires review before publishing and preserves the published source after r
       name: "Review Life underwriting guide · v1.2.md",
     }),
   );
-  expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Submit for review" }),
+  ).toBeDisabled();
   for (const label of [
     "Text and key values match the original",
     "Source locations are correct",
     "Version and scope are correct",
+    "Conditions and exceptions match the original",
   ])
     fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button", { name: "Submit for review" }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Awaiting independent review",
+  );
+  expect(screen.queryByRole("button", { name: "Approve review" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "View Health disclosure policy · approved.md",
+    }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Publish" }));
   expect(screen.getByRole("status")).toHaveTextContent(
     "Published to knowledge library",
   );
   fireEvent.click(screen.getByRole("button", { name: "Ask Tapper" }));
   expect(
-    screen.getByRole("checkbox", { name: /Life underwriting guide · v1.2.md/ }),
+    screen.getByRole("checkbox", {
+      name: /Health disclosure policy · approved.md/,
+    }),
   ).toBeChecked();
   view.unmount();
   render(<TapProductPrototype />);
   expect(
-    screen.getByRole("checkbox", { name: /Life underwriting guide · v1.2.md/ }),
+    screen.getByRole("checkbox", {
+      name: /Health disclosure policy · approved.md/,
+    }),
   ).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "View Health disclosure policy · approved.md",
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+  expect(
+    screen.queryByRole("checkbox", {
+      name: /Health disclosure policy · approved.md/,
+    }),
+  ).toBeNull();
+});
+
+it("keeps the full checklist when replacing a failed document", async () => {
+  const view = render(<TapProductPrototype />);
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "View Underwriting rules — scanned.pdf",
+    }),
+  );
+  const replacement = new File(["# text"], "replacement.md", {
+    type: "text/markdown",
+  });
+  fireEvent.change(screen.getByLabelText("Replace file"), {
+    target: { files: [replacement] },
+  });
+  expect(
+    screen.getByRole("heading", { name: "Processing document…" }),
+  ).toBeVisible();
+  await waitFor(
+    () =>
+      expect(
+        screen.getByLabelText("Conditions and exceptions match the original"),
+      ).toBeVisible(),
+    { timeout: 2_000 },
+  );
+  view.unmount();
+  render(<TapProductPrototype />);
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  expect(
+    screen.getByRole("button", { name: "Review replacement.md" }),
+  ).toBeVisible();
 });

@@ -12,7 +12,8 @@ import platform
 import re
 import shutil
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 from urllib.parse import urlsplit
@@ -165,11 +166,59 @@ class TapperSettings:
     project_id: str = _FIXED_PROJECT
     group_id: str = _FIXED_GROUP
     environment: str = _FIXED_ENVIRONMENT
+    insights_base_url: str = ""
+    insights_delegated_user_token: str = field(default="", repr=False)
+    insights_service_token: str = field(default="", repr=False)
+    insights_authorization_version: str = ""
+    insights_expires_at: str = ""
+    insights_max_micros_per_token: int = 0
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, str]) -> TapperSettings:
         if not isinstance(values, Mapping):
             raise TypeError("Tapper settings require a string mapping")
+        insight_names = (
+            "TAP_INSIGHTS_BASE_URL",
+            "TAP_INSIGHTS_DELEGATED_USER_TOKEN",
+            "TAP_INSIGHTS_SERVICE_TOKEN",
+            "TAP_INSIGHTS_DELEGATED_PROJECT_ID",
+            "TAP_INSIGHTS_DELEGATED_EXPIRES_AT",
+            "TAP_INSIGHTS_AUTHORIZATION_VERSION",
+            "TAP_INSIGHTS_MAX_MICROS_PER_TOKEN",
+        )
+        configured_insights = any(values.get(name) for name in insight_names)
+        if configured_insights:
+            if not all(values.get(name) for name in insight_names):
+                raise ValueError(
+                    "Insights explanation requires all server-side delegation settings"
+                )
+            if values["TAP_INSIGHTS_DELEGATED_PROJECT_ID"] != _FIXED_PROJECT:
+                raise ValueError("Insights delegation must match the fixed Tapper project")
+            if (
+                len(values["TAP_INSIGHTS_DELEGATED_USER_TOKEN"]) < 16
+                or len(values["TAP_INSIGHTS_SERVICE_TOKEN"]) < 16
+            ):
+                raise ValueError("Insights delegation credentials must be bounded")
+            expires = datetime.fromisoformat(values["TAP_INSIGHTS_DELEGATED_EXPIRES_AT"])
+            if expires.utcoffset() is None or expires <= datetime.now(UTC):
+                raise ValueError("Insights delegation must have a future expiry")
+            price = int(values["TAP_INSIGHTS_MAX_MICROS_PER_TOKEN"])
+            if not 1 <= price <= 1000:
+                raise ValueError("Insights token price ceiling is outside the bound")
+            url = urlsplit(values["TAP_INSIGHTS_BASE_URL"])
+            if (
+                url.scheme != "http"
+                or url.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or url.username
+                or url.password
+                or url.query
+                or url.fragment
+            ):
+                raise ValueError("Insights runtime must target loopback HTTP")
+            if _IDENTITY.fullmatch(values["TAP_INSIGHTS_AUTHORIZATION_VERSION"]) is None:
+                raise ValueError("Insights authorization version must be bounded")
+        else:
+            price = 0
         backend = _fixed_choice(
             values,
             "TAPPER_MODEL_BACKEND",
@@ -443,6 +492,12 @@ class TapperSettings:
                 "tap-local-Provisioner1!",
             ),
             e2e_mode=demo_mode == "e2e",
+            insights_base_url=values.get("TAP_INSIGHTS_BASE_URL", ""),
+            insights_delegated_user_token=values.get("TAP_INSIGHTS_DELEGATED_USER_TOKEN", ""),
+            insights_service_token=values.get("TAP_INSIGHTS_SERVICE_TOKEN", ""),
+            insights_authorization_version=values.get("TAP_INSIGHTS_AUTHORIZATION_VERSION", ""),
+            insights_expires_at=values.get("TAP_INSIGHTS_DELEGATED_EXPIRES_AT", ""),
+            insights_max_micros_per_token=price,
         )
 
 
@@ -714,8 +769,58 @@ async def create_api_runtime(
             conversation_sessions=async_sessionmaker(engine, expire_on_commit=False),
             graph_sessions=async_sessionmaker(engine, expire_on_commit=False),
             test_plan_sessions=async_sessionmaker(engine, expire_on_commit=False),
+            test_design_model_mapping=_test_design_model_mapping(settings),
+            review_sessions=async_sessionmaker(engine, expire_on_commit=False),
             corpus_version=settings.corpus_version,
         )
+        if settings.insights_base_url:
+            if (
+                services.insights_knowledge_search is None
+                or services.insights_publication_authority is None
+            ):
+                raise ValueError("Insights knowledge evidence authority is unavailable")
+            from tap.interfaces.http.insights_explanation_runtime import (
+                ConfiguredInsightsExplanation,
+            )
+            from tap.modules.ai.adapters.published_knowledge import PublishedKnowledgeEvidence
+            from tap.modules.ai.adapters.tap_insights import (
+                ServiceIdentity,
+                TapInsightsAdapter,
+                TapInsightsConfig,
+            )
+            from tap.modules.knowledge.application.answers import AnswerService
+            from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+
+            expiry = datetime.fromisoformat(settings.insights_expires_at)
+            insights_adapter = TapInsightsAdapter(
+                TapInsightsConfig(base_url=settings.insights_base_url),
+                service_identity=lambda: ServiceIdentity(
+                    authorization=settings.insights_service_token,
+                    audience="tap-insights",
+                    expires_at=expiry,
+                ),
+                clock=lambda: datetime.now(UTC),
+            )
+            resources.push(insights_adapter)
+            services = replace(
+                services,
+                insights_explanation=ConfiguredInsightsExplanation(
+                    insights=insights_adapter,
+                    gateway=embeddings.gateway,
+                    model_alias=embeddings.chat_alias,
+                    project_id=settings.project_id,
+                    delegated_user_token=settings.insights_delegated_user_token,
+                    authorization_version=settings.insights_authorization_version,
+                    max_micros_per_token=settings.insights_max_micros_per_token,
+                    knowledge_evidence_factory=lambda selection: PublishedKnowledgeEvidence(
+                        searches=cast(AnswerService, services.insights_knowledge_search),
+                        publication_authority=cast(
+                            PublishedKnowledgeAuthority, services.insights_publication_authority
+                        ),
+                        selection=selection,
+                    ),
+                ),
+            )
         return TapperApiRuntime(
             http_services=services,
             quality_models=embeddings,
@@ -901,7 +1006,10 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
         from tap.modules.test_management.adapters.model_gateway_generation import (
             ModelGatewayTestDesign,
         )
-        from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
+        from tap.modules.test_management.adapters.mysql import (
+            MysqlReconciledTestDesign,
+            MysqlTestPlanRepository,
+        )
         from tap.modules.test_management.application.generation import TestDesignWorker
         from tap.platform.messaging.redis_dispatch import AsyncRedisStream
         from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
@@ -909,13 +1017,22 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
         generator = (
             DeterministicTestDesign()
             if settings.e2e_mode
-            else ModelGatewayTestDesign(
-                models.gateway, timeout_seconds=settings.model_timeout_seconds
+            else MysqlReconciledTestDesign(
+                sessions,
+                scope=scope,
+                delegate=ModelGatewayTestDesign(
+                    models.gateway, timeout_seconds=settings.model_timeout_seconds
+                ),
             )
         )
         worker_id = settings.worker_id + "-test-design"
         worker = TestDesignWorker(
-            jobs=MysqlTestPlanRepository(sessions, scope=scope),
+            jobs=MysqlTestPlanRepository(
+                sessions,
+                scope=scope,
+                model_alias=settings.chat_alias,
+                model_mapping=_test_design_model_mapping(settings),
+            ),
             generator=generator,
             scope=scope,
             worker_id=worker_id,
@@ -999,6 +1116,15 @@ async def _redact_model_context(text: str) -> str:
     return await PatternEgressRedactor(max_chars=262144).redact_text(text)
 
 
+def _answer_planner(models: KnowledgeModelGateway):
+    from tap.modules.chat.adapters.model_gateway_planner import ModelGatewayPlanner
+    from tap.modules.chat.application.plan_answer import AnswerPlanner
+
+    return AnswerPlanner(
+        ModelGatewayPlanner(models.gateway, scope=models.scope, redact=_redact_model_context)
+    )
+
+
 def _create_embeddings(
     settings: TapperSettings,
     *,
@@ -1010,11 +1136,7 @@ def _create_embeddings(
         api_key=settings.litellm_api_key,
         chat_alias=settings.chat_alias,
         embedding_alias=settings.embedding_alias,
-        chat_model=(
-            ProviderModelMapping("fake", "deterministic-chat-v1")
-            if settings.e2e_mode
-            else ProviderModelMapping.from_route(settings.litellm_model)
-        ),
+        chat_model=_test_design_model_mapping(settings),
         embedding_model=(
             ProviderModelMapping("fake", "deterministic-embedding-v1")
             if settings.e2e_mode
@@ -1047,6 +1169,14 @@ def _create_embeddings(
         alternate_answers=(
             {} if codex_answers is None else {_FIXED_CODEX_CHAT_ALIAS: codex_answers}
         ),
+    )
+
+
+def _test_design_model_mapping(settings: TapperSettings) -> ProviderModelMapping:
+    return (
+        ProviderModelMapping("fake", "deterministic-chat-v1")
+        if settings.e2e_mode
+        else ProviderModelMapping.from_route(settings.litellm_model)
     )
 
 
@@ -1472,6 +1602,8 @@ def _assemble_http_services(
     conversation_sessions: object | None = None,
     graph_sessions: object | None = None,
     test_plan_sessions: object | None = None,
+    test_design_model_mapping: ProviderModelMapping | None = None,
+    review_sessions: async_sessionmaker[AsyncSession] | None = None,
     corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
@@ -1495,6 +1627,18 @@ def _assemble_http_services(
     document_repository = cast(DocumentRepository, repository)
     artifact_store = cast(ArtifactStore, artifacts)
 
+    review_repository = None
+    publication_authority = None
+    if review_sessions is not None:
+        from tap.modules.knowledge.adapters.mysql_review import MysqlKnowledgeReviewRepository
+        from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+
+        review_repository = MysqlKnowledgeReviewRepository(
+            review_sessions,
+            scope=repository.scope,  # type: ignore[arg-type]
+        )
+        publication_authority = PublishedKnowledgeAuthority(review_repository)
+
     documents = DocumentService(repository=document_repository, artifacts=artifact_store)
     knowledge = KnowledgeAPI(
         search=search,
@@ -1506,16 +1650,19 @@ def _assemble_http_services(
             corpus_version=corpus_version,
         ),
         redactor=redactor,
+        publication_authority=publication_authority,
     )
     answer_service = AnswerService(
         repository=cast(AnswerSnapshotRepository, repository),
         knowledge=knowledge,
         corpus_version=corpus_version,
+        publication_authority=publication_authority,
     )
     search_service = answer_service
     citations = CitationResolver(
         repository=cast(CitationRepository, repository),
         artifacts=cast(CitationArtifactStore, artifacts),
+        publication_authority=publication_authority,
     )
     conversations = None
     if conversation_sessions is not None:
@@ -1533,14 +1680,45 @@ def _assemble_http_services(
         from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 
         graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
-        graph_enricher = GraphAnswerEnricher(graph)
+        graph_enricher = GraphAnswerEnricher(graph, publication_authority=publication_authority)
     test_plans = None
     if test_plan_sessions is not None:
         from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
         from tap.modules.test_management.application.plans import TestPlanApplication
 
+        if test_design_model_mapping is None:
+            raise ValueError("Test Plan service requires the actual model mapping")
         test_plans = TestPlanApplication(
-            MysqlTestPlanRepository(test_plan_sessions, scope=repository.scope)  # type: ignore[arg-type]
+            MysqlTestPlanRepository(
+                test_plan_sessions,  # type: ignore[arg-type]
+                scope=repository.scope,  # type: ignore[arg-type]
+                model_alias=embeddings.chat_alias,
+                model_mapping=test_design_model_mapping,
+            )
+        )
+    knowledge_reviews = None
+    if review_sessions is not None:
+        from tap.interfaces.http.knowledge_review_service import KnowledgeReviewHttpService
+        from tap.modules.knowledge.adapters.mysql_review import (
+            MysqlApprovedProjectionVerifier,
+        )
+        from tap.modules.knowledge.application.review import KnowledgeReviewApplication
+
+        assert review_repository is not None
+        knowledge_reviews = KnowledgeReviewHttpService(
+            KnowledgeReviewApplication(
+                review_repository,
+                MysqlApprovedProjectionVerifier(
+                    review_sessions,
+                    scope=repository.scope,  # type: ignore[arg-type]
+                ),
+                artifact_store,
+            ),
+            scope=repository.scope,
+            authorization_policy=authorization_policy,
+            source_impact_notifier=(
+                None if test_plans is None else test_plans.mark_knowledge_sources_changed
+            ),
         )
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]
@@ -1553,7 +1731,7 @@ def _assemble_http_services(
                     ModelDescriptor(
                         _FIXED_CODEX_CHAT_ALIAS,
                         "GPT-5.6 Sol · Codex",
-                        frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
+                        frozenset({ModelCapability.CHAT}),
                     ),
                 )
                 if _FIXED_CODEX_CHAT_ALIAS in embeddings.chat_aliases
@@ -1569,6 +1747,7 @@ def _assemble_http_services(
             corpus_version=corpus_version,
             graph_enricher=graph_enricher,
             models=embeddings,
+            answer_planner=_answer_planner(embeddings),
         ),
         readiness=readiness,
         scope_provider=scope_provider,
@@ -1577,6 +1756,9 @@ def _assemble_http_services(
         conversations=conversations,
         graph=graph,
         test_plans=test_plans,
+        knowledge_reviews=knowledge_reviews,
+        insights_knowledge_search=answer_service,
+        insights_publication_authority=publication_authority,
     )
 
 

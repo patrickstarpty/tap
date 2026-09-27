@@ -139,6 +139,33 @@
     "Citation": {
       "additionalProperties": false,
       "properties": {
+        "approvalDigest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approvaldigest"
+        },
+        "approvedItemId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approveditemid"
+        },
         "chunkContentHash": {
           "minLength": 1,
           "title": "Chunkcontenthash",
@@ -181,6 +208,20 @@
           "minLength": 1,
           "title": "Logicalchunkid",
           "type": "string"
+        },
+        "publicationId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Publicationid"
         },
         "source": {
           "$ref": "#/$defs/SourceRevisionRef"
@@ -476,6 +517,20 @@
           ],
           "default": null,
           "title": "Headingpath"
+        },
+        "inventoryItemId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inventoryitemid"
         },
         "page": {
           "anyOf": [
@@ -1065,6 +1120,72 @@
         {
           "properties": {
             "detail": {
+              "const": "The approved knowledge projection did not validate for publication."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Knowledge projection not ready"
+            },
+            "type": {
+              "const": "https://tap.example/problems/knowledge-projection-not-ready"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The knowledge review is unavailable in this Project."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 404
+            },
+            "title": {
+              "const": "Knowledge review not found"
+            },
+            "type": {
+              "const": "https://tap.example/problems/knowledge-review-not-found"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The requested knowledge review transition is not allowed."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Knowledge review state conflict"
+            },
+            "type": {
+              "const": "https://tap.example/problems/knowledge-review-state-conflict"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The knowledge runtime is not configured."
             },
             "failureStage": {
@@ -1490,6 +1611,9 @@
             "https://tap.example/problems/graph-fact-not-found",
             "https://tap.example/problems/graph-unavailable",
             "https://tap.example/problems/idempotency-conflict",
+            "https://tap.example/problems/knowledge-projection-not-ready",
+            "https://tap.example/problems/knowledge-review-not-found",
+            "https://tap.example/problems/knowledge-review-state-conflict",
             "https://tap.example/problems/knowledge-runtime-unavailable",
             "https://tap.example/problems/model-unavailable",
             "https://tap.example/problems/recorder-unavailable",
@@ -1933,6 +2057,178 @@
       ],
       "title": "StructuralAnchor"
     },
+    "TestPlanGenerationCanceledEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TestPlanGenerationCanceledPayload"
+        },
+        "type": {
+          "const": "test-plan.generation.canceled",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TestPlanGenerationCanceledEvent",
+      "type": "object"
+    },
+    "TestPlanGenerationCanceledPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "jobId": {
+          "minLength": 1,
+          "title": "Jobid",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId",
+        "reason"
+      ],
+      "title": "TestPlanGenerationCanceledPayload",
+      "type": "object"
+    },
+    "TestPlanGenerationFailedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TestPlanGenerationFailedPayload"
+        },
+        "type": {
+          "const": "test-plan.generation.failed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TestPlanGenerationFailedEvent",
+      "type": "object"
+    },
+    "TestPlanGenerationFailedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "failureCode": {
+          "minLength": 1,
+          "title": "Failurecode",
+          "type": "string"
+        },
+        "jobId": {
+          "minLength": 1,
+          "title": "Jobid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId",
+        "failureCode"
+      ],
+      "title": "TestPlanGenerationFailedPayload",
+      "type": "object"
+    },
+    "TestPlanGenerationResultEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TestPlanGenerationResultPayload"
+        },
+        "type": {
+          "const": "test-plan.generation.result_ready",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TestPlanGenerationResultEvent",
+      "type": "object"
+    },
+    "TestPlanGenerationResultPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "deepLink": {
+          "minLength": 1,
+          "title": "Deeplink",
+          "type": "string"
+        },
+        "jobId": {
+          "minLength": 1,
+          "title": "Jobid",
+          "type": "string"
+        },
+        "revisionId": {
+          "minLength": 1,
+          "title": "Revisionid",
+          "type": "string"
+        },
+        "testPlanId": {
+          "minLength": 1,
+          "title": "Testplanid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId",
+        "testPlanId",
+        "revisionId",
+        "deepLink"
+      ],
+      "title": "TestPlanGenerationResultPayload",
+      "type": "object"
+    },
+    "TestPlanGenerationWaitingEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TestPlanGenerationWaitingPayload"
+        },
+        "type": {
+          "const": "test-plan.generation.waiting",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TestPlanGenerationWaitingEvent",
+      "type": "object"
+    },
+    "TestPlanGenerationWaitingPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "jobId": {
+          "minLength": 1,
+          "title": "Jobid",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId",
+        "reason"
+      ],
+      "title": "TestPlanGenerationWaitingPayload",
+      "type": "object"
+    },
     "TurnAbstainedEvent": {
       "additionalProperties": false,
       "properties": {
@@ -2179,6 +2475,10 @@
           "retrieval.hits_ready": "#/$defs/RetrievalHitsReadyEvent",
           "stage.completed": "#/$defs/StageCompletedEvent",
           "stage.started": "#/$defs/StageStartedEvent",
+          "test-plan.generation.canceled": "#/$defs/TestPlanGenerationCanceledEvent",
+          "test-plan.generation.failed": "#/$defs/TestPlanGenerationFailedEvent",
+          "test-plan.generation.result_ready": "#/$defs/TestPlanGenerationResultEvent",
+          "test-plan.generation.waiting": "#/$defs/TestPlanGenerationWaitingEvent",
           "turn.abstained": "#/$defs/TurnAbstainedEvent",
           "turn.canceled": "#/$defs/TurnCanceledEvent",
           "turn.completed": "#/$defs/TurnCompletedEvent",
@@ -2236,6 +2536,18 @@
         },
         {
           "$ref": "#/$defs/ConversationTurnCompletedEvent"
+        },
+        {
+          "$ref": "#/$defs/TestPlanGenerationWaitingEvent"
+        },
+        {
+          "$ref": "#/$defs/TestPlanGenerationResultEvent"
+        },
+        {
+          "$ref": "#/$defs/TestPlanGenerationFailedEvent"
+        },
+        {
+          "$ref": "#/$defs/TestPlanGenerationCanceledEvent"
         }
       ],
       "title": "Event"

@@ -4,7 +4,7 @@
 >
 > **2026-09-18 AI 编排更新**：[ADR-029](../decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 已接受 TAP AI 的 Chat 与 AI Task 进入同一版本化 LangGraph 的目标架构：Fast Chat 走低延迟路径，Durable Workflow 承载可恢复长任务，Bounded Agentic Task 承载受预算限制的复杂工具循环。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不在该 Project API 作用域内。这不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
 
-> **2026-09-22 主动 Agent 功能设计**：[RFC-011 主动 Agent](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#2-主动-agent) 将可信事件、项目工作记忆、行动提案、授权执行与反馈接入同一 LangGraph。该增量仍为 draft 目标，未改变本页已接受基线、当前实现状态或 TAP/TAP AI 产品归属；总览与专题图明确区分目标设计和历史架构。
+> **2026-09-22 主动 Agent 功能设计**：[RFC-011 主动 Agent](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#2-主动-agent) 将可信事件、项目工作记忆、行动提案、授权执行与反馈接入同一 LangGraph。该增量已随 RFC-011 于 2026-09-23 确认审批通过；实施仍须遵循已接受 ADR，当前实现状态和 TAP/TAP AI 产品归属不因审批改变；总览与专题图明确区分目标设计和历史架构。
 
 | 字段         | 值                                                                                                                           |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |

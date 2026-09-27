@@ -103,6 +103,11 @@ async def resolve_project_scope(request: Request) -> ProjectScopeContext:
         and getattr(services.test_plans, "scope", None) != services.scope
     ):
         raise AuthorizationDenied("scope-mismatch")
+    if (
+        services.knowledge_reviews is not None
+        and getattr(services.knowledge_reviews, "scope", None) != services.scope
+    ):
+        raise AuthorizationDenied("scope-mismatch")
     scope = await services.scope_provider.current(RequestFacts(project_id=project_id))
     if not isinstance(scope, ProjectScopeContext) or scope != services.scope:
         raise AuthorizationDenied("scope-mismatch")
@@ -113,7 +118,9 @@ async def resolve_project_scope(request: Request) -> ProjectScopeContext:
     return scope
 
 
-def project_authorization(action: str) -> Callable[[Request], Awaitable[None]]:
+def project_authorization(
+    action: str, *, resource_id_param: str | None = None
+) -> Callable[[Request], Awaitable[None]]:
     async def authorize(request: Request) -> None:
         scope = await resolve_project_scope(request)
         services: HttpServices = request.app.state.http_services
@@ -126,15 +133,32 @@ def project_authorization(action: str) -> Callable[[Request], Awaitable[None]]:
             ResourceRef(
                 enterprise_id=scope.enterprise_id,
                 project_id=scope.project_id,
-                kind=(
-                    "ai"
-                    if action.startswith("ai.")
-                    else "test-plan"
-                    if action.startswith("test-plans.")
-                    else "knowledge"
+                kind=_resource_kind_for_action(action),
+                resource_id=(
+                    None
+                    if resource_id_param is None
+                    else request.path_params.get(resource_id_param)
                 ),
             ),
         )
         request.state.project_scope = scope
 
     return authorize
+
+
+def _resource_kind_for_action(action: str) -> str:
+    exact = {
+        "knowledge.citation.read": "knowledge-citation",
+        "knowledge.evidence.read": "knowledge-evidence",
+        "knowledge.original.read": "knowledge-original",
+        "knowledge.publish": "knowledge-publication",
+    }
+    if action in exact:
+        return exact[action]
+    if action.startswith("knowledge.review."):
+        return "knowledge-review"
+    if action.startswith("ai."):
+        return "ai"
+    if action.startswith("test-plans."):
+        return "test-plan"
+    return "knowledge"

@@ -360,7 +360,8 @@ class LiteLLMModelGateway:
         path = (
             "v1/embeddings" if request.operation is ModelOperation.EMBED else "v1/chat/completions"
         )
-        for attempt in range(self._config.max_retries + 1):
+        max_retries = self._config.max_retries if request.allow_retries else 0
+        for attempt in range(max_retries + 1):
             try:
                 async with (
                     self._slots,
@@ -377,7 +378,7 @@ class LiteLLMModelGateway:
                     ) as response,
                 ):
                     if response.status_code in {408, 429} or response.status_code >= 500:
-                        if attempt < self._config.max_retries:
+                        if attempt < max_retries:
                             continue
                     response.raise_for_status()
                     raw = bytearray()
@@ -390,7 +391,7 @@ class LiteLLMModelGateway:
                         raise ModelGatewayUnavailable()
                     return body, response.headers
             except httpx.TransportError:
-                if attempt == self._config.max_retries:
+                if attempt == max_retries:
                     raise ModelGatewayUnavailable() from None
         raise ModelGatewayUnavailable()
 

@@ -22,6 +22,13 @@ from tap.modules.test_management.domain.models import TestPlanGenerationRequest
 from tap.modules.test_management.domain.validation import validate_draft_structure
 from tap.modules.test_management.ports.generation import TestDesignContext
 
+from tap.quality.evidence import (
+    candidate_digest as evidence_candidate_digest,
+    candidate_run_id,
+    canonical_digest,
+    test_design_materials,
+)
+
 
 class CapturingGateway:
     def __init__(self, delegate: Any) -> None:
@@ -81,10 +88,8 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
     observations = deepcopy(profile)
     bindings = observations["bindings"]
     semaphore = asyncio.Semaphore(4)
-    review_invalidated = False
 
     async def evaluate_case(index: int, item: dict[str, Any]) -> None:
-        nonlocal review_invalidated
         source = str(item["source"])
         suffix = f"{index + 1:03d}"
         request = TestPlanGenerationRequest.create(
@@ -122,6 +127,9 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
             },
         )
         observation = item["observation"]
+        item["reviewerJudgments"] = []
+        observation.pop("reviewedOutputDigest", None)
+        observation.pop("reviewedCaseDigest", None)
         try:
             async with semaphore:
                 revision = await generator.generate(context)
@@ -135,16 +143,6 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                 item,
                 request_digest=request.request_digest,
                 output_digest=output_digest,
-            )
-            review_is_current = (
-                observation.get("reviewedOutputDigest") == output_digest
-                and observation.get("reviewedCaseDigest") == candidate_digest
-                and bool(item.get("reviewerJudgments"))
-                and all(
-                    judgment.get("approved") is True
-                    for judgment in item["reviewerJudgments"]
-                    if isinstance(judgment, dict)
-                )
             )
             observation.update(
                 schemaValid=True,
@@ -160,17 +158,10 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                     "model": model,
                     "providerRequestId": provider_request_id,
                 },
+                unsupportedFactCount=1,
+                criticalCovered=0,
+                criticalCorrectionRequired=True,
             )
-            if not review_is_current:
-                review_invalidated = True
-                observation.update(
-                    unsupportedFactCount=1,
-                    criticalCovered=0,
-                    criticalCorrectionRequired=True,
-                )
-                observation.pop("reviewedOutputDigest", None)
-                observation.pop("reviewedCaseDigest", None)
-                item["reviewerJudgments"] = []
             observation.pop("failureType", None)
             observation.pop("failureMessage", None)
         except Exception as error:
@@ -202,8 +193,81 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
             )
         observations["dataset"]["modelObservationStatus"] = "captured"
         observations["dataset"]["providerInvocationCount"] = capture.invocation_count
-        if review_invalidated:
-            observations["dataset"]["reviewStatus"] = "pending"
+        observations["dataset"]["reviewStatus"] = "pending"
+        binding_digests = {
+            name: str(bindings[name])
+            for name in ("promptDigest", "schemaDigest", "evaluatorDigest")
+        }
+        dataset_material, config_material, model_material = test_design_materials(
+            observations, binding_digests=binding_digests
+        )
+        dataset_digest = canonical_digest(dataset_material)
+        config_digest = canonical_digest(config_material)
+        model_digest = canonical_digest(model_material)
+        completed = []
+        for item in observations["cases"]:
+            observation = item["observation"]
+            receipt = observation.get("providerReceipt")
+            output = observation.get("generatedOutput")
+            output_digest = observation.get("outputDigest")
+            if (
+                not isinstance(receipt, dict)
+                or output is None
+                or not isinstance(output_digest, str)
+            ):
+                continue
+            request_id = str(receipt["providerRequestId"])
+            provider_receipt = {
+                "provider": receipt["provider"],
+                "model": receipt["model"],
+                "providerRequestId": request_id,
+                "requestDigest": receipt["requestDigest"],
+                "outputDigest": output_digest,
+            }
+            receipt_digest = canonical_digest(provider_receipt)
+            candidate_digest = evidence_candidate_digest(
+                case_id=str(item["caseId"]),
+                request_id=request_id,
+                request_digest=str(receipt["requestDigest"]),
+                receipt_digest=receipt_digest,
+                output_digest=output_digest,
+                dataset_digest=dataset_digest,
+                config_digest=config_digest,
+                model_digest=model_digest,
+            )
+            completed.append(
+                {
+                    "caseId": item["caseId"],
+                    "status": "completed",
+                    "executionMode": "real",
+                    "requestId": request_id,
+                    "requestDigest": receipt["requestDigest"],
+                    "providerReceipt": provider_receipt,
+                    "receiptDigest": receipt_digest,
+                    "output": output,
+                    "outputDigest": output_digest,
+                    "datasetDigest": dataset_digest,
+                    "configDigest": config_digest,
+                    "modelDigest": model_digest,
+                    "candidateDigest": candidate_digest,
+                    "reviewJudgments": [],
+                }
+            )
+        run_id = candidate_run_id(completed)
+        observations["runEvidence"] = {
+            "schemaVersion": "quality-candidate-evidence-v1",
+            "runId": run_id,
+            "runStatus": (
+                "awaiting_review"
+                if len(completed) == len(observations["cases"])
+                else "failed"
+            ),
+            "executionMode": "real",
+            "datasetDigest": dataset_digest,
+            "configDigest": config_digest,
+            "modelDigest": model_digest,
+            "cases": completed,
+        }
         return observations
     finally:
         await models.aclose()
@@ -214,10 +278,7 @@ def main() -> int:
     parser.add_argument("profile", type=Path)
     parser.add_argument("--observations", type=Path, required=True)
     arguments = parser.parse_args()
-    source = (
-        arguments.observations if arguments.observations.exists() else arguments.profile
-    )
-    profile = json.loads(source.read_text(encoding="utf-8"))
+    profile = json.loads(arguments.profile.read_text(encoding="utf-8"))
     observations = asyncio.run(run(profile))
     arguments.observations.parent.mkdir(parents=True, exist_ok=True)
     arguments.observations.write_text(

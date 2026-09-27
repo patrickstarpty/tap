@@ -138,6 +138,22 @@ it("uses canonical Source API identities in the existing source panel", async ()
     ],
     nextCursor: null,
   });
+  api.withPublishedSources({
+    items: [
+      {
+        sourceId: "src_" + "a".repeat(32),
+        sourceName: "Canonical policy",
+        documentId: "doc_canonical",
+        filename: "Canonical policy",
+        revisionId: "rev_canonical",
+        publicationId: "pub_canonical",
+        approvedItemCount: 1,
+        inventoryItemCount: 1,
+        partial: false,
+        expiresAt: "2027-01-01T00:00:00Z",
+      },
+    ],
+  });
   const { queryClient } = renderKnowledgeApp(
     <TapProductPrototype conversationSource="api" />,
     { api },
@@ -160,6 +176,56 @@ it("uses canonical Source API identities in the existing source panel", async ()
     }),
   );
   await waitFor(() => expect(screen.getByText("0 selected")).toBeVisible());
+});
+
+it("does not offer an ingestion-ready source that has not been published", async () => {
+  const api = fakeKnowledgeClient();
+  api.listSources = vi.fn().mockResolvedValue({
+    items: [
+      {
+        sourceId: "src_" + "b".repeat(32),
+        name: "Uploaded draft",
+        documentCount: 1,
+        readyCount: 1,
+        failedCount: 0,
+        createdAt: "2026-09-25T00:00:00Z",
+      },
+    ],
+    nextCursor: null,
+  });
+  const { queryClient } = renderKnowledgeApp(
+    <TapProductPrototype conversationSource="api" />,
+    { api },
+  );
+  await waitFor(() =>
+    expect(
+      queryClient.getQueryData(["knowledge", api.projectId, "sources"]),
+    ).toBeDefined(),
+  );
+  expect(
+    screen.queryByRole("checkbox", { name: /Uploaded draft/u }),
+  ).not.toBeInTheDocument();
+});
+
+it("offers a multi-document published Source only once", async () => {
+  const api = fakeKnowledgeClient().withPublishedSources({
+    items: ["first", "second"].map((suffix) => ({
+      sourceId: `src_${"c".repeat(32)}`,
+      sourceName: "Grouped policy source",
+      documentId: `doc_${suffix}`,
+      filename: `${suffix}.md`,
+      revisionId: `rev_${suffix}`,
+      publicationId: "pub_grouped",
+      approvedItemCount: 1,
+      inventoryItemCount: 1,
+      partial: false,
+      expiresAt: "2027-01-01T00:00:00Z",
+    })),
+  });
+  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, { api });
+  expect(
+    await screen.findAllByRole("checkbox", { name: /Grouped policy source/u }),
+  ).toHaveLength(1);
 });
 
 it("shows Source documents in Library and targets retry and confirmed deletion", async () => {
@@ -213,6 +279,12 @@ it("shows Source documents in Library and targets retry and confirmed deletion",
     name: "Canonical policy",
   });
   expect(await within(dialog).findByText("failed.txt")).toBeVisible();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Review failed.txt" }),
+  );
+  expect(
+    await within(dialog).findByRole("heading", { name: "业务审核" }),
+  ).toBeVisible();
   await userEvent.click(
     within(dialog).getByRole("button", { name: "Retry failed.txt" }),
   );

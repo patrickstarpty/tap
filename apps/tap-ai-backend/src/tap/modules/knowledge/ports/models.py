@@ -22,6 +22,8 @@ class SearchExecution:
     plan: QueryPlan
     context_snapshot: ContextSnapshot
     query_vector: tuple[float, ...]
+    approved_item_scope: tuple[tuple[str, tuple[str, ...]], ...] | None = None
+    approved_chunk_ids: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -175,6 +175,30 @@
       "type": "https://tap.example/problems/idempotency-conflict"
     },
     {
+      "code": "knowledge-projection-not-ready",
+      "detail": "The approved knowledge projection did not validate for publication.",
+      "retryable": true,
+      "status": 409,
+      "title": "Knowledge projection not ready",
+      "type": "https://tap.example/problems/knowledge-projection-not-ready"
+    },
+    {
+      "code": "knowledge-review-not-found",
+      "detail": "The knowledge review is unavailable in this Project.",
+      "retryable": false,
+      "status": 404,
+      "title": "Knowledge review not found",
+      "type": "https://tap.example/problems/knowledge-review-not-found"
+    },
+    {
+      "code": "knowledge-review-state-conflict",
+      "detail": "The requested knowledge review transition is not allowed.",
+      "retryable": false,
+      "status": 409,
+      "title": "Knowledge review state conflict",
+      "type": "https://tap.example/problems/knowledge-review-state-conflict"
+    },
+    {
       "code": "knowledge-runtime-unavailable",
       "detail": "The knowledge runtime is not configured.",
       "retryable": true,

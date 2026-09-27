@@ -29,6 +29,12 @@ from tap.modules.knowledge.application.answers import (
 )
 from tap.modules.knowledge.application.citations import CitationStale, CitationUnavailable
 from tap.modules.knowledge.application.demo_policy import DocumentPolicyChanged
+from tap.modules.knowledge.application.review import (
+    ProjectionNotReady,
+    ReviewCommandConflict,
+    ReviewNotFound,
+    ReviewStateConflict,
+)
 from tap.modules.knowledge.domain.documents import DocumentParseRejected
 from tap.modules.knowledge.domain.sources import (
     SourceCommandConflict,
@@ -149,6 +155,33 @@ def register_problem_handlers(app: FastAPI) -> None:
         request: Request, _error: RevisionConflict | RevisionImmutable
     ) -> JSONResponse:
         return problem_response("revision-conflict", request)
+
+    @app.exception_handler(ReviewStateConflict)
+    async def knowledge_review_state_conflict(
+        request: Request, error: ReviewStateConflict
+    ) -> JSONResponse:
+        code = (
+            "revision-conflict"
+            if str(error) == "revision-conflict"
+            else "knowledge-review-state-conflict"
+        )
+        return problem_response(code, request)
+
+    @app.exception_handler(ReviewCommandConflict)
+    async def knowledge_review_command_conflict(
+        request: Request, _error: ReviewCommandConflict
+    ) -> JSONResponse:
+        return problem_response("idempotency-conflict", request)
+
+    @app.exception_handler(ReviewNotFound)
+    async def knowledge_review_not_found(request: Request, _error: ReviewNotFound) -> JSONResponse:
+        return problem_response("knowledge-review-not-found", request)
+
+    @app.exception_handler(ProjectionNotReady)
+    async def knowledge_projection_not_ready(
+        request: Request, _error: ProjectionNotReady
+    ) -> JSONResponse:
+        return problem_response("knowledge-projection-not-ready", request)
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_problem(

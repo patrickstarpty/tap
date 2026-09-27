@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "requirement-scope-snapshot-v1",
+  "contractVersion": "trusted-knowledge-inputs-v1",
+  "evidenceKind": "synthetic-development-fixture",
+  "realGateStatus": "pending-real-input",
+  "scopeId": "synthetic-checkout-scope-v1",
+  "projectId": "synthetic-commerce-project",
+  "businessFlow": "reviewed checkout authorization",
+  "applicableFrom": "2026-09-23T00:00:00Z",
+  "applicableUntil": null,
+  "sourceRevisions": [
+    {
+      "sourceRevisionId": "synthetic-checkout-policy-v1",
+      "mediaType": "text/markdown",
+      "title": "Synthetic checkout policy",
+      "digest": null,
+      "digestStatus": "pending-real-input",
+      "access": "project-members"
+    },
+    {
+      "sourceRevisionId": "synthetic-risk-policy-v1",
+      "mediaType": "application/pdf",
+      "title": "Synthetic risk exception policy",
+      "digest": null,
+      "digestStatus": "pending-real-input",
+      "access": "risk-reviewers"
+    },
+    {
+      "sourceRevisionId": "synthetic-restricted-policy-v1",
+      "mediaType": "application/pdf",
+      "title": "Synthetic restricted policy",
+      "digest": null,
+      "digestStatus": "pending-real-input",
+      "access": "restricted-audit"
+    }
+  ],
+  "approvalRoleMatrix": {
+    "editorId": "synthetic-editor-01",
+    "independentReviewerId": "synthetic-reviewer-02",
+    "publisherId": "synthetic-publisher-03"
+  },
+  "requirements": [
+    {
+      "requirementId": "checkout-normal-001",
+      "caseKind": "normal",
+      "statement": "An approved payment authorization records exactly one immutable checkout result.",
+      "sourceRevisionId": "synthetic-checkout-policy-v1",
+      "locator": "section:authorization"
+    },
+    {
+      "requirementId": "checkout-boundary-001",
+      "caseKind": "boundary",
+      "statement": "The maximum permitted order total remains eligible; one cent above it requires review.",
+      "sourceRevisionId": "synthetic-checkout-policy-v1",
+      "locator": "section:limits"
+    },
+    {
+      "requirementId": "checkout-exception-001",
+      "caseKind": "exception",
+      "statement": "A risk hold blocks publication until an independent reviewer clears it.",
+      "sourceRevisionId": "synthetic-risk-policy-v1",
+      "locator": "page:2#risk-hold"
+    },
+    {
+      "requirementId": "checkout-conflict-001",
+      "caseKind": "conflict",
+      "statement": "Conflicting authorization windows must be surfaced and cannot be silently resolved.",
+      "sourceRevisionId": "synthetic-risk-policy-v1",
+      "locator": "page:3#conflict"
+    },
+    {
+      "requirementId": "checkout-no-answer-001",
+      "caseKind": "no-answer",
+      "statement": "The approved sources do not define cryptocurrency settlement behavior.",
+      "sourceRevisionId": "synthetic-checkout-policy-v1",
+      "locator": "document-scope:excluded-topics"
+    },
+    {
+      "requirementId": "checkout-forbidden-001",
+      "caseKind": "forbidden",
+      "statement": "Users without restricted-audit access cannot retrieve this source or its derived evidence.",
+      "sourceRevisionId": "synthetic-restricted-policy-v1",
+      "locator": "page:1#restricted"
+    }
+  ],
+  "limitations": [
+    "Synthetic content freezes development contracts only.",
+    "A named business owner, real source digests, and independent human review remain required for the real gate."
+  ]
+}

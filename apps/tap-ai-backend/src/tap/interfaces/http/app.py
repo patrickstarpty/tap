@@ -20,9 +20,11 @@ from tap.interfaces.http.routes.ai_assets import router as ai_assets_router
 from tap.interfaces.http.routes.citations import router as citations_router
 from tap.interfaces.http.routes.conversations import router as conversations_router
 from tap.interfaces.http.routes.health import router as health_router
+from tap.interfaces.http.routes.insights_explanations import router as insights_explanations_router
 from tap.interfaces.http.routes.knowledge_answers import router as knowledge_answers_router
 from tap.interfaces.http.routes.knowledge_documents import router as knowledge_documents_router
 from tap.interfaces.http.routes.knowledge_graph import router as knowledge_graph_router
+from tap.interfaces.http.routes.knowledge_reviews import router as knowledge_reviews_router
 from tap.interfaces.http.routes.knowledge_sources import router as knowledge_sources_router
 from tap.interfaces.http.routes.model_catalog import router as model_catalog_router
 from tap.interfaces.http.routes.test_plans import router as test_plans_router
@@ -93,6 +95,7 @@ def create_app(
         return project_id
 
     for router in (
+        insights_explanations_router,
         knowledge_sources_router,
         knowledge_documents_router,
         knowledge_answers_router,
@@ -101,6 +104,7 @@ def create_app(
         ai_assets_router,
         conversations_router,
         knowledge_graph_router,
+        knowledge_reviews_router,
         test_plans_router,
     ):
         app.include_router(
