@@ -11,7 +11,16 @@ from tap.modules.knowledge.application.review import (
     KnowledgeReviewApplication,
     ProjectionNotReady,
     ReviewCommandConflict,
+    ReviewComparisonTarget,
+    ReviewInventoryRecord,
     ReviewStateConflict,
+    initial_review_items,
+)
+from tap.modules.knowledge.domain.documents import canonical_sha256
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
 )
 from tap.modules.knowledge.domain.review import (
     KnowledgeReviewRevision,
@@ -21,6 +30,7 @@ from tap.modules.knowledge.domain.review import (
     canonical_digest,
     review_id_for,
 )
+from tap.modules.knowledge.ports.documents import ArtifactLocator
 
 NOW = datetime(2026, 9, 23, 9, tzinfo=UTC)
 DIGEST_A = "sha256:" + "a" * 64
@@ -538,6 +548,140 @@ def test_item_decision_is_durable_updates_checklist_and_survives_application_ref
         assert detail.decisions[0].check_kind is ReviewCheckKind.EXCEPTION
         assert detail.decisions[0].status is ReviewDecisionStatus.ACCEPTED
         assert [entry.action for entry in detail.history][-1] == "item_decided"
+
+    run(scenario())
+
+
+def test_visual_review_keeps_unresolved_edges_blocking_after_one_node_is_accepted():
+    class VisualRepository(InMemoryKnowledgeReviewRepository):
+        async def list_inventory(self, review_id):  # type: ignore[no-untyped-def]
+            return tuple(
+                ReviewInventoryRecord(
+                    source_revision_id="rev_001",
+                    item_id=item_id,
+                    attempt=1,
+                    kind=kind,
+                    locator=locator,
+                    status="needs_review",
+                    artifact_digest=DIGEST_A,
+                    reason="visual-confirmation-required",
+                    decision_actor_id=None,
+                )
+                for item_id, kind, locator in (
+                    ("pi_node", "flow_node", "image:1/node:a"),
+                    ("pi_edge", "flow_edge", "image:1/edge:1"),
+                )
+            )
+
+    async def scenario() -> None:
+        repository = VisualRepository()
+        await repository.add(
+            review(
+                status=ReviewStatus.CHECKING,
+                approved_item_ids=(),
+                blocking_item_ids=("pi_node", "pi_edge"),
+            ),
+            inventory_item_ids=("pi_node", "pi_edge"),
+        )
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        changed = await application.record_item_decision(
+            "krv_001",
+            item_id="pi_node",
+            check_kind=ReviewCheckKind.SCOPE,
+            status=ReviewDecisionStatus.ACCEPTED,
+            note="与原图一致",
+            actor_id="synthetic-editor-03",
+            expected_version=3,
+            now=NOW,
+        )
+
+        assert changed.blocking_item_ids == ("pi_edge",)
+        assert changed.approved_item_ids == ("pi_node",)
+
+    run(scenario())
+
+
+def test_visual_review_starts_with_every_model_item_unapproved_and_blocking():
+    image = ParseInventoryItem.create(
+        source_revision_id="rev_001",
+        kind=ParseInventoryKind.IMAGE,
+        locator="image:1",
+        status=ParseInventoryStatus.NEEDS_REVIEW,
+        artifact_digest=DIGEST_A,
+        reason="visual-analysis-required",
+    )
+    node = ParseInventoryItem.create(
+        source_revision_id="rev_001",
+        kind=ParseInventoryKind.FLOW_NODE,
+        locator="image:1/node:a",
+        status=ParseInventoryStatus.NEEDS_REVIEW,
+        artifact_digest=DIGEST_B,
+        reason="visual-confirmation-required",
+    )
+
+    assert initial_review_items((image, node)) == ((), tuple(sorted((image.item_id, node.item_id))))
+
+
+def test_visual_review_cannot_approve_only_the_nonsearchable_image_item():
+    class VisualRepository(InMemoryKnowledgeReviewRepository):
+        async def list_inventory(self, review_id):  # type: ignore[no-untyped-def]
+            return tuple(
+                ReviewInventoryRecord(
+                    source_revision_id="rev_001",
+                    item_id=item_id,
+                    attempt=1,
+                    kind=kind,
+                    locator=locator,
+                    status="needs_review",
+                    artifact_digest=DIGEST_A,
+                    reason="visual-confirmation-required",
+                    decision_actor_id=None,
+                )
+                for item_id, kind, locator in (
+                    ("pi_image", "image", "image:1"),
+                    ("pi_node", "flow_node", "image:1/node:a"),
+                )
+            )
+
+    async def scenario() -> None:
+        repository = VisualRepository()
+        await repository.add(review(approved_item_ids=("pi_image",)))
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        with pytest.raises(ReviewStateConflict, match="review-has-no-approved-items"):
+            await application.approve_review(
+                "krv_001", actor_id="synthetic-reviewer-02", expected_version=3, now=NOW
+            )
+
+    run(scenario())
+
+
+def test_review_original_image_requires_matching_immutable_source_digest():
+    image = b"\x89PNG\r\n\x1a\nreview-image"
+
+    class Repository(InMemoryKnowledgeReviewRepository):
+        async def comparison_target(self, review_id, item_id):  # type: ignore[no-untyped-def]
+            return ReviewComparisonTarget(
+                media_type="image/png",
+                source_revision_id="rev_001",
+                source_digest=canonical_sha256(image),
+                original_locator=ArtifactLocator("original:1"),
+                normalized_locator=None,
+                item_id=item_id,
+                original_excerpt=None,
+                original_alignment_reason="image-region-not-text",
+            )
+
+    class Artifacts:
+        async def read_original(self, locator):  # type: ignore[no-untyped-def]
+            return image
+
+    async def scenario() -> None:
+        repository = Repository()
+        await repository.add(review())
+        application = KnowledgeReviewApplication(repository, ProjectionGate(), Artifacts())  # type: ignore[arg-type]
+        data, media_type = await application.read_original_image("krv_001", "pi_001")
+        assert data == image
+        assert media_type == "image/png"
 
     run(scenario())
 

@@ -31,6 +31,7 @@ from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvi
 from tap.modules.access.application.scope import RequestFacts
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.adapters.litellm import (
+    ChatModelRoute,
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
     ProviderModelMapping,
@@ -92,6 +93,7 @@ _FIXED_CORPUS = "tapper-demo-v1"
 _FIXED_CHAT_ALIAS = "tapper-chat"
 _FIXED_CODEX_CHAT_ALIAS = "tapper-chat-codex"
 _FIXED_EMBEDDING_ALIAS = "tapper-embedding"
+_FIXED_VISION_ALIAS = "tapper-vision"
 _FIXED_LITELLM_EMBEDDING_ROUTE = "dashscope/text-embedding-v4"
 _FIXED_RETRIEVAL_PROFILE = "quick-hybrid-v1"
 _FIXED_SCHEMA_VERSION = "doc-schema-v1"
@@ -154,6 +156,8 @@ class TapperSettings:
     milvus_provisioner_username: str
     milvus_provisioner_password: str = field(repr=False)
     e2e_mode: bool
+    vision_model: str = ""
+    vision_timeout_seconds: float = 60.0
     object_store_provider: str = "azure"
     s3_endpoint: str = ""
     s3_bucket: str = ""
@@ -341,6 +345,11 @@ class TapperSettings:
                 "LITELLM_TAPPER_EMBEDDING_MODEL",
                 _FIXED_LITELLM_EMBEDDING_ROUTE,
             )
+            vision_model = (
+                _model_route(values, "LITELLM_TAPPER_VISION_MODEL")
+                if values.get("LITELLM_TAPPER_VISION_MODEL")
+                else ""
+            )
             allowed_answer_labels = _model_labels(_FIXED_CHAT_ALIAS, litellm_model)
             allowed_embedding_labels = _model_labels(
                 _FIXED_EMBEDDING_ALIAS,
@@ -353,6 +362,7 @@ class TapperSettings:
         else:
             litellm_model = _FIXED_CHAT_ALIAS
             litellm_embedding_model = _FIXED_EMBEDDING_ALIAS
+            vision_model = ""
             allowed_answer_labels = frozenset({_FIXED_CHAT_ALIAS})
             allowed_embedding_labels = frozenset({_FIXED_EMBEDDING_ALIAS})
 
@@ -474,6 +484,10 @@ class TapperSettings:
             litellm_api_key=_secret(values, "LITELLM_MASTER_KEY", "tap-local-master-key"),
             litellm_model=litellm_model,
             litellm_embedding_model=litellm_embedding_model,
+            vision_model=vision_model,
+            vision_timeout_seconds=_duration(
+                values, "TAPPER_VISION_TIMEOUT_SECONDS", 60.0, maximum=60
+            ),
             codex_model=codex_model,
             codex_reasoning_effort=codex_reasoning_effort,
             codex_timeout_seconds=codex_timeout_seconds,
@@ -771,6 +785,7 @@ async def create_api_runtime(
             test_plan_sessions=async_sessionmaker(engine, expire_on_commit=False),
             test_design_model_mapping=_test_design_model_mapping(settings),
             review_sessions=async_sessionmaker(engine, expire_on_commit=False),
+            parser_socket=settings.parser_socket,
             corpus_version=settings.corpus_version,
         )
         if settings.insights_base_url:
@@ -1143,8 +1158,24 @@ def _create_embeddings(
             else ProviderModelMapping.from_route(settings.litellm_embedding_model)
         ),
         embedding_dimension=settings.embedding_dimension,
-        timeout_seconds=settings.model_timeout_seconds,
+        timeout_seconds=(
+            max(settings.model_timeout_seconds, settings.vision_timeout_seconds)
+            if settings.vision_model
+            else settings.model_timeout_seconds
+        ),
         max_retries=max_retries,
+        additional_chat_models=(
+            (
+                ChatModelRoute(
+                    _FIXED_VISION_ALIAS,
+                    "Flowchart vision",
+                    ProviderModelMapping.from_route(settings.vision_model),
+                    image_input=True,
+                ),
+            )
+            if settings.vision_model
+            else ()
+        ),
     )
     gateway: LiteLLMModelGateway
     if settings.e2e_mode:
@@ -1604,6 +1635,7 @@ def _assemble_http_services(
     test_plan_sessions: object | None = None,
     test_design_model_mapping: ProviderModelMapping | None = None,
     review_sessions: async_sessionmaker[AsyncSession] | None = None,
+    parser_socket: str | None = None,
     corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
@@ -1699,6 +1731,7 @@ def _assemble_http_services(
     knowledge_reviews = None
     if review_sessions is not None:
         from tap.interfaces.http.knowledge_review_service import KnowledgeReviewHttpService
+        from tap.modules.knowledge.adapters.isolated_parser import IsolatedParser
         from tap.modules.knowledge.adapters.mysql_review import (
             MysqlApprovedProjectionVerifier,
         )
@@ -1713,6 +1746,7 @@ def _assemble_http_services(
                     scope=repository.scope,  # type: ignore[arg-type]
                 ),
                 artifact_store,
+                parser=None if parser_socket is None else IsolatedParser(parser_socket),
             ),
             scope=repository.scope,
             authorization_policy=authorization_policy,
@@ -1777,6 +1811,7 @@ def _assemble_worker_runtime(
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
     from tap.modules.knowledge.adapters.document_chunker import StructuralChunker
+    from tap.modules.knowledge.adapters.flowchart_vision import ModelGatewayFlowchartVision
     from tap.modules.knowledge.adapters.isolated_parser import IsolatedParser
     from tap.modules.knowledge.application.ingestion import IngestionWorker
     from tap.modules.knowledge.ports.documents import (
@@ -1788,6 +1823,17 @@ def _assemble_worker_runtime(
     from tap.platform.messaging.redis_dispatch import AsyncRedisStream
     from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
 
+    vision = None
+    if settings.vision_model:
+        gateway = getattr(embeddings, "gateway", None)
+        if gateway is None:
+            raise ValueError("configured vision requires the governed model gateway")
+        vision = ModelGatewayFlowchartVision(
+            gateway,
+            repository.scope,
+            alias=_FIXED_VISION_ALIAS,
+            timeout_seconds=settings.vision_timeout_seconds,
+        )
     worker = IngestionWorker(
         repository=cast(DocumentRepository, repository),
         artifacts=cast(ArtifactStore, artifacts),
@@ -1800,6 +1846,7 @@ def _assemble_worker_runtime(
         embedding_dimension=settings.embedding_dimension,
         index_version=settings.index_version,
         stage_hook=stage_hook,
+        vision=vision,
     )
     wakeups = RedisWakeupConsumer(
         scope=repository.scope,

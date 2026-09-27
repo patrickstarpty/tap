@@ -194,6 +194,47 @@ async def test_owned_search_reads_exact_frozen_tuple_and_maps_both_profiles(vers
     assert len(hits) == 1 and hits[0].source.source_id == owner.source_id
     assert hits[0].chunk_id == row["chunk_id"]
     assert "project_id" in reader.requests[0].output_fields
+    if approved_only:
+        assert await adapter.flowchart_edges(execution) == ()
+        exact = reader.query_calls[-1]
+        assert exact.limit == 21
+        assert 'content like "流程图连线 %"' in exact.filter_expression
+        assert f'chunk_id in ["{row["chunk_id"]}"]' in exact.filter_expression
+        assert "project_id" in exact.output_fields
+
+        async def non_edge_query(request):
+            return (row,)
+
+        reader.query = non_edge_query
+        with pytest.raises(SearchUnavailable, match="non-edge"):
+            await adapter.flowchart_edges(execution)
+
+        row["content"] = "流程图连线 a → b：开始 → 结束；条件：通过"
+        row["chunk_content_hash"] = (
+            "sha256:" + __import__("hashlib").sha256(row["content"].encode()).hexdigest()
+        )
+        exact_anchor = json.loads(row["anchor_json"])
+        exact_anchor.update(bbox=[0, 0, 20, 20], inventoryItemId="approved-item")
+        row["anchor_json"] = json.dumps(exact_anchor, sort_keys=True, separators=(",", ":"))
+        row["chunk_id"] = str(
+            chunk_id_for(
+                RevisionId(owner.revision_id), row["anchor_json"], row["chunk_content_hash"]
+            )
+        )
+        row["logical_chunk_id"] = logical_chunk_projection_id(
+            logical_chunk_id_for(DocumentId(owner.document_id), row["anchor_json"])
+        )
+        exact_hits = await adapter.flowchart_edges(execution)
+        assert len(exact_hits) == 1
+        assert exact_hits[0].content == row["content"]
+        assert exact_hits[0].source.anchor.inventory_item_id == "approved-item"
+
+        async def overflowing_query(request):
+            return tuple(row for _ in range(21))
+
+        reader.query = overflowing_query
+        with pytest.raises(SearchBoundsExceeded):
+            await adapter.flowchart_edges(execution)
     reader.rows = ({**row, "project_id": "other-project"},)
     with pytest.raises(SearchUnavailable):
         await adapter.search(execution)

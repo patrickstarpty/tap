@@ -41,3 +41,5 @@
 - [BrowserStack Load Testing 逐页分析](2026-09-17-browserstack-load-testing-page-analysis.md)：128 篇正文、11 个旧跳转与 3 个坏链；记录 API/浏览器/混合模式、负载语义、统计与执行边界，并映射 k6/Playwright 目标设计。
 - [可信知识、Graph 与测试设计质量重新验收](2026-09-26-trusted-knowledge-graph-test-design-gate.md)：真实验收 `NOT RUN / PENDING`；确定性 anti-forgery 与证据绑定已补齐，但缺真实数据集、模型执行和具名 reviewer 授权，新增可信知识、V2、V3 均未关闭 Gate。
 - [可信知识、测试设计与基础 Insights 联合交付门禁](2026-09-26-trusted-knowledge-insights-delivery-gate.md)：M1–M4 隔离模拟业务 UAT `PASS`，适用于本机演示与开发交接；真实业务 Gate 均 `PENDING`，计划保持 `active`。
+- [流程图业务语义 UAT 验收](2026-09-27-flowchart-business-meaning-uat.md)：输出契约与人工纠错闭环已修复；三次真实输出均可进入审核，仍需纠正箭头误识别，完整真实业务 UAT 待验收。
+- [流程图图片审核原型对照](2026-09-27-flowchart-image-prototype-review.md)：记录审核纠错前后截图、生产编辑器桌面与移动端核对及模块导航验证。

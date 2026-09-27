@@ -46,6 +46,22 @@ it("places document review inside the existing Library", () => {
   ).toBeVisible();
 });
 
+it("reviews a flowchart image with its nodes and directed branch", () => {
+  render(<TapProductPrototype />);
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review Approval flowchart.png" }),
+  );
+
+  expect(screen.getByRole("img", { name: "Approval flowchart" })).toBeVisible();
+  expect(screen.getByText("Submit request → Manager approval")).toBeVisible();
+  expect(screen.getByText("Condition: Amount exceeds 1000")).toBeVisible();
+  expect(
+    screen.getByLabelText("Arrow direction matches the image"),
+  ).toBeVisible();
+});
+
 it("hands submitted work to an independent reviewer and only publishes an approved fixture", () => {
   const view = render(<TapProductPrototype />);
   fireEvent.click(screen.getByRole("button", { name: "Library" }));
@@ -142,4 +158,34 @@ it("keeps the full checklist when replacing a failed document", async () => {
   expect(
     screen.getByRole("button", { name: "Review replacement.md" }),
   ).toBeVisible();
+});
+
+it("corrects flow direction and condition with a fresh review revision", () => {
+  render(<TapProductPrototype />);
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review Approval flowchart.png" }),
+  );
+  fireEvent.click(screen.getByLabelText("Arrow direction matches the image"));
+  fireEvent.click(screen.getByRole("button", { name: "Edit flowchart" }));
+  fireEvent.click(screen.getByRole("button", { name: "Reverse direction" }));
+  fireEvent.change(screen.getByLabelText("Branch condition"), {
+    target: { value: "Return for correction" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save corrections" }));
+  expect(screen.getByText("Manager approval → Submit request")).toBeVisible();
+  expect(screen.getByText("Condition: Return for correction")).toBeVisible();
+  expect(
+    screen.getByLabelText("Arrow direction matches the image"),
+  ).not.toBeChecked();
+  expect(
+    screen.getByRole("button", { name: "Submit for review" }),
+  ).toBeDisabled();
+  expect(screen.getByText(/flowchart_corrected/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review Approval flowchart.png" }),
+  );
+  expect(screen.getByText("Manager approval → Submit request")).toBeVisible();
 });

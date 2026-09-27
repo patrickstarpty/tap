@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import json
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol, cast
 
-from tap.modules.knowledge.domain.parse_inventory import OriginalExcerptRange
+from tap.modules.knowledge.domain.documents import (
+    MAX_UPLOAD_BYTES,
+    PARSER_VERSION,
+    DocumentSource,
+    NormalizedArtifact,
+    RevisionId,
+    canonical_sha256,
+    revision_id_for,
+)
+from tap.modules.knowledge.domain.flowcharts import FlowchartRejected, normalize_flowchart
+from tap.modules.knowledge.domain.parse_inventory import (
+    OriginalExcerptRange,
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
+    parse_inventory_digest,
+)
 from tap.modules.knowledge.domain.review import (
     KnowledgePublication,
     KnowledgeReviewHistoryEntry,
@@ -20,7 +37,7 @@ from tap.modules.knowledge.domain.review import (
     canonical_digest,
     publication_id_for,
 )
-from tap.modules.knowledge.ports.documents import ArtifactLocator, ArtifactStore
+from tap.modules.knowledge.ports.documents import ArtifactLocator, ArtifactStore, DocumentParserPort
 from tap.modules.knowledge.ports.errors import ArtifactError
 
 
@@ -38,6 +55,34 @@ class ReviewNotFound(Exception):
 
 class ProjectionNotReady(Exception):
     """The proposed immutable projection generation did not validate."""
+
+
+def initial_review_items(
+    inventory: tuple[ParseInventoryItem, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Native text keeps existing approval; visual hypotheses start blocked."""
+    if not inventory:
+        raise ReviewStateConflict("review-inventory-incomplete")
+    if all(item.status is ParseInventoryStatus.PARSED for item in inventory):
+        return tuple(sorted(item.item_id for item in inventory)), ()
+    allowed_kinds = {
+        ParseInventoryKind.IMAGE,
+        ParseInventoryKind.FLOW_NODE,
+        ParseInventoryKind.FLOW_EDGE,
+    }
+    if not any(item.kind is ParseInventoryKind.FLOW_NODE for item in inventory) or any(
+        item.kind not in allowed_kinds
+        or item.status is not ParseInventoryStatus.NEEDS_REVIEW
+        or item.reason
+        not in {
+            "visual-analysis-required",
+            "visual-confirmation-required",
+            "uncertain-connection",
+        }
+        for item in inventory
+    ):
+        raise ReviewStateConflict("review-inventory-incomplete")
+    return (), tuple(sorted(item.item_id for item in inventory))
 
 
 class ProjectionVerifier(Protocol):
@@ -187,6 +232,16 @@ class KnowledgeReviewRepository(Protocol):
         self, review_id: str, *, limit: int, after_item_id: str | None
     ) -> ReviewInventoryPageRead: ...
     async def review_authority(self, revision: KnowledgeReviewRevision) -> bool: ...
+    async def save_flowchart_correction(
+        self,
+        revision: KnowledgeReviewRevision,
+        artifact: NormalizedArtifact,
+        locator: ArtifactLocator,
+        *,
+        expected_version: int,
+        actor_id: str,
+        occurred_at: datetime,
+    ) -> KnowledgeReviewRevision: ...
     async def save_review(
         self,
         revision: KnowledgeReviewRevision,
@@ -260,10 +315,140 @@ class KnowledgeReviewApplication:
         repository: KnowledgeReviewRepository,
         projection: ProjectionVerifier,
         artifacts: ArtifactStore | None = None,
+        *,
+        parser: DocumentParserPort | None = None,
     ) -> None:
         self._repository = repository
         self._projection = projection
         self._artifacts = artifacts
+        self._parser = parser
+
+    async def _flowchart_artifact(
+        self,
+        current: KnowledgeReviewRevision,
+    ) -> tuple[ReviewComparisonTarget, NormalizedArtifact]:
+        if self._artifacts is None or len(current.source_revision_ids) != 1:
+            raise ReviewStateConflict("flowchart-unavailable")
+        items = (*current.approved_item_ids, *current.blocking_item_ids)
+        if not items:
+            inventory = await self._repository.list_inventory(current.review_id)
+            items = tuple(item.item_id for item in inventory)
+        if not items:
+            raise ReviewStateConflict("flowchart-unavailable")
+        target = await self._repository.comparison_target(current.review_id, items[0])
+        if target is None or target.normalized_locator is None:
+            raise ReviewStateConflict("flowchart-unavailable")
+        artifact = await self._artifacts.read_normalized(target.normalized_locator)
+        if (
+            artifact.flowchart_data is None
+            or str(artifact.revision_id) != current.source_revision_ids[0]
+            or artifact.source_hash != target.source_digest
+        ):
+            raise ReviewStateConflict("flowchart-unavailable")
+        return target, artifact
+
+    async def get_flowchart(self, review_id: str) -> dict[str, object]:
+        current = await self._required_review(review_id)
+        _, artifact = await self._flowchart_artifact(current)
+        assert artifact.flowchart_data is not None
+        return cast(dict[str, object], json.loads(artifact.flowchart_data))
+
+    async def correct_flowchart(
+        self,
+        review_id: str,
+        *,
+        graph: Mapping[str, object],
+        actor_id: str,
+        expected_version: int,
+        now: datetime,
+    ) -> str:
+        current = await self._required_review(review_id)
+        _expected_version(current, expected_version)
+        if current.status not in {
+            ReviewStatus.DRAFT,
+            ReviewStatus.CHECKING,
+            ReviewStatus.REVIEWING,
+            ReviewStatus.APPROVED,
+        }:
+            raise ReviewStateConflict("flowchart-correction-not-editable")
+        if current.expires_at <= now or self._parser is None:
+            raise ReviewStateConflict("flowchart-correction-unavailable")
+        target, prior = await self._flowchart_artifact(current)
+        assert self._artifacts is not None
+        content = await self._artifacts.read_original(target.original_locator)
+        if canonical_sha256(content) != prior.source_hash:
+            raise ReviewStateConflict("review-original-changed")
+        correction_digest = canonical_digest(
+            {"sourceRevisionId": str(prior.revision_id), "graph": graph}
+        )
+        assert prior.document_id is not None
+        revision_id = str(
+            revision_id_for(
+                prior.document_id, prior.source_hash, "human-correction-" + correction_digest[7:]
+            )
+        )
+        original_source = DocumentSource(
+            prior.filename,
+            prior.media_type,
+            content,
+            prior.document_id,
+            revision_id_for(prior.document_id, prior.source_hash, PARSER_VERSION),
+        )
+        parsed = await self._parser.parse(original_source)
+        source = replace(original_source, revision_id=RevisionId(revision_id))
+        rebased_inventory = tuple(
+            ParseInventoryItem.create(
+                source_revision_id=revision_id,
+                kind=item.kind,
+                locator=item.locator,
+                status=item.status,
+                artifact_digest=item.artifact_digest,
+                reason=item.reason,
+                original_alignment_reason=item.original_alignment_reason,
+            )
+            for item in parsed.parse_inventory
+        )
+        parsed = replace(
+            parsed,
+            revision_id=RevisionId(revision_id),
+            parse_inventory=rebased_inventory,
+            parse_inventory_digest=parse_inventory_digest(rebased_inventory),
+        )
+        if parsed.vision_input is None:
+            raise ReviewStateConflict("flowchart-correction-unavailable")
+        try:
+            corrected = normalize_flowchart(
+                source, parsed, parsed.vision_input.original_size, graph
+            )
+        except FlowchartRejected as error:
+            raise ReviewStateConflict("invalid-flowchart-correction") from error
+        corrected = replace(
+            corrected,
+            parser_version="human-correction-" + correction_digest[7:],
+            correction_source_revision_id=str(prior.revision_id),
+        )
+        if corrected.flowchart_data == prior.flowchart_data:
+            raise ReviewStateConflict("flowchart-correction-unchanged")
+        locator = await self._artifacts.write_normalized(revision_id, corrected)
+        invalidated = replace(
+            current,
+            status=ReviewStatus.NEEDS_REVIEW,
+            version=current.version + 1,
+            approved_item_ids=(),
+            blocking_item_ids=tuple(item.item_id for item in prior.parse_inventory),
+            reviewer_actor_id=None,
+            annotation_digest=correction_digest,
+            editor_actor_ids=tuple(sorted(set((*current.editor_actor_ids, actor_id)))),
+        )
+        await self._repository.save_flowchart_correction(
+            invalidated,
+            corrected,
+            locator,
+            expected_version=expected_version,
+            actor_id=actor_id,
+            occurred_at=now,
+        )
+        return revision_id
 
     async def resolve_open_review(self, *, document_id: str, source_revision_id: str) -> str:
         return await self._repository.resolve_open_review_target(
@@ -549,6 +734,33 @@ class KnowledgeReviewApplication:
             extracted = await self._extracted_preview(target)
         return ReviewItemComparisonRead(review_id, item_id, original, extracted)
 
+    async def read_original_image(self, review_id: str, item_id: str) -> tuple[bytes, str]:
+        review = await self._required_review(review_id)
+        target = await self._repository.comparison_target(review_id, item_id)
+        if (
+            target is None
+            or target.item_id != item_id
+            or target.source_revision_id not in review.source_revision_ids
+            or target.media_type not in {"image/png", "image/jpeg"}
+            or not target.original_alignment_valid
+            or self._artifacts is None
+        ):
+            raise ReviewNotFound("review-original-image-not-found")
+        try:
+            data = await self._artifacts.read_original(target.original_locator)
+        except ArtifactError:
+            raise ReviewNotFound("review-original-image-not-found") from None
+        expected_signature = (
+            b"\x89PNG\r\n\x1a\n" if target.media_type == "image/png" else b"\xff\xd8\xff"
+        )
+        if (
+            not data.startswith(expected_signature)
+            or len(data) > MAX_UPLOAD_BYTES
+            or canonical_sha256(data) != target.source_digest
+        ):
+            raise ReviewNotFound("review-original-image-not-found")
+        return data, target.media_type
+
     async def _original_preview(self, target: ReviewComparisonTarget) -> ReviewPreview:
         if not target.original_alignment_valid:
             return ReviewPreview("unavailable", reason="item-alignment-invalid")
@@ -616,6 +828,19 @@ class KnowledgeReviewApplication:
         decisions = {
             item.item_id: item for item in await self._repository.list_decisions(review_id)
         }
+        inventory = await self._repository.list_inventory(review_id)
+        unresolved = {
+            item.item_id
+            for item in inventory
+            if item.status == "needs_review" and item.item_id not in decisions
+        }
+        selected = next((item for item in inventory if item.item_id == item_id), None)
+        if (
+            selected is not None
+            and selected.reason == "uncertain-connection"
+            and status is ReviewDecisionStatus.ACCEPTED
+        ):
+            raise ReviewStateConflict("uncertain-connection-requires-correction")
         next_version = current.version + 1
         decision = KnowledgeReviewItemDecision(
             review_id=review_id,
@@ -628,11 +853,15 @@ class KnowledgeReviewApplication:
             decided_at=now,
         )
         decisions[item_id] = decision
+        unresolved.discard(item_id)
         blocking = tuple(
             sorted(
-                item.item_id
-                for item in decisions.values()
-                if item.status is ReviewDecisionStatus.BLOCKED
+                unresolved
+                | {
+                    item.item_id
+                    for item in decisions.values()
+                    if item.status is ReviewDecisionStatus.BLOCKED
+                }
             )
         )
         approved = tuple(
@@ -689,6 +918,14 @@ class KnowledgeReviewApplication:
         if current.blocking_item_ids:
             raise ReviewStateConflict("review-has-blockers")
         if not current.approved_item_ids:
+            raise ReviewStateConflict("review-has-no-approved-items")
+        inventory = await self._repository.list_inventory(review_id)
+        visual_items = {
+            item.item_id
+            for item in inventory
+            if item.kind in {ParseInventoryKind.FLOW_NODE.value, ParseInventoryKind.FLOW_EDGE.value}
+        }
+        if visual_items and not visual_items.intersection(current.approved_item_ids):
             raise ReviewStateConflict("review-has-no-approved-items")
         await self._require_review_authority(current)
         if current.expires_at <= now:

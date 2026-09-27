@@ -78,7 +78,10 @@ describe("KnowledgeLibrary", () => {
     await user.click(await screen.findByRole("button", { name: "添加来源" }));
     const input = screen.getByLabelText("选择文档");
 
-    expect(input).toHaveAttribute("accept", ".pdf,.docx,.md,.markdown,.txt");
+    expect(input).toHaveAttribute(
+      "accept",
+      ".pdf,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg",
+    );
     await user.upload(
       input,
       new File(["csv"], "records.csv", { type: "text/csv" }),
@@ -86,7 +89,7 @@ describe("KnowledgeLibrary", () => {
     await waitFor(() =>
       expect(
         within(screen.getByRole("dialog", { name: "添加来源" })).getByText(
-          "支持 PDF、DOCX、Markdown 和 TXT 文件。",
+          "支持 PDF、DOCX、Markdown、TXT、PNG 和 JPEG 文件。",
         ),
       ).toBeVisible(),
     );
@@ -114,6 +117,8 @@ describe("KnowledgeLibrary", () => {
     ],
     ["guide.markdown", "text/markdown"],
     ["guide.txt", "text/plain"],
+    ["flow.png", "image/png"],
+    ["flow.jpg", "image/jpeg"],
   ])("accepts and uploads supported file %s", async (name, mediaType) => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient();

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -49,6 +49,8 @@ class ModelRequest:
     tool_allowlist: frozenset[str] = frozenset()
     governance_digests: tuple[str, ...] = ()
     allow_retries: bool = True
+    image_bytes: bytes | None = field(default=None, repr=False)
+    image_media_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -113,6 +115,7 @@ class ModelCallAudit:
     usage: ModelUsage
     tool_allowlist: frozenset[str] = frozenset()
     governance_digests: tuple[str, ...] = ()
+    image_digest: str | None = None
 
 
 class ModelGatewayRejected(ValueError):

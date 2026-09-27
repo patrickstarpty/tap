@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
@@ -45,6 +46,8 @@ class MediaType(str, Enum):
     DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     MARKDOWN = "text/markdown"
     TEXT = "text/plain"
+    PNG = "image/png"
+    JPEG = "image/jpeg"
 
 
 class BlockKind(str, Enum):
@@ -110,6 +113,7 @@ class NormalizedBlock:
     start_offset: int
     end_offset: int
     inventory_item_id: str | None = None
+    bbox: tuple[int, int, int, int] | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -147,6 +151,37 @@ class NormalizedBlock:
             not isinstance(self.inventory_item_id, str) or not self.inventory_item_id.strip()
         ):
             raise ValueError("normalized block inventory identity must be nonblank")
+        if self.bbox is not None and (
+            not isinstance(self.bbox, tuple)
+            or len(self.bbox) != 4
+            or any(type(value) is not int or value < 0 for value in self.bbox)
+            or self.bbox[0] >= self.bbox[2]
+            or self.bbox[1] >= self.bbox[3]
+        ):
+            raise ValueError("normalized block image bounds are invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class VisionImageInput:
+    """Metadata-free pixels prepared inside the isolated parser."""
+
+    content: bytes
+    media_type: MediaType
+    original_size: tuple[int, int]
+    sent_size: tuple[int, int]
+
+    def __post_init__(self) -> None:
+        if (
+            self.media_type not in {MediaType.PNG, MediaType.JPEG}
+            or not self.content
+            or len(self.content) > 4 * 1024 * 1024
+            or any(
+                len(size) != 2
+                or any(type(value) is not int or not 1 <= value <= 8192 for value in size)
+                for size in (self.original_size, self.sent_size)
+            )
+        ):
+            raise ValueError("invalid isolated vision input")
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +198,10 @@ class NormalizedArtifact:
     parse_inventory: tuple[ParseInventoryItem, ...] = ()
     parser_config_digest: str | None = None
     parse_inventory_digest: str | None = None
+    vision_input: VisionImageInput | None = None
+    flowchart_data: str | None = None
+    parser_version: str = PARSER_VERSION
+    correction_source_revision_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.filename, str) or not self.filename:
@@ -176,6 +215,57 @@ class NormalizedArtifact:
             isinstance(block, NormalizedBlock) for block in self.blocks
         ):
             raise TypeError("normalized artifact blocks must be immutable normalized blocks")
+        if self.vision_input is not None and (
+            self.media_type not in {MediaType.PNG, MediaType.JPEG}
+            or not isinstance(self.vision_input, VisionImageInput)
+        ):
+            raise ValueError("vision input requires a raster image")
+        if self.flowchart_data is not None:
+            try:
+                graph = json.loads(self.flowchart_data)
+                if (
+                    self.media_type not in {MediaType.PNG, MediaType.JPEG}
+                    or not isinstance(graph, dict)
+                    or set(graph) != {"nodes", "edges"}
+                    or len(self.flowchart_data) > 100_000
+                    or json.dumps(graph, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    != self.flowchart_data
+                ):
+                    raise ValueError("invalid flowchart graph")
+            except (TypeError, ValueError) as error:
+                raise ValueError("invalid flowchart graph") from error
+        if self.parser_version == PARSER_VERSION:
+            if self.correction_source_revision_id is not None:
+                raise ValueError("parser output cannot claim correction provenance")
+        else:
+            if (
+                not isinstance(self.parser_version, str)
+                or re.fullmatch(r"human-correction-[0-9a-f]{64}", self.parser_version) is None
+                or not isinstance(self.correction_source_revision_id, str)
+                or not self.correction_source_revision_id
+                or len(self.correction_source_revision_id) > 256
+                or self.flowchart_data is None
+                or self.document_id is None
+                or self.revision_id is None
+            ):
+                raise ValueError("invalid correction provenance")
+            digest = canonical_sha256(
+                json.dumps(
+                    {
+                        "sourceRevisionId": self.correction_source_revision_id,
+                        "graph": json.loads(self.flowchart_data),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            )
+            if (
+                self.parser_version != "human-correction-" + digest[7:]
+                or revision_id_for(self.document_id, self.source_hash, self.parser_version)
+                != self.revision_id
+            ):
+                raise ValueError("correction graph does not match revision provenance")
         if (self.document_id is None) != (self.revision_id is None):
             raise ValueError("normalized artifact source identity must be complete")
         if self.parse_inventory:
@@ -220,7 +310,7 @@ class NormalizedArtifact:
                     item.status is not ParseInventoryStatus.PARSED
                     and not (
                         item.status is ParseInventoryStatus.NEEDS_REVIEW
-                        and item.reason == "historical-unreviewed"
+                        and item.reason in {"historical-unreviewed", "visual-confirmation-required"}
                     )
                 ):
                     raise ValueError("normalized block must bind to one parsed inventory item")
@@ -238,6 +328,7 @@ class ChunkDraft:
     anchor_json: str
     source_content_hash: str
     chunk_content_hash: str
+    parser_version: str = PARSER_VERSION
 
 
 def canonical_sha256(data: bytes | Iterable[bytes]) -> str:
@@ -317,13 +408,15 @@ def chunk_id_for(revision_id: RevisionId, anchor_json: str, chunk_hash: str) -> 
 
 
 def validate_filename_media_type(filename: str, media_type: MediaType) -> None:
-    """Keep parser invocation bound to exactly the four public upload media types."""
+    """Keep parser invocation bound to supported extension/media pairs."""
     extension = splitext(filename)[1].lower()
     expected = {
         MediaType.PDF: {".pdf"},
         MediaType.DOCX: {".docx"},
         MediaType.MARKDOWN: {".md", ".markdown"},
         MediaType.TEXT: {".txt"},
+        MediaType.PNG: {".png"},
+        MediaType.JPEG: {".jpg", ".jpeg"},
     }[media_type]
     if extension not in expected:
         raise DocumentParseRejected("unsupported-document")

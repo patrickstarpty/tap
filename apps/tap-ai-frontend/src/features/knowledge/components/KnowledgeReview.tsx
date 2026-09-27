@@ -16,10 +16,13 @@ import { KnowledgeClientError } from "../api/client";
 import { knowledgeKeys, useKnowledgeClient } from "../api/queries";
 import type {
   KnowledgePublicationDetail,
+  KnowledgeFlowchart,
   KnowledgeReviewDecisionRequest,
   KnowledgeReviewDetail,
   KnowledgeReviewItemComparison,
 } from "../api/types";
+
+import { FlowchartEditor } from "./FlowchartEditor";
 
 const REVIEW_STATUS: Record<KnowledgeReviewDetail["status"], string> = {
   draft: "草稿",
@@ -54,6 +57,8 @@ function errorMessage(error: unknown): string {
   if (error instanceof KnowledgeClientError) {
     if (error.status === 403)
       return "当前账号无权执行此操作，请刷新权限后重试。";
+    if (error.status === 422)
+      return "输入内容无效，请检查名称、原图坐标和连线端点后重试。";
     if (error.status === 409)
       return "审核版本已变化，已重新加载最新记录。请核对后再提交。";
     if (error.code === "knowledge-projection-not-ready")
@@ -100,6 +105,8 @@ export function KnowledgeReview({
   const [decisionStatus, setDecisionStatus] =
     useState<KnowledgeReviewDecisionRequest["status"]>("accepted");
   const [note, setNote] = useState("");
+  const [flowchart, setFlowchart] = useState<KnowledgeFlowchart | null>(null);
+  const [correctionSaved, setCorrectionSaved] = useState(false);
   const [inventory, setInventory] = useState<
     KnowledgeReviewDetail["inventory"] | null
   >(null);
@@ -125,6 +132,9 @@ export function KnowledgeReview({
   const currentScope = useRef(scope);
   currentScope.current = scope;
   const comparisonHeading = useRef<HTMLElement | null>(null);
+  const selectedInventoryItem = inventory?.items.find(
+    (item) => item.itemId === selectedItemId,
+  );
 
   const intentFor = (
     action: "publish" | "withdraw",
@@ -180,6 +190,8 @@ export function KnowledgeReview({
     setSelectedId(null);
     setSelectedItemId(null);
     setComparison(null);
+    setFlowchart(null);
+    setCorrectionSaved(false);
     setNote("");
     setCheckKind("scope");
     setDecisionStatus("accepted");
@@ -277,6 +289,8 @@ export function KnowledgeReview({
   }, [selectedItemId]);
 
   useEffect(() => {
+    setFlowchart(null);
+    setCorrectionSaved(false);
     if (selectedId === null) return;
     let active = true;
     void reload(selectedId)
@@ -332,6 +346,33 @@ export function KnowledgeReview({
     }
   };
 
+  const editFlowchart = async () => {
+    if (!review || pending) return;
+    const reviewId = review.reviewId;
+    setPending(true);
+    setError(null);
+    try {
+      const graph = await client.getReviewFlowchart(reviewId);
+      if (selectedReview.current === reviewId) setFlowchart(graph);
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const saveFlowchart = async (graph: KnowledgeFlowchart) => {
+    const saved = await execute((value) =>
+      client.correctReviewFlowchart(value.reviewId, value.version, graph),
+    );
+    if (saved) {
+      setFlowchart(null);
+      setCorrectionSaved(true);
+      await queryClient.invalidateQueries({ queryKey: knowledgeKeys.all });
+      onPublicationChange?.();
+    }
+  };
+
   const openItem = async (itemId: string, trigger: HTMLElement) => {
     if (!review) return;
     const request = ++comparisonRequest.current;
@@ -340,7 +381,12 @@ export function KnowledgeReview({
     if (selectedItemId !== itemId) {
       setNote("");
       setCheckKind("scope");
-      setDecisionStatus("accepted");
+      setDecisionStatus(
+        inventory?.items.find((item) => item.itemId === itemId)?.reason ===
+          "uncertain-connection"
+          ? "excluded"
+          : "accepted",
+      );
     }
     setSelectedItemId(itemId);
     setComparison(null);
@@ -630,7 +676,21 @@ export function KnowledgeReview({
                   <article>
                     <h4>原件位置</h4>
                     {review.allowedActions.includes("read_original") ? (
-                      <Preview value={comparison.original} />
+                      selectedInventoryItem &&
+                      ["image", "flow_node", "flow_edge"].includes(
+                        selectedInventoryItem.kind,
+                      ) ? (
+                        <img
+                          alt="待核对的流程图原图"
+                          src={client.originalImageUrl(
+                            review.reviewId,
+                            selectedInventoryItem.itemId,
+                          )}
+                          style={{ maxWidth: "100%", maxHeight: 480 }}
+                        />
+                      ) : (
+                        <Preview value={comparison.original} />
+                      )
                     ) : (
                       <p role="status">当前账号无权查看原件。</p>
                     )}
@@ -641,8 +701,42 @@ export function KnowledgeReview({
                   </article>
                 </div>
               )}
+              {correctionSaved ? (
+                <Alert
+                  type="success"
+                  title="更正已保存，正在重新索引。完成后请打开新版本审核。"
+                />
+              ) : null}
+              {review.allowedActions.includes("edit") &&
+              review.allowedActions.includes("read_original") &&
+              selectedInventoryItem &&
+              ["image", "flow_node", "flow_edge"].includes(
+                selectedInventoryItem.kind,
+              ) ? (
+                flowchart ? (
+                  <FlowchartEditor
+                    key={review.reviewId}
+                    graph={flowchart}
+                    pending={pending}
+                    onSave={saveFlowchart}
+                    onCancel={() => setFlowchart(null)}
+                  />
+                ) : (
+                  <Button
+                    disabled={writeLocked || pending}
+                    onClick={() => void editFlowchart()}
+                  >
+                    编辑流程图
+                  </Button>
+                )
+              ) : null}
               {review.allowedActions.includes("edit") ? (
                 <div className="tapper-review-decision">
+                  {selectedInventoryItem?.reason === "uncertain-connection" ? (
+                    <p role="status">
+                      这条连线的方向或端点尚未确认，请编辑流程图更正，或排除此项。
+                    </p>
+                  ) : null}
                   <Select
                     aria-label="核对字段"
                     value={checkKind}
@@ -655,9 +749,13 @@ export function KnowledgeReview({
                     aria-label="核对结果"
                     value={decisionStatus}
                     onChange={setDecisionStatus}
-                    options={Object.entries(DECISION_STATUS).map(
-                      ([value, label]) => ({ value, label }),
-                    )}
+                    options={Object.entries(DECISION_STATUS)
+                      .filter(
+                        ([value]) =>
+                          selectedInventoryItem?.reason !==
+                            "uncertain-connection" || value !== "accepted",
+                      )
+                      .map(([value, label]) => ({ value, label }))}
                   />
                   <Input.TextArea
                     aria-label="核对说明"

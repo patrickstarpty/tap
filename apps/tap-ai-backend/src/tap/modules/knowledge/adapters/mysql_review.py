@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from typing import Literal, cast
 
@@ -32,6 +32,7 @@ from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document,
     knowledge_document_revision,
+    knowledge_ingestion_job,
     knowledge_parse_inventory,
     knowledge_source,
 )
@@ -50,7 +51,9 @@ from tap.modules.knowledge.application.review import (
     ReviewNotFound,
     ReviewPublicationPageRead,
     ReviewStateConflict,
+    initial_review_items,
 )
+from tap.modules.knowledge.domain.documents import NormalizedArtifact
 from tap.modules.knowledge.domain.parse_inventory import (
     OriginalExcerptRange,
     ParseInventoryItem,
@@ -71,10 +74,20 @@ from tap.modules.knowledge.domain.review import (
     review_dependency_digest,
     review_id_for,
 )
-from tap.modules.knowledge.ports.documents import ArtifactLocator
+from tap.modules.knowledge.ports.documents import (
+    ArtifactLocator,
+    JobStage,
+    StageState,
+    initial_stage_results,
+    serialize_stage_results,
+)
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
-from tap.platform.db.schema import augment_project_table, metadata
-from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
+from tap.platform.db.schema import augment_project_table, metadata, outbox
+from tap.platform.messaging.mysql_outbox import (
+    compatibility_outbox_values,
+    scoped_outbox_id,
+    write_project_event,
+)
 
 knowledge_review_revision = Table(
     "knowledge_review_revision",
@@ -534,9 +547,29 @@ class MysqlKnowledgeReviewRepository:
                 raise ReviewStateConflict("review-inventory-invalid") from error
             if inventory_digest != authority["parse_inventory_digest"]:
                 raise ReviewStateConflict("review-inventory-changed")
-            if any(item.status is not ParseInventoryStatus.PARSED for item in inventory):
-                raise ReviewStateConflict("review-inventory-incomplete")
+            approved_item_ids, blocking_item_ids = initial_review_items(inventory)
 
+            correction_editor_groups = (
+                (
+                    await session.execute(
+                        select(knowledge_review_revision.c.editor_actor_ids)
+                        .join(
+                            knowledge_review_history,
+                            knowledge_review_history.c.review_id
+                            == knowledge_review_revision.c.review_id,
+                        )
+                        .where(
+                            *scope_predicates(knowledge_review_history, self._scope),
+                            *scope_predicates(knowledge_review_revision, self._scope),
+                            knowledge_review_history.c.action == "flowchart_corrected",
+                            knowledge_review_history.c.item_id == source_revision_id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            correction_editors = {editor for group in correction_editor_groups for editor in group}
             revision = KnowledgeReviewRevision(
                 review_id=review_id_for(self._scope.project_id, (source_revision_id,)),
                 project_id=self._scope.project_id,
@@ -554,13 +587,13 @@ class MysqlKnowledgeReviewRepository:
                         ),
                     )
                 ),
-                editor_actor_ids=(actor_id,),
+                editor_actor_ids=tuple(sorted({actor_id, *correction_editors})),
                 reviewer_actor_id=None,
                 expires_at=expires_at,
                 status=ReviewStatus.CHECKING,
                 version=1,
-                blocking_item_ids=(),
-                approved_item_ids=tuple(sorted(item.item_id for item in inventory)),
+                blocking_item_ids=blocking_item_ids,
+                approved_item_ids=approved_item_ids,
             )
             await session.execute(
                 insert(knowledge_review_revision).values(
@@ -587,9 +620,9 @@ class MysqlKnowledgeReviewRepository:
             )
             return revision
 
-    async def _open_review_candidates(
+    async def _open_review_candidates(  # type: ignore[no-untyped-def]
         self, session: AsyncSession, *, source_revision_id: str, lock: bool
-    ):  # type: ignore[no-untyped-def]
+    ):
         statement = (
             select(knowledge_review_revision)
             .where(
@@ -1327,6 +1360,197 @@ class MysqlKnowledgeReviewRepository:
         inventory_rows = (await session.execute(inventory_statement)).mappings().all()
         return _review_authority_matches(revision, rows, inventory_rows)
 
+    async def save_flowchart_correction(
+        self,
+        revision: KnowledgeReviewRevision,
+        artifact: NormalizedArtifact,
+        locator: ArtifactLocator,
+        *,
+        expected_version: int,
+        actor_id: str,
+        occurred_at: datetime,
+    ) -> KnowledgeReviewRevision:
+        async with self._sessions() as session, session.begin():
+            await self._lock_project(session)
+            locked = await self._locked_review(session, revision.review_id)
+            if locked is None or locked.version != expected_version:
+                raise ReviewStateConflict("revision-conflict")
+            if locked.status not in {
+                ReviewStatus.DRAFT,
+                ReviewStatus.CHECKING,
+                ReviewStatus.REVIEWING,
+                ReviewStatus.APPROVED,
+            }:
+                raise ReviewStateConflict("flowchart-correction-not-editable")
+            if not await self._review_authority(session, locked, lock=True):
+                raise ReviewStateConflict("review-authority-changed")
+            if await session.scalar(
+                select(knowledge_publication.c.publication_id)
+                .where(
+                    *scope_predicates(knowledge_publication, self._scope),
+                    knowledge_publication.c.review_id == locked.review_id,
+                )
+                .limit(1)
+            ):
+                raise ReviewStateConflict("flowchart-correction-not-editable")
+            old = (
+                (
+                    await session.execute(
+                        select(knowledge_document_revision)
+                        .where(
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_document_revision.c.revision_id
+                            == locked.source_revision_ids[0],
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            new_id = str(artifact.revision_id)
+            if (
+                artifact.parser_version != "human-correction-" + revision.annotation_digest[7:]
+                or artifact.correction_source_revision_id != locked.source_revision_ids[0]
+            ):
+                raise ReviewStateConflict("invalid-flowchart-correction")
+            if (
+                artifact.source_hash != old["source_content_hash"]
+                or str(artifact.document_id) != old["document_id"]
+            ):
+                raise ReviewStateConflict("review-original-changed")
+            now = _naive_utc(occurred_at)
+            await session.execute(
+                insert(knowledge_document_revision).values(
+                    **scope_values(self._scope),
+                    revision_id=new_id,
+                    source_id=old["source_id"],
+                    document_id=old["document_id"],
+                    source_content_hash=old["source_content_hash"],
+                    original_blob_locator=old["original_blob_locator"],
+                    normalized_blob_locator=str(locator),
+                    parser_version=artifact.parser_version,
+                    chunker_version=old["chunker_version"],
+                    pipeline_version=old["pipeline_version"],
+                    parse_inventory_attempt=1,
+                    parser_config_digest=artifact.parser_config_digest,
+                    parse_inventory_digest=artifact.parse_inventory_digest,
+                    created_at=now,
+                )
+            )
+            assert artifact.parser_config_digest is not None
+            assert artifact.parse_inventory_digest is not None
+            await session.execute(
+                insert(knowledge_parse_inventory),
+                [
+                    {
+                        **scope_values(self._scope),
+                        "inventory_row_id": "pir_"
+                        + hashlib.sha256(f"{new_id}:1:{item.item_id}".encode()).hexdigest(),
+                        "source_revision_id": new_id,
+                        "attempt": 1,
+                        "item_id": item.item_id,
+                        "ordinal": ordinal,
+                        "item_kind": item.kind.value,
+                        "locator": item.locator,
+                        "status": item.status.value,
+                        "reason": item.reason,
+                        "artifact_digest": item.artifact_digest,
+                        "decision_actor_id": item.decision_actor_id,
+                        "original_alignment_reason": item.original_alignment_reason,
+                        "original_alignment_binding_digest": original_alignment_binding_digest(
+                            item,
+                            attempt=1,
+                            parser_digest=artifact.parser_config_digest,
+                            inventory_digest=artifact.parse_inventory_digest,
+                        ),
+                        "created_at": now,
+                    }
+                    for ordinal, item in enumerate(artifact.parse_inventory)
+                ],
+            )
+            results = tuple(
+                replace(item, state=StageState.COMPLETED, completed_at=now)
+                if item.stage is JobStage.PARSING
+                else item
+                for item in initial_stage_results(now)
+            )
+            job_id = "job_fc_" + new_id[7:55]
+            await session.execute(
+                insert(knowledge_ingestion_job).values(
+                    **scope_values(self._scope),
+                    job_id=job_id,
+                    revision_id=new_id,
+                    kind="ingestion",
+                    attempt=1,
+                    status="pending",
+                    stage="chunking",
+                    stage_results_json=serialize_stage_results(results),
+                    next_attempt_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            updated = await session.execute(
+                update(knowledge_document)
+                .where(
+                    *scope_predicates(knowledge_document, self._scope),
+                    knowledge_document.c.document_id == old["document_id"],
+                    knowledge_document.c.current_revision_id == old["revision_id"],
+                    knowledge_document.c.deleted_at.is_(None),
+                )
+                .values(
+                    current_revision_id=new_id,
+                    status="processing",
+                    stage="chunking",
+                    chunk_count=0,
+                    error_code=None,
+                    error_summary=None,
+                    updated_at=now,
+                )
+            )
+            if updated.rowcount != 1:
+                raise ReviewStateConflict("review-authority-changed")
+            await session.execute(
+                update(knowledge_review_revision)
+                .where(
+                    *scope_predicates(knowledge_review_revision, self._scope),
+                    knowledge_review_revision.c.review_id == revision.review_id,
+                    knowledge_review_revision.c.version == expected_version,
+                )
+                .values(**_review_values(revision), updated_at=now)
+            )
+            await self._insert_history(
+                session,
+                review_id=revision.review_id,
+                review_version=revision.version,
+                action="flowchart_corrected",
+                actor_id=actor_id,
+                occurred_at=occurred_at,
+                item_id=new_id,
+            )
+            identity = f"knowledge-ingestion_requested:{job_id}:1"
+            await session.execute(
+                insert(outbox).values(
+                    **compatibility_outbox_values(
+                        self._scope,
+                        outbox_id=scoped_outbox_id(
+                            self._scope, kind="knowledge", identity=identity
+                        ),
+                        command_id=identity,
+                        aggregate_type="knowledge_document",
+                        aggregate_id=old["document_id"],
+                        sequence=None,
+                        message_type="knowledge.ingestion_requested",
+                        created_at=now,
+                    ),
+                    status="pending",
+                    attempt_count=0,
+                    next_attempt_at=now,
+                )
+            )
+            return revision
+
     async def save_review(
         self,
         revision: KnowledgeReviewRevision,
@@ -2020,7 +2244,9 @@ class MysqlKnowledgeReviewRepository:
                             knowledge_parse_inventory.c.source_revision_id,
                             knowledge_parse_inventory.c.attempt,
                             knowledge_parse_inventory.c.item_id,
+                            knowledge_parse_inventory.c.item_kind,
                             knowledge_parse_inventory.c.status,
+                            knowledge_parse_inventory.c.reason,
                         )
                         .select_from(
                             knowledge_parse_inventory.join(
@@ -2048,15 +2274,46 @@ class MysqlKnowledgeReviewRepository:
                 .mappings()
                 .all()
             )
+            decision_rows = (
+                (
+                    await session.execute(
+                        select(
+                            knowledge_review_item_decision.c.item_id,
+                            knowledge_review_item_decision.c.status,
+                            knowledge_review_item_decision.c.review_version,
+                        )
+                        .where(
+                            *scope_predicates(knowledge_review_item_decision, self._scope),
+                            knowledge_review_item_decision.c.review_id == publication.review_id,
+                        )
+                        .order_by(knowledge_review_item_decision.c.review_version)
+                        .limit(501)
+                    )
+                )
+                .mappings()
+                .all()
+            )
         approved = set(publication.approved_item_ids)
         if {row["revision_id"] for row in revision_rows} != set(publication.source_revision_ids):
             return ()
-        if len(inventory_rows) > 500:
+        if len(inventory_rows) > 500 or len(decision_rows) > 500:
             return ()
         latest_inventory = tuple(inventory_rows)
-        publishable_ids = {
-            item["item_id"] for item in latest_inventory if item["status"] == "parsed"
-        }
+        decisions = {item["item_id"]: item["status"] for item in decision_rows}
+        publishable_ids = set()
+        for item in latest_inventory:
+            item_id = item["item_id"]
+            if item["status"] == "parsed":
+                publishable_ids.add(item_id)
+            elif (
+                item["status"] == "needs_review"
+                and item["item_kind"] in {"image", "flow_node", "flow_edge"}
+                and item["reason"] in {"visual-analysis-required", "visual-confirmation-required"}
+                and decisions.get(item_id) == "accepted"
+            ):
+                publishable_ids.add(item_id)
+            elif item["status"] == "needs_review" and decisions.get(item_id) != "excluded":
+                return ()
         if not approved or not approved <= publishable_ids:
             return ()
         records = tuple(
@@ -2069,7 +2326,7 @@ class MysqlKnowledgeReviewRepository:
                 publication_id=publication.publication_id,
                 expires_at=publication.expires_at,
                 approved_item_count=sum(
-                    item["item_id"] in approved
+                    item["item_id"] in approved and item["item_kind"] != "image"
                     for item in latest_inventory
                     if item["source_revision_id"] == row["revision_id"]
                 ),
@@ -2590,10 +2847,10 @@ class MysqlKnowledgeReviewRepository:
         )
 
 
-def _review_authority_matches(
+def _review_authority_matches(  # type: ignore[no-untyped-def]
     revision: KnowledgeReviewRevision,
-    revision_rows,  # type: ignore[no-untyped-def]
-    inventory_rows,  # type: ignore[no-untyped-def]
+    revision_rows,
+    inventory_rows,
 ) -> bool:
     if len(revision_rows) != len(revision.source_revision_ids) or len(inventory_rows) > 500:
         return False

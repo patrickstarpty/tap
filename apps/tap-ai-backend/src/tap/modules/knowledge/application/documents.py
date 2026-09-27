@@ -54,6 +54,8 @@ PublicMediaType = Literal[
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "text/markdown",
     "text/plain",
+    "image/png",
+    "image/jpeg",
 ]
 _T = TypeVar("_T")
 UPLOAD_CLEANUP_SETTLEMENT_TIMEOUT_SECONDS = 2.0

@@ -271,6 +271,8 @@ def _document_anchor_json(anchor: DocumentAnchor) -> str:
         value["page"] = anchor.page
     if anchor.inventory_item_id is not None:
         value["inventoryItemId"] = anchor.inventory_item_id
+    if anchor.bbox:
+        value["bbox"] = list(anchor.bbox)
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 

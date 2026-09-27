@@ -68,6 +68,29 @@
   background: #fff0d1;
   line-height: 2;
 }
+.tap-document-flowchart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  color: var(--tap-ink);
+}
+.tap-document-flowchart rect {
+  fill: var(--tap-canvas);
+  stroke: var(--tap-line);
+  stroke-width: 2;
+}
+.tap-document-flowchart path {
+  fill: none;
+  stroke: var(--tap-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tap-document-flowchart text {
+  fill: currentColor;
+  font-size: 14px;
+  font-weight: 600;
+}
 .tap-document-checks {
   display: grid;
   gap: 20px;
@@ -131,4 +154,34 @@
   .tap-document-recovery {
     flex-direction: column;
   }
+}
+
+.tap-flow-correction {
+  display: grid;
+  gap: 12px;
+}
+.tap-flow-correction label {
+  display: grid;
+  gap: 6px;
+}
+.tap-flow-correction input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--tap-line);
+  border-radius: 6px;
+  background: var(--tap-canvas);
+  color: var(--tap-ink);
+  font: inherit;
+}
+.tap-flow-correction input:focus-visible {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 2px;
+}
+.tap-flow-correction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
 }

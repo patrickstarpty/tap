@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import math
 import re
@@ -67,6 +69,7 @@ class ChatModelRoute:
     alias: str
     display_name: str
     target: ProviderModelMapping = field(repr=False)
+    image_input: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -75,6 +78,7 @@ class ChatModelRoute:
             or not self.display_name.strip()
             or len(self.display_name) > 128
             or not isinstance(self.target, ProviderModelMapping)
+            or type(self.image_input) is not bool
         ):
             raise ValueError("chat model route must be a bounded approved mapping")
 
@@ -173,6 +177,7 @@ class LiteLLMModelGateway:
                 frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
             )
             for item in self._chat_routes()
+            if not item.image_input
         ) + (
             ModelDescriptor(
                 self._config.embedding_alias,
@@ -227,8 +232,24 @@ class LiteLLMModelGateway:
             or (operation is ModelOperation.EMBED and request.alias != alias)
             or (operation is not ModelOperation.EMBED and chat_route is None)
             or alias in self._config.disabled_aliases
+            or (chat_route is not None and chat_route.image_input and request.image_bytes is None)
         ):
             raise ModelGatewayRejected()
+        if request.image_bytes is not None or request.image_media_type is not None:
+            image = request.image_bytes
+            media_type = request.image_media_type
+            if (
+                operation is not ModelOperation.STRUCTURED
+                or chat_route is None
+                or not chat_route.image_input
+                or type(image) is not bytes
+                or not 0 < len(image) <= 4 * 1024 * 1024
+                or media_type not in {"image/png", "image/jpeg"}
+                or not image.startswith(
+                    b"\x89PNG\r\n\x1a\n" if media_type == "image/png" else b"\xff\xd8\xff"
+                )
+            ):
+                raise ModelGatewayRejected()
         if (
             type(request.timeout_seconds) not in {float, int}
             or not math.isfinite(request.timeout_seconds)
@@ -302,6 +323,11 @@ class LiteLLMModelGateway:
                         "idempotency_key": request.idempotency_key,
                         "tool_allowlist": sorted(request.tool_allowlist),
                         "governance_digests": list(request.governance_digests),
+                        "image_digest": (
+                            None
+                            if request.image_bytes is None
+                            else "sha256:" + hashlib.sha256(request.image_bytes).hexdigest()
+                        ),
                     },
                 }
                 if operation is ModelOperation.EMBED:
@@ -311,23 +337,50 @@ class LiteLLMModelGateway:
                         encoding_format="float",
                     )
                 else:
+                    user_content: str | list[dict[str, Any]] = request.context
+                    if request.image_bytes is not None:
+                        user_content = [
+                            {"type": "text", "text": request.context},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "data:"
+                                    + str(request.image_media_type)
+                                    + ";base64,"
+                                    + base64.b64encode(request.image_bytes).decode("ascii")
+                                },
+                            },
+                        ]
+                    system_prompt = request.prompt
+                    if request.image_bytes is not None:
+                        # JSON-object mode guarantees JSON, not the caller's schema.
+                        # Send the validated snapshot explicitly for vision providers.
+                        system_prompt += (
+                            "\nReturn one JSON object conforming exactly to this JSON schema; "
+                            "include all required fields and no additional fields:\n"
+                            + json.dumps(request.schema, sort_keys=True, separators=(",", ":"))
+                        )
                     payload.update(
                         messages=[
-                            {"role": "system", "content": request.prompt},
-                            {"role": "user", "content": request.context},
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_content},
                         ],
-                        max_tokens=2048,
+                        max_tokens=8192 if request.image_bytes is not None else 2048,
                     )
                     if operation is ModelOperation.STRUCTURED:
                         payload["temperature"] = 0
-                        payload["response_format"] = {
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": "governed_output",
-                                "schema": request.schema,
-                                "strict": True,
-                            },
-                        }
+                        payload["response_format"] = (
+                            {"type": "json_object"}
+                            if request.image_bytes is not None
+                            else {
+                                "type": "json_schema",
+                                "json_schema": {
+                                    "name": "governed_output",
+                                    "schema": request.schema,
+                                    "strict": True,
+                                },
+                            }
+                        )
                 body, headers = await self._post(request, payload)
                 return self._normalize(request, body, headers)
         except ModelGatewayRejected:
@@ -355,7 +408,7 @@ class LiteLLMModelGateway:
         encoded = json.dumps(
             payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
         ).encode()
-        if len(encoded) > 262144:
+        if len(encoded) > (6 * 1024 * 1024 if request.image_bytes is not None else 262144):
             raise ModelGatewayRejected()
         path = (
             "v1/embeddings" if request.operation is ModelOperation.EMBED else "v1/chat/completions"
@@ -482,6 +535,11 @@ class LiteLLMModelGateway:
             normalized_usage,
             tool_allowlist=request.tool_allowlist,
             governance_digests=request.governance_digests,
+            image_digest=(
+                None
+                if request.image_bytes is None
+                else "sha256:" + hashlib.sha256(request.image_bytes).hexdigest()
+            ),
         )
 
         def safe_header(name: str) -> str | None:

@@ -48,8 +48,18 @@ export interface ListDocumentsInput {
   signal?: AbortSignal;
 }
 
+export type KnowledgeFlowchart = components["schemas"]["KnowledgeFlowchart"];
+export type KnowledgeFlowchartCorrection =
+  components["schemas"]["KnowledgeFlowchartCorrection"];
+
 export interface KnowledgeClient {
   readonly projectId: string;
+  getReviewFlowchart(reviewId: string): Promise<KnowledgeFlowchart>;
+  correctReviewFlowchart(
+    reviewId: string,
+    version: number,
+    graph: KnowledgeFlowchart,
+  ): Promise<KnowledgeFlowchartCorrection>;
   listReviews(input: {
     sourceRevisionId?: string;
     afterReviewId?: string;
@@ -85,6 +95,7 @@ export interface KnowledgeClient {
     reviewId: string,
     itemId: string,
   ): Promise<KnowledgeReviewItemComparison>;
+  originalImageUrl(reviewId: string, itemId: string): string;
   decideReviewItem(
     reviewId: string,
     itemId: string,

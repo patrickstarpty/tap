@@ -15,7 +15,16 @@ import type { DocumentAccepted } from "../api/types";
 import { COPY, safeProblemCopy } from "../copy";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
-const ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".md", ".markdown", ".txt"];
+const ACCEPTED_EXTENSIONS = [
+  ".pdf",
+  ".docx",
+  ".md",
+  ".markdown",
+  ".txt",
+  ".png",
+  ".jpg",
+  ".jpeg",
+];
 const ACCEPT_ATTRIBUTE = ACCEPTED_EXTENSIONS.join(",");
 
 function validationMessage(file: File): string | null {

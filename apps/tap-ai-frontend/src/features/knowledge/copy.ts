@@ -30,14 +30,14 @@ export const COPY = {
   uploadTitle: "添加来源",
   dropTitle: "拖放文档到这里",
   dropDescription: "或按 Enter 选择文件 · 单次添加一份文档",
-  acceptedFormats: "PDF、DOCX、Markdown 或 TXT · 最大 25 MiB",
+  acceptedFormats: "PDF、DOCX、Markdown、TXT、PNG 或 JPEG · 最大 25 MiB",
   chooseDocument: "选择文档",
   dropZoneLabel: "拖放或选择文档",
   selectedFile: "已选择",
   startUpload: "开始添加",
   cancel: "取消",
   uploadProgress: (percentage: number) => `上传 ${percentage}%`,
-  invalidFormat: "支持 PDF、DOCX、Markdown 和 TXT 文件。",
+  invalidFormat: "支持 PDF、DOCX、Markdown、TXT、PNG 和 JPEG 文件。",
   oversizedFile: "文件超过 25 MiB，请选择更小的文档。",
   duplicateReceipt: "这个内容已经在知识库中，已显示现有来源。",
   uploadAccepted: "来源已接收，后台处理会继续进行。",
@@ -81,6 +81,7 @@ export const COPY = {
   citationTitle: "原文",
   citationEmpty: "选择回答中的引用以核验原文。",
   citationEvidence: "原文依据",
+  citationImageEvidence: "经核对的流程图解析",
   citationOpen: "打开来源",
   citationLoading: "正在核验原文",
   closeCitation: "关闭原文",
@@ -94,12 +95,14 @@ export const COPY = {
   headingPath: "标题路径",
   page: "页码",
   offsets: "字符范围",
+  imageRegion: "图中区域（像素）",
 } as const;
 
 export const CITATION_EN = {
   citationTitle: "Source text",
   citationEmpty: "Select an answer citation to check the original text.",
   citationEvidence: "Cited source",
+  citationImageEvidence: "Reviewed flowchart extraction",
   citationOpen: "Open source",
   citationLoading: "Checking source text…",
   closeCitation: "Close source text",
@@ -116,6 +119,7 @@ export const CITATION_EN = {
   headingPath: "Heading path",
   page: "Page",
   offsets: "Character range",
+  imageRegion: "Image region (pixels)",
 } as const;
 
 export const STATUS_COPY: Readonly<Record<DocumentStatus, string>> = {
@@ -225,6 +229,8 @@ export function safeCitationProblem(
 }
 
 export function mediaTypeCopy(mediaType: string): string {
+  if (mediaType === "image/png") return "PNG";
+  if (mediaType === "image/jpeg") return "JPEG";
   if (mediaType === "application/pdf") return "PDF";
   if (
     mediaType ===

@@ -393,7 +393,7 @@ export function LibraryWorkspace({
               <input
                 type="file"
                 aria-label={copy.library.sourceFile}
-                accept=".pdf,.docx,.md,.txt"
+                accept=".pdf,.docx,.md,.txt,.png,.jpg,.jpeg"
                 onChange={(event) =>
                   setSelectedFile(event.target.files?.item(0) ?? null)
                 }

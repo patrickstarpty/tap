@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import gzip
 import io
 import json
@@ -21,6 +23,7 @@ from tap.modules.knowledge.domain.documents import (
     NormalizedArtifact,
     NormalizedBlock,
     RevisionId,
+    VisionImageInput,
     canonical_sha256,
     chunk_id_for,
     logical_chunk_id_for,
@@ -66,7 +69,7 @@ def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -
         not isinstance(artifact, NormalizedArtifact)
         or str(artifact.revision_id) != revision_id
         or artifact.document_id is None
-        or str(revision_id_for(artifact.document_id, artifact.source_hash, PARSER_VERSION))
+        or str(revision_id_for(artifact.document_id, artifact.source_hash, artifact.parser_version))
         != revision_id
     ):
         raise ArtifactIntegrityError("normalized artifact identity does not match revision")
@@ -85,6 +88,8 @@ def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -
         }
         if inventory_enabled:
             encoded_block["inventoryItemId"] = block.inventory_item_id
+            if block.bbox is not None:
+                encoded_block["bbox"] = list(block.bbox)
         blocks.append(encoded_block)
     payload: dict[str, object] = {
         "blocks": blocks,
@@ -124,6 +129,19 @@ def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -
                 "parserConfigDigest": artifact.parser_config_digest,
             }
         )
+    if artifact.vision_input is not None:
+        vision = artifact.vision_input
+        payload["visionInput"] = {
+            "content": base64.b64encode(vision.content).decode("ascii"),
+            "mediaType": vision.media_type.value,
+            "originalSize": list(vision.original_size),
+            "sentSize": list(vision.sent_size),
+        }
+    if artifact.flowchart_data is not None:
+        payload["flowchartData"] = artifact.flowchart_data
+    if artifact.parser_version != PARSER_VERSION:
+        payload["parserVersion"] = artifact.parser_version
+        payload["correctionSourceRevisionId"] = artifact.correction_source_revision_id
     payload_bytes = _canonical_line(payload)
     envelope = {
         "blockCount": len(artifact.blocks),
@@ -159,8 +177,7 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
         source_hash = _digest(envelope["sourceContentHash"])
         payload = _mapping(envelope["payload"])
         legacy = schema_version == _LEGACY_NORMALIZED_SCHEMA
-        _exact_keys(
-            payload,
+        payload_keys = (
             {"blocks", "documentId", "filename", "mediaType", "normalizedSchema"}
             if legacy
             else {
@@ -172,7 +189,17 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
                 "parseInventory",
                 "parseInventoryDigest",
                 "parserConfigDigest",
-            },
+            }
+        )
+        if not legacy and "visionInput" in payload:
+            payload_keys.add("visionInput")
+        if not legacy and "flowchartData" in payload:
+            payload_keys.add("flowchartData")
+        if not legacy and ("parserVersion" in payload or "correctionSourceRevisionId" in payload):
+            payload_keys.update({"parserVersion", "correctionSourceRevisionId"})
+        _exact_keys(
+            payload,
+            payload_keys,
         )
         if canonical_sha256(_canonical_line(payload)) != _digest(envelope["payloadSha256"]):
             raise ValueError
@@ -192,7 +219,10 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
                 "startOffset",
                 "text",
             }
-            _exact_keys(block, block_keys if legacy else block_keys | {"inventoryItemId"})
+            allowed_keys = block_keys if legacy else block_keys | {"inventoryItemId"}
+            if not legacy and "bbox" in block:
+                allowed_keys = allowed_keys | {"bbox"}
+            _exact_keys(block, allowed_keys)
             heading = _sequence(block["headingPath"], maximum=32, allow_empty=True)
             blocks.append(
                 NormalizedBlock(
@@ -207,10 +237,22 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
                     inventory_item_id=None
                     if legacy
                     else _optional_text(block["inventoryItemId"], maximum=128),
+                    bbox=(
+                        None
+                        if "bbox" not in block
+                        else cast(
+                            tuple[int, int, int, int],
+                            tuple(
+                                _integer(value, minimum=0)
+                                for value in _sequence(block["bbox"], maximum=4)
+                            ),
+                        )
+                    ),
                 )
             )
         document_id = DocumentId(_text(payload["documentId"], maximum=256))
-        if str(revision_id_for(document_id, source_hash, PARSER_VERSION)) != expected_revision:
+        parser_version = _parser_version(payload.get("parserVersion", PARSER_VERSION))
+        if str(revision_id_for(document_id, source_hash, parser_version)) != expected_revision:
             raise ValueError
         if legacy:
             inventory = historical_unreviewed_inventory(expected_revision, source_hash)
@@ -235,6 +277,31 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
             inventory = tuple(_inventory_item(raw) for raw in raw_inventory)
             config_digest = _digest(payload["parserConfigDigest"])
             inventory_artifact_digest = _digest(payload["parseInventoryDigest"])
+        vision_input = None
+        if "visionInput" in payload:
+            raw_vision = _mapping(payload["visionInput"])
+            _exact_keys(raw_vision, {"content", "mediaType", "originalSize", "sentSize"})
+            encoded = _text(raw_vision["content"], maximum=6_000_000)
+            image_bytes = base64.b64decode(encoded, validate=True)
+            if base64.b64encode(image_bytes).decode("ascii") != encoded:
+                raise ValueError
+            vision_input = VisionImageInput(
+                content=image_bytes,
+                media_type=MediaType(_text(raw_vision["mediaType"], maximum=32)),
+                original_size=cast(
+                    tuple[int, int],
+                    tuple(
+                        _integer(v, minimum=1)
+                        for v in _sequence(raw_vision["originalSize"], maximum=2)
+                    ),
+                ),
+                sent_size=cast(
+                    tuple[int, int],
+                    tuple(
+                        _integer(v, minimum=1) for v in _sequence(raw_vision["sentSize"], maximum=2)
+                    ),
+                ),
+            )
         return NormalizedArtifact(
             filename=_text(payload["filename"], maximum=1024),
             media_type=MediaType(_text(payload["mediaType"], maximum=128)),
@@ -246,8 +313,27 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
             parse_inventory=inventory,
             parser_config_digest=config_digest,
             parse_inventory_digest=inventory_artifact_digest,
+            vision_input=vision_input,
+            parser_version=parser_version,
+            correction_source_revision_id=(
+                None
+                if "correctionSourceRevisionId" not in payload
+                else _text(payload["correctionSourceRevisionId"], maximum=256)
+            ),
+            flowchart_data=(
+                None
+                if "flowchartData" not in payload
+                else _text(payload["flowchartData"], maximum=100_000)
+            ),
         )
-    except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as error:
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        UnicodeError,
+        json.JSONDecodeError,
+        binascii.Error,
+    ) as error:
         raise ArtifactIntegrityError("normalized artifact integrity check failed") from error
 
 
@@ -259,17 +345,19 @@ def encode_chunks_artifact(revision_id: str, chunks: tuple[ChunkDraft, ...]) -> 
         raise ArtifactIntegrityError("chunk artifact contains an invalid row")
     source_hashes = {chunk.source_content_hash for chunk in chunks}
     document_ids = {str(chunk.root_id) for chunk in chunks}
-    if len(source_hashes) != 1 or len(document_ids) != 1:
+    parser_versions = {chunk.parser_version for chunk in chunks}
+    if len(source_hashes) != 1 or len(document_ids) != 1 or len(parser_versions) != 1:
         raise ArtifactIntegrityError("chunk artifact source hash is not exact")
     source_hash = _digest(next(iter(source_hashes)))
     document_id = DocumentId(_text(next(iter(document_ids)), maximum=256))
-    if str(revision_id_for(document_id, source_hash, PARSER_VERSION)) != revision_id:
+    parser_version = _parser_version(next(iter(parser_versions)))
+    if str(revision_id_for(document_id, source_hash, parser_version)) != revision_id:
         raise ArtifactIntegrityError("chunk artifact revision provenance is inconsistent")
     payload = b"".join(_canonical_line(_chunk_payload(chunk, revision_id)) for chunk in chunks)
     header = {
         "documentId": str(document_id),
         "itemCount": len(chunks),
-        "parserVersion": PARSER_VERSION,
+        "parserVersion": parser_version,
         "payloadSha256": canonical_sha256(payload),
         "revisionId": revision_id,
         "schemaVersion": _CHUNKS_SCHEMA,
@@ -301,11 +389,8 @@ def decode_chunks_artifact(data: bytes, *, expected_revision: str) -> tuple[Chun
             raise ValueError
         source_hash = _digest(header["sourceContentHash"])
         document_id = DocumentId(_text(header["documentId"], maximum=256))
-        parser_version = _text(header["parserVersion"], maximum=128)
-        if (
-            parser_version != PARSER_VERSION
-            or str(revision_id_for(document_id, source_hash, parser_version)) != expected_revision
-        ):
+        parser_version = _parser_version(header["parserVersion"])
+        if str(revision_id_for(document_id, source_hash, parser_version)) != expected_revision:
             raise ValueError
         payload = b"".join(lines[1:])
         if canonical_sha256(payload) != _digest(header["payloadSha256"]):
@@ -313,7 +398,9 @@ def decode_chunks_artifact(data: bytes, *, expected_revision: str) -> tuple[Chun
         if header["itemCount"] != len(lines) - 1 or not 1 <= len(lines) - 1 <= _MAX_CHUNKS:
             raise ValueError
         chunks = tuple(
-            _chunk_from_payload(_closed_json_line(line), source_hash, expected_revision)
+            _chunk_from_payload(
+                _closed_json_line(line), source_hash, expected_revision, parser_version
+            )
             for line in lines[1:]
         )
         if any(chunk.root_id != document_id for chunk in chunks):
@@ -488,7 +575,7 @@ def _inventory_item(value: object) -> ParseInventoryItem:
 
 
 def _chunk_from_payload(
-    value: Mapping[str, object], source_hash: str, expected_revision: str
+    value: Mapping[str, object], source_hash: str, expected_revision: str, parser_version: str
 ) -> ChunkDraft:
     _exact_keys(
         value,
@@ -512,6 +599,7 @@ def _chunk_from_payload(
         anchor_json=_text(value["anchorJson"], maximum=16384),
         source_content_hash=source_hash,
         chunk_content_hash=_digest(value["chunkContentHash"]),
+        parser_version=parser_version,
     )
     _chunk_payload(chunk, expected_revision)
     return chunk
@@ -645,3 +733,13 @@ def _safe_path_segment(value: str) -> str:
     if not isinstance(value, str) or _SAFE_SEGMENT.fullmatch(value) is None:
         raise ValueError("artifact path segment is unsafe")
     return value
+
+
+def _parser_version(value: object) -> str:
+    version = _text(value, maximum=128)
+    if (
+        version != PARSER_VERSION
+        and re.fullmatch(r"human-correction-[0-9a-f]{64}", version) is None
+    ):
+        raise ArtifactIntegrityError("unsupported parser provenance")
+    return version

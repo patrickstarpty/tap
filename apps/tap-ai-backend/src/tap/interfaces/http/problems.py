@@ -160,6 +160,8 @@ def register_problem_handlers(app: FastAPI) -> None:
     async def knowledge_review_state_conflict(
         request: Request, error: ReviewStateConflict
     ) -> JSONResponse:
+        if str(error) == "invalid-flowchart-correction":
+            return problem_response("request-validation", request)
         code = (
             "revision-conflict"
             if str(error) == "revision-conflict"

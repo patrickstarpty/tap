@@ -330,15 +330,11 @@ class KnowledgeModelGateway:
                 await self._redact(json.dumps(answer_input.context, ensure_ascii=False))
             )
         if graph_context:
-            context_value["knowledgeGraph"] = [
-                {
-                    **dict(item),
-                    **(
-                        {"label": await self._redact(str(item["label"]))} if "label" in item else {}
-                    ),
-                }
-                for item in graph_context
-            ]
+            context_value["knowledgeGraph"] = json.loads(
+                await self._redact(
+                    json.dumps([dict(item) for item in graph_context], ensure_ascii=False)
+                )
+            )
         context = json.dumps(
             context_value,
             ensure_ascii=False,

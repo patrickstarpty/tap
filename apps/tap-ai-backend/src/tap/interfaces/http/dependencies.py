@@ -18,6 +18,8 @@ from tap.contracts.http import (
     HealthComponentName,
     HealthComponentState,
     HealthRemediationCode,
+    KnowledgeFlowchart,
+    KnowledgeFlowchartCorrection,
     KnowledgePublicationDetail,
     KnowledgePublicationPage,
     KnowledgeReviewDecisionPage,
@@ -38,10 +40,12 @@ from tap.contracts.http import (
 )
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.access.domain.policy import RetrievalPolicyContext
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.graph.ports.store import GraphStorePort
+from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.modules.test_management.application.plans import TestPlanApplication
 
@@ -86,7 +90,9 @@ class KnowledgeHttpService(Protocol):
     ) -> None: ...
 
     async def answer(self, request: RetrievalAnswerRequest) -> RetrievalAnswerResponse: ...
-    async def resolve_conversation_selection(self, revision_ids: tuple[str, ...]): ...
+    async def resolve_conversation_selection(
+        self, revision_ids: tuple[str, ...]
+    ) -> tuple[tuple[ReadyDocumentRevision, ...], RetrievalPolicyContext]: ...
 
     async def citation(self, citation_id: str) -> CitationPreview: ...
     async def historical_citation(self, citation_id: str) -> CitationPreview: ...
@@ -97,6 +103,11 @@ class ReadinessHttpService(Protocol):
 
 
 class KnowledgeReviewHttpService(Protocol):
+    async def get_flowchart(self, review_id: str) -> KnowledgeFlowchart: ...
+    async def correct_flowchart(
+        self, review_id: str, graph: dict[str, object], expected_version: int
+    ) -> KnowledgeFlowchartCorrection: ...
+
     @property
     def scope(self) -> ProjectScopeContext: ...
 
@@ -136,6 +147,7 @@ class KnowledgeReviewHttpService(Protocol):
     async def compare_review_item(
         self, review_id: str, item_id: str
     ) -> KnowledgeReviewItemComparison: ...
+    async def read_original_image(self, review_id: str, item_id: str) -> tuple[bytes, str]: ...
     async def update_item_decision(
         self, review_id: str, item_id: str, body: dict[str, object], expected_version: int
     ) -> KnowledgeReviewDetail: ...

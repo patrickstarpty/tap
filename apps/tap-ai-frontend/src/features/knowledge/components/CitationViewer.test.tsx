@@ -11,6 +11,36 @@ import { renderKnowledgeApp } from "../testing/renderKnowledgeApp";
 import { CitationViewer } from "./CitationViewer";
 
 describe("CitationViewer", () => {
+  it("shows the reviewed flowchart node's image region", async () => {
+    const anchor = {
+      type: "document" as const,
+      headingPath: ["approval.png"],
+      page: null,
+      bbox: [10, 20, 50, 60],
+      startOffset: 0,
+      endOffset: 8,
+    };
+    const citation = retrievalCitation("citation-a", {
+      source: { ...retrievalCitation().source, anchor },
+    });
+    const api = fakeKnowledgeClient().withCitation(
+      citationPreview({ filename: "approval.png", anchor }),
+    );
+    renderKnowledgeApp(
+      <CitationViewer
+        active={{ citation, generation: 1, id: "citation-a" }}
+        onClose={() => undefined}
+      />,
+      { api },
+    );
+
+    expect(await screen.findByText("10, 20, 50, 60")).toBeVisible();
+    expect(screen.getByText("图中区域（像素）")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "经核对的流程图解析" }),
+    ).toBeVisible();
+  });
+
   it("returns focus to the citation trigger when closed", async () => {
     const trigger = document.createElement("button");
     trigger.textContent = "Open citation";

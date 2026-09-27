@@ -226,6 +226,9 @@ def test_settings_close_the_exact_runtime_defaults_and_aliases() -> None:
         ("TAPPER_POLL_SECONDS", "nan"),
         ("TAPPER_READY_TIMEOUT_SECONDS", "inf"),
         ("TAPPER_MODEL_TIMEOUT_SECONDS", "0"),
+        ("TAPPER_VISION_TIMEOUT_SECONDS", "0"),
+        ("TAPPER_VISION_TIMEOUT_SECONDS", "61"),
+        ("TAPPER_VISION_TIMEOUT_SECONDS", "nan"),
         ("TAPPER_COLLECTION", "unsafe collection"),
         ("TAPPER_ALIAS", "../alias"),
         ("TAP_TAPPER_COMPOSE_PROJECT", "Bad Project"),
@@ -1045,8 +1048,47 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
     assert retrieval._redactor is redactor
 
 
+def test_review_graph_uses_configured_isolated_parser() -> None:
+    from tap.modules.knowledge.adapters.isolated_parser import IsolatedParser
+
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    services = module._assemble_http_services(
+        repository=SimpleNamespace(scope=VALIDATION_SCOPE),
+        artifacts=object(),
+        search=object(),
+        embeddings=module._create_embeddings(settings),
+        readiness=object(),
+        redactor=object(),
+        scope_provider=object(),
+        authorization_policy=object(),
+        review_sessions=object(),
+        parser_socket="/tmp/tap-review-parser.sock",
+    )
+
+    parser = services.knowledge_reviews._application._parser
+    assert isinstance(parser, IsolatedParser)
+    assert parser.socket_path == "/tmp/tap-review-parser.sock"
+
+
 def test_runtime_has_no_legacy_combined_model_factory() -> None:
     assert not hasattr(_runtime(), "_create_model")
+
+
+def test_configured_flowchart_vision_uses_a_separate_image_only_route() -> None:
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(
+        valid_settings() | {"LITELLM_TAPPER_VISION_MODEL": "dashscope/qwen3-vl-plus"}
+    )
+    models = module._create_embeddings(settings)
+    route = models.gateway._chat_route("tapper-vision")
+
+    assert settings.vision_model == "dashscope/qwen3-vl-plus"
+    assert route.image_input is True
+    assert route.target.route == "dashscope/qwen3-vl-plus"
+    assert settings.vision_timeout_seconds == 60
+    assert models.gateway._config.timeout_seconds == 60
+    assert models.timeout_seconds == 15
 
 
 @pytest.mark.asyncio
@@ -1617,6 +1659,27 @@ def test_worker_graph_reuses_one_repo_blob_model_and_outer_resource_owner() -> N
     assert runtime.wakeups._consumer_name == settings.worker_id
     assert runtime.wakeups._aggregate_type == "knowledge_document"
     assert runtime.resources == (resources,)
+
+
+def test_worker_graph_wires_configured_vision_into_image_ingestion() -> None:
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(
+        valid_settings() | {"LITELLM_TAPPER_VISION_MODEL": "dashscope/qwen3-vl-plus"}
+    )
+    gateway = object()
+    runtime = module._assemble_worker_runtime(
+        settings=settings,
+        repository=SimpleNamespace(scope=VALIDATION_SCOPE),
+        artifacts=object(),
+        embeddings=SimpleNamespace(gateway=gateway),
+        index=object(),
+        redis=object(),
+        resources=module.OwnedResources(),
+        stage_hook=None,
+    )
+
+    assert runtime.worker._vision._gateway is gateway
+    assert runtime.worker._vision._timeout_seconds == 60
 
 
 @pytest.mark.asyncio
@@ -2528,3 +2591,17 @@ def test_blob_private_properties_require_the_explicit_public_access_field(
 class _UnusedSearchAudit:
     async def emit(self, event):
         raise AssertionError("construction-only test must not search")
+
+
+def test_vision_timeout_override_keeps_text_requests_and_unconfigured_gateway_bounded():
+    module = _runtime()
+    base = valid_settings() | {"TAPPER_VISION_TIMEOUT_SECONDS": "45"}
+    no_vision = module._create_embeddings(module.TapperSettings.from_mapping(base))
+    assert no_vision.gateway._config.timeout_seconds == 15
+    settings = module.TapperSettings.from_mapping(
+        base | {"LITELLM_TAPPER_VISION_MODEL": "dashscope/qwen3-vl-plus"}
+    )
+    models = module._create_embeddings(settings)
+    assert settings.vision_timeout_seconds == 45
+    assert models.gateway._config.timeout_seconds == 45
+    assert models.timeout_seconds == 15

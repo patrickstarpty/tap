@@ -9,7 +9,7 @@ import stat
 import unicodedata
 import zipfile
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
 from xml.parsers import expat
@@ -18,6 +18,7 @@ from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 from lxml import etree  # type: ignore[import-untyped]
+from PIL import Image, UnidentifiedImageError
 from pypdf import PdfReader, filters
 from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
 
@@ -29,6 +30,7 @@ from tap.modules.knowledge.domain.documents import (
     MediaType,
     NormalizedArtifact,
     NormalizedBlock,
+    VisionImageInput,
     canonical_sha256,
     validate_filename_media_type,
 )
@@ -160,6 +162,74 @@ class ParserRegistry:
             raise DocumentParseRejected("invalid-document") from None
         except Exception:
             raise DocumentParseRejected("invalid-document") from None
+
+
+class ImageParser:
+    """Validate one bounded raster original; semantic analysis happens after isolation."""
+
+    def parse(self, source: DocumentSource) -> NormalizedArtifact:
+        expected = "PNG" if source.media_type is MediaType.PNG else "JPEG"
+        try:
+            with Image.open(io.BytesIO(source.content)) as image:
+                width, height = image.size
+                if (
+                    image.format != expected
+                    or width < 1
+                    or height < 1
+                    or width > 8192
+                    or height > 8192
+                    or width * height > 16_000_000
+                    or getattr(image, "n_frames", 1) != 1
+                ):
+                    raise DocumentParseRejected("document-too-complex")
+                image.verify()
+            with Image.open(io.BytesIO(source.content)) as image:
+                if image.getexif().get(274, 1) != 1:
+                    raise DocumentParseRejected("document-too-complex")
+                image.load()
+                if image.mode == "RGB":
+                    clean = image.convert("RGB")
+                else:
+                    rgba = image.convert("RGBA")
+                    clean = Image.new("RGB", (width, height), "white")
+                    clean.paste(rgba, mask=rgba.getchannel("A"))
+                output = io.BytesIO()
+                if source.media_type is MediaType.JPEG:
+                    clean.save(output, format="JPEG", quality=95, optimize=True)
+                else:
+                    clean.save(output, format="PNG")
+                image_bytes = output.getvalue()
+                image_media = source.media_type
+                sent_size = (width, height)
+                if len(image_bytes) > 4 * 1024 * 1024:
+                    clean.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+                    sent_size = clean.size
+                    for quality in (85, 70, 55):
+                        output = io.BytesIO()
+                        clean.save(output, format="JPEG", quality=quality, optimize=True)
+                        image_bytes = output.getvalue()
+                        if len(image_bytes) <= 4 * 1024 * 1024:
+                            break
+                    else:
+                        raise DocumentParseRejected("document-too-complex")
+                    image_media = MediaType.JPEG
+        except DocumentParseRejected:
+            raise
+        except (OSError, ValueError, UnidentifiedImageError):
+            raise DocumentParseRejected("invalid-document") from None
+        provenance = _SourceProvenance.create(source)
+        item = _inventory_item(
+            provenance,
+            ParseInventoryKind.IMAGE,
+            "image:1",
+            ParseInventoryStatus.NEEDS_REVIEW,
+            source.content,
+            reason="visual-analysis-required",
+        )
+        return replace(
+            _artifact(provenance, [], [item]),
+            vision_input=VisionImageInput(image_bytes, image_media, (width, height), sent_size),
+        )
 
 
 class PdfParser:
@@ -586,6 +656,8 @@ PARSERS: Mapping[MediaType, DocumentParser] = {
     MediaType.DOCX: DocxParser(),
     MediaType.MARKDOWN: MarkdownParser(),
     MediaType.TEXT: TextParser(),
+    MediaType.PNG: ImageParser(),
+    MediaType.JPEG: ImageParser(),
 }
 
 
@@ -1146,6 +1218,10 @@ def _validate_signature(source: DocumentSource) -> None:
         valid = content.startswith(b"%PDF-")
     elif source.media_type is MediaType.DOCX:
         valid = content.startswith(b"PK\x03\x04")
+    elif source.media_type is MediaType.PNG:
+        valid = content.startswith(b"\x89PNG\r\n\x1a\n")
+    elif source.media_type is MediaType.JPEG:
+        valid = content.startswith(b"\xff\xd8\xff")
     else:
         valid = not content.startswith((b"%PDF-", b"PK\x03\x04", b"\x7fELF", b"MZ", b"\x89PNG"))
     if not valid:

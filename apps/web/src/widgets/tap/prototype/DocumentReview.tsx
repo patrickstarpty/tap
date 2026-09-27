@@ -12,7 +12,9 @@ type DocumentState =
   | "approved"
   | "published"
   | "withdrawn";
+type FlowCorrection = { source: string; target: string; condition: string };
 type Document = {
+  flow?: FlowCorrection;
   id: string;
   name: string;
   version: string;
@@ -36,6 +38,15 @@ const initial: Document[] = [
     name: "Underwriting rules — scanned.pdf",
     version: "v1.0",
     state: "failed",
+    checks: [false, false, false, false],
+    revision: 1,
+    history: [],
+  },
+  {
+    id: "approval-flowchart",
+    name: "Approval flowchart.png",
+    version: "v1.0",
+    state: "review",
     checks: [false, false, false, false],
     revision: 1,
     history: [],
@@ -67,6 +78,10 @@ export function useDocumentReview(locale: Locale) {
             typeof d.id === "string" &&
             typeof d.name === "string" &&
             typeof d.version === "string" &&
+            (d.flow === undefined ||
+              (typeof d.flow.source === "string" &&
+                typeof d.flow.target === "string" &&
+                typeof d.flow.condition === "string")) &&
             [
               "processing",
               "failed",
@@ -190,6 +205,28 @@ export function useDocumentReview(locale: Locale) {
       }),
     );
   }
+  function correctFlow(flow: FlowCorrection) {
+    setDocuments((current) =>
+      current.map((d) =>
+        d.id !== inspected || d.state !== "review"
+          ? d
+          : {
+              ...d,
+              flow,
+              revision: d.revision + 1,
+              checks: [false, false, false, false],
+              history: [
+                ...d.history,
+                {
+                  action: "flowchart_corrected",
+                  revision: d.revision + 1,
+                  actorId: "Content editor",
+                },
+              ],
+            },
+      ),
+    );
+  }
   function inspect(id: string, trigger?: HTMLElement) {
     opener.current = trigger ?? null;
     setInspected(id);
@@ -214,6 +251,7 @@ export function useDocumentReview(locale: Locale) {
     selected,
     inspect,
     update,
+    correctFlow,
     upload,
     opener,
     close: () => setInspected(null),
@@ -297,7 +335,7 @@ export function DocumentReview({
               {t("Replace file", "替换文件")}
               <input
                 type="file"
-                accept=".pdf,.docx,.md,.txt"
+                accept=".pdf,.docx,.md,.txt,.png,.jpg,.jpeg"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (file)
@@ -314,61 +352,130 @@ export function DocumentReview({
       ) : (
         <>
           <div className="tap-document-columns">
-            <article className="tap-document-original">
-              <h3>{t("Original document", "原文")}</h3>
-              <h4>{t("4. Health disclosure", "4. 健康告知")}</h4>
-              <p>
-                {t(
-                  "An application must include a completed health disclosure before submission.",
-                  "投保申请提交前必须完成健康告知。",
-                )}
-              </p>
-              <mark>
-                {t(
-                  "If disclosure is missing, block submission and return HTTP 422 with HEALTH_DISCLOSURE_REQUIRED.",
-                  "缺少健康告知时，阻止提交并返回 HTTP 422，错误码 HEALTH_DISCLOSURE_REQUIRED。",
-                )}
-              </mark>
-              <p>
-                {t(
-                  "Keep entered information and allow the applicant to complete missing fields before resubmitting.",
-                  "保留已填写信息，允许申请人补齐缺失项后再次提交。",
-                )}
-              </p>
-            </article>
+            {d.id === "approval-flowchart" ? (
+              <article className="tap-document-original tap-document-flowchart">
+                <h3>{t("Original image", "原图")}</h3>
+                <svg
+                  role="img"
+                  aria-label="Approval flowchart"
+                  viewBox="0 0 440 230"
+                  preserveAspectRatio="xMidYMid meet"
+                >
+                  <rect x="14" y="72" width="120" height="64" rx="12" />
+                  <rect x="294" y="72" width="132" height="64" rx="12" />
+                  <path d="M134 104H294" />
+                  <path d="m282 96 12 8-12 8" />
+                  <text x="74" y="109" textAnchor="middle">
+                    {t("Submit request", "提交申请")}
+                  </text>
+                  <text x="360" y="109" textAnchor="middle">
+                    {t("Manager approval", "经理审批")}
+                  </text>
+                  <text x="214" y="82" textAnchor="middle">
+                    {t("Amount > 1000", "金额超过 1000 元")}
+                  </text>
+                </svg>
+              </article>
+            ) : (
+              <article className="tap-document-original">
+                <h3>{t("Original document", "原文")}</h3>
+                <h4>{t("4. Health disclosure", "4. 健康告知")}</h4>
+                <p>
+                  {t(
+                    "An application must include a completed health disclosure before submission.",
+                    "投保申请提交前必须完成健康告知。",
+                  )}
+                </p>
+                <mark>
+                  {t(
+                    "If disclosure is missing, block submission and return HTTP 422 with HEALTH_DISCLOSURE_REQUIRED.",
+                    "缺少健康告知时，阻止提交并返回 HTTP 422，错误码 HEALTH_DISCLOSURE_REQUIRED。",
+                  )}
+                </mark>
+                <p>
+                  {t(
+                    "Keep entered information and allow the applicant to complete missing fields before resubmitting.",
+                    "保留已填写信息，允许申请人补齐缺失项后再次提交。",
+                  )}
+                </p>
+              </article>
+            )}
             <section>
               <h3>{t("Review extracted content", "核对提取内容")}</h3>
-              <p>
-                {t(
-                  "Missing disclosure → block submission → HTTP 422",
-                  "缺少健康告知 → 阻止提交 → HTTP 422",
-                )}
-              </p>
-              <small>
-                {t(
-                  "Source: section 4, paragraphs 1–3",
-                  "原文位置：第 4 节，段落 1–3",
-                )}
-              </small>
-              <p className="tap-document-issue">
-                {t(
-                  "Review item: section 4, paragraph 2 · amount, scope and exception",
-                  "核对项：第 4 节第 2 段 · 金额、范围与例外",
-                )}
-              </p>
+              {d.id === "approval-flowchart" ? (
+                <>
+                  <FlowCorrectionEditor
+                    key={`${d.id}:${d.revision}`}
+                    flow={
+                      d.flow ?? {
+                        source: t("Submit request", "提交申请"),
+                        target: t("Manager approval", "经理审批"),
+                        condition: t("Amount exceeds 1000", "金额超过 1000 元"),
+                      }
+                    }
+                    editable={d.state === "review"}
+                    onSave={review.correctFlow}
+                    t={t}
+                  />
+                  <p className="tap-document-issue">
+                    {t(
+                      "Review node text, arrow direction, and branch condition",
+                      "核对节点文字、箭头方向与分支条件",
+                    )}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p>
+                    {t(
+                      "Missing disclosure → block submission → HTTP 422",
+                      "缺少健康告知 → 阻止提交 → HTTP 422",
+                    )}
+                  </p>
+                  <small>
+                    {t(
+                      "Source: section 4, paragraphs 1–3",
+                      "原文位置：第 4 节，段落 1–3",
+                    )}
+                  </small>
+                  <p className="tap-document-issue">
+                    {t(
+                      "Review item: section 4, paragraph 2 · amount, scope and exception",
+                      "核对项：第 4 节第 2 段 · 金额、范围与例外",
+                    )}
+                  </p>
+                </>
+              )}
               <div className="tap-document-checks">
-                {[
-                  [
-                    "Text and key values match the original",
-                    "文本与关键数值和原文一致",
-                  ],
-                  ["Source locations are correct", "原文位置准确"],
-                  ["Version and scope are correct", "版本与适用范围正确"],
-                  [
-                    "Conditions and exceptions match the original",
-                    "条件与例外和原文一致",
-                  ],
-                ].map(([en, zh], i) => (
+                {(d.id === "approval-flowchart"
+                  ? [
+                      ["Node labels match the image", "节点文字与原图一致"],
+                      [
+                        "Arrow direction matches the image",
+                        "箭头方向与原图一致",
+                      ],
+                      [
+                        "Branch condition matches the image",
+                        "分支条件与原图一致",
+                      ],
+                      [
+                        "Image region and version are correct",
+                        "图中位置与版本正确",
+                      ],
+                    ]
+                  : [
+                      [
+                        "Text and key values match the original",
+                        "文本与关键数值和原文一致",
+                      ],
+                      ["Source locations are correct", "原文位置准确"],
+                      ["Version and scope are correct", "版本与适用范围正确"],
+                      [
+                        "Conditions and exceptions match the original",
+                        "条件与例外和原文一致",
+                      ],
+                    ]
+                ).map(([en, zh], i) => (
                   <label key={en}>
                     <input
                       type="checkbox"
@@ -472,6 +579,115 @@ export function DocumentReview({
     </AccessibleDialog>
   );
 }
+function FlowCorrectionEditor({
+  flow,
+  editable,
+  onSave,
+  t,
+}: {
+  flow: FlowCorrection;
+  editable: boolean;
+  onSave: (flow: FlowCorrection) => void;
+  t: (en: string, zh: string) => string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(flow);
+  if (!editing)
+    return (
+      <>
+        <p>
+          {flow.source} → {flow.target}
+        </p>
+        <small>
+          {t("Condition: ", "条件：")}
+          {flow.condition}
+        </small>
+        {editable && (
+          <div className="tap-flow-correction-actions">
+            <Button
+              onClick={() => {
+                setDraft(flow);
+                setEditing(true);
+              }}
+            >
+              {t("Edit flowchart", "编辑流程图")}
+            </Button>
+          </div>
+        )}
+      </>
+    );
+  return (
+    <form
+      className="tap-flow-correction"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave({
+          source: draft.source.trim(),
+          target: draft.target.trim(),
+          condition: draft.condition.trim(),
+        });
+        setEditing(false);
+      }}
+    >
+      <p>
+        {t(
+          "Saving clears previous checks. Review the corrected connection against the original image.",
+          "保存后需重新核对。请对照原图确认更正后的连接。",
+        )}
+      </p>
+      <label>
+        {t("Start node", "起点节点")}
+        <input
+          required
+          maxLength={200}
+          value={draft.source}
+          onChange={(event) =>
+            setDraft({ ...draft, source: event.target.value })
+          }
+        />
+      </label>
+      <label>
+        {t("End node", "终点节点")}
+        <input
+          required
+          maxLength={200}
+          value={draft.target}
+          onChange={(event) =>
+            setDraft({ ...draft, target: event.target.value })
+          }
+        />
+      </label>
+      <Button
+        onClick={() =>
+          setDraft({ ...draft, source: draft.target, target: draft.source })
+        }
+      >
+        {t("Reverse direction", "反转方向")}
+      </Button>
+      <label>
+        {t("Branch condition", "分支条件")}
+        <input
+          maxLength={200}
+          value={draft.condition}
+          onChange={(event) =>
+            setDraft({ ...draft, condition: event.target.value })
+          }
+        />
+      </label>
+      <div className="tap-flow-correction-actions">
+        <Button
+          htmlType="submit"
+          type="primary"
+          disabled={!draft.source.trim() || !draft.target.trim()}
+        >
+          {t("Save corrections", "保存更正")}
+        </Button>
+        <Button onClick={() => setEditing(false)}>{t("Cancel", "取消")}</Button>
+      </div>
+    </form>
+  );
+}
+
 export function KnowledgeAnswer({
   turn,
   onRetry,

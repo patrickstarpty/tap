@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from dataclasses import replace
@@ -78,6 +79,138 @@ def configured_gateway(handler, **changes):
             base_url="https://litellm.example", transport=httpx.MockTransport(handler)
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_vision_request_sends_bounded_image_with_digest_and_structured_schema():
+    sent = []
+    image_bytes = b"\x89PNG\r\n\x1a\nexample"
+    vision_route = ChatModelRoute(
+        "tapper-vision",
+        "Flowchart vision",
+        ProviderModelMapping("dashscope", "qwen3-vl-plus"),
+        image_input=True,
+    )
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen3-vl-plus",
+                "choices": [{"message": {"content": '{"answer":"A to B"}'}}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4},
+            },
+        )
+
+    gateway = configured_gateway(respond, additional_chat_models=(vision_route,))
+    result = await gateway.generate_structured(
+        replace(
+            request(ModelOperation.STRUCTURED),
+            alias="tapper-vision",
+            image_bytes=image_bytes,
+            image_media_type="image/png",
+        )
+    )
+
+    assert result.output == {"answer": "A to B"}
+    expected_digest = "sha256:" + hashlib.sha256(image_bytes).hexdigest()
+    assert sent[0]["metadata"]["image_digest"] == expected_digest
+    assert sent[0]["messages"][1]["content"][1]["image_url"]["url"] == (
+        "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+    )
+    assert sent[0]["response_format"] == {"type": "json_object"}
+    schema_message = sent[0]["messages"][0]
+    assert schema_message["role"] == "system"
+    transmitted_schema = json.loads(schema_message["content"].rsplit("\n", 1)[1])
+    assert transmitted_schema == request(ModelOperation.STRUCTURED).schema
+    assert transmitted_schema["required"] == ["answer"]
+    assert transmitted_schema["additionalProperties"] is False
+    # Detailed node boxes and directed edges exceed the text-chat output budget.
+    assert 4096 <= sent[0]["max_tokens"] <= 16384
+    assert result.audit.image_digest == sent[0]["metadata"]["image_digest"]
+    assert "example" not in repr(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "finish_reason"),
+    [
+        ("{}", "stop"),
+        ('{"answer":"A to B","shape":"arrow"}', "stop"),
+        ('{"answer":7}', "stop"),
+        ('{"answer":"A to B"}', "length"),
+    ],
+)
+async def test_vision_json_object_mode_still_rejects_invalid_or_truncated_output(
+    content, finish_reason
+):
+    from tap.modules.ai.domain.models import ModelGatewayUnavailable
+
+    calls = []
+
+    def respond(incoming):
+        calls.append(incoming)
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen3-vl-plus",
+                "choices": [{"message": {"content": content}, "finish_reason": finish_reason}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4},
+            },
+        )
+
+    gateway = configured_gateway(
+        respond,
+        additional_chat_models=(
+            ChatModelRoute(
+                "tapper-vision",
+                "Flowchart vision",
+                ProviderModelMapping("dashscope", "qwen3-vl-plus"),
+                image_input=True,
+            ),
+        ),
+    )
+    with pytest.raises(ModelGatewayUnavailable, match="^model-unavailable$"):
+        await gateway.generate_structured(
+            replace(
+                request(ModelOperation.STRUCTURED),
+                alias="tapper-vision",
+                image_bytes=b"\x89PNG\r\n\x1a\nexample",
+                image_media_type="image/png",
+            )
+        )
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_vision_input_rejects_wrong_route_mime_and_size_before_transport():
+    sent = []
+    route = ChatModelRoute(
+        "tapper-vision",
+        "Flowchart vision",
+        ProviderModelMapping("dashscope", "qwen3-vl-plus"),
+        image_input=True,
+    )
+    gateway = configured_gateway(
+        lambda incoming: (sent.append(incoming), success(incoming))[1],
+        additional_chat_models=(route,),
+    )
+    base = replace(
+        request(ModelOperation.STRUCTURED),
+        alias="tapper-vision",
+        image_bytes=b"\x89PNG\r\n\x1a\nvalid",
+        image_media_type="image/png",
+    )
+    for invalid in (
+        replace(base, alias="tapper-chat"),
+        replace(base, image_media_type="image/jpeg"),
+        replace(base, image_bytes=b"\x89PNG\r\n\x1a\n" + b"x" * (4 * 1024 * 1024)),
+        replace(base, image_bytes=None, image_media_type=None),
+    ):
+        with pytest.raises(ValueError):
+            await gateway.generate_structured(invalid)
+    assert sent == []
 
 
 @pytest.mark.asyncio

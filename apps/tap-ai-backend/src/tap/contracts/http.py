@@ -11,6 +11,7 @@ from pydantic import (
     ConfigDict,
     Field,
     RootModel,
+    StrictBool,
     StrictInt,
     ValidationInfo,
     field_validator,
@@ -267,6 +268,8 @@ class DocumentSummary(ContractModel):
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "text/markdown",
         "text/plain",
+        "image/png",
+        "image/jpeg",
     ]
     status: DocumentStatus
     stage: IngestionStage
@@ -319,7 +322,18 @@ class KnowledgeReviewInventoryItem(ContractModel):
     source_revision_id: ShortIdentifier
     item_id: ShortIdentifier
     attempt: Annotated[StrictInt, Field(ge=1)]
-    kind: Literal["document", "page", "paragraph", "heading", "table", "image", "list", "code"]
+    kind: Literal[
+        "document",
+        "page",
+        "paragraph",
+        "heading",
+        "table",
+        "image",
+        "list",
+        "code",
+        "flow_node",
+        "flow_edge",
+    ]
     locator: Annotated[str, Field(strict=True, min_length=1, max_length=1_024)]
     status: ParseInventoryItemStatus
     artifact_digest: CanonicalSha256
@@ -413,6 +427,31 @@ class KnowledgeReviewDecisionRequest(ContractModel):
     check_kind: KnowledgeReviewCheckKind
     status: KnowledgeReviewDecisionStatus
     note: Annotated[str, Field(strict=True, min_length=1, max_length=1_000)]
+
+
+class KnowledgeFlowchartNode(ContractModel):
+    id: Annotated[str, Field(strict=True, min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")]
+    label: Annotated[str, Field(strict=True, min_length=1, max_length=200)]
+    lane: Annotated[str, Field(strict=True, max_length=100)]
+    box: Annotated[
+        list[Annotated[StrictInt, Field(ge=0, le=8192)]], Field(min_length=4, max_length=4)
+    ]
+
+
+class KnowledgeFlowchartEdge(ContractModel):
+    source: Annotated[str, Field(strict=True, min_length=1, max_length=32)]
+    target: Annotated[str, Field(strict=True, min_length=1, max_length=32)]
+    condition: Annotated[str, Field(strict=True, max_length=200)]
+    certain: StrictBool
+
+
+class KnowledgeFlowchart(ContractModel):
+    nodes: Annotated[list[KnowledgeFlowchartNode], Field(min_length=1, max_length=100)]
+    edges: Annotated[list[KnowledgeFlowchartEdge], Field(max_length=200)]
+
+
+class KnowledgeFlowchartCorrection(ContractModel):
+    source_revision_id: ShortIdentifier
 
 
 class KnowledgeReviewPreview(ContractModel):

@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from typing import cast
 
 from tap.contracts.http import (
+    KnowledgeFlowchart,
+    KnowledgeFlowchartCorrection,
     KnowledgePublicationDetail,
     KnowledgePublicationPage,
     KnowledgePublicationTarget,
@@ -117,6 +119,21 @@ class KnowledgeReviewHttpService:
             ),
         )
 
+    async def get_flowchart(self, review_id: str) -> KnowledgeFlowchart:
+        return KnowledgeFlowchart.model_validate(await self._application.get_flowchart(review_id))
+
+    async def correct_flowchart(
+        self, review_id: str, graph: dict[str, object], expected_version: int
+    ) -> KnowledgeFlowchartCorrection:
+        revision_id = await self._application.correct_flowchart(
+            review_id,
+            graph=graph,
+            expected_version=expected_version,
+            actor_id=self._scope.actor_id,
+            now=self._clock(),
+        )
+        return KnowledgeFlowchartCorrection(source_revision_id=revision_id)
+
     async def get_review(self, review_id: str) -> KnowledgeReviewDetail:
         return await self._review_detail(
             await self._application.get_review(review_id),
@@ -215,6 +232,9 @@ class KnowledgeReviewHttpService:
                 reason=value.extracted.reason,
             ),
         )
+
+    async def read_original_image(self, review_id: str, item_id: str) -> tuple[bytes, str]:
+        return await self._application.read_original_image(review_id, item_id)
 
     async def update_item_decision(
         self,
