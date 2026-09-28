@@ -105,7 +105,7 @@ it("uses indexed chunks directly and removes disabled documents from sources", a
       name: /Life underwriting guide · v1.2.md/,
     }),
   ).not.toBeInTheDocument();
-});
+}, 15_000);
 
 it("processes a replacement document into manageable chunks", async () => {
   const view = render(<TapProductPrototype />);

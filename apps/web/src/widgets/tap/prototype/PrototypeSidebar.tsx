@@ -13,8 +13,8 @@ import type { PrototypeCopy } from "./copy";
 import type { Conversation, Locale, ProductModule } from "./model";
 import { PanelToggleIcon } from "./PanelToggleIcon";
 
-const tapperListeningAvatar = new URL(
-  "../../../../assets/brand/tapper/listening/svg/avatar/tapper-listening-avatar-color.svg?no-inline",
+const tapperAvatar = new URL(
+  "../../../../assets/brand/tapper/owl/svg/avatar/tapper-owl-avatar-color.svg?no-inline",
   import.meta.url,
 ).href;
 const tapperWordmark = new URL(
@@ -69,7 +69,7 @@ export function PrototypeSidebar({
       icon: (
         <img
           className="tap-tapper-rail-mark"
-          src={tapperListeningAvatar}
+          src={tapperAvatar}
           alt=""
         />
       ),
