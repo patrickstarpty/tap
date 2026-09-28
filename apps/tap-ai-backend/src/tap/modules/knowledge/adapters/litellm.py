@@ -81,8 +81,11 @@ _FLOWCHART_ANSWER_PROMPT = (
     "with a period, then build answer by joining exactly those claim texts, each as its own "
     "paragraph separated by a blank line, with no other text. Never use record fields or node "
     "identifiers as a claim. Cite in each claim the labels of every edge record that the "
-    "sentence describes. A flowchart shows only steps, their order and branch conditions; it "
-    "never states who performs or approves a step, durations, thresholds or authority. If the "
+    "sentence describes. Describe only the branch the query asks about; never cite edges "
+    "from different outgoing branches of the same decision in one claim, and do not add "
+    "contrast claims about other branches. A flowchart shows only steps, their order and "
+    "branch conditions; it never states who performs or approves a step, durations, "
+    "thresholds or authority. If the "
     "query needs such facts and no non-flowchart evidence states them, return an empty answer "
     "and empty claims."
 )
