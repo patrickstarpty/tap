@@ -50,7 +50,7 @@ it("keeps an explicit New chat when durable history arrives afterwards", async (
   releaseList!();
 
   expect(
-    await screen.findByRole("button", { name: /Earlier question/u }),
+    await screen.findByRole("button", { name: /^Earlier question/u }),
   ).toBeInTheDocument();
   expect(
     requested.some((path) => path.endsWith("/conversations/conversation-old")),
