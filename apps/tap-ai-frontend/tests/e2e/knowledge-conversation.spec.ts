@@ -265,12 +265,17 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   const cancelAccepted = (await cancelAcceptedResponse.json()) as {
     turnId: string;
   };
-  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
-  const canceled = await page.request.post(
-    `${root}/conversations/${accepted.conversationId}/turns/${cancelAccepted.turnId}/cancel`,
-    { headers: { Origin: ORIGIN } },
+  const stop = page.getByRole("button", { name: "Stop generating" });
+  await expect(stop).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);
+  const canceledPromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `${root}/conversations/${accepted.conversationId}/turns/${cancelAccepted.turnId}/cancel`,
   );
-  expect(canceled.status()).toBe(200);
+  await stop.click();
+  expect((await canceledPromise).status()).toBe(200);
   await expect
     .poll(async () => {
       const response = await page.request.get(
