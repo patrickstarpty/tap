@@ -53,6 +53,26 @@ async def test_explicit_routes_do_not_spend_planning_calls(message, route, count
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message,route",
+    [
+        (
+            "How many days does compliance approval take, and who is authorized to grant it?",
+            "retrieve",
+        ),
+        ("Is it different from the previous version?", "clarify"),
+        ("How does it differ from v1?", "clarify"),
+    ],
+)
+async def test_english_it_is_ambiguous_only_as_an_unresolved_version_referent(message, route):
+    async def forbidden(_input, _timeout):
+        pytest.fail("explicit input must not call the planning model")
+
+    plan = await planning().AnswerPlanner(forbidden).plan(context(message))
+    assert plan.route == route
+
+
+@pytest.mark.asyncio
 async def test_enterprise_fact_without_sources_never_becomes_direct_chat():
     plan = (
         await planning()

@@ -11,6 +11,28 @@ from tap.modules.knowledge.domain.models import DocumentAnchor, Evidence
 _EDGE = re.compile(
     r"流程图连线 ([A-Za-z0-9_-]+) → ([A-Za-z0-9_-]+)：(.+?) → (.+?)(?:；条件：(.*))?$"
 )
+_NODE = re.compile(r"流程图节点 ([A-Za-z0-9_-]+)：(.+?)(?:；泳道：(.*))?$")
+
+
+def flowchart_evidence_record(content: str) -> tuple[str, dict[str, str]] | None:
+    """Return a model-facing record for one indexed flowchart fact, else None.
+
+    Edge and node chunk text reads like a complete statement, so models quoted it
+    verbatim as claims; a structured record keeps the fact without a quotable sentence.
+    """
+    edge = _EDGE.fullmatch(content)
+    if edge:
+        return "flowchartEdge", {
+            "sourceNodeId": edge[1],
+            "sourceLabel": edge[3],
+            "targetNodeId": edge[2],
+            "targetLabel": edge[4],
+            "condition": edge[5] or "",
+        }
+    node = _NODE.fullmatch(content)
+    if node:
+        return "flowchartNode", {"nodeId": node[1], "label": node[2], "lane": node[3] or ""}
+    return None
 
 
 def flowchart_path_context(

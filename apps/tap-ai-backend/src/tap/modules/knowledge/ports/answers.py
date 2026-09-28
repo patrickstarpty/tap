@@ -178,7 +178,7 @@ class AnswerSnapshot:
                 or item.content_role is not ContentRole.SOURCE
                 or source.source_type != "doc"
                 or source.revision_kind is not RevisionKind.BLOB_VERSION
-                or source.anchor.bbox
+                # An image region is bound through anchor_json into the recomputed chunk ID.
                 or source.anchor.start_offset is None
                 or source.anchor.end_offset is None
                 or source.anchor.end_offset <= source.anchor.start_offset

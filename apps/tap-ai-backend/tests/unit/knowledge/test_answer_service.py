@@ -580,6 +580,61 @@ def test_provider_unavailability_is_not_misreported_as_zero_evidence(failure: Ex
     asyncio.run(scenario())
 
 
+def test_published_image_region_citation_is_snapshotted_with_its_bound_region() -> None:
+    """Flowchart answers cite approved image regions; the snapshot must keep, not refuse, them."""
+
+    async def scenario() -> None:
+        anchor = DocumentAnchor(
+            heading_path=("Flowchart",),
+            start_offset=0,
+            end_offset=40,
+            inventory_item_id="pi_edge",
+            bbox=(10, 20, 300, 90),
+        )
+        anchor_json = json.dumps(
+            {
+                "bbox": [10, 20, 300, 90],
+                "endOffset": 40,
+                "headingPath": ["Flowchart"],
+                "inventoryItemId": "pi_edge",
+                "startOffset": 0,
+                "type": "document",
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        base = citation()
+        image = replace(
+            base,
+            chunk_id=str(chunk_id_for(RevisionId("rev_a"), anchor_json, CHUNK_HASH)),
+            logical_chunk_id="h_"
+            + str(logical_chunk_id_for(DocumentId("doc_a"), anchor_json)).removeprefix("lc_"),
+            source=replace(base.source, anchor=anchor),
+        )
+        answer_service, repository, _gateway = service(response=answer_response(citations=(image,)))
+
+        await answer_service.answer(request_for("doc_a"))
+
+        assert json.loads(repository.snapshots[0].citations[0].anchor_json)["bbox"] == [
+            10,
+            20,
+            300,
+            90,
+        ]
+
+        forged = replace(
+            image, source=replace(image.source, anchor=replace(anchor, bbox=(0, 0, 1, 1)))
+        )
+        answer_service, repository, _gateway = service(
+            response=answer_response(citations=(forged,))
+        )
+        with pytest.raises(AnswerSnapshotUnavailable):
+            await answer_service.answer(request_for("doc_a"))
+        assert repository.snapshots == []
+
+    asyncio.run(scenario())
+
+
 def test_snapshot_rejects_claims_or_citations_outside_the_selected_set() -> None:
     async def scenario() -> None:
         outside = answer_response(

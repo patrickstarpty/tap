@@ -462,6 +462,145 @@ async def test_knowledge_query_document_and_answer_calls_use_one_gateway():
 
 
 @pytest.mark.asyncio
+async def test_plan_bound_grounded_answer_passes_the_real_gateway_governance_check():
+    """A planned chat answer carries a template digest, so it must declare knowledge.answer."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+    from tap.modules.knowledge.application.answer_templates import assemble_answer, get_template
+
+    sent = []
+
+    def handler(incoming):
+        sent.append(json.loads(incoming.content))
+        response = success(incoming).json()
+        response["choices"][0]["message"]["content"] = json.dumps(
+            {"answer": "Grounded.", "claims": [{"text": "Grounded.", "evidenceLabels": ["S1"]}]}
+        )
+        return httpx.Response(200, json=response)
+
+    selected = get_template("procedural", "1")
+    assembled = assemble_answer(
+        template_id="procedural",
+        template_version="1",
+        template_digest=selected.digest,
+        original_question="query",
+        standalone_question="query",
+        evidence_map={"q1": ("S1",)},
+    )
+    assembled.context["planId"] = "plan-a"
+    models = KnowledgeModelGateway(
+        configured_gateway(handler),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="tapper-embedding",
+        chat_alias="tapper-chat",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+    result = await models.answer(
+        "query", (_claim_resolution_evidence(),), "quick-hybrid-v1", answer_input=assembled
+    )
+
+    assert result.text == "Grounded."
+    assert sent[0]["metadata"]["tool_allowlist"] == ["knowledge.answer"]
+    assert sent[0]["metadata"]["governance_digests"]
+
+    no_evidence = assemble_answer(
+        template_id="general",
+        template_version="1",
+        template_digest=get_template("general", "1").digest,
+        original_question="hello",
+        standalone_question="hello",
+        evidence_map={},
+    )
+    direct = await models.chat(
+        "hello", model_alias="tapper-chat", answer_plan_id="plan-b", answer_input=no_evidence
+    )
+    assert direct.text == "Grounded."
+    assert sent[1]["metadata"]["tool_allowlist"] == ["knowledge.answer"]
+
+
+@pytest.mark.asyncio
+async def test_flowchart_evidence_reaches_the_model_as_records_not_quotable_sentences():
+    """Real models copied edge sentences as claims; answers must quote their own sentences."""
+    from dataclasses import replace
+
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.ai.domain.models import ModelCallAudit, ModelResult, ModelUsage, text_digest
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    captured = []
+
+    class CapturingGateway:
+        async def generate_structured(self, request):
+            captured.append(request)
+            sentence = "A low-risk application goes to Automatic approval."
+            return ModelResult(
+                output={
+                    "answer": sentence,
+                    "claims": [{"text": sentence, "evidenceLabels": ["S1"]}],
+                },
+                actual_model="qwen-plus",
+                usage=ModelUsage(),
+                actual_provider="dashscope",
+                audit=ModelCallAudit(
+                    request.scope,
+                    request.alias,
+                    request.operation,
+                    request.prompt_digest,
+                    request.schema_digest,
+                    text_digest(request.context),
+                    request.idempotency_key,
+                    "dashscope",
+                    "qwen-plus",
+                    ModelUsage(),
+                ),
+            )
+
+    models = KnowledgeModelGateway(
+        CapturingGateway(),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="tapper-embedding",
+        chat_alias="tapper-chat",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+    base = _claim_resolution_evidence()
+    edge = replace(base, content="流程图连线 n6 → n9：High risk? → Automatic approval；条件：No")
+    node = replace(
+        base, evidence_label="S2", content="流程图节点 n9：Automatic approval；泳道：Underwriting"
+    )
+    prose = replace(base, evidence_label="S3", content="Low risk means score below 40.")
+
+    await models.answer("low risk path?", (edge, node, prose), "quick-hybrid-v1")
+
+    evidence = json.loads(captured[0].context)["evidence"]
+    assert "content" not in evidence[0] and "content" not in evidence[1]
+    assert evidence[0]["flowchartEdge"] == {
+        "sourceNodeId": "n6",
+        "sourceLabel": "High risk?",
+        "targetNodeId": "n9",
+        "targetLabel": "Automatic approval",
+        "condition": "No",
+    }
+    assert evidence[1]["flowchartNode"] == {
+        "nodeId": "n9",
+        "label": "Automatic approval",
+        "lane": "Underwriting",
+    }
+    assert evidence[2]["content"] == "Low risk means score below 40."
+    assert "Flowchart evidence items are structured records" in captured[0].prompt
+
+    captured.clear()
+    await models.answer("low risk?", (replace(prose, evidence_label="S1"),), "quick-hybrid-v1")
+    assert "Flowchart evidence items are structured records" not in captured[0].prompt
+
+
+@pytest.mark.asyncio
 async def test_model_only_chat_always_receives_tapper_platform_identity():
     from tap.modules.ai.domain.models import ModelCallAudit, ModelResult, ModelUsage, text_digest
     from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
