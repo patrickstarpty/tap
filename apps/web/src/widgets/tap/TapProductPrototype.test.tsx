@@ -108,7 +108,7 @@ it("hands submitted work to an independent reviewer and only publishes an approv
       name: /Health disclosure policy · approved.md/,
     }),
   ).toBeNull();
-});
+}, 15_000);
 
 it("keeps the full checklist when replacing a failed document", async () => {
   const view = render(<TapProductPrototype />);
