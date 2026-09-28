@@ -667,6 +667,30 @@
   color: var(--tap-muted);
 }
 
+.tap-context-chip[data-kind="attachment"] {
+  max-width: min(460px, 100%);
+}
+
+.tap-context-chip > .tap-attachment-status {
+  flex: 0 0 auto;
+  color: var(--tap-muted);
+  font-weight: 400;
+}
+
+.tap-context-chip > .tap-attachment-review {
+  display: inline;
+  width: auto;
+  height: auto;
+  border: 0;
+  background: transparent;
+  padding: 0 2px;
+  color: var(--tap-accent, #c2410c);
+  cursor: pointer;
+  font: inherit;
+  opacity: 1;
+  white-space: nowrap;
+}
+
 .tap-context-chip > .anticon {
   flex: 0 0 auto;
   font-size: 11px;

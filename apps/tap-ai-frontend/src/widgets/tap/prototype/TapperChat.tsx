@@ -657,7 +657,7 @@ export function TapperChat({
                 <PaperClipOutlined aria-hidden="true" />
               )}
               <span title={attachment.name}>{attachment.name}</span>
-              <span role="status">
+              <span className="tap-attachment-status" role="status">
                 {
                   {
                     uploading: copy.composer.attachmentUploading,
@@ -669,13 +669,13 @@ export function TapperChat({
               </span>
               {attachment.status === "needs_review" &&
               onReviewAttachment !== undefined ? (
-                <Button
-                  type="link"
-                  size="small"
+                <button
+                  type="button"
+                  className="tap-attachment-review"
                   onClick={() => onReviewAttachment(attachment.id)}
                 >
                   {copy.composer.reviewInLibrary}
-                </Button>
+                </button>
               ) : null}
               {onRemoveAttachment === undefined ? null : (
                 <button
