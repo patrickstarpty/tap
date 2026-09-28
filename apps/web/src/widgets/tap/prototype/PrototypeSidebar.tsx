@@ -2,12 +2,25 @@ import {
   BarChartOutlined,
   BookOutlined,
   CodeOutlined,
+  DeleteOutlined,
+  EditOutlined,
   FileTextOutlined,
   FormOutlined,
   MessageOutlined,
+  MoreOutlined,
   RobotOutlined,
+  SearchOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
+import { Button } from "antd";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
+
+import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 
 import type { PrototypeCopy } from "./copy";
 import type { Conversation, Locale, ProductModule } from "./model";
@@ -32,9 +45,13 @@ interface PrototypeSidebarProps {
   onLocaleChange: (locale: Locale) => void;
   onModuleChange: (module: ProductModule) => void;
   onNewChat: () => void;
+  onDeleteConversation: (conversationId: string) => void;
+  onRenameConversation: (conversationId: string, title: string) => void;
   onSelectConversation: (conversationId: string) => void;
   onToggleCollapsed: () => void;
 }
+
+export const CONVERSATION_TITLE_MAX_LENGTH = 120;
 
 export function PrototypeSidebar({
   activeConversationId,
@@ -46,9 +63,53 @@ export function PrototypeSidebar({
   onLocaleChange,
   onModuleChange,
   onNewChat,
+  onDeleteConversation,
+  onRenameConversation,
   onSelectConversation,
   onToggleCollapsed,
 }: PrototypeSidebarProps) {
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [menuConversationId, setMenuConversationId] = useState<string | null>(
+    null,
+  );
+  const [renaming, setRenaming] = useState<{
+    conversationId: string;
+    value: string;
+    invalid: boolean;
+  } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
+  const renamingRef = useRef(renaming);
+  renamingRef.current = renaming;
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const searchRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (menuConversationId === null) return;
+    menuRef.current
+      ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+      ?.focus();
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (
+        !menuRef.current?.contains(target) &&
+        !menuTriggerRefs.current.get(menuConversationId)?.contains(target)
+      )
+        setMenuConversationId(null);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    return () =>
+      document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+  }, [menuConversationId]);
+
+  useEffect(() => {
+    if (renaming === null) return;
+    renameInputRef.current?.focus();
+    renameInputRef.current?.select();
+    // Focus and select only when an inline rename starts.
+  }, [renaming?.conversationId]);
   const tapperWorkspaceActive = [
     "tapper",
     "agents",
@@ -115,15 +176,97 @@ export function PrototypeSidebar({
     return conversation.turns.length > 0 || contextCount > 0;
   });
 
+  const getConversationTitle = (conversation: Conversation) =>
+    conversation.turns.length > 0 || conversation.title !== "New chat"
+      ? conversation.title
+      : copy.navigation.newChat;
+
+  const normalizedHistoryQuery = historyQuery.trim().toLowerCase();
+  const visibleConversationHistory =
+    normalizedHistoryQuery.length === 0
+      ? conversationHistory
+      : conversationHistory.filter((conversation) =>
+          getConversationTitle(conversation)
+            .toLowerCase()
+            .includes(normalizedHistoryQuery),
+        );
+
+  const closeMenu = (restoreFocus: boolean) => {
+    const conversationId = menuConversationId;
+    setMenuConversationId(null);
+    if (restoreFocus && conversationId !== null)
+      menuTriggerRefs.current.get(conversationId)?.focus();
+  };
+
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]',
+      ) ?? [],
+    );
+    const activeIndex = items.indexOf(
+      document.activeElement as HTMLButtonElement,
+    );
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown") nextIndex = (activeIndex + 1) % items.length;
+    else if (event.key === "ArrowUp")
+      nextIndex = (activeIndex - 1 + items.length) % items.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = items.length - 1;
+    else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenu(true);
+      return;
+    } else if (event.key === "Tab") {
+      closeMenu(false);
+      return;
+    }
+    if (nextIndex !== null && items.length > 0) {
+      event.preventDefault();
+      items[nextIndex]?.focus();
+    }
+  };
+
+  const startRename = (conversation: Conversation) => {
+    setMenuConversationId(null);
+    setRenaming({
+      conversationId: conversation.id,
+      value: getConversationTitle(conversation),
+      invalid: false,
+    });
+  };
+
+  const finishRename = (save: boolean) => {
+    const current = renamingRef.current;
+    if (current === null) return;
+    const title = current.value.trim();
+    if (save) {
+      if (title.length === 0 || title.length > CONVERSATION_TITLE_MAX_LENGTH) {
+        setRenaming({ ...current, invalid: true });
+        return;
+      }
+      onRenameConversation(current.conversationId, title);
+    }
+    renamingRef.current = null;
+    setRenaming(null);
+    menuTriggerRefs.current.get(current.conversationId)?.focus();
+  };
+
+  const confirmDelete = () => {
+    if (deleteTarget === null) return;
+    const deletingActive = deleteTarget.id === activeConversationId;
+    onDeleteConversation(deleteTarget.id);
+    setDeleteTarget(null);
+    if (!deletingActive) searchRef.current?.focus();
+  };
+
   const getConversationLabel = (conversation: Conversation) => {
     const contextCount =
       conversation.selectedSourceIds.length +
       conversation.selectedAgentIds.length +
       conversation.selectedSkillIds.length;
-    const title =
-      conversation.turns.length > 0
-        ? conversation.title
-        : copy.navigation.newChat;
+    const title = getConversationTitle(conversation);
     const contextLabel =
       contextCount > 0 ? ` · ${contextCount} ${copy.sources.selected}` : "";
 
@@ -269,30 +412,192 @@ export function PrototypeSidebar({
             <span className="tap-sidebar-section-title">
               {copy.navigation.chatHistory}
             </span>
-            {conversationHistory.map((conversation) => {
+            <label className="tap-chat-history-search">
+              <SearchOutlined aria-hidden="true" />
+              <input
+                ref={searchRef}
+                type="search"
+                aria-label={copy.navigation.searchChats}
+                placeholder={copy.navigation.searchChats}
+                value={historyQuery}
+                onChange={(event) => setHistoryQuery(event.target.value)}
+              />
+            </label>
+            {visibleConversationHistory.length === 0 ? (
+              <p className="tap-chat-history-empty" role="status">
+                {copy.navigation.noMatchingChats}
+              </p>
+            ) : null}
+            {visibleConversationHistory.map((conversation) => {
               const label = getConversationLabel(conversation);
+              const title = getConversationTitle(conversation);
+              const menuOpen = menuConversationId === conversation.id;
+              const isRenaming = renaming?.conversationId === conversation.id;
+              const renameHintId = `tap-chat-rename-hint-${conversation.id}`;
 
               return (
-                <button
+                <div
                   key={conversation.id}
-                  type="button"
-                  aria-label={label}
-                  aria-current={
-                    conversation.id === activeConversationId
-                      ? "page"
-                      : undefined
-                  }
-                  title={label}
-                  onClick={() => onSelectConversation(conversation.id)}
+                  className="tap-chat-history-row"
+                  data-active={conversation.id === activeConversationId}
+                  data-menu-open={menuOpen || undefined}
                 >
-                  <MessageOutlined aria-hidden="true" />
-                  <span>{label}</span>
-                </button>
+                  {isRenaming ? (
+                    <div className="tap-chat-history-rename">
+                      <MessageOutlined aria-hidden="true" />
+                      <input
+                        ref={renameInputRef}
+                        aria-label={copy.navigation.chatName}
+                        aria-invalid={renaming?.invalid || undefined}
+                        aria-describedby={
+                          renaming?.invalid ? renameHintId : undefined
+                        }
+                        maxLength={CONVERSATION_TITLE_MAX_LENGTH}
+                        value={renaming?.value ?? ""}
+                        onChange={(event) =>
+                          setRenaming({
+                            conversationId: conversation.id,
+                            value: event.target.value,
+                            invalid: false,
+                          })
+                        }
+                        onKeyDown={(event) => {
+                          if (event.nativeEvent.isComposing) return;
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            finishRename(true);
+                          } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            finishRename(false);
+                          }
+                        }}
+                        onBlur={() => {
+                          const current = renamingRef.current;
+                          if (current?.conversationId !== conversation.id)
+                            return;
+                          const trimmed = current.value.trim();
+                          finishRename(
+                            trimmed.length > 0 &&
+                              trimmed.length <= CONVERSATION_TITLE_MAX_LENGTH,
+                          );
+                        }}
+                      />
+                      {renaming?.invalid ? (
+                        <small id={renameHintId} role="alert">
+                          {copy.navigation.chatNameHint}
+                        </small>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="tap-chat-history-item"
+                      aria-label={label}
+                      aria-current={
+                        conversation.id === activeConversationId
+                          ? "page"
+                          : undefined
+                      }
+                      title={label}
+                      onClick={() => onSelectConversation(conversation.id)}
+                    >
+                      <MessageOutlined aria-hidden="true" />
+                      <span>{label}</span>
+                    </button>
+                  )}
+                  <button
+                    ref={(element) => {
+                      if (element === null)
+                        menuTriggerRefs.current.delete(conversation.id);
+                      else menuTriggerRefs.current.set(conversation.id, element);
+                    }}
+                    type="button"
+                    className="tap-chat-history-more"
+                    aria-label={copy.navigation.moreOptionsFor.replace(
+                      "{title}",
+                      title,
+                    )}
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    hidden={isRenaming}
+                    onClick={() =>
+                      setMenuConversationId(menuOpen ? null : conversation.id)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                        event.preventDefault();
+                        setMenuConversationId(conversation.id);
+                      }
+                    }}
+                  >
+                    <MoreOutlined aria-hidden="true" />
+                  </button>
+                  {menuOpen ? (
+                    <div
+                      ref={menuRef}
+                      className="tap-chat-history-menu"
+                      role="menu"
+                      aria-label={copy.navigation.moreOptionsFor.replace(
+                        "{title}",
+                        title,
+                      )}
+                      onKeyDown={handleMenuKeyDown}
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => startRename(conversation)}
+                      >
+                        <EditOutlined aria-hidden="true" />
+                        {copy.navigation.renameChat}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        data-danger="true"
+                        onClick={() => {
+                          setMenuConversationId(null);
+                          setDeleteTarget(conversation);
+                        }}
+                      >
+                        <DeleteOutlined aria-hidden="true" />
+                        {copy.navigation.deleteChat}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
           </nav>
         ) : null}
       </aside>
+      {deleteTarget === null ? null : (
+        <AccessibleDialog
+          ariaLabel={copy.navigation.deleteChatTitle}
+          className="tap-catalog-dialog tap-delete-chat-dialog"
+          onClose={() => setDeleteTarget(null)}
+          opener={menuTriggerRefs.current.get(deleteTarget.id) ?? null}
+        >
+          <header>
+            <h2>{copy.navigation.deleteChatTitle}</h2>
+          </header>
+          <p>
+            {copy.navigation.deleteChatDescription.replace(
+              "{title}",
+              getConversationTitle(deleteTarget),
+            )}
+          </p>
+          <div className="tap-dialog-actions">
+            <Button onClick={() => setDeleteTarget(null)}>
+              {copy.navigation.cancel}
+            </Button>
+            <Button type="primary" danger onClick={confirmDelete}>
+              {copy.navigation.deleteChat}
+            </Button>
+          </div>
+        </AccessibleDialog>
+      )}
     </>
   );
 }

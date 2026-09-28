@@ -208,6 +208,7 @@ export function useDocumentReview(locale: Locale) {
         history: [],
       },
     ]);
+    return id;
   }
   return {
     sources,

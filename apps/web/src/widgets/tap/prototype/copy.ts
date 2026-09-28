@@ -16,6 +16,16 @@ export interface PrototypeCopy {
     language: string;
     prototypeTeam: string;
     localWorkspace: string;
+    searchChats: string;
+    noMatchingChats: string;
+    moreOptionsFor: string;
+    renameChat: string;
+    deleteChat: string;
+    chatName: string;
+    chatNameHint: string;
+    deleteChatTitle: string;
+    deleteChatDescription: string;
+    cancel: string;
   };
   chat: {
     startConversation: string;
@@ -40,6 +50,10 @@ export interface PrototypeCopy {
     showEarlierQuestions: string;
     showLaterQuestion: string;
     showLaterQuestions: string;
+    stopGenerating: string;
+    sending: string;
+    regenerate: string;
+    editQuestion: string;
   };
   sources: {
     heading: string;
@@ -74,6 +88,14 @@ export interface PrototypeCopy {
     models: string;
     remove: string;
     close: string;
+    uploadFile: string;
+    attachments: string;
+    attachmentProcessing: string;
+    attachmentFailed: string;
+    attachmentNeedsReview: string;
+    reviewInLibrary: string;
+    unsupportedFile: string;
+    fileTooLarge: string;
   };
   catalog: {
     agents: string;
@@ -310,6 +332,17 @@ export const PROTOTYPE_COPY = {
       language: "Language",
       prototypeTeam: "Workspace team",
       localWorkspace: "Local workspace",
+      searchChats: "Search chats",
+      noMatchingChats: "No matching chats",
+      moreOptionsFor: "More options for {title}",
+      renameChat: "Rename",
+      deleteChat: "Delete",
+      chatName: "Chat name",
+      chatNameHint: "Enter a name of 1–120 characters.",
+      deleteChatTitle: "Delete chat?",
+      deleteChatDescription:
+        "“{title}” will be removed from your chat history. This can’t be undone.",
+      cancel: "Cancel",
     },
     chat: {
       startConversation: "Start a conversation",
@@ -342,6 +375,10 @@ export const PROTOTYPE_COPY = {
       showEarlierQuestions: "Show {count} earlier questions",
       showLaterQuestion: "Show {count} later question",
       showLaterQuestions: "Show {count} later questions",
+      stopGenerating: "Stop generating",
+      sending: "Sending",
+      regenerate: "Regenerate",
+      editQuestion: "Edit question",
     },
     sources: {
       heading: "Knowledge sources",
@@ -377,6 +414,15 @@ export const PROTOTYPE_COPY = {
       models: "Models",
       remove: "Remove",
       close: "Close",
+      uploadFile: "Upload file",
+      attachments: "Attachments",
+      attachmentProcessing: "Processing…",
+      attachmentFailed: "Text extraction failed",
+      attachmentNeedsReview: "Needs review before use",
+      reviewInLibrary: "Review in Library",
+      unsupportedFile:
+        "This file type isn’t supported. Upload a PDF, DOCX, MD or TXT file.",
+      fileTooLarge: "Files must be 25 MB or smaller.",
     },
     catalog: {
       agents: "Agents",
@@ -619,6 +665,16 @@ export const PROTOTYPE_COPY = {
       language: "语言",
       prototypeTeam: "工作空间团队",
       localWorkspace: "本地工作区",
+      searchChats: "搜索对话",
+      noMatchingChats: "没有匹配的对话",
+      moreOptionsFor: "更多操作：{title}",
+      renameChat: "重命名",
+      deleteChat: "删除",
+      chatName: "对话名称",
+      chatNameHint: "请输入 1–120 个字符的名称。",
+      deleteChatTitle: "删除对话？",
+      deleteChatDescription: "“{title}”将从对话历史中移除，且无法恢复。",
+      cancel: "取消",
     },
     chat: {
       startConversation: "开始对话",
@@ -649,6 +705,10 @@ export const PROTOTYPE_COPY = {
       showEarlierQuestions: "显示上方另外 {count} 个问题",
       showLaterQuestion: "显示下方另外 {count} 个问题",
       showLaterQuestions: "显示下方另外 {count} 个问题",
+      stopGenerating: "停止生成",
+      sending: "正在发送",
+      regenerate: "重新生成",
+      editQuestion: "编辑问题",
     },
     sources: {
       heading: "知识来源",
@@ -683,6 +743,14 @@ export const PROTOTYPE_COPY = {
       models: "模型",
       remove: "移除",
       close: "关闭",
+      uploadFile: "上传文件",
+      attachments: "附件",
+      attachmentProcessing: "正在处理…",
+      attachmentFailed: "文本提取失败",
+      attachmentNeedsReview: "需审核后使用",
+      reviewInLibrary: "在知识库中审核",
+      unsupportedFile: "不支持此文件类型。请上传 PDF、DOCX、MD 或 TXT 文件。",
+      fileTooLarge: "文件大小不能超过 25 MB。",
     },
     catalog: {
       agents: "智能体",
