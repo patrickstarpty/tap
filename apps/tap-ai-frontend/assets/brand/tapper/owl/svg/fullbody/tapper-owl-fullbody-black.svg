@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="10 8 180 180" role="img" aria-label="Tapper Owl fullbody black">
+<title>Tapper Owl fullbody black</title>
+<desc>Tapper Owl. Front-facing round owl with ear tufts, facial disc, bright eyes and cheeks. Flat vector, no headset.</desc>
+<defs><mask id="fb-black-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
+<rect width="200" height="200" fill="#fff"/>
+<circle cx="76" cy="89" r="21" fill="#000"/><circle cx="124" cy="89" r="21" fill="#000"/>
+<circle cx="81" cy="86" r="12" fill="#fff"/><circle cx="129" cy="86" r="12" fill="#fff"/>
+<circle cx="85" cy="81" r="4.5" fill="#000"/><circle cx="133" cy="81" r="4.5" fill="#000"/>
+<path d="M93 106 Q100 103 107 106 Q104 116 100 120 Q96 116 93 106 Z" fill="#000"/>
+<path d="M34 112 Q62 124 66 178 M166 112 Q138 124 134 178" fill="none" stroke="#000" stroke-width="4"/>
+</mask></defs>
+<path fill="#000000" d="M44 24 Q54 40 72 52 Q100 45 128 52 Q148 38 160 22 Q167 62 166 100 L166 140 Q166 178 100 178 Q34 178 34 140 L34 100 Q33 62 44 24 Z" mask="url(#fb-black-cut)"/>
+</svg>
