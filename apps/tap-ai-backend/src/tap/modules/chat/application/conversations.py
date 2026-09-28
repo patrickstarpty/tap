@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     AnswerEvidenceSnapshot,
@@ -17,7 +18,10 @@ from tap.modules.chat.domain.conversations import (
     GraphContextStatus,
     RetrievalSummary,
     TurnInputSnapshot,
+    conversation_title,
 )
+
+_TERMINAL_TURN_STATES = frozenset({"completed", "abstained", "failed", "canceled"})
 
 
 class ConversationNotFound(Exception):
@@ -32,15 +36,40 @@ class InvalidConversationCursor(ValueError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class ConversationOwnership:
+    """Minimal owner facts, visible even after a soft delete, for owner-only commands."""
+
+    actor_id: str
+    deleted_at: datetime | None
+
+
+def history_query(value: str | None) -> str | None:
+    """Canonical title search text: stripped, empty means no filter."""
+    if value is None:
+        return None
+    stripped = value.strip()
+    if len(stripped) > 120:
+        raise ValueError("conversation search must be at most 120 characters")
+    return stripped or None
+
+
 class ConversationRepository(Protocol):
     async def create_with_first_turn(self, conversation: Conversation) -> ConversationTurn: ...
     async def append_turn(
         self, conversation_id: str, turn: ConversationTurn, event: ConversationEvent
     ) -> ConversationTurn: ...
     async def list(
-        self, *, limit: int, cursor: str | None
+        self, *, limit: int, cursor: str | None, query: str | None = None
     ) -> tuple[tuple[Conversation, ...], str | None]: ...
     async def load(self, conversation_id: str) -> Conversation: ...
+    async def ownership(self, conversation_id: str) -> ConversationOwnership: ...
+    async def rename(
+        self, conversation_id: str, title: str, *, updated_at: datetime
+    ) -> Conversation: ...
+    async def soft_delete(
+        self, conversation_id: str, *, actor_id: str, deleted_at: datetime
+    ) -> None: ...
     async def complete(
         self,
         conversation_id: str,
@@ -100,9 +129,14 @@ class InMemoryConversationRepository:
         )
         return turn
 
-    async def list(self, *, limit, cursor):
+    async def list(self, *, limit, cursor, query=None):
+        needle = None if query is None else query.casefold()
         values = sorted(
-            self.values.values(),
+            (
+                item
+                for item in self.values.values()
+                if item.deleted_at is None and (needle is None or needle in item.title.casefold())
+            ),
             key=lambda item: (item.updated_at, item.conversation_id),
             reverse=True,
         )
@@ -124,10 +158,31 @@ class InMemoryConversationRepository:
         return page, next_cursor
 
     async def load(self, conversation_id):
-        try:
-            return self.values[conversation_id]
-        except KeyError as error:
-            raise ConversationNotFound from error
+        value = self.values.get(conversation_id)
+        if value is None or value.deleted_at is not None:
+            raise ConversationNotFound
+        return value
+
+    async def ownership(self, conversation_id):
+        value = self.values.get(conversation_id)
+        if value is None:
+            raise ConversationNotFound
+        return ConversationOwnership(value.actor_id or "", value.deleted_at)
+
+    async def rename(self, conversation_id, title, *, updated_at):
+        value = await self.load(conversation_id)
+        renamed = replace(value, title=title, updated_at=updated_at)
+        self.values[conversation_id] = renamed
+        return renamed
+
+    async def soft_delete(self, conversation_id, *, actor_id, deleted_at):
+        value = self.values.get(conversation_id)
+        if value is None:
+            raise ConversationNotFound
+        if value.deleted_at is None:
+            self.values[conversation_id] = replace(
+                value, deleted_at=deleted_at, deleted_by=actor_id
+            )
 
     async def complete(
         self,
@@ -259,7 +314,14 @@ class ConversationService:
         turn, event = self._turn(conversation_id, turn_id, request_id, value)
         now = event.occurred_at
         conversation = Conversation(
-            conversation_id, self.scope.project_id, value.message[:120], now, now, (turn,), (event,)
+            conversation_id,
+            self.scope.project_id,
+            value.message[:120],
+            now,
+            now,
+            (turn,),
+            (event,),
+            actor_id=self.scope.actor_id,
         )
         return await self.repository.create_with_first_turn(conversation)
 
@@ -269,8 +331,35 @@ class ConversationService:
         event = replace(event, sequence=len(conversation.events) + 1)
         return await self.repository.append_turn(conversation_id, turn, event)
 
-    async def list(self, *, limit, cursor):
-        return await self.repository.list(limit=limit, cursor=cursor)
+    async def list(self, *, limit, cursor, query: str | None = None):
+        return await self.repository.list(limit=limit, cursor=cursor, query=history_query(query))
+
+    async def _owned(self, conversation_id: str, actor_id: str) -> ConversationOwnership:
+        owner = await self.repository.ownership(conversation_id)
+        if owner.actor_id != actor_id:
+            raise AuthorizationDenied("conversation-owner-required")
+        return owner
+
+    async def rename(self, conversation_id: str, title: str, *, actor_id: str) -> Conversation:
+        canonical = conversation_title(title)
+        owner = await self._owned(conversation_id, actor_id)
+        if owner.deleted_at is not None:
+            raise ConversationNotFound
+        return await self.repository.rename(
+            conversation_id, canonical, updated_at=datetime.now(timezone.utc)
+        )
+
+    async def delete(self, conversation_id: str, *, actor_id: str) -> None:
+        owner = await self._owned(conversation_id, actor_id)
+        if owner.deleted_at is not None:
+            return
+        conversation = await self.load(conversation_id)
+        for turn in conversation.turns:
+            if turn.state not in _TERMINAL_TURN_STATES:
+                await self.cancel(conversation_id, turn.turn_id)
+        await self.repository.soft_delete(
+            conversation_id, actor_id=actor_id, deleted_at=datetime.now(timezone.utc)
+        )
 
     async def load(self, conversation_id):
         value = await self.repository.load(conversation_id)
@@ -292,7 +381,7 @@ class ConversationService:
         turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
         if turn is None:
             raise ConversationNotFound
-        if turn.state in {"completed", "abstained", "failed", "canceled"}:
+        if turn.state in _TERMINAL_TURN_STATES:
             return turn
         return await self.complete_evidence(
             conversation_id,

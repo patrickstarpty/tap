@@ -941,3 +941,57 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
     assert await GenerationWorker(Conversations(), knowledge).run_once(limit=1) == 1
     assert gateway.requests[0].resource_refs[0].source_id == frozen.source_id
     assert repository.snapshots[0].selected_revisions == (frozen,)
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_skips_a_turn_whose_conversation_was_deleted():
+    from tap.modules.chat.application.conversations import ConversationNotFound
+
+    turn = SimpleNamespace(
+        turn_id="turn-1",
+        lease_token="lease-1",
+        input_snapshot=SimpleNamespace(
+            value=SimpleNamespace(
+                message="question",
+                source_revision_ids=("revision-1",),
+                resolved_resources=(
+                    SimpleNamespace(source_id="src_" + "1" * 32, revision_id="revision-1"),
+                ),
+            )
+        ),
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return (("conversation-1", turn),)
+
+    class Conversations:
+        repository = Repository()
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            raise ConversationNotFound
+
+    class Knowledge:
+        async def answer(self, request):
+            return SimpleNamespace(
+                answer="grounded",
+                citations=[],
+                abstained=False,
+                trace_id="trace-1",
+                model_dump=lambda **_: {
+                    "traceId": "trace-1",
+                    "queryPlanId": "plan-1",
+                    "contextSnapshotId": "context-1",
+                    "corpusVersion": "v1",
+                    "retrievalProfileId": "quick",
+                    "degradedMode": False,
+                    "answer": "grounded",
+                    "abstained": False,
+                    "abstentionReason": None,
+                    "claims": [],
+                    "citations": [],
+                },
+            )
+
+    worker = GenerationWorker(Conversations(), Knowledge(), checkpointer=InMemorySaver())
+    assert await worker.run_once(limit=1) == 1
