@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 200 200" role="img" aria-label="Simple owl">
+  <title>Simple owl</title>
+  <defs>
+    <clipPath id="owl-body">
+      <path d="M42 28 L72 52 Q100 45 128 52 L158 28 Q167 62 166 100 L166 140 Q166 178 100 178 Q34 178 34 140 L34 100 Q33 62 42 28 Z"/>
+    </clipPath>
+  </defs>
+  <path fill="#C8642E" d="M42 28 L72 52 Q100 45 128 52 L158 28 Q167 62 166 100 L166 140 Q166 178 100 178 Q34 178 34 140 L34 100 Q33 62 42 28 Z"/>
+  <g clip-path="url(#owl-body)">
+    <ellipse cx="100" cy="162" rx="42" ry="34" fill="#EDB06A"/>
+    <path fill="#A9501F" d="M34 112 Q62 124 66 178 L30 178 Z"/>
+    <path fill="#A9501F" d="M166 112 Q138 124 134 178 L170 178 Z"/>
+  </g>
+  <circle cx="76" cy="90" r="22" fill="#FFFFFF"/>
+  <circle cx="124" cy="90" r="22" fill="#FFFFFF"/>
+  <circle cx="78" cy="92" r="10" fill="#1E1B18"/>
+  <circle cx="122" cy="92" r="10" fill="#1E1B18"/>
+  <circle cx="81" cy="88" r="3" fill="#FFFFFF"/>
+  <circle cx="125" cy="88" r="3" fill="#FFFFFF"/>
+  <path fill="#EDB06A" d="M92 110 L108 110 L100 123 Z"/>
+</svg>
