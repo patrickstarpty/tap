@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from typing import cast
 from xml.etree import ElementTree
 
+from tap_platform.insights.adapters.report_errors import ReportSecurityError
 from tap_platform.insights.domain.reports import ReportManifest, TestAttemptFact
 
 
@@ -14,10 +16,24 @@ PARSER_VERSION = "junit-v1"
 _FORBIDDEN_DECLARATION = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
 
 
-class JUnitSecurityError(ValueError):
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
+class JUnitSecurityError(ReportSecurityError):
+    """Rejection raised by the JUnit/pytest XML parsers."""
+
+
+_RETRY_TAGS = {"rerunFailure", "rerunError", "flakyFailure", "flakyError"}
+_OUTCOME_TAGS = (("failure", "failed"), ("error", "broken"), ("skipped", "skipped"))
+
+
+@dataclass(frozen=True, slots=True)
+class JUnitCase:
+    """Evidence captured from a testcase during the single streaming pass."""
+
+    name: str
+    identified: bool
+    has_retry: bool
+    status: str
+    message: str
+    trace: str
 
 
 def parse_junit(
@@ -28,6 +44,26 @@ def parse_junit(
     max_nodes: int = 200_000,
     max_text_chars: int = 2_000_000,
 ) -> list[TestAttemptFact]:
+    return [
+        fact
+        for fact, _ in parse_junit_cases(
+            raw,
+            manifest,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+            max_text_chars=max_text_chars,
+        )
+    ]
+
+
+def parse_junit_cases(
+    raw: bytes,
+    manifest: ReportManifest,
+    *,
+    max_depth: int = 64,
+    max_nodes: int = 200_000,
+    max_text_chars: int = 2_000_000,
+) -> list[tuple[TestAttemptFact, JUnitCase]]:
     if b"\x00" in raw or raw.startswith((b"\xff\xfe", b"\xfe\xff")):
         raise JUnitSecurityError("xml-encoding-forbidden")
     if _FORBIDDEN_DECLARATION.search(raw):
@@ -37,7 +73,7 @@ def parse_junit(
     nodes = 0
     text_chars = 0
     root_tag: str | None = None
-    attempts: list[TestAttemptFact] = []
+    attempts: list[tuple[TestAttemptFact, JUnitCase]] = []
     mapping = dict(manifest.external_test_id_mapping)
     try:
         for offset in range(0, len(raw), 64 * 1024):
@@ -59,11 +95,14 @@ def parse_junit(
                         raise JUnitSecurityError("xml-text-limit")
                     if _local_name(element.tag) == "testcase":
                         attempts.append(
-                            _map_testcase(
-                                element,
-                                index=len(attempts) + 1,
-                                manifest=manifest,
-                                mapping=mapping,
+                            (
+                                _map_testcase(
+                                    element,
+                                    index=len(attempts) + 1,
+                                    manifest=manifest,
+                                    mapping=mapping,
+                                ),
+                                _case_evidence(element),
                             )
                         )
                         element.clear()
@@ -151,6 +190,23 @@ def _map_testcase(
         first_attempt_eligible=bool(
             manifest.contains_complete_attempts and attempt == 1 and stable_id
         ),
+    )
+
+
+def _case_evidence(element: ElementTree.Element) -> JUnitCase:
+    children = {_local_name(child.tag): child for child in reversed(element)}
+    status, outcome = "passed", None
+    for tag, value in _OUTCOME_TAGS:
+        if tag in children:
+            status, outcome = value, children[tag]
+            break
+    return JUnitCase(
+        name=element.attrib.get("name", ""),
+        identified=bool(element.attrib.get("classname") and element.attrib.get("name")),
+        has_retry=any(tag in _RETRY_TAGS for tag in children),
+        status=status,
+        message=outcome.attrib.get("message", "") if outcome is not None else "",
+        trace=(outcome.text or "") if outcome is not None else "",
     )
 
 

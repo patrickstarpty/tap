@@ -34,6 +34,7 @@ interface PrototypeSidebarProps {
   onNewChat: () => void;
   onSelectConversation: (conversationId: string) => void;
   onToggleCollapsed: () => void;
+  showFooter?: boolean;
 }
 
 export function PrototypeSidebar({
@@ -48,6 +49,7 @@ export function PrototypeSidebar({
   onNewChat,
   onSelectConversation,
   onToggleCollapsed,
+  showFooter = true,
 }: PrototypeSidebarProps) {
   const tapperWorkspaceActive = [
     "tapper",
@@ -83,8 +85,8 @@ export function PrototypeSidebar({
       icon: <CodeOutlined aria-hidden="true" />,
     },
     {
-      key: "test-analytics",
-      label: copy.navigation["test-analytics"],
+      key: "test-insights",
+      label: copy.navigation["test-insights"],
       icon: <BarChartOutlined aria-hidden="true" />,
     },
   ];
@@ -179,7 +181,7 @@ export function PrototypeSidebar({
           {productModules.map((module) => moduleButton(module, "product"))}
         </nav>
 
-        <div className="tap-sidebar-footer">
+        {showFooter ? <div className="tap-sidebar-footer">
           <div
             className="tap-language-switcher"
             aria-label={copy.navigation.language}
@@ -207,7 +209,7 @@ export function PrototypeSidebar({
             <strong>{copy.navigation.prototypeTeam}</strong>
             <small>{copy.navigation.localWorkspace}</small>
           </span>
-        </div>
+        </div> : null}
       </aside>
 
       <aside

@@ -16,6 +16,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}/attachment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evidence Attachment */
+        get: operations["evidence_attachment_api_v1_projects__project_id__insights_evidence__receipt_id__attachment_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}/details": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evidence Details */
+        get: operations["evidence_details_api_v1_projects__project_id__insights_evidence__receipt_id__details_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/insights/failures": {
         parameters: {
             query?: never;
@@ -394,6 +428,36 @@ export interface components {
             /** Value */
             value: number | null;
         };
+        /** ReportAttachmentContract */
+        ReportAttachmentContract: {
+            /** Available */
+            available: boolean;
+            /** Mediatype */
+            mediaType: string;
+            /** Name */
+            name: string;
+            /** Source */
+            source: string;
+        };
+        /** ReportAttemptEvidenceContract */
+        ReportAttemptEvidenceContract: {
+            /** Attachments */
+            attachments: components["schemas"]["ReportAttachmentContract"][];
+            /** Factkey */
+            factKey: string;
+            /** Legacyfactkey */
+            legacyFactKey?: string | null;
+            /** Message */
+            message: string;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /** Steps */
+            steps: components["schemas"]["ReportStepContract"][];
+            /** Trace */
+            trace: string;
+        };
         /** ReportCoverageContract */
         ReportCoverageContract: {
             /**
@@ -413,6 +477,31 @@ export interface components {
             reportBatchId: string;
             /** Sourceid */
             sourceId: string;
+        };
+        /** ReportEvidenceContract */
+        ReportEvidenceContract: {
+            /** Attempts */
+            attempts: components["schemas"]["ReportAttemptEvidenceContract"][];
+            /**
+             * Reportformat
+             * @enum {string}
+             */
+            reportFormat: "junit" | "pytest" | "allure";
+        };
+        /** ReportStepContract */
+        ReportStepContract: {
+            /** Attachments */
+            attachments: components["schemas"]["ReportAttachmentContract"][];
+            /** Message */
+            message: string;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /** Steps */
+            steps: components["schemas"]["ReportStepContract"][];
+            /** Trace */
+            trace: string;
         };
         /** RunPageContract */
         RunPageContract: {
@@ -494,6 +583,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evidence_attachment_api_v1_projects__project_id__insights_evidence__receipt_id__attachment_get: {
+        parameters: {
+            query: {
+                source: string;
+            };
+            header?: {
+                Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
+                "X-TAP-Authorization-Version"?: string | null;
+            };
+            path: {
+                project_id: string;
+                receipt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evidence_details_api_v1_projects__project_id__insights_evidence__receipt_id__details_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+                "X-TAP-Service-Authorization"?: string | null;
+                "X-TAP-Authorization-Version"?: string | null;
+            };
+            path: {
+                project_id: string;
+                receipt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportEvidenceContract"];
                 };
             };
             /** @description Validation Error */

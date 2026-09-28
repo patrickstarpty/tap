@@ -2,6 +2,8 @@
 
 本文记录当前有效决策及被后续决策替代的历史。RFC-009 已在 2026-09-04 接受，当前交付、部署、知识、资产版本和执行基线以 ADR-020–025 为准；ADR-026–029 补充产品命名、应用边界与统一 AI 交互/任务编排。
 
+- [ADR-030：知识切片直接生效](2026-09-27-adr-030-direct-knowledge-chunk-lifecycle.md)（`accepted`）：用户确认采用 Dify 保存、索引、启用的流程，保留原件与历史审批。
+
 ## 当前平台基线
 
 - [ADR-029：LangGraph 统一编排 TAP AI 的 AI 交互与任务](2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md)（`accepted`，目标架构，当前 V1 未实现）：TAP AI Chat 与 AI Task 进入同一版本化图；Fast Chat、Durable Workflow、Bounded Agentic Task 经稳定领域端口访问模型、知识、指标与业务动作。

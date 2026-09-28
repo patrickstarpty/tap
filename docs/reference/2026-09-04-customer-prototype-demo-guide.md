@@ -1,503 +1,435 @@
-# TAP 客户原型演示指南
+# TAP 客户演示指南：从业务知识到测试决策
 
-更新日期：2026-09-22（恢复完整组合原型为唯一设计基准与固定入口；逐页截图和历史讲解保留 2026-09-06 状态）。
+更新日期：2026-09-27。本文按当前实现重新组织演示，替代原有逐页浏览脚本。面向售前、产品负责人和演示主持人；主线约 20 分钟，管理层精简版约 5 分钟。
 
-> **现行设计基准与历史截图**：完整组合原型已恢复为持续演进的唯一产品设计基准，固定入口为 `apps/web` 的 `/prototype`；后续设计必须在其上增量修改并保留既有模块。本文 2026-09-06 的截图仍是历史采集，不是当前运行状态或已实现能力的证明。模块清单、产品 UI 边界与回归要求以[产品原型基准规范](2026-09-22-product-prototype-baseline.md)为准。TAP AI 与 TAP 仍按[产品边界](../architecture/2026-09-15-tap-ai-product-boundary.md)独立实现与部署，独立应用入口不能替代完整设计基准。
+## 1. 客户应带走的三个答案
 
-本文保留 TAP 前端交互原型的历史演示记录，覆盖 Tapper、Library、Test Management 和 Low Code Automation 的页面、弹窗、关键状态与跨模块旅程。完整现行基准还包括 Test Analytics/Insights；历史截图未覆盖它不构成删除该模块的理由。
+| 客户的问题                           | 演示的业务流程                                      | 可说明的帮助                                       |
+| ------------------------------------ | --------------------------------------------------- | -------------------------------------------------- |
+| 资料很多、版本混乱，回答依据可信吗？ | 资料入库 → 提取核对 → 复核发布 → 引用问答           | 把可用知识与待核对资料分开，让回答能回到依据       |
+| 测试设计依赖个人经验，遗漏难发现？   | 已知需求 → 测试草稿 → 人工评审 → 发布版本           | 提供可编辑的起点，并显式暴露假设、未知项和覆盖缺口 |
+| 测试报告分散，失败原因难追查？       | pytest 测试结果 → 指标 → 运行/attempt → 证据 → 解释 | 在同一查询范围下看结果、找证据，减少来回翻报告     |
 
-历史交互设计见 [RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。下文逐页操作、`Simulated` 标签、演示提示与模拟场景描述均记录采集时状态，不要求复制到当前产品 UI。当前界面呈现拟交付产品体验，不放演示开关、模拟场景控件或实现说明；能力边界在文档和评审中说明。本文不替代 RFC、ADR、实施计划或验收记录。
+开场话术：
 
-> **现行目标与原型边界**：[RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已确定 Web-only/Jenkins-first。本文截图中的 Mobile/iOS/Android 与 Azure DevOps Pipeline Agent 是遗留的模拟原型探索，只能用于解释曾验证的交互，不属于当前 V0–VG、P0 或 P1 目标；Mobile 与 Azure DevOps 均在 P1 之后另行设计。演示现行路线时，应把 Web 执行口径改为外置 Jenkins Pipeline Agent，且不得把截图中的 ADO 文案解释为计划中的 Provider。
+> 今天我们沿着一项业务变更走一遍：先确认团队使用的知识，再把需求整理成测试计划，最后查看已有测试结果并追查失败。重点看每一步留下什么依据，以及下一位同事如何接着工作。
 
-## 2026-09-06 交互更新与截图说明
+不承诺未经测量的节省比例、生产规模或自动修复效果。
 
-2026-09-06 原型沿用[浅色视觉规范](2026-09-05-tap-light-design.md)，新增 Listening/Aha 啄木鸟形象、常驻折叠图标栏、跨页面悬浮助手，以及默认打开的 Knowledge Graph 搜索工作区。品牌方案见 [Tapper LOGO 与助手形象设计提案](../proposals/2026-09-06-tapper-icon-design-proposal.md)。
+## 2. 演示前准备（主持人）
 
-本文 **44 张截图均于 2026-09-06 从当时的原型以 2× 像素密度采集**，包含 Listening 品牌、`Agents` 导航、`Documents` 标签、折叠图标栏，以及图谱搜索、悬浮助手上下文、Aha 未读状态和会话交接。截图统一为 **2560×1440 无损 PNG**，页面布局视口保持 1280×720，可点击图片查看原尺寸细节。截图使用隔离浏览器和确定性示例数据，不连接真实执行服务；Mobile 与 ADO 屏幕只代表遗留交互探索。
+### 2.1 选择正确入口
 
-独立 TAP AI 应用截图采集命令（仓库根目录；不替代完整原型回归，也不重建本文历史截图）：
+| 入口                  | 用途                               | 启动与地址                                                                                           |
+| --------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 完整产品原型          | 展示统一布局、模块导航与跨模块设计 | `corepack pnpm --dir apps/web dev --port 15176` → `http://127.0.0.1:15176/prototype`                 |
+| TAP AI 运行页面       | 资料、审核、问答、测试设计         | 配好本地服务后 `make tap-ai-dev` → `http://127.0.0.1:5173/`                                          |
+| TAP Insights 运行页面 | pytest/Allure 上传、指标、运行详情 | TAP API/Worker/ClickHouse 就绪后 `make tap-web-dev` → `http://127.0.0.1:5174/?module=test-insights` |
 
-```sh
-corepack pnpm --dir apps/tap-ai-frontend run prototype:capture
+详细环境步骤见[后端指引](2026-09-27-backend-developer-onboarding.md)和[前端指引](2026-09-27-frontend-developer-onboarding.md)。原型入口本身不证明后台持久化或真实执行；运行页面与完整原型的画面可以不同，切换时应说明用途。
+
+### 2.2 准备可重复的演示资料
+
+流程一、二沿用原型内置的“健康告知缺失”合成场景。若切换到 TAP AI 运行页面，可另准备一份小型可提取文字的 MD/TXT，内容包含健康告知规则、异常条件和待澄清项。图片能力使用下文的脱敏 PNG 审批流程图，核对其中的节点、箭头方向、分支条件和回路。只演示资料中实际写明或图中确实画出的规则；不要现场编造引用。流程三的“身份核验/支付”pytest 报告是另一组独立样本。
+
+准备以下状态：
+
+1. 一份待核对资料，用于展示提取结果；如要展示原件对照，另在 TAP AI 运行页面准备原文件。
+2. 一份已通过复核并发布的资料，用于稳定演示问答。
+3. 一个可编辑的测试草稿及一个已发布版本，用于展示评审前后差异。
+4. 同一次 pytest 运行的报告与完整来源信息：Allure Results ZIP 可用于导入步骤/附件，pytest 导出的 JUnit XML 可用于基础结果接入。来源格式、attempt 与完整历史必须按[后端指引](2026-09-27-backend-developer-onboarding.md#41-报告来源pytest--allure)确认；应按本次真实来源核对参数和重试语义。可使用[仓库 retry.xml](../../apps/backend/tests/fixtures/insights/reports/retry.xml)与[对应字段示例](../../apps/web/tests/e2e/insights-report.spec.ts)。这个报告是独立技术样本，不宣称来自前面现场生成的测试计划。
+5. 可用的项目授权与未过期 token，放在本地安全配置中，投屏不展示凭证。
+
+现场不依赖临时构造第二位复核人。独立复核用已准备的合规身份或预先完成的演示状态；固定本地身份的交接验证由隔离测试完成，不能宣称已有客户具名签字。
+
+演示前完整排练一次：引用可打开、草稿可保存、报告收据就绪、指标筛选可用、原报告可下载。模型未配置或解释不可用时，使用已保存的合成示例展示结果，并明确为预先准备内容。
+
+### 2.3 当前能力口径
+
+| 能力          | 当前可以展示                                                       | 不应宣称                                                   |
+| ------------- | ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| 可信知识      | 文字型 PDF/DOCX/MD/TXT 与 XLSX；功能分支另支持单张 PNG/JPEG 流程图解析、核对、复核发布及区域引用 | 扫描 PDF/Office 内图片 OCR、一般图片理解、图像向量检索、真实客户质量已验收 |
+| 测试设计      | 生成草稿、编辑、评审、发布、持久化恢复                             | 自动生成即正确、无需业务审核                               |
+| 基础 Insights | pytest XML / Allure ZIP 上传、指标、Run/attempt、步骤/附件及原报告 | 已连接客户 CI、支持 Allure HTML 站点导入、真实客户验收通过 |
+| AI 解释       | 配置完整时读取授权事实，区分事实、假设和缺失信息                   | 已证实根因、自动修改或自动修复                             |
+| 完整原型扩展  | Graph 浏览、Agents/Skills、Automation 配置及跨模块设计             | 自建 Web/App 执行平台、生产级主动 Agent 已交付             |
+
+依据：[2026-09-27 交付复验](../reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md)。M1–M4 **隔离模拟业务 UAT PASS，真实业务 Gate PENDING**。此次文档更新没有重跑这些验收；不把历史证据改写为本次测试。
+
+### 2.4 截图使用说明与快速导航
+
+主线提供 **18 张分步骤截图**；流程一另有 PDF、Excel 格式示例，以及一张合成流程图原件和两张当前原型截图。流程图图片的实际上传与视觉解析需切换到 `feat/trusted-knowledge-insights` 的 TAP AI 运行页面；原型内置解析文字只用于说明审核交互。图片保留界面中的英文按钮，旁边提供中文操作指引；点击图片可查看原图。现场演示前先说明画面来源：
+
+| 图号 | 内容 | 画面与数据来源 |
+| --- | --- | --- |
+| 01–09 | 知识核对、引用、测试计划 | 当前 `/prototype`，内置示例，仅说明产品交互设计 |
+| 10–15 | Allure 接入、指标、Run、失败证据与交接入口 | 实际运行界面与隔离后端，仓库合成 pytest 报告 |
+| 16 | 事实、假设、缺失信息 | 当前 TAP AI 页面，自动化截图提供固定接口响应，未调用真实模型 |
+| 17–18 | 图谱与自动化扩展 | 当前 `/prototype`，内置示例 |
+| 流程一格式补充 | PDF 与 Excel 的统一审核工作台 | 当前 `/prototype`，内置示例 |
+| 流程图图片补充 | 合成 PNG 原件、资料卡片与三栏核对画面 | 合成样本与当前 `/prototype` 固定示例；不代表真实视觉模型输出 |
+
+**主持人须知：**图 01–09 使用“健康告知”示例；图 10–15 使用独立的“身份核验/支付”报告样本；图 16 使用另一组解释样本。三组画面展示衔接方式，不声称是同一次业务执行。图 16 的 50% 与图 12 的 66.67% 来自不同样本，不作同一查询比较。完整产品原型的文件列表包含未来设计格式，实际上传范围仍以 §2.3 为准。
+
+按流程跳转：[知识核对](#3-流程一把业务资料变成可用知识4-分钟) → [引用与测试计划](#4-流程二从有依据的回答到可评审测试计划6-分钟) → [pytest/Allure 分析](#5-流程三把已有测试结果变成可追查的分析6-分钟) → [解释与行动](#6-流程四围绕证据请求解释形成下一步行动2-分钟)。
+
+## 3. 流程一：把业务资料变成可用知识（4 分钟）
+
+**业务角色：**业务分析师、知识维护者、复核人。
+
+**业务问题：**上传的文件可能提取不完整，未经确认的资料容易被当作答案依据。
+
+本段图 01–04 均来自当前 `/prototype` 产品壳；图 02–04 使用同一版三栏审核界面。图 01–03 操作 **Life underwriting guide · v1.2.md**；图 04 明确切换到**另一份预先批准的** **Health disclosure policy · approved.md** 展示发布结果。两份资料不能讲成同一文件的一次完整复核。
+
+1. 进入完整产品原型的 **Library → Documents**，找到待核对的 Life underwriting guide（图 01）。该文件已预置，不现场声称刚完成上传。
+2. 点击 **Review**，按左侧章节定位，在中间阅读提取文字，在右侧标记疑点或留下核对意见；完成整份资料检查（图 02）。原型图展示的是提取内容与位置，真实原件对照在 TAP AI 运行页面进行。
+3. 点击 **Submit for review**。同一文件进入 **Awaiting independent review**，修订记录显示维护者已提交（图 03）。此处停在移交状态，不把维护者冒充独立复核人。
+4. 关闭该文件，打开另一份**已预先独立复核**的 Health disclosure policy，点击 **Publish**。展示它的批准/发布记录以及 **Ask Tapper** 入口（图 04）。
+5. 点击 **Ask Tapper** 或回到问答来源选择，进入流程二，确认本轮选用的健康告知资料是已发布版本。
+
+下图说明业务闭环；图 01–04 是两个预置文件的演示画面，不是同一文件从提交到批准的全程实录。
+
+```mermaid
+flowchart LR
+    A[资料入库与系统解析] --> B[维护者按位置核对]
+    B --> C{有待澄清的问题?}
+    C -- 有 --> D[记录意见或修订原文件]
+    D --> A
+    C -- 无 --> E[提交独立复核]
+    E --> F{批准?}
+    F -- 否 --> B
+    F -- 是 --> G[发布确认版本]
+    G --> H[问答按来源引用]
 ```
 
-该命令启动独立的 loopback 服务，使用隔离浏览器和确定性 HTTP 示例响应，采集 Tapper、模型选择器、Agent/Skill 目录、Library 图谱与文档页，共 6 张 2560×1440 PNG。输出在 `apps/tap-ai-frontend/test-results/prototype-capture/`，不会改写 `docs/assets/prototype-demo/` 的 44 张历史截图。它不调用真实模型，不验证服务端持久化或自动化执行。可追加 `--list` 查看 3 个现行采集场景。首次运行需安装 Playwright Chromium：`corepack pnpm --dir apps/tap-ai-frontend exec playwright install chromium`。
+**客户应看到：**待核对、已移交、已批准和已发布是不同状态；资料位置、审核修订和发布记录可追溯。原件与提取内容的并排对照属于 TAP AI 运行页面，以下产品原型截图不证明已打开真实原件。
 
-## 演示前须知
+**讲解话术：**
 
-### 启动方式
+> 文件进入系统后，团队可以先核对提取内容，再决定哪个版本供问答使用。这样业务人员能掌握知识发布的边界，后续回答也有明确依据。
 
-从仓库根目录启动完整产品原型：
+**异常演示：**如果发布被阻止，解释缺少的审核条件，不绕过校验。文字无法提取时换用准备好的文字文件，并说明本轮不含 OCR。
 
-```sh
-corepack pnpm --dir apps/web dev --port 15176
-```
+### 图 01｜找到需要核对的业务资料
 
-然后访问固定入口 `http://127.0.0.1:15176/prototype`，浏览器标题应显示 `TAP`。该入口用于完整产品体验设计与回归，不宣称后端已实现；真实 API 仍需按 README 启动相应应用后端。所有后续 UI 需求沿用此入口，不能另建独立原型取代它。
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-演示前确认来源目录是否已有数据。没有来源时，可以通过 `Add source` 添加页面级示例文件；默认图谱仍显示编排的领域概念，不能把这些节点讲成已从上传文件自动抽取。若要演示真实文档 ingestion 与问答，使用 [README 的本地知识工作区说明](../../README.md#tapper-本地知识工作区)，不要与产品壳原型混为一谈。
+![图 01：找到需要核对的业务资料](../assets/customer-demo-2026-09-27/01-library.png)
 
-### 推荐演示时长
+- **怎么操作：**进入 Library → Documents，在 Search library 输入 Life underwriting。
+- **请客户看：**文档名称、版本、Needs review 状态和 Review 按钮；右上角 Add source 是新增入口。
+- **讲解重点：**“先识别要维护的资料和版本，再开始核对，避免把未确认内容直接用于回答。”
 
-| 时长   | 内容                       | 客户应获得的结论                                                     |
-| ------ | -------------------------- | -------------------------------------------------------------------- |
-| 2 分钟 | 产品壳层与 Tapper          | TAP 用统一 AI 入口串联知识、测试资产与自动化工作流。                 |
-| 3 分钟 | Library 与 Knowledge Graph | 用户可以选择知识上下文，并以高密度关系图探索领域实体。               |
-| 3 分钟 | Test Management            | Test Plan 是业务测试意图和执行结果的管理入口。                       |
-| 4 分钟 | Low Code Automation        | BDD 步骤与 Click、Send keys、Navigate、Assert 等动作显式映射。       |
-| 3 分钟 | Tapper 端到端生成旅程      | Tapper 先询问 Test Plan，再生成并关联 Automation，最后提供双向跳转。 |
+### 图 02｜按章节检查提取内容并留下意见
 
-### 必须主动说明的边界
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-| 原型中可演示                                                     | 当前不应宣称                                                                 |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| 浏览器内保存 Conversation、Test Plan、Automation 和模拟 Run 状态 | 已完成服务端资产持久化、多人协作或企业级权限                                 |
-| 遗留截图模拟 Azure DevOps Pipeline Agent 与 Mobile 设备选择      | Azure DevOps/Mobile 属于当前正式路线，或已连接、排队、触发真实 Provider/设备 |
-| 运行结果标记为 `Simulated`，并展示有限日志                       | 已产生真实 Execution Evidence、真实通过结论或生产 SLA                        |
-| 默认图谱、关键词定位、节点关系与文档列表跳转                     | 已接入生产图数据库、实时图谱抽取或企业知识治理                               |
-| 跨页面助手按页面快照给出建议并交接到 Tapper                      | 已接入真实 AI、自动执行页面操作或读取任意页面内容                            |
-| Composer 中选择 GPT 模型                                         | 已真实调用 UI 中所选模型，或已实现模型路由、计费与配额治理                   |
+![图 02：按章节检查提取内容并留下意见](../assets/customer-demo-2026-09-27/02-document-review.png)
 
-术语必须保持清晰：**AI Agent** 是 Tapper 中负责分析、生成和调整资产的智能体；**Execution Agent** 是负责实际执行 Web Automation 的 **Pipeline Agent**。现行首个 Provider 是 Jenkins；截图中的 Azure DevOps Agent 只属于遗留模拟探索。两者不是同一类 Agent。
+- **怎么操作：**点击 Review，在左侧目录选择章节，在中间阅读提取内容，在右侧记录核对意见，再逐项完成下方四项整份资料检查。
+- **请客户看：**同一文件的名称与版本、章节位置、提取规则、意见区和整份资料检查。此图没有原文件预览。
+- **讲解重点：**“关键条件、适用范围和例外都需要核对，提取完成并不等于业务确认。”
 
-## 一、产品壳层与 Tapper
+### 图 03｜提交核对，移交独立复核
 
-### 1. Tapper 新对话首页
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-![Tapper 新对话首页](../assets/prototype-demo/01-tapper-new-chat.png)
+![图 03：提交核对，移交独立复核](../assets/customer-demo-2026-09-27/03-review-handoff.png)
 
-- **页面目的**：提供全产品统一的自然语言入口，并保持与测试管理、低代码自动化一致的视觉体系。
-- **界面结构**：最左侧是一级产品 Rail；Tapper 激活后显示二级菜单 `New chat`、`Agents`、`Skills`、`Library`；中间是对话区；右侧是可折叠的 Knowledge sources。
-- **演示重点**：输入框底部只显示 `GPT-5.6 Sol` 和下拉箭头，不出现 Fast、Ultra 或闪电图标；`+` 用于添加 Knowledge、AI Agent 或 Skill。
-- **品牌与返回**：一级产品栏使用 Listening 图标，二级栏展开时只显示 Tapper wordmark。点击一级 Tapper 回到当前 Conversation 并保留草稿；`New chat` 才开启新会话。
-- **建议话术**：“用户可以从一个问题开始，也可以先组合知识、Agent 和 Skill，再让 Tapper 生成测试资产。”
+- **怎么操作：**确认四项内容后勾选并点击 Submit for review。
+- **请客户看：**仍是 Life underwriting guide · v1.2.md；顶部审核修订变为 2，底部 Awaiting independent review / Handed off to reviewer，Review history 新增维护者提交记录。页面向下滚动，以便同时看到标题与移交结果。
+- **讲解重点：**“维护者完成核对后还有复核环节，团队可以看清当前停在哪一步。”
 
-### 2. Conversation 历史与问题 Minimap
+### 图 04｜用另一份预先批准资料展示发布结果
 
-![Tapper Conversation 与 Minimap](../assets/prototype-demo/02-tapper-conversation-minimap.png)
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-- **Conversation 规则**：未发送消息且未选择上下文的空白 New chat 不显示在历史中；发出消息或选入 Knowledge、Agent、Skill 后，该 Conversation 可显示在历史中。同一 Conversation 的后续问答继续追加，不会一问一条历史。
-- **恢复行为**：当前纯前端原型使用版本化浏览器本地存储模拟跨模块和刷新恢复；这是原型恢复，不是服务端持久化。
-- **Minimap 规则**：每个刻度对应一条用户问题；刻度集中在对话视口内，当前节点加粗并略微突出；节点很多时显示一个可浏览窗口，不会穿过底部输入框。
-- **键盘效率**：当输入框为空且不在输入法组字状态时，按上方向键可召回本 Conversation 最近一次已发送内容，只填入、不自动发送。
+![图 04：展示已批准资料的发布结果](../assets/customer-demo-2026-09-27/04-published.png)
 
-### 3. 模型选择器
+- **怎么操作：**关闭上一份文档，搜索 Health disclosure，打开另一份预置的 Health disclosure policy · approved.md，再点击 Publish。
+- **请客户看：**标题已换成 approved.md；Review history 依次显示提交、独立复核批准与发布，底部出现 Published、Ask Tapper 和 Withdraw。页面向下滚动，以便同时看到标题与发布结果。
+- **讲解重点：**“这是一份另行预置、已经独立复核的示例资料。它展示批准后才能发布，以及发布后可被问答引用；不代表图 03 的资料刚刚通过复核。”
 
-![Tapper 模型选择器](../assets/prototype-demo/03-tapper-model-selector.png)
+### 3.1 格式补充：PDF 与 Excel 沿用同一审核工作台
 
-- **可选模型**：原型只展示 Codex 当前模型族，例如 `GPT-5.6 Sol`、`GPT-5.6 Terra`、`GPT-5.6 Luna`、`GPT-5.5` 和 `GPT-5.4`。
-- **保存语义**：模型选择属于单个 Conversation；新对话默认回到 `GPT-5.6 Sol`，返回旧 Conversation 时恢复它自己的模型。
-- **边界**：选择器验证交互与信息架构，不表示原型已经按该选择真实调用模型。
+主流程讲完后，仅在客户关心大文档或表格时展示下面两张**并列格式示例**。它们不是图 03–04 的后续审核状态。图 02 已展示文字文档；三种格式共用目录、位置、意见、整份检查与复核操作，阅读区分别按章节、PDF 页和工作表单元格范围呈现。
 
-### 4. Composer 上下文入口
+![PDF 审核：按页定位并记录意见](../assets/customer-demo-2026-09-27/19-review-pdf.png)
 
-![Tapper Composer 上下文菜单](../assets/prototype-demo/04-tapper-context-menu.png)
+**PDF 操作：**在左侧按页进入条款，核对提取文字与页码，选取疑点并记录意见。此图只展示原型中的提取内容；真实运行页面可按授权打开 PDF 原文件并定位到对应页。
 
-- `Add from Library`：添加本轮可使用的知识来源。
-- `Use Agents`：选择负责领域分析和资产生成的 AI Agent。
-- `Use Skills`：选择可复用的任务方法或能力包。
-- `+` 默认无边框，hover 时显示边框；菜单展开后，点击菜单与触发按钮之外的区域即可收起，Esc 也可关闭。外部点击不会将焦点抢回 `+`。
-- 发送后，知识源、Agent 和 Skill 标签从输入框清除；本轮选择保存在可展开的 Message context 中，下一轮按需重新选择。
+![Excel 审核：按工作表与单元格范围定位](../assets/customer-demo-2026-09-27/20-review-excel.png)
 
-### 5. 从 Library 选择知识来源
+**Excel 操作：**在左侧选择工作表行及单元格范围，在表格中核对提取的表头、值与单位。真实运行页面也提供提取表格预览；公式、格式和隐藏行列须下载原工作簿核对。此图不表示已在浏览器中呈现原工作簿。
 
-![Tapper 知识来源选择器](../assets/prototype-demo/05-tapper-source-picker.png)
+TAP AI 运行页已增加待核对/阻断/全部筛选、已加载位置搜索、前后条目导航和引文说明保存；PDF 可按授权打开原文件并按页定位，XLSX 保留工作表/单元格位置、展示提取表格并标出公式及格式风险。两套页面采用同一审核顺序；详细操作和限制见[知识审核工作台](2026-09-27-knowledge-review-workbench.md)。OCR、PDF 框选和 Excel 原件单元格直接批注尚未交付。
 
-- 弹窗显示当前 Library 中可用来源，并支持关键字搜索。
-- 点击来源后立即加入当前 Conversation 的 Composer 上下文。
-- 演示时可选择 `Life underwriting guide.pdf`，再说明正式产品会在服务端执行权限校验、revision 绑定和引用溯源。
+### 3.2 图片补充：把流程图解析成可核对的知识
 
-### 6. 选择 AI Agent
+这段与图 01–04 的健康告知主流程及上面的 PDF、Excel 格式示例分别讲解。示例是脱敏的**核保审批流程图**：申请人、运营、核保/合规三个泳道；健康告知补件与缴费失败两条回路；资料完整、高风险、缴费确认三处判断。供现场上传的文件是[完整 PNG 样本](../assets/customer-demo-2026-09-27/21-underwriting-approval-flow.png)，[SVG 源图](../assets/customer-demo-2026-09-27/21-underwriting-approval-flow.svg)可用于放大核对。
 
-![Tapper AI Agent 选择器](../assets/prototype-demo/06-tapper-agent-picker.png)
+![复杂核保审批流程图：三个泳道、三处判断与两条回路](../assets/customer-demo-2026-09-27/21-underwriting-approval-flow.png)
 
-- 选择器突出 Agent 的职责，而不是把它与执行机器混在一起。
-- 示例 `Life Underwriting Analyst` 负责寿险核保领域分析。
-- 正式产品中 AI Agent 还需要版本、权限、工具白名单、审计和评测；当前为确定性原型目录。
+**先让客户看原图：**从提交申请进入资料校验；告知缺失则退回申请人补齐并重新校验。资料完整后进行风险评估：高风险走资深核保及合规复核，低风险走自动批准；两路汇合后生成报价。缴费失败返回重试，成功才出单。演示时请客户指出一条容易看反的箭头或条件，作为人工核对的理由。
 
-### 7. 选择 Skill
+![流程图在 Library Documents 中作为待核对来源](../assets/customer-demo-2026-09-27/22-flowchart-library.png)
 
-![Tapper Skill 选择器](../assets/prototype-demo/07-tapper-skill-picker.png)
+**原型操作：**进入当前 `/prototype` 的 **Library → Documents**，搜索 `Underwriting approval flow`，点击 **Review**。此处是预置样本，图中的 Ready for review 不是现场上传或真实模型运行的证据。
 
-- Skill 表示可复用的方法，例如 `BDD Scenario Design`。
-- Agent 回答“由谁分析”，Skill 回答“采用什么方法”，Knowledge 回答“可以依据哪些资料”。
-- 三类上下文并列但语义独立，便于后续做权限、版本和溯源。
+![复杂流程图在统一三栏工作台中核对](../assets/customer-demo-2026-09-27/23-flowchart-review.png)
 
-### 8. 已选择上下文与删除按钮
+**原型核对：**左栏按受理、风险、缴费三个环节定位；中栏查看原图并点击 **Open full image** 放大，再向下滚动检查提取的路径文字；右栏留下意见。重点核对“告知缺失 → 补件 → 重新校验”“高风险 → 资深核保 → 合规复核”及“缴费失败 → 重试”的方向和条件。底部四项整份检查分别覆盖节点、箭头、条件、版本与位置。截图中的解析文字是与样本对应的固定示例，并非视觉模型在此次截图中生成。
 
-![Tapper 已选择上下文](../assets/prototype-demo/08-tapper-selected-context.png)
+**实际运行演示：**切换到 `feat/trusted-knowledge-insights` 的 TAP AI 运行页面，在 **Library → Add source** 上传同一 PNG，等待视觉解析，再逐项对照原图与节点、连线、条件及泳道。对无法确认的连接保留待确认或明确排除；完成维护者提交、独立复核与发布后，在 Tapper 选择已发布图片来源，询问“高风险申请通过哪几步？”并检查引用的图片区域坐标与版本。当前运行页支持单张 PNG/JPEG、上限 25 MiB；文字更正需通过新修订处理。演示前须配置已获授权的视觉模型路由和图片数据使用范围；缺少路由时不声称现场解析成功。
 
-- Composer 同时显示 Knowledge、AI Agent 和 Skill 标签。
-- 每个标签都有独立删除按钮，行为与 Codex 的可移除上下文一致。
-- 右侧 Knowledge sources 同步显示选中数量和复选状态，让用户能从两个入口检查知识范围。
+**客户应看到：**流程图中的步骤、方向和条件可以进入知识审核与发布流程；问答引用能回到图片区域。当前检索使用确认后的**流程语义文字**及其文字向量，尚无“以图搜图”的图像向量索引；扫描 PDF、Office 内嵌图片和任意照片不在本段范围内。真实模型对客户流程图的识别准确率和真实业务 UAT 仍待单独验证。
 
-### 9. Agents 目录
+## 4. 流程二：从有依据的回答到可评审测试计划（6 分钟）
 
-![Tapper Agent 目录](../assets/prototype-demo/09-tapper-agent-catalog.png)
+**业务角色：**业务分析师、测试设计人员、测试负责人。
 
-- **页面目的**：集中浏览和管理可用于 Tapper 的 AI Agent。
-- **主要动作**：搜索、查看状态、在聊天中使用，以及进入创建流程。
-- **演示重点**：该页面管理的是 AI Agent；Web 自动化详情中的 Execution Agent 是 Pipeline Agent，两者在入口、字段和措辞上完全分开。
+**业务问题：**需求理解与测试设计分散，测试人员需要知道结论来自哪里、哪些问题尚未确认。
 
-### 10. 创建 Agent
+1. 进入 **Tapper / New chat**，选择健康告知主流程中图 04 的已发布来源；若刚展示了可选的图片段，先切回健康告知样本。
+2. 提问：“如果健康告知缺失会怎样？”与图 05–06 的预置画面保持一致。若改用其他资料，应同步更换后续画面与讲解。
+3. 打开回答引用，回到原文核对至少一条结论。若无足够依据，保留不确定性，不把推测讲成规则。
+4. 通过当前测试设计入口提出：“基于这些规则生成测试计划，包含正常、异常和边界场景，并列出待确认项。”
+5. 打开 **Generated Test Plan** 草稿，查看用例、引用、假设/未知项与覆盖缺口。
+6. 修改一条用例的前置条件或预期结果，点击 **Save draft / 保存草稿**。
+7. 展示 **Accept modified / 修改后采纳** 以及满足评审要求后的 **Approve and publish / 批准并发布**；核对发布状态。未满足要求时展示阻止原因，或使用预先完成评审的版本。
 
-![Tapper 创建 Agent](../assets/prototype-demo/10-tapper-create-agent.png)
+**客户应看到：**问题、引用、草稿、人工修改与发布版本组成连续工作流，发布有明确门槛。
 
-- 创建弹窗收集名称、描述和指令等原型字段。
-- 用户完成创建后可以返回 Agent 目录，并在对话中选择该 Agent。
-- 正式产品仍需补充版本发布、审批、权限、工具策略、模型策略和质量评测。
+**讲解话术：**
 
-### 11. Skill 目录
+> 系统先给出可检查的设计起点，同时把缺失信息列出来。测试人员可以修改并评审，再形成可追溯的发布版本，让团队把时间集中在业务判断上。
 
-![Tapper Skill 目录](../assets/prototype-demo/11-tapper-skill-catalog.png)
+**边界说明：**本段完成的是测试设计；不要把“测试计划已发布”说成“自动化测试已执行”。如展示 Graph，用于解释关联与来源导航，不承诺已验证真实业务图谱质量。
 
-- **页面目的**：统一管理可复用的测试设计和分析方法。
-- **主要动作**：搜索、查看状态、在聊天中使用，以及创建新 Skill。
-- **客户价值**：把团队方法沉淀为可选择、可复用的资产，而不是依赖每个人重复编写 Prompt。
+### 图 05｜选择本轮问答的知识来源
 
-### 12. 创建 Skill
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-![Tapper 创建 Skill](../assets/prototype-demo/12-tapper-create-skill.png)
+![图 05：选择本轮问答的知识来源](../assets/customer-demo-2026-09-27/05-question-source.png)
 
-- 创建弹窗验证最小的信息架构和表单节奏。
-- 原型中的创建结果是页面状态；生产版需要服务端版本、发布、权限和审计。
+- **怎么操作：**在 Tapper 右侧勾选 Underwriting test rules.pdf，再输入图中的健康告知问题，暂不发送。
+- **请客户看：**右侧 2 selected：刚发布的资料及追加选择的核保规则，以及 Message Tapper 输入框中的来源标签。
+- **讲解重点：**“每轮先限定依据，让团队知道系统准备参考哪些资料。此处追加原型内置的核保规则样本，后续引用指向该核保文件。”
 
-## 二、Library 与 Knowledge Graph
+### 图 06｜回答给出规则和引用入口
 
-### 13. Library 默认图谱与无匹配状态
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-![Library 文档无匹配状态](../assets/prototype-demo/13-tapper-library-empty.png)
+![图 06：回答给出规则和引用入口](../assets/customer-demo-2026-09-27/06-answer.png)
 
-- 进入 Library 默认选中 `Knowledge Graph`；`Documents`（文档列表）位于第二个标签，替代旧的 `All`。
-- 原型内置 28 份示例来源；搜索无匹配项时显示空状态并保留 `Add source`，清除筛选后恢复文件。
-- 推荐先展示默认图谱，再切到文档列表解释知识来源；添加来源只验证页面级目录交互。
+- **怎么操作：**点击 Send，等待回答完成。
+- **请客户看：**回答中的阻止提交、保留已填信息，以及橙色 [1] Health disclosure · Section 4。
+- **讲解重点：**“客户可以检查结论的出处；这里是原型预设回答，不代表本次真实模型推理。发送后右栏清空选择，已发送来源保留在 Message context。”
 
-### 14. Documents 文档列表
+### 图 07｜打开原文验证一条结论
 
-![Tapper Library 全部来源](../assets/prototype-demo/14-tapper-library-all.png)
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-- 点击 `Documents` 默认进入卡片视图，可切换列表视图；展示来源名称、类型、状态和来源范围。
-- 顶部同时提供关键字、类型、状态筛选以及 `Clear filters`。
-- `32/32 sources` 让用户明确当前结果数和总数。
-- 截图中的来源来自隔离截图流程提供的确定性示例目录，包含 ready、processing 和 failed 状态，不代表生产知识库已入库。
+![图 07：打开原文验证一条结论](../assets/customer-demo-2026-09-27/07-citation.png)
 
-### 15. Library 组合筛选
+- **怎么操作：**点击回答下的 [1] 引用。
+- **请客户看：**弹窗中的第 4 节及高亮原文，核对它是否支持回答中的结论。
+- **讲解重点：**“从回答回到依据，业务人员可以自己检查，而不是只能接受一句结论。”
 
-![Tapper Library 组合筛选](../assets/prototype-demo/15-tapper-library-filtered.png)
+### 图 08｜把讨论转为测试计划草稿
 
-- 示例同时使用关键字 `underwriting`、类型 `PDF` 和状态 `Ready`，结果从 32 个收敛到 2 个。
-- 组合筛选用于验证大规模资产目录的查找模式；正式产品的大列表还需要分页或虚拟化。
-- `Clear filters` 可一键回到全部来源。
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-### 16. 添加来源
+![图 08：把讨论转为测试计划草稿](../assets/customer-demo-2026-09-27/08-test-plan.png)
 
-![Tapper 添加来源](../assets/prototype-demo/16-tapper-add-source.png)
+- **怎么操作：**关闭引用，重新选择核保来源，要求生成健康告知的正常、缺失和边界场景。
+- **请客户看：**BDD test plan ready、3 scenarios · Draft、Given/When/Then 和 Import to Test Plan。
+- **讲解重点：**“草稿提供正常与异常场景的讨论起点；例如高保额阈值仍需业务确认，不能把预设场景当作已审核要求。”
 
-- 弹窗提供文件添加入口，并在提交前明确支持的原型文件类型。
-- 添加的来源元数据保存在浏览器本地，刷新后可以恢复；这不代表文件已经上传或完成服务端入库。
-- 生产版需要 ingestion 状态机、大小限制、恶意文件检查、权限、revision、删除传播和索引治理。
+### 图 09｜进入计划详情检查覆盖与执行关联
 
-### 17. 默认 Knowledge Graph 与搜索定位
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-![Knowledge Graph](../assets/prototype-demo/17-tapper-knowledge-graph.png)
+![图 09：进入计划详情检查覆盖与执行关联](../assets/customer-demo-2026-09-27/09-plan-detail.png)
 
-- **默认视图**：Library 首先展示图谱；画布使用页面剩余空间，支持平移、缩放、重置及进入/退出全屏。分类面板可以收起。
-- **搜索**：顶部输入关键词后，结果区列出匹配的文档、概念和实体，并显示类型及所属分类。类型、状态筛选作用于来源文档；领域示例节点不因此变成真实来源。
-- **定位**：例如输入 `disclosure`，点击结果中的 `Health disclosure`，画布将该节点居中、放大并高亮，同时展示节点详情。检索也会考虑文档描述；当前是本地关键词匹配，不是语义检索。
-- **恢复**：清空搜索恢复图谱总览、100% 缩放并关闭节点详情；`Clear filters` 同时清除关键词、类型和状态筛选。没有匹配项时显示明确提示。
-- **边界**：节点、关系、分类和布局来自确定性编排，不表示已经运行图谱抽取、生产图数据库或大规模节点聚合。大图分页、按需加载、聚合与容量验证仍未实现。
+- **怎么操作：**点击 Import to Test Plan，再打开新导入的 TP-103。
+- **请客户看：**Scenario coverage 中的场景和步骤；右侧执行历史为空，Linked Automation 尚未关联。
+- **讲解重点：**“团队能看到计划覆盖什么，以及是否已经关联执行。当前图没有运行记录，不能当作测试通过证明。”
 
-![Knowledge Graph 搜索结果与节点定位](../assets/prototype-demo/40-library-search-location.png)
+**运行版评审补充：**图 08–09 展示完整原型的草稿导入与计划详情，未拍摄 TAP AI 运行版的人工修改/批准发布过程。现场按本节步骤 6–7 使用已准备的运行版草稿演示；只有实际出现发布状态后才宣布发布完成。
 
-### 18. 节点详情与来源查阅
+## 5. 流程三：把已有测试结果变成可追查的分析（6 分钟）
 
-![Knowledge Graph 节点详情](../assets/prototype-demo/18-tapper-knowledge-graph-node.png)
+**业务角色：**测试负责人、研发负责人。
 
-- 点击图中节点或搜索结果后显示详情，包括分类、连接数量、关系和抽取/推断标签；可通过关闭按钮收起详情。
-- 文档节点额外显示来源说明；点击 `View source in document list`（在文档列表中查看来源）切换到 `Documents`，按该文档名定位记录。
-- 此入口当前查看的是来源记录，不是原文预览、下载、revision 或段落锚点；图中抽取/推断标签也只是示例标注。
-- 窄屏按顺序展示搜索结果、画布和节点详情；桌面使用侧栏。全屏适合展示关系结构。
+**业务问题：**团队主要使用 pytest 执行测试、Allure 查看报告，希望从单次报告进一步汇总结果、定位运行并追溯证据。
 
-## 三、Test Management
+**场景说明：**先展示准备好的 Allure 报告，说明这是团队现有的结果查看方式。随后切到 TAP 展示已实现的分析通道；本轮优先使用 Allure Results ZIP 展示步骤与附件，也可以用 pytest XML 展示基础结果。两种来源都要核对运行范围与完整历史。
 
-### 19. Test Plan 列表
+1. 切到 TAP Insights 运行页面，使用演示项目打开 **Test Insights**。
+2. 展开 **Upload test report**，选择 **Allure Results ZIP** 并上传本次运行的结果压缩包（或选择 **pytest JUnit XML**）；仅在确认没有遗漏 attempts 时勾选完整历史；填写来源、Run、Batch、Shard、应用/脚本版本、环境、配置、开始时间等来源字段。
+3. 点击 **Upload report**，观察接收与处理状态，等到 **Ready for Insights**。说明“收到文件”和“可用于分析”是两个阶段。
+4. 查看当前查询范围及指标；筛选项目/构建或时间范围，说明数值与范围绑定。
+5. 打开一条 Run，查看 attempt、环境和版本信息，使用 **Download raw report** 回到原始报告。
+6. 在某个 attempt 下点击 **View report evidence**，展开失败信息和步骤，打开截图或下载附件。Allure 测试与 fixture 的步骤/附件可查看；pytest XML 主要提供结果和失败文本。若包内缺少附件或来源无步骤，保留缺失提示，不补造证据。
+7. 时间允许时重复上传同一报告，说明系统处理重复来源；更正流程使用更正版本并保留追踪关系。
 
-![Test Management 的 Test Plan 列表](../assets/prototype-demo/19-test-management-plans.png)
+**客户应看到：**从原报告到收据、指标、运行详情、原报告下载的闭环。
 
-- **页面目的**：统一查看 Test Plan 的数量、状态、场景数和 Automation 关联状态。
-- **入口行为**：点击某条 Test Plan 进入详情；顶层切换到 `Test Data` 管理测试数据。
-- **核心规则**：一个 Test Plan 最多关联一个 Automation；一个 Automation 也最多关联一个 Test Plan，形成可选的严格 `1:1`。
+**讲解话术：**
 
-### 20. 已关联 Automation 的 Test Plan 详情
+> 团队可以从现有测试结果开始，不必先替换执行工具。我们把来源和运行条件保留下来，让负责人从汇总快速定位到需要检查的那一次运行。
 
-![已关联 Automation 的 Test Plan 详情](../assets/prototype-demo/20-test-plan-detail-linked.png)
+**边界说明：**业务来源以 pytest + Allure 为主，两种格式均有本地接入实现；Allure 仅接收 Results ZIP，不接收生成后的 HTML 站点。文件导入不代表已连通客户 CI。fixture 中的运行名称只是样本标识；不能把单个样本外推为客户质量趋势或性能规模。
 
-- 顶部 `Linked Automation` 卡片显示 `AUTO-101`，可直接打开或解除关联。
-- 中间 Scenario coverage 展示 BDD 场景和每个 Given/When/And/Then 步骤的稳定 ID。
-- `Mapped · AUTO-101` 表示该场景已经映射到 Automation，而不是只有计划级标题关联。
-- 右侧是执行配置和 Test Plan execution history；只有已关联 Automation 的运行结果才回写这里。
+### 图 10｜选择 Allure 格式并填写来源信息
 
-### 21. 从 Test Plan 配置执行
+**画面来源：**2026-09-27 实际 TAP Insights 页面，本地隔离后端处理合成 pytest/Allure 报告。
 
-![Test Plan 执行配置](../assets/prototype-demo/21-test-plan-run-config.png)
+![图 10：选择 Allure 格式并填写来源信息](../assets/customer-demo-2026-09-27/10-report-upload.png)
 
-- 该遗留模拟屏幕要求先选择虚构的 Azure DevOps Pipeline Agent（例如 `ADO Web Agent 03`）再启用按钮；它只验证选择门禁交互。现行正式目标改为 Jenkins Pipeline Agent。
-- 选择后才允许点击 `Run automation`，避免把 AI Agent 误当执行资源。
-- 当前按钮触发的是模拟运行，并在页面上持续显示 `Simulated · No execution evidence`。
+- **怎么操作：**展开 Upload test report，选择 Allure Results ZIP，选择文件并填写 Run、Build、环境和版本。核实完整历史后再勾选 Complete attempt history，点击 Upload report。
+- **请客户看：**格式选择、来源字段、所选 allure-results.zip；截图拍于勾选完整历史之前，仍可看到上一份报告的收据。
+- **讲解重点：**“把运行条件与结果一起保留，后续定位到的是明确的一次运行。该格式接收结果 ZIP，不是 Allure HTML 站点。”
 
-### 22. Test Plan 执行结果
+### 图 11｜确认报告已可用于分析
 
-![Test Plan 执行结果](../assets/prototype-demo/22-test-plan-run-result.png)
+**画面来源：**2026-09-27 实际 TAP Insights 页面，本地隔离后端处理合成 pytest/Allure 报告。
 
-- 新增 Run 后，Test Plan history 记录 Run ID、时间、状态、触发入口和 Pipeline Agent。
-- 每个 Scenario 下显示 BDD 步骤及其对应的动作摘要，让客户看到“业务步骤—自动化动作—运行记录”的连续链路。
-- 同一份 Run 也会出现在关联 Automation 的历史中，避免两个模块分别生成互不一致的结果。
-- 原型结果明确标为 `Completed · Simulated`，不能解读为真实系统通过。
+![图 11：确认报告已可用于分析](../assets/customer-demo-2026-09-27/11-report-ready.png)
 
-### 23. 未关联 Automation 的 Test Plan
+- **怎么操作：**上传后等待处理状态变为 Ready for Insights。
+- **请客户看：**收据标识和 Ready for Insights 状态。
+- **讲解重点：**“接收文件只是第一步，处理就绪后才能把结果用于分析。”
 
-![未关联 Automation 的 Test Plan](../assets/prototype-demo/23-test-plan-detail-unlinked.png)
+### 图 12｜在明确范围内阅读质量指标
 
-- 未关联时页面不提供可执行的 Automation 结果回写链路。
-- 用户可以保留只用于人工评审的 Test Plan，也可以后续选择一个尚未被其他 Test Plan 占用的 Automation。
-- 未关联 Automation 独立运行时，其结果不会出现在该 Test Plan 的执行记录中。
+**画面来源：**2026-09-27 实际 TAP Insights 页面，本地隔离后端处理合成 pytest/Allure 报告。
 
-### 24. Test Data 页面
+![图 12：在明确范围内阅读质量指标](../assets/customer-demo-2026-09-27/12-report-metrics.png)
 
-![Test Management 的 Test Data 页面](../assets/prototype-demo/24-test-management-test-data.png)
+- **怎么操作：**在 Build 输入 BUILD-ALLURE，点击 Apply filters。
+- **请客户看：**构建筛选范围，以及首次/最终通过率 66.67%；跳过实例独立计数。
+- **讲解重点：**“样本有两个通过、一个失败、一个跳过，通过率按三个可计入结果计算。它说明当前样本，不代表客户整体质量趋势。”
 
-- Test Data 与 Test Plan 同属 Test Management，但保持独立页面语义。
-- 当前页面验证数据集目录、数量和入口布局；生产版的数据脱敏、密钥引用、环境隔离和使用追踪仍需单独设计。
+### 图 13｜从运行定位到具体测试实例
 
-## 四、Low Code Automation
+**画面来源：**2026-09-27 实际 TAP Insights 页面，本地隔离后端处理合成 pytest/Allure 报告。
 
-### 25. Automation Library
+![图 13：从运行定位到具体测试实例](../assets/customer-demo-2026-09-27/13-run-details.png)
 
-![Low Code Automation 资产列表](../assets/prototype-demo/25-automation-library.png)
+- **怎么操作：**在 Runs 表点击 Open RUN-PYTEST-ALLURE。
+- **请客户看：**四个实例的 Source identity、Data row、Attempt、结果与耗时，以及 Download raw report。
+- **讲解重点：**“同一个测试的参数实例要分开看；负责人可以从汇总进入具体执行证据。”
 
-- 点击一级 `Low Code Automation` 后先进入资产列表，而不是直接打开某个寿险 Automation。
-- 页面展示资产总数、搜索、类型、状态、关联 Test Plan 和最近更新时间。
-- 每一行都是可独立打开、编辑、关联和执行的 Automation 资产。
-- `New automation` 进入创建流程。
+### 图 14｜展开失败步骤与附件
 
-### 26. 创建 Automation
+**画面来源：**2026-09-27 实际 TAP Insights 页面，本地隔离后端处理合成 pytest/Allure 报告。
 
-![创建 Automation](../assets/prototype-demo/26-create-automation.png)
+![图 14：展开失败步骤与附件](../assets/customer-demo-2026-09-27/14-failure-evidence.png)
 
-- 该遗留模拟屏幕允许用户选择 Web、Mobile 或让 Tapper 推断类型；现行正式目标只创建 Web Automation，Mobile 入口不属于 V0–P1。
-- 用户可以手动编写 BDD，也可以在标题/目标中描述需求并通过 AI 生成草稿。
-- 在该遗留原型的 Web/Mobile 双类型假设下，Tapper 无法可靠判断时会让用户明确选择；现行 Web-only 路线不再需要该类型推断。
-- Test Plan 关联是可选的，但必须遵守严格 `1:1` 可用性校验。
+- **怎么操作：**在 test_identity_required 卡片点击 View report evidence；展开步骤，点击 Open Synthetic diagnostic image；需要原始文件时点击 Download raw report。
+- **请客户看：**Validate identity 失败文本、前置 fixture 的 Prepare synthetic business context 步骤、Open Source 和附件入口。
+- **讲解重点：**“失败结果带着原报告中的步骤和附件，排障人员能追查到具体检查点。图中诊断图片仅为单像素合成附件，验证读取入口，不是业务页面截图。”
 
-### 27. Web Automation：BDD 与动作映射
+如需展示响应式布局，可打开[手机页面完整截图](../assets/pytest-allure/report-mobile.png)；主线讲解优先使用上面的分步图。
 
-![Web Automation 的 BDD 与动作映射](../assets/prototype-demo/27-web-automation-bdd-mapping.png)
+## 6. 流程四：围绕证据请求解释，形成下一步行动（2 分钟）
 
-- 左侧列出 Scenario；中间显示当前 BDD 场景和步骤；右侧提供 Run 与 AI Agent 两个工作区。
-- 每个 BDD 步骤下方都显示实现映射，例如 `Navigate`、`Click`、`Send keys`、`Assert`，解决“BDD 只是文字、看不到自动化动作”的问题。
-- 页面顶部显示与 `TP-101` 的双向关联，并可直接打开 Test Plan。
-- `Mapped from TP-101-ST-01` 等标识把 Automation 步骤追溯到 Test Plan 步骤。
+**业务角色：**测试负责人、排障人员。
 
-### 28. 编辑自动化动作
+1. 在运行详情中选择 **Open draft in Tapper**。
+2. 展示带来源上下文的草稿，确认目标项目和查询引用；配置就绪时提交解释请求。
+3. 对照展示内容：哪些是报告事实、哪些是假设、还缺少哪些资料。
+4. 用一项具体人工行动结束，例如补充失败步骤、核对环境变化、补充一条测试场景。
 
-![编辑 Automation actions](../assets/prototype-demo/28-web-automation-action-editor.png)
+**讲解话术：**
 
-- 点击某个 BDD Step 的 `Edit automation actions` 后，可以调整动作类型、目标 locator 和输入值。
-- 一个 BDD Step 可映射多个底层动作，例如先 `Navigate` 再 `Click`。
-- 建议客户理解为“BDD 是业务可读层，Automation actions 是可执行实现层”，两层保持显式关联而非互相替代。
+> 分析可以带着证据进入讨论。系统帮助整理已知事实和待验证方向，负责人据此决定下一步检查什么。
 
-### 29. Automation 详情中的 AI Agent 对话
+**完成标志：**客户能指出一条事实、一个待验证假设和一项需要补充的信息。解释服务未启用时只演示上下文交接，说明本环境未执行解释；不口头补造模型结论。
 
-![Automation AI Agent](../assets/prototype-demo/29-web-automation-ai-agent.png)
+### 图 15｜将当前运行带入 Tapper
 
-- 每个 Automation 详情都提供专属 AI Agent 区域，用户可以要求解释、补充或调整当前资产。
-- 示例中 AI Agent 提议补充 `Missing health disclosure` 场景；用户可以 Review 后接受，也可以继续手动编辑。
-- AI Agent 的修改应形成可审查候选，不应绕过权限、版本或人工确认直接修改生产资产。
+**画面来源：**2026-09-27 实际 TAP Insights 页面，本地隔离后端处理合成 pytest/Allure 报告。
 
-### 30. Web Automation 执行与历史
+![图 15：将当前运行带入 Tapper](../assets/customer-demo-2026-09-27/15-tapper-handoff.png)
 
-![Web Automation 执行历史](../assets/prototype-demo/30-web-automation-run-history.png)
+- **怎么操作：**在运行详情顶部找到 Open draft in Tapper；现场目标服务就绪时再点击。
+- **请客户看：**Prepare an investigation draft 提示：打开的是可编辑、不含数值的草稿，尚不是经过核验的 Insights 解释。
+- **讲解重点：**“把当前分析的问题带入讨论，减少重新描述运行范围。此图证明入口存在，不证明本次已执行模型解释。”
 
-- 该遗留模拟屏幕通过 Execution Agent 下拉框选择 Azure DevOps Pipeline Agent；现行正式目标的 Web 执行使用 Jenkins Pipeline Agent。
-- 运行历史显示触发来源：从 Test Plan 触发或从 Automation 详情触发。
-- 若 Automation 已关联 Test Plan，两处引用同一 Run；若未关联，则结果只保留在 Automation 历史中。
-- 所有当前结果仍标为模拟，且明确说明没有连接 provider、pipeline、browser 或 device。
+### 图 16｜分清事实、假设和待补信息
 
-### 历史附录 A：Mobile Automation 平台与设备（非主线演示）
+**画面来源：**2026-09-27 当前 TAP AI 页面，固定接口响应的界面截图；独立解释样本，非真实模型输出。
 
-![Mobile Automation 的平台与设备选择](../assets/prototype-demo/31-mobile-automation-device.png)
+![图 16：分清事实、假设和待补信息](../assets/customer-demo-2026-09-27/16-explanation.png)
 
-- Mobile 类型不选择 Pipeline Agent，而是先选择 `iOS` 或 `Android`，再选择该平台可用设备。
-- 离线设备不可执行；在线设备满足条件后才启用 `Run automation`。
-- BDD 步骤同样映射到底层动作，例如图片上传场景中的 `Click` 和 `Send keys`。
-- 该 Automation 当前未关联 Test Plan，因此其 Run 不会出现在任何 Test Plan history。
+- **怎么操作：**切到预先准备的解释示例，从上到下阅读 Report investigation。
+- **请客户看：**事实 first_pass_rate 50% (1/2)、Possible associations、Referenced evidence 和 Missing information。
+- **讲解重点：**“超时或权限变更在这里是待验证方向。下一步应补充 403 日志和权限变更记录，再决定排查行动。”
 
-### 历史附录 B：Mobile Automation 模拟运行结果（非主线演示）
+## 7. 可选扩展：完整产品设计（2–3 分钟）
 
-![Mobile Automation 模拟运行结果](../assets/prototype-demo/32-mobile-automation-run-result.png)
+客户关心后续工作组织方式时，切回 `/prototype`：
 
-- Run history 记录设备、触发入口、场景、BDD 步骤和动作摘要。
-- 未关联状态保持可见，用于向客户说明“Automation 可以独立存在和运行”。
-- 原型未连接真实 iPhone、Android 设备云或自动化框架，不产生截图、视频、网络日志或其他真实 Evidence。
+- 在 Agents/Skills 说明可复用的工作配置。
+- 在 Test Management 与 Low Code Automation 之间演示关联导航、BDD 与动作配置设计。
+- 展示浮动助手如何把当前页面上下文带入 Tapper。
 
-## 五、Tapper 生成 Test Plan 与 Automation
+切换话术：“接下来展示完整产品的交互设计，帮助讨论团队未来如何组织工作。”不现场宣称配置已驱动真实浏览器/手机执行，也不把历史模拟运行当作本次 CI 结果。
 
-这一段建议作为演示高潮，完整展示 Tapper 如何把自然语言意图转换为可评审、可关联、可跳转的测试资产。
+### 图 17｜用图谱解释业务关联
 
-### 33. 先询问是否创建 Test Plan
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-![Tapper 询问是否先创建 Test Plan](../assets/prototype-demo/33-tapper-test-plan-first.png)
+![图 17：用图谱解释业务关联](../assets/customer-demo-2026-09-27/17-knowledge-graph.png)
 
-- 用户提出“为寿险投保生成自动化脚本”后，Tapper 不直接跳到代码，而是先询问是否创建 Test Plan。
-- 用户可以选择 `Create Test Plan first`，也可以 `Skip Test Plan` 创建独立 Automation。
-- 该决策保护业务测试意图：需要治理和结果回写时先建 Test Plan；一次性或独立脚本可以跳过。
+- **怎么操作：**进入 Library → Knowledge Graph，指向 Application、Health disclosure、Test cases 等关联节点。
+- **请客户看：**主题分组、来源文件与节点连线；客户可按主题理解资料关系。
+- **讲解重点：**“图谱用于浏览关联与导航；这里展示设计样本，不代表已验收客户知识图谱质量。”
 
-### 34. Test Plan 草稿评审
+### 图 18｜展示自动化资产的组织入口
 
-![Tapper 生成 Test Plan 草稿](../assets/prototype-demo/34-tapper-test-plan-review.png)
+**画面来源：**2026-09-27 当前完整产品原型，内置示例数据。
 
-![Tapper 展示完整 BDD 并生成关联 Automation](../assets/prototype-demo/34b-tapper-generate-linked-automation.png)
+![图 18：展示自动化资产的组织入口](../assets/customer-demo-2026-09-27/18-automation.png)
 
-- Tapper 生成 Test Plan 草稿（截图示例为 `TP-103`），并提供三个 BDD Scenario。
-- 用户可以先点击 `Review Test Plan` 检查业务覆盖，再继续生成 Automation。
-- `Generate linked automation` 会以该 Test Plan 为来源创建 Automation，并建立严格 `1:1` 关联。
-- 演示时强调 AI 生成的是可 Review 的资产草稿，不是未经确认的生产变更。
+- **怎么操作：**切到 Low Code Automation，选择客户关心的 Web 或 App 自动化资产继续讨论。
+- **请客户看：**自动化列表、类型和进入配置的入口。
+- **讲解重点：**“测试设计后可以继续组织自动化配置；此页说明产品组织方式，真实浏览器或手机执行能力需另行验证。”
 
-### 35. 遗留探索：无法判断时选择 Web 或 Mobile
+## 8. 管理层 5 分钟版本
 
-![Tapper 请求选择 Web 或 Mobile](../assets/prototype-demo/35-tapper-channel-choice.png)
+| 时间     | 操作                                   | 业务结论                 |
+| -------- | -------------------------------------- | ------------------------ |
+| 1 分钟   | 打开已发布资料与一条回答引用           | 业务知识有版本与依据     |
+| 1.5 分钟 | 打开测试草稿，展示缺口、修改及发布版本 | 测试设计可评审、可追踪   |
+| 1.5 分钟 | 查看指标，打开一个 Run 和原报告        | 结果可以回到证据         |
+| 1 分钟   | 展示解释中的待验证信息或上下文交接     | 团队能据此安排下一步检查 |
 
-- 该屏幕记录旧的 Web/Mobile 双类型探索：当用户意图无法可靠区分时，Tapper 展示明确选择，不做隐藏推断。
-- 遗留原型中 `Create Web automation` 进入 Pipeline Agent 执行模型，`Create Mobile automation` 进入平台和设备选择模型；现行正式路线只保留 Web/Jenkins，Mobile 选择仅供历史交互讲解。
-- 这保留了“模型承认不确定性”的历史交互原则，但不构成现行 Mobile 范围。
+结束话术：
 
-### 36. 生成关联资产与双向跳转
+> TAP 把知识依据、测试设计和结果证据串起来。今天展示的是这些流程在本地隔离环境中的能力；下一步业务验收需要使用贵方获授权的资料、报告与具名复核，验证是否满足实际工作要求。
 
-![Tapper 生成关联的 Test Plan 与 Automation](../assets/prototype-demo/36-tapper-linked-artifacts.png)
+## 9. 常见问题与现场兜底
 
-- 最终卡片同时显示 Test Plan 与 Automation（截图示例为 `TP-103` 和 `AUTO-103`），并明确 Automation 类型为 Web、已关联 Test Plan。
-- `Open Test Plan` 跳转到 Test Management 详情；`Open in Low Code Automation` 跳转到 Automation 详情。
-- BDD 场景和动作类型摘要保留在对话结果中，用户可以先在 Tapper Review，再进入专业工作区继续编辑或执行。
-- 后续从任一详情发起的模拟运行会遵守同一关联关系和共享历史语义。
+| 客户问题/现场情况        | 回答或处理                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| 能完全替代业务复核吗？   | 不能；当前流程明确保留核对、评审与发布责任。                                                |
+| 已经接入我们的 CI 吗？   | 当前支持 pytest XML 与 Allure Results ZIP 文件导入；客户 CI 连接与来源语义仍需单独验证。    |
+| 为什么看不到截图或步骤？ | 先查看报告证据：pytest XML 通常不含步骤/截图；Allure ZIP 应保留原附件，缺失时需补齐来源包。 |
+| 为什么不能直接发布？     | 当前身份、版本或复核条件尚未满足；展示具体阻止原因。                                        |
+| 刷新后数据还在吗？       | 已有会话、审核、测试计划和报告的隔离持久化/重启验证；临时编辑状态和原型样本不作同等承诺。   |
+| 可以正式上线了吗？       | 真实业务、模型质量、生产身份、规模与业务/运维/安全签字仍待验收。                            |
+| 现场服务失败怎么办？     | 说明故障阶段，改用预先保存的截图/记录，标明录制时间和示例来源；不称现场操作成功。           |
 
-## 六、长对话导航与工作区折叠
+## 10. 历史资料与证据使用
 
-### 37. Minimap Hover 预览
+2026-09-06 的 44 张截图仍是历史设计资料，包含旧模型名称及模拟交互，不再作为主线讲稿或当前实现证明。历史界面可从 [README 历史展示](../../README.md)查看；当前设计规则以[完整原型基准](2026-09-22-product-prototype-baseline.md)为准。
 
-![Tapper Minimap Hover 预览](../assets/prototype-demo/37-tapper-minimap-preview.png)
+本组截图采集于 2026-09-27，基于 `codex/pytest-allure-reports` 工作区（基线提交 `d75352a` 加未提交的 pytest/Allure 与审核工作台实现）。图 01–09、17–18 及流程一的 PDF/Excel 格式补充从干净浏览器打开当前原型并逐步操作；图 10–15 经 `make tap-insights-e2e` 的隔离环境采集；图 16 经 `apps/tap-ai-frontend` 的 `prototype:capture` 固定响应流程采集。报告样本来源见 [pytest/Allure fixture 说明](../../apps/backend/tests/fixtures/insights/pytest-allure/README.md)。本次截图没有调用真实模型，也未改变 M1–M4 真实业务 Gate 状态。
 
-- 每条用户问题生成一条左对齐短刻度。
-- Hover 或键盘 Focus 到某个刻度时，该刻度有限加长，并显示对应用户问题的预览卡片。
-- 点击节点可直接跳到相应问答位置；当前节点加粗，邻近节点按有限层级变化。
-- 问题数量超过视口后，Minimap 使用窗口化浏览，底部边界止于输入框上方。
+界面回归对照：[调整前报告页](../assets/pytest-allure/report-desktop.png)可见横向模块标签和拥挤的四列详情；图 12–15 为调整后的左侧导航、直接 Test Insights 入口与两列证据布局。流程一图 02–04 与 PDF/Excel 格式补充在相同 1280×720、2× 视口重采；图 03–04 已替换旧版双栏弹窗。移动端报告布局通过隔离浏览器流程检查，无横向页面溢出。
 
-### 38. 收起 Knowledge sources
-
-![收起 Knowledge sources](../assets/prototype-demo/38-tapper-sources-collapsed.png)
-
-- 点击右侧 Codex 式面板图标后，Knowledge sources 平滑收起，主对话区扩展。
-- 收起后图标的内部线条方向发生变化，让用户能从形状判断下一次点击会展开哪一侧。
-- 适合长回答、代码或 BDD 内容的专注阅读。
-
-### 39. 同时收起 Tapper 二级菜单
-
-![收起 Tapper 二级菜单](../assets/prototype-demo/39-tapper-sidebar-collapsed.png)
-
-- Tapper 二级 Sidebar 收起后保留窄图标栏：展开按钮、New chat、Agents、Skills 与 Library，当前入口保留选中态，hover 可查看名称。按钮位于导航栏内，不再遮挡页面标题。
-- 一级产品 Rail 也保持常驻。点击 Tapper 回到当前对话，保留会话与草稿；进入 Library、Agents 或 Skills 不必先展开菜单。展开后可访问对话历史。
-- 左、右面板都收起时，中间获得最大的阅读宽度，Minimap 和固定 Composer 仍保留。
-- 两侧使用同一套面板图标语义、动画节奏和选中反馈，避免出现不同组件各自为政的体验。
-
-## 七、跨页面 Tapper 悬浮助手
-
-### 入口与上下文
-
-![Tapper 悬浮助手与当前页面上下文](../assets/prototype-demo/41-tapper-floating-context.png)
-
-- 只在 **Test Management** 和 **Low Code Automation** 页面右下角展示悬浮入口；Tapper、Agents、Skills、Library 属于 Tapper 工作区，不重复显示入口。
-- 默认使用 **Listening** 形象，表示助手等待提问。点击后展开面板，展示当前页面或已打开资产的上下文摘要与事实；空会话中提供三条快捷提问，已有消息时显示会话内容。
-- 上下文只使用原型已经加载的页面数据；发送时记录快照，后续切换页面不会改写旧回复依据。新建 Automation 表单尚未保存的输入不属于上下文。
-
-### 建议演示动作
-
-1. 为演示快捷提问，先在 Tapper 中选择 `New chat`，再打开 Test Management 中的 `TP-101`，点击右下角 Tapper。
-2. 展开“当前页面”检查资产名称和事实，选择一条快捷提问；提示会填入输入框，点击发送或按 Enter 才提交。
-3. 说明回复中的原型提示：建议由页面数据确定性生成，不代表真实模型分析、自动执行或修改资产。
-4. 收起面板后若收到新回复，入口切换为 **Aha**；再次打开查看后恢复 Listening。该状态用于表达“有新发现”，不表示缺陷已被真实检测确认。
-5. 再输入一段未发送内容，点击 `Continue in Tapper`（在 Tapper 中继续）：同一会话、已有消息、草稿与当前页面上下文一起进入 Tapper；可继续提问或移除上下文标签。
-
-![Tapper Aha 未读回复入口](../assets/prototype-demo/42-tapper-floating-aha.png)
-
-![悬浮助手携会话与草稿进入 Tapper](../assets/prototype-demo/43-tapper-floating-handoff.png)
-
-面板收起保留当前草稿，Esc 可关闭并将焦点返回入口；草稿是页面内状态，不承诺刷新恢复。已发送的会话内容沿用原型浏览器本地存储语义。
-
-## 建议的现场演示脚本
-
-### 路线 A：12–15 分钟完整演示
-
-1. 从 Tapper 新对话首页说明一级 Rail、二级 Tapper Sidebar 和三栏布局。
-2. 打开模型菜单，说明模型按 Conversation 保存，但当前只是选择器原型。
-3. 通过 `+` 依次添加一个 Knowledge、一个 AI Agent 和一个 Skill，再逐个展示可删除按钮。
-4. 进入 Library，展示默认图谱；搜索 `disclosure` 并定位 `Health disclosure`。清空搜索后切换 Documents，演示组合筛选与 Add source；收起二级菜单，再点击一级 Tapper 返回原会话。
-5. 进入 Test Management，打开 `TP-101`，指出 Scenario、BDD Step ID、`Mapped · AUTO-101` 和 Linked Automation。
-6. 如需讲解遗留截图，可选择 `ADO Web Agent 03` 触发模拟运行，同时明确它不是现行 Provider；现行目标使用 Jenkins Pipeline Agent，并保留同一 Run 投影到 Test Plan 与 Automation history 的语义。
-7. 进入 Low Code Automation，打开 `AUTO-101`，从 BDD Step 展开 Click、Send keys、Navigate、Assert 映射。
-8. 切到 AI Agent 标签，展示“建议—Review—人工决定”的调整方式；再打开右下角 Tapper，检查页面上下文、发送快捷问题，并通过“在 Tapper 中继续”交接同一会话和草稿。
-9. Mobile 页面仅作为遗留模拟探索选讲；必须说明 iOS/Android/设备能力不在当前正式路线，P1 后才可能另行设计。未关联时不回写 Test Plan 的规则仍可用于解释产品语义。
-10. 回到 Tapper，新建 Conversation，输入 `Generate an automation script for a life insurance application`。
-11. 选择先创建 Test Plan，Review BDD 草稿并继续生成关联的 Web Automation；Web/Mobile 不确定提示仅在讲解遗留交互时展示。
-12. 用最终两个资产卡片收尾：分别跳转 Test Plan 和 Automation，强调 Tapper 是跨模块编排入口，不是取代专业工作区。
-
-### 路线 B：5 分钟管理层演示
-
-1. 展示 Tapper 新对话首页：统一入口与上下文组合。
-2. 进入 Library 的默认图谱，搜索并定位一个节点；说明可从关系探索切换到文档检索。
-3. 展示已关联 Test Plan，并打开右下角 Tapper，演示针对当前资产提问及返回完整会话。
-4. 展示 Web Automation：BDD 步骤与底层动作一一可见。
-5. 展示 Tapper 最终资产卡片：从自然语言得到关联的 Test Plan 和 Automation，并能双向跳转。
-
-## 客户常见问题与回答口径
-
-### “AI Agent 和 Execution Agent 有什么区别？”
-
-AI Agent 在 Tapper 或 Automation 详情中负责理解意图、生成 BDD、提出修改建议和辅助 Review。Execution Agent 是 Pipeline Agent，负责在获得配置后执行 Web Automation；现行首个 Provider 是 Jenkins，Azure DevOps 只存在于遗留模拟截图。生产版中两者的权限、生命周期、审计和故障模型完全不同。
-
-### “一个 Test Plan 能关联多个 Automation 吗？”
-
-当前已确认产品规则是可选的严格 `1:1`：一个 Test Plan 最多关联一个 Automation，一个 Automation 也最多关联一个 Test Plan。未关联资产可以独立存在，但不会把运行结果写入 Test Plan history。
-
-### “Test Plan 中点击运行后，结果在哪里看？”
-
-若已关联 Automation，Test Plan 与 Automation 引用同一个 Run，两个页面都可看到同一份状态和步骤摘要；若没有关联，Test Plan 不显示该 Automation 的结果。原型 Run 明确标为 `Simulated`。
-
-### “BDD 与 Click、Send keys 是什么关系？”
-
-BDD 是业务可读的意图层；每一个 BDD Step 下方有显式 Automation actions 实现映射。一个业务步骤可以对应一个或多个 Navigate、Click、Send keys、Assert 等动作，并记录它来自哪个 Test Plan Step。
-
-### “Conversation 会丢失吗？”
-
-原型使用浏览器本地存储模拟刷新和跨模块恢复；同一 Conversation 的多轮问答保持在一条历史记录中。生产版仍需要服务端 Conversation API、身份、权限、同步、保留策略和审计。
-
-### “Knowledge Graph 已经是生产能力吗？”
-
-不是。当前图谱验证默认入口、关键词搜索定位、全屏探索与来源记录跳转；领域节点、关系、主题分组和布局来自确定性编排，来源节点取自当前目录。搜索不代表真实语义检索，尚未实现大规模图谱聚合与原文证据跳转。已接受的正式方案选择 **MySQL 保存 Knowledge Graph 权威数据、Milvus 保存可重建文档检索投影**，但尚未实现；后续仍需完成抽取、证据绑定、权限、增量更新和质量评测链路。
-
-### “在知识库怎么回到刚才的对话？”
-
-点击最左侧一级产品栏的 Tapper 图标，回到当前 Conversation，保留页面内草稿。二级菜单收起后仍有图标导航；需要换一条历史会话时展开菜单并选择历史记录。`New chat` 用于开启新会话，不是返回按钮。
-
-### “悬浮助手能自动发现缺陷吗？”
-
-当前不能。它基于已加载的页面事实生成确定性原型建议，用于验证上下文提问和跨页面交接；Aha 只表示有未读回复。真实分析、工具调用、缺陷确认和资产修改需要后续服务端能力与相应权限。
-
-### “模型选择会真实调用对应 GPT 吗？”
-
-当前页面只验证模型选择交互和 Conversation 级保存语义，不应据此承诺真实模型调用。生产接入还需要模型网关、配额、成本、数据边界、可用性和回退策略。
-
-## 演示结束时的三句话
-
-1. TAP 把知识上下文、业务测试意图、低代码实现和执行记录放进一条可审查链路。
-2. Tapper 负责理解、生成和跨模块引导；Test Management 与 Low Code Automation 仍是专业资产工作区。
-3. 当前产品壳中的 Conversation、Test Plan、Automation 和 Run 仍是纯前端交互原型；现有 Tapper 本地知识切片已经具备文档、ingestion 与索引状态持久化，但服务端会话/测试资产、权限、Jenkins、Recorder、真实浏览器执行和 Evidence 仍需后续工程化交付。
+每次客户演示记录实际使用的代码版本、样本来源、已展示流程及未执行环节。模拟数据演示成功与真实业务验收通过应分别记录。

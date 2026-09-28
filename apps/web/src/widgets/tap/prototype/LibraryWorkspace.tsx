@@ -123,18 +123,6 @@ export function LibraryWorkspace({
   };
 
   const sourceStatus = (source: LibrarySource) => {
-    if (source.reviewState === "review")
-      return copy.navigation.library === "Library" ? "Needs review" : "待核对";
-    if (source.reviewState === "published")
-      return copy.navigation.library === "Library" ? "Published" : "已发布";
-    if (source.reviewState === "reviewing")
-      return copy.navigation.library === "Library"
-        ? "Awaiting review"
-        : "待独立复核";
-    if (source.reviewState === "approved")
-      return copy.navigation.library === "Library" ? "Approved" : "已批准";
-    if (source.reviewState === "withdrawn")
-      return copy.navigation.library === "Library" ? "Withdrawn" : "已撤回";
     if (source.status === "ready") return copy.library.ready;
     if (source.status === "failed") return copy.library.failed;
     return copy.library.processing;
@@ -325,18 +313,14 @@ export function LibraryWorkspace({
                         {source.reviewState && onInspectSource ? (
                           <Button
                             type="text"
-                            aria-label={`${source.reviewState === "review" ? "Review" : "View"} ${source.name}`}
+                            aria-label={`${copy.navigation.library === "Library" ? "Manage chunks" : "管理切片"} ${source.name}`}
                             onClick={(event) =>
                               onInspectSource(source.id, event.currentTarget)
                             }
                           >
-                            {source.reviewState === "review"
-                              ? copy.navigation.library === "Library"
-                                ? "Review"
-                                : "核对"
-                              : copy.navigation.library === "Library"
-                                ? "View"
-                                : "查看"}
+                            {copy.navigation.library === "Library"
+                              ? "Manage chunks"
+                              : "管理切片"}
                           </Button>
                         ) : null}
                         {source.downloadUrl ? (

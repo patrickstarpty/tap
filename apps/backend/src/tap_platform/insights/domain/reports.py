@@ -60,8 +60,11 @@ class ReportManifest:
     started_at: str | None = None
     finished_at: str | None = None
     business_cycle_id: str | None = None
+    report_format: str = "junit"
 
     def __post_init__(self) -> None:
+        if self.report_format not in {"junit", "pytest", "allure"}:
+            raise ValueError("unsupported report format")
         for name in (
             "project_id",
             "source_id",
@@ -145,6 +148,11 @@ class ReportManifest:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            **(
+                {"report_format": self.report_format}
+                if self.report_format != "junit"
+                else {}
+            ),
             "project_id": self.project_id,
             "source_id": self.source_id,
             "external_run_id": self.external_run_id,
@@ -174,6 +182,7 @@ class ReportManifest:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> ReportManifest:
         aliases = {
+            "reportFormat": "report_format",
             "projectId": "project_id",
             "sourceId": "source_id",
             "externalRunId": "external_run_id",
@@ -216,6 +225,7 @@ class ReportManifest:
             "timezone",
         }
         optional = {
+            "report_format",
             "correction_no",
             "attachments",
             "external_test_id_mapping",
@@ -260,6 +270,7 @@ class ReportManifest:
             started_at=normalized.get("started_at"),
             finished_at=normalized.get("finished_at"),
             business_cycle_id=normalized.get("business_cycle_id"),
+            report_format=normalized.get("report_format", "junit"),
         )
 
 
@@ -312,6 +323,30 @@ def logical_attempt_key(manifest: ReportManifest, fact: TestAttemptFact) -> str:
             fact.data_row,
             fact.attempt,
             fact.source_locator if fact.attempt is None else None,
+        ]
+    )
+
+
+def legacy_v1_fact_key(
+    receipt: ReportReceipt, manifest: ReportManifest, fact: TestAttemptFact
+) -> str:
+    """Frozen fe736895 fact key, still stored by receipts projected with payload v1."""
+    return _digest(
+        [
+            receipt.project_id,
+            receipt.source_id,
+            receipt.external_run_id,
+            receipt.batch_id,
+            receipt.shard_id,
+            manifest.application_commit,
+            manifest.script_commit,
+            manifest.environment,
+            manifest.configuration,
+            manifest.timezone,
+            receipt.correction_no,
+            fact.stable_test_id or fact.source_test_identity,
+            fact.data_row,
+            fact.attempt,
         ]
     )
 

@@ -600,6 +600,96 @@
         "title": "MetricResultContract",
         "type": "object"
       },
+      "ReportAttachmentContract": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "mediaType": {
+            "title": "Mediatype",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "source",
+          "mediaType",
+          "available"
+        ],
+        "title": "ReportAttachmentContract",
+        "type": "object"
+      },
+      "ReportAttemptEvidenceContract": {
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/ReportAttachmentContract"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
+          "factKey": {
+            "title": "Factkey",
+            "type": "string"
+          },
+          "legacyFactKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legacyfactkey"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ReportStepContract"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "trace": {
+            "title": "Trace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status",
+          "message",
+          "trace",
+          "attachments",
+          "steps",
+          "factKey"
+        ],
+        "title": "ReportAttemptEvidenceContract",
+        "type": "object"
+      },
       "ReportCoverageContract": {
         "additionalProperties": false,
         "properties": {
@@ -657,6 +747,78 @@
           "missingReasons"
         ],
         "title": "ReportCoverageContract",
+        "type": "object"
+      },
+      "ReportEvidenceContract": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/ReportAttemptEvidenceContract"
+            },
+            "title": "Attempts",
+            "type": "array"
+          },
+          "reportFormat": {
+            "enum": [
+              "junit",
+              "pytest",
+              "allure"
+            ],
+            "title": "Reportformat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reportFormat",
+          "attempts"
+        ],
+        "title": "ReportEvidenceContract",
+        "type": "object"
+      },
+      "ReportStepContract": {
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/ReportAttachmentContract"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ReportStepContract"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "trace": {
+            "title": "Trace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status",
+          "message",
+          "trace",
+          "attachments",
+          "steps"
+        ],
+        "title": "ReportStepContract",
         "type": "object"
       },
       "RunPageContract": {
@@ -932,6 +1094,206 @@
           }
         },
         "summary": "Download Evidence"
+      }
+    },
+    "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}/attachment": {
+      "get": {
+        "operationId": "evidence_attachment_api_v1_projects__project_id__insights_evidence__receipt_id__attachment_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "receipt_id",
+            "required": true,
+            "schema": {
+              "title": "Receipt Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TAP-Service-Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tap-Service-Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TAP-Authorization-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tap-Authorization-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evidence Attachment"
+      }
+    },
+    "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}/details": {
+      "get": {
+        "operationId": "evidence_details_api_v1_projects__project_id__insights_evidence__receipt_id__details_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "receipt_id",
+            "required": true,
+            "schema": {
+              "title": "Receipt Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TAP-Service-Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tap-Service-Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TAP-Authorization-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tap-Authorization-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportEvidenceContract"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evidence Details"
       }
     },
     "/api/v1/projects/{project_id}/insights/failures": {

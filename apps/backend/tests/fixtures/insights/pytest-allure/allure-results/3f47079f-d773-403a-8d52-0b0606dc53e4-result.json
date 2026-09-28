@@ -1,0 +1,35 @@
+{
+  "name": "test_unavailable",
+  "status": "skipped",
+  "statusDetails": {
+    "message": "Skipped: Synthetic unavailable dependency",
+    "trace": "('/private/tmp/tap-allure-generated/sample_business.py', 21, 'Skipped: Synthetic unavailable dependency')"
+  },
+  "start": 1790510475151,
+  "stop": 1790510475151,
+  "uuid": "e2257be9-c995-49af-8902-ba60d4e06f10",
+  "historyId": "3e64cf08db07dc85e72caa6653ddf4d7",
+  "testCaseId": "3e64cf08db07dc85e72caa6653ddf4d7",
+  "fullName": "sample_business#test_unavailable",
+  "labels": [
+    {
+      "name": "suite",
+      "value": "sample_business"
+    },
+    {
+      "name": "framework",
+      "value": "pytest"
+    },
+    {
+      "name": "language",
+      "value": "cpython3"
+    },
+    {
+      "name": "package",
+      "value": "sample_business"
+    }
+  ],
+  "titlePath": [
+    "sample_business.py"
+  ]
+}

@@ -24,6 +24,14 @@ async def assert_tap_surface(app: FastAPI) -> None:
             "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}",
             ("GET",),
         ),
+        (
+            "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}/attachment",
+            ("GET",),
+        ),
+        (
+            "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}/details",
+            ("GET",),
+        ),
         ("/api/v1/projects/{project_id}/insights/failures", ("GET",)),
         ("/api/v1/projects/{project_id}/insights/metrics", ("GET",)),
         ("/api/v1/projects/{project_id}/insights/queries", ("POST",)),
@@ -51,7 +59,7 @@ async def assert_tap_surface(app: FastAPI) -> None:
         ("/openapi.json", ("GET", "HEAD")),
         ("/redoc", ("GET", "HEAD")),
     ]
-    assert len(app.routes) == 15
+    assert len(app.routes) == 17
     for route in app.routes:
         if isinstance(route, APIRoute):
             assert route.endpoint.__module__.startswith("tap_platform.")
@@ -69,6 +77,10 @@ async def assert_tap_surface(app: FastAPI) -> None:
     assert schema["info"]["title"] == "TAP API"
     assert {path: set(operations) for path, operations in schema["paths"].items()} == {
         "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}": {"get"},
+        "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}/attachment": {
+            "get"
+        },
+        "/api/v1/projects/{project_id}/insights/evidence/{receipt_id}/details": {"get"},
         "/api/v1/projects/{project_id}/insights/failures": {"get"},
         "/api/v1/projects/{project_id}/insights/metrics": {"get"},
         "/api/v1/projects/{project_id}/insights/queries": {"post"},

@@ -2,6 +2,8 @@
 
 本目录保存 RFC、待评审设计和未决输入。
 
+- [Dify 知识切片能力对齐设计](2026-09-27-dify-knowledge-chunk-parity.md)：用户确认的操作、生效语义与验收范围。
+
 - [待确认项](2026-08-20-open-questions.md)：汇总实现前仍需确认的产品、平台与运行输入。
 - [RFC-001：受控 Codex Agent Runtime](2026-08-21-rfc-001-codex-agent-runtime.md)（`rejected`）：保留旧 Phase 1.5 Runtime 设计的历史记录；当前范围和安全契约由 RFC-007 重新收敛。
 - [RFC-002：TAP 文档信息架构](2026-08-22-rfc-002-document-information-architecture.md)（`implemented`）：定义六类文档目录、生命周期、命名与迁移规则。

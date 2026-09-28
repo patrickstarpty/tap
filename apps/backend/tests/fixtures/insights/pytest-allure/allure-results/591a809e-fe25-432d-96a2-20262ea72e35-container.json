@@ -1,0 +1,39 @@
+{
+  "uuid": "904478ff-07c7-472d-a075-6653ec57f0f5",
+  "children": [
+    "c82aa95d-30a5-4302-a17a-f4b001f29f4a"
+  ],
+  "befores": [
+    {
+      "name": "business_context",
+      "status": "passed",
+      "steps": [
+        {
+          "name": "Prepare synthetic business context",
+          "status": "passed",
+          "attachments": [
+            {
+              "name": "Source",
+              "source": "0cf4005c-f629-437d-bafd-cfeb9b24ef01-attachment.txt",
+              "type": "text/plain"
+            }
+          ],
+          "start": 1790510475140,
+          "stop": 1790510475140
+        }
+      ],
+      "start": 1790510475140,
+      "stop": 1790510475140
+    }
+  ],
+  "afters": [
+    {
+      "name": "business_context::0",
+      "status": "passed",
+      "start": 1790510475141,
+      "stop": 1790510475141
+    }
+  ],
+  "start": 1790510475140,
+  "stop": 1790510475141
+}

@@ -73,7 +73,7 @@ import {
 import { PanelToggleIcon } from "./prototype/PanelToggleIcon";
 import { PrototypeSidebar } from "./prototype/PrototypeSidebar";
 import { TestManagementWorkspace } from "./prototype/testManagement/TestManagementWorkspace";
-import { TestAnalyticsWorkspace } from "../../legacy/TestAnalyticsWorkspace";
+import { TestInsightsPrototypeWorkspace } from "../../legacy/TestAnalyticsWorkspace";
 import "./TapProductPrototype.css";
 
 function BddPreview({ copy }: { copy: PrototypeCopy }) {
@@ -444,7 +444,13 @@ export function TapProductPrototype() {
     };
   }, []);
   const [activeModule, setActiveModule] = useState<ProductModule>(() =>
-    initialSnapshot?.library?.open ? "library" : "tapper",
+    (() => {
+      const requested = new URLSearchParams(window.location.search).get("module");
+      if (requested === "test-analytics") return "test-insights";
+      if (requested && ["tapper", "agents", "skills", "library", "test-management", "low-code", "test-insights"].includes(requested))
+        return requested as ProductModule;
+      return initialSnapshot?.library?.open ? "library" : "tapper";
+    })(),
   );
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
@@ -738,7 +744,7 @@ export function TapProductPrototype() {
       if (isNarrowViewport) setSidebarCollapsed(true);
       return;
     }
-    if (module === "test-management" || module === "test-analytics")
+    if (module === "test-management" || module === "test-insights")
       setSelectedPlanId(null);
     if (module === "low-code") setAutomationView({ kind: "library" });
     setActiveModule(module);
@@ -1363,8 +1369,8 @@ export function TapProductPrototype() {
             onInspectSource={review.inspect}
           />
         ) : null}
-        {activeModule === "test-analytics" ? (
-          <TestAnalyticsWorkspace
+        {activeModule === "test-insights" ? (
+          <TestInsightsPrototypeWorkspace
             locale={locale}
             reviewPrototype
             initialPlanId={selectedPlanId ?? undefined}
@@ -1383,7 +1389,7 @@ export function TapProductPrototype() {
             }}
             onOpenObservability={(testPlanId) => {
               setSelectedPlanId(testPlanId);
-              setActiveModule("test-analytics");
+              setActiveModule("test-insights");
             }}
             onLink={(automationId, testPlanId) =>
               dispatchArtifact({
@@ -1434,7 +1440,7 @@ export function TapProductPrototype() {
         ) : null}
       </main>
       <TapperFloatingAssistant
-        visible={!tapperWorkspaceActive && activeModule !== "test-analytics"}
+        visible={!tapperWorkspaceActive && activeModule !== "test-insights"}
         context={floatingContext}
         conversation={activeConversation}
         draft={messageDraft}

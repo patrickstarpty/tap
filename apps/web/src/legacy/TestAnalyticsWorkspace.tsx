@@ -231,16 +231,16 @@ export function TestAnalyticsWorkspace({
   if (!reviewPrototype && runtimeProjectId)
     return (
       <div className="ti-runtime">
-        {connection ? <button type="button" onClick={() => setConnection(null)}>{locale === "zh" ? "切换项目" : "Change project"}</button> : null}
         <InsightsWorkspace
           adapter={insightsAdapter ?? connection?.adapter ?? browserInsightsClient}
           projectId={runtimeProjectId}
           initialQueryId={initialQueryId}
+          onChangeProject={connection ? () => setConnection(null) : undefined}
         />
       </div>
     );
   return (
-    <PrototypeAnalyticsWorkspace
+    <TestInsightsPrototypeWorkspace
       locale={locale}
       initialPlanId={initialPlanId}
       reviewPrototype
@@ -248,7 +248,7 @@ export function TestAnalyticsWorkspace({
   );
 }
 
-function PrototypeAnalyticsWorkspace({
+export function TestInsightsPrototypeWorkspace({
   locale = "zh",
   initialPlanId,
   reviewPrototype = false,
@@ -355,7 +355,7 @@ function PrototypeAnalyticsWorkspace({
     );
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `test-analytics-synthetic-${ANALYTICS.endDate}.csv`;
+    anchor.download = `test-insights-synthetic-${ANALYTICS.endDate}.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
