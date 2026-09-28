@@ -1,4 +1,4 @@
-"""Closed, local parsers for the four text-extractable document formats."""
+"""Closed, local parsers for supported text-extractable document formats."""
 
 from __future__ import annotations
 
@@ -18,6 +18,9 @@ from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 from lxml import etree  # type: ignore[import-untyped]
+from openpyxl import load_workbook  # type: ignore[import-untyped]
+from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
+from openpyxl.utils.cell import coordinate_to_tuple  # type: ignore[import-untyped]
 from pypdf import PdfReader, filters
 from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
 
@@ -581,7 +584,205 @@ class TextParser:
         return _artifact(provenance, builder.blocks, inventory)
 
 
+class XlsxParser:
+    """Bounded values-only workbook extraction; never evaluates formulas or links."""
+
+    def parse(self, source: DocumentSource) -> NormalizedArtifact:
+        _validate_docx_zip(source.content, spreadsheet=True)
+        provenance = _SourceProvenance.create(source)
+        builder = _BlockBuilder()
+        inventory: list[ParseInventoryItem] = []
+
+        def issue(locator: str, reason: str, content: bytes = b"") -> None:
+            if len(inventory) >= 10_000:
+                raise DocumentParseRejected("document-too-complex")
+            inventory.append(
+                _inventory_item(
+                    provenance,
+                    ParseInventoryKind.TABLE,
+                    locator,
+                    ParseInventoryStatus.NEEDS_REVIEW,
+                    content,
+                    reason=reason,
+                )
+            )
+
+        book = load_workbook(
+            io.BytesIO(source.content), read_only=True, data_only=True, keep_links=False
+        )
+        try:
+            if len(book.worksheets) > 100:
+                raise DocumentParseRejected("document-too-complex")
+            cell_budget = 0
+            with zipfile.ZipFile(io.BytesIO(source.content)) as archive:
+                for sheet in book.worksheets:
+                    prefix = "worksheet:'" + sheet.title.replace("'", "''") + "'!"
+                    if sheet.sheet_state != "visible":
+                        issue(prefix, "hidden-worksheet")
+                    # Inspect the same worksheet part selected by openpyxl, without
+                    # discarding metadata that streaming value iteration omits.
+                    xml = archive.read(sheet._worksheet_path)
+                    root = etree.fromstring(
+                        xml,
+                        etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False),
+                    )
+                    for node in root.iter():
+                        tag = etree.QName(node).localname
+                        if tag == "row" and node.get("hidden") in ("1", "true"):
+                            issue(prefix + "row:" + str(node.get("r")), "hidden-row")
+                        elif tag == "col" and node.get("hidden") in ("1", "true"):
+                            issue(
+                                prefix
+                                + "columns:"
+                                + str(node.get("min"))
+                                + ":"
+                                + str(node.get("max")),
+                                "hidden-column",
+                            )
+                        elif tag == "mergeCell":
+                            issue(prefix + str(node.get("ref")) + ";merge", "merged-cells")
+                        elif tag == "c" and node.find("{*}f") is not None:
+                            cached = node.find("{*}v")
+                            reason = (
+                                "formula-without-cached-value"
+                                if cached is None or cached.text is None
+                                else "formula-cached-value-unverified"
+                            )
+                            issue(
+                                prefix + str(node.get("r")) + ";formula",
+                                reason,
+                                etree.tostring(node),
+                            )
+                        elif tag in ("drawing", "legacyDrawing", "extLst"):
+                            issue(prefix + tag, "unsupported-worksheet-content")
+                    # Recalculate dimensions from actual rows, avoiding incorrect
+                    # producer dimension hints, while capping sparse coordinate grids.
+                    coordinates = [
+                        coordinate_to_tuple(str(node.get("r"))) for node in root.iter("{*}c")
+                    ]
+                    max_row = max((r for r, _ in coordinates), default=0)
+                    max_column = max((c for _, c in coordinates), default=0)
+                    cell_budget += max_row * max_column
+                    if cell_budget > 100_000 or max_column > 256:
+                        raise DocumentParseRejected("document-too-complex")
+                    header: str | None = None
+                    header_range = ""
+                    header_cells: tuple[str, ...] = ()
+                    added = False
+                    rows = (
+                        sheet.iter_rows(max_row=max_row, max_col=max_column, values_only=False)
+                        if coordinates
+                        else ()
+                    )
+                    for index, row in enumerate(rows, start=1):
+                        if not any(cell.value is not None for cell in row):
+                            continue
+                        cell_text: list[str] = []
+                        for column, cell in enumerate(row, start=1):
+                            value = "" if cell.value is None else str(cell.value)
+                            if cell.value is not None and cell.number_format not in (
+                                "General",
+                                "@",
+                            ):
+                                issue(
+                                    prefix + f"{get_column_letter(column)}{index};format",
+                                    "cell-display-format-not-rendered",
+                                    cell.number_format.encode("utf-8"),
+                                )
+                                value += f" [Excel format: {cell.number_format}]"
+                            cell_text.append(value)
+                        cells = tuple(cell_text)
+                        text = "\t".join(cells)
+                        location = f"A{index}:{get_column_letter(len(row))}{index}"
+                        if header is None:
+                            header, header_range, header_cells = text, location, cells
+                            continue
+                        locator = prefix + location + ";header:" + header_range
+                        if len(header.encode("utf-8")) > 256:
+                            issue(
+                                locator + ";header-review",
+                                "oversized-header-context",
+                                header.encode("utf-8"),
+                            )
+                            fragments = [("", header + "\n" + text)]
+                        elif len((header + "\n" + text).encode("utf-8")) <= 512:
+                            fragments = [("", header + "\n" + text)]
+                        else:
+                            # Oversized rows become explicitly labelled cell fragments:
+                            # a continuation must never look like column A of a new row.
+                            fragments = []
+                            for column, value in enumerate(cells, start=1):
+                                label = f"{get_column_letter(column)}: {header_cells[column - 1]}"
+                                budget = 512 - len(label.encode("utf-8")) - 13
+                                parts: list[str] = []
+                                current = ""
+                                size = 0
+                                for character in value:
+                                    width = len(character.encode("utf-8"))
+                                    if size + width > budget:
+                                        parts.append(current)
+                                        current, size = "", 0
+                                    current += character
+                                    size += width
+                                parts.append(current)
+                                for part_number, part in enumerate(parts, start=1):
+                                    marker = "[continued]\n" if part_number > 1 else ""
+                                    suffix = (
+                                        f";cell:{get_column_letter(column)}{index}"
+                                        f";fragment:{part_number}"
+                                    )
+                                    fragments.append((suffix, label + "\n" + marker + part))
+                        for suffix, fragment in fragments:
+                            item = _inventory_item(
+                                provenance,
+                                ParseInventoryKind.TABLE,
+                                locator + suffix,
+                                ParseInventoryStatus.PARSED,
+                                fragment.encode("utf-8"),
+                            )
+                            inventory.append(item)
+                            builder.add(
+                                BlockKind.TABLE_TEXT,
+                                fragment,
+                                (sheet.title,),
+                                inventory_item_id=item.item_id,
+                            )
+                        added = True
+                    if header is not None and not added:
+                        item = _inventory_item(
+                            provenance,
+                            ParseInventoryKind.TABLE,
+                            prefix + header_range,
+                            ParseInventoryStatus.PARSED,
+                            header.encode("utf-8"),
+                        )
+                        inventory.append(item)
+                        builder.add(
+                            BlockKind.TABLE_TEXT,
+                            header,
+                            (sheet.title,),
+                            inventory_item_id=item.item_id,
+                        )
+                    elif header is None:
+                        issue(prefix + "empty", "empty-worksheet")
+                    if len(inventory) > 10_000:
+                        raise DocumentParseRejected("document-too-complex")
+                for name in archive.namelist():
+                    if name.startswith(("xl/media/", "xl/charts/", "xl/comments")):
+                        issue(
+                            "workbook-part:" + name,
+                            "unsupported-workbook-content",
+                            archive.read(name),
+                        )
+        finally:
+            book.close()
+        if not inventory:
+            return _failed_text_artifact(provenance, "empty-document")
+        return _artifact(provenance, builder.blocks, inventory)
+
+
 PARSERS: Mapping[MediaType, DocumentParser] = {
+    MediaType.XLSX: XlsxParser(),
     MediaType.PDF: PdfParser(),
     MediaType.DOCX: DocxParser(),
     MediaType.MARKDOWN: MarkdownParser(),
@@ -1144,7 +1345,7 @@ def _validate_signature(source: DocumentSource) -> None:
     content = source.content
     if source.media_type is MediaType.PDF:
         valid = content.startswith(b"%PDF-")
-    elif source.media_type is MediaType.DOCX:
+    elif source.media_type in (MediaType.DOCX, MediaType.XLSX):
         valid = content.startswith(b"PK\x03\x04")
     else:
         valid = not content.startswith((b"%PDF-", b"PK\x03\x04", b"\x7fELF", b"MZ", b"\x89PNG"))
@@ -1205,7 +1406,8 @@ def _validate_pdf_objects(reader: PdfReader) -> None:
         visit(IndirectObject(number, 0, reader), 0)
 
 
-def _validate_docx_zip(content: bytes) -> None:
+def _validate_docx_zip(content: bytes, *, spreadsheet: bool = False) -> None:
+    main_part = "xl/workbook.xml" if spreadsheet else "word/document.xml"
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         entries = archive.infolist()
         if len(entries) > _DOCX_MAX_ENTRIES:
@@ -1260,7 +1462,7 @@ def _validate_docx_zip(content: bytes) -> None:
                 raise DocumentParseRejected("invalid-document")
             if lower.endswith((".xml", ".rels")):
                 xml_entries[name] = bytes(data)
-        if not {"[Content_Types].xml", "_rels/.rels", "word/document.xml"} <= xml_entries.keys():
+        if not {"[Content_Types].xml", "_rels/.rels", main_part} <= xml_entries.keys():
             raise DocumentParseRejected("invalid-document")
         office_document = False
         main_type = False
@@ -1289,28 +1491,34 @@ def _validate_docx_zip(content: bytes) -> None:
                     )
                 ):
                     raise DocumentParseRejected("invalid-document")
-                if node.get("PartName") == "/word/document.xml":
-                    main_type = (
-                        kind == "application/vnd.openxmlformats-officedocument."
-                        "wordprocessingml.document.main+xml"
+                if node.get("PartName") == f"/{main_part}":
+                    main_type = kind == "application/vnd.openxmlformats-officedocument." + (
+                        "spreadsheetml.sheet.main+xml"
+                        if spreadsheet
+                        else "wordprocessingml.document.main+xml"
                     )
                 if name.endswith(".rels") and str(node.tag).endswith("}Relationship"):
                     target = str(node.get("Target", ""))
                     if (
                         node.get("TargetMode", "Internal") != "Internal"
                         or urlsplit(target).scheme
-                        or target.startswith(("/", "\\"))
+                        or target.startswith("\\")
+                        or (target.startswith("/") and not spreadsheet)
                         or "\\" in target
                     ):
                         raise DocumentParseRejected("invalid-document")
                     base = name.split("_rels/", 1)[0]
-                    resolved = posixpath.normpath(posixpath.join(base, target))
+                    resolved = posixpath.normpath(
+                        target.lstrip("/")
+                        if target.startswith("/")
+                        else posixpath.join(base, target)
+                    )
                     if resolved.startswith("../") or resolved not in archive.namelist():
                         raise DocumentParseRejected("invalid-document")
                     if (
                         name == "_rels/.rels"
                         and relation.endswith("/officedocument")
-                        and resolved == "word/document.xml"
+                        and resolved == main_part
                     ):
                         office_document = True
         if not main_type or not office_document:

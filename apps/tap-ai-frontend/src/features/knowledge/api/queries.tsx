@@ -1,3 +1,4 @@
+import type { ChunkSettings } from "./chunks";
 import {
   useMutation,
   useQuery,
@@ -210,8 +211,17 @@ export function useUploadSourceMutation(projectId: string) {
       onProgress,
       signal,
       idempotencyKey,
+      settings,
     }: UploadDocumentCommand & { idempotencyKey: string }) =>
-      client.uploadSource(file, onProgress, signal, idempotencyKey),
+      settings === undefined
+        ? client.uploadSource(file, onProgress, signal, idempotencyKey)
+        : client.uploadSource(
+            file,
+            onProgress,
+            signal,
+            idempotencyKey,
+            settings,
+          ),
     onSuccess: (receipt) =>
       settleSourceReceipt(queryClient, projectId, receipt),
   });
@@ -541,6 +551,7 @@ export function useDocumentDetailQuery(
 }
 
 export interface UploadDocumentCommand {
+  settings?: ChunkSettings;
   file: File;
   onProgress: (ratio: number) => void;
   signal?: AbortSignal;
@@ -551,8 +562,15 @@ export function useUploadDocumentMutation(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: ["knowledge", projectId, "upload"],
-    mutationFn: ({ file, onProgress, signal }: UploadDocumentCommand) =>
-      client.uploadDocument(file, onProgress, signal),
+    mutationFn: ({
+      file,
+      onProgress,
+      signal,
+      settings,
+    }: UploadDocumentCommand) =>
+      settings === undefined
+        ? client.uploadDocument(file, onProgress, signal)
+        : client.uploadDocument(file, onProgress, signal, undefined, settings),
     onSuccess: (receipt) => settleReceipt(queryClient, projectId, receipt),
   });
 }

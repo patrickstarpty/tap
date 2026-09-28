@@ -265,6 +265,7 @@ class DocumentSummary(ContractModel):
     media_type: Literal[
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "text/markdown",
         "text/plain",
     ]
@@ -434,8 +435,8 @@ class PublishedKnowledgeSource(ContractModel):
     revision_id: ShortIdentifier
     source_name: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
     filename: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
-    publication_id: ShortIdentifier
-    expires_at: TimestampValue
+    publication_id: ShortIdentifier | None = None
+    expires_at: TimestampValue | None = None
     approved_item_count: Annotated[StrictInt, Field(ge=0, le=10_000)]
     inventory_item_count: Annotated[StrictInt, Field(ge=0, le=10_000)]
     partial: bool
@@ -1311,3 +1312,93 @@ class TestPlanRevisionUpdate(ContractModel):
     assumptions: list[TestPlanTextFactView]
     unknowns: list[TestPlanTextFactView]
     coverage_gaps: list[TestPlanCoverageGapView]
+
+
+class KnowledgeChunkSettings(ContractModel):
+    mode: Literal["general", "parent_child"] = "general"
+    parent_mode: Literal["paragraph", "full_doc"] = "paragraph"
+    separator: str = Field(default="\n\n", max_length=100)
+    max_length: int = Field(default=1024, ge=1, le=32768)
+    overlap: int = Field(default=50, ge=0, le=32767)
+    child_separator: str = Field(default="\n", max_length=100)
+    child_max_length: int = Field(default=256, ge=1, le=32768)
+    replace_whitespace: bool = False
+    remove_urls: bool = False
+
+
+class KnowledgeChunk(ContractModel):
+    chunk_id: str
+    content: str
+    enabled: bool
+    edited: bool
+    position: int
+    char_count: int
+    tokens: int
+    keywords: list[str] = Field(default_factory=list)
+    summary: str | None = None
+    children: list["KnowledgeChunk"] = Field(default_factory=list)
+    index_status: Literal["pending", "ready", "error"]
+    index_error: str | None = None
+    version: int
+
+
+class KnowledgeChunkPage(ContractModel):
+    items: list[KnowledgeChunk]
+    total: int
+    page: int
+    page_size: int
+
+
+class KnowledgeChunkPreview(ContractModel):
+    items: list[KnowledgeChunk]
+    total: int
+
+
+class KnowledgeChunkSettingsView(ContractModel):
+    settings: KnowledgeChunkSettings
+    version: int
+    original_revision_id: str
+
+
+class KnowledgeChunkSettingsRequest(ContractModel):
+    settings: KnowledgeChunkSettings
+
+
+class KnowledgeChunkSettingsSave(KnowledgeChunkSettingsRequest):
+    version: int = Field(ge=1)
+    confirm_replace: bool = False
+
+
+class KnowledgeChunkCreate(ContractModel):
+    content: str = Field(min_length=1, max_length=32768)
+
+
+class KnowledgeChunkChange(ContractModel):
+    version: int = Field(ge=1)
+    content: str | None = Field(default=None, min_length=1, max_length=32768)
+    enabled: bool | None = None
+    regenerate_children: bool = False
+
+
+class KnowledgeChunkVersion(ContractModel):
+    chunk_id: str
+    version: int = Field(ge=1)
+
+
+class KnowledgeChunkBatch(ContractModel):
+    action: Literal["enable", "disable", "delete", "retry"]
+    items: list[KnowledgeChunkVersion] = Field(min_length=1, max_length=1000)
+
+
+class KnowledgeChunkImport(ContractModel):
+    contents: list[str] = Field(min_length=1, max_length=1000)
+
+
+class KnowledgeChunkFailure(ContractModel):
+    chunk_id: str
+    error: str
+
+
+class KnowledgeChunkBatchResult(ContractModel):
+    succeeded: list[str]
+    failed: list[KnowledgeChunkFailure]

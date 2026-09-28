@@ -237,6 +237,8 @@ class ReserveUpload:
     source_id: str | None = None
     command: SourceCommand | None = None
 
+    chunk_settings: dict[str, object] | None = None
+
     def __post_init__(self) -> None:
         if not isinstance(self.staging_key, str) or not self.staging_key.strip():
             raise ValueError("upload reservation requires a nonblank staging locator")

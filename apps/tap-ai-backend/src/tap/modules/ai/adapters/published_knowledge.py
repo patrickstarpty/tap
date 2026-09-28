@@ -1,4 +1,4 @@
-"""Insights evidence from the authorized, currently published Knowledge search path."""
+"""Insights evidence from authorized, current Knowledge search results."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ class PublishedKnowledgeEvidence:
         self,
         *,
         searches: PublishedSearch,
-        publication_authority: PublishedKnowledgeAuthority,
+        publication_authority: PublishedKnowledgeAuthority | None,
         selection: tuple[FrozenResource, ...],
     ) -> None:
         if len(selection) > 20 or len({item.source_id for item in selection}) != len(selection):
@@ -106,16 +106,21 @@ class PublishedKnowledgeEvidence:
                 or item.source.revision != frozen.revision_id
                 or item.source.source_content_hash != frozen.source_content_hash
                 or not isinstance(item.source.anchor, DocumentAnchor)
-                or item.approved_item_id != item.source.anchor.inventory_item_id
-                or item.approved_item_id is None
-                or item.publication_id is None
-                or item.approval_digest is None
+                or (
+                    self._publication is not None
+                    and (
+                        item.approved_item_id != item.source.anchor.inventory_item_id
+                        or item.approved_item_id is None
+                        or item.publication_id is None
+                        or item.approval_digest is None
+                    )
+                )
                 or not item.content.strip()
                 or item.citation_id in by_citation
             ):
-                raise InsightsAuthorizationChanged("knowledge hit is outside frozen approval")
+                raise InsightsAuthorizationChanged("knowledge hit is outside frozen selection")
             binding = await self._authorize_hit(scope, item)
-            if (
+            if binding is not None and (
                 binding.publication_id != item.publication_id
                 or binding.approval_digest != item.approval_digest
             ):
@@ -152,7 +157,7 @@ class PublishedKnowledgeEvidence:
                 ):
                     return False
                 binding = await self._authorize_hit(scope, item)
-                if (
+                if binding is not None and (
                     binding.publication_id != item.publication_id
                     or binding.approval_digest != item.approval_digest
                 ):
@@ -217,10 +222,20 @@ class PublishedKnowledgeEvidence:
                     or not isinstance(detail.get("chunkId"), str)
                     or not isinstance(detail.get("chunkContentHash"), str)
                     or not isinstance(detail.get("text"), str)
-                    or not isinstance(approved_item_id, str)
-                    or not approved_item_id
+                    or (
+                        self._publication is not None
+                        and (not isinstance(approved_item_id, str) or not approved_item_id)
+                    )
                 ):
                     return False
+                if self._publication is None:
+                    if (
+                        detail.get("publicationId") is not None
+                        or detail.get("approvalDigest") is not None
+                    ):
+                        return False
+                    continue
+                assert isinstance(approved_item_id, str)
                 binding = await self._publication.authorize_evidence(
                     scope.context.project_id,
                     source_revision_id=frozen.revision_id,
@@ -264,7 +279,11 @@ class PublishedKnowledgeEvidence:
 
     async def _authorize_hit(
         self, scope: AuthorizedInsightsScope, item: Evidence
-    ) -> PublicationBinding:
+    ) -> PublicationBinding | None:
+        if self._publication is None:
+            if item.publication_id is not None or item.approval_digest is not None:
+                raise InsightsAuthorizationChanged("direct knowledge cannot claim an approval")
+            return None
         binding = await self._publication.authorize_evidence(
             scope.context.project_id,
             source_revision_id=item.source.revision,

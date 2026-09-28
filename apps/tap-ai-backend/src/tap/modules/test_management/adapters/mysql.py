@@ -53,8 +53,11 @@ from tap.modules.governance.domain.audit import (
 )
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_citation_snapshot,
+    knowledge_document,
     knowledge_document_revision,
     knowledge_parse_inventory,
+    knowledge_source,
+    managed_chunks_visible,
 )
 from tap.modules.knowledge.adapters.mysql_review import (
     knowledge_current_publication,
@@ -610,6 +613,7 @@ class MysqlTestPlanRepository:
         scope: ProjectScopeContext,
         model_alias: str,
         model_mapping: ProviderModelMapping,
+        knowledge_requires_publication: bool = True,
     ) -> None:
         self._sessions = sessions
         self.scope = require_project_scope(scope)
@@ -619,6 +623,7 @@ class MysqlTestPlanRepository:
             raise ValueError("test design model alias is required")
         self._model_alias = model_alias
         self._model_mapping = model_mapping
+        self._knowledge_requires_publication = knowledge_requires_publication
 
     def _assert_model_alias(self, model_alias: str) -> None:
         if model_alias != self._model_alias:
@@ -1255,6 +1260,92 @@ class MysqlTestPlanRepository:
             )
             return published
 
+    async def _ready_requirement_scope(
+        self,
+        session: AsyncSession,
+        scope: ProjectScopeContext,
+        source_revision_ids: set[str],
+    ) -> tuple[RequirementScopeSnapshot, set[tuple[str, str]]]:
+        current = (
+            (
+                await session.execute(
+                    select(knowledge_document_revision.c.revision_id)
+                    .select_from(
+                        knowledge_document_revision.join(
+                            knowledge_document,
+                            knowledge_document.c.current_revision_id
+                            == knowledge_document_revision.c.revision_id,
+                        ).join(
+                            knowledge_source,
+                            knowledge_source.c.source_id == knowledge_document.c.source_id,
+                        )
+                    )
+                    .where(
+                        *scope_predicates(knowledge_document_revision, scope),
+                        *scope_predicates(knowledge_document, scope),
+                        *scope_predicates(knowledge_source, scope),
+                        knowledge_document_revision.c.revision_id.in_(source_revision_ids),
+                        knowledge_document.c.status == "ready",
+                        managed_chunks_visible(scope),
+                        knowledge_document.c.chunk_count > 0,
+                        knowledge_document.c.deleted_at.is_(None),
+                        knowledge_source.c.deleted_at.is_(None),
+                    )
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if (
+            not source_revision_ids
+            or {row["revision_id"] for row in current} != source_revision_ids
+        ):
+            raise ValueError("generation requires current ready knowledge revisions")
+        inventory = (
+            (
+                await session.execute(
+                    select(
+                        knowledge_parse_inventory.c.item_id,
+                        knowledge_parse_inventory.c.source_revision_id,
+                        knowledge_parse_inventory.c.locator,
+                    )
+                    .select_from(
+                        knowledge_parse_inventory.join(
+                            knowledge_document_revision,
+                            knowledge_document_revision.c.revision_id
+                            == knowledge_parse_inventory.c.source_revision_id,
+                        )
+                    )
+                    .where(
+                        *scope_predicates(knowledge_parse_inventory, scope),
+                        *scope_predicates(knowledge_document_revision, scope),
+                        knowledge_parse_inventory.c.source_revision_id.in_(source_revision_ids),
+                        knowledge_parse_inventory.c.attempt
+                        == knowledge_document_revision.c.parse_inventory_attempt,
+                        knowledge_parse_inventory.c.status == "parsed",
+                    )
+                    .order_by(
+                        knowledge_parse_inventory.c.source_revision_id,
+                        knowledge_parse_inventory.c.ordinal,
+                    )
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .all()
+        )
+        items = {(row["source_revision_id"], row["item_id"]) for row in inventory}
+        material = json.dumps(sorted(items), separators=(",", ":"))
+        return RequirementScopeSnapshot.create(
+            scope_id="rs_" + hashlib.sha256(material.encode()).hexdigest()[:48],
+            version=1,
+            requirements=tuple(
+                RequirementScopeItem(row["item_id"], row["source_revision_id"], row["locator"])
+                for row in inventory
+            ),
+        ), items
+
     async def _current_requirement_scope(
         self,
         session: AsyncSession,
@@ -1262,6 +1353,8 @@ class MysqlTestPlanRepository:
         source_revision_ids: set[str],
         now: datetime,
     ) -> tuple[RequirementScopeSnapshot, set[tuple[str, str]]]:
+        if not self._knowledge_requires_publication:
+            return await self._ready_requirement_scope(session, scope, source_revision_ids)
         publications = (
             (
                 await session.execute(

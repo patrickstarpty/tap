@@ -108,6 +108,11 @@ async def resolve_project_scope(request: Request) -> ProjectScopeContext:
         and getattr(services.knowledge_reviews, "scope", None) != services.scope
     ):
         raise AuthorizationDenied("scope-mismatch")
+    if (
+        services.chunk_manager is not None
+        and getattr(services.chunk_manager, "scope", None) != services.scope
+    ):
+        raise AuthorizationDenied("scope-mismatch")
     scope = await services.scope_provider.current(RequestFacts(project_id=project_id))
     if not isinstance(scope, ProjectScopeContext) or scope != services.scope:
         raise AuthorizationDenied("scope-mismatch")

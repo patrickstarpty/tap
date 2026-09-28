@@ -10,7 +10,7 @@ import stat
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,10 +56,13 @@ from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_ingestion_job,
 )
 from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore, _parse
+from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents, managed_history
 from tap.modules.knowledge.domain.documents import (
     CHUNKER_VERSION,
     PARSER_VERSION,
     LogicalChunkId,
+    DocumentId,
+    revision_id_for,
     canonical_sha256,
     logical_chunk_projection_id,
 )
@@ -162,8 +165,11 @@ class ManifestEvidence:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class RevisionEvidence:
+    state: DocumentState
+    original: DocumentState
     locators: tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator]
     manifest: Mapping[str, ManifestEvidence]
+    lineage: tuple[RevisionEvidence, ...] = ()
 
 
 def _require(condition: bool, code: str) -> None:
@@ -308,10 +314,13 @@ def _expected_locators(
 
 
 def _persisted_locators(
-    revision: Mapping[Any, Any], document: DocumentState, settings: TapperSettings
+    revision: Mapping[Any, Any], document: DocumentState, settings: TapperSettings,
+    original: DocumentState | None = None,
 ) -> tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator]:
+    original = document if original is None else original
     if settings.object_store_provider == "azure":
-        return _expected_locators(document, settings)
+        current = _expected_locators(document, settings)
+        return (_expected_locators(original, settings)[0], *current[1:])
     _require(settings.object_store_provider == "minio", "object-provider")
     locators = []
     for kind in ("original", "normalized", "chunks", "embeddings"):
@@ -320,7 +329,7 @@ def _persisted_locators(
         locator = ArtifactLocator(value)
         actual_revision, actual_kind, _ref = _parse(locator)
         _require(
-            actual_revision == document.revision_id and actual_kind == kind,
+            actual_revision == (original.revision_id if kind == "original" else document.revision_id) and actual_kind == kind,
             "object-locator-binding",
         )
         locators.append(locator)
@@ -334,12 +343,14 @@ async def _verify_object_binding(
     locators: tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator],
     document: DocumentState,
     settings: TapperSettings,
+    original: DocumentState | None = None,
 ) -> None:
+    original = document if original is None else original
     for kind, locator in zip(
         ("original", "normalized", "chunks", "embeddings"), locators, strict=True
     ):
         revision, actual_kind, ref = _parse(locator)
-        _require(revision == document.revision_id and actual_kind == kind, "object-locator-binding")
+        _require(revision == (original.revision_id if kind == "original" else document.revision_id) and actual_kind == kind, "object-locator-binding")
         value = await artifacts.objects.open_verified(ref)
         identity = f"{revision}/{kind}"
         if kind == "embeddings":
@@ -349,7 +360,7 @@ async def _verify_object_binding(
             and value.attributes == tuple(sorted({"kind": kind, "revision": revision}.items()))
             and len(value.data) == value.size
             and canonical_sha256(value.data) == value.sha256
-            and (kind != "original" or value.sha256 == document.source_content_hash),
+            and (kind != "original" or value.sha256 == original.source_content_hash),
             "object-manifest-binding",
         )
 
@@ -359,13 +370,14 @@ def _require_revision_binding(
     document: DocumentState,
     locators: tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator],
     pipeline_version: str,
+    *, managed: bool = False,
 ) -> None:
     _require(
         revision["document_id"] == document.document_id
         and revision["source_content_hash"] == document.source_content_hash
-        and revision["parser_version"] == PARSER_VERSION
-        and revision["chunker_version"] == CHUNKER_VERSION
-        and revision["pipeline_version"] == pipeline_version
+        and revision["parser_version"] == ("managed-chunks-v1" if managed else PARSER_VERSION)
+        and revision["chunker_version"] == ("managed-chunks-v1" if managed else CHUNKER_VERSION)
+        and revision["pipeline_version"] == ("managed-chunks-v1" if managed else pipeline_version)
         and tuple(
             revision[name]
             for name in (

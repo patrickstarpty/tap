@@ -22,6 +22,10 @@ from tap.interfaces.http.routes.conversations import router as conversations_rou
 from tap.interfaces.http.routes.health import router as health_router
 from tap.interfaces.http.routes.insights_explanations import router as insights_explanations_router
 from tap.interfaces.http.routes.knowledge_answers import router as knowledge_answers_router
+from tap.interfaces.http.routes.knowledge_chunks import router as knowledge_chunks_router
+from tap.interfaces.http.routes.knowledge_chunks import (
+    upload_router as knowledge_chunk_upload_router,
+)
 from tap.interfaces.http.routes.knowledge_documents import router as knowledge_documents_router
 from tap.interfaces.http.routes.knowledge_graph import router as knowledge_graph_router
 from tap.interfaces.http.routes.knowledge_reviews import router as knowledge_reviews_router
@@ -98,6 +102,8 @@ def create_app(
         insights_explanations_router,
         knowledge_sources_router,
         knowledge_documents_router,
+        knowledge_chunks_router,
+        knowledge_chunk_upload_router,
         knowledge_answers_router,
         citations_router,
         model_catalog_router,

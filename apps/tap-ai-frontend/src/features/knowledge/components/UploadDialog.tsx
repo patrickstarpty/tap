@@ -1,3 +1,5 @@
+import { UploadChunkPreview } from "./UploadChunkPreview";
+import { DEFAULT_CHUNK_SETTINGS } from "../api/chunks";
 import { useKnowledgeClient } from "../api/queries";
 import { InboxOutlined } from "@ant-design/icons";
 import { Alert, Button, Modal, Progress, Space, Typography } from "antd";
@@ -15,7 +17,14 @@ import type { DocumentAccepted } from "../api/types";
 import { COPY, safeProblemCopy } from "../copy";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
-const ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".md", ".markdown", ".txt"];
+const ACCEPTED_EXTENSIONS = [
+  ".pdf",
+  ".docx",
+  ".xlsx",
+  ".md",
+  ".markdown",
+  ".txt",
+];
 const ACCEPT_ATTRIBUTE = ACCEPTED_EXTENSIONS.join(",");
 
 function validationMessage(file: File): string | null {
@@ -40,6 +49,7 @@ export function UploadDialog({ open, onClose, onAccepted }: UploadDialogProps) {
   const [file, setFile] = useState<File | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [settings, setSettings] = useState(DEFAULT_CHUNK_SETTINGS);
   const [progress, setProgress] = useState(0);
   const uploadMutation = useUploadDocumentMutation(projectId);
   const uploadPending = uploadMutation.isPending;
@@ -54,6 +64,7 @@ export function UploadDialog({ open, onClose, onAccepted }: UploadDialogProps) {
   useEffect(() => {
     if (!open) return;
     setFile(null);
+    setSettings(DEFAULT_CHUNK_SETTINGS);
     setValidationError(null);
     setRequestError(null);
     setProgress(0);
@@ -97,6 +108,7 @@ export function UploadDialog({ open, onClose, onAccepted }: UploadDialogProps) {
     try {
       const receipt = await uploadMutation.mutateAsync({
         file,
+        settings,
         onProgress: setProgress,
         signal: controller.signal,
       });
@@ -177,6 +189,15 @@ export function UploadDialog({ open, onClose, onAccepted }: UploadDialogProps) {
           <strong>{file.name}</strong>
         </div>
       ) : null}
+      {file !== null && (
+        <UploadChunkPreview
+          key={`${file.name}:${file.lastModified}`}
+          projectId={projectId}
+          file={file}
+          value={settings}
+          onChange={setSettings}
+        />
+      )}
       {validationError !== null ? (
         <Alert
           className="tapper-dialog-alert"

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createKnowledgeClient,
@@ -676,5 +676,24 @@ describe("failure stream boundaries", () => {
         status: 413,
       });
     },
+  );
+});
+
+it("fetches review originals as blobs from the project-scoped route", async () => {
+  const fetcher = vi.fn(async (request: Request) => {
+    expect(request.method).toBe("GET");
+    return new Response("%PDF-1.4", {
+      headers: { "content-type": "application/pdf" },
+    });
+  });
+  const client = createKnowledgeClient({
+    projectId: "project-a",
+    fetch: fetcher,
+  });
+  const blob = await client.readReviewOriginal!("review-a", "item-a");
+  expect(blob.type).toBe("application/pdf");
+  expect(await blob.text()).toBe("%PDF-1.4");
+  expect(fetcher.mock.calls[0]?.[0].url).toContain(
+    "/projects/project-a/knowledge/reviews/review-a/items/item-a/original",
   );
 });

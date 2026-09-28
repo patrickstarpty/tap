@@ -42,6 +42,7 @@ class WorkerRuntime:
     worker: BoundedWorker
     wakeups: WakeupConsumer
     resources: tuple[AsyncCloseable, ...] = ()
+    pending_work: Callable[..., Awaitable[int]] | None = None
 
 
 RuntimeFactory = Callable[["TapperSettings"], Awaitable[WorkerRuntime]]
@@ -81,6 +82,7 @@ async def run_worker_loop(
     settings: WorkerSettings,
     stop: asyncio.Event,
     max_iterations: int | None = None,
+    pending_work: Callable[..., Awaitable[int]] | None = None,
 ) -> None:
     if max_iterations is not None and (type(max_iterations) is not int or max_iterations < 1):
         raise ValueError("max_iterations must be positive")
@@ -97,6 +99,8 @@ async def run_worker_loop(
         if stop.is_set():
             break
         await worker.run_once(limit=settings.job_batch_size)
+        if pending_work is not None:
+            await pending_work(limit=settings.job_batch_size)
         if wakeup is not None:
             await wakeups.ack(wakeup)
         if wakeup_failed:
@@ -164,6 +168,7 @@ async def run(
             settings=worker_settings,
             stop=stop,
             max_iterations=max_iterations,
+            pending_work=runtime.pending_work,
         )
     except BaseException as error:
         errors.append(error)

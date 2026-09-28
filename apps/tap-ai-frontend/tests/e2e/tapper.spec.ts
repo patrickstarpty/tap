@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test, type Page, type Request } from "@playwright/test";
 
 import {
@@ -286,10 +287,6 @@ async function failOnceThenRetry(
     "failed",
   );
   assertFailedTimeline(failed, stage, safeCode);
-  const failedStageIndex = STAGES.indexOf(stage);
-  const durableCheckpointTimes = failed.stages
-    .slice(0, failedStageIndex)
-    .map((snapshot) => snapshot.completedAt);
 
   await assertLibraryStatus(page, file, "Failed");
   accepted = await retryThroughApi(page, accepted);
@@ -301,13 +298,27 @@ async function failOnceThenRetry(
     "ready",
   );
   assertReadyTimeline(detail);
-  expect(detail.revisionId).toBe(failed.revisionId);
-  expect(detail.sourceContentHash).toBe(failed.sourceContentHash);
+  const settingsResponse = await page.request.get(
+    knowledgePath(page, `documents/${initialDocumentId}/chunk-settings`),
+  );
+  expect(settingsResponse.status()).toBe(200);
+  const settings = (await settingsResponse.json()) as {
+    originalRevisionId: string;
+  };
+  expect(settings.originalRevisionId).toBe(failed.revisionId);
+  expect(detail.revisionId).not.toBe(settings.originalRevisionId);
+  const originalResponse = await page.request.get(
+    knowledgePath(page, `documents/${initialDocumentId}/original`),
+  );
+  expect(originalResponse.status()).toBe(200);
+  const originalBytes = await originalResponse.body();
+  expect(originalBytes.equals(file.buffer)).toBe(true);
   expect(
-    detail.stages
-      .slice(0, failedStageIndex)
-      .map((snapshot) => snapshot.completedAt),
-  ).toEqual(durableCheckpointTimes);
+    `sha256:${createHash("sha256").update(originalBytes).digest("hex")}`,
+  ).toBe(failed.sourceContentHash);
+  // Managed indexing has its own job; original retry checkpoint preservation is
+  // covered in backend test_managed_chunks.py::
+  // test_mutations_persist_reindex_and_fence_old_revisions (real MySQL).
   // API retry does not invalidate the browser's terminal failed-document cache.
   await page.reload();
   await assertLibraryStatus(page, file, "Ready");
@@ -545,21 +556,32 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
     policy!.detail.revisionId,
     selectedReference!.detail.revisionId,
   ]);
-  const publishedGraphSnapshots = await page.request.get(
-    knowledgePath(page, "graph/snapshots"),
-    { params: { sourceRevisionId: policy!.detail.revisionId } },
-  );
-  expect(publishedGraphSnapshots.status()).toBe(200);
-  const snapshot = (await publishedGraphSnapshots.json()) as {
-    items: Array<{ snapshotId: string }>;
-  };
-  expect(snapshot.items[0]?.snapshotId).toBeTruthy();
+  let readySnapshotId: string | undefined;
+  const graphDeadline = Date.now() + 60_000;
+  while (!readySnapshotId && Date.now() < graphDeadline) {
+    const publishedGraphSnapshots = await page.request.get(
+      knowledgePath(page, "graph/snapshots"),
+      { params: { sourceRevisionId: policy!.detail.revisionId } },
+    );
+    expect(publishedGraphSnapshots.status()).toBe(200);
+    const snapshot = (await publishedGraphSnapshots.json()) as {
+      items: Array<{
+        snapshotId: string;
+        status: "CANDIDATE" | "READY" | "FAILED";
+      }>;
+    };
+    readySnapshotId = snapshot.items.find(
+      (item) => item.status === "READY",
+    )?.snapshotId;
+    if (!readySnapshotId) await page.waitForTimeout(500);
+  }
+  expect(readySnapshotId, "graph snapshot becomes READY").toBeTruthy();
   const publishedGraph = await page.request.post(
     knowledgePath(page, "graph/query"),
     {
       headers: { Origin: ORIGIN },
       data: {
-        snapshotId: snapshot.items[0]!.snapshotId,
+        snapshotId: readySnapshotId!,
         query: "*",
         nodeLimit: 500,
       },

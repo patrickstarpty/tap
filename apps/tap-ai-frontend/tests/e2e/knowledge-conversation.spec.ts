@@ -194,7 +194,7 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   await expect(citationButton).toBeVisible();
   await citationButton.click();
   await expect(
-    page.getByRole("heading", { name: /Cited source|原文依据/u }),
+    page.getByRole("heading", { name: /Cited evidence|引用依据/u }),
   ).toBeVisible();
   const sourceLink = page.getByRole("link", {
     name: /Open source|打开来源/u,
@@ -316,15 +316,15 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     .first()
     .click();
   await expect(
-    page.getByRole("heading", { name: /Cited source|原文依据/u }),
+    page.getByRole("heading", { name: /Cited evidence|引用依据/u }),
   ).toBeVisible();
   await expect(
     page
-      .getByLabel(/Source text|原文/u)
+      .getByLabel(/Cited content|引用内容/u)
       .getByText("verified identity evidence", { exact: false }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: /Close source text|关闭原文/u })
+    .getByRole("button", { name: /Close cited content|关闭引用内容/u })
     .click();
 
   const history = page.getByRole("navigation", { name: "Chat history" });

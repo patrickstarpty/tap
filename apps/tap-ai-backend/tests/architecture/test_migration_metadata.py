@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 
 EXPECTED_TABLES = {
+    "knowledge_managed_document",
+    "knowledge_managed_generation",
     "ai_graph_run",
     "ai_graph_checkpoint",
     "ai_graph_checkpoint_write",

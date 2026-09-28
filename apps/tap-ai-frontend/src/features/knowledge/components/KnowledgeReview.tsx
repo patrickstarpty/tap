@@ -1,3 +1,4 @@
+import { ReviewOriginal } from "./ReviewOriginal";
 import {
   Alert,
   Button,
@@ -20,6 +21,8 @@ import type {
   KnowledgeReviewDetail,
   KnowledgeReviewItemComparison,
 } from "../api/types";
+
+import "./KnowledgeReview.css";
 
 const REVIEW_STATUS: Record<KnowledgeReviewDetail["status"], string> = {
   draft: "草稿",
@@ -70,14 +73,25 @@ function Preview({
   if (value.availability !== "available" || !value.excerpt) {
     return <p role="status">{value.reason ?? "该位置暂无可核对内容。"}</p>;
   }
-  return <pre className="tapper-preview">{value.excerpt}</pre>;
+  return (
+    <>
+      <pre className="tapper-preview" tabIndex={0}>
+        {value.excerpt}
+      </pre>
+      <p className="tapper-review-hint">
+        预览最多显示前 4,000 个字符，长段落请打开原文件完整核对。
+      </p>
+    </>
+  );
 }
 
 export function KnowledgeReview({
   documentId,
   sourceRevisionId,
   onPublicationChange,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
   documentId?: string;
   sourceRevisionId: string;
   onPublicationChange?: () => void;
@@ -91,7 +105,8 @@ export function KnowledgeReview({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [writeLocked, setWriteLocked] = useState(false);
+  const [locked, setWriteLocked] = useState(false);
+  const writeLocked = readOnly || locked;
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [comparison, setComparison] =
     useState<KnowledgeReviewItemComparison | null>(null);
@@ -100,6 +115,45 @@ export function KnowledgeReview({
   const [decisionStatus, setDecisionStatus] =
     useState<KnowledgeReviewDecisionRequest["status"]>("accepted");
   const [note, setNote] = useState("");
+  const [filter, setFilter] = useState("needs_review");
+  const [locatorQuery, setLocatorQuery] = useState("");
+  const [quote, setQuote] = useState("");
+  const extractionRef = useRef<HTMLElement | null>(null);
+  const drafts = useRef(
+    new Map<
+      string,
+      {
+        note: string;
+        checkKind: KnowledgeReviewDecisionRequest["checkKind"];
+        status: KnowledgeReviewDecisionRequest["status"];
+      }
+    >(),
+  );
+  const draftKey = (itemId: string) =>
+    `${scope}\u0000${selectedId}\u0000${itemId}`;
+  const rememberDraft = () => {
+    if (selectedItemId)
+      drafts.current.set(draftKey(selectedItemId), {
+        note,
+        checkKind,
+        status: decisionStatus,
+      });
+  };
+  const resetQuote = () => {
+    setQuote("");
+    window.getSelection()?.removeAllRanges();
+  };
+  const captureQuote = () => {
+    const selection = window.getSelection();
+    const excerpt = extractionRef.current?.querySelector("pre");
+    if (
+      selection?.rangeCount &&
+      excerpt?.contains(selection.anchorNode) &&
+      excerpt.contains(selection.focusNode)
+    )
+      setQuote(selection.toString().trim());
+    else setQuote("");
+  };
   const [inventory, setInventory] = useState<
     KnowledgeReviewDetail["inventory"] | null
   >(null);
@@ -141,6 +195,7 @@ export function KnowledgeReview({
   };
 
   const adopt = useCallback((value: KnowledgeReviewDetail) => {
+    setQuote("");
     setReview(value);
     setReviews((items) =>
       items.map((item) => (item.reviewId === value.reviewId ? value : item)),
@@ -172,6 +227,9 @@ export function KnowledgeReview({
     let active = true;
     setLoading(true);
     setError(null);
+    setFilter("needs_review");
+    setLocatorQuery("");
+    setQuote("");
     setReviews([]);
     setReviewCursor(null);
     selectedReview.current = null;
@@ -333,14 +391,18 @@ export function KnowledgeReview({
   };
 
   const openItem = async (itemId: string, trigger: HTMLElement) => {
-    if (!review) return;
+    if (!review || pending || !review.allowedActions.includes("read_original"))
+      return;
+    rememberDraft();
+    resetQuote();
     const request = ++comparisonRequest.current;
     const reviewId = review.reviewId;
     itemTrigger.current = trigger;
     if (selectedItemId !== itemId) {
-      setNote("");
-      setCheckKind("scope");
-      setDecisionStatus("accepted");
+      const draft = drafts.current.get(draftKey(itemId));
+      setNote(draft?.note ?? "");
+      setCheckKind(draft?.checkKind ?? "scope");
+      setDecisionStatus(draft?.status ?? "accepted");
     }
     setSelectedItemId(itemId);
     setComparison(null);
@@ -363,6 +425,9 @@ export function KnowledgeReview({
   };
 
   const closeItem = () => {
+    if (pending) return;
+    rememberDraft();
+    resetQuote();
     comparisonRequest.current += 1;
     setSelectedItemId(null);
     setComparison(null);
@@ -444,6 +509,31 @@ export function KnowledgeReview({
     }
   };
 
+  const visibleItems = (inventory?.items ?? []).filter((item) => {
+    const isBlocking =
+      review?.blockingItemIds.includes(item.itemId) || item.status === "failed";
+    const matches =
+      filter === "all" ||
+      (filter === "blocked"
+        ? isBlocking
+        : isBlocking || item.status === "needs_review");
+    return (
+      matches &&
+      item.locator
+        .toLocaleLowerCase()
+        .includes(locatorQuery.trim().toLocaleLowerCase())
+    );
+  });
+  const visibleIndex = visibleItems.findIndex(
+    (item) => item.itemId === selectedItemId,
+  );
+  const selectedItem = inventory?.items.find(
+    (item) => item.itemId === selectedItemId,
+  );
+  const quoteNote =
+    selectedItem && quote ? `【${selectedItem.locator}】“${quote}”` : "";
+  const annotatedNote = [note, quoteNote].filter(Boolean).join("\n");
+
   return (
     <section
       aria-labelledby="knowledge-review-heading"
@@ -494,9 +584,9 @@ export function KnowledgeReview({
         <div>
           <p>
             <strong>未关联审核记录</strong>
-            。上传或解析就绪不代表已通过业务审核。
+            {readOnly ? "。" : "。上传或解析就绪不代表已通过业务审核。"}
           </p>
-          {documentId ? (
+          {documentId && !readOnly ? (
             <Button
               type="primary"
               loading={pending}
@@ -513,6 +603,10 @@ export function KnowledgeReview({
           disabled={pending}
           value={selectedId}
           onChange={(id) => {
+            rememberDraft();
+            resetQuote();
+            setFilter("needs_review");
+            setLocatorQuery("");
             selectedReview.current = id;
             comparisonRequest.current += 1;
             setSelectedItemId(null);
@@ -563,16 +657,72 @@ export function KnowledgeReview({
               {inventory.totalCount === 0 ? (
                 <p>尚无清单数据，不能提交审核。</p>
               ) : null}
+              <div className="tapper-review-tools">
+                <Space wrap role="group" aria-label="清单筛选">
+                  {[
+                    ["blocked", "阻断"],
+                    ["needs_review", "待核对"],
+                    ["all", "全部"],
+                  ].map(([value, label]) => (
+                    <Button
+                      key={value}
+                      aria-label={label}
+                      aria-pressed={filter === value}
+                      type={filter === value ? "primary" : "default"}
+                      onClick={() => setFilter(value!)}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                </Space>
+                <Input
+                  type="search"
+                  aria-label="搜索已加载位置"
+                  placeholder="搜索已加载位置，例如 page:4"
+                  value={locatorQuery}
+                  onChange={(event) => setLocatorQuery(event.target.value)}
+                />
+              </div>
+              <p className="tapper-review-range" aria-live="polite">
+                <span>{`已加载 ${inventory.items.length} / ${inventory.totalCount} 项`}</span>{" "}
+                · 当前显示 {visibleItems.length} 项
+              </p>
+              {inventory.nextCursor ? (
+                <p className="tapper-review-hint">
+                  筛选和搜索仅覆盖已加载清单。继续加载可查看更多位置。
+                </p>
+              ) : null}
+              {visibleItems.length === 0 && inventory.totalCount > 0 ? (
+                <div>
+                  <p role="status">
+                    {filter === "needs_review" && !locatorQuery.trim()
+                      ? "已加载清单中没有待核对项，可查看全部资料继续核对。"
+                      : "已加载清单中没有匹配项。请调整筛选或继续加载。"}
+                  </p>
+                  <Button
+                    onClick={() => {
+                      setFilter("all");
+                      setLocatorQuery("");
+                    }}
+                  >
+                    查看全部资料
+                  </Button>
+                </div>
+              ) : null}
               <ul className="tapper-review-list">
                 {!review.allowedActions.includes("read_original") ? (
                   <li>当前账号无权查看原件与提取对照。</li>
                 ) : null}
-                {inventory.items.map((item) => (
+                {visibleItems.map((item) => (
                   <li key={item.itemId}>
                     <Button
                       type="link"
                       disabled={
+                        pending ||
                         !review.allowedActions.includes("read_original")
+                      }
+                      aria-current={
+                        selectedItemId === item.itemId ? "true" : undefined
                       }
                       onClick={(event) =>
                         void openItem(item.itemId, event.currentTarget)
@@ -614,8 +764,51 @@ export function KnowledgeReview({
                 >
                   原件与提取对照
                 </Typography.Title>
-                <Button onClick={closeItem}>关闭对照</Button>
+                <Button disabled={pending} onClick={closeItem}>
+                  关闭对照
+                </Button>
               </Space>
+              <div className="tapper-review-navigation">
+                <span>{selectedItem?.locator ?? selectedItemId}</span>
+                <Space wrap>
+                  <Button
+                    disabled={
+                      pending ||
+                      visibleIndex <= 0 ||
+                      !review.allowedActions.includes("read_original")
+                    }
+                    onClick={(event) =>
+                      void openItem(
+                        visibleItems[visibleIndex - 1]!.itemId,
+                        event.currentTarget,
+                      )
+                    }
+                  >
+                    上一项
+                  </Button>
+                  <span>
+                    {visibleIndex >= 0
+                      ? `${visibleIndex + 1} / ${visibleItems.length}`
+                      : "当前项不在筛选结果中"}
+                  </span>
+                  <Button
+                    disabled={
+                      pending ||
+                      visibleIndex < 0 ||
+                      visibleIndex >= visibleItems.length - 1 ||
+                      !review.allowedActions.includes("read_original")
+                    }
+                    onClick={(event) =>
+                      void openItem(
+                        visibleItems[visibleIndex + 1]!.itemId,
+                        event.currentTarget,
+                      )
+                    }
+                  >
+                    下一项
+                  </Button>
+                </Space>
+              </div>
               <p role="status">
                 {comparison
                   ? "对照已加载。"
@@ -630,20 +823,69 @@ export function KnowledgeReview({
                   <article>
                     <h4>原件位置</h4>
                     {review.allowedActions.includes("read_original") ? (
-                      <Preview value={comparison.original} />
+                      <>
+                        <Preview value={comparison.original} />
+                        {client.readReviewOriginal && selectedItem ? (
+                          <ReviewOriginal
+                            key={`${review.reviewId}/${selectedItemId}`}
+                            reviewId={review.reviewId}
+                            itemId={selectedItemId}
+                            locator={selectedItem.locator}
+                            extractedText={
+                              comparison.extracted.availability === "available"
+                                ? (comparison.extracted.excerpt ?? undefined)
+                                : undefined
+                            }
+                            load={client.readReviewOriginal}
+                          />
+                        ) : null}
+                      </>
                     ) : (
                       <p role="status">当前账号无权查看原件。</p>
                     )}
                   </article>
-                  <article>
+                  <article
+                    ref={extractionRef}
+                    onMouseUp={captureQuote}
+                    onKeyUp={captureQuote}
+                    onTouchEnd={captureQuote}
+                  >
                     <h4>提取内容</h4>
                     <Preview value={comparison.extracted} />
                   </article>
                 </div>
               )}
-              {review.allowedActions.includes("edit") ? (
+              {!readOnly && review.allowedActions.includes("edit") ? (
                 <div className="tapper-review-decision">
+                  <p className="tapper-review-hint">
+                    选取提取内容中的文字，可将引文和位置加入核对说明。未保存的说明会在本次审核中按条目保留。
+                  </p>
+                  {quote ? (
+                    <blockquote className="tapper-review-quote">
+                      {quote}
+                    </blockquote>
+                  ) : null}
+                  <Button
+                    disabled={
+                      pending ||
+                      writeLocked ||
+                      !quoteNote ||
+                      annotatedNote.length > 1000
+                    }
+                    onClick={() => {
+                      setNote(annotatedNote);
+                      resetQuote();
+                    }}
+                  >
+                    将选中文字加入说明
+                  </Button>
+                  {quoteNote && annotatedNote.length > 1000 ? (
+                    <p role="status">
+                      引文加入后超过 1000 字，请缩短说明或重新选择文字。
+                    </p>
+                  ) : null}
                   <Select
+                    disabled={pending}
                     aria-label="核对字段"
                     value={checkKind}
                     onChange={setCheckKind}
@@ -652,6 +894,7 @@ export function KnowledgeReview({
                     )}
                   />
                   <Select
+                    disabled={pending}
                     aria-label="核对结果"
                     value={decisionStatus}
                     onChange={setDecisionStatus}
@@ -663,12 +906,18 @@ export function KnowledgeReview({
                     aria-label="核对说明"
                     value={note}
                     onChange={(event) => setNote(event.target.value)}
-                    maxLength={2000}
+                    rows={4}
+                    maxLength={1000}
+                    showCount
+                    disabled={pending}
                   />
                   <Button
                     type="primary"
                     disabled={
-                      writeLocked || comparison === null || !note.trim()
+                      writeLocked ||
+                      comparison === null ||
+                      !note.trim() ||
+                      note.length > 1000
                     }
                     loading={pending}
                     onClick={() =>
@@ -684,7 +933,11 @@ export function KnowledgeReview({
                           },
                         ),
                       ).then((saved) => {
-                        if (saved) setNote("");
+                        if (saved) {
+                          drafts.current.delete(draftKey(selectedItemId));
+                          setNote("");
+                          resetQuote();
+                        }
                       })
                     }
                   >

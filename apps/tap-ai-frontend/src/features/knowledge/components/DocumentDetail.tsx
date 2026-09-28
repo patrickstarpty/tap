@@ -16,7 +16,10 @@ import type {
   IngestionStage,
 } from "../api/types";
 import { COPY, STAGE_STATE_COPY, STAGE_TITLES, safeProblemCopy } from "../copy";
-import { KnowledgeReview } from "./KnowledgeReview";
+import { useState } from "react";
+import { ChunkManager } from "./ChunkManager";
+import { DocumentChunkSettings } from "./ChunkSettings";
+import { chunkPath, type ChunkSettings } from "../api/chunks";
 
 const INGESTION_STAGES: IngestionStage[] = [
   "stored",
@@ -62,6 +65,7 @@ export function DocumentDetail({
   onAfterClose,
 }: DocumentDetailProps) {
   const { projectId } = useKnowledgeClient();
+  const [settings, setSettings] = useState<ChunkSettings | null>(null);
   const detailQuery = useDocumentDetailQuery(projectId, documentId);
 
   return (
@@ -94,6 +98,13 @@ export function DocumentDetail({
       ) : null}
       {detailQuery.data !== undefined ? (
         <div className="tapper-detail-stack">
+          <a
+            href={`${chunkPath(projectId, detailQuery.data.documentId)}/original`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            查看原始文件
+          </a>
           <section aria-labelledby="source-facts-heading">
             <Typography.Title level={5} id="source-facts-heading">
               {COPY.immutableFacts}
@@ -138,9 +149,19 @@ export function DocumentDetail({
               {detailQuery.data.normalizedPreview ?? COPY.previewUnavailable}
             </pre>
           </section>
-          <KnowledgeReview
+          <DocumentChunkSettings
+            projectId={projectId}
             documentId={detailQuery.data.documentId}
-            sourceRevisionId={detailQuery.data.revisionId}
+            onLoaded={setSettings}
+          />
+          <ChunkManager
+            projectId={projectId}
+            documentId={detailQuery.data.documentId}
+            parentChild={settings?.mode === "parent_child"}
+            fullDocument={
+              settings?.mode === "parent_child" &&
+              settings.parentMode === "full_doc"
+            }
           />
         </div>
       ) : null}

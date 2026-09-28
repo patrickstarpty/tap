@@ -1,6 +1,7 @@
 """Governed knowledge review, publication, and withdrawal commands."""
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import Response
 
 from tap.contracts.http import (
     KnowledgePublicationDetail,
@@ -328,4 +329,32 @@ async def withdraw_publication(
 ) -> KnowledgePublicationDetail:
     return await knowledge_review_service(request).withdraw_publication(
         publication_id, expected_version, key
+    )
+
+
+@router.get(
+    "/knowledge/reviews/{review_id}/items/{item_id}/original",
+    operation_id="knowledge_read_review_original",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {
+                "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}
+            }
+        }
+    },
+    dependencies=[
+        Depends(project_authorization("knowledge.original.read", resource_id_param="review_id"))
+    ],
+)
+async def read_review_original(request: Request, review_id: str, item_id: str) -> Response:
+    content, media_type = await knowledge_review_service(request).read_original(review_id, item_id)
+    return Response(
+        content,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "attachment",
+        },
     )

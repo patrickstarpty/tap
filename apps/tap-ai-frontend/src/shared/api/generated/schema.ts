@@ -255,6 +255,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/knowledge/chunks/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Upload */
+        post: operations["preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/knowledge/citations/{citation_id}": {
         parameters: {
             query?: never;
@@ -306,6 +323,145 @@ export interface paths {
         post?: never;
         /** Delete Document */
         delete: operations["knowledge_delete_document"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunk-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_api_v1_projects__project_id__knowledge_documents__document_id__chunk_settings_get"];
+        /** Save Settings */
+        put: operations["save_settings_api_v1_projects__project_id__knowledge_documents__document_id__chunk_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Chunks */
+        get: operations["list_chunks_api_v1_projects__project_id__knowledge_documents__document_id__chunks_get"];
+        put?: never;
+        /** Create Chunk */
+        post: operations["create_chunk_api_v1_projects__project_id__knowledge_documents__document_id__chunks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Batch */
+        post: operations["batch_api_v1_projects__project_id__knowledge_documents__document_id__chunks_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Chunks */
+        post: operations["import_chunks_api_v1_projects__project_id__knowledge_documents__document_id__chunks_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview */
+        post: operations["preview_api_v1_projects__project_id__knowledge_documents__document_id__chunks_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks/{chunk_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Chunk */
+        delete: operations["delete_chunk_api_v1_projects__project_id__knowledge_documents__document_id__chunks__chunk_id__delete"];
+        options?: never;
+        head?: never;
+        /** Change Chunk */
+        patch: operations["change_chunk_api_v1_projects__project_id__knowledge_documents__document_id__chunks__chunk_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks/{chunk_id}/children": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Child */
+        post: operations["create_child_api_v1_projects__project_id__knowledge_documents__document_id__chunks__chunk_id__children_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/original": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Original */
+        get: operations["original_api_v1_projects__project_id__knowledge_documents__document_id__original_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -644,6 +800,23 @@ export interface paths {
         get?: never;
         /** Update Review Item Decision */
         put: operations["knowledge_update_review_item_decision"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/original": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Review Original */
+        get: operations["knowledge_read_review_original"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1128,6 +1301,8 @@ export interface components {
         };
         /** Body_knowledge_upload_document */
         Body_knowledge_upload_document: {
+            /** Settings */
+            settings?: string | null;
             /**
              * Upload
              * Format: binary
@@ -1136,6 +1311,18 @@ export interface components {
         };
         /** Body_knowledge_upload_source */
         Body_knowledge_upload_source: {
+            /** Settings */
+            settings?: string | null;
+            /**
+             * Upload
+             * Format: binary
+             */
+            upload: string;
+        };
+        /** Body_preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post */
+        Body_preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post: {
+            /** Settings */
+            settings: string;
             /**
              * Upload
              * Format: binary
@@ -1604,7 +1791,7 @@ export interface components {
              * Mediatype
              * @enum {string}
              */
-            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "text/markdown" | "text/plain";
+            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "text/markdown" | "text/plain";
             /**
              * Normalizedpreview
              * @default null
@@ -1680,7 +1867,7 @@ export interface components {
              * Mediatype
              * @enum {string}
              */
-            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "text/markdown" | "text/plain";
+            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "text/markdown" | "text/plain";
             /** Sourceid */
             sourceId: string;
             stage: components["schemas"]["IngestionStage"];
@@ -2007,6 +2194,184 @@ export interface components {
              * @enum {string}
              */
             stopReason: "completed" | "budget-exhausted" | "insights-unavailable";
+        };
+        /** KnowledgeChunk */
+        KnowledgeChunk: {
+            /** Charcount */
+            charCount: number;
+            /** Children */
+            children?: components["schemas"]["KnowledgeChunk"][];
+            /** Chunkid */
+            chunkId: string;
+            /** Content */
+            content: string;
+            /** Edited */
+            edited: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /** Indexerror */
+            indexError?: string | null;
+            /**
+             * Indexstatus
+             * @enum {string}
+             */
+            indexStatus: "pending" | "ready" | "error";
+            /** Keywords */
+            keywords?: string[];
+            /** Position */
+            position: number;
+            /** Summary */
+            summary?: string | null;
+            /** Tokens */
+            tokens: number;
+            /** Version */
+            version: number;
+        };
+        /** KnowledgeChunkBatch */
+        KnowledgeChunkBatch: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "enable" | "disable" | "delete" | "retry";
+            /** Items */
+            items: components["schemas"]["KnowledgeChunkVersion"][];
+        };
+        /** KnowledgeChunkBatchResult */
+        KnowledgeChunkBatchResult: {
+            /** Failed */
+            failed: components["schemas"]["KnowledgeChunkFailure"][];
+            /** Succeeded */
+            succeeded: string[];
+        };
+        /** KnowledgeChunkChange */
+        KnowledgeChunkChange: {
+            /** Content */
+            content?: string | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /**
+             * Regeneratechildren
+             * @default false
+             */
+            regenerateChildren?: boolean;
+            /** Version */
+            version: number;
+        };
+        /** KnowledgeChunkCreate */
+        KnowledgeChunkCreate: {
+            /** Content */
+            content: string;
+        };
+        /** KnowledgeChunkFailure */
+        KnowledgeChunkFailure: {
+            /** Chunkid */
+            chunkId: string;
+            /** Error */
+            error: string;
+        };
+        /** KnowledgeChunkImport */
+        KnowledgeChunkImport: {
+            /** Contents */
+            contents: string[];
+        };
+        /** KnowledgeChunkPage */
+        KnowledgeChunkPage: {
+            /** Items */
+            items: components["schemas"]["KnowledgeChunk"][];
+            /** Page */
+            page: number;
+            /** Pagesize */
+            pageSize: number;
+            /** Total */
+            total: number;
+        };
+        /** KnowledgeChunkPreview */
+        KnowledgeChunkPreview: {
+            /** Items */
+            items: components["schemas"]["KnowledgeChunk"][];
+            /** Total */
+            total: number;
+        };
+        /** KnowledgeChunkSettings */
+        KnowledgeChunkSettings: {
+            /**
+             * Childmaxlength
+             * @default 256
+             */
+            childMaxLength?: number;
+            /**
+             * Childseparator
+             * @default
+             */
+            childSeparator?: string;
+            /**
+             * Maxlength
+             * @default 1024
+             */
+            maxLength?: number;
+            /**
+             * Mode
+             * @default general
+             * @enum {string}
+             */
+            mode?: "general" | "parent_child";
+            /**
+             * Overlap
+             * @default 50
+             */
+            overlap?: number;
+            /**
+             * Parentmode
+             * @default paragraph
+             * @enum {string}
+             */
+            parentMode?: "paragraph" | "full_doc";
+            /**
+             * Removeurls
+             * @default false
+             */
+            removeUrls?: boolean;
+            /**
+             * Replacewhitespace
+             * @default false
+             */
+            replaceWhitespace?: boolean;
+            /**
+             * Separator
+             * @default
+             */
+            separator?: string;
+        };
+        /** KnowledgeChunkSettingsRequest */
+        KnowledgeChunkSettingsRequest: {
+            settings: components["schemas"]["KnowledgeChunkSettings"];
+        };
+        /** KnowledgeChunkSettingsSave */
+        KnowledgeChunkSettingsSave: {
+            /**
+             * Confirmreplace
+             * @default false
+             */
+            confirmReplace?: boolean;
+            settings: components["schemas"]["KnowledgeChunkSettings"];
+            /** Version */
+            version: number;
+        };
+        /** KnowledgeChunkSettingsView */
+        KnowledgeChunkSettingsView: {
+            /** Originalrevisionid */
+            originalRevisionId: string;
+            settings: components["schemas"]["KnowledgeChunkSettings"];
+            /** Version */
+            version: number;
+        };
+        /** KnowledgeChunkVersion */
+        KnowledgeChunkVersion: {
+            /** Chunkid */
+            chunkId: string;
+            /** Version */
+            version: number;
         };
         /** KnowledgePublicationDetail */
         KnowledgePublicationDetail: {
@@ -2870,7 +3235,7 @@ export interface components {
             /** Documentid */
             documentId: string;
             /** Expiresat */
-            expiresAt: string;
+            expiresAt?: string | null;
             /** Filename */
             filename: string;
             /** Inventoryitemcount */
@@ -2878,7 +3243,7 @@ export interface components {
             /** Partial */
             partial: boolean;
             /** Publicationid */
-            publicationId: string;
+            publicationId?: string | null;
             /** Revisionid */
             revisionId: string;
             /** Sourceid */
@@ -3322,7 +3687,7 @@ export interface components {
              * Mediatype
              * @enum {string}
              */
-            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "text/markdown" | "text/plain";
+            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "text/markdown" | "text/plain";
             /** Normalizedpreview */
             normalizedPreview?: string | null;
             /** Revisionid */
@@ -5106,6 +5471,50 @@ export interface operations {
             };
         };
     };
+    preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkPreview"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     citation_get_preview: {
         parameters: {
             query?: never;
@@ -5422,6 +5831,499 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    get_settings_api_v1_projects__project_id__knowledge_documents__document_id__chunk_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkSettingsView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_settings_api_v1_projects__project_id__knowledge_documents__document_id__chunk_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeChunkSettingsSave"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkSettingsView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_chunks_api_v1_projects__project_id__knowledge_documents__document_id__chunks_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                status?: "all" | "enabled" | "disabled";
+                page?: number;
+                pageSize?: number;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_chunk_api_v1_projects__project_id__knowledge_documents__document_id__chunks_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeChunkCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunk"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    batch_api_v1_projects__project_id__knowledge_documents__document_id__chunks_batch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeChunkBatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkBatchResult"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_chunks_api_v1_projects__project_id__knowledge_documents__document_id__chunks_import_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeChunkImport"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkBatchResult"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_api_v1_projects__project_id__knowledge_documents__document_id__chunks_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeChunkSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkPreview"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_chunk_api_v1_projects__project_id__knowledge_documents__document_id__chunks__chunk_id__delete: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+                chunk_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_chunk_api_v1_projects__project_id__knowledge_documents__document_id__chunks__chunk_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                chunk_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeChunkChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunk"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_child_api_v1_projects__project_id__knowledge_documents__document_id__chunks__chunk_id__children_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                document_id: string;
+                chunk_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeChunkCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunk"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    original_api_v1_projects__project_id__knowledge_documents__document_id__original_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -6630,6 +7532,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["KnowledgeReviewDetail"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_read_review_original: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_id: string;
+                item_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
                 };
             };
             /** @description Project scope or authorization denied */
