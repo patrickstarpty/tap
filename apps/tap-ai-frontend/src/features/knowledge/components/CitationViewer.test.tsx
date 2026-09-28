@@ -56,7 +56,9 @@ describe("CitationViewer", () => {
       />,
       { api: fakeKnowledgeClient() },
     );
-    expect(screen.getByRole("heading", { name: "Cited content" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Cited content" }),
+    ).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("no longer resolves");
     expect(screen.getByRole("alert")).toHaveTextContent("withdrawn");
     expect(screen.queryByText("引用内容核验未完成")).not.toBeInTheDocument();

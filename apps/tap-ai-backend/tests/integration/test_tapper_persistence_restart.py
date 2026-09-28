@@ -10,7 +10,7 @@ import stat
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,13 +56,10 @@ from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_ingestion_job,
 )
 from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore, _parse
-from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents, managed_history
 from tap.modules.knowledge.domain.documents import (
     CHUNKER_VERSION,
     PARSER_VERSION,
     LogicalChunkId,
-    DocumentId,
-    revision_id_for,
     canonical_sha256,
     logical_chunk_projection_id,
 )
@@ -314,7 +311,9 @@ def _expected_locators(
 
 
 def _persisted_locators(
-    revision: Mapping[Any, Any], document: DocumentState, settings: TapperSettings,
+    revision: Mapping[Any, Any],
+    document: DocumentState,
+    settings: TapperSettings,
     original: DocumentState | None = None,
 ) -> tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator]:
     original = document if original is None else original
@@ -328,8 +327,9 @@ def _persisted_locators(
         _require(isinstance(value, str), "object-locator-binding")
         locator = ArtifactLocator(value)
         actual_revision, actual_kind, _ref = _parse(locator)
+        expected = original if kind == "original" else document
         _require(
-            actual_revision == (original.revision_id if kind == "original" else document.revision_id) and actual_kind == kind,
+            actual_revision == expected.revision_id and actual_kind == kind,
             "object-locator-binding",
         )
         locators.append(locator)
@@ -350,7 +350,11 @@ async def _verify_object_binding(
         ("original", "normalized", "chunks", "embeddings"), locators, strict=True
     ):
         revision, actual_kind, ref = _parse(locator)
-        _require(revision == (original.revision_id if kind == "original" else document.revision_id) and actual_kind == kind, "object-locator-binding")
+        expected = original if kind == "original" else document
+        _require(
+            revision == expected.revision_id and actual_kind == kind,
+            "object-locator-binding",
+        )
         value = await artifacts.objects.open_verified(ref)
         identity = f"{revision}/{kind}"
         if kind == "embeddings":
@@ -370,7 +374,8 @@ def _require_revision_binding(
     document: DocumentState,
     locators: tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator],
     pipeline_version: str,
-    *, managed: bool = False,
+    *,
+    managed: bool = False,
 ) -> None:
     _require(
         revision["document_id"] == document.document_id
