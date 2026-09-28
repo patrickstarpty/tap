@@ -13,16 +13,12 @@ import type { FloatingAssistantContext } from "./floatingAssistantModel";
 import type { Conversation, Locale } from "./model";
 import "./TapperFloatingAssistant.css";
 
-const listening = new URL(
-  "../../../../assets/brand/tapper/listening/svg/launcher/tapper-listening-launcher-light.svg?no-inline",
-  import.meta.url,
-).href;
-const aha = new URL(
-  "../../../../assets/brand/tapper/aha/svg/launcher/tapper-aha-launcher-light.svg?no-inline",
+const launcher = new URL(
+  "../../../../assets/brand/tapper/owl/svg/launcher/tapper-owl-launcher-light.svg?no-inline",
   import.meta.url,
 ).href;
 const avatar = new URL(
-  "../../../../assets/brand/tapper/listening/svg/avatar/tapper-listening-avatar-color.svg?no-inline",
+  "../../../../assets/brand/tapper/owl/svg/avatar/tapper-owl-avatar-color.svg?no-inline",
   import.meta.url,
 ).href;
 const wordmark = new URL(
@@ -359,7 +355,7 @@ export function TapperFloatingAssistant({
         title={open ? text.minimize : unread ? text.unread : text.open}
         onClick={() => (open ? minimize() : setOpen(true))}
       >
-        <img src={unread ? aha : listening} alt="" width="56" height="56" />
+        <img src={launcher} alt="" width="56" height="56" />
         {unread ? (
           <span className="tap-floating-unread" aria-hidden="true" />
         ) : null}

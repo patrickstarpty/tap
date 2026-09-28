@@ -12,8 +12,8 @@ import type { Conversation, Locale, ProductModule } from "./model";
 import { PanelToggleIcon } from "./PanelToggleIcon";
 import { ConversationHistory } from "../../../features/conversations/components/ConversationHistory";
 
-const tapperListeningAvatar = new URL(
-  "../../../../assets/brand/tapper/listening/svg/avatar/tapper-listening-avatar-color.svg?no-inline",
+const tapperAvatar = new URL(
+  "../../../../assets/brand/tapper/owl/svg/avatar/tapper-owl-avatar-color.svg?no-inline",
   import.meta.url,
 ).href;
 const tapperWordmark = new URL(
@@ -72,13 +72,7 @@ export function PrototypeSidebar({
     {
       key: "tapper",
       label: copy.navigation.tapper,
-      icon: (
-        <img
-          className="tap-tapper-rail-mark"
-          src={tapperListeningAvatar}
-          alt=""
-        />
-      ),
+      icon: <img className="tap-tapper-rail-mark" src={tapperAvatar} alt="" />,
     },
     {
       key: "test-management",
