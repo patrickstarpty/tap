@@ -80,7 +80,11 @@ export interface ReportReceipt {
   evidenceUrl: string;
 }
 
+export type ReportEvidence = components["schemas"]["ReportEvidenceContract"];
+export type ReportStep = components["schemas"]["ReportStepContract"];
+
 export interface ReportManifest {
+  reportFormat?: "pytest" | "allure" | "junit";
   projectId: string;
   sourceId: string;
   externalRunId: string;
@@ -109,6 +113,8 @@ export interface InsightsDataAdapter {
   uploadReport(projectId: string, manifest: ReportManifest, file: File): Promise<ReportReceipt>;
   getReceipt(projectId: string, receiptId: string): Promise<ReportReceipt>;
   retryReceipt(projectId: string, receiptId: string): Promise<ReportReceipt>;
+  getReportEvidence(projectId: string, receiptId: string): Promise<ReportEvidence>;
+  downloadAttachment(projectId: string, receiptId: string, source: string): Promise<Blob>;
   downloadEvidence(projectId: string, receiptId: string): Promise<Blob>;
   exportQuery(projectId: string, queryId: string): Promise<Blob>;
 }
@@ -196,7 +202,7 @@ export function createInsightsClient(options: {
       call(path(projectId, "/reports"), {
         method: "POST",
         headers: {
-          "Content-Type": "application/xml",
+          "Content-Type": manifest.reportFormat === "allure" ? "application/zip" : "application/xml",
           "X-TAP-Report-Manifest": JSON.stringify(manifest),
         },
         body: file,
@@ -207,6 +213,15 @@ export function createInsightsClient(options: {
       call(path(projectId, `/reports/${encodeURIComponent(receiptId)}/retry`), {
         method: "POST",
       }),
+    getReportEvidence: (projectId, receiptId) => call(path(projectId, `/evidence/${encodeURIComponent(receiptId)}/details`)),
+    downloadAttachment: async (projectId, receiptId, source) => {
+      const token = options.token();
+      const response = await request(path(projectId, `/evidence/${encodeURIComponent(receiptId)}/attachment?source=${encodeURIComponent(source)}`), {
+        credentials: "same-origin", headers: token ? {Authorization: `Bearer ${token}`} : {},
+      });
+      if (!response.ok) throw new InsightsHttpError("Attachment request failed", response.status);
+      return response.blob();
+    },
     downloadEvidence: async (projectId, receiptId) => {
       const token = options.token();
       const response = await request(

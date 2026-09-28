@@ -373,7 +373,7 @@ describe("TapperWorkspace answer lifecycle", () => {
     await ask(user, "退款规则是什么？");
     expect(await screen.findByText("😀退款需要两人审批。")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "打开来源引用 1" }));
-    expect(await screen.findByText("原文依据")).toBeVisible();
+    expect(await screen.findByText("引用依据")).toBeVisible();
 
     act(() => {
       queryClient.setQueryData<DocumentPage>(
@@ -414,7 +414,7 @@ describe("TapperWorkspace answer lifecycle", () => {
       expect(
         screen.queryByText("😀退款需要两人审批。"),
       ).not.toBeInTheDocument();
-      expect(screen.queryByText("原文依据")).not.toBeInTheDocument();
+      expect(screen.queryByText("引用依据")).not.toBeInTheDocument();
       expect(screen.getByText("已选择 0 个来源")).toBeVisible();
     });
   });
@@ -730,17 +730,17 @@ describe("TapperWorkspace claim and citation integrity", () => {
 
     await user.click(citationButton);
     expect(screen.queryByText("不应显示的缓存")).not.toBeInTheDocument();
-    expect(screen.getByText("正在核验原文")).toBeVisible();
+    expect(screen.getByText("正在核验引用内容")).toBeVisible();
     act(() => api.finishCitation("citation-a", citationPreview()));
-    expect(await screen.findByText("原文依据")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "关闭原文" }));
+    expect(await screen.findByText("引用依据")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "关闭引用内容" }));
     await waitFor(() => expect(citationButton).toHaveFocus());
 
     api.deferCitation("citation-a", { ignoreAbort: true });
     await user.click(citationButton);
     expect(api.citationCalls).toEqual(["citation-a", "citation-a"]);
-    expect(screen.queryByText("原文依据")).not.toBeInTheDocument();
-    expect(screen.getByText("正在核验原文")).toBeVisible();
+    expect(screen.queryByText("引用依据")).not.toBeInTheDocument();
+    expect(screen.getByText("正在核验引用内容")).toBeVisible();
     act(() => api.finishCitation("citation-a", citationPreview()));
   });
 
@@ -756,7 +756,7 @@ describe("TapperWorkspace claim and citation integrity", () => {
     await user.click(
       await screen.findByRole("button", { name: "打开来源引用 1" }),
     );
-    expect(await screen.findByText("原文依据")).toBeVisible();
+    expect(await screen.findByText("引用依据")).toBeVisible();
 
     api.withCitationProblem(
       new KnowledgeClientError({
@@ -780,9 +780,9 @@ describe("TapperWorkspace claim and citation integrity", () => {
         "引用已失效：来源可能已撤回或版本已变化，请重新提交问题。",
       ),
     ).toBeVisible();
-    const citationRegion = screen.getByRole("region", { name: "原文" });
+    const citationRegion = screen.getByRole("region", { name: "引用内容" });
     expect(
-      within(citationRegion).queryByText("原文依据"),
+      within(citationRegion).queryByText("引用依据"),
     ).not.toBeInTheDocument();
     expect(within(citationRegion).queryByText("前文")).not.toBeInTheDocument();
   });
@@ -803,9 +803,9 @@ describe("TapperWorkspace claim and citation integrity", () => {
     );
 
     expect(
-      await screen.findByText("原文校验失败，请重新提交问题。"),
+      await screen.findByText("引用内容校验失败，请重新提交问题。"),
     ).toBeVisible();
-    expect(screen.queryByText("原文依据")).not.toBeInTheDocument();
+    expect(screen.queryByText("引用依据")).not.toBeInTheDocument();
   });
 
   it("keeps source, question, and preview in DOM order without nesting another main", async () => {
@@ -814,7 +814,7 @@ describe("TapperWorkspace claim and citation integrity", () => {
     });
     const source = await screen.findByRole("heading", { name: "来源" });
     const question = screen.getByRole("heading", { name: "问答" });
-    const preview = screen.getByRole("heading", { name: "原文" });
+    const preview = screen.getByRole("heading", { name: "引用内容" });
 
     expect(
       source.compareDocumentPosition(question) &

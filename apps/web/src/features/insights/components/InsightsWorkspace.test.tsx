@@ -160,6 +160,8 @@ function adapter(overrides: Partial<InsightsDataAdapter> = {}): InsightsDataAdap
     uploadReport: vi.fn(),
     getReceipt: vi.fn(),
     retryReceipt: vi.fn(),
+    getReportEvidence: vi.fn(),
+    downloadAttachment: vi.fn(),
     downloadEvidence: vi.fn().mockResolvedValue(new Blob(["<xml/>"])),
     exportQuery: vi.fn().mockResolvedValue(new Blob(["queryId,query-1"])),
     ...overrides,
@@ -248,7 +250,7 @@ describe("real TAP Insights workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
     await waitFor(() => expect(data.listRuns).toHaveBeenCalledWith("project-a", "query-a"));
 
-    const intake = screen.getByText("Upload JUnit report").closest("details")!;
+    const intake = screen.getByText("Upload test report").closest("details")!;
     for (const [name, value] of Object.entries({
       sourceId: "ci", externalRunId: "RUN-query-b", batchId: "batch-1", shardId: "1",
       applicationCommit: "abc", scriptCommit: "def", environment: "qa",
@@ -400,8 +402,7 @@ describe("real TAP Insights workspace", () => {
       "opaque-run-1",
     );
     expect(screen.getAllByText("premium=100")[0]).toBeVisible();
-    expect(screen.getAllByText("Step details were not provided by this report.")[0]).toBeVisible();
-    expect(screen.getAllByText("No screenshot was attached to this attempt.")[0]).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "View report evidence" })[0]).toBeVisible();
   });
 
   it("applies Build, time, environment and branch as one server query scope while table search stays local", async () => {

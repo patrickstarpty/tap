@@ -99,11 +99,13 @@ export function InsightsWorkspace({
   projectId,
   initialQueryId,
   tapperBaseUrl = "http://127.0.0.1:5173/",
+  onChangeProject,
 }: {
   adapter: InsightsDataAdapter;
   projectId: string;
   initialQueryId?: string;
   tapperBaseUrl?: string;
+  onChangeProject?: () => void;
 }) {
   const [catalog, setCatalog] = useState<MetricCatalog | null>(null);
   const [result, setResult] = useState<{
@@ -337,7 +339,7 @@ export function InsightsWorkspace({
   const copyLink = async () => {
     if (!query) return;
     const url = new URL(window.location.href);
-    url.searchParams.set("module", "test-analytics");
+    url.searchParams.set("module", "test-insights");
     url.searchParams.set("queryId", query.queryId);
     await navigator.clipboard.writeText(url.toString());
   };
@@ -347,6 +349,7 @@ export function InsightsWorkspace({
       <header className="ti-header">
         <div><h1>Test Insights</h1><p>Project · <strong>{projectId}</strong></p></div>
         <div className="ti-actions">
+          {onChangeProject ? <button type="button" onClick={onChangeProject}>Change project</button> : null}
           <button type="button" disabled={!query} onClick={exportCurrent}>Export current query</button>
           <button type="button" disabled={!query} onClick={copyLink}>Copy project link</button>
         </div>

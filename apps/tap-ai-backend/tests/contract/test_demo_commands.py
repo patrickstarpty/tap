@@ -3627,7 +3627,7 @@ def test_task14_acceptance_runner_lists_the_closed_joint_gate() -> None:
 def test_task14_prototype_capture_waits_for_the_selected_module_and_disables_animations() -> None:
     source = (ROOT / "apps/web/tests/e2e/insights-report.spec.ts").read_text()
 
-    assert 'name: "Test Analytics"' in source
+    assert 'name: "Test Insights"' in source
     assert "exact: true" in source
     assert 'toHaveAttribute("aria-current", "page")' in source
     assert 'animations: "disabled"' in source

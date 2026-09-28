@@ -1,0 +1,45 @@
+{
+  "name": "test_payment[card]",
+  "status": "passed",
+  "steps": [
+    {
+      "name": "Submit payment",
+      "status": "passed",
+      "start": 1790510475135,
+      "stop": 1790510475135
+    }
+  ],
+  "parameters": [
+    {
+      "name": "method",
+      "value": "'card'"
+    }
+  ],
+  "start": 1790510475135,
+  "stop": 1790510475135,
+  "uuid": "4d4783e9-0da0-45cb-8d1e-b0153c2c44db",
+  "historyId": "8d29eb788aeb64a7de68e42056e8937c",
+  "testCaseId": "dff5ca822b2a4e799046660273248638",
+  "fullName": "sample_business#test_payment",
+  "labels": [
+    {
+      "name": "suite",
+      "value": "sample_business"
+    },
+    {
+      "name": "framework",
+      "value": "pytest"
+    },
+    {
+      "name": "language",
+      "value": "cpython3"
+    },
+    {
+      "name": "package",
+      "value": "sample_business"
+    }
+  ],
+  "titlePath": [
+    "sample_business.py"
+  ]
+}

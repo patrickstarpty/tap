@@ -36,12 +36,15 @@ function intakeAdapter(): InsightsDataAdapter {
       .mockResolvedValueOnce({ ...received, state: "validating" })
       .mockResolvedValue({ ...received, state: "ready" }),
     retryReceipt: vi.fn().mockResolvedValue({ ...received, state: "validating" }),
+    getReportEvidence: vi.fn(),
+    downloadAttachment: vi.fn(),
     downloadEvidence: vi.fn(),
     exportQuery: vi.fn(),
   };
 }
 
 async function completeIdentity(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByText("Upload test report"));
   await user.type(screen.getByLabelText("Source"), "github-actions");
   await user.type(screen.getByLabelText("Run"), "RUN-1042");
   await user.type(screen.getByLabelText("Report build"), "BUILD-1042");
@@ -71,7 +74,7 @@ it("uploads JUnit, polls the receipt to ready and reports an exact duplicate", a
   );
   await completeIdentity(user);
   await user.upload(
-    screen.getByLabelText("JUnit XML report"),
+    screen.getByLabelText("pytest XML report"),
     new File(["<testsuite/>"] , "report.xml", { type: "application/xml" }),
   );
   await user.click(screen.getByRole("button", { name: "Upload report" }));
@@ -96,6 +99,7 @@ it("restores the latest receipt from the server after a page reload", async () =
   );
 
   expect(await screen.findByText("Ready for Insights")).toBeVisible();
+  expect(document.querySelector(".ti-intake")).not.toHaveAttribute("open");
   expect(adapter.getReceipt).toHaveBeenCalledWith("project-a", "receipt-1");
 });
 
@@ -113,7 +117,7 @@ it.each([
   const user = userEvent.setup();
   render(<ReportIntake adapter={adapter} projectId="project-a" onReceipt={vi.fn()} />);
   await completeIdentity(user);
-  await user.upload(screen.getByLabelText("JUnit XML report"), new File(["bad"], "report.xml"));
+  await user.upload(screen.getByLabelText("pytest XML report"), new File(["bad"], "report.xml"));
   await user.click(screen.getByRole("button", { name: "Upload report" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(expected);
   expect(screen.getByText("Report completeness: partial")).toBeVisible();
@@ -129,7 +133,7 @@ it("retries server intake only and never claims to rerun tests", async () => {
   const user = userEvent.setup();
   render(<ReportIntake adapter={adapter} projectId="project-a" onReceipt={vi.fn()} />);
   await completeIdentity(user);
-  await user.upload(screen.getByLabelText("JUnit XML report"), new File(["bad"], "report.xml"));
+  await user.upload(screen.getByLabelText("pytest XML report"), new File(["bad"], "report.xml"));
   await user.click(screen.getByRole("button", { name: "Upload report" }));
   await user.click(await screen.findByRole("button", { name: "Retry processing stored report" }));
   await waitFor(() => expect(adapter.retryReceipt).toHaveBeenCalledWith("project-a", "receipt-1"));
@@ -140,9 +144,85 @@ it("rejects non-XML files before making a request", async () => {
   const adapter = intakeAdapter();
   const user = userEvent.setup();
   render(<ReportIntake adapter={adapter} projectId="project-a" onReceipt={vi.fn()} />);
-  fireEvent.change(screen.getByLabelText("JUnit XML report"), {
+  fireEvent.change(screen.getByLabelText("pytest XML report"), {
     target: { files: [new File(["{}"], "report.json")] },
   });
-  expect(await screen.findByRole("alert")).toHaveTextContent("Choose a JUnit XML file.");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Choose a pytest XML file.");
   expect(adapter.uploadReport).not.toHaveBeenCalled();
+});
+
+it("uploads Allure results with an explicit format and unconfirmed history", async () => {
+  const adapter = intakeAdapter();
+  const user = userEvent.setup();
+  render(<ReportIntake adapter={adapter} projectId="project-a" onReceipt={vi.fn()} />);
+  await completeIdentity(user);
+  await user.selectOptions(screen.getByLabelText("Report format"), "allure");
+  expect(screen.getByLabelText("Complete attempt history")).not.toBeChecked();
+  await user.upload(screen.getByLabelText("Allure Results ZIP"), new File(["zip"], "allure-results.zip", { type: "application/zip" }));
+  await user.click(screen.getByRole("button", { name: "Upload report" }));
+  expect(adapter.uploadReport).toHaveBeenCalledWith("project-a", expect.objectContaining({ reportFormat: "allure", containsCompleteAttempts: false }), expect.any(File));
+});
+
+it("opens the intake panel so a restored rejection and its retry stay visible", async () => {
+  const adapter = intakeAdapter();
+  adapter.getReceipt = vi.fn().mockResolvedValue({
+    ...received,
+    state: "failed",
+    failureReason: "mapping-failed",
+  });
+
+  render(
+    <ReportIntake
+      adapter={adapter}
+      projectId="project-a"
+      knownReceiptIds={["receipt-1"]}
+      onReceipt={vi.fn()}
+    />,
+  );
+
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(document.querySelector(".ti-intake")).toHaveAttribute("open");
+  expect(screen.getByRole("button", { name: "Retry processing stored report" })).toBeVisible();
+});
+
+it("opens the intake panel when restoring the receipt fails", async () => {
+  const adapter = intakeAdapter();
+  adapter.getReceipt = vi.fn().mockRejectedValue(new Error("offline"));
+
+  render(
+    <ReportIntake
+      adapter={adapter}
+      projectId="project-a"
+      knownReceiptIds={["receipt-1"]}
+      onReceipt={vi.fn()}
+    />,
+  );
+
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(document.querySelector(".ti-intake")).toHaveAttribute("open");
+});
+
+it("names the file input after the selected report format", async () => {
+  const user = userEvent.setup();
+  render(<ReportIntake adapter={intakeAdapter()} projectId="project-a" onReceipt={vi.fn()} />);
+  expect(screen.getByLabelText("pytest XML report")).toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("Report format"), "junit");
+  expect(screen.getByLabelText("JUnit XML report")).toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("Report format"), "allure");
+  expect(screen.getByLabelText("Allure Results ZIP")).toBeInTheDocument();
+});
+
+it("explains a server-side report format mismatch", async () => {
+  const adapter = intakeAdapter();
+  adapter.uploadReport = vi.fn().mockRejectedValue(
+    Object.assign(new Error("uploaded content does not match reportFormat pytest"), { status: 415 }),
+  );
+  const user = userEvent.setup();
+  render(<ReportIntake adapter={adapter} projectId="project-a" onReceipt={vi.fn()} />);
+  await completeIdentity(user);
+  await user.upload(screen.getByLabelText("pytest XML report"), new File(["PK"], "report.xml"));
+  await user.click(screen.getByRole("button", { name: "Upload report" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The file does not match the selected report format.",
+  );
 });

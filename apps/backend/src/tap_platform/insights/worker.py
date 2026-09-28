@@ -10,7 +10,8 @@ from typing import Protocol
 
 from sqlalchemy import create_engine
 
-from tap_platform.insights.adapters.junit import JUnitSecurityError, parse_junit
+from tap_platform.insights.adapters.report_errors import ReportSecurityError
+from tap_platform.insights.adapters.report_parser import parse_report
 from tap_platform.insights.adapters.clickhouse import ClickHouseInsightsStore
 from tap_platform.insights.adapters.mysql import SqlAlchemyReportLedger
 from tap_platform.insights.adapters.objects import FileReportObjectStore
@@ -69,11 +70,12 @@ class ReportWorker:
             return True
         if receipt.state is ReportState.VALIDATING:
             try:
-                attempts = parse_junit(
+                attempts = parse_report(
                     self._objects.read(receipt.raw_object_ref),
                     self._ledger.get_manifest(receipt_id),
+                    receipt.parser_version,
                 )
-            except JUnitSecurityError as exc:
+            except ReportSecurityError as exc:
                 self._ledger.transition(
                     receipt_id,
                     expected=ReportState.VALIDATING,

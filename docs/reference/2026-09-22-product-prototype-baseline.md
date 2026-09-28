@@ -27,7 +27,7 @@ corepack pnpm --dir apps/web dev --port 15176
 | Agents 与 Skills | 保留各自目录、详情或创建入口，以及在 Tapper 中使用的旅程。 |
 | Library 与 Knowledge Graph | 保留文档目录与筛选、来源入口、图谱搜索定位、节点关系与来源跳转、缩放和全屏探索。 |
 | Test Management | 保留测试资产列表、Test Plan 详情、Scenario/BDD 步骤、Test Data、Automation 关联与运行记录入口。 |
-| Test Analytics / Insights | 保留一级分析入口和已有分析视图；新增 Insights 能力在此延展，不能删除其他模块来突出分析。 |
+| Test Insights | 在原分析模块的一级导航位置直接展示 Test Insights；保留指标、趋势、运行和原报告追查能力，不再出现 Test Analytics 名称或额外横向模块标签。 |
 | Low Code Automation | 保留列表、创建、详情、BDD 与动作映射、动作编辑、AI 辅助、运行与历史入口。 |
 | 跨模块关联 | 保留 Tapper 生成并打开测试资产、Test Plan 与 Automation 双向跳转、可选严格 `1:1` 关联及关联资产共享 Run 的交互语义。 |
 | Tapper 悬浮助手 | 保留 Test Management 与 Low Code Automation 的助手入口、当前页面上下文、快捷提问、未读状态，以及携会话和草稿在 Tapper 中继续。 |
@@ -49,3 +49,9 @@ corepack pnpm --dir apps/web dev --port 15176
 验收须逐项确认上表模块仍可导航到达、受影响旅程可操作，并检查 Tapper → Test Plan → Automation 的关联跳转和悬浮助手 → Tapper 的会话交接。只验证新增页面或只提供局部截图不足以证明完整基准没有退化。真实服务能力另按相应测试与验收规范验证。
 
 2026-09-26 的 [Task 14 联合交付门禁](../reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md#产品基准对照) 使用同一 fixture、1280×720、2× 条件复验全部模块和跨模块旅程，并保存稳定前后 PNG。该回归只证明完整原型未因本轮实现退化，不把 fixture 页面认作真实生产数据或后端完成证据。
+
+## 2026-09-27 知识切片维护增量
+
+Library 在同一文档详情中提供切片、切片设置与原件三个入口，采用保存索引后直接使用的流程。完整原型仍使用浏览器样例数据；真实服务端持久化与索引位于 TAP AI 应用。能力与验收见[实施计划](../plans/2026-09-27-dify-knowledge-chunk-parity.md)。
+
+[变更前](../assets/knowledge-chunks-2026-09-27/tap-chunks-before-detail.png) · [变更后](../assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png) · [移动布局](../assets/knowledge-chunks-2026-09-27/tap-chunks-after-mobile.png) · [跨模块旅程](../assets/knowledge-chunks-2026-09-27/tap-chunks-journey-automation.png)。

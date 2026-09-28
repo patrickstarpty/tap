@@ -84,9 +84,15 @@ test("Tapper durable state survives the selected restart boundary", async ({
     `${knowledgePath}/documents/${reviewState.documentId}`,
   );
   expect(reviewedDocument.status()).toBe(200);
-  expect(
-    (await reviewedDocument.json()) as { revisionId: string },
-  ).toMatchObject({ revisionId: reviewState.revisionId });
+  const editedDocument = (await reviewedDocument.json()) as {
+    revisionId: string;
+  };
+  expect(editedDocument.revisionId).not.toBe(reviewState.revisionId);
+  const originalDocument = await page.request.get(
+    `${knowledgePath}/documents/${reviewState.documentId}/original`,
+  );
+  expect(originalDocument.status()).toBe(200);
+  expect(await originalDocument.text()).not.toContain("signed passport record");
 
   const graphSnapshots = await page.request.get(
     `${knowledgePath}/graph/snapshots`,
@@ -171,25 +177,24 @@ test("Tapper durable state survives the selected restart boundary", async ({
     sourceRevisionIds: string[];
     history: Array<{ action: string; actorId: string }>;
   };
-  expect(persistedReview.status).toBe("withdrawn");
+  expect(persistedReview.status).toBe("checking");
   expect(persistedReview.sourceRevisionIds).toContain(reviewState.revisionId);
-  expect(persistedReview.history.map((item) => item.action)).toEqual(
-    expect.arrayContaining([
-      "created",
-      "item_decided",
-      "submitted",
-      "approved",
-      "published",
-      "withdrawn",
-    ]),
+  expect(persistedReview.history.map((item) => item.action)).toContain(
+    "created",
   );
+  const chunksAfterRestart = await page.request.get(
+    `${knowledgePath}/documents/${reviewState.documentId}/chunks`,
+  );
+  expect(chunksAfterRestart.status()).toBe(200);
+  const chunks = (await chunksAfterRestart.json()) as {
+    items: Array<{ content: string; enabled: boolean; edited: boolean }>;
+  };
   expect(
-    persistedReview.history.some(
-      (item) =>
-        item.action === "approved" &&
-        item.actorId === "tapper-e2e-fixture-reviewer",
+    chunks.items.some(
+      (item) => item.content.includes("signed passport record") && item.edited,
     ),
   ).toBe(true);
+  expect(chunks.items.every((item) => !item.enabled)).toBe(true);
   const publishedAfterRestart = await page.request.get(
     `${knowledgePath}/published-sources`,
   );
@@ -256,15 +261,15 @@ test("Tapper durable state survives the selected restart boundary", async ({
     .first()
     .click();
   await expect(
-    page.getByRole("heading", { name: /Cited source|原文依据/u }),
+    page.getByRole("heading", { name: /Cited evidence|引用依据/u }),
   ).toBeVisible();
   await expect(
     page
-      .getByLabel(/Source text|原文/u)
+      .getByLabel(/Cited content|引用内容/u)
       .getByText("verified identity evidence", { exact: false }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: /Close source text|关闭原文/u })
+    .getByRole("button", { name: /Close cited content|关闭引用内容/u })
     .click();
 
   await page
