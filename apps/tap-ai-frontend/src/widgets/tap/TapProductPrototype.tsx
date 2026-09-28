@@ -1685,6 +1685,8 @@ export function TapProductPrototype({
       kind: "selector",
       selector: ".tap-composer textarea",
     };
+    // An explicit choice made before history loads must not be replaced by it.
+    initialDurableSelection.current = true;
     setConversations((current) =>
       durable
         ? [createConversation(id), ...current.filter((item) => item.id !== id)]
@@ -1706,6 +1708,7 @@ export function TapProductPrototype({
       kind: "selector",
       selector: ".tap-composer textarea",
     };
+    initialDurableSelection.current = true;
     setActiveConversationId(conversationId);
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
