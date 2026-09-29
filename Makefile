@@ -275,15 +275,11 @@ demo-up: ## start durable Tapper middleware and initialize exact owned resources
 	unset OPENAI_API_KEY BAILIAN_API_KEY BAILIAN_API_BASE; \
 	unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE; \
 	export TAP_TAPPER_COMPOSE_PROJECT="$$tapper_demo_project"; \
-	if [ "$${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ]; then \
-		TAPPER_OBJECT_STORE_IMAGE="$$(bash "$(TAP_REPO_ROOT)/scripts/build-tapper-object-store.sh" verify)"; \
-		export TAPPER_OBJECT_STORE_IMAGE; \
-		docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile milvus --profile tapper-objects up -d --wait --wait-timeout 180; \
-		tapper_object_container="$$(docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile tapper-objects ps -q tap-minio)"; \
-		bash "$(TAP_REPO_ROOT)/scripts/build-tapper-object-store.sh" verify-container "$$tapper_object_container" >/dev/null; \
-	else \
-		docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile milvus up -d --wait --wait-timeout 180; \
-	fi; \
+	TAPPER_OBJECT_STORE_IMAGE="$$(bash "$(TAP_REPO_ROOT)/scripts/build-tapper-object-store.sh" verify)"; \
+	export TAPPER_OBJECT_STORE_IMAGE; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile milvus up -d --wait --wait-timeout 180; \
+	tapper_object_container="$$(docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" ps -q tap-minio)"; \
+	bash "$(TAP_REPO_ROOT)/scripts/build-tapper-object-store.sh" verify-container "$$tapper_object_container" >/dev/null; \
 	unset DASHSCOPE_API_KEY DASHSCOPE_API_BASE; \
 	uv run --project apps/tap-ai-backend alembic -c apps/tap-ai-backend/alembic.ini upgrade head; \
 	TAP_ALLOW_INITIAL_MILVUS_ROOT=1 uv run --project apps/tap-ai-backend python scripts/milvus_bootstrap.py; \

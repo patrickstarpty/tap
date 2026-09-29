@@ -21,7 +21,6 @@ MYSQL_IMAGE=${MYSQL_IMAGE:-mysql:8.4.6}
 REDIS_PORT=${REDIS_PORT:-6379}
 REDIS_IMAGE=${REDIS_IMAGE:-redis:7.4.7}
 
-AZURITE_BLOB_PORT=${AZURITE_BLOB_PORT:-10000}
 LITELLM_PORT=${LITELLM_PORT:-4000}
 DOCKER_CHECK_TIMEOUT_SECONDS=${DOCKER_CHECK_TIMEOUT_SECONDS:-30}
 CHECK_MILVUS=0
@@ -114,25 +113,6 @@ check_redis() {
     ping | grep -qx 'PONG'
 }
 
-check_azurite() {
-  local headers
-  headers=$(mktemp)
-  trap 'rm -f "$headers"' RETURN
-
-  curl \
-    --silent \
-    --show-error \
-    --max-time 5 \
-    --dump-header "$headers" \
-    --output /dev/null \
-    "http://127.0.0.1:${AZURITE_BLOB_PORT}/devstoreaccount1?comp=list&maxresults=1"
-
-  grep -Eiq '^server: .*azurite-blob' "$headers" || {
-    printf 'Expected Azurite Blob server header in response from port %s\n' "$AZURITE_BLOB_PORT" >&2
-    return 1
-  }
-}
-
 check_litellm() {
   curl \
     --fail \
@@ -176,7 +156,6 @@ PY
 if ((ONLY_CLICKHOUSE == 0)); then
   run_or_capture "mysql" check_mysql || true
   run_or_capture "redis" check_redis || true
-  run_or_capture "azurite" check_azurite || true
   run_or_capture "litellm" check_litellm || true
   if ((CHECK_MILVUS == 1)); then
     run_or_capture "milvus-reader" check_milvus || true

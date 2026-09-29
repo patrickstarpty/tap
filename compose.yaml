@@ -107,46 +107,7 @@ services:
       retries: 20
       start_period: 30s
 
-  azurite:
-    image: ${AZURITE_IMAGE:-mcr.microsoft.com/azure-storage/azurite:3.35.0}
-    restart: unless-stopped
-    command:
-      - azurite-blob
-      - --blobHost
-      - 0.0.0.0
-      - --blobPort
-      - "${AZURITE_BLOB_PORT:-10000}"
-      - --location
-      - /data
-      - --silent
-    ports:
-      - "127.0.0.1:${AZURITE_BLOB_PORT:-10000}:${AZURITE_BLOB_PORT:-10000}"
-    volumes:
-      - azurite-data:/data
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - |
-          const http = require("http");
-          const req = http.get(
-            "http://127.0.0.1:${AZURITE_BLOB_PORT:-10000}/devstoreaccount1?comp=list&maxresults=1",
-            (res) => process.exit(/azurite-blob/i.test(String(res.headers.server || "")) ? 0 : 1),
-          );
-          req.on("error", () => process.exit(1));
-          req.on("timeout", () => {
-            req.destroy();
-            process.exit(1);
-          });
-          req.setTimeout(5000);
-      interval: 10s
-      timeout: 6s
-      retries: 10
-      start_period: 10s
-
   tap-minio:
-    profiles: [tapper-objects]
     image: ${TAPPER_OBJECT_STORE_IMAGE:-sha256:0000000000000000000000000000000000000000000000000000000000000000}
     pull_policy: never
     restart: unless-stopped
@@ -184,11 +145,6 @@ services:
       - "False"
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-tap-local-master-key}
-      LITELLM_MODEL: ${LITELLM_MODEL:-dashscope/qwen-plus}
-      LITELLM_FLASH_MODEL: ${LITELLM_FLASH_MODEL:-dashscope/qwen-flash}
-      LITELLM_MAX_MODEL: ${LITELLM_MAX_MODEL:-dashscope/qwen-max}
-      LITELLM_TAPPER_EMBEDDING_MODEL: ${LITELLM_TAPPER_EMBEDDING_MODEL:-dashscope/text-embedding-v4}
-      LITELLM_TAPPER_VISION_MODEL: ${LITELLM_TAPPER_VISION_MODEL:-dashscope/qwen3-vl-plus}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       DASHSCOPE_API_BASE: ${DASHSCOPE_API_BASE:-https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
     ports:
@@ -260,7 +216,6 @@ services:
 volumes:
   mysql-data:
   redis-data:
-  azurite-data:
   tapper-object-data:
   milvus-etcd-data:
   milvus-minio-data:

@@ -244,8 +244,9 @@ class TapperSettings:
 
         from tap.platform.storage.s3 import S3ObjectConfig
 
-        if any(not value for value in s3_values.values()):
-            raise ValueError("MinIO requires explicit object configuration")
+        for name, value in s3_values.items():
+            if not value:
+                raise ValueError(f"TAPPER_S3_{name.upper()} is required")
         _loopback_url(
             values,
             "TAPPER_S3_ENDPOINT",

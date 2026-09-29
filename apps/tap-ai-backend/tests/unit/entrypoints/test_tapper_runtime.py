@@ -226,7 +226,7 @@ def test_minio_settings_require_closed_explicit_credentials_and_compose_shared_p
     assert not hasattr(settings, "blob_connection_string")
     for key in tuple(values):
         reduced = {k: v for k, v in values.items() if k != key}
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=key):
             TapperSettings.from_mapping(reduced)
     assert "owned-secret" not in repr(settings)
 

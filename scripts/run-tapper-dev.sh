@@ -51,12 +51,11 @@ if ! uv run --project apps/tap-ai-backend python -c \
   exit 2
 fi
 
-if [ "${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ] && \
-  [ "${TAPPER_COMPOSE_OBJECT_STORE_VERIFY:-0}" = 1 ]; then
+if [ "${TAPPER_COMPOSE_OBJECT_STORE_VERIFY:-0}" = 1 ]; then
   TAPPER_OBJECT_STORE_IMAGE="$(bash "$tapper_dev_script_dir/build-tapper-object-store.sh" verify)"
   export TAPPER_OBJECT_STORE_IMAGE
   tapper_dev_object_container="$(docker compose -f "$tapper_dev_repo_root/compose.yaml" \
-    -p "$tapper_dev_requested_project" --profile tapper-objects ps -q tap-minio)"
+    -p "$tapper_dev_requested_project" ps -q tap-minio)"
   bash "$tapper_dev_script_dir/build-tapper-object-store.sh" \
     verify-container "$tapper_dev_object_container" >/dev/null
 fi

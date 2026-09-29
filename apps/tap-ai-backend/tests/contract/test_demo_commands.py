@@ -197,7 +197,7 @@ def test_task6a_collection_closes_only_opened_clients_on_migration_settlement(mo
     assert events == ["artifacts", "reader", "writer", "provisioner", "coordinator", "database"]
 
 
-E2E_FIXED_PORTS = (13306, 16379, 11000, 14000, 29530, 19091, 18000, 15173, 29000)
+E2E_FIXED_PORTS = (13306, 16379, 14000, 29530, 19091, 18000, 15173, 29000)
 EXPECTED_ENV = {
     "TAP_TAPPER_COMPOSE_PROJECT",
     "TAPPER_API_HOST",
@@ -209,7 +209,7 @@ EXPECTED_ENV = {
 }
 _RECORDED_ENVIRONMENT_NAMES = (
     "TAPPER_API_HOST",
-    "AZURE_STORAGE_CONNECTION_STRING",
+    "TAPPER_S3_SECRET_KEY",
     "BAILIAN_API_BASE",
     "BAILIAN_API_KEY",
     "DASHSCOPE_API_BASE",
@@ -573,11 +573,7 @@ exec tapper-child web
                 "mysql+asyncmy://tap:provider-secret@127.0.0.1:3306/tap?charset=utf8mb4"
             ),
             "TAP_REDIS_URL": "redis://provider-secret@127.0.0.1/0",
-            "AZURE_STORAGE_CONNECTION_STRING": (
-                "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;"
-                "AccountKey=provider-secret;"
-                "BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
-            ),
+            "TAPPER_S3_SECRET_KEY": "provider-secret",
             "LITELLM_MASTER_KEY": "provider-secret",
             "MILVUS_READER_PASSWORD": "provider-secret",
             "MILVUS_WRITER_PASSWORD": "provider-secret",
@@ -655,7 +651,6 @@ def _e2e_runner_fixture(
         """TAP_TAPPER_COMPOSE_PROJECT=shared-project
 MYSQL_PORT=3306
 REDIS_PORT=6379
-AZURITE_BLOB_PORT=10000
 LITELLM_PORT=4000
 MILVUS_PORT=19530
 MILVUS_HEALTH_PORT=9091
@@ -667,7 +662,6 @@ TAP_DATABASE_URL=mysql+asyncmy://shared@127.0.0.1:3306/tap
 TAP_REDIS_URL=redis://127.0.0.1:6379/0
 MILVUS_URI=http://127.0.0.1:19530
 DOCKER_HOST=tcp://provider-secret.invalid:2375
-AZURE_STORAGE_CONNECTION_STRING=provider-secret
 OPENAI_API_KEY=provider-secret
 BAILIAN_API_KEY=provider-secret
 BAILIAN_API_BASE=https://provider-secret.invalid/bailian
@@ -751,11 +745,10 @@ case " $* " in
     printf 'env|settings|%s\n' "$environment_names" >> "$TAPPER_E2E_STUB_LOG"
     [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND" = e2e:fake ] || exit 71
     [ "${TAPPER_VISION_TIMEOUT_SECONDS:-}" = 60 ] || exit 71
-    [ "${TAPPER_OBJECT_STORE_PROVIDER:-}" = minio ] || exit 79
     [ "${TAPPER_S3_ENDPOINT:-}" = http://127.0.0.1:29000 ] || exit 79
     [ "${TAPPER_S3_BUCKET:-}" = tapper-e2e-objects ] || exit 79
     [ "${TAPPER_S3_SECRET_KEY:-}" = tap-e2e-object-password ] || exit 79
-    [ "${TAPPER_LEGACY_AZURE_ENABLED:-}" = 0 ] || exit 79
+    [ -z "${TAPPER_VISION_MODEL:-}" ] || exit 79
     [ "$TAPPER_DEFAULT_CHAT_MODEL" = qwen-plus ] || exit 72
     [ "$TAPPER_EMBEDDING_MODEL" = text-embedding-v4 ] || exit 72
     [ "$LITELLM_EMBEDDING_MODEL" = text-embedding-v4 ] || exit 73
@@ -812,8 +805,8 @@ case " $* " in
   *" ps --filter "*) printf 'owned-object-container\n' ;;
   *" compose "*)
     [ "$TAP_TAPPER_COMPOSE_PROJECT" = tap-tapper-e2e ] || exit 81
-    middleware_ports="$MYSQL_PORT:$REDIS_PORT:$AZURITE_BLOB_PORT:$LITELLM_PORT"
-    [ "$middleware_ports" = 13306:16379:11000:14000 ] || exit 82
+    middleware_ports="$MYSQL_PORT:$REDIS_PORT:$LITELLM_PORT"
+    [ "$middleware_ports" = 13306:16379:14000 ] || exit 82
     app_ports="$MILVUS_PORT:$MILVUS_HEALTH_PORT:$TAPPER_API_PORT:$TAPPER_WEB_PORT"
     [ "$app_ports" = 29530:19091:18000:15173 ] || exit 83
     [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND" = e2e:fake ] || exit 84
@@ -824,10 +817,7 @@ case " $* " in
     [ -z "${OPENAI_API_KEY+x}${BAILIAN_API_KEY+x}${BAILIAN_API_BASE+x}" ] || exit 89
     [ -z "${LITELLM_EMBEDDING_API_KEY+x}" ] || exit 90
     [ -z "${LITELLM_EMBEDDING_API_BASE+x}" ] || exit 94
-    case "$AZURE_STORAGE_CONNECTION_STRING" in
-      *'BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1;'*) ;;
-      *) exit 88 ;;
-    esac
+    [ "$TAPPER_S3_ENDPOINT" = http://127.0.0.1:29000 ] || exit 88
     printf 'docker|%s\n' "$*" >> "$TAPPER_E2E_STUB_LOG"
     case " $* " in
       *" down --volumes --remove-orphans "*)
@@ -1129,6 +1119,15 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
 """,
         encoding="utf-8",
     )
+    (isolated / "scripts").mkdir()
+    helper = isolated / "scripts/build-tapper-object-store.sh"
+    helper.write_text(
+        "#!/bin/sh\nset -eu\n"
+        'if [ "$1" = verify ]; then printf "sha256:%s\\n" "$(printf a%.0s $(seq 1 64))"; '
+        "else :; fi\n",
+        encoding="utf-8",
+    )
+    helper.chmod(helper.stat().st_mode | stat.S_IXUSR)
     stubs = isolated / "bin"
     stubs.mkdir()
     marker = isolated / "projects.log"
@@ -1158,12 +1157,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert marker.read_text(encoding="utf-8").splitlines() == [
-        "tap-tapper-demo",
-        "tap-tapper-demo",
-        "tap-tapper-demo",
-        "tap-tapper-demo",
-    ]
+    assert marker.read_text(encoding="utf-8").splitlines() == ["tap-tapper-demo"] * 5
     assert "provider-secret" not in completed.stdout + completed.stderr
 
 
@@ -1173,22 +1167,43 @@ def test_demo_up_executes_compose_migration_bootstrap_and_exact_ensure_in_order(
     completed, calls = _run_make_with_stubs(tmp_path, "demo-up")
 
     assert completed.returncode == 0, completed.stderr
-    assert calls == [
-        [
-            "docker",
-            "compose",
-            "-f",
-            str(ROOT / "compose.yaml"),
-            "-p",
-            "tap-tapper-demo",
-            "--profile",
-            "milvus",
-            "up",
-            "-d",
-            "--wait",
-            "--wait-timeout",
-            "180",
-        ],
+    assert calls[0] == [
+        "bash",
+        str(ROOT / "scripts/build-tapper-object-store.sh"),
+        "verify",
+    ]
+    assert calls[1] == [
+        "docker",
+        "compose",
+        "-f",
+        str(ROOT / "compose.yaml"),
+        "-p",
+        "tap-tapper-demo",
+        "--profile",
+        "milvus",
+        "up",
+        "-d",
+        "--wait",
+        "--wait-timeout",
+        "180",
+    ]
+    assert calls[2] == [
+        "docker",
+        "compose",
+        "-f",
+        str(ROOT / "compose.yaml"),
+        "-p",
+        "tap-tapper-demo",
+        "ps",
+        "-q",
+        "tap-minio",
+    ]
+    assert calls[3][:3] == [
+        "bash",
+        str(ROOT / "scripts/build-tapper-object-store.sh"),
+        "verify-container",
+    ]
+    assert calls[-3:] == [
         [
             "uv",
             "run",
@@ -2218,7 +2233,6 @@ def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> N
     for service in config["services"].values():
         assert all(str(item).startswith("127.0.0.1:") for item in service.get("ports", []))
     assert set(config["volumes"]) == {
-        "azurite-data",
         "clickhouse-insights-backups",
         "clickhouse-insights-data",
         "tapper-object-data",
@@ -2231,34 +2245,11 @@ def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> N
     assert all(value is None for value in config["volumes"].values())
 
     services = config["services"]
-    assert {name: services[name]["ports"] for name in ("mysql", "redis", "azurite", "litellm")} == {
+    assert {name: services[name]["ports"] for name in ("mysql", "redis", "litellm")} == {
         "mysql": ["127.0.0.1:${MYSQL_PORT:-3306}:3306"],
         "redis": ["127.0.0.1:${REDIS_PORT:-6379}:6379"],
-        "azurite": ["127.0.0.1:${AZURITE_BLOB_PORT:-10000}:${AZURITE_BLOB_PORT:-10000}"],
         "litellm": ["127.0.0.1:${LITELLM_PORT:-4000}:4000"],
     }
-    azurite_port = "${AZURITE_BLOB_PORT:-10000}"
-    azurite = services["azurite"]
-    assert azurite["command"].count("--silent") == 1
-    assert "--debug" not in azurite["command"]
-    assert not any("debug.log" in item for item in azurite["command"])
-    assert azurite["command"][azurite["command"].index("--blobPort") + 1] == azurite_port
-    health_program = azurite["healthcheck"]["test"][-1]
-    assert f"http://127.0.0.1:{azurite_port}/devstoreaccount1" in health_program
-    for rendered_port in (10000, 11000):
-        replacement = str(rendered_port)
-        assert azurite["ports"][0].replace(azurite_port, replacement) == (
-            f"127.0.0.1:{rendered_port}:{rendered_port}"
-        )
-        assert (
-            azurite["command"][azurite["command"].index("--blobPort") + 1].replace(
-                azurite_port, replacement
-            )
-            == replacement
-        )
-        assert f"http://127.0.0.1:{rendered_port}/devstoreaccount1" in (
-            health_program.replace(azurite_port, replacement)
-        )
     assert services["milvus"]["ports"] == [
         "127.0.0.1:${MILVUS_PORT:-19530}:19530",
         "127.0.0.1:${MILVUS_HEALTH_PORT:-9091}:9091",
@@ -2266,9 +2257,38 @@ def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> N
     for name in ("milvus", "milvus-etcd", "milvus-minio"):
         assert services[name]["profiles"] == ["milvus"]
     assert set(services["milvus"]["depends_on"]) == {"milvus-etcd", "milvus-minio"}
-    for name in ("mysql", "redis", "azurite", "litellm", "milvus"):
+    for name in ("mysql", "redis", "litellm", "milvus", "tap-minio"):
         assert "healthcheck" in services[name]
     assert services["litellm"]["environment"]["DASHSCOPE_API_KEY"] == ("${DASHSCOPE_API_KEY:-}")
+
+
+def test_compose_has_no_azurite_and_minio_is_default() -> None:
+    """Azurite is retired; tap-minio must be part of the default project with no profile gate."""
+
+    config = _load_yaml_as_json(ROOT / "compose.yaml")
+    services = config["services"]
+    assert "azurite" not in services
+    assert "profiles" not in services["tap-minio"]
+    assert "azurite-data" not in config["volumes"]
+
+
+def test_litellm_service_has_no_model_indirection_variables() -> None:
+    """The LiteLLM config file is the single source of upstream model names."""
+
+    config = _load_yaml_as_json(ROOT / "compose.yaml")
+    environment = config["services"]["litellm"]["environment"]
+    assert not any(key.startswith("LITELLM_") and key.endswith("_MODEL") for key in environment)
+
+
+def test_env_example_declares_model_roles() -> None:
+    """.env.example carries the model-role variables and no Azure/provider-indirection names."""
+
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "TAPPER_DEFAULT_CHAT_MODEL=qwen-plus" in example
+    assert "TAPPER_EMBEDDING_MODEL=text-embedding-v4" in example
+    assert "AZURITE" not in example.upper()
+    assert "AZURE_STORAGE_CONNECTION_STRING" not in example
+    assert "TAPPER_OBJECT_STORE_PROVIDER" not in example
 
 
 def test_vite_config_is_strict_and_exposes_only_same_origin_api_proxies() -> None:
@@ -2433,11 +2453,10 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
         "TAP_ALEMBIC_DATABASE_URL",
         "TAP_REDIS_URL",
         "TAP_REDIS_COMMAND_STREAM",
-        "AZURE_STORAGE_CONNECTION_STRING",
         "LITELLM_BASE_URL",
         "LITELLM_MASTER_KEY",
-        "LITELLM_MODEL",
         "LITELLM_EMBEDDING_MODEL",
+        "TAPPER_DEFAULT_CHAT_MODEL",
         "DASHSCOPE_API_KEY",
         "DASHSCOPE_API_HOST",
         "DASHSCOPE_API_BASE",
@@ -2459,7 +2478,6 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
     }
     assert required <= values.keys()
     assert values["TAPPER_MODEL_BACKEND"] == "litellm"
-    assert values["LITELLM_TAPPER_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
     assert values["TAPPER_DEFAULT_CHAT_MODEL"] == "qwen-plus"
     assert values["TAPPER_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert values["DASHSCOPE_API_KEY"] == ""
@@ -2478,22 +2496,18 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
     assert values["DASHSCOPE_NATIVE_API_BASE"] == (
         "https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/api/v1"
     )
-    assert values["LITELLM_MODEL"] == "dashscope/qwen-plus"
-    assert values["LITELLM_TAPPER_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
     assert values["TAPPER_DEFAULT_CHAT_MODEL"] == "qwen-plus"
     assert values["TAPPER_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert values["LITELLM_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert {
         "MYSQL_PORT": values["MYSQL_PORT"],
         "REDIS_PORT": values["REDIS_PORT"],
-        "AZURITE_BLOB_PORT": values["AZURITE_BLOB_PORT"],
         "LITELLM_PORT": values["LITELLM_PORT"],
         "MILVUS_PORT": values["MILVUS_PORT"],
         "MILVUS_HEALTH_PORT": values["MILVUS_HEALTH_PORT"],
     } == {
         "MYSQL_PORT": "23306",
         "REDIS_PORT": "26379",
-        "AZURITE_BLOB_PORT": "21000",
         "LITELLM_PORT": "24000",
         "MILVUS_PORT": "39530",
         "MILVUS_HEALTH_PORT": "29091",
@@ -2501,10 +2515,8 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
     assert values["TAP_DATABASE_URL"].endswith("@127.0.0.1:23306/tap?charset=utf8mb4")
     assert values["TAP_ALEMBIC_DATABASE_URL"].endswith("@127.0.0.1:23306/tap?charset=utf8mb4")
     assert values["TAP_REDIS_URL"] == "redis://127.0.0.1:26379/0"
-    assert (
-        "BlobEndpoint=http://127.0.0.1:21000/devstoreaccount1;"
-        in values["AZURE_STORAGE_CONNECTION_STRING"]
-    )
+    assert "AZURITE" not in example.upper()
+    assert "AZURE_STORAGE_CONNECTION_STRING" not in values
     assert values["LITELLM_BASE_URL"] == "http://127.0.0.1:24000"
     assert values["MILVUS_URI"] == "http://127.0.0.1:39530"
 
@@ -2793,7 +2805,7 @@ DASHSCOPE_API_BASE=https://provider-secret.invalid/dashscope-api
     assert {
         "TAP_DATABASE_URL",
         "TAP_REDIS_URL",
-        "AZURE_STORAGE_CONNECTION_STRING",
+        "TAPPER_S3_SECRET_KEY",
         "LITELLM_MASTER_KEY",
         "MILVUS_READER_PASSWORD",
     } <= environment_names["api"]
@@ -2801,14 +2813,14 @@ DASHSCOPE_API_BASE=https://provider-secret.invalid/dashscope-api
     assert {
         "TAP_DATABASE_URL",
         "TAP_REDIS_URL",
-        "AZURE_STORAGE_CONNECTION_STRING",
+        "TAPPER_S3_SECRET_KEY",
         "LITELLM_MASTER_KEY",
         "MILVUS_WRITER_PASSWORD",
     } <= environment_names["worker"]
     assert {
         "TAP_DATABASE_URL",
         "TAP_REDIS_URL",
-        "AZURE_STORAGE_CONNECTION_STRING",
+        "TAPPER_S3_SECRET_KEY",
     } <= environment_names["graph"]
     assert {"TAP_DATABASE_URL", "TAP_REDIS_URL"} <= environment_names["test-design"]
     assert {"TAP_DATABASE_URL", "TAP_REDIS_URL"} <= environment_names["generation"]
@@ -3318,8 +3330,7 @@ def test_minio_demo_up_checks_receipt_and_container_before_migrations(tmp_path: 
     result = subprocess.run(
         ["make", "--no-print-directory", "demo-up"],
         cwd=root,
-        env=os.environ
-        | {"PATH": f"{stubs}:{os.environ['PATH']}", "TAPPER_OBJECT_STORE_PROVIDER": "minio"},
+        env=os.environ | {"PATH": f"{stubs}:{os.environ['PATH']}"},
         text=True,
         capture_output=True,
         check=False,
@@ -3327,7 +3338,7 @@ def test_minio_demo_up_checks_receipt_and_container_before_migrations(tmp_path: 
     assert result.returncode == 0, result.stderr
     calls = log.read_text().splitlines()
     assert calls[0] == "helper verify"
-    assert "--profile tapper-objects up" in calls[1]
+    assert "--profile milvus up" in calls[1]
     assert calls[2].endswith("ps -q tap-minio")
     assert calls[3] == "helper verify-container " + container
     assert "alembic" in calls[4]
@@ -3337,7 +3348,6 @@ def test_minio_dev_missing_receipt_stops_before_children(tmp_path: Path) -> None
     supervisor, environment, log = _supervisor_fixture(tmp_path, api_exit="17")
     helper = supervisor.parent / "build-tapper-object-store.sh"
     helper.write_text((ROOT / "scripts/build-tapper-object-store.sh").read_text())
-    environment["TAPPER_OBJECT_STORE_PROVIDER"] = "minio"
     environment["TAPPER_COMPOSE_OBJECT_STORE_VERIFY"] = "1"
     result = subprocess.run(
         ["/bin/bash", str(supervisor)],
@@ -3359,7 +3369,6 @@ def test_external_minio_dev_does_not_require_demo_receipt(tmp_path: Path) -> Non
     supervisor, environment, log = _supervisor_fixture(tmp_path, api_exit="17")
     helper = supervisor.parent / "build-tapper-object-store.sh"
     helper.write_text((ROOT / "scripts/build-tapper-object-store.sh").read_text())
-    environment["TAPPER_OBJECT_STORE_PROVIDER"] = "minio"
     environment["TAPPER_COMPOSE_OBJECT_STORE_VERIFY"] = "0"
     result = subprocess.run(
         ["/bin/bash", str(supervisor)],
@@ -3380,7 +3389,7 @@ def test_compose_minio_is_a_separate_nonroot_store_with_no_image_pull() -> None:
     assert "tap-minio" in config["services"]
     service = config["services"]["tap-minio"]
     assert service["pull_policy"] == "never"
-    assert service["profiles"] == ["tapper-objects"]
+    assert "profiles" not in service
     assert service["ports"] == ["127.0.0.1:${TAPPER_S3_PORT:-19000}:9000"]
     assert service["volumes"] == ["tapper-object-data:/data"]
     assert service["user"] == "65532:65532"
