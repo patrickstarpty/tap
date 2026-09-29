@@ -23,15 +23,22 @@ os.environ.update(_environment_before_pymilvus_import)
 del _environment_before_pymilvus_import
 
 ROOT = Path(__file__).resolve().parents[4]
-# Mirrors tests/object_settings.py; this module must also load via runpy from the repo root.
-S3_SETTINGS = {
-    "TAPPER_S3_ENDPOINT": "http://127.0.0.1:29000",
-    "TAPPER_S3_BUCKET": "tapper-test-objects",
-    "TAPPER_S3_REGION": "us-east-1",
-    "TAPPER_S3_ACCESS_KEY": "owned-key",
-    "TAPPER_S3_SECRET_KEY": "owned-secret",
-    "TAPPER_S3_STORE_ID": "owned-store",
-}
+
+
+def _canonical_object_settings() -> dict[str, str]:
+    # Load tests/object_settings.py by path: this module must also run via runpy from the
+    # repo root, where the `tests` package is not importable.
+    spec = importlib.util.spec_from_file_location(
+        "tapper_test_object_settings",
+        ROOT / "apps/tap-ai-backend/tests/object_settings.py",
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return dict(module.S3_SETTINGS)
+
+
+S3_SETTINGS = _canonical_object_settings()
 
 
 def task6a_collection_module():
@@ -817,7 +824,6 @@ case " $* " in
     [ -z "${OPENAI_API_KEY+x}${BAILIAN_API_KEY+x}${BAILIAN_API_BASE+x}" ] || exit 89
     [ -z "${LITELLM_EMBEDDING_API_KEY+x}" ] || exit 90
     [ -z "${LITELLM_EMBEDDING_API_BASE+x}" ] || exit 94
-    [ "$TAPPER_S3_ENDPOINT" = http://127.0.0.1:29000 ] || exit 88
     printf 'docker|%s\n' "$*" >> "$TAPPER_E2E_STUB_LOG"
     case " $* " in
       *" down --volumes --remove-orphans "*)

@@ -2191,27 +2191,30 @@ async def test_milvus_document_role_factory_owns_client_created_during_cancellat
 
 
 @pytest.mark.parametrize(
-    ("chat_info", "extra_rows", "expected_status", "expected_detail"),
+    ("chat_info", "extra_rows", "blob_private", "unready_component", "expected_detail"),
     [
-        ({}, [], "ready", None),
+        ({}, [], True, None, None),
         (
             {},
             [{"model_name": "Bad_Name", "model_info": {"mode": "chat"}}],
-            "ready",
+            True,
+            None,
             "LiteLLM model skipped: Bad_Name (",
         ),
         (
             {"tapper_display_name": "x" * 129},
             [],
-            "unready",
+            True,
+            "models",
             "TAPPER_DEFAULT_CHAT_MODEL=qwen-plus was skipped",
         ),
+        ({}, [], False, "blob", None),
     ],
-    ids=["clean", "skipped-non-role-is-notice", "skipped-role-fails"],
+    ids=["clean", "skipped-non-role-is-notice", "skipped-role-fails", "public-blob-fails"],
 )
 @pytest.mark.asyncio
 async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and_models_get(
-    chat_info, extra_rows, expected_status, expected_detail
+    chat_info, extra_rows, blob_private, unready_component, expected_detail
 ) -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
@@ -2250,7 +2253,7 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
     class Blob:
         async def is_private(self) -> bool:
             calls.append("blob:private")
-            return True
+            return blob_private
 
     _, reader, target = await module._create_search(settings, audit_sink=_UnusedSearchAudit())
 
@@ -2324,14 +2327,17 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
 
     result = await service.check()
 
-    assert result.status == expected_status
-    models_component = next(item for item in result.components if item.name.value == "models")
+    assert result.status == ("ready" if unready_component is None else "unready")
+    components = {item.name.value: item for item in result.components}
+    models_component = components["models"]
     if expected_detail is None:
         assert models_component.detail is None
     else:
         assert models_component.detail is not None
         assert expected_detail in models_component.detail
-    assert (models_component.state.value == "ok") is (expected_status == "ready")
+    assert {name for name, item in components.items() if item.state.value != "ok"} == (
+        set() if unready_component is None else {unready_component}
+    )
     assert "redis-ping" in calls
     assert calls.count("blob:private") == 1
     assert calls.count("milvus-query:1") == 1

@@ -166,7 +166,7 @@ def worker_entrypoint() -> tuple[EmbeddingEntrypointWorker, httpx.AsyncClient]:
 
 
 @pytest.mark.asyncio
-async def test_worker_entrypoint_reaches_ready_without_optional_top_level_id(
+async def test_worker_entrypoint_reaches_ready_with_embedding_lacking_provider_request_id(
     worker_entrypoint: tuple[EmbeddingEntrypointWorker, httpx.AsyncClient],
 ) -> None:
     worker, client = worker_entrypoint
