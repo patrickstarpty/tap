@@ -634,6 +634,35 @@ button:focus-visible,
   line-height: 1.65;
 }
 
+.tapper-original-grid-scroll {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+}
+
+.tapper-original-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.tapper-original-grid th,
+.tapper-original-grid td {
+  min-width: 90px;
+  border-right: 1px solid var(--tap-line);
+  border-bottom: 1px solid var(--tap-line);
+  padding: 8px 10px;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.tapper-original-grid th {
+  position: sticky;
+  top: 0;
+  background: var(--tap-soft);
+}
+
 .tapper-drop-zone {
   display: grid;
   place-items: center;

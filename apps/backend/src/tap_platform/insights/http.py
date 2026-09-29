@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
+from collections import OrderedDict
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, Protocol
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
@@ -16,6 +19,13 @@ from tap_platform.access import (
     authorize_insights_request,
     authorize_project_action,
 )
+from tap_platform.insights.adapters.allure import archive_member
+from tap_platform.insights.adapters.report_errors import ReportSecurityError
+from tap_platform.insights.adapters.report_evidence import (
+    report_evidence,
+    attachment_sources,
+)
+from tap_platform.insights.adapters.report_parser import VERSIONS as PARSER_VERSIONS
 from tap_platform.insights.application.intake import ReportIntake, UploadTooLarge
 from tap_platform.insights.application.queries import (
     InsightsQueryService,
@@ -25,6 +35,7 @@ from tap_platform.insights.application.queries import (
     QueryUnavailable,
 )
 from tap_platform.insights.contracts import (
+    ReportEvidenceContract,
     AttemptPageContract,
     FailurePageContract,
     MetricCatalogContract,
@@ -45,6 +56,7 @@ from tap_platform.insights.domain.reports import (
 
 
 class ReceiptReader(Protocol):
+    def get_manifest(self, receipt_id: str) -> ReportManifest: ...
     def get_receipt(self, receipt_id: str) -> ReportReceipt: ...
 
 
@@ -177,6 +189,9 @@ class DualBearerInsightsAuthorizer:
         ).allowed
 
 
+EVIDENCE_CACHE_SIZE = 16
+
+
 def create_insights_router(
     *,
     report_intake: ReportIntake | None,
@@ -187,6 +202,8 @@ def create_insights_router(
     query_service: InsightsQueryService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/projects/{project_id}/insights")
+    # Originals are immutable and checksum-verified, so parsed evidence is reusable.
+    evidence_cache: OrderedDict[tuple[str, str, str], dict[str, Any]] = OrderedDict()
 
     @router.get("/metrics", response_model=MetricCatalogContract)
     async def list_metrics(
@@ -505,6 +522,17 @@ def create_insights_router(
             chunks = await _bounded_request_chunks(
                 request, max_bytes=report_intake.max_upload_bytes
             )
+        except UploadTooLarge as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        if _contradicts_format(
+            manifest.report_format, request.headers.get("content-type"), chunks
+        ):
+            raise HTTPException(
+                status_code=415,
+                detail=f"uploaded content does not match reportFormat "
+                f"{manifest.report_format}",
+            )
+        try:
             receipt = await run_in_threadpool(report_intake.receive, manifest, chunks)
         except UploadTooLarge as exc:
             raise HTTPException(status_code=413, detail=str(exc)) from exc
@@ -595,13 +623,143 @@ def create_insights_router(
         receipt = await _load_receipt(report_ledger, receipt_id)
         _authorize_receipt_project(project_id, receipt)
         raw = await run_in_threadpool(report_objects.read, receipt.raw_object_ref)
+        is_zip = receipt.parser_version == PARSER_VERSIONS["allure"]
         return Response(
             content=raw,
-            media_type="application/xml",
+            media_type="application/zip" if is_zip else "application/xml",
             headers={
                 "Cache-Control": "private, no-store",
-                "Content-Disposition": f'attachment; filename="report-{receipt.receipt_id}.xml"',
+                "Content-Disposition": f'attachment; filename="report-{receipt.receipt_id}.{"zip" if is_zip else "xml"}"',
                 "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    async def load_report_details(
+        project_id: str,
+        receipt_id: str,
+        authorization: str | None,
+        service_authorization: str | None,
+        authorization_version: str | None,
+    ) -> tuple[dict[str, Any], bytes]:
+        _authorize(
+            insights_authorizer,
+            authorization,
+            project_id=project_id,
+            action="insights.evidence.read",
+            resource_kind="evidence",
+            resource_id=receipt_id,
+            service_authorization=service_authorization,
+            authorization_version=authorization_version,
+        )
+        if report_objects is None or report_ledger is None:
+            raise HTTPException(status_code=503, detail="evidence store unavailable")
+        receipt = await _load_receipt(report_ledger, receipt_id)
+        _authorize_receipt_project(project_id, receipt)
+        if receipt.state not in {
+            ReportState.MAPPED,
+            ReportState.PROJECTING,
+            ReportState.READY,
+        }:
+            raise HTTPException(status_code=409, detail="report evidence is not ready")
+        raw = await run_in_threadpool(report_objects.read, receipt.raw_object_ref)
+        if (
+            len(raw) != receipt.size_bytes
+            or hashlib.sha256(raw).hexdigest() != receipt.checksum
+        ):
+            raise HTTPException(
+                status_code=503, detail="evidence integrity check failed"
+            )
+        cache_key = (receipt.receipt_id, receipt.checksum, receipt.parser_version)
+        details = evidence_cache.get(cache_key)
+        if details is not None:
+            evidence_cache.move_to_end(cache_key)
+            return details, raw
+        manifest = await run_in_threadpool(report_ledger.get_manifest, receipt_id)
+        try:
+            details = await run_in_threadpool(
+                partial(
+                    report_evidence,
+                    raw,
+                    manifest,
+                    receipt.parser_version,
+                    receipt=receipt,
+                )
+            )
+        except (ReportSecurityError, RuntimeError) as exc:
+            raise HTTPException(
+                status_code=422, detail="report evidence cannot be read"
+            ) from exc
+        evidence_cache[cache_key] = details
+        while len(evidence_cache) > EVIDENCE_CACHE_SIZE:
+            evidence_cache.popitem(last=False)
+        return details, raw
+
+    @router.get("/evidence/{receipt_id}/details", response_model=ReportEvidenceContract)
+    async def evidence_details(
+        project_id: str,
+        receipt_id: str,
+        response: Response,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
+    ) -> ReportEvidenceContract:
+        details, _ = await load_report_details(
+            project_id,
+            receipt_id,
+            authorization,
+            service_authorization,
+            authorization_version,
+        )
+        response.headers["Cache-Control"] = "private, no-store"
+        return ReportEvidenceContract.model_validate(details)
+
+    @router.get("/evidence/{receipt_id}/attachment")
+    async def evidence_attachment(
+        project_id: str,
+        receipt_id: str,
+        source: str = Query(max_length=512),
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        service_authorization: str | None = Header(
+            default=None, alias="X-TAP-Service-Authorization"
+        ),
+        authorization_version: str | None = Header(
+            default=None, alias="X-TAP-Authorization-Version"
+        ),
+    ) -> Response:
+        details, raw = await load_report_details(
+            project_id,
+            receipt_id,
+            authorization,
+            service_authorization,
+            authorization_version,
+        )
+        if details["reportFormat"] != "allure" or source not in attachment_sources(
+            details
+        ):
+            raise HTTPException(status_code=404, detail="attachment not found")
+        try:
+            content = await run_in_threadpool(archive_member, raw, source)
+        except (ReportSecurityError, KeyError) as exc:
+            raise HTTPException(status_code=404, detail="attachment not found") from exc
+        # Only raster signatures may render inline. HTML/SVG/unknown data download
+        # as inert bytes regardless of the report-supplied MIME type or filename.
+        media_type = "application/octet-stream"
+        if content.startswith(b"\x89PNG\r\n\x1a\n"):
+            media_type = "image/png"
+        elif content.startswith(b"\xff\xd8\xff"):
+            media_type = "image/jpeg"
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Disposition": 'attachment; filename="attachment"',
+                "Content-Security-Policy": "default-src 'none'; sandbox",
             },
         )
 
@@ -621,6 +779,26 @@ def _historical(
         raise HTTPException(
             status_code=503, detail="insights query unavailable"
         ) from exc
+
+
+_ZIP_MEDIA_TYPES = {"application/zip", "application/x-zip-compressed"}
+_XML_MEDIA_TYPES = {"application/xml", "text/xml"}
+
+
+def _contradicts_format(
+    report_format: str, content_type: str | None, chunks: list[bytes]
+) -> bool:
+    """Reject only clear container mismatches; malformed content stays a durable receipt."""
+    media_type = (content_type or "").split(";", 1)[0].strip().lower()
+    head = b""
+    for chunk in chunks:
+        head += chunk[: 4 - len(head)]
+        if len(head) >= 4:
+            break
+    is_zip = head.startswith(b"PK\x03\x04")
+    if report_format == "allure":
+        return media_type in _XML_MEDIA_TYPES or not is_zip
+    return media_type in _ZIP_MEDIA_TYPES or is_zip
 
 
 async def _bounded_request_chunks(request: Request, *, max_bytes: int) -> list[bytes]:

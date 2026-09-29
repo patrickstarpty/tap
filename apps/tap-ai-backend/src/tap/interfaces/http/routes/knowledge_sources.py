@@ -1,12 +1,15 @@
 """Project-owned Source commands and bounded current-source views."""
 
-from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
+from dataclasses import asdict
+
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
 
 from tap.contracts.http import SourceAccepted, SourceDetail, SourcePage, SourceRetryRequest
 from tap.interfaces.http.dependencies import UploadInput, knowledge_service, source_command_key
 from tap.interfaces.http.multipart import BoundedUploadRoute
 from tap.interfaces.http.problems import InvalidDocumentUpload, problem_response_metadata
+from tap.interfaces.http.routes.knowledge_chunks import upload_settings
 from tap.interfaces.http.routes.knowledge_documents import (
     MAX_DOCUMENT_BYTES,
     bounded_upload_bytes,
@@ -33,19 +36,33 @@ router = APIRouter(
     dependencies=[Depends(project_authorization("knowledge.write"))],
 )
 async def upload_source(
-    request: Request, upload: UploadFile = File(...), key: str = Depends(source_command_key)
+    request: Request,
+    upload: UploadFile = File(...),
+    settings: str | None = Form(default=None),
+    key: str = Depends(source_command_key),
 ) -> SourceAccepted:
     form = await request.form()
-    if set(form) != {"upload"} or len(form.getlist("upload")) != 1:
+    if (
+        set(form) - {"upload", "settings"}
+        or len(form.getlist("upload")) != 1
+        or len(form.getlist("settings")) > 1
+    ):
         raise InvalidDocumentUpload("invalid multipart request")
     if upload.size is not None and upload.size > MAX_DOCUMENT_BYTES:
         raise InvalidDocumentUpload("document-too-large")
+    configuration = upload_settings(request, settings)
     filename, media_type = sanitize_upload_metadata(upload.filename, upload.content_type)
-    return await knowledge_service(request).upload_source(
-        UploadInput(filename, media_type, bounded_upload_bytes(upload)),
+    result = await knowledge_service(request).upload_source(
+        UploadInput(
+            filename,
+            media_type,
+            bounded_upload_bytes(upload),
+            asdict(configuration) if configuration is not None else None,
+        ),
         key,
         request.state.correlation_id,
     )
+    return result
 
 
 @router.get(

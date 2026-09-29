@@ -100,11 +100,11 @@ tap-insights-worker: ## process durable TAP report receipts
 	uv run --project apps/backend python -m tap_platform.insights.worker
 
 tap-insights-up: ## start the persistent loopback TAP Insights ClickHouse only
-	@printf '%s' "$(TAP_INSIGHTS_COMPOSE_PROJECT)" | rg -q '^tap-insights-[a-z0-9][a-z0-9_-]{2,48}$$' || { echo "invalid owned TAP Insights Compose project" >&2; exit 2; }
+	@printf '%s' "$(TAP_INSIGHTS_COMPOSE_PROJECT)" | grep -Eq '^tap-insights-[a-z0-9][a-z0-9_-]{2,48}$$' || { echo "invalid owned TAP Insights Compose project" >&2; exit 2; }
 	docker compose -p "$(TAP_INSIGHTS_COMPOSE_PROJECT)" --profile insights up -d --wait --wait-timeout 180 clickhouse
 
 tap-insights-down: ## stop TAP Insights ClickHouse while preserving its named volume
-	@printf '%s' "$(TAP_INSIGHTS_COMPOSE_PROJECT)" | rg -q '^tap-insights-[a-z0-9][a-z0-9_-]{2,48}$$' || { echo "invalid owned TAP Insights Compose project" >&2; exit 2; }
+	@printf '%s' "$(TAP_INSIGHTS_COMPOSE_PROJECT)" | grep -Eq '^tap-insights-[a-z0-9][a-z0-9_-]{2,48}$$' || { echo "invalid owned TAP Insights Compose project" >&2; exit 2; }
 	docker compose -p "$(TAP_INSIGHTS_COMPOSE_PROJECT)" --profile insights stop clickhouse
 	docker compose -p "$(TAP_INSIGHTS_COMPOSE_PROJECT)" --profile insights rm -f clickhouse
 

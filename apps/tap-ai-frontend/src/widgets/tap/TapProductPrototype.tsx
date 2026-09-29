@@ -63,7 +63,7 @@ import {
 } from "../../features/conversations/model/stream";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
-import { KnowledgeReview } from "../../features/knowledge/components/KnowledgeReview";
+import { DocumentChunks } from "../../features/knowledge/components/DocumentChunks";
 import {
   appendTurn,
   createConversation,
@@ -761,12 +761,13 @@ function ProjectLibraryWorkspace({
           opener.current = trigger;
           setInspected(sourceId);
         }}
-        onAddSource={async (file) => {
+        onAddSource={async (file, settings) => {
           const idempotencyKey =
             uploadIntents.current.get(file) ?? crypto.randomUUID();
           uploadIntents.current.set(file, idempotencyKey);
           await upload.mutateAsync({
             file,
+            settings,
             onProgress: () => undefined,
             idempotencyKey,
           });
@@ -823,7 +824,7 @@ function ProjectLibraryWorkspace({
                     </p>
                     <small>{item.revisionId}</small>
                     <Button
-                      aria-label={`Review ${item.filename}`}
+                      aria-label={`管理切片 ${item.filename}`}
                       aria-expanded={reviewDocumentId === item.documentId}
                       onClick={() =>
                         setReviewDocumentId((current) =>
@@ -831,13 +832,15 @@ function ProjectLibraryWorkspace({
                         )
                       }
                     >
-                      审核记录
+                      管理切片
                     </Button>
                     {reviewDocumentId === item.documentId ? (
-                      <KnowledgeReview
-                        documentId={item.documentId}
-                        sourceRevisionId={item.revisionId}
-                      />
+                      <>
+                        <DocumentChunks
+                          projectId={projectId}
+                          documentId={item.documentId}
+                        />
+                      </>
                     ) : null}
                     {item.errorCode != null && <p>{item.errorCode}</p>}
                     {item.status === "failed" && (
@@ -1581,8 +1584,8 @@ export function TapProductPrototype({
         status: "ready",
         description:
           source.partial || prior?.description.includes("部分范围可用")
-            ? "已发布 · 部分范围可用"
-            : "已发布",
+            ? "索引就绪 · 部分范围可用"
+            : "索引就绪",
       });
     }
     return [...grouped.values()];

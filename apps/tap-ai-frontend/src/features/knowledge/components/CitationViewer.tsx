@@ -226,7 +226,7 @@ export function CitationViewer({
               <code>{preview.chunkContentHash}</code>
             </Descriptions.Item>
             <Descriptions.Item label={text.headingPath}>
-              {preview.anchor.headingPath?.join(" / ") ?? "—"}
+              {preview.anchor.headingPath?.join(" / ") || "—"}
             </Descriptions.Item>
             <Descriptions.Item label={text.page}>
               {preview.anchor.page ?? "—"}

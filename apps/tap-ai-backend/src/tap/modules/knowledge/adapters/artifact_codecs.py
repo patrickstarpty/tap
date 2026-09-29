@@ -66,8 +66,10 @@ def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -
         not isinstance(artifact, NormalizedArtifact)
         or str(artifact.revision_id) != revision_id
         or artifact.document_id is None
-        or str(revision_id_for(artifact.document_id, artifact.source_hash, PARSER_VERSION))
-        != revision_id
+        or not any(
+            str(revision_id_for(artifact.document_id, artifact.source_hash, version)) == revision_id
+            for version in (PARSER_VERSION, "managed-chunks-v1")
+        )
     ):
         raise ArtifactIntegrityError("normalized artifact identity does not match revision")
     inventory_enabled = bool(artifact.parse_inventory and artifact.parser_config_digest is not None)
@@ -210,7 +212,10 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
                 )
             )
         document_id = DocumentId(_text(payload["documentId"], maximum=256))
-        if str(revision_id_for(document_id, source_hash, PARSER_VERSION)) != expected_revision:
+        if not any(
+            str(revision_id_for(document_id, source_hash, version)) == expected_revision
+            for version in (PARSER_VERSION, "managed-chunks-v1")
+        ):
             raise ValueError
         if legacy:
             inventory = historical_unreviewed_inventory(expected_revision, source_hash)
@@ -263,13 +268,21 @@ def encode_chunks_artifact(revision_id: str, chunks: tuple[ChunkDraft, ...]) -> 
         raise ArtifactIntegrityError("chunk artifact source hash is not exact")
     source_hash = _digest(next(iter(source_hashes)))
     document_id = DocumentId(_text(next(iter(document_ids)), maximum=256))
-    if str(revision_id_for(document_id, source_hash, PARSER_VERSION)) != revision_id:
+    parser_version = next(
+        (
+            version
+            for version in (PARSER_VERSION, "managed-chunks-v1")
+            if str(revision_id_for(document_id, source_hash, version)) == revision_id
+        ),
+        None,
+    )
+    if parser_version is None:
         raise ArtifactIntegrityError("chunk artifact revision provenance is inconsistent")
     payload = b"".join(_canonical_line(_chunk_payload(chunk, revision_id)) for chunk in chunks)
     header = {
         "documentId": str(document_id),
         "itemCount": len(chunks),
-        "parserVersion": PARSER_VERSION,
+        "parserVersion": parser_version,
         "payloadSha256": canonical_sha256(payload),
         "revisionId": revision_id,
         "schemaVersion": _CHUNKS_SCHEMA,
@@ -303,7 +316,7 @@ def decode_chunks_artifact(data: bytes, *, expected_revision: str) -> tuple[Chun
         document_id = DocumentId(_text(header["documentId"], maximum=256))
         parser_version = _text(header["parserVersion"], maximum=128)
         if (
-            parser_version != PARSER_VERSION
+            parser_version not in {PARSER_VERSION, "managed-chunks-v1"}
             or str(revision_id_for(document_id, source_hash, parser_version)) != expected_revision
         ):
             raise ValueError

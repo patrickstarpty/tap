@@ -327,7 +327,7 @@ it("uploads an attachment to the Library and uses it only once published", async
   const attachments = await screen.findByRole("group", { name: "Upload file" });
   await waitFor(() =>
     expect(attachments).toHaveTextContent(
-      /claims\.md.*(Processing|Needs review before use)/u,
+      /claims\.md.*(Processing|No searchable chunks yet)/u,
     ),
   );
   const sourceId = (await api.listSources({ limit: 50 })).items.find(

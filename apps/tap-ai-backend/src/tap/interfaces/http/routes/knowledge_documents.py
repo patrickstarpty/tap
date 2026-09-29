@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import unicodedata
 from collections.abc import AsyncIterator
+from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
 from tap.contracts.http import DocumentAccepted, DocumentDetail, DocumentPage
 from tap.interfaces.http.dependencies import UploadInput, knowledge_service, source_command_key
 from tap.interfaces.http.multipart import BoundedUploadRoute
 from tap.interfaces.http.problems import InvalidDocumentUpload, problem_response_metadata
+from tap.interfaces.http.routes.knowledge_chunks import upload_settings
 from tap.interfaces.http.scope import project_authorization
 
 router = APIRouter(
@@ -20,6 +22,7 @@ router = APIRouter(
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 READ_CHUNK_BYTES = 1_048_576
 _MEDIA_TYPES_BY_EXTENSION = {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".md": "text/markdown",
@@ -78,19 +81,31 @@ async def bounded_upload_bytes(upload: UploadFile) -> AsyncIterator[bytes]:
 async def upload_document(
     request: Request,
     upload: UploadFile = File(...),
+    settings: str | None = Form(default=None),
     key: str = Depends(source_command_key),
 ) -> DocumentAccepted:
     form = await request.form()
-    if set(form) != {"upload"} or len(form.getlist("upload")) != 1:
+    if (
+        set(form) - {"upload", "settings"}
+        or len(form.getlist("upload")) != 1
+        or len(form.getlist("settings")) > 1
+    ):
         raise InvalidDocumentUpload("invalid multipart request")
     if upload.size is not None and upload.size > MAX_DOCUMENT_BYTES:
         raise InvalidDocumentUpload("document-too-large")
+    configuration = upload_settings(request, settings)
     filename, media_type = sanitize_upload_metadata(upload.filename, upload.content_type)
-    return await knowledge_service(request).upload(
-        UploadInput(filename=filename, media_type=media_type, content=bounded_upload_bytes(upload)),
+    result = await knowledge_service(request).upload(
+        UploadInput(
+            filename=filename,
+            media_type=media_type,
+            content=bounded_upload_bytes(upload),
+            chunk_settings=asdict(configuration) if configuration is not None else None,
+        ),
         key,
         request.state.correlation_id,
     )
+    return result
 
 
 @router.get(

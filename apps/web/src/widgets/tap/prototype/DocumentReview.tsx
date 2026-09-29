@@ -3,6 +3,7 @@ import { Button } from "antd";
 import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 import type { AssistantTurn, LibrarySource, Locale } from "./model";
 import "./DocumentReview.css";
+import { ChunkManager } from "./ChunkManager";
 
 type DocumentState =
   | "processing"
@@ -12,13 +13,23 @@ type DocumentState =
   | "approved"
   | "published"
   | "withdrawn";
+type ReviewComment = {
+  id: string;
+  section: number;
+  quote: string;
+  text: string;
+  resolved: boolean;
+};
 type Document = {
+  available?: boolean;
+  chunkSetup?: boolean;
   id: string;
   name: string;
   version: string;
   state: DocumentState;
   checks: boolean[];
   revision: number;
+  comments?: ReviewComment[];
   history: { action: string; revision: number; actorId: string }[];
 };
 const initial: Document[] = [
@@ -36,6 +47,33 @@ const initial: Document[] = [
     name: "Underwriting rules — scanned.pdf",
     version: "v1.0",
     state: "failed",
+    checks: [false, false, false, false],
+    revision: 1,
+    history: [],
+  },
+  {
+    id: "underwriting-evidence-pdf",
+    name: "Underwriting evidence.pdf",
+    version: "v1.0",
+    state: "review",
+    checks: [false, false, false, false],
+    revision: 1,
+    history: [],
+  },
+  {
+    id: "premium-rates-xlsx",
+    name: "Premium rates.xlsx",
+    version: "v1.0",
+    state: "review",
+    checks: [false, false, false, false],
+    revision: 1,
+    history: [],
+  },
+  {
+    id: "approval-flow-complex",
+    name: "Underwriting approval flow.png",
+    version: "v1.0",
+    state: "review",
     checks: [false, false, false, false],
     revision: 1,
     history: [],
@@ -80,6 +118,17 @@ export function useDocumentReview(locale: Locale) {
             d.checks.length === 4 &&
             d.checks.every((value: unknown) => typeof value === "boolean") &&
             Number.isInteger(d.revision) &&
+            (d.comments === undefined ||
+              (Array.isArray(d.comments) &&
+                d.comments.every(
+                  (c: ReviewComment) =>
+                    c &&
+                    typeof c.id === "string" &&
+                    [3, 4, 5].includes(c.section) &&
+                    typeof c.quote === "string" &&
+                    typeof c.text === "string" &&
+                    typeof c.resolved === "boolean",
+                ))) &&
             Array.isArray(d.history) &&
             d.history.every(
               (event: unknown) =>
@@ -94,7 +143,12 @@ export function useDocumentReview(locale: Locale) {
             ),
         )
       )
-        return saved;
+        return [
+          ...saved,
+          ...initial.filter(
+            (document) => !saved.some((item) => item.id === document.id),
+          ),
+        ];
     } catch {
       /* A damaged browser snapshot must not prevent opening Library. */
     }
@@ -135,27 +189,25 @@ export function useDocumentReview(locale: Locale) {
         name: d.name,
         origin: "knowledge-base",
         type: d.name.split(".").pop()!.toUpperCase(),
+        preview:
+          d.id === "approval-flow-complex"
+            ? { imageUrl: "/prototype-files/underwriting-approval-flow.png" }
+            : undefined,
         status:
-          d.state === "published"
-            ? "ready"
-            : d.state === "failed"
-              ? "failed"
-              : "processing",
+          d.state === "failed"
+            ? "failed"
+            : d.state === "processing" || d.available === false
+              ? "processing"
+              : "ready",
         reviewState: d.state,
         description:
-          d.state === "published"
-            ? t("Published", "已发布")
-            : d.state === "review"
-              ? t("Ready for review", "待核对")
-              : d.state === "reviewing"
-                ? t("Awaiting independent review", "待独立复核")
-                : d.state === "approved"
-                  ? t("Approved, awaiting publication", "已批准，待发布")
-                  : d.state === "withdrawn"
-                    ? t("Publication withdrawn", "发布已撤回")
-                    : d.state === "failed"
-                      ? t("Text extraction failed", "文本提取失败")
-                      : t("Processing document", "正在处理资料"),
+          d.state === "failed"
+            ? t("Text extraction failed", "文本提取失败")
+            : d.state === "processing"
+              ? t("Processing document", "正在处理资料")
+              : d.available === false
+                ? t("No searchable chunks", "暂无可检索切片")
+                : t("Ready for retrieval", "可检索"),
       })),
     [documents, locale],
   );
@@ -164,20 +216,32 @@ export function useDocumentReview(locale: Locale) {
     setDocuments((current) =>
       current.map((d) => {
         if (d.id !== inspected) return d;
+        if (
+          Object.entries(patch).every(
+            ([key, value]) => d[key as keyof Document] === value,
+          )
+        )
+          return d;
         const changedState =
           patch.state !== undefined && patch.state !== d.state;
+        const changedReview = changedState || patch.comments !== undefined;
+        const commentAction =
+          patch.comments &&
+          (patch.comments.length > (d.comments ?? []).length
+            ? `Comment saved · ${patch.comments.at(-1)!.text}`
+            : "Comment resolved");
         return {
           ...d,
           ...patch,
-          revision: changedState ? d.revision + 1 : d.revision,
-          history: changedState
+          revision: changedReview ? d.revision + 1 : d.revision,
+          history: changedReview
             ? [
                 ...d.history,
                 {
-                  action: patch.state!,
+                  action: commentAction || patch.state!,
                   revision: d.revision + 1,
                   actorId:
-                    patch.state === "reviewing"
+                    patch.state === "reviewing" || patch.comments
                       ? "Content editor"
                       : patch.state === "published" ||
                           patch.state === "withdrawn"
@@ -194,7 +258,7 @@ export function useDocumentReview(locale: Locale) {
     opener.current = trigger ?? null;
     setInspected(id);
   }
-  function upload(name: string) {
+  function upload(name: string, options: { inspect?: boolean } = {}) {
     const id = crypto.randomUUID();
     setDocuments((current) => [
       ...current,
@@ -202,12 +266,14 @@ export function useDocumentReview(locale: Locale) {
         id,
         name,
         version: "v1.0",
-        state: "processing",
+        state: "review",
+        chunkSetup: true,
         checks: [false, false, false, false],
         revision: 1,
         history: [],
       },
     ]);
+    if (options.inspect ?? true) setInspected(id);
     return id;
   }
   return {
@@ -233,7 +299,7 @@ export function DocumentReview({
   const { t } = review;
   return (
     <AccessibleDialog
-      ariaLabel={t("Document review", "资料核对")}
+      ariaLabel={t("Document chunks", "文档切片")}
       className="tap-document-review"
       onClose={review.close}
       opener={review.opener.current}
@@ -243,234 +309,633 @@ export function DocumentReview({
           <h2>{d.name}</h2>
           <p>
             {d.version} · {t("Knowledge library", "知识库")} ·{" "}
-            {t("Review revision", "审核修订")} {d.revision}
+            {t("Document version", "文档版本")} {d.revision}
           </p>
         </div>
         <Button aria-label={t("Close", "关闭")} onClick={review.close}>
           {t("Close", "关闭")}
         </Button>
       </header>
-      <p className="tap-document-status-line">
-        {t("Extraction", "解析")}：
-        {d.state === "processing"
-          ? t("Processing", "处理中")
-          : d.state === "failed"
-            ? t("Failed", "失败")
-            : t("Ready", "就绪")}
-        {" · "}
-        {t("Business review", "业务审核")}：
-        {d.state === "review"
-          ? t("Checking", "核对中")
-          : d.state === "reviewing"
-            ? t("Awaiting independent review", "待独立复核")
-            : d.state === "approved"
-              ? t("Approved", "已批准")
-              : d.state === "published"
-                ? t("Published", "已发布")
-                : d.state === "withdrawn"
-                  ? t("Withdrawn", "已撤回")
-                  : t("Not started", "未开始")}
-      </p>
       {d.state === "processing" ? (
-        <div className="tap-document-state" role="status">
-          <h3>{t("Processing document…", "正在处理资料…")}</h3>
-          <p>
-            {t(
-              "Extracting text and locating source passages.",
-              "正在提取文本并定位原文段落。",
-            )}
-          </p>
-        </div>
+        <p role="status">{t("Processing document…", "正在处理资料…")}</p>
       ) : d.state === "failed" ? (
-        <div className="tap-document-state">
+        <section>
           <h3>{t("No readable text found", "未找到可提取的文本")}</h3>
           <p>
             {t(
-              "Replace this scan with a text-based PDF, DOCX, MD or TXT file.",
-              "请将扫描件替换为可提取文本的 PDF、DOCX、MD 或 TXT。",
+              "Replace this scan with a text-based PDF, DOCX, MD, TXT or XLSX file.",
+              "请替换为可提取文本的 PDF、DOCX、MD、TXT 或 XLSX 文件。",
             )}
           </p>
-          <div className="tap-document-recovery">
-            <Button onClick={() => review.update({ state: "processing" })}>
-              {t("Retry processing", "重新处理")}
-            </Button>
-            <label>
-              {t("Replace file", "替换文件")}
-              <input
-                type="file"
-                accept=".pdf,.docx,.md,.txt"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file)
-                    review.update({
-                      name: file.name,
-                      state: "processing",
-                      checks: [false, false, false, false],
-                    });
-                }}
-              />
-            </label>
-          </div>
-        </div>
+          <Button onClick={() => review.update({ state: "processing" })}>
+            {t("Retry processing", "重新处理")}
+          </Button>
+          <label>
+            {t("Replace file", "替换文件")}
+            <input
+              type="file"
+              accept=".pdf,.docx,.md,.txt,.xlsx"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file)
+                  review.update({ name: file.name, state: "processing" });
+              }}
+            />
+          </label>
+        </section>
       ) : (
-        <>
-          <div className="tap-document-columns">
-            <article className="tap-document-original">
-              <h3>{t("Original document", "原文")}</h3>
-              <h4>{t("4. Health disclosure", "4. 健康告知")}</h4>
-              <p>
-                {t(
-                  "An application must include a completed health disclosure before submission.",
-                  "投保申请提交前必须完成健康告知。",
+        <ChunkManager
+          key={d.id}
+          id={d.id}
+          t={t}
+          initialSettings={d.chunkSetup}
+          onAvailability={(available) => review.update({ available })}
+          originalView={
+            <>
+              <ReviewWorkbench document={d} review={review} />
+              <details className="tap-document-history">
+                <summary>
+                  {t("Historical review records", "历史审核记录")}
+                </summary>
+                {d.history.length ? (
+                  <ol>
+                    {d.history.map((event) => (
+                      <li key={event.revision}>
+                        {event.action} · {event.actorId} · {event.revision}
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p>{t("No historical review records", "暂无历史审核记录")}</p>
                 )}
-              </p>
-              <mark>
-                {t(
-                  "If disclosure is missing, block submission and return HTTP 422 with HEALTH_DISCLOSURE_REQUIRED.",
-                  "缺少健康告知时，阻止提交并返回 HTTP 422，错误码 HEALTH_DISCLOSURE_REQUIRED。",
-                )}
-              </mark>
-              <p>
-                {t(
-                  "Keep entered information and allow the applicant to complete missing fields before resubmitting.",
-                  "保留已填写信息，允许申请人补齐缺失项后再次提交。",
-                )}
-              </p>
-            </article>
-            <section>
-              <h3>{t("Review extracted content", "核对提取内容")}</h3>
-              <p>
-                {t(
-                  "Missing disclosure → block submission → HTTP 422",
-                  "缺少健康告知 → 阻止提交 → HTTP 422",
-                )}
-              </p>
-              <small>
-                {t(
-                  "Source: section 4, paragraphs 1–3",
-                  "原文位置：第 4 节，段落 1–3",
-                )}
-              </small>
-              <p className="tap-document-issue">
-                {t(
-                  "Review item: section 4, paragraph 2 · amount, scope and exception",
-                  "核对项：第 4 节第 2 段 · 金额、范围与例外",
-                )}
-              </p>
-              <div className="tap-document-checks">
-                {[
-                  [
-                    "Text and key values match the original",
-                    "文本与关键数值和原文一致",
-                  ],
-                  ["Source locations are correct", "原文位置准确"],
-                  ["Version and scope are correct", "版本与适用范围正确"],
-                  [
-                    "Conditions and exceptions match the original",
-                    "条件与例外和原文一致",
-                  ],
-                ].map(([en, zh], i) => (
-                  <label key={en}>
-                    <input
-                      type="checkbox"
-                      checked={d.checks[i]}
-                      disabled={d.state !== "review"}
-                      onChange={(event) =>
-                        review.update({
-                          checks: d.checks.map((checked, index) =>
-                            index === i ? event.target.checked : checked,
-                          ),
-                        })
-                      }
-                    />
-                    {t(en!, zh!)}
-                  </label>
-                ))}
-              </div>
-            </section>
-          </div>
-          <section
-            className="tap-document-history"
-            aria-label={t("Review history", "审核记录")}
-          >
-            <h3>{t("Review history", "审核记录")}</h3>
-            {d.history.length === 0 ? (
-              <p>{t("No decisions yet", "暂无核对记录")}</p>
-            ) : (
-              <ol>
-                {d.history.map((event) => (
-                  <li key={event.revision}>
-                    {t("Revision", "修订")} {event.revision} · {event.action} ·{" "}
-                    {event.actorId}
-                  </li>
-                ))}
-              </ol>
-            )}
-          </section>
-          <footer>
-            {d.state === "published" ? (
-              <>
-                <span role="status">
-                  {t("Published to knowledge library", "已发布到知识库")}
-                </span>
-                <Button
-                  type="primary"
-                  onClick={() => {
-                    onUse(d.id);
-                    review.close();
-                  }}
-                >
-                  {t("Ask Tapper", "向 Tapper 提问")}
-                </Button>
-                <Button
-                  danger
-                  onClick={() => review.update({ state: "withdrawn" })}
-                >
-                  {t("Withdraw", "撤回")}
-                </Button>
-              </>
-            ) : d.state === "withdrawn" ? (
-              <span role="status">
-                {t("Publication withdrawn", "发布已撤回")}
-              </span>
-            ) : d.state === "reviewing" ? (
-              <span role="status">
-                {t("Awaiting independent review", "待独立复核")} ·{" "}
-                {t("Handed off to reviewer", "已移交复核人")}
-              </span>
-            ) : d.state === "approved" ? (
-              <>
-                <span role="status">
-                  {t("Approved; ready to publish", "已批准，待发布")}
-                </span>
-                <Button
-                  type="primary"
-                  onClick={() => review.update({ state: "published" })}
-                >
-                  {t("Publish", "发布")}
-                </Button>
-              </>
-            ) : (
-              <>
-                <span>
-                  {t(
-                    `${d.checks.filter(Boolean).length} of 4 checks completed`,
-                    `已核对 ${d.checks.filter(Boolean).length} / 4 项`,
-                  )}
-                </span>
-                <Button
-                  type="primary"
-                  disabled={!d.checks.every(Boolean)}
-                  onClick={() => review.update({ state: "reviewing" })}
-                >
-                  {t("Submit for review", "提交复核")}
-                </Button>
-              </>
-            )}
-          </footer>
-        </>
+              </details>
+            </>
+          }
+        />
       )}
+      <footer>
+        <small>
+          {t(
+            "Save changes to update the index. Enabled chunks become searchable when ready.",
+            "保存后更新索引，索引就绪后即可检索已启用切片。",
+          )}
+        </small>
+        <Button
+          type="primary"
+          disabled={
+            d.state === "failed" ||
+            d.state === "processing" ||
+            d.available === false
+          }
+          onClick={() => {
+            onUse(d.id);
+            review.close();
+          }}
+        >
+          {t("Ask Tapper", "向 Tapper 提问")}
+        </Button>
+      </footer>
     </AccessibleDialog>
+  );
+}
+
+type ReviewProps = {
+  document: Document;
+  review: ReturnType<typeof useDocumentReview>;
+};
+function ReviewWorkbench({ document: d, review }: ReviewProps) {
+  const { t } = review;
+  const textSections = [
+    {
+      number: 3,
+      title: t("3. Application information", "3. 投保信息"),
+      paragraphs: [
+        t(
+          "The application records the applicant’s information and supporting disclosures.",
+          "投保申请记录申请人信息与相关告知内容。",
+        ),
+        t(
+          "Check the applicable version and scope before using this guide.",
+          "使用本指南前，请核对适用版本与范围。",
+        ),
+      ],
+    },
+    {
+      number: 4,
+      title: t("4. Health disclosure", "4. 健康告知"),
+      paragraphs: [
+        t(
+          "An application must include a completed health disclosure before submission.",
+          "投保申请提交前必须完成健康告知。",
+        ),
+        t(
+          "If disclosure is missing, block submission and return HTTP 422 with HEALTH_DISCLOSURE_REQUIRED.",
+          "缺少健康告知时，阻止提交并返回 HTTP 422，错误码 HEALTH_DISCLOSURE_REQUIRED。",
+        ),
+        t(
+          "Keep entered information and allow the applicant to complete missing fields before resubmitting.",
+          "保留已填写信息，允许申请人补齐缺失项后再次提交。",
+        ),
+      ],
+    },
+    {
+      number: 5,
+      title: t("5. Submission and correction", "5. 提交与补充"),
+      paragraphs: [
+        t(
+          "Review the application and completed disclosure together before resubmitting.",
+          "再次提交前，一并核对投保申请与已补充的告知内容。",
+        ),
+        t(
+          "Previously entered information remains available while the applicant completes missing fields.",
+          "申请人补齐缺失项时，先前填写的信息应予保留。",
+        ),
+      ],
+    },
+  ];
+  const pdfSections = [
+    {
+      number: 3,
+      title: t("Page 3", "第 3 页"),
+      paragraphs: [
+        t(
+          "The application must record the product and applicant identity.",
+          "申请资料须记录产品与投保人身份。",
+        ),
+      ],
+    },
+    {
+      number: 4,
+      title: t("Page 4", "第 4 页"),
+      paragraphs: [
+        t(
+          "Health disclosure is required before an underwriting decision.",
+          "核保决定前须完成健康告知。",
+        ),
+        t(
+          "The reviewer checks this passage against the original PDF page.",
+          "复核人须对照 PDF 原件对应页核对本段。",
+        ),
+      ],
+    },
+    {
+      number: 5,
+      title: t("Page 5", "第 5 页"),
+      paragraphs: [
+        t(
+          "Exceptions require a documented decision and approval.",
+          "例外处理须记录决定和批准依据。",
+        ),
+      ],
+    },
+  ];
+  const excelSections = [
+    {
+      number: 3,
+      title: "Rates!A3:C3",
+      paragraphs: [
+        t("Product\tRate\tUnit", "产品\t费率\t单位"),
+        t("Life cover\t0.25\t%", "寿险保障\t0.25\t%"),
+      ],
+    },
+    {
+      number: 4,
+      title: "Rates!A4:C4",
+      paragraphs: [
+        t("Product\tRate\tUnit", "产品\t费率\t单位"),
+        t("Critical illness\t0.35\t%", "重疾保障\t0.35\t%"),
+      ],
+    },
+    {
+      number: 5,
+      title: "Rates!A5:C5",
+      paragraphs: [
+        t("Product\tRate\tUnit", "产品\t费率\t单位"),
+        t("Accident\t0.18\t%", "意外保障\t0.18\t%"),
+      ],
+    },
+  ];
+  const flowchartSections = [
+    {
+      number: 3,
+      title: t("3. Intake and completion", "3. 受理与补件"),
+      paragraphs: [
+        t(
+          "Missing disclosure returns to applicant for correction.",
+          "健康告知缺失时退回申请人补齐。",
+        ),
+        t(
+          "Resubmission restarts the completeness check.",
+          "补件后重新检查资料完整性。",
+        ),
+      ],
+    },
+    {
+      number: 4,
+      title: t("4. Risk and approval", "4. 风险与批准"),
+      paragraphs: [
+        t(
+          "High risk requires senior review and compliance approval.",
+          "高风险须经过资深核保与合规复核。",
+        ),
+        t(
+          "Low risk proceeds through automatic approval.",
+          "低风险进入自动核保批准。",
+        ),
+      ],
+    },
+    {
+      number: 5,
+      title: t("5. Payment and issuance", "5. 缴费与出单"),
+      paragraphs: [
+        t(
+          "Failed payment returns to the applicant for retry.",
+          "缴费失败时通知申请人重试。",
+        ),
+        t(
+          "Successful payment leads to policy issuance.",
+          "缴费成功后出具保单。",
+        ),
+      ],
+    },
+  ];
+  const isFlowchart = d.id === "approval-flow-complex";
+  const sections = isFlowchart
+    ? flowchartSections
+    : d.name.toLowerCase().endsWith(".xlsx")
+      ? excelSections
+      : d.name.toLowerCase().endsWith(".pdf")
+        ? pdfSections
+        : textSections;
+  const [active, setActive] = useState(4);
+  const [query, setQuery] = useState("");
+  const [problems, setProblems] = useState(false);
+  const [selection, setSelection] = useState("");
+  const [quote, setQuote] = useState("");
+  const [text, setText] = useState("");
+  const [notice, setNotice] = useState("");
+  const drafts = useRef<Record<number, { quote: string; text: string }>>({});
+  const sourceRef = useRef<HTMLElement>(null);
+  const comments = d.comments ?? [];
+  const openComments = comments.filter((comment) => !comment.resolved);
+  const current = sections.find((section) => section.number === active)!;
+  const filtered = sections.filter((section) =>
+    `${section.title} ${section.number}`
+      .toLocaleLowerCase()
+      .includes(query.toLocaleLowerCase()),
+  );
+  const editable = d.state === "review";
+  function markedParagraph(paragraph: string) {
+    const quotes = comments
+      .filter(
+        (comment) =>
+          comment.section === active &&
+          comment.quote &&
+          paragraph.includes(comment.quote),
+      )
+      .map((comment) => comment.quote);
+    if (!quotes.length) return paragraph;
+    const boundaries = new Set([0, paragraph.length]);
+    const ranges = quotes.flatMap((value) => {
+      const found: [number, number][] = [];
+      let start = paragraph.indexOf(value);
+      while (start !== -1) {
+        found.push([start, start + value.length]);
+        boundaries.add(start);
+        boundaries.add(start + value.length);
+        start = paragraph.indexOf(value, start + value.length);
+      }
+      return found;
+    });
+    const points = [...boundaries].sort((a, b) => a - b);
+    return points.slice(0, -1).map((start, index) => {
+      const end = points[index + 1]!;
+      const content = paragraph.slice(start, end);
+      return ranges.some(([left, right]) => start >= left && end <= right) ? (
+        <mark data-review-mark key={start}>
+          {content}
+        </mark>
+      ) : (
+        <span key={start}>{content}</span>
+      );
+    });
+  }
+  function navigate(number: number) {
+    if (!sections.some((section) => section.number === number)) return;
+    drafts.current[active] = { quote, text };
+    setActive(number);
+    setSelection("");
+    setQuote(drafts.current[number]?.quote ?? "");
+    setText(drafts.current[number]?.text ?? "");
+    setNotice("");
+    window.getSelection()?.removeAllRanges();
+  }
+  function captureSelection() {
+    const selected = window.getSelection();
+    if (
+      selected &&
+      sourceRef.current?.contains(selected.anchorNode) &&
+      sourceRef.current?.contains(selected.focusNode)
+    )
+      setSelection(selected.toString().trim());
+  }
+  return (
+    <div className="tap-review-workbench">
+      <aside className="tap-review-outline">
+        <div className="tap-review-modes">
+          <button
+            type="button"
+            aria-pressed={!problems}
+            onClick={() => setProblems(false)}
+          >
+            {t("Outline", "目录")}
+          </button>
+          <button
+            type="button"
+            aria-pressed={problems}
+            onClick={() => setProblems(true)}
+          >
+            {t(
+              `Open comments (${openComments.length})`,
+              `待核对 (${openComments.length})`,
+            )}
+          </button>
+        </div>
+        {problems ? (
+          <div className="tap-review-problems">
+            {openComments.length === 0 ? (
+              <p>
+                {t(
+                  "No open comments. Select a passage to raise a question.",
+                  "暂无待核对意见。选取原文可添加问题。",
+                )}
+              </p>
+            ) : (
+              openComments.map((comment) => (
+                <button
+                  key={comment.id}
+                  type="button"
+                  onClick={() => navigate(comment.section)}
+                >
+                  <small>
+                    {
+                      sections.find(
+                        (section) => section.number === comment.section,
+                      )?.title
+                    }
+                  </small>
+                  {comment.text}
+                </button>
+              ))
+            )}
+          </div>
+        ) : (
+          <>
+            <input
+              type="search"
+              aria-label={t("Find a section", "查找章节")}
+              placeholder={t("Find a section…", "查找章节…")}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <small>
+              {t(
+                `${filtered.length} of ${sections.length} sections`,
+                `${filtered.length} / ${sections.length} 个章节`,
+              )}
+            </small>
+            <nav aria-label={t("Document outline", "文档目录")}>
+              {filtered.map((section) => (
+                <button
+                  key={section.number}
+                  type="button"
+                  aria-current={
+                    section.number === active ? "location" : undefined
+                  }
+                  onClick={() => navigate(section.number)}
+                >
+                  {section.title}
+                  <small>
+                    {d.name.toLowerCase().endsWith(".xlsx")
+                      ? t("1 row", "1 行")
+                      : d.name.toLowerCase().endsWith(".pdf")
+                        ? t("1 page", "1 页")
+                        : t(
+                            `${section.paragraphs.length} paragraphs`,
+                            `${section.paragraphs.length} 段`,
+                          )}
+                  </small>
+                </button>
+              ))}
+              {filtered.length === 0 && (
+                <p>
+                  {t(
+                    "No matching sections. Try a title or section number.",
+                    "未找到章节，请尝试标题或章节号。",
+                  )}
+                </p>
+              )}
+            </nav>
+          </>
+        )}
+      </aside>
+      <div className="tap-review-reader">
+        <div className="tap-review-reader-toolbar">
+          <strong>
+            {isFlowchart
+              ? t("Original image and extracted flow", "原图与流程解析")
+              : d.name.toLowerCase().endsWith(".xlsx")
+                ? t("Extracted cells", "提取单元格")
+                : t("Extracted text", "提取文本")}
+          </strong>
+          <span>{d.version}</span>
+        </div>
+        <article
+          ref={sourceRef}
+          className="tap-document-original"
+          onMouseUp={captureSelection}
+          onKeyUp={captureSelection}
+          tabIndex={0}
+          aria-label={t("Source passage", "来源段落")}
+        >
+          {isFlowchart ? (
+            <div className="tap-review-flowchart-preview">
+              <img
+                src="/prototype-files/underwriting-approval-flow.png"
+                alt={t(
+                  "Original underwriting approval flowchart",
+                  "核保审批流程图原图",
+                )}
+              />
+              <a
+                href="/prototype-files/underwriting-approval-flow.png"
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t("Open full image", "查看完整原图")}
+              </a>
+            </div>
+          ) : null}
+          <h3>{current.title}</h3>
+          {d.name.toLowerCase().endsWith(".xlsx") ? (
+            <div className="tap-review-table-scroll">
+              <table aria-label={t("Extracted worksheet row", "提取工作表行")}>
+                <thead>
+                  <tr>
+                    {current.paragraphs[0]!.split("\t").map((cell, index) => (
+                      <th key={index} scope="col">
+                        {cell}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    {current.paragraphs[1]!.split("\t").map((cell, index) => (
+                      <td key={index}>{markedParagraph(cell)}</td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            current.paragraphs.map((paragraph, index) => (
+              <p key={paragraph}>
+                {active === 4 && index === 1 && !isFlowchart ? (
+                  <mark>{markedParagraph(paragraph)}</mark>
+                ) : (
+                  markedParagraph(paragraph)
+                )}
+              </p>
+            ))
+          )}
+        </article>
+        <div className="tap-review-reader-actions">
+          <Button
+            disabled={!editable || !selection}
+            onClick={() => {
+              setQuote(selection);
+              setNotice("");
+            }}
+          >
+            {t("Mark selected text", "标记选中文字")}
+          </Button>
+          <small>
+            {t(
+              "Select text to attach a comment. The source stays unchanged.",
+              "选取文字添加意见，原文保持不变。",
+            )}
+          </small>
+        </div>
+        <div className="tap-review-pagination">
+          <Button disabled={active === 3} onClick={() => navigate(active - 1)}>
+            {t("Previous section", "上一节")}
+          </Button>
+          <small>
+            {active - 2} / {sections.length}
+          </small>
+          <Button disabled={active === 5} onClick={() => navigate(active + 1)}>
+            {t("Next section", "下一节")}
+          </Button>
+        </div>
+      </div>
+      <section
+        className="tap-review-comments"
+        aria-label={t("Section comments", "章节意见")}
+      >
+        <h3>{t("Review comments", "核对意见")}</h3>
+        <small>
+          {d.name.toLowerCase().endsWith(".xlsx")
+            ? t("Worksheet row", "工作表行")
+            : d.name.toLowerCase().endsWith(".pdf")
+              ? t("PDF page", "PDF 页")
+              : t("Section", "章节")}{" "}
+          · {current.title}
+        </small>
+        {comments
+          .filter((comment) => comment.section === active)
+          .map((comment) => (
+            <div className="tap-review-comment" key={comment.id}>
+              <blockquote>{comment.quote}</blockquote>
+              <p>{comment.text}</p>
+              {comment.resolved ? (
+                <small>{t("Resolved", "已解决")}</small>
+              ) : (
+                <Button
+                  disabled={!editable}
+                  onClick={() =>
+                    review.update({
+                      comments: comments.map((item) =>
+                        item.id === comment.id
+                          ? { ...item, resolved: true }
+                          : item,
+                      ),
+                    })
+                  }
+                >
+                  {t("Resolve comment", "标为已解决")}
+                </Button>
+              )}
+            </div>
+          ))}
+        {editable && (
+          <div className="tap-review-comment-form">
+            {quote ? (
+              <blockquote>{quote}</blockquote>
+            ) : (
+              <p>
+                {t(
+                  "Mark a passage or leave a comment for this section.",
+                  "标记一段文字，或为本节填写核对意见。",
+                )}
+              </p>
+            )}
+            <label htmlFor="tap-review-comment">
+              {t("Review comment", "核对意见")}
+            </label>
+            <textarea
+              id="tap-review-comment"
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              rows={4}
+              placeholder={t("What needs to be checked?", "哪些内容需要核对？")}
+            />
+            <Button
+              disabled={!text.trim()}
+              onClick={() => {
+                review.update({
+                  comments: [
+                    ...comments,
+                    {
+                      id: crypto.randomUUID(),
+                      section: active,
+                      quote,
+                      text: text.trim(),
+                      resolved: false,
+                    },
+                  ],
+                });
+                setQuote("");
+                setText("");
+                setSelection("");
+                setNotice(t("Comment saved", "意见已保存"));
+              }}
+            >
+              {t("Save comment", "保存意见")}
+            </Button>
+            <small aria-live="polite">{notice}</small>
+          </div>
+        )}
+        {openComments.length > 0 && (
+          <p className="tap-review-open-notice">
+            {t(
+              "Comments are retained with the original document.",
+              "核对意见保留在原始文档中。",
+            )}
+          </p>
+        )}
+      </section>
+    </div>
   );
 }
 export function KnowledgeAnswer({
@@ -488,7 +953,7 @@ export function KnowledgeAnswer({
   if (turn.answerState === "running")
     return (
       <div role="status">
-        <p>{t("Searching published sources…", "正在检索已发布资料…")}</p>
+        <p>{t("Searching enabled sources…", "正在检索已启用资料…")}</p>
         <Button onClick={onStop}>{t("Stop", "停止生成")}</Button>
       </div>
     );
@@ -550,9 +1015,7 @@ export function KnowledgeAnswer({
           <header>
             <div>
               <h2>{turn.sourceReferences[0]?.name}</h2>
-              <p>
-                {t("Published version · Section 4", "已发布版本 · 第 4 节")}
-              </p>
+              <p>{t("Source version · Section 4", "来源版本 · 第 4 节")}</p>
             </div>
             <Button
               onClick={() => setCitation(false)}

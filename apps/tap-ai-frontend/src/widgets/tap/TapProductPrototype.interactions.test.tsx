@@ -280,10 +280,10 @@ it("shows Source documents in Library and targets retry and confirmed deletion",
   });
   expect(await within(dialog).findByText("failed.txt")).toBeVisible();
   await userEvent.click(
-    within(dialog).getByRole("button", { name: "Review failed.txt" }),
+    within(dialog).getByRole("button", { name: "管理切片 failed.txt" }),
   );
   expect(
-    await within(dialog).findByRole("heading", { name: "业务审核" }),
+    await within(dialog).findByRole("heading", { name: "切片管理" }),
   ).toBeVisible();
   await userEvent.click(
     within(dialog).getByRole("button", { name: "Retry failed.txt" }),

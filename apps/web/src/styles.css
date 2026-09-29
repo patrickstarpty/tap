@@ -32,10 +32,15 @@ body {
   background: #e9f1ff;
   color: #174a9a;
 }
-.tap-app main {
+.tap-runtime-main {
   padding: 1.5rem;
-  max-width: 1440px;
-  margin: auto;
+  background: var(--tap-canvas);
+}
+.tap-runtime-main .ti-workspace {
+  padding-inline: 0;
+}
+@media (max-width: 640px) {
+  .tap-runtime-main { padding: 16px 12px; }
 }
 .tap-workspace-transfer {
   margin-bottom: 1rem;

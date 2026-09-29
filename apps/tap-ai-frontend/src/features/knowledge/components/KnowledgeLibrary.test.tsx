@@ -19,7 +19,7 @@ import { KnowledgeClientError } from "../api/client";
 import { KnowledgeLibrary } from "./KnowledgeLibrary";
 
 describe("KnowledgeLibrary", () => {
-  it("shows the separate business review state for an ingested document", async () => {
+  it("opens chunk management without requiring business review", async () => {
     const user = userEvent.setup();
     const ready = document({ status: "ready", stage: "ready" });
     renderKnowledgeApp(<KnowledgeLibrary />, {
@@ -30,9 +30,11 @@ describe("KnowledgeLibrary", () => {
 
     await user.click(await screen.findByRole("row", { name: /handbook\.md/u }));
     expect(
-      await screen.findByRole("heading", { name: "业务审核" }),
+      await screen.findByRole("heading", { name: "切片管理" }),
     ).toBeVisible();
-    expect(screen.getByText("未关联审核记录")).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "业务审核" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows one clear add-source action in an empty library", async () => {
@@ -78,7 +80,10 @@ describe("KnowledgeLibrary", () => {
     await user.click(await screen.findByRole("button", { name: "添加来源" }));
     const input = screen.getByLabelText("选择文档");
 
-    expect(input).toHaveAttribute("accept", ".pdf,.docx,.md,.markdown,.txt");
+    expect(input).toHaveAttribute(
+      "accept",
+      ".pdf,.docx,.xlsx,.md,.markdown,.txt",
+    );
     await user.upload(
       input,
       new File(["csv"], "records.csv", { type: "text/csv" }),
@@ -86,7 +91,7 @@ describe("KnowledgeLibrary", () => {
     await waitFor(() =>
       expect(
         within(screen.getByRole("dialog", { name: "添加来源" })).getByText(
-          "支持 PDF、DOCX、Markdown 和 TXT 文件。",
+          "支持 PDF、DOCX、XLSX、Markdown 和 TXT 文件。",
         ),
       ).toBeVisible(),
     );
@@ -106,11 +111,34 @@ describe("KnowledgeLibrary", () => {
     expect(api.uploadCalls).toBe(0);
   });
 
+  it.each(["legacy.xls", "macros.xlsm"])(
+    "rejects unsupported workbook %s before upload",
+    async (name) => {
+      const user = userEvent.setup({ applyAccept: false });
+      const api = fakeKnowledgeClient();
+      renderKnowledgeApp(<KnowledgeLibrary />, { api });
+      await user.click(await screen.findByRole("button", { name: "添加来源" }));
+      await user.upload(
+        screen.getByLabelText("选择文档"),
+        new File(["workbook"], name),
+      );
+      expect(screen.getByRole("button", { name: "开始添加" })).toBeDisabled();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "支持 PDF、DOCX、XLSX、Markdown 和 TXT 文件。",
+      );
+      expect(api.uploadCalls).toBe(0);
+    },
+  );
+
   it.each([
     ["guide.pdf", "application/pdf"],
     [
       "guide.docx",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
+    [
+      "guide.xlsx",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ],
     ["guide.markdown", "text/markdown"],
     ["guide.txt", "text/plain"],

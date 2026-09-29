@@ -43,6 +43,7 @@ class LogicalChunkId(str):
 class MediaType(str, Enum):
     PDF = "application/pdf"
     DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     MARKDOWN = "text/markdown"
     TEXT = "text/plain"
 
@@ -322,6 +323,7 @@ def validate_filename_media_type(filename: str, media_type: MediaType) -> None:
     expected = {
         MediaType.PDF: {".pdf"},
         MediaType.DOCX: {".docx"},
+        MediaType.XLSX: {".xlsx"},
         MediaType.MARKDOWN: {".md", ".markdown"},
         MediaType.TEXT: {".txt"},
     }[media_type]

@@ -373,3 +373,29 @@ def _attempt_contract(value: AttemptDetail) -> AttemptDetailContract:
         durationSeconds=value.duration_seconds,
         evidenceRefs=list(value.evidence_refs),
     )
+
+
+class ReportAttachmentContract(ContractModel):
+    name: str
+    source: str
+    media_type: str = Field(alias="mediaType")
+    available: bool
+
+
+class ReportStepContract(ContractModel):
+    name: str
+    status: str
+    message: str
+    trace: str
+    attachments: list[ReportAttachmentContract]
+    steps: list[ReportStepContract]
+
+
+class ReportAttemptEvidenceContract(ReportStepContract):
+    fact_key: str = Field(alias="factKey")
+    legacy_fact_key: str | None = Field(default=None, alias="legacyFactKey")
+
+
+class ReportEvidenceContract(ContractModel):
+    report_format: Literal["junit", "pytest", "allure"] = Field(alias="reportFormat")
+    attempts: list[ReportAttemptEvidenceContract]

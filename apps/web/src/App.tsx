@@ -2,6 +2,10 @@ import { ConfigProvider } from "antd";
 import { TapProductPrototype } from "./widgets/tap/TapProductPrototype";
 import { tapperTheme } from "./widgets/tap/PrototypeTheme";
 import "./widgets/tap/PrototypeTheme.css";
+import "./widgets/tap/TapProductPrototype.css";
+import { PrototypeSidebar } from "./widgets/tap/prototype/PrototypeSidebar";
+import { PROTOTYPE_COPY } from "./widgets/tap/prototype/copy";
+import type { ProductModule } from "./widgets/tap/prototype/model";
 import { useEffect, useLayoutEffect, useReducer, useState } from "react";
 
 import {
@@ -26,23 +30,19 @@ import "./legacy/automation/AutomationWorkspace.css";
 export function App() {
   const isPrototype = window.location.pathname === "/prototype";
   useLayoutEffect(() => {
-    if (!isPrototype) return;
     document.documentElement.dataset.tapPrototype = "true";
     return () => { delete document.documentElement.dataset.tapPrototype; };
   }, [isPrototype]);
-  return isPrototype ? (
-    <ConfigProvider theme={tapperTheme}>
-      <TapProductPrototype />
-    </ConfigProvider>
-  ) : (
-    <TapApplication />
-  );
+  return <ConfigProvider theme={tapperTheme}>
+    {isPrototype ? <TapProductPrototype /> : <TapApplication />}
+  </ConfigProvider>;
 }
 
 function TapApplication() {
   const [section, setSection] = useState<"automation" | "analytics">(
-    new URLSearchParams(window.location.search).get("module") ===
-      "test-analytics"
+    ["test-insights", "test-analytics"].includes(
+      new URLSearchParams(window.location.search).get("module") ?? "",
+    )
       ? "analytics"
       : "automation",
   );
@@ -56,37 +56,43 @@ function TapApplication() {
     kind: "library",
   });
   const [notice, setNotice] = useState("");
+  const selectModule = (module: ProductModule) => {
+    if (module === "test-insights" || module === "low-code") {
+      const next = module === "test-insights" ? "analytics" : "automation";
+      setSection(next);
+      const url = new URL(window.location.href);
+      url.searchParams.set("module", module);
+      window.history.replaceState(null, "", url);
+      return;
+    }
+    window.location.assign(`/prototype?module=${module}`);
+  };
 
   return (
-    <div className="tap-app">
-      <header className="tap-app-header">
-        <strong>TAP</strong>
-        <nav aria-label="TAP modules">
-          <button
-            type="button"
-            aria-current={section === "automation" ? "page" : undefined}
-            onClick={() => setSection("automation")}
-          >
-            Low Code Automation
-          </button>
-          <button
-            type="button"
-            aria-current={section === "analytics" ? "page" : undefined}
-            onClick={() => setSection("analytics")}
-          >
-            Test Analytics
-          </button>
-        </nav>
-      </header>
-      <main>
-        <WorkspaceTransfer
+    <div className="tap-product-shell tap-runtime-shell">
+      <PrototypeSidebar
+        activeConversationId=""
+        activeModule={section === "analytics" ? "test-insights" : "low-code"}
+        collapsed
+        conversations={[]}
+        copy={PROTOTYPE_COPY.en}
+        locale="en"
+        onLocaleChange={() => {}}
+        onModuleChange={selectModule}
+        onNewChat={() => selectModule("tapper")}
+        onSelectConversation={() => {}}
+        onToggleCollapsed={() => {}}
+        showFooter={false}
+      />
+      <main className="tap-product-main tap-runtime-main">
+        {section === "automation" ? <WorkspaceTransfer
           state={state}
           onRestore={(restored) => {
             dispatch({ type: "workspace/restore", state: restored });
             setView({ kind: "library" });
             setSection("automation");
           }}
-        />
+        /> : null}
         {section === "analytics" ? (
           <TestAnalyticsWorkspace
             locale="en"
@@ -144,6 +150,6 @@ function TapApplication() {
         )}
         {notice ? <p role="status">{notice}</p> : null}
       </main>
-    </div>
+  </div>
   );
 }

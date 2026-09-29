@@ -30,7 +30,10 @@ function legacyWorkspace() {
   });
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  window.history.replaceState(null, "", "/");
+});
 afterEach(cleanup);
 afterEach(() => vi.restoreAllMocks());
 
@@ -225,20 +228,22 @@ describe("TAP non-AI application", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("opens automation and analytics without mounting Tapper", async () => {
+  it("opens automation and Insights from the product sidebar", async () => {
     const user = userEvent.setup();
     render(<App />);
 
     expect(
       screen.getByRole("button", { name: "Low Code Automation" }),
     ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Tapper" }),
-    ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Test Analytics" }));
+    expect(screen.getByRole("navigation", { name: "Product" })).toBeVisible();
+    expect(screen.queryByText("Test Analytics")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Test Insights" }));
     expect(
       screen.getByRole("heading", { name: "Test Insights" }),
     ).toBeVisible();
+    expect(screen.queryByText("Local workspace")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Insights" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Test Insights" })).toHaveAttribute("aria-current", "page");
   });
 
   it("keeps the automation editor free of the Tapper agent panel", async () => {

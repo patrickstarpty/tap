@@ -33,7 +33,7 @@ from sqlalchemy.engine import Connection, Engine, RowMapping
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects import mysql
 
-from tap_platform.insights.adapters.junit import PARSER_VERSION
+from tap_platform.insights.adapters.report_parser import parser_version
 from tap_platform.insights.adapters.objects import StoredObject
 from tap_platform.insights.application.queries import (
     AttemptDetail,
@@ -331,7 +331,7 @@ class SqlAlchemyReportLedger:
                     checksum=raw.checksum,
                     size_bytes=raw.size_bytes,
                     raw_object_ref=raw.ref,
-                    parser_version=PARSER_VERSION,
+                    parser_version=parser_version(manifest),
                     state=ReportState.RECEIVED.value,
                     completeness=completeness.value,
                     manifest=manifest.to_dict(),
@@ -1273,7 +1273,7 @@ class SqlAlchemyReportLedger:
                     checksum=raw.checksum,
                     size_bytes=raw.size_bytes,
                     raw_object_ref=raw.ref,
-                    parser_version=PARSER_VERSION,
+                    parser_version=parser_version(manifest),
                     state=ReportState.CONFLICTED.value,
                     completeness=completeness.value,
                     manifest=manifest.to_dict(),

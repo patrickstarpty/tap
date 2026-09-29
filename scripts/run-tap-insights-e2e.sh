@@ -118,7 +118,7 @@ insights_wait_url() {
 
 insights_require_free_port() {
   local port="$1"
-  if lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | rg -q .; then
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | grep -q .; then
     echo "owned TAP Insights port $port is already in use" >&2
     return 1
   fi
@@ -190,4 +190,15 @@ insights_compose up -d --wait --wait-timeout 180 mysql clickhouse
 insights_start_apps
 insights_run_phase compose-restart
 
-echo "TAP Insights owned JUnit upload, query, detail, and restart journey passed."
+insights_stop_apps
+uv run --project apps/backend python scripts/rebuild-insights.py \
+  --compose-project "$insights_project" \
+  --target-version rebuild-report-formats \
+  --confirm-target rebuild-report-formats \
+  --database-url "$TAP_DATABASE_URL" \
+  --object-root "$TAP_REPORT_OBJECT_ROOT" \
+  --clickhouse-url "$TAP_CLICKHOUSE_URL"
+insights_start_apps
+insights_run_phase projection-rebuild
+
+echo "TAP Insights JUnit/Allure upload, evidence, restart, and projection rebuild journey passed."

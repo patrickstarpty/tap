@@ -45,10 +45,12 @@ interface PrototypeSidebarProps {
   onLocaleChange: (locale: Locale) => void;
   onModuleChange: (module: ProductModule) => void;
   onNewChat: () => void;
-  onDeleteConversation: (conversationId: string) => void;
-  onRenameConversation: (conversationId: string, title: string) => void;
+  /** History actions appear only where the shell can rename and delete chats. */
+  onDeleteConversation?: (conversationId: string) => void;
+  onRenameConversation?: (conversationId: string, title: string) => void;
   onSelectConversation: (conversationId: string) => void;
   onToggleCollapsed: () => void;
+  showFooter?: boolean;
 }
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 120;
@@ -67,6 +69,7 @@ export function PrototypeSidebar({
   onRenameConversation,
   onSelectConversation,
   onToggleCollapsed,
+  showFooter = true,
 }: PrototypeSidebarProps) {
   const [historyQuery, setHistoryQuery] = useState("");
   const [menuConversationId, setMenuConversationId] = useState<string | null>(
@@ -144,8 +147,8 @@ export function PrototypeSidebar({
       icon: <CodeOutlined aria-hidden="true" />,
     },
     {
-      key: "test-analytics",
-      label: copy.navigation["test-analytics"],
+      key: "test-insights",
+      label: copy.navigation["test-insights"],
       icon: <BarChartOutlined aria-hidden="true" />,
     },
   ];
@@ -246,7 +249,7 @@ export function PrototypeSidebar({
         setRenaming({ ...current, invalid: true });
         return;
       }
-      onRenameConversation(current.conversationId, title);
+      onRenameConversation?.(current.conversationId, title);
     }
     renamingRef.current = null;
     setRenaming(null);
@@ -256,7 +259,7 @@ export function PrototypeSidebar({
   const confirmDelete = () => {
     if (deleteTarget === null) return;
     const deletingActive = deleteTarget.id === activeConversationId;
-    onDeleteConversation(deleteTarget.id);
+    onDeleteConversation?.(deleteTarget.id);
     setDeleteTarget(null);
     if (!deletingActive) searchRef.current?.focus();
   };
@@ -322,7 +325,7 @@ export function PrototypeSidebar({
           {productModules.map((module) => moduleButton(module, "product"))}
         </nav>
 
-        <div className="tap-sidebar-footer">
+        {showFooter ? <div className="tap-sidebar-footer">
           <div
             className="tap-language-switcher"
             aria-label={copy.navigation.language}
@@ -350,7 +353,7 @@ export function PrototypeSidebar({
             <strong>{copy.navigation.prototypeTeam}</strong>
             <small>{copy.navigation.localWorkspace}</small>
           </span>
-        </div>
+        </div> : null}
       </aside>
 
       <aside
@@ -506,6 +509,8 @@ export function PrototypeSidebar({
                       <span>{label}</span>
                     </button>
                   )}
+                  {onRenameConversation === undefined ||
+                  onDeleteConversation === undefined ? null : (
                   <button
                     ref={(element) => {
                       if (element === null)
@@ -533,6 +538,7 @@ export function PrototypeSidebar({
                   >
                     <MoreOutlined aria-hidden="true" />
                   </button>
+                  )}
                   {menuOpen ? (
                     <div
                       ref={menuRef}

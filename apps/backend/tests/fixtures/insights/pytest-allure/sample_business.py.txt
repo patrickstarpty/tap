@@ -1,0 +1,23 @@
+import base64
+import allure
+import pytest
+
+@pytest.fixture(autouse=True)
+def business_context():
+    with allure.step('Prepare synthetic business context'):
+        allure.attach('synthetic-development-fixture', 'Source', allure.attachment_type.TEXT)
+    yield
+
+@pytest.mark.parametrize('method', ['card', 'cash'])
+def test_payment(method):
+    with allure.step('Submit payment'):
+        assert method in {'card', 'cash'}
+
+def test_identity_required():
+    with allure.step('Validate identity'):
+        allure.attach(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='), 'Synthetic diagnostic image', allure.attachment_type.PNG)
+        assert False, 'Synthetic missing identity evidence'
+
+@pytest.mark.skip(reason='Synthetic unavailable dependency')
+def test_unavailable():
+    pass

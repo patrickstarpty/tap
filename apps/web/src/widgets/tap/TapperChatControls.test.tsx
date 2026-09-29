@@ -325,7 +325,7 @@ describe("composer and turn controls", () => {
     expect(screen.getAllByText("Message context · 1")).toHaveLength(2);
   });
 
-  it("uploads a file to Library and keeps it out of context until published", () => {
+  it("uploads a file to Library and adds it to the message once searchable", () => {
     render(<TapProductPrototype />);
     fireEvent.click(screen.getByRole("button", { name: "Add to message" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Upload file" }));
@@ -358,26 +358,14 @@ describe("composer and turn controls", () => {
       },
     });
     expect(screen.queryByRole("alert")).toBeNull();
-    const attachments = screen.getByRole("group", { name: "Attachments" });
-    expect(within(attachments).getByText("Claims notes.md")).toBeVisible();
-    expect(within(attachments).getByText("Processing…")).toBeVisible();
-
-    advance(1000);
+    // Text sources index directly, so a searchable upload joins this message.
+    expect(screen.queryByRole("dialog", { name: "Document review" })).toBeNull();
     expect(
-      within(attachments).getByText("Needs review before use"),
+      within(screen.getByRole("group", { name: "Message context" })).getByText(
+        "Claims notes.md",
+      ),
     ).toBeVisible();
-    expect(screen.queryByRole("group", { name: "Message context" })).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Remove Claims notes.md" }),
-    ).not.toBeNull();
-
-    fireEvent.click(
-      within(attachments).getByRole("button", { name: "Review in Library" }),
-    );
-    expect(screen.getByRole("dialog", { name: "Document review" })).toBeVisible();
-    expect(
-      screen.getByRole("heading", { name: "Claims notes.md" }),
-    ).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Attachments" })).toBeNull();
   });
 
   it("adds a published attachment to the message context", () => {

@@ -1,0 +1,54 @@
+{
+  "name": "test_identity_required",
+  "status": "failed",
+  "statusDetails": {
+    "message": "AssertionError: Synthetic missing identity evidence\nassert False",
+    "trace": "def test_identity_required():\n        with allure.step('Validate identity'):\n            allure.attach(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='), 'Synthetic diagnostic image', allure.attachment_type.PNG)\n>           assert False, 'Synthetic missing identity evidence'\nE           AssertionError: Synthetic missing identity evidence\nE           assert False\n\nsample_business.py:19: AssertionError"
+  },
+  "steps": [
+    {
+      "name": "Validate identity",
+      "status": "failed",
+      "statusDetails": {
+        "message": "AssertionError: Synthetic missing identity evidence\nassert False\n",
+        "trace": "  File \"/private/tmp/tap-allure-generated/sample_business.py\", line 19, in test_identity_required\n    assert False, 'Synthetic missing identity evidence'\n"
+      },
+      "attachments": [
+        {
+          "name": "Synthetic diagnostic image",
+          "source": "e5441a9c-ce94-42a6-a107-14dfc1c4f4b0-attachment.png",
+          "type": "image/png"
+        }
+      ],
+      "start": 1790510475142,
+      "stop": 1790510475142
+    }
+  ],
+  "start": 1790510475142,
+  "stop": 1790510475142,
+  "uuid": "a843e90e-75bf-47a5-b610-9ce988a44336",
+  "historyId": "f1f8d4a253137680e30efeba1d4ef189",
+  "testCaseId": "f1f8d4a253137680e30efeba1d4ef189",
+  "fullName": "sample_business#test_identity_required",
+  "labels": [
+    {
+      "name": "suite",
+      "value": "sample_business"
+    },
+    {
+      "name": "framework",
+      "value": "pytest"
+    },
+    {
+      "name": "language",
+      "value": "cpython3"
+    },
+    {
+      "name": "package",
+      "value": "sample_business"
+    }
+  ],
+  "titlePath": [
+    "sample_business.py"
+  ]
+}

@@ -89,7 +89,7 @@ it("marks expired evidence separately from a missing attachment", async () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Download raw report" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("This evidence reference has expired or was removed.");
-  expect(screen.getByText("No screenshot was attached to this attempt.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "View report evidence" })).toBeVisible();
 });
 
 it.each([
@@ -138,4 +138,61 @@ it.each([
   );
   fireEvent.click(screen.getByRole("button", { name: "Download raw report" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
+});
+
+it("loads one receipt's evidence once for every attempt that references it", async () => {
+  const adapter = {
+    getReportEvidence: vi.fn().mockResolvedValue({
+      reportFormat: "allure",
+      attempts: ["fact-1", "fact-2"].map((factKey) => ({
+        factKey,
+        name: factKey,
+        status: "failed",
+        message: `message ${factKey}`,
+        trace: "",
+        steps: [],
+        attachments: [],
+      })),
+    }),
+  } as unknown as InsightsDataAdapter;
+  const attempt = {
+    externalRunId: "RUN-1042",
+    stableTestId: "case-1",
+    sourceTestIdentity: "suite::case-1",
+    dataRow: null,
+    result: "fail",
+    durationSeconds: 1,
+    evidenceRefs: ["receipt-shared"],
+  };
+  render(
+    <RunDetails
+      adapter={adapter}
+      projectId="project-a"
+      queryId="query-a"
+      tapperBaseUrl="https://tap-ai.example/chat"
+      run={{
+        runId: "opaque-run-1",
+        externalRunId: "RUN-1042",
+        sourceId: "ci",
+        buildId: "BUILD-1042",
+        branch: "main",
+        environment: "qa",
+        configuration: "browser=chromium",
+        startedAt: "2026-09-24T08:00:00Z",
+        instanceCount: 1,
+        evidenceRefs: ["receipt-shared"],
+      }}
+      attempts={[
+        { ...attempt, factKey: "fact-1", attempt: 1 },
+        { ...attempt, factKey: "fact-2", attempt: 2 },
+      ]}
+      onClose={vi.fn()}
+    />,
+  );
+  for (const button of screen.getAllByRole("button", { name: "View report evidence" })) {
+    fireEvent.click(button);
+  }
+  expect(await screen.findByText("message fact-1")).toBeVisible();
+  expect(await screen.findByText("message fact-2")).toBeVisible();
+  expect(adapter.getReportEvidence).toHaveBeenCalledTimes(1);
 });

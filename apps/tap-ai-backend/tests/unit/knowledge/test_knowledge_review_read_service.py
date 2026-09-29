@@ -392,3 +392,34 @@ def test_review_comparison_keeps_old_and_unalignable_inventory_explicit():
 
     run(scenario(None, "unavailable"))
     run(scenario("source-text-not-stably-addressable", "unsupported"))
+
+
+def test_review_original_download_checks_source_integrity_and_item_membership():
+    async def scenario() -> None:
+        original = b"%PDF-1.4\nexample"
+        target = ReviewComparisonTarget(
+            media_type="application/pdf",
+            source_revision_id="rev_001",
+            source_digest=canonical_sha256(original),
+            original_locator=ArtifactLocator("private/original"),
+            normalized_locator=None,
+            item_id="pi_001",
+            original_excerpt=None,
+            original_alignment_reason="pdf-layout",
+        )
+        repository = ComparisonRepository(target)
+        await repository.add(review(), inventory_item_ids=("pi_001",))
+        artifacts = Artifacts(original=original, normalized=ArtifactUnavailable("unused"))
+        application = KnowledgeReviewApplication(repository, Projection(), artifacts)  # type: ignore[arg-type]
+        assert await application.read_original("krv_001", "pi_001") == (original, "application/pdf")
+        import pytest
+
+        from tap.modules.knowledge.application.review import ReviewNotFound
+
+        with pytest.raises(ReviewNotFound):
+            await application.read_original("krv_001", "pi_other")
+        artifacts.original = b"changed"
+        with pytest.raises(ReviewNotFound):
+            await application.read_original("krv_001", "pi_001")
+
+    run(scenario())

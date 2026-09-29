@@ -35,8 +35,8 @@ export function validateAttachmentFile(
 }
 
 /**
- * Splits composer attachments into chips that still need Library processing or
- * review, and sources that are published and can join the message context.
+ * Splits composer attachments into chips that are still processing or have no
+ * searchable chunks, and searchable sources that can join the message context.
  */
 export function resolveComposerAttachments(
   attachments: readonly ComposerAttachment[],

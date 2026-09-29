@@ -269,6 +269,17 @@
       },
       "Body_knowledge_upload_document": {
         "properties": {
+          "settings": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          },
           "upload": {
             "format": "binary",
             "title": "Upload",
@@ -283,6 +294,17 @@
       },
       "Body_knowledge_upload_source": {
         "properties": {
+          "settings": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          },
           "upload": {
             "format": "binary",
             "title": "Upload",
@@ -293,6 +315,25 @@
           "upload"
         ],
         "title": "Body_knowledge_upload_source",
+        "type": "object"
+      },
+      "Body_preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post": {
+        "properties": {
+          "settings": {
+            "title": "Settings",
+            "type": "string"
+          },
+          "upload": {
+            "format": "binary",
+            "title": "Upload",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload",
+          "settings"
+        ],
+        "title": "Body_preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post",
         "type": "object"
       },
       "ChatEventEnvelope": {
@@ -1816,6 +1857,7 @@
             "enum": [
               "application/pdf",
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
               "text/markdown",
               "text/plain"
             ],
@@ -2042,6 +2084,7 @@
             "enum": [
               "application/pdf",
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
               "text/markdown",
               "text/plain"
             ],
@@ -3029,6 +3072,456 @@
           "stopReason"
         ],
         "title": "InsightsExplanationResult",
+        "type": "object"
+      },
+      "KnowledgeChunk": {
+        "additionalProperties": false,
+        "properties": {
+          "charCount": {
+            "title": "Charcount",
+            "type": "integer"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeChunk"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "chunkId": {
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "edited": {
+            "title": "Edited",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "indexError": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indexerror"
+          },
+          "indexStatus": {
+            "enum": [
+              "pending",
+              "ready",
+              "error"
+            ],
+            "title": "Indexstatus",
+            "type": "string"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Keywords",
+            "type": "array"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "chunkId",
+          "content",
+          "enabled",
+          "edited",
+          "position",
+          "charCount",
+          "tokens",
+          "indexStatus",
+          "version"
+        ],
+        "title": "KnowledgeChunk",
+        "type": "object"
+      },
+      "KnowledgeChunkBatch": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "enable",
+              "disable",
+              "delete",
+              "retry"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeChunkVersion"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "action",
+          "items"
+        ],
+        "title": "KnowledgeChunkBatch",
+        "type": "object"
+      },
+      "KnowledgeChunkBatchResult": {
+        "additionalProperties": false,
+        "properties": {
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeChunkFailure"
+            },
+            "title": "Failed",
+            "type": "array"
+          },
+          "succeeded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Succeeded",
+            "type": "array"
+          }
+        },
+        "required": [
+          "succeeded",
+          "failed"
+        ],
+        "title": "KnowledgeChunkBatchResult",
+        "type": "object"
+      },
+      "KnowledgeChunkChange": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "maxLength": 32768,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "regenerateChildren": {
+            "default": false,
+            "title": "Regeneratechildren",
+            "type": "boolean"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "KnowledgeChunkChange",
+        "type": "object"
+      },
+      "KnowledgeChunkCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 32768,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "KnowledgeChunkCreate",
+        "type": "object"
+      },
+      "KnowledgeChunkFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "chunkId": {
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunkId",
+          "error"
+        ],
+        "title": "KnowledgeChunkFailure",
+        "type": "object"
+      },
+      "KnowledgeChunkImport": {
+        "additionalProperties": false,
+        "properties": {
+          "contents": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Contents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "contents"
+        ],
+        "title": "KnowledgeChunkImport",
+        "type": "object"
+      },
+      "KnowledgeChunkPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeChunk"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize"
+        ],
+        "title": "KnowledgeChunkPage",
+        "type": "object"
+      },
+      "KnowledgeChunkPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeChunk"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "KnowledgeChunkPreview",
+        "type": "object"
+      },
+      "KnowledgeChunkSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "childMaxLength": {
+            "default": 256,
+            "maximum": 32768.0,
+            "minimum": 1.0,
+            "title": "Childmaxlength",
+            "type": "integer"
+          },
+          "childSeparator": {
+            "default": "\n",
+            "maxLength": 100,
+            "title": "Childseparator",
+            "type": "string"
+          },
+          "maxLength": {
+            "default": 1024,
+            "maximum": 32768.0,
+            "minimum": 1.0,
+            "title": "Maxlength",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "general",
+            "enum": [
+              "general",
+              "parent_child"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "overlap": {
+            "default": 50,
+            "maximum": 32767.0,
+            "minimum": 0.0,
+            "title": "Overlap",
+            "type": "integer"
+          },
+          "parentMode": {
+            "default": "paragraph",
+            "enum": [
+              "paragraph",
+              "full_doc"
+            ],
+            "title": "Parentmode",
+            "type": "string"
+          },
+          "removeUrls": {
+            "default": false,
+            "title": "Removeurls",
+            "type": "boolean"
+          },
+          "replaceWhitespace": {
+            "default": false,
+            "title": "Replacewhitespace",
+            "type": "boolean"
+          },
+          "separator": {
+            "default": "\n\n",
+            "maxLength": 100,
+            "title": "Separator",
+            "type": "string"
+          }
+        },
+        "title": "KnowledgeChunkSettings",
+        "type": "object"
+      },
+      "KnowledgeChunkSettingsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/KnowledgeChunkSettings"
+          }
+        },
+        "required": [
+          "settings"
+        ],
+        "title": "KnowledgeChunkSettingsRequest",
+        "type": "object"
+      },
+      "KnowledgeChunkSettingsSave": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmReplace": {
+            "default": false,
+            "title": "Confirmreplace",
+            "type": "boolean"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/KnowledgeChunkSettings"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "settings",
+          "version"
+        ],
+        "title": "KnowledgeChunkSettingsSave",
+        "type": "object"
+      },
+      "KnowledgeChunkSettingsView": {
+        "additionalProperties": false,
+        "properties": {
+          "originalRevisionId": {
+            "title": "Originalrevisionid",
+            "type": "string"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/KnowledgeChunkSettings"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "settings",
+          "version",
+          "originalRevisionId"
+        ],
+        "title": "KnowledgeChunkSettingsView",
+        "type": "object"
+      },
+      "KnowledgeChunkVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "chunkId": {
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "chunkId",
+          "version"
+        ],
+        "title": "KnowledgeChunkVersion",
         "type": "object"
       },
       "KnowledgePublicationDetail": {
@@ -5246,10 +5739,17 @@
             "type": "string"
           },
           "expiresAt": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Expiresat",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
           },
           "filename": {
             "maxLength": 255,
@@ -5268,10 +5768,17 @@
             "type": "boolean"
           },
           "publicationId": {
-            "maxLength": 256,
-            "minLength": 1,
-            "title": "Publicationid",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publicationid"
           },
           "revisionId": {
             "maxLength": 256,
@@ -5297,8 +5804,6 @@
           "revisionId",
           "sourceName",
           "filename",
-          "publicationId",
-          "expiresAt",
           "approvedItemCount",
           "inventoryItemCount",
           "partial"
@@ -6558,6 +7063,7 @@
             "enum": [
               "application/pdf",
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
               "text/markdown",
               "text/plain"
             ],
@@ -10824,6 +11330,70 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/knowledge/chunks/preview": {
+      "post": {
+        "operationId": "preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Upload",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/knowledge/citations/{citation_id}": {
       "get": {
         "operationId": "citation_get_preview",
@@ -11288,6 +11858,894 @@
           }
         },
         "summary": "Get Document",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunk-settings": {
+      "get": {
+        "operationId": "get_settings_api_v1_projects__project_id__knowledge_documents__document_id__chunk_settings_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkSettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Settings",
+        "tags": [
+          "knowledge"
+        ]
+      },
+      "put": {
+        "operationId": "save_settings_api_v1_projects__project_id__knowledge_documents__document_id__chunk_settings_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeChunkSettingsSave"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkSettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Settings",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks": {
+      "get": {
+        "operationId": "list_chunks_api_v1_projects__project_id__knowledge_documents__document_id__chunks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 1000,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "enabled",
+                "disabled"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Chunks",
+        "tags": [
+          "knowledge"
+        ]
+      },
+      "post": {
+        "operationId": "create_chunk_api_v1_projects__project_id__knowledge_documents__document_id__chunks_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeChunkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunk"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Chunk",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks/batch": {
+      "post": {
+        "operationId": "batch_api_v1_projects__project_id__knowledge_documents__document_id__chunks_batch_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeChunkBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkBatchResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Batch",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks/import": {
+      "post": {
+        "operationId": "import_chunks_api_v1_projects__project_id__knowledge_documents__document_id__chunks_import_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeChunkImport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkBatchResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Chunks",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks/preview": {
+      "post": {
+        "operationId": "preview_api_v1_projects__project_id__knowledge_documents__document_id__chunks_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeChunkSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks/{chunk_id}": {
+      "delete": {
+        "operationId": "delete_chunk_api_v1_projects__project_id__knowledge_documents__document_id__chunks__chunk_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Chunk",
+        "tags": [
+          "knowledge"
+        ]
+      },
+      "patch": {
+        "operationId": "change_chunk_api_v1_projects__project_id__knowledge_documents__document_id__chunks__chunk_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeChunkChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunk"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Chunk",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/chunks/{chunk_id}/children": {
+      "post": {
+        "operationId": "create_child_api_v1_projects__project_id__knowledge_documents__document_id__chunks__chunk_id__children_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeChunkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunk"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Child",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/original": {
+      "get": {
+        "operationId": "original_api_v1_projects__project_id__knowledge_documents__document_id__original_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Original",
         "tags": [
           "knowledge"
         ]
@@ -13220,6 +14678,109 @@
           }
         },
         "summary": "Update Review Item Decision",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/original": {
+      "get": {
+        "operationId": "knowledge_read_review_original",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "title": "Review Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          }
+        },
+        "summary": "Read Review Original",
         "tags": [
           "knowledge"
         ]

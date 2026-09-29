@@ -992,7 +992,10 @@ class MilvusDocumentIndex:
             )
         except (TypeError, ValueError) as error:
             raise ValueError("Tapper revision provenance is invalid") from error
-        if work.parser_version != PARSER_VERSION or str(canonical_revision) != work.revision_id:
+        if (
+            work.parser_version not in {PARSER_VERSION, "managed-chunks-v1"}
+            or str(canonical_revision) != work.revision_id
+        ):
             raise ValueError("Tapper revision provenance is inconsistent")
         if len({str(chunk.chunk_id) for chunk in chunks}) != len(chunks):
             raise ValueError("Tapper revision chunk identities must be unique")

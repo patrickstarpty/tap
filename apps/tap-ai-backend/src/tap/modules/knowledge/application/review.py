@@ -549,6 +549,27 @@ class KnowledgeReviewApplication:
             extracted = await self._extracted_preview(target)
         return ReviewItemComparisonRead(review_id, item_id, original, extracted)
 
+    async def read_original(self, review_id: str, item_id: str) -> tuple[bytes, str]:
+        """Read the immutable source only after resolving a scoped review item."""
+        from tap.modules.knowledge.domain.documents import (
+            MAX_UPLOAD_BYTES,
+            MediaType,
+            canonical_sha256,
+        )
+
+        await self._required_review(review_id)
+        target = await self._repository.comparison_target(review_id, item_id)
+        if target is None or self._artifacts is None or not target.original_alignment_valid:
+            raise ReviewNotFound("review-original-not-found")
+        try:
+            media_type = MediaType(target.media_type)
+            content = await self._artifacts.read_original(target.original_locator)
+        except (ArtifactError, ValueError):
+            raise ReviewNotFound("review-original-not-found") from None
+        if len(content) > MAX_UPLOAD_BYTES or canonical_sha256(content) != target.source_digest:
+            raise ReviewNotFound("review-original-not-found")
+        return content, media_type.value
+
     async def _original_preview(self, target: ReviewComparisonTarget) -> ReviewPreview:
         if not target.original_alignment_valid:
             return ReviewPreview("unavailable", reason="item-alignment-invalid")

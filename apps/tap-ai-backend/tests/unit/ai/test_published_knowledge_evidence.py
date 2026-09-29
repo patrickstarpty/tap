@@ -112,6 +112,52 @@ class Authority:
 
 
 @pytest.mark.asyncio
+async def test_ready_enabled_knowledge_can_supply_insights_without_fabricating_approval():
+    searches = Searches(
+        (_evidence(publication_id=None, approval_digest=None, approved_item_id=None),)
+    )
+    adapter = PublishedKnowledgeEvidence(
+        searches=searches, publication_authority=None, selection=(FROZEN,)
+    )
+    evidence = await adapter.retrieve(SCOPE, (SOURCE,), "Why did login fail?")
+    assert len(evidence) == 1
+    details = adapter.citation_details(("citation-1",))
+    assert details[0]["publicationId"] is None
+    assert details[0]["approvalDigest"] is None
+    assert await adapter.reauthorize(SCOPE, evidence)
+    assert await adapter.reauthorize_details(SCOPE, details)
+    searches.current = ()
+    assert not await adapter.reauthorize(SCOPE, evidence)
+    assert not await adapter.reauthorize_details(SCOPE, details)
+
+
+@pytest.mark.asyncio
+async def test_direct_knowledge_rejects_unselected_and_cross_project_evidence():
+    searches = Searches(
+        (_evidence(publication_id=None, approval_digest=None, approved_item_id=None),)
+    )
+    adapter = PublishedKnowledgeEvidence(
+        searches=searches, publication_authority=None, selection=(FROZEN,)
+    )
+    with pytest.raises(InsightsAuthorizationChanged):
+        await adapter.retrieve(
+            replace(SCOPE, context=replace(VALIDATION_SCOPE, project_id="other")),
+            (SOURCE,),
+            "Why did login fail?",
+        )
+    searches.evidence = (
+        _evidence(
+            source=replace(_evidence().source, source_id="src_" + "2" * 32),
+            publication_id=None,
+            approval_digest=None,
+            approved_item_id=None,
+        ),
+    )
+    with pytest.raises(InsightsAuthorizationChanged):
+        await adapter.retrieve(SCOPE, (SOURCE,), "Why did login fail?")
+
+
+@pytest.mark.asyncio
 async def test_published_source_enters_model_evidence_with_actual_search_provenance():
     searches = Searches()
     adapter = PublishedKnowledgeEvidence(

@@ -1642,3 +1642,32 @@ async def test_litellm_adapter_uses_fixed_models_captures_request_ids_and_bounds
     assert result.provider_model_id is None
     assert result.completion_id == "body-request-id"
     assert result.claims[0].evidence_labels == ("S1",)
+
+
+def test_independent_managed_chunks_without_semantic_headings_do_not_conflict() -> None:
+    first = _claim_resolution_evidence()
+    first = replace(
+        first,
+        family=SourceFamily.DOC,
+        source=replace(
+            first.source,
+            source_type="doc",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            anchor=DocumentAnchor(),
+        ),
+    )
+    second = replace(
+        first,
+        chunk_id="h_" + "b" * 64,
+        logical_chunk_id="h_" + "c" * 64,
+        chunk_content_hash="sha256:" + "d" * 64,
+        source=replace(
+            first.source, source_id="independent-source", revision="independent-revision"
+        ),
+    )
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources((first, second))
+    # Removing fabricated headings does not weaken immutable logical identity conflicts.
+    same_logical_identity = replace(second, logical_chunk_id=first.logical_chunk_id)
+    assert retrieval_application.AuthorizedRetrieval._has_conflicting_sources(
+        (first, same_logical_identity)
+    )

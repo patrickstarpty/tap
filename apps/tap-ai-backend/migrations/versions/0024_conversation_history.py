@@ -8,8 +8,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.mysql import DATETIME
 
-revision: str = "0023_conversation_history"
-down_revision: str | None = "0022_test_design_review"
+revision: str = "0024_conversation_history"
+down_revision: str | None = "0023_managed_chunks"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
