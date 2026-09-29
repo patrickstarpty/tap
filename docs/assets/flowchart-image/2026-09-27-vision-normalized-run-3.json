@@ -1,0 +1,256 @@
+{
+  "edges": [
+    {
+      "certain": true,
+      "condition": "",
+      "source": "n1",
+      "target": "n2"
+    },
+    {
+      "certain": true,
+      "condition": "",
+      "source": "n2",
+      "target": "n3"
+    },
+    {
+      "certain": true,
+      "condition": "No · request correction",
+      "source": "n3",
+      "target": "n4"
+    },
+    {
+      "certain": true,
+      "condition": "Resubmit",
+      "source": "n4",
+      "target": "n1"
+    },
+    {
+      "certain": true,
+      "condition": "Yes",
+      "source": "n3",
+      "target": "n5"
+    },
+    {
+      "certain": true,
+      "condition": "",
+      "source": "n5",
+      "target": "n6"
+    },
+    {
+      "certain": true,
+      "condition": "Yes",
+      "source": "n6",
+      "target": "n7"
+    },
+    {
+      "certain": true,
+      "condition": "No",
+      "source": "n6",
+      "target": "n9"
+    },
+    {
+      "certain": true,
+      "condition": "",
+      "source": "n7",
+      "target": "n8"
+    },
+    {
+      "certain": true,
+      "condition": "Approved",
+      "source": "n8",
+      "target": "n10"
+    },
+    {
+      "certain": true,
+      "condition": "",
+      "source": "n9",
+      "target": "n10"
+    },
+    {
+      "certain": true,
+      "condition": "",
+      "source": "n10",
+      "target": "n11"
+    },
+    {
+      "certain": true,
+      "condition": "No · retry",
+      "source": "n11",
+      "target": "n12"
+    },
+    {
+      "certain": true,
+      "condition": "",
+      "source": "n12",
+      "target": "n11"
+    },
+    {
+      "certain": true,
+      "condition": "Yes",
+      "source": "n11",
+      "target": "n13"
+    },
+    {
+      "certain": true,
+      "condition": "",
+      "source": "n13",
+      "target": "n14"
+    }
+  ],
+  "nodes": [
+    {
+      "box": [
+        85,
+        163,
+        294,
+        238
+      ],
+      "id": "n1",
+      "label": "Submit application",
+      "lane": "Applicant"
+    },
+    {
+      "box": [
+        106,
+        367,
+        275,
+        441
+      ],
+      "id": "n2",
+      "label": "Validate application",
+      "lane": "Operations"
+    },
+    {
+      "box": [
+        375,
+        367,
+        543,
+        441
+      ],
+      "id": "n3",
+      "label": "Disclosure complete?",
+      "lane": "Operations"
+    },
+    {
+      "box": [
+        427,
+        163,
+        623,
+        238
+      ],
+      "id": "n4",
+      "label": "Complete missing disclosure",
+      "lane": "Applicant"
+    },
+    {
+      "box": [
+        585,
+        637,
+        753,
+        711
+      ],
+      "id": "n5",
+      "label": "Assess risk",
+      "lane": "Underwriting / Compliance"
+    },
+    {
+      "box": [
+        817,
+        622,
+        986,
+        697
+      ],
+      "id": "n6",
+      "label": "High risk?",
+      "lane": "Underwriting / Compliance"
+    },
+    {
+      "box": [
+        1053,
+        597,
+        1233,
+        672
+      ],
+      "id": "n7",
+      "label": "Senior review",
+      "lane": "Underwriting / Compliance"
+    },
+    {
+      "box": [
+        1270,
+        597,
+        1451,
+        672
+      ],
+      "id": "n8",
+      "label": "Compliance approval",
+      "lane": "Underwriting / Compliance"
+    },
+    {
+      "box": [
+        1023,
+        770,
+        1233,
+        845
+      ],
+      "id": "n9",
+      "label": "Automatic approval",
+      "lane": "Underwriting / Compliance"
+    },
+    {
+      "box": [
+        843,
+        367,
+        1011,
+        441
+      ],
+      "id": "n10",
+      "label": "Prepare quote",
+      "lane": "Operations"
+    },
+    {
+      "box": [
+        1075,
+        367,
+        1244,
+        441
+      ],
+      "id": "n11",
+      "label": "Payment confirmed?",
+      "lane": "Operations"
+    },
+    {
+      "box": [
+        1090,
+        163,
+        1263,
+        238
+      ],
+      "id": "n12",
+      "label": "Retry failed payment",
+      "lane": "Applicant"
+    },
+    {
+      "box": [
+        1308,
+        367,
+        1476,
+        441
+      ],
+      "id": "n13",
+      "label": "Issue policy",
+      "lane": "Operations"
+    },
+    {
+      "box": [
+        1308,
+        163,
+        1476,
+        238
+      ],
+      "id": "n14",
+      "label": "Receive policy",
+      "lane": "Applicant"
+    }
+  ]
+}

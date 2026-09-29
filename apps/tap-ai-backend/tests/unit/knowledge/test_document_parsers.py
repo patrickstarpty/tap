@@ -7,14 +7,76 @@ import zipfile
 from xml.sax.saxutils import escape
 
 import pytest
+from PIL import Image
 from pypdf import PdfWriter
 
+from tap.interfaces.http.routes.knowledge_documents import sanitize_upload_metadata
 from tap.modules.knowledge.adapters.document_parsers import ParserRegistry
 from tap.modules.knowledge.domain.documents import (
     DocumentParseRejected,
     DocumentSource,
     MediaType,
 )
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryKind,
+    ParseInventoryStatus,
+)
+
+
+@pytest.mark.parametrize(
+    "format_name,media_type,extension",
+    [
+        ("PNG", "image/png", "png"),
+        ("JPEG", "image/jpeg", "jpg"),
+    ],
+)
+def test_image_upload_records_one_unreviewed_original(format_name, media_type, extension):
+    image = Image.new("RGB", (48, 32), "white")
+    output = io.BytesIO()
+    image.save(output, format=format_name)
+
+    artifact = ParserRegistry().parse(
+        DocumentSource(f"flow.{extension}", MediaType(media_type), output.getvalue())
+    )
+
+    assert artifact.blocks == ()
+    assert len(artifact.parse_inventory) == 1
+    item = artifact.parse_inventory[0]
+    assert item.kind is ParseInventoryKind.IMAGE
+    assert item.status is ParseInventoryStatus.NEEDS_REVIEW
+    assert item.locator == "image:1"
+    assert item.reason == "visual-analysis-required"
+
+
+@pytest.mark.parametrize(
+    "media_type,extension,format_name",
+    [
+        ("image/png", "png", "JPEG"),
+        ("image/jpeg", "jpg", "PNG"),
+    ],
+)
+def test_image_signature_mismatch_is_rejected(media_type, extension, format_name):
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), "white").save(output, format=format_name)
+
+    with pytest.raises(DocumentParseRejected) as rejected:
+        ParserRegistry().parse(
+            DocumentSource(f"flow.{extension}", MediaType(media_type), output.getvalue())
+        )
+
+    assert rejected.value.code == "invalid-document"
+
+
+@pytest.mark.parametrize(
+    "name,media_type",
+    [
+        ("flow.png", "image/png"),
+        ("flow.jpg", "image/jpeg"),
+        ("flow.jpeg", "image/jpeg"),
+    ],
+)
+def test_public_upload_accepts_matching_flowchart_image_type(name, media_type):
+    assert sanitize_upload_metadata(name, media_type) == (name, media_type)
 
 
 def _pdf_with_text(*pages: str) -> bytes:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from dataclasses import replace
@@ -78,6 +79,138 @@ def configured_gateway(handler, **changes):
             base_url="https://litellm.example", transport=httpx.MockTransport(handler)
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_vision_request_sends_bounded_image_with_digest_and_structured_schema():
+    sent = []
+    image_bytes = b"\x89PNG\r\n\x1a\nexample"
+    vision_route = ChatModelRoute(
+        "tapper-vision",
+        "Flowchart vision",
+        ProviderModelMapping("dashscope", "qwen3-vl-plus"),
+        image_input=True,
+    )
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen3-vl-plus",
+                "choices": [{"message": {"content": '{"answer":"A to B"}'}}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4},
+            },
+        )
+
+    gateway = configured_gateway(respond, additional_chat_models=(vision_route,))
+    result = await gateway.generate_structured(
+        replace(
+            request(ModelOperation.STRUCTURED),
+            alias="tapper-vision",
+            image_bytes=image_bytes,
+            image_media_type="image/png",
+        )
+    )
+
+    assert result.output == {"answer": "A to B"}
+    expected_digest = "sha256:" + hashlib.sha256(image_bytes).hexdigest()
+    assert sent[0]["metadata"]["image_digest"] == expected_digest
+    assert sent[0]["messages"][1]["content"][1]["image_url"]["url"] == (
+        "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+    )
+    assert sent[0]["response_format"] == {"type": "json_object"}
+    schema_message = sent[0]["messages"][0]
+    assert schema_message["role"] == "system"
+    transmitted_schema = json.loads(schema_message["content"].rsplit("\n", 1)[1])
+    assert transmitted_schema == request(ModelOperation.STRUCTURED).schema
+    assert transmitted_schema["required"] == ["answer"]
+    assert transmitted_schema["additionalProperties"] is False
+    # Detailed node boxes and directed edges exceed the text-chat output budget.
+    assert 4096 <= sent[0]["max_tokens"] <= 16384
+    assert result.audit.image_digest == sent[0]["metadata"]["image_digest"]
+    assert "example" not in repr(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "finish_reason"),
+    [
+        ("{}", "stop"),
+        ('{"answer":"A to B","shape":"arrow"}', "stop"),
+        ('{"answer":7}', "stop"),
+        ('{"answer":"A to B"}', "length"),
+    ],
+)
+async def test_vision_json_object_mode_still_rejects_invalid_or_truncated_output(
+    content, finish_reason
+):
+    from tap.modules.ai.domain.models import ModelGatewayUnavailable
+
+    calls = []
+
+    def respond(incoming):
+        calls.append(incoming)
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen3-vl-plus",
+                "choices": [{"message": {"content": content}, "finish_reason": finish_reason}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4},
+            },
+        )
+
+    gateway = configured_gateway(
+        respond,
+        additional_chat_models=(
+            ChatModelRoute(
+                "tapper-vision",
+                "Flowchart vision",
+                ProviderModelMapping("dashscope", "qwen3-vl-plus"),
+                image_input=True,
+            ),
+        ),
+    )
+    with pytest.raises(ModelGatewayUnavailable, match="^model-unavailable$"):
+        await gateway.generate_structured(
+            replace(
+                request(ModelOperation.STRUCTURED),
+                alias="tapper-vision",
+                image_bytes=b"\x89PNG\r\n\x1a\nexample",
+                image_media_type="image/png",
+            )
+        )
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_vision_input_rejects_wrong_route_mime_and_size_before_transport():
+    sent = []
+    route = ChatModelRoute(
+        "tapper-vision",
+        "Flowchart vision",
+        ProviderModelMapping("dashscope", "qwen3-vl-plus"),
+        image_input=True,
+    )
+    gateway = configured_gateway(
+        lambda incoming: (sent.append(incoming), success(incoming))[1],
+        additional_chat_models=(route,),
+    )
+    base = replace(
+        request(ModelOperation.STRUCTURED),
+        alias="tapper-vision",
+        image_bytes=b"\x89PNG\r\n\x1a\nvalid",
+        image_media_type="image/png",
+    )
+    for invalid in (
+        replace(base, alias="tapper-chat"),
+        replace(base, image_media_type="image/jpeg"),
+        replace(base, image_bytes=b"\x89PNG\r\n\x1a\n" + b"x" * (4 * 1024 * 1024)),
+        replace(base, image_bytes=None, image_media_type=None),
+    ):
+        with pytest.raises(ValueError):
+            await gateway.generate_structured(invalid)
+    assert sent == []
 
 
 @pytest.mark.asyncio
@@ -326,6 +459,145 @@ async def test_knowledge_query_document_and_answer_calls_use_one_gateway():
     assert len(sent) == 3
     assert all(json.loads(item.content)["metadata"]["project_id"] == "tapper-demo" for item in sent)
     assert all(b"password=secret" not in item.content for item in sent)
+
+
+@pytest.mark.asyncio
+async def test_plan_bound_grounded_answer_passes_the_real_gateway_governance_check():
+    """A planned chat answer carries a template digest, so it must declare knowledge.answer."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+    from tap.modules.knowledge.application.answer_templates import assemble_answer, get_template
+
+    sent = []
+
+    def handler(incoming):
+        sent.append(json.loads(incoming.content))
+        response = success(incoming).json()
+        response["choices"][0]["message"]["content"] = json.dumps(
+            {"answer": "Grounded.", "claims": [{"text": "Grounded.", "evidenceLabels": ["S1"]}]}
+        )
+        return httpx.Response(200, json=response)
+
+    selected = get_template("procedural", "1")
+    assembled = assemble_answer(
+        template_id="procedural",
+        template_version="1",
+        template_digest=selected.digest,
+        original_question="query",
+        standalone_question="query",
+        evidence_map={"q1": ("S1",)},
+    )
+    assembled.context["planId"] = "plan-a"
+    models = KnowledgeModelGateway(
+        configured_gateway(handler),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="tapper-embedding",
+        chat_alias="tapper-chat",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+    result = await models.answer(
+        "query", (_claim_resolution_evidence(),), "quick-hybrid-v1", answer_input=assembled
+    )
+
+    assert result.text == "Grounded."
+    assert sent[0]["metadata"]["tool_allowlist"] == ["knowledge.answer"]
+    assert sent[0]["metadata"]["governance_digests"]
+
+    no_evidence = assemble_answer(
+        template_id="general",
+        template_version="1",
+        template_digest=get_template("general", "1").digest,
+        original_question="hello",
+        standalone_question="hello",
+        evidence_map={},
+    )
+    direct = await models.chat(
+        "hello", model_alias="tapper-chat", answer_plan_id="plan-b", answer_input=no_evidence
+    )
+    assert direct.text == "Grounded."
+    assert sent[1]["metadata"]["tool_allowlist"] == ["knowledge.answer"]
+
+
+@pytest.mark.asyncio
+async def test_flowchart_evidence_reaches_the_model_as_records_not_quotable_sentences():
+    """Real models copied edge sentences as claims; answers must quote their own sentences."""
+    from dataclasses import replace
+
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.ai.domain.models import ModelCallAudit, ModelResult, ModelUsage, text_digest
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    captured = []
+
+    class CapturingGateway:
+        async def generate_structured(self, request):
+            captured.append(request)
+            sentence = "A low-risk application goes to Automatic approval."
+            return ModelResult(
+                output={
+                    "answer": sentence,
+                    "claims": [{"text": sentence, "evidenceLabels": ["S1"]}],
+                },
+                actual_model="qwen-plus",
+                usage=ModelUsage(),
+                actual_provider="dashscope",
+                audit=ModelCallAudit(
+                    request.scope,
+                    request.alias,
+                    request.operation,
+                    request.prompt_digest,
+                    request.schema_digest,
+                    text_digest(request.context),
+                    request.idempotency_key,
+                    "dashscope",
+                    "qwen-plus",
+                    ModelUsage(),
+                ),
+            )
+
+    models = KnowledgeModelGateway(
+        CapturingGateway(),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="tapper-embedding",
+        chat_alias="tapper-chat",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+    base = _claim_resolution_evidence()
+    edge = replace(base, content="流程图连线 n6 → n9：High risk? → Automatic approval；条件：No")
+    node = replace(
+        base, evidence_label="S2", content="流程图节点 n9：Automatic approval；泳道：Underwriting"
+    )
+    prose = replace(base, evidence_label="S3", content="Low risk means score below 40.")
+
+    await models.answer("low risk path?", (edge, node, prose), "quick-hybrid-v1")
+
+    evidence = json.loads(captured[0].context)["evidence"]
+    assert "content" not in evidence[0] and "content" not in evidence[1]
+    assert evidence[0]["flowchartEdge"] == {
+        "sourceNodeId": "n6",
+        "sourceLabel": "High risk?",
+        "targetNodeId": "n9",
+        "targetLabel": "Automatic approval",
+        "condition": "No",
+    }
+    assert evidence[1]["flowchartNode"] == {
+        "nodeId": "n9",
+        "label": "Automatic approval",
+        "lane": "Underwriting",
+    }
+    assert evidence[2]["content"] == "Low risk means score below 40."
+    assert "Flowchart evidence items are structured records" in captured[0].prompt
+
+    captured.clear()
+    await models.answer("low risk?", (replace(prose, evidence_label="S1"),), "quick-hybrid-v1")
+    assert "Flowchart evidence items are structured records" not in captured[0].prompt
 
 
 @pytest.mark.asyncio

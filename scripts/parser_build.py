@@ -30,6 +30,16 @@ def run(argv: list[str], *, timeout: int = 60) -> str:
     return result.stdout.decode().strip()
 
 
+def compatible_wheels(wheels: list[dict], wheel_tag: str) -> list[dict]:
+    arch = wheel_tag.removeprefix("manylinux2014_")
+    tags = ("cp313-cp313-" + wheel_tag, "cp313-cp313-manylinux_2_27_" + arch)
+    return [
+        wheel
+        for wheel in wheels
+        if "none-any.whl" in wheel["url"] or any(tag in wheel["url"] for tag in tags)
+    ]
+
+
 def main() -> None:
     root = Path(sys.argv[1]).resolve()
     parser = argparse.ArgumentParser()
@@ -61,12 +71,9 @@ def main() -> None:
             for dep in package.get("dependencies", [])
         ):
             raise ValueError("parser dependency closure changed")
-        wheels = [
-            w
-            for w in package["wheels"]
-            if "none-any.whl" in w["url"]
-            or ("cp313-cp313-" + inputs["platforms"][platform]["wheel_tag"]) in w["url"]
-        ]
+        wheels = compatible_wheels(
+            package["wheels"], inputs["platforms"][platform]["wheel_tag"]
+        )
         if len(wheels) != 1:
             raise ValueError("parser wheel selection is ambiguous")
         selected.append({"name": name, "version": package["version"], **wheels[0]})
@@ -191,7 +198,11 @@ def main() -> None:
             if baked != expected:
                 raise ValueError("parser image provenance mismatch")
             for name in inputs["sources"]:
-                actual = extracted / "src" / Path(name).relative_to("apps/tap-ai-backend/src")
+                actual = (
+                    extracted
+                    / "src"
+                    / Path(name).relative_to("apps/tap-ai-backend/src")
+                )
                 if sha(actual.read_bytes()) != hashes[name]:
                     raise ValueError("parser image source digest mismatch")
             if (

@@ -316,6 +316,177 @@
   white-space: nowrap;
 }
 
+.tap-chat-history-search {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  margin: 0 2px 6px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: var(--tap-surface);
+  padding: 0 9px;
+  color: var(--tap-muted);
+  font-size: 11px;
+}
+
+.tap-chat-history-search:focus-within {
+  border-color: var(--tap-accent);
+  outline: 2px solid var(--tap-accent-soft);
+}
+
+.tap-chat-history-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tap-ink);
+  font: inherit;
+  outline: none;
+}
+
+.tap-chat-history-empty {
+  margin: 4px 10px;
+  color: var(--tap-muted);
+  font-size: 11px;
+}
+
+.tap-chat-history-row {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.tap-chat-history-row:hover,
+.tap-chat-history-row[data-active="true"],
+.tap-chat-history-row[data-menu-open] {
+  background: var(--tap-line);
+}
+
+.tap-chat-history-row > button.tap-chat-history-item,
+.tap-chat-history-row > button.tap-chat-history-item:hover,
+.tap-chat-history-row > button.tap-chat-history-item[aria-current="page"] {
+  background: transparent;
+}
+
+.tap-chat-history-row:hover > .tap-chat-history-item {
+  color: var(--tap-ink);
+}
+
+.tap-chat-history-row > button.tap-chat-history-more {
+  display: grid;
+  width: 30px;
+  min-height: 30px;
+  height: 30px;
+  margin-right: 6px;
+  padding: 0;
+  place-items: center;
+  font-size: 15px;
+  opacity: 0;
+}
+
+.tap-chat-history-row > button.tap-chat-history-more[hidden] {
+  display: none;
+}
+
+.tap-chat-history-row:hover > .tap-chat-history-more,
+.tap-chat-history-row:focus-within > .tap-chat-history-more,
+.tap-chat-history-row[data-active="true"] > .tap-chat-history-more,
+.tap-chat-history-row[data-menu-open] > .tap-chat-history-more {
+  opacity: 1;
+}
+
+.tap-chat-history-row > button.tap-chat-history-more:hover,
+.tap-chat-history-row > button.tap-chat-history-more[aria-expanded="true"] {
+  background: rgb(255 255 255 / 72%);
+  color: var(--tap-ink);
+}
+
+@media (hover: none) {
+  .tap-chat-history-row > button.tap-chat-history-more {
+    opacity: 1;
+  }
+}
+
+.tap-chat-history-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% - 4px);
+  right: 4px;
+  display: grid;
+  width: 150px;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 14px 34px 4px rgb(29 38 56 / 14%);
+  padding: 6px;
+}
+
+.tap-chat-history-menu > button {
+  display: flex;
+  min-height: 38px;
+  color: var(--tap-ink);
+  font-size: 12px;
+}
+
+.tap-chat-history .tap-chat-history-menu > button:hover,
+.tap-chat-history .tap-chat-history-menu > button:focus-visible {
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent-dark);
+}
+
+.tap-chat-history .tap-chat-history-menu > button[data-danger="true"] {
+  color: #b42318;
+}
+
+.tap-chat-history-rename {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 44px;
+  padding: 4px 8px 4px 10px;
+  color: var(--tap-muted);
+}
+
+.tap-chat-history-rename input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--tap-accent);
+  border-radius: 6px;
+  background: var(--tap-surface);
+  padding: 0 7px;
+  color: var(--tap-ink);
+  font: inherit;
+  font-size: 11px;
+  outline: 2px solid var(--tap-accent-soft);
+}
+
+.tap-chat-history-rename input[aria-invalid="true"] {
+  border-color: #b42318;
+}
+
+.tap-chat-history-rename small {
+  grid-column: 2;
+  color: #b42318;
+  font-size: 10px;
+}
+
+.tap-delete-chat-dialog {
+  width: min(420px, 100%);
+}
+
+.tap-delete-chat-dialog p {
+  margin: 12px 0 20px;
+  color: var(--tap-muted);
+  line-height: 1.55;
+}
+
 .tap-sidebar-footer {
   display: flex;
   flex-direction: column;
@@ -879,6 +1050,88 @@
   background: var(--tap-line);
 }
 
+.tap-composer-send-button[data-state="sending"] {
+  cursor: progress;
+}
+
+.tap-composer-send-button[data-state="sending"] .tap-composer-send-face {
+  background: var(--tap-line-strong);
+  color: var(--tap-surface);
+  font-size: 15px;
+}
+
+.tap-composer-send-button:focus-visible {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 2px;
+}
+
+.tap-composer-stop-icon {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: currentcolor;
+}
+
+.tap-attachment-chip.tap-context-chip {
+  max-width: 100%;
+  height: auto;
+  min-height: 38px;
+  padding: 4px 4px 4px 8px;
+}
+
+.tap-attachment-chip-copy {
+  display: grid;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.tap-attachment-chip-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-attachment-chip-copy > small {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--tap-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.tap-attachment-chip[data-status="needs-review"] .tap-attachment-chip-copy > small {
+  color: var(--tap-accent-dark);
+}
+
+.tap-attachment-chip[data-status="failed"] .tap-attachment-chip-copy > small {
+  color: #b42318;
+}
+
+.tap-context-chip > button.tap-attachment-review {
+  display: inline-flex;
+  width: auto;
+  height: 26px;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: var(--tap-accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 1;
+  white-space: nowrap;
+}
+
+.tap-context-chip > button.tap-attachment-review:hover {
+  background: var(--tap-accent-soft);
+}
+
+.tap-composer-error {
+  margin: 0 4px 6px;
+  color: #b42318;
+  font-size: 12px;
+}
+
 .tap-sources-shell {
   z-index: 15;
   height: 100dvh;
@@ -1200,6 +1453,72 @@
 
 .tap-assistant-message {
   min-width: 0;
+}
+
+.tap-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.tap-user-row > .tap-user-message {
+  margin-left: 0;
+}
+
+.tap-turn-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: -12px;
+}
+
+.tap-turn-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0 9px;
+  color: var(--tap-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.tap-turn-action:hover:enabled {
+  border-color: var(--tap-line);
+  background: var(--tap-soft);
+  color: var(--tap-ink);
+}
+
+.tap-turn-action:focus-visible {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 2px;
+}
+
+.tap-turn-action:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.tap-turn-action--icon {
+  width: 30px;
+  justify-content: center;
+  padding: 0;
+  opacity: 0;
+}
+
+.tap-turn:hover .tap-turn-action--icon,
+.tap-turn-action--icon:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .tap-turn-action--icon {
+    opacity: 1;
+  }
 }
 
 .tap-answer-copy {

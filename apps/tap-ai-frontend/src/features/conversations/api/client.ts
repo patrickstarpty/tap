@@ -9,6 +9,7 @@ export type ConversationDetail = components["schemas"]["ConversationDetail"];
 export type ConversationEventPage =
   components["schemas"]["ConversationEventPage"];
 export type ConversationPage = components["schemas"]["ConversationPage"];
+export type ConversationSummary = components["schemas"]["ConversationSummary"];
 export type ConversationTurnSummary =
   components["schemas"]["ConversationTurnSummary"];
 export type ConversationCitationPreview =
@@ -83,8 +84,15 @@ export interface ConversationClient {
   list(input: {
     cursor?: string;
     limit?: number;
+    query?: string;
     signal?: AbortSignal;
   }): Promise<ConversationPage>;
+  rename(
+    conversationId: string,
+    title: string,
+    signal?: AbortSignal,
+  ): Promise<ConversationSummary>;
+  remove(conversationId: string, signal?: AbortSignal): Promise<void>;
   get(
     conversationId: string,
     signal?: AbortSignal,
@@ -222,10 +230,29 @@ export function createConversationClient({
 
   return {
     projectId,
-    list({ cursor, limit = 20, signal }) {
+    list({ cursor, limit = 20, query: search, signal }) {
       const query = new URLSearchParams({ limit: String(limit) });
       if (cursor !== undefined) query.set("cursor", cursor);
+      if (search !== undefined && search.trim().length > 0)
+        query.set("q", search.trim());
       return request<ConversationPage>(`?${query}`, { signal });
+    },
+    rename: (id, title, signal) =>
+      request<ConversationSummary>(`/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title }),
+        signal,
+      }),
+    async remove(id, signal) {
+      const response = await fetcher(
+        new Request(`${root}/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+          signal,
+        }),
+      );
+      // Deletion answers 204 with no body; only failures carry a problem.
+      if (!response.ok) await checkedJson(response);
     },
     get: (id, signal) =>
       request<ConversationDetail>(`/${encodeURIComponent(id)}`, { signal }),

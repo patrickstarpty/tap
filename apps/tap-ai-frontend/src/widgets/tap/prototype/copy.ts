@@ -11,6 +11,17 @@ export interface PrototypeCopy {
     expandSidebar: string;
     newChat: string;
     chatHistory: string;
+    searchChats: string;
+    noMatchingChats: string;
+    moreOptions: string;
+    renameChat: string;
+    deleteChat: string;
+    chatName: string;
+    chatNameInvalid: string;
+    confirmDeleteChat: string;
+    deleteChatWarning: string;
+    cancel: string;
+    historyActionFailed: string;
     product: string;
     tapperTools: string;
     language: string;
@@ -40,6 +51,11 @@ export interface PrototypeCopy {
     showEarlierQuestions: string;
     showLaterQuestion: string;
     showLaterQuestions: string;
+    stopGenerating: string;
+    sending: string;
+    regenerate: string;
+    retry: string;
+    editQuestion: string;
   };
   sources: {
     heading: string;
@@ -87,6 +103,14 @@ export interface PrototypeCopy {
     models: string;
     remove: string;
     close: string;
+    uploadFile: string;
+    attachmentUploading: string;
+    attachmentProcessing: string;
+    attachmentNeedsReview: string;
+    attachmentReady: string;
+    attachmentFailed: string;
+    reviewInLibrary: string;
+    removeAttachment: string;
   };
   catalog: {
     agents: string;
@@ -237,6 +261,17 @@ export const PROTOTYPE_COPY = {
       expandSidebar: "Expand sidebar",
       newChat: "New chat",
       chatHistory: "Chat history",
+      searchChats: "Search chats",
+      noMatchingChats: "No matching chats",
+      moreOptions: "More options for {title}",
+      renameChat: "Rename",
+      deleteChat: "Delete",
+      chatName: "Chat name",
+      chatNameInvalid: "Enter a name of 1–120 characters.",
+      confirmDeleteChat: "Delete chat?",
+      deleteChatWarning: "This chat will be removed from your history.",
+      cancel: "Cancel",
+      historyActionFailed: "The chat could not be updated. Try again.",
       product: "Product",
       tapperTools: "Tapper tools",
       language: "Language",
@@ -273,6 +308,11 @@ export const PROTOTYPE_COPY = {
       showEarlierQuestions: "Show {count} earlier questions",
       showLaterQuestion: "Show {count} later question",
       showLaterQuestions: "Show {count} later questions",
+      stopGenerating: "Stop generating",
+      sending: "Sending",
+      regenerate: "Regenerate",
+      retry: "Retry",
+      editQuestion: "Edit question",
     },
     sources: {
       heading: "Knowledge sources",
@@ -323,6 +363,14 @@ export const PROTOTYPE_COPY = {
       models: "Models",
       remove: "Remove",
       close: "Close",
+      uploadFile: "Upload file",
+      attachmentUploading: "Uploading",
+      attachmentProcessing: "Processing",
+      attachmentNeedsReview: "No searchable chunks yet",
+      attachmentReady: "Ready to use",
+      attachmentFailed: "Upload failed",
+      reviewInLibrary: "Open in Library",
+      removeAttachment: "Remove attachment",
     },
     catalog: {
       agents: "Agents",
@@ -475,6 +523,17 @@ export const PROTOTYPE_COPY = {
       expandSidebar: "展开侧边栏",
       newChat: "新建对话",
       chatHistory: "对话历史",
+      searchChats: "搜索对话",
+      noMatchingChats: "没有匹配的对话",
+      moreOptions: "更多操作：{title}",
+      renameChat: "重命名",
+      deleteChat: "删除",
+      chatName: "对话名称",
+      chatNameInvalid: "请输入 1–120 个字符的名称。",
+      confirmDeleteChat: "删除对话？",
+      deleteChatWarning: "该对话将从历史中移除。",
+      cancel: "取消",
+      historyActionFailed: "对话未能更新，请重试。",
       product: "产品",
       tapperTools: "Tapper 工具",
       language: "语言",
@@ -509,6 +568,11 @@ export const PROTOTYPE_COPY = {
       showEarlierQuestions: "显示上方另外 {count} 个问题",
       showLaterQuestion: "显示下方另外 {count} 个问题",
       showLaterQuestions: "显示下方另外 {count} 个问题",
+      stopGenerating: "停止生成",
+      sending: "正在发送",
+      regenerate: "重新生成",
+      retry: "重试",
+      editQuestion: "编辑问题",
     },
     sources: {
       heading: "知识来源",
@@ -556,6 +620,14 @@ export const PROTOTYPE_COPY = {
       models: "模型",
       remove: "移除",
       close: "关闭",
+      uploadFile: "上传文件",
+      attachmentUploading: "正在上传",
+      attachmentProcessing: "正在处理",
+      attachmentNeedsReview: "暂无可检索切片",
+      attachmentReady: "可以使用",
+      attachmentFailed: "上传失败",
+      reviewInLibrary: "在知识库中打开",
+      removeAttachment: "移除附件",
     },
     catalog: {
       agents: "智能体",

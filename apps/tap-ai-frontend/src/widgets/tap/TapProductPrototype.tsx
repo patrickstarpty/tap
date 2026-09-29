@@ -13,7 +13,7 @@ import {
 } from "../../features/knowledge/api/queries";
 import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
-import { TapperChat } from "./prototype/TapperChat";
+import { TapperChat, type ChatAttachment } from "./prototype/TapperChat";
 import {
   loadPrototypeSnapshot,
   PROTOTYPE_SNAPSHOT_VERSION,
@@ -38,6 +38,9 @@ import {
 import {
   useAppendConversation,
   useCancelTurn,
+  useConversationSearch,
+  useDeleteConversation,
+  useRenameConversation,
   useConversationCitation,
   useConversationDetail,
   useConversationEvents,
@@ -61,6 +64,7 @@ import {
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
 import { DocumentChunks } from "../../features/knowledge/components/DocumentChunks";
+import { KnowledgeReview } from "../../features/knowledge/components/KnowledgeReview";
 import {
   appendTurn,
   createConversation,
@@ -465,6 +469,14 @@ function DurableInsightsResponse({
   );
 }
 
+const isFlowchartImage = (filename: string) =>
+  /\.(png|jpe?g)$/iu.test(filename);
+interface ResendContext {
+  sourceIds: readonly string[];
+  agentIds: readonly string[];
+  skillIds: readonly string[];
+}
+
 function AssistantResponse({
   contentCopy,
   turn,
@@ -472,6 +484,7 @@ function AssistantResponse({
   conversationId,
   onOpenCitation,
   onRetryConversation,
+  onResend,
   onGenerateTestPlan,
   activityEvents = [],
 }: {
@@ -481,6 +494,8 @@ function AssistantResponse({
   conversationId?: string;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
   onRetryConversation: () => void;
+  /** Sends the same question and context again as a new turn. */
+  onResend?: () => void;
   onGenerateTestPlan?: () => void;
   activityEvents?: readonly ActivityEvent[];
 }) {
@@ -515,14 +530,23 @@ function AssistantResponse({
       );
     }
     if (turn.status === "canceled") {
-      return <p role="status">Generation stopped.</p>;
+      return (
+        <div role="status">
+          <p>{turn.locale === "zh" ? "已停止生成。" : "Generation stopped."}</p>
+          {onResend === undefined ? null : (
+            <Button size="small" onClick={onResend}>
+              {contentCopy.chat.retry}
+            </Button>
+          )}
+        </div>
+      );
     }
     if (turn.status === "failed") {
       return (
         <div role="alert">
           <p>{turn.error ?? "The answer could not be generated. Try again."}</p>
-          <Button size="small" onClick={onRetryConversation}>
-            Retry
+          <Button size="small" onClick={onResend ?? onRetryConversation}>
+            {contentCopy.chat.retry}
           </Button>
         </div>
       );
@@ -547,6 +571,15 @@ function AssistantResponse({
             onOpenCitation={onOpenCitation}
           />
           <TurnContext copy={contentCopy} turn={turn} />
+          {onResend === undefined ||
+          turn.status === "queued" ||
+          turn.status === "running" ? null : (
+            <div className="tap-assistant-actions">
+              <Button size="small" onClick={onResend}>
+                {contentCopy.chat.regenerate}
+              </Button>
+            </div>
+          )}
           {onGenerateTestPlan === undefined ? null : (
             <div className="tap-artifact-actions">
               <Button type="primary" onClick={onGenerateTestPlan}>
@@ -793,8 +826,9 @@ function ProjectLibraryWorkspace({
                       {item.status} · {item.stage}
                     </p>
                     <small>{item.revisionId}</small>
+                    {/* Flowchart images keep review: model-read arrows need a person to correct and publish them. */}
                     <Button
-                      aria-label={`管理切片 ${item.filename}`}
+                      aria-label={`${isFlowchartImage(item.filename) ? "审核流程图" : "管理切片"} ${item.filename}`}
                       aria-expanded={reviewDocumentId === item.documentId}
                       onClick={() =>
                         setReviewDocumentId((current) =>
@@ -802,15 +836,22 @@ function ProjectLibraryWorkspace({
                         )
                       }
                     >
-                      管理切片
+                      {isFlowchartImage(item.filename)
+                        ? "审核流程图"
+                        : "管理切片"}
                     </Button>
                     {reviewDocumentId === item.documentId ? (
-                      <>
+                      isFlowchartImage(item.filename) ? (
+                        <KnowledgeReview
+                          documentId={item.documentId}
+                          sourceRevisionId={item.revisionId}
+                        />
+                      ) : (
                         <DocumentChunks
                           projectId={projectId}
                           documentId={item.documentId}
                         />
-                      </>
+                      )
                     ) : null}
                     {item.errorCode != null && <p>{item.errorCode}</p>}
                     {item.status === "failed" && (
@@ -1089,6 +1130,9 @@ export function TapProductPrototype({
     durable ? [] : BUILT_IN_SKILLS,
   );
   const sendInFlight = useRef(false);
+  const pendingSendKey = useRef<{ signature: string; key: string } | null>(
+    null,
+  );
   const [sendPending, setSendPending] = useState(false);
   const citationTrigger = useRef<HTMLElement | null>(null);
   const [activeCitation, setActiveCitation] = useState<{
@@ -1610,6 +1654,110 @@ export function TapProductPrototype({
     ],
   );
   const answerSources = durable ? publishedItems : sources;
+  const [pendingAttachments, setPendingAttachments] = useState<
+    readonly {
+      id: string;
+      name: string;
+      sourceId: string | null;
+      failed: boolean;
+    }[]
+  >([]);
+  const chatAttachments = useMemo<readonly ChatAttachment[]>(
+    () =>
+      pendingAttachments.map((item) => {
+        const source = sourceItems.find(
+          (candidate) => candidate.id === item.sourceId,
+        );
+        return {
+          id: item.id,
+          name: item.name,
+          status: item.failed
+            ? "failed"
+            : item.sourceId === null
+              ? "uploading"
+              : source?.status === "failed"
+                ? "failed"
+                : source?.status === "ready"
+                  ? "needs_review"
+                  : "processing",
+        };
+      }),
+    [pendingAttachments, sourceItems],
+  );
+  useEffect(() => {
+    // A chat attachment becomes turn context only after Library publication.
+    const published = new Set(publishedItems.map((item) => item.id));
+    const usable = pendingAttachments.filter(
+      (item) => item.sourceId !== null && published.has(item.sourceId),
+    );
+    if (usable.length === 0) return;
+    setPendingAttachments((current) =>
+      current.filter((item) => !usable.some((ready) => ready.id === item.id)),
+    );
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === activeConversationId
+          ? {
+              ...conversation,
+              selectedSourceIds: [
+                ...conversation.selectedSourceIds,
+                ...usable
+                  .map((item) => item.sourceId!)
+                  .filter((id) => !conversation.selectedSourceIds.includes(id)),
+              ],
+            }
+          : conversation,
+      ),
+    );
+  }, [activeConversationId, pendingAttachments, publishedItems]);
+  const uploadAttachment = (file: File) => {
+    const id = crypto.randomUUID();
+    const lowerName = file.name.toLowerCase();
+    const valid =
+      [".pdf", ".docx", ".md", ".txt"].some((extension) =>
+        lowerName.endsWith(extension),
+      ) && file.size <= 25 * 1024 * 1024;
+    setPendingAttachments((current) => [
+      ...current,
+      { id, name: file.name, sourceId: null, failed: !valid },
+    ]);
+    if (!valid || knowledgeClient === null) return;
+    knowledgeClient
+      .uploadSource(file, () => undefined, undefined, id)
+      .then((receipt) => {
+        void queryClient.invalidateQueries({
+          queryKey: ["knowledge", projectId, "sources"],
+        });
+        setPendingAttachments((current) =>
+          current.map((item) =>
+            item.id === id
+              ? { ...item, sourceId: receipt.source.sourceId }
+              : item,
+          ),
+        );
+      })
+      .catch(() =>
+        setPendingAttachments((current) =>
+          current.map((item) =>
+            item.id === id ? { ...item, failed: true } : item,
+          ),
+        ),
+      );
+  };
+  const resendContextOf = (turn: AssistantTurn): ResendContext => ({
+    sourceIds: turn.sourceReferences.map((source) => source.id),
+    agentIds:
+      turn.agentRevisionId != null
+        ? [turn.agentRevisionId]
+        : (turn.catalogReferences ?? [])
+            .filter((item) => item.kind === "agent")
+            .map((item) => item.id),
+    skillIds:
+      turn.skillRevisionIds ??
+      (turn.catalogReferences ?? [])
+        .filter((item) => item.kind === "skill")
+        .map((item) => item.id),
+  });
   const activeConversation =
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
@@ -1678,6 +1826,87 @@ export function TapProductPrototype({
     );
   };
 
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyError, setHistoryError] = useState<string | undefined>();
+  const conversationSearch = useConversationSearch(
+    durable ? projectId : null,
+    historySearch,
+  );
+  const renameConversationMutation = useRenameConversation(projectId);
+  const deleteConversationMutation = useDeleteConversation(projectId);
+  const historyActions = {
+    labels: {
+      search: copy.navigation.searchChats,
+      noMatches: copy.navigation.noMatchingChats,
+      moreOptions: (title: string) =>
+        copy.navigation.moreOptions.replace("{title}", title),
+      rename: copy.navigation.renameChat,
+      delete: copy.navigation.deleteChat,
+      chatName: copy.navigation.chatName,
+      chatNameInvalid: copy.navigation.chatNameInvalid,
+      confirmDelete: copy.navigation.confirmDeleteChat,
+      deleteWarning: copy.navigation.deleteChatWarning,
+      cancel: copy.navigation.cancel,
+    },
+    search: historySearch,
+    onSearchChange: (value: string) => {
+      setHistorySearch(value);
+      setHistoryError(undefined);
+    },
+    searchResults: durable
+      ? conversationSearch.data?.items
+      : conversations
+          .filter(
+            (item) =>
+              item.id !== "draft" &&
+              item.title
+                .toLowerCase()
+                .includes(historySearch.trim().toLowerCase()),
+          )
+          .map((item) => ({
+            conversationId: item.id,
+            title: item.title,
+            createdAt: "1970-01-01T00:00:00Z",
+            updatedAt: "1970-01-01T00:00:00Z",
+          })),
+    isSearching: durable && conversationSearch.isFetching,
+    error: historyError,
+    onRename: async (conversationId: string, title: string) => {
+      try {
+        if (durable)
+          await renameConversationMutation.mutateAsync({
+            conversationId,
+            title,
+          });
+        setConversations((current) =>
+          current.map((item) =>
+            item.id === conversationId ? { ...item, title } : item,
+          ),
+        );
+        setHistoryError(undefined);
+        return true;
+      } catch {
+        setHistoryError(copy.navigation.historyActionFailed);
+        return false;
+      }
+    },
+    onDelete: async (conversationId: string) => {
+      try {
+        if (durable)
+          await deleteConversationMutation.mutateAsync(conversationId);
+        setHistoryError(undefined);
+        if (conversationId === activeConversationId) createNewChat();
+        setConversations((current) =>
+          current.filter((item) => item.id !== conversationId),
+        );
+        return true;
+      } catch {
+        setHistoryError(copy.navigation.historyActionFailed);
+        return false;
+      }
+    },
+  };
+
   const createNewChat = () => {
     setMessageDraft("");
     setInsightsHandoff(null);
@@ -1688,6 +1917,8 @@ export function TapProductPrototype({
       kind: "selector",
       selector: ".tap-composer textarea",
     };
+    // An explicit choice made before history loads must not be replaced by it.
+    initialDurableSelection.current = true;
     setConversations((current) =>
       durable
         ? [createConversation(id), ...current.filter((item) => item.id !== id)]
@@ -1699,6 +1930,19 @@ export function TapProductPrototype({
   };
 
   const selectConversation = (conversationId: string) => {
+    // A search result can point past the loaded history pages.
+    const found = conversationSearch.data?.items.find(
+      (item) => item.conversationId === conversationId,
+    );
+    if (
+      found !== undefined &&
+      !conversations.some((item) => item.id === conversationId)
+    ) {
+      setConversations((current) => [
+        ...current,
+        createConversation(conversationId, { title: found.title }),
+      ]);
+    }
     if (conversationId !== activeConversationId) {
       setMessageDraft("");
       setInsightsHandoff(null);
@@ -1709,6 +1953,7 @@ export function TapProductPrototype({
       kind: "selector",
       selector: ".tap-composer textarea",
     };
+    initialDurableSelection.current = true;
     setActiveConversationId(conversationId);
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
@@ -1753,7 +1998,16 @@ export function TapProductPrototype({
       )
       .map(({ id, kind, name }) => ({ id, kind, name }));
 
-  const sendMessage = async (prompt: string): Promise<boolean> => {
+  const sendMessage = async (
+    prompt: string,
+    context?: ResendContext,
+  ): Promise<boolean> => {
+    const selectedSourceIds =
+      context?.sourceIds ?? activeConversation.selectedSourceIds;
+    const selectedAgentIds =
+      context?.agentIds ?? activeConversation.selectedAgentIds;
+    const selectedSkillIds =
+      context?.skillIds ?? activeConversation.selectedSkillIds;
     if (
       durable &&
       (createConversationMutation.isPending ||
@@ -1854,9 +2108,7 @@ export function TapProductPrototype({
     }
     const intent = detectIntent(prompt);
     const sourceReferences = answerSources
-      .filter((source) =>
-        activeConversation.selectedSourceIds.includes(source.id),
-      )
+      .filter((source) => selectedSourceIds.includes(source.id))
       .map(({ id, name, origin }) => ({ id, name, origin }));
     if (durable) {
       sendInFlight.current = true;
@@ -1870,8 +2122,8 @@ export function TapProductPrototype({
         );
         const allowedAgentIds = new Set(agents.map((item) => item.id));
         const allowedSkillIds = new Set(skills.map((item) => item.id));
-        const futureSourceIds = activeConversation.selectedSourceIds.filter(
-          (id) => readySourceIds.has(id),
+        const futureSourceIds = selectedSourceIds.filter((id) =>
+          readySourceIds.has(id),
         );
         const currentSourceReferences = currentPublished.items
           .filter((item) => futureSourceIds.includes(item.sourceId))
@@ -1888,14 +2140,18 @@ export function TapProductPrototype({
             .map((item) => item.revisionId),
           documentRevisionIds: [],
           agentRevisionId:
-            activeConversation.selectedAgentIds.find((id) =>
-              allowedAgentIds.has(id),
-            ) ?? null,
-          skillRevisionIds: activeConversation.selectedSkillIds.filter((id) =>
+            selectedAgentIds.find((id) => allowedAgentIds.has(id)) ?? null,
+          skillRevisionIds: selectedSkillIds.filter((id) =>
             allowedSkillIds.has(id),
           ),
         };
-        const key = crypto.randomUUID();
+        // Reuse the key while the same send is unconfirmed so a retry after an
+        // ambiguous failure replays instead of creating a duplicate turn.
+        const signature = JSON.stringify([activeConversation.id, input]);
+        if (pendingSendKey.current?.signature !== signature) {
+          pendingSendKey.current = { signature, key: crypto.randomUUID() };
+        }
+        const key = pendingSendKey.current.key;
         const accepted =
           activeConversation.id === "draft"
             ? await createConversationMutation.mutateAsync({
@@ -1906,6 +2162,7 @@ export function TapProductPrototype({
                 input,
                 idempotencyKey: key,
               });
+        pendingSendKey.current = null;
         setRequestedStreamTarget({
           conversationId: accepted.conversationId,
           turnId: accepted.turnId,
@@ -1923,14 +2180,10 @@ export function TapProductPrototype({
             contextLabels: [
               ...currentSourceReferences.map((item) => item.name),
               ...agents
-                .filter((item) =>
-                  activeConversation.selectedAgentIds.includes(item.id),
-                )
+                .filter((item) => selectedAgentIds.includes(item.id))
                 .map((item) => item.name),
               ...skills
-                .filter((item) =>
-                  activeConversation.selectedSkillIds.includes(item.id),
-                )
+                .filter((item) => selectedSkillIds.includes(item.id))
                 .map((item) => item.name),
             ],
             status: "queued",
@@ -2040,6 +2293,7 @@ export function TapProductPrototype({
         onModuleChange={selectModule}
         onNewChat={createNewChat}
         onSelectConversation={selectConversation}
+        historyActions={historyActions}
         onToggleCollapsed={
           sidebarCollapsed ? expandTapperSidebar : dismissTapperSidebar
         }
@@ -2110,7 +2364,25 @@ export function TapProductPrototype({
                   modelId,
                 }))
               }
-              onSend={sendMessage}
+              onSend={(prompt) => sendMessage(prompt)}
+              onEditTurn={(turn) => {
+                const context = resendContextOf(turn);
+                setMessageDraft(turn.prompt);
+                updateActiveConversation((conversation) => ({
+                  ...conversation,
+                  selectedSourceIds: context.sourceIds,
+                  selectedAgentIds: context.agentIds,
+                  selectedSkillIds: context.skillIds,
+                }));
+              }}
+              onUploadFile={durable ? uploadAttachment : undefined}
+              attachments={chatAttachments}
+              onRemoveAttachment={(attachmentId) =>
+                setPendingAttachments((current) =>
+                  current.filter((item) => item.id !== attachmentId),
+                )
+              }
+              onReviewAttachment={() => setActiveModule("library")}
               sendError={insightsError}
               sending={
                 sendPending ||
@@ -2187,6 +2459,12 @@ export function TapProductPrototype({
                     void conversationEvents.refetch();
                     void conversationDetail.refetch();
                   }}
+                  onResend={
+                    turn.insightsQueryId === undefined
+                      ? () =>
+                          void sendMessage(turn.prompt, resendContextOf(turn))
+                      : undefined
+                  }
                   onGenerateTestPlan={
                     durable &&
                     projectId !== null &&

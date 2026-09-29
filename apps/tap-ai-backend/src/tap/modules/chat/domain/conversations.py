@@ -418,3 +418,19 @@ class Conversation:
     updated_at: datetime
     turns: tuple[ConversationTurn, ...] = ()
     events: tuple[ConversationEvent, ...] = ()
+    actor_id: str | None = None
+    deleted_at: datetime | None = None
+    deleted_by: str | None = None
+
+
+CONVERSATION_TITLE_MAX_LENGTH = 120
+
+
+def conversation_title(value: str) -> str:
+    """Return the canonical stripped title or reject a blank/overlong one."""
+    if not isinstance(value, str):
+        raise ValueError("conversation title must be text")
+    title = value.strip()
+    if not 1 <= len(title) <= CONVERSATION_TITLE_MAX_LENGTH:
+        raise ValueError("conversation title must contain 1 to 120 characters")
+    return title

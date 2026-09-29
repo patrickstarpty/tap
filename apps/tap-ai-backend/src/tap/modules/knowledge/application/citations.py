@@ -313,6 +313,7 @@ def _document_anchor(anchor_json: str) -> DocumentAnchor:
     if not isinstance(value, dict):
         raise ValueError("citation anchor must be an object")
     allowed = {
+        "bbox",
         "endOffset",
         "headingPath",
         "inventoryItemId",
@@ -328,8 +329,12 @@ def _document_anchor(anchor_json: str) -> DocumentAnchor:
     end = value["endOffset"]
     page = value.get("page")
     inventory_item_id = value.get("inventoryItemId")
+    bbox = value.get("bbox", [])
     if (
         not isinstance(headings, list)
+        or not isinstance(bbox, list)
+        or len(bbox) not in {0, 4}
+        or any(type(item) is not int or item < 0 for item in bbox)
         or any(not isinstance(item, str) or not item for item in headings)
         or type(start) is not int
         or type(end) is not int
@@ -352,6 +357,7 @@ def _document_anchor(anchor_json: str) -> DocumentAnchor:
         start_offset=start,
         end_offset=end,
         inventory_item_id=inventory_item_id,
+        bbox=tuple(bbox),
     )
 
 

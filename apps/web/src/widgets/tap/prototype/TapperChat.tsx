@@ -4,9 +4,13 @@ import {
   CheckOutlined,
   CloseOutlined,
   DownOutlined,
+  EditOutlined,
+  LoadingOutlined,
   PlusOutlined,
+  ReloadOutlined,
   RobotOutlined,
   ToolOutlined,
+  UploadOutlined,
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
@@ -31,21 +35,34 @@ import type {
 } from "./model";
 import { CODEX_MODELS } from "./model";
 import { FileTypeIcon } from "./FileTypeIcon";
+import {
+  ATTACHMENT_ACCEPT,
+  validateAttachmentFile,
+  type ComposerAttachmentView,
+} from "./composerAttachments";
 import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 
 type PickerKind = "library" | "agents" | "skills";
 
 interface TapperChatProps {
   agents: readonly CatalogItem[];
+  attachments?: readonly ComposerAttachmentView[];
   conversation: Conversation;
   copy: PrototypeCopy;
   isInert?: boolean;
+  isSending?: boolean;
   message: string;
   onMessageChange: (message: string) => void;
   pageContext?: AssistantTurn["pageContext"];
   onClearPageContext: () => void;
   onModelChange: (modelId: CodexModelId) => void;
   onSend: (prompt: string) => void;
+  onStop?: () => void;
+  onRegenerate?: (turn: AssistantTurn) => void;
+  onEditTurn?: (turn: AssistantTurn) => void;
+  onUploadFile?: (file: File) => void;
+  onRemoveAttachment?: (sourceId: string) => void;
+  onReviewAttachment?: (sourceId: string, trigger: HTMLElement) => void;
   onToggleAgent: (agentId: string) => void;
   onToggleSkill: (skillId: string) => void;
   onToggleSource: (sourceId: string) => void;
@@ -102,15 +119,23 @@ function formatQuestionCount(
 
 export function TapperChat({
   agents,
+  attachments = [],
   conversation,
   copy,
   isInert = false,
+  isSending = false,
   message,
   onMessageChange: setMessage,
   pageContext,
   onClearPageContext,
   onModelChange,
   onSend,
+  onStop,
+  onRegenerate,
+  onEditTurn,
+  onUploadFile,
+  onRemoveAttachment,
+  onReviewAttachment,
   onToggleAgent,
   onToggleSkill,
   onToggleSource,
@@ -122,6 +147,8 @@ export function TapperChat({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [picker, setPicker] = useState<PickerKind | null>(null);
   const [pickerQuery, setPickerQuery] = useState("");
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<TextAreaRef>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const addTriggerRef = useRef<HTMLButtonElement>(null);
@@ -151,12 +178,16 @@ export function TapperChat({
     turnId: string | null;
   } | null>(null);
   const hasTurns = conversation.turns.length > 0;
+  const isGenerating = conversation.turns.some(
+    (turn) => turn.answerState === "running",
+  );
 
   useEffect(() => {
     setMenuOpen(false);
     setModelMenuOpen(false);
     setPicker(null);
     setPickerQuery("");
+    setUploadError(null);
   }, [conversation.id]);
 
   useEffect(() => {
@@ -388,7 +419,7 @@ export function TapperChat({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = message.trim();
-    if (prompt.length === 0) return;
+    if (prompt.length === 0 || isSending || isGenerating) return;
     onSend(prompt);
     setMessage("");
     composerRef.current?.focus();
@@ -496,6 +527,22 @@ export function TapperChat({
     shiftQuestionWindow(
       event.deltaY > 0 ? QUESTION_RAIL_WHEEL_STEP : -QUESTION_RAIL_WHEEL_STEP,
     );
+  };
+
+  const chooseUploadFile = (file: File | undefined) => {
+    if (file === undefined) return;
+    const problem = validateAttachmentFile(file);
+    if (problem !== null) {
+      setUploadError(
+        problem === "too-large"
+          ? copy.composer.fileTooLarge
+          : copy.composer.unsupportedFile,
+      );
+      return;
+    }
+    setUploadError(null);
+    onUploadFile?.(file);
+    composerRef.current?.focus();
   };
 
   const openPicker = (kind: PickerKind) => {
@@ -658,6 +705,62 @@ export function TapperChat({
         </div>
       ) : null}
 
+      {attachments.length > 0 ? (
+        <div
+          className="tap-context-chips"
+          role="group"
+          aria-label={copy.composer.attachments}
+        >
+          {attachments.map((attachment) => (
+            <span
+              key={`attachment-${attachment.id}`}
+              className="tap-context-chip tap-attachment-chip"
+              data-kind="attachment"
+              data-status={attachment.status}
+            >
+              <FileTypeIcon type={attachment.type} />
+              <span className="tap-attachment-chip-copy">
+                <span title={attachment.name}>{attachment.name}</span>
+                <small role="status">
+                  {attachment.status === "processing" ? (
+                    <LoadingOutlined aria-hidden="true" />
+                  ) : null}
+                  {attachment.status === "processing"
+                    ? copy.composer.attachmentProcessing
+                    : attachment.status === "failed"
+                      ? copy.composer.attachmentFailed
+                      : copy.composer.attachmentNeedsReview}
+                </small>
+              </span>
+              {attachment.status === "processing" ? null : (
+                <button
+                  type="button"
+                  className="tap-attachment-review"
+                  onClick={(event) =>
+                    onReviewAttachment?.(attachment.id, event.currentTarget)
+                  }
+                >
+                  {copy.composer.reviewInLibrary}
+                </button>
+              )}
+              <button
+                type="button"
+                aria-label={`${copy.composer.remove} ${attachment.name}`}
+                onClick={() => onRemoveAttachment?.(attachment.id)}
+              >
+                <CloseOutlined aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {uploadError === null ? null : (
+        <p className="tap-composer-error" role="alert">
+          {uploadError}
+        </p>
+      )}
+
       <Input.TextArea
         ref={composerRef}
         id="tap-message"
@@ -716,8 +819,32 @@ export function TapperChat({
                 <ToolOutlined aria-hidden="true" />
                 {copy.composer.useSkills}
               </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  fileInputRef.current?.click();
+                }}
+              >
+                <UploadOutlined aria-hidden="true" />
+                {copy.composer.uploadFile}
+              </button>
             </div>
           ) : null}
+          <input
+            ref={fileInputRef}
+            className="tapper-visually-hidden"
+            type="file"
+            accept={ATTACHMENT_ACCEPT}
+            aria-label={copy.composer.uploadFile}
+            aria-hidden="true"
+            tabIndex={-1}
+            onChange={(event) => {
+              chooseUploadFile(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
         </div>
         <div className="tap-composer-model-control">
           <button
@@ -764,16 +891,39 @@ export function TapperChat({
             </div>
           ) : null}
         </div>
-        <button
-          className="tap-composer-send-button"
-          type="submit"
-          aria-label={copy.chat.send}
-          disabled={message.trim().length === 0}
-        >
-          <span className="tap-composer-send-face">
-            <ArrowUpOutlined aria-hidden="true" />
-          </span>
-        </button>
+        {isGenerating && !isSending ? (
+          <button
+            key="stop"
+            className="tap-composer-send-button"
+            type="button"
+            data-state="stop"
+            aria-label={copy.chat.stopGenerating}
+            title={copy.chat.stopGenerating}
+            onClick={() => onStop?.()}
+          >
+            <span className="tap-composer-send-face">
+              <span className="tap-composer-stop-icon" aria-hidden="true" />
+            </span>
+          </button>
+        ) : (
+          <button
+            key="send"
+            className="tap-composer-send-button"
+            type="submit"
+            data-state={isSending ? "sending" : undefined}
+            aria-label={isSending ? copy.chat.sending : copy.chat.send}
+            aria-busy={isSending || undefined}
+            disabled={isSending || message.trim().length === 0}
+          >
+            <span className="tap-composer-send-face">
+              {isSending ? (
+                <LoadingOutlined aria-hidden="true" />
+              ) : (
+                <ArrowUpOutlined aria-hidden="true" />
+              )}
+            </span>
+          </button>
+        )}
       </div>
     </form>
   );
@@ -814,7 +964,23 @@ export function TapperChat({
                 key={turn.id}
                 lang={turn.locale === "zh" ? "zh-CN" : "en"}
               >
-                <div className="tap-user-message">{turn.prompt}</div>
+                <div className="tap-user-row">
+                  {onEditTurn === undefined ? null : (
+                    <button
+                      type="button"
+                      className="tap-turn-action tap-turn-action--icon"
+                      aria-label={copy.chat.editQuestion}
+                      title={copy.chat.editQuestion}
+                      onClick={() => {
+                        onEditTurn(turn);
+                        composerRef.current?.focus();
+                      }}
+                    >
+                      <EditOutlined aria-hidden="true" />
+                    </button>
+                  )}
+                  <div className="tap-user-message">{turn.prompt}</div>
+                </div>
                 {(turn.sourceReferences.length > 0 ||
                   (turn.catalogReferences?.length ?? 0) > 0) && (
                   <details className="tap-message-context">
@@ -840,6 +1006,21 @@ export function TapperChat({
                 <div className="tap-assistant-message">
                   {renderAssistantTurn(turn)}
                 </div>
+                {onRegenerate !== undefined &&
+                (turn.answerState === "completed" ||
+                  turn.answerState === "insufficient") ? (
+                  <div className="tap-turn-actions">
+                    <button
+                      type="button"
+                      className="tap-turn-action"
+                      disabled={isGenerating || isSending}
+                      onClick={() => onRegenerate(turn)}
+                    >
+                      <ReloadOutlined aria-hidden="true" />
+                      {copy.chat.regenerate}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

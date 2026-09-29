@@ -29,7 +29,10 @@ from tap.modules.ai.ports.insights import (
     InsightsBudgetExceeded,
     InsightsQueryUnavailable,
 )
-from tap.modules.chat.application.conversations import ConversationConflict
+from tap.modules.chat.application.conversations import (
+    ConversationConflict,
+    ConversationNotFound,
+)
 from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.answer_plan import AnswerPlan
@@ -505,6 +508,9 @@ class GenerationWorker:
                     continue
             except PermissionError:
                 # The graph fence proves another worker owns the Turn.
+                continue
+            except ConversationNotFound:
+                # The owner deleted the Conversation; its Turn must not be completed.
                 continue
             except ConversationConflict:
                 if turn.attempt < self.max_checkpoint_attempts:

@@ -258,7 +258,7 @@ export function useDocumentReview(locale: Locale) {
     opener.current = trigger ?? null;
     setInspected(id);
   }
-  function upload(name: string) {
+  function upload(name: string, options: { inspect?: boolean } = {}) {
     const id = crypto.randomUUID();
     setDocuments((current) => [
       ...current,
@@ -273,7 +273,8 @@ export function useDocumentReview(locale: Locale) {
         history: [],
       },
     ]);
-    setInspected(id);
+    if (options.inspect ?? true) setInspected(id);
+    return id;
   }
   return {
     sources,

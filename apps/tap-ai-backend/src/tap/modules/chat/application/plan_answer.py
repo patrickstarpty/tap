@@ -114,7 +114,12 @@ class AnswerPlanner:
         missing: tuple[str, ...] = ()
         reason = None
         confidence = 1.0
-        ambiguous = bool(re.search(r"它|上一版|\b(?:it|previous version)\b", original, re.I))
+        # English "it" usually has an in-sentence antecedent; it is an unresolved
+        # referent only when the question also asks about versions or differences.
+        ambiguous = bool(re.search(r"它|上一版|\bprevious version\b", original, re.I)) or bool(
+            re.search(r"\bit\b", original, re.I)
+            and re.search(r"\b(?:version|v\d+|differ\w*|compare\w*|change\w*)\b", original, re.I)
+        )
         complex_query = bool(re.search(r"比较|不同|对比|跨章节|compare|difference", original, re.I))
         direct = bool(
             re.fullmatch(r"\s*(?:你好|您好|hi|hello|谢谢|thanks)[！!。.\s]*", original, re.I)

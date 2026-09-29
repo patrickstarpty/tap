@@ -158,7 +158,10 @@ class MysqlManagedChunks:
     async def _ensure(self, document_id: str) -> dict[str, Any]:
         # Reads must remain available while the worker holds its generation lock.
         async with self.sessions() as session:
-            await self._document(session, document_id)
+            document = await self._document(session, document_id)
+            if document["media_type"] in {"image/png", "image/jpeg"}:
+                # Model-read flowchart arrows are corrected and published through review.
+                raise ChunkConflict("flowchart images are managed through review")
             existing = (
                 (
                     await session.execute(

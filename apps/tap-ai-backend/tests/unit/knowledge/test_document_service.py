@@ -535,3 +535,42 @@ def test_reservation_cancellation_does_not_wait_unbounded_for_staging_cleanup(
         assert caught.value is cancellation
 
     asyncio.run(scenario())
+
+
+def test_flowchart_images_never_enter_direct_chunk_management() -> None:
+    """Chunk settings apply to text sources; flowchart images are corrected through review."""
+
+    async def scenario() -> None:
+        repository = MemoryDocumentRepository()
+        reserved: list[ReserveUpload] = []
+        original_reserve = repository.reserve_upload
+
+        async def recording_reserve(command):  # type: ignore[no-untyped-def]
+            reserved.append(command)
+            return await original_reserve(command)
+
+        repository.reserve_upload = recording_reserve  # type: ignore[method-assign]
+        service = DocumentService(repository=repository, artifacts=FakeArtifactStore())
+        settings = {"mode": "general"}
+        png = b"\\x89PNG\\r\\n\\x1a\\n" + b"0" * 32
+
+        await service.upload(
+            UploadInput(
+                filename="flow.png",
+                media_type="image/png",
+                content=_content(png),
+                chunk_settings=settings,
+            )
+        )
+        await service.upload(
+            UploadInput(
+                filename="rules.md",
+                media_type="text/markdown",
+                content=_content(b"# Rules"),
+                chunk_settings=settings,
+            )
+        )
+
+        assert [command.chunk_settings for command in reserved] == [None, settings]
+
+    asyncio.run(scenario())

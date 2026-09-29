@@ -51,6 +51,8 @@ class ParseInventoryKind(str, Enum):
     HEADING = "heading"
     TABLE = "table"
     IMAGE = "image"
+    FLOW_NODE = "flow_node"
+    FLOW_EDGE = "flow_edge"
     LIST = "list"
     CODE = "code"
 

@@ -761,6 +761,7 @@ case " $* " in
     environment_names="$(tapper-env-names)"
     printf 'env|settings|%s\n' "$environment_names" >> "$TAPPER_E2E_STUB_LOG"
     [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND:$TAPPER_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 71
+    [ "${TAPPER_VISION_TIMEOUT_SECONDS:-}" = 60 ] || exit 71
     [ "${TAPPER_OBJECT_STORE_PROVIDER:-}" = minio ] || exit 79
     [ "${TAPPER_S3_ENDPOINT:-}" = http://127.0.0.1:29000 ] || exit 79
     [ "${TAPPER_S3_BUCKET:-}" = tapper-e2e-objects ] || exit 79
@@ -2349,6 +2350,7 @@ def test_litellm_exposes_only_the_fixed_tapper_aliases() -> None:
         "tapper-chat-flash",
         "tapper-chat-max",
         "tapper-embedding",
+        "tapper-vision",
     ]
     assert config["model_list"][0]["litellm_params"] == {
         "model": "os.environ/LITELLM_MODEL",
@@ -2357,6 +2359,11 @@ def test_litellm_exposes_only_the_fixed_tapper_aliases() -> None:
     }
     assert config["model_list"][3]["litellm_params"] == {
         "model": "os.environ/LITELLM_TAPPER_EMBEDDING_MODEL",
+        "api_key": "os.environ/DASHSCOPE_API_KEY",
+        "api_base": "os.environ/DASHSCOPE_API_BASE",
+    }
+    assert config["model_list"][4]["litellm_params"] == {
+        "model": "os.environ/LITELLM_TAPPER_VISION_MODEL",
         "api_key": "os.environ/DASHSCOPE_API_KEY",
         "api_base": "os.environ/DASHSCOPE_API_BASE",
     }
@@ -2598,6 +2605,7 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
         "MILVUS_READER_PASSWORD",
         "MILVUS_WRITER_PASSWORD",
         "MILVUS_PROVISIONER_PASSWORD",
+        "TAPPER_VISION_TIMEOUT_SECONDS",
         "TAPPER_COLLECTION",
         "TAPPER_ALIAS",
         "TAPPER_CORPUS_VERSION",
@@ -3204,6 +3212,7 @@ def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoin
     runner, environment, log = _e2e_runner_fixture(tmp_path)
     environment.update(
         {
+            "TAPPER_VISION_TIMEOUT_SECONDS": "999",
             "OPENAI_API_KEY": "caller-openai-key",
             "BAILIAN_API_KEY": "caller-bailian-key",
             "BAILIAN_API_BASE": "https://caller.invalid/bailian",

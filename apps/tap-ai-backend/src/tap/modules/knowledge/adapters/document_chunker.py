@@ -106,6 +106,8 @@ class StructuralChunker:
             anchor["page"] = block.page
         if block.inventory_item_id is not None:
             anchor["inventoryItemId"] = block.inventory_item_id
+        if block.bbox is not None:
+            anchor["bbox"] = list(block.bbox)
         anchor_json = json.dumps(anchor, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         chunk_hash = canonical_sha256(content.encode("utf-8"))
         return ChunkDraft(
@@ -117,6 +119,7 @@ class StructuralChunker:
             anchor_json=anchor_json,
             source_content_hash=artifact.source_hash,
             chunk_content_hash=chunk_hash,
+            parser_version=artifact.parser_version,
         )
 
 

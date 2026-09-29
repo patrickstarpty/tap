@@ -2,6 +2,8 @@
 
 本目录保存契约、来源和文档治理规范。
 
+- [流程图图片知识设计](2026-09-27-flowchart-image-knowledge-design.md)：单张 PNG/JPEG 的解析、复核、语义文字检索及有引用问答边界。
+
 - [TAP 产品原型基准规范](../../guides/2026-09-22-product-prototype-baseline.md)：唯一 `/prototype` 入口、完整模块保留、增量设计、产品 UI 边界与前后截图回归要求。
 - [RFC-011 AI、知识与主动 Agent](2026-09-22-rfc-011-ai-knowledge-design.md)：已接受 RFC-011 的配套开发设计，包含统一编排、知识处理与审核、资源包、主动准入和量化验收。
 - [RFC-011 测试管理与执行](2026-09-22-rfc-011-testing-execution-design.md)：已接受 RFC-011 的配套开发设计，包含用例迁移、手工结果、Web/App LCA 和负载执行。

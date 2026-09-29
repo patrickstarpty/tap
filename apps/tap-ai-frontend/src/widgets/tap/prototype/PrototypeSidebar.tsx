@@ -10,7 +10,10 @@ import {
 import type { PrototypeCopy } from "./copy";
 import type { Conversation, Locale, ProductModule } from "./model";
 import { PanelToggleIcon } from "./PanelToggleIcon";
-import { ConversationHistory } from "../../../features/conversations/components/ConversationHistory";
+import {
+  ConversationHistory,
+  type ConversationHistoryActions,
+} from "../../../features/conversations/components/ConversationHistory";
 
 const tapperAvatar = new URL(
   "../../../../assets/brand/tapper/owl/svg/avatar/tapper-owl-avatar-color.svg?no-inline",
@@ -33,6 +36,7 @@ interface PrototypeSidebarProps {
   onNewChat: () => void;
   onSelectConversation: (conversationId: string) => void;
   onToggleCollapsed: () => void;
+  historyActions?: ConversationHistoryActions;
   historyState?: {
     error?: string;
     hasMore: boolean;
@@ -56,6 +60,7 @@ export function PrototypeSidebar({
   onSelectConversation,
   onToggleCollapsed,
   historyState,
+  historyActions,
 }: PrototypeSidebarProps) {
   const tapperWorkspaceActive = [
     "tapper",
@@ -111,16 +116,18 @@ export function PrototypeSidebar({
       return conversation.turns.length > 0 || contextCount > 0;
     });
 
+  const getConversationTitle = (conversation: Conversation) =>
+    conversation.turns.length > 0 ||
+    (historyState !== undefined && conversation.id !== "draft")
+      ? conversation.title
+      : copy.navigation.newChat;
+
   const getConversationLabel = (conversation: Conversation) => {
     const contextCount =
       conversation.selectedSourceIds.length +
       conversation.selectedAgentIds.length +
       conversation.selectedSkillIds.length;
-    const title =
-      conversation.turns.length > 0 ||
-      (historyState !== undefined && conversation.id !== "draft")
-        ? conversation.title
-        : copy.navigation.newChat;
+    const title = getConversationTitle(conversation);
     const contextLabel =
       contextCount > 0 ? ` · ${contextCount} ${copy.sources.selected}` : "";
 
@@ -259,7 +266,7 @@ export function PrototypeSidebar({
               ariaLabel={copy.navigation.chatHistory}
               conversations={conversationHistory.map(({ conversation }) => ({
                 conversationId: conversation.id,
-                title: getConversationLabel(conversation),
+                title: getConversationTitle(conversation),
                 createdAt: "1970-01-01T00:00:00Z",
                 updatedAt: "1970-01-01T00:00:00Z",
               }))}
@@ -272,6 +279,24 @@ export function PrototypeSidebar({
               onRetry={historyState?.onRetry ?? (() => undefined)}
               onSelect={onSelectConversation}
               sectionTitle={copy.navigation.chatHistory}
+              actions={
+                historyActions === undefined
+                  ? undefined
+                  : {
+                      ...historyActions,
+                      // The unsaved draft has no durable history actions.
+                      canManage: (id) => id !== "draft",
+                    }
+              }
+              getLabel={(summary) => {
+                const match = conversationHistory.find(
+                  ({ conversation }) =>
+                    conversation.id === summary.conversationId,
+                );
+                return match === undefined
+                  ? summary.title
+                  : getConversationLabel(match.conversation);
+              }}
             />
           ) : null}
         </aside>

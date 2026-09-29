@@ -42,3 +42,6 @@
 - [可信知识、Graph 与测试设计质量重新验收](2026-09-26-trusted-knowledge-graph-test-design-gate.md)：真实验收 `NOT RUN / PENDING`；确定性 anti-forgery 与证据绑定已补齐，但缺真实数据集、模型执行和具名 reviewer 授权，新增可信知识、V2、V3 均未关闭 Gate。
 - [可信知识、测试设计与基础 Insights 联合交付门禁](2026-09-26-trusted-knowledge-insights-delivery-gate.md)：M1–M4 隔离模拟业务 UAT `PASS`，适用于本机演示与开发交接；真实业务 Gate 均 `PENDING`，计划保持 `active`。
 - [架构与实施评审及 V1 范围收敛](2026-09-29-architecture-review-and-v1-scope.md)：核心架构方向合理但治理快于交付；记录前端原型分叉、文档与代码差距、后端可靠性缺口，以及收敛为 TAP AI 内 5 项能力的 V1 范围。
+- [流程图业务语义 UAT 验收](2026-09-27-flowchart-business-meaning-uat.md)：2026-09-29 完整浏览器链路（真实视觉与对话模型、纠错、复核、发布、追问、区域引用、撤回）自动化执行通过，独立复核由 UAT 工具身份代劳；真实视觉仍需人工更正，M1–M4 真实业务 Gate 待验收。
+- [流程图图片审核原型对照](2026-09-27-flowchart-image-prototype-review.md)：记录审核纠错前后截图、生产编辑器桌面与移动端核对及模块导航验证。
+- [Tapper 对话控制（TAP-8517）验收](2026-09-29-tapper-chat-controls-review.md)：通过；重命名、软删除、历史搜索、重新生成/重试/编辑为追加新回合、停止生成与发送状态、经 Library 的附件，含真实浏览器旅程与设计基线前后截图。

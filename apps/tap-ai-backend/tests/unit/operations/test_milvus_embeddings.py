@@ -1367,6 +1367,7 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
         "LITELLM_MODEL": "${LITELLM_MODEL:-dashscope/qwen-plus}",
         "LITELLM_FLASH_MODEL": "${LITELLM_FLASH_MODEL:-dashscope/qwen-flash}",
         "LITELLM_MAX_MODEL": "${LITELLM_MAX_MODEL:-dashscope/qwen-max}",
+        "LITELLM_TAPPER_VISION_MODEL": ("${LITELLM_TAPPER_VISION_MODEL:-dashscope/qwen3-vl-plus}"),
     }
     assert not any(key.startswith("LITELLM_EMBEDDING_") for key in compose_environment)
     chat_route = next(item for item in gateway["model_list"] if item["model_name"] == "tapper-chat")
