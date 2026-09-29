@@ -131,6 +131,8 @@ export interface PrototypeCopy {
     noResults: string;
     agentCatalog: string;
     skillCatalog: string;
+    nameRule: string;
+    previewHeading: string;
   };
   library: {
     testingCommunity: string;
@@ -503,6 +505,9 @@ export const PROTOTYPE_COPY = {
       noResults: "No matching items",
       agentCatalog: "Agent catalog",
       skillCatalog: "Skill catalog",
+      nameRule:
+        "Use lowercase letters, numbers and hyphens, e.g. health-disclosure-check.",
+      previewHeading: "SKILL.md preview",
     },
     library: {
       loadExamples: "Load examples",
@@ -872,6 +877,8 @@ export const PROTOTYPE_COPY = {
       noResults: "没有匹配项",
       agentCatalog: "智能体目录",
       skillCatalog: "技能目录",
+      nameRule: "只能使用小写字母、数字和连字符，例如 health-disclosure-check。",
+      previewHeading: "SKILL.md 预览",
     },
     library: {
       loadExamples: "加载示例文件",
