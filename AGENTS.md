@@ -10,7 +10,7 @@
 
 ## Project Structure & Module Organization
 
-TAP AI lives in `apps/tap-ai-backend/` (Python 3.13/FastAPI) and `apps/tap-ai-frontend/` (React/TypeScript/Vite). TAP non-AI app boundaries live in `apps/backend/` and `apps/web/`. Generated AI contracts remain in `contracts/`; runtime tooling lives in `scripts/` and `deploy/`. The Tapper local slice uses MySQL, Redis, LiteLLM, Milvus and an object store selected by `TAPPER_OBJECT_STORE_PROVIDER` (`azure` → Azurite is the code default; `.env.example` and isolated E2E use `minio` → `tap-minio`); API, Relay and worker entrypoints remain separate. The LangGraph interaction graph is currently a fixed `classify → admit → execute` pipeline. Place specs in `docs/superpowers/specs/` and plans in `docs/superpowers/plans/`; guides in `docs/guides/`; cross-module decisions in `docs/decisions/`; `docs/archive/` is read-only. Use `YYYY-MM-DD-<topic>[-design].md` filenames.
+TAP AI lives in `apps/tap-ai-backend/` (Python 3.13/FastAPI) and `apps/tap-ai-frontend/` (React/TypeScript/Vite). TAP non-AI app boundaries live in `apps/backend/` and `apps/web/`. Generated AI contracts remain in `contracts/`; runtime tooling lives in `scripts/` and `deploy/`. The Tapper local slice uses MySQL, Redis, MinIO, LiteLLM and Milvus; API, Relay and worker entrypoints remain separate. The LangGraph interaction graph is currently a fixed `classify → admit → execute` pipeline. Place specs in `docs/superpowers/specs/` and plans in `docs/superpowers/plans/`; guides in `docs/guides/`; cross-module decisions in `docs/decisions/`; `docs/archive/` is read-only. Use `YYYY-MM-DD-<topic>[-design].md` filenames.
 
 ## Documentation Governance
 

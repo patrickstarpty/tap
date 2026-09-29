@@ -139,7 +139,6 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 - 不把 DeepSeek Harness、LangGraph 或 BrowserStack 的内部对象直接暴露为 TAP 公共契约。
 - 不在 MVP 阶段构建通用低代码编排器或多云调度平台。
 - 不让非确定性的 Agent 判断替代确定性的测试门禁。
-- 不把 Codex CLI/SDK 变成 Knowledge、授权、摄取、Milvus/Graph 写入或测试执行的必需依赖。
 
 ## 核心原则
 
@@ -176,7 +175,7 @@ make demo-dev
 
 文档解析镜像使用固定 Python 基础镜像和 `uv.lock` 中的四个解析依赖，在本机生成 `.tapper/parser-build.json` receipt；源码、锁或构建输入变化后需要重建。`make demo-dev` 先启动私有 Unix socket 监督进程，并以真实短解析确认可执行及可回收，再启动 API、Relay、Ingestion、Conversation Generation、Graph、Test Design Worker 与 Web。每次解析使用独立无网络容器，Parser 不开放 TCP 端口；停止应用时同时回收监督进程及其任务。`.tapper/parser-runtime/<compose-project>` 保留私有 owner/image 关联，重启先按原归属清理遗留任务，再执行当前镜像自检；不要把缺少错误文件当成清理成功。
 
-已有旧 `.env` 的工作区应同步所需配置，保留原凭据和存储引用。未配置 `TAPPER_OBJECT_STORE_PROVIDER` 时保留 Azure；新模板明确选择 MinIO。切换已有 Azure 数据时，显式设置 `TAPPER_LEGACY_AZURE_ENABLED=1` 并保留有效的 `AZURE_STORAGE_CONNECTION_STRING`，旧 locator 才能继续读取、删除及恢复 reservation；新写入进入 MinIO，不自动搬迁旧数据。
+从旧版本升级：先执行 `make demo-reset` 再重新导入。旧模型名、旧 Azurite 数据与旧定位符不做迁移。
 
 模型配置至少同步下面三项；旧 OpenAI model route 会覆盖 Compose 默认值，不能继续保留：
 
@@ -186,44 +185,32 @@ LITELLM_TAPPER_EMBEDDING_MODEL=dashscope/text-embedding-v4
 DASHSCOPE_API_BASE=https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
 ```
 
-`make demo-up` 启动并初始化 MySQL、Redis、Azurite、Milvus 与 LiteLLM，MinIO 模式另外启用独立的 `tap-minio` 服务；`make demo-dev` 在 `127.0.0.1:8000` 运行 FastAPI，在 `127.0.0.1:5173` 运行 Vite Web，并启动 Relay、Ingestion、Conversation Generation、Graph 与 Test Design Worker。默认本地端口如下：
+`make demo-up` 启动并初始化 MySQL、Redis、MinIO、Milvus 与 LiteLLM；`make demo-dev` 在 `127.0.0.1:8000` 运行 FastAPI，在 `127.0.0.1:5173` 运行 Vite Web，并启动 Relay、Ingestion、Conversation Generation、Graph 与 Test Design Worker。默认本地端口如下：
 
 | 组件           | 默认 loopback 端口 | 职责                                                                             |
 | -------------- | ------------------ | -------------------------------------------------------------------------------- |
 | MySQL 8.4 LTS  | `23306`            | Source/Document、Conversation/快照、Graph、Test Plan、Audit 与 Outbox 的权威状态 |
 | Redis 7.4      | `26379`            | 可重建命令分发与任务唤醒                                                         |
-| TAP MinIO      | `19000`            | 新模板默认的原文件、normalized/chunk/embedding artifact，独立具名卷              |
-| Azurite Blob   | `21000`            | 显式 Azure 模式或已启用的旧 locator 兼容存储                                     |
-| LiteLLM Proxy  | `24000`            | 固定 Chat/Embedding alias 路由                                                   |
+| TAP MinIO      | `19000`            | 唯一对象存储：原文件、normalized/chunk/embedding artifact，独立具名卷            |
+| LiteLLM Proxy  | `24000`            | 唯一模型调用路径                                                                 |
 | Milvus         | `39530` / `29091`  | 本地 `doc` 可重建检索投影与健康端口                                              |
 | FastAPI / Vite | `8000` / `5173`    | Knowledge HTTP API 与 Tapper Web                                                 |
 
-RFC-009 V1 默认、Validation 和 Product runtime 现在只装配一个 LiteLLM `ModelGateway`，并对 `TAPPER_ANSWER_BACKEND=codex` fail closed。RFC-006 的直接 Codex CLI 路径只保留在不挂载 RFC-009 Project API 的显式 legacy-loopback composition，不属于 V1 合同，也不能作为 V1/VG 验收证据。
+模型调用只有一条路径：`ModelGateway → LiteLLM`。模型目录由 LiteLLM `GET /v1/model/info` 动态提供并缓存 60 秒，唯一配置来源是 `deploy/local/litellm/config.yaml`；新增模型只改这份配置并重启 LiteLLM，后端无需改代码或重启，详见 [LiteLLM 模型目录指南](docs/guides/2026-09-29-litellm-models.md)。
 
-该历史 Demo 的模型配置只来自服务端 `.env`，不在 UI 或单次请求暴露。默认及已验收的完整回答选择块为：
+该 Demo 的模型配置只来自服务端 `.env`，不在 UI 或单次请求暴露：
 
 ```dotenv
 TAPPER_MODEL_BACKEND=litellm
-TAPPER_ANSWER_BACKEND=litellm
-TAPPER_CODEX_MODEL=gpt-5.6-sol
-TAPPER_CODEX_REASONING_EFFORT=ultra
-TAPPER_CODEX_TIMEOUT_SECONDS=300
-TAPPER_CHAT_ALIAS=tapper-chat
-TAPPER_EMBEDDING_ALIAS=tapper-embedding
+TAPPER_DEFAULT_CHAT_MODEL=qwen-plus
+TAPPER_EMBEDDING_MODEL=text-embedding-v4
+TAPPER_VISION_MODEL=qwen3-vl-plus
 TAPPER_EMBEDDING_DIMENSION=1536
 ```
 
-要复验历史本机 Codex 路径，必须显式运行 `make legacy-tapper-codex-dev`；该命令只绑定 loopback，固定使用直接 Codex 能力，不会启动 V1 Project API 或切换到 LiteLLM 回答路由。默认 `make demo-dev` 不接受 Codex 直连，也不会 fallback、hedge 或重试到 legacy runtime。
+V1 文档、查询 Embedding 和回答生成都经唯一 `ModelGateway`：`TAPPER_EMBEDDING_MODEL` 发往阿里云百炼/DashScope `text-embedding-v4`，维度固定为 `1536`；`TAPPER_DEFAULT_CHAT_MODEL` 当前路由到百炼 `qwen-plus`。回答记录的是响应实际命中的上游模型（`ModelResult.actual_model`/`actual_provider`），不是配置的角色名。
 
-V1 文档、查询 Embedding 和回答生成都经唯一 ModelGateway 的固定 alias：`tapper-embedding` 发往阿里云百炼/DashScope `text-embedding-v4`，维度固定为 `1536`；`tapper-chat` 当前路由到百炼 `qwen-plus`。公共模型目录的逻辑显示名与实际 provider/model 审计分离；`GPT-5.6 Sol` 显示名不是当前上游路由或 V1 质量证据。
-
-Codex 回答模式精确要求原生 `codex-cli 0.149.0`、`gpt-5.6-sol`、`ultra`、有效的本机 ChatGPT 登录、单智能体、零工具、单 API 进程内并发 `1` 和 300 秒超时，不读取或要求 `OPENAI_API_KEY`/`CODEX_API_KEY`。
-
-Codex CLI 只是本机调用入口，不是本地推理：query 与所选 Evidence 会发送给 OpenAI；文档和 query 的 Embedding 内容会发送给阿里云百炼。该数据边界只获准用于 loopback、无认证的单操作者本地 Demo，不得据此开放 LAN、共享或生产服务。
-
-Codex 的请求自有 canonical model catalog 会消除内建 CodeModeOnly、多智能体和 apply-patch metadata，并与 24 个禁用 feature 及显式 plan/input/agent overrides 一起保持 Direct tool registry 为空。这个 catalog 的固定 entry schema 只保证精确 CLI `0.149.0`，不是跨版本兼容承诺；CLI、登录、feature、catalog/schema、模型或能力任何漂移都会使 readiness/request fail closed，返回 `503 answer-unavailable`，且绝不调用 LiteLLM answer。Web 对该错误只显示“回答模型暂时不可用，请稍后重试。”
-
-LiteLLM 用 `LITELLM_BASE_URL`、`LITELLM_MASTER_KEY`、`LITELLM_MODEL`、`LITELLM_TAPPER_EMBEDDING_MODEL`、`DASHSCOPE_API_KEY` 与 `DASHSCOPE_API_BASE` 注入实际路由与凭据。在未跟踪的 `.env` 填写 key，并把脱敏 Workspace ID 替换为实际值；`.env.example` 同时列出的 API Host 与原生 `/api/v1` 地址仅供参考，Tapper/LiteLLM 当前只消费 OpenAI-compatible `/compatible-mode/v1` 地址。`LITELLM_EMBEDDING_*` 只供单独批准的付费 Embedding research 使用，Tapper runtime 不读取。
+LiteLLM 用 `LITELLM_BASE_URL`、`LITELLM_MASTER_KEY`、`DASHSCOPE_API_KEY` 与 `DASHSCOPE_API_BASE` 注入实际路由与凭据。在未跟踪的 `.env` 填写 key，并把脱敏 Workspace ID 替换为实际值；`.env.example` 同时列出的 API Host 与原生 `/api/v1` 地址仅供参考，Tapper/LiteLLM 当前只消费 OpenAI-compatible `/compatible-mode/v1` 地址。`LITELLM_EMBEDDING_*` 只供单独批准的付费 Embedding research 使用，Tapper runtime 不读取。
 
 页面刷新会重新读取 Source/Document、Conversation/Turn、Answer/Evidence Snapshot、Citation、Graph Snapshot 和 Test Plan Revision；API/Web/Worker 进程重启与普通 Compose 停止/再次启动后也从 MySQL 权威状态和可重建投影恢复。普通停止/再次启动保留具名卷：
 
@@ -233,7 +220,7 @@ make demo-up
 make demo-dev
 ```
 
-只有下面的 guarded 命令会不可逆删除精确 Compose project `tap-tapper-demo` 的 MySQL、Redis、Azurite、TAP MinIO 和 Milvus 卷；命令拒绝其他 project 名称：
+只有下面的 guarded 命令会不可逆删除精确 Compose project `tap-tapper-demo` 的 MySQL、Redis、TAP MinIO 和 Milvus 卷；命令拒绝其他 project 名称：
 
 ```sh
 TAP_TAPPER_COMPOSE_PROJECT=tap-tapper-demo \
@@ -248,9 +235,9 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-tapper-demo \
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | MySQL / `start-mysql`       | 运行 `make demo-up`；确认 `TAP_DATABASE_URL` 与迁移 head 使用默认 loopback project。                                                                                                                                                                                                                                                                                                          |
 | Redis / `start-redis`       | 运行 `make demo-up`；确认 `TAP_REDIS_URL` 指向 `redis://127.0.0.1:26379/0`。                                                                                                                                                                                                                                                                                                                  |
-| Blob / `start-blob`         | MinIO 模式先运行 `make object-store-build PLATFORM=linux/arm64`，核对 `.env.example` 的显式 `TAPPER_S3_*` 配置，再运行 `make demo-up`；Azure 模式核对 loopback connection string 与 private 容器。                                                                                                                                                                                            |
+| Blob / `start-blob`         | 先运行 `make object-store-build PLATFORM=linux/arm64`，核对 `.env.example` 的显式 `TAPPER_S3_*` 配置，再运行 `make demo-up`。                                                                                                                                                                                                                                                                 |
 | Milvus / `start-milvus`     | 为 Docker 分配至少 2 vCPU / 8 GiB，运行 `make demo-up`，并保留固定 reader/writer/provisioner 配置。                                                                                                                                                                                                                                                                                           |
-| Models / `configure-models` | 默认 V1 在 ignored `.env` 配置 `DASHSCOPE_API_KEY`、`dashscope/text-embedding-v4`、`dashscope/qwen-plus` 与完整 Workspace `/compatible-mode/v1` 地址，重启 `make demo-up` 和本地角色，并确认 `tapper-embedding` / `tapper-chat`；只在显式复验 legacy 时检查精确原生 Codex `0.149.0`、ChatGPT 登录与 tool-free catalog/feature 契约。默认 runtime 对 Codex 直连 fail closed，不会回退 legacy。 |
+| Models / `configure-models` | 默认 V1 在 ignored `.env` 配置 `DASHSCOPE_API_KEY`、完整 Workspace `/compatible-mode/v1` 地址、`TAPPER_DEFAULT_CHAT_MODEL` 与 `TAPPER_EMBEDDING_MODEL`，重启 `make demo-up` 后确认这两个角色在 LiteLLM 模型目录中存在且能力符合要求（见 [LiteLLM 模型目录指南](docs/guides/2026-09-29-litellm-models.md)）。                                                                                |
 
 ### 确定性 E2E 与真实模型 smoke
 
@@ -260,7 +247,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-tapper-demo \
 make demo-e2e
 ```
 
-真实 provider gate 是单独的显式 opt-in；未设置开关时两个 smoke 文件精确产生两次有意 skip，且不会进入 provider/Codex 请求体。阿里门禁验证 `tapper-embedding`、1536 维、有限数值及 zh→en/en→zh 相似度；Codex 门禁验证精确 `0.149.0 + gpt-5.6-sol + ultra` 的单智能体、零工具、grounded/cited/sanitized/cleanup 契约。缺凭据、provider `401`、维度或 catalog 漂移、非法 claim/citation、工具事件和清理不确定性都算失败，不会转为 skip：
+真实 provider gate 是单独的显式 opt-in；未设置开关时该 smoke 文件产生一次有意 skip，且不会进入 provider 请求体。门禁验证 `TAPPER_EMBEDDING_MODEL`、1536 维、有限数值及 zh→en/en→zh 相似度。缺凭据、provider `401`、维度漂移或非法 claim/citation 都算失败，不会转为 skip：
 
 ```sh
 set -a
@@ -268,11 +255,9 @@ set -a
 set +a
 TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1 uv run --project apps/tap-ai-backend pytest \
   apps/tap-ai-backend/tests/smoke/test_tapper_real_model.py -v -rs
-TAP_RUN_TAPPER_CODEX_CONFORMANCE=1 uv run --project apps/tap-ai-backend pytest \
-  apps/tap-ai-backend/tests/smoke/test_tapper_codex_smoke.py -v -rs
 ```
 
-2026-09-01 的验收证据为：阿里 `tapper-embedding` 的 zh→en 与 en→zh 门禁均通过且维度为 `1536`，`elapsed_ms=669`；Codex bootstrap 和未打补丁的生产配置均通过，最新生产复验输出 `version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=21652`，pytest 为 `1 passed in 21.71s`、exit `0`。默认无授权执行为 `2 skipped in 0.63s`、exit `0`。证据不保存 query、Evidence、回答、向量、JSONL 或登录信息。
+未设置 `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 时默认输出 `1 skipped`、exit `0`。证据不保存 query、Evidence、回答、向量或 JSONL。
 
 ### 实验性 Milvus 检索门禁
 
