@@ -1125,7 +1125,7 @@ describe("Tap product prototype interactions", () => {
     ).toBeNull();
   });
 
-  it("uses a Codex-style model-only selector in the Tapper composer", async () => {
+  it("uses a model-only selector in the Tapper composer", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -1145,18 +1145,18 @@ describe("Tap product prototype interactions", () => {
       within(menu)
         .getAllByRole("menuitemradio")
         .map((option) => option.textContent?.trim()),
-    ).toEqual(["Qwen Plus", "GPT-5.6 Sol · Codex"]);
+    ).toEqual(["Qwen Plus", "GPT-5.6 Sol"]);
     expect(within(menu).queryByText(/Fast|Ultra/)).toBeNull();
 
     await user.click(
       within(menu).getByRole("menuitemradio", {
-        name: "GPT-5.6 Sol · Codex",
+        name: "GPT-5.6 Sol",
       }),
     );
 
     expect(
       within(composer).getByRole("button", {
-        name: "Select model, current model GPT-5.6 Sol · Codex",
+        name: "Select model, current model GPT-5.6 Sol",
       }),
     ).toBeVisible();
     expect(screen.queryByRole("menu", { name: "Models" })).toBeNull();
@@ -1189,7 +1189,7 @@ describe("Tap product prototype interactions", () => {
       }),
     );
     await user.click(
-      screen.getByRole("menuitemradio", { name: "GPT-5.6 Sol · Codex" }),
+      screen.getByRole("menuitemradio", { name: "GPT-5.6 Sol" }),
     );
     await user.type(
       screen.getByRole("textbox", { name: "Message Tapper" }),
@@ -1211,7 +1211,7 @@ describe("Tap product prototype interactions", () => {
     );
     expect(
       screen.getByRole("button", {
-        name: "Select model, current model GPT-5.6 Sol · Codex",
+        name: "Select model, current model GPT-5.6 Sol",
       }),
     ).toBeVisible();
   });
@@ -1382,7 +1382,7 @@ describe("Tap product prototype interactions", () => {
     expect(secondQuestion).toHaveAttribute("data-proximity", "rest");
   });
 
-  it("matches the centered, left-anchored Codex minimap geometry and fisheye", async () => {
+  it("matches the centered, left-anchored minimap geometry and fisheye", async () => {
     const style = installPrototypeStyles();
     const user = userEvent.setup();
 

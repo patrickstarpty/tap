@@ -429,29 +429,14 @@ def test_only_milvus_transport_imports_pymilvus() -> None:
     assert consumers == {transport}
 
 
-def test_only_fixed_codex_adapter_and_parser_supervisor_own_native_process_capability() -> None:
-    """Native process authority is confined to two explicit implementation files."""
-    codex_adapter = KNOWLEDGE / "adapters" / "codex_exec.py"
+def test_only_parser_supervisor_owns_native_process_capability() -> None:
+    """Native process authority is confined to one explicit implementation file."""
     process_callers = {
         path for path in recursive_python_files(BACKEND_SOURCE) if native_process_calls(path)
     }
 
     parser_supervisor = BACKEND_SOURCE / "entrypoints" / "tapper_parser_worker.py"
-    assert process_callers == {codex_adapter, parser_supervisor}
-    imports = _imports(codex_adapter)
-    assert (
-        ImportReference(
-            module="tap.modules.knowledge.ports.search",
-            symbol="AnswerGenerationPort",
-            alias=None,
-        )
-        in imports
-    )
-    assert not any(
-        reference.module == "tap.modules.knowledge.adapters.litellm"
-        or reference.symbol in {"QueryEmbeddingPort", "ModelPort", "Embedding"}
-        for reference in imports
-    )
+    assert process_callers == {parser_supervisor}
 
 
 def test_application_cannot_import_parser_supervisor_or_docker_client() -> None:

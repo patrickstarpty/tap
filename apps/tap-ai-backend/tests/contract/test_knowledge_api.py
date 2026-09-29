@@ -8,7 +8,6 @@ import json
 from dataclasses import replace
 from typing import Any
 
-import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -24,7 +23,6 @@ from tap.contracts.http import (
 from tap.contracts.http import (
     RetrievalSearchResponse as HttpSearchResponse,
 )
-from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.access.application.authorize import build_retrieval_policy_context
 from tap.modules.access.domain.policy import (
     AuthorizationDenied,
@@ -1317,22 +1315,6 @@ def test_azure_config_repr_does_not_reveal_credential() -> None:
     assert "secret-value-must-not-appear" not in repr(config)
 
 
-def test_litellm_config_repr_does_not_reveal_credential() -> None:
-    """Dataclass diagnostics must not render the LiteLLM gateway secret."""
-    config = LiteLLMConfig(
-        base_url="https://litellm.example",
-        api_key="gateway-secret-must-not-appear",
-        embedding_model_id="tap-embed-fixed-v1",
-        answer_model_id="tap-answer-fixed-v1",
-        answer_profile_id="grounded-answer-v1",
-        embedding_dimension=2,
-        allowed_embedding_model_labels=frozenset({"tap-embed-fixed-v1"}),
-        allowed_answer_model_labels=frozenset({"tap-answer-fixed-v1"}),
-        allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
-    )
-    assert "gateway-secret-must-not-appear" not in repr(config)
-
-
 @pytest.mark.asyncio
 async def test_azure_adapter_bounds_fanout_retries_and_deadline() -> None:
     """Unbounded queries, retries, or waits must fail these externally visible limits."""
@@ -1534,114 +1516,6 @@ async def test_azure_adapter_preserves_only_allowlisted_search_request_id() -> N
 
     assert hits[0].provider_request_id == "azure-request-17"
     assert hits[0].index_revision.physical_index == "kb-code-v1-20260823"
-
-
-@pytest.mark.asyncio
-async def test_litellm_adapter_uses_fixed_models_captures_request_ids_and_bounds_retry() -> None:
-    """Caller-selected models or unbounded 503 retries must fail this gateway contract."""
-    attempts = 0
-    payloads: list[dict[str, Any]] = []
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal attempts
-        attempts += 1
-        payloads.append(json.loads(request.content))
-        if attempts == 1:
-            return httpx.Response(503, json={"error": "busy"})
-        return httpx.Response(
-            200,
-            headers={
-                "x-request-id": "provider-answer-17",
-                "x-litellm-call-id": "gateway-call-17",
-                "x-litellm-model-id": "gateway-model-17",
-                "x-litellm-model-group": "tap-answer-fixed-v1",
-                "x-untrusted-diagnostic": "must-not-cross-port",
-            },
-            json={
-                "id": "body-request-id",
-                "model": "tap-answer-fixed-v1",
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(
-                                {
-                                    "answer": "Grounded answer.",
-                                    "claims": [
-                                        {"text": "Grounded answer.", "evidenceLabels": ["S1"]}
-                                    ],
-                                }
-                            )
-                        }
-                    }
-                ],
-            },
-        )
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        adapter = LiteLLMAdapter(
-            LiteLLMConfig(
-                base_url="https://litellm.example",
-                api_key="not-a-real-key",
-                embedding_model_id="tap-embed-fixed-v1",
-                answer_model_id="tap-answer-fixed-v1",
-                answer_profile_id="grounded-answer-v1",
-                embedding_dimension=2,
-                allowed_embedding_model_labels=frozenset(
-                    {
-                        "tap-embed-fixed-v1",
-                    }
-                ),
-                allowed_answer_model_labels=frozenset(
-                    {
-                        "tap-answer-fixed-v1",
-                        "gateway-model-17",
-                        "provider-model-17",
-                    }
-                ),
-                allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
-                deadline_seconds=1,
-                max_retries=1,
-                max_connections=1,
-            ),
-            client=client,
-        )
-        result = await adapter.answer(
-            "Where?",
-            (
-                Evidence(
-                    family=SourceFamily.CODE,
-                    chunk_id="h_" + "1" * 64,
-                    logical_chunk_id="h_" + "2" * 64,
-                    title="authorize",
-                    content="Policy facts are verified server-side.",
-                    source=source_revision(),
-                    chunk_content_hash=CHUNK_HASH,
-                    content_role=ContentRole.SOURCE,
-                    citation_id="citation-1",
-                    evidence_label="S1",
-                    index_revision=IndexRevision(
-                        physical_index="kb-code-v1-20260823",
-                        schema_version="search-schema-v1",
-                        corpus_version="corpus-17",
-                    ),
-                    embedding_model_version="embed-v1",
-                    acl_decision_id="decision-17",
-                    score=0.91,
-                ),
-            ),
-            "quick-hybrid-v1",
-        )
-
-    assert attempts == 2
-    assert all(payload["model"] == "tap-answer-fixed-v1" for payload in payloads)
-    assert all("profile" not in payload for payload in payloads)
-    assert result.profile_id == "grounded-answer-v1"
-    assert result.provider_request_id == "provider-answer-17"
-    assert result.gateway_call_id == "gateway-call-17"
-    assert result.gateway_model_id == "gateway-model-17"
-    assert result.provider_model_id is None
-    assert result.completion_id == "body-request-id"
-    assert result.claims[0].evidence_labels == ("S1",)
 
 
 def test_independent_managed_chunks_without_semantic_headings_do_not_conflict() -> None:

@@ -5,7 +5,6 @@ import io
 import json
 import logging
 import os
-import shutil
 import signal
 import time
 from dataclasses import replace
@@ -19,13 +18,18 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 
 from tap.entrypoints import tapper_ingestion_worker
-from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.entrypoints.tapper_runtime import (
     TapperSettings,
     create_project_audit,
     create_worker_runtime,
 )
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.adapters.litellm import (
+    LiteLLMModelGateway,
+    LiteLLMModelGatewayConfig,
+    ProviderModelMapping,
+)
+from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application.ingestion import WorkerRun
 from tap.modules.knowledge.ports.documents import ArtifactLocator, ReserveUpload
@@ -106,14 +110,14 @@ class ScanningWorker:
 
 
 class EmbeddingEntrypointWorker:
-    def __init__(self, adapter: LiteLLMAdapter) -> None:
+    def __init__(self, adapter: KnowledgeModelGateway) -> None:
         self.adapter = adapter
         self.status = "pending"
 
     async def run_once(self, limit: int) -> WorkerRun:
         assert limit == 1
-        result = await self.adapter.embed_many(("跨语言退款审批",))
-        assert result[0].completion_id is None
+        result = await self.adapter.embed("跨语言退款审批")
+        assert result.provider_request_id is None
         self.status = "ready"
         return WorkerRun(1, 1, 0, 0, 0)
 
@@ -122,7 +126,7 @@ class EmbeddingEntrypointWorker:
 def worker_entrypoint() -> tuple[EmbeddingEntrypointWorker, httpx.AsyncClient]:
     body = {
         "object": "list",
-        "model": "tapper-embedding",
+        "model": "dashscope/text-embedding-v4",
         "data": [{"embedding": [0.25, 0.5], "index": 0}],
         "usage": {"prompt_tokens": 1, "total_tokens": 1},
     }
@@ -130,21 +134,34 @@ def worker_entrypoint() -> tuple[EmbeddingEntrypointWorker, httpx.AsyncClient]:
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=body)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    adapter = LiteLLMAdapter(
-        LiteLLMConfig(
-            base_url="https://litellm.example",
-            api_key="not-a-real-key",
-            embedding_model_id="tapper-embedding",
-            answer_model_id="tapper-chat",
-            answer_profile_id="quick-hybrid-v1",
-            embedding_dimension=2,
-            allowed_embedding_model_labels=frozenset({"tapper-embedding", "provider-embed-v1"}),
-            allowed_answer_model_labels=frozenset({"tapper-chat", "provider-answer-v1"}),
-            allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
-            max_retries=0,
+    async def redact(text: str) -> str:
+        return text
+
+    client = httpx.AsyncClient(
+        base_url="https://litellm.example", transport=httpx.MockTransport(handler)
+    )
+    adapter = KnowledgeModelGateway(
+        LiteLLMModelGateway(
+            LiteLLMModelGatewayConfig(
+                base_url="https://litellm.example",
+                api_key="not-a-real-key",
+                chat_alias="tapper-chat",
+                embedding_alias="tapper-embedding",
+                chat_model=ProviderModelMapping("dashscope", "qwen-plus"),
+                embedding_model=ProviderModelMapping("dashscope", "text-embedding-v4"),
+                embedding_dimension=2,
+                max_retries=0,
+            ),
+            scope=VALIDATION_SCOPE,
+            redact=redact,
+            client=client,
         ),
-        client=client,
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="tapper-embedding",
+        chat_alias="tapper-chat",
+        embedding_dimension=2,
+        timeout_seconds=1,
     )
     return EmbeddingEntrypointWorker(adapter), client
 
@@ -610,31 +627,6 @@ def test_main_uses_only_the_fixed_runtime_factory_and_one_settings_snapshot(
     assert len(seen) == 1
     assert seen[0].worker_id == "entrypoint-worker"
     assert seen[0].database_url.endswith("127.0.0.1:13306/tap?charset=utf8mb4")
-
-
-def test_worker_entrypoint_rejects_codex_selection_without_discovery(
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
-    seen: list[TapperSettings] = []
-
-    async def fixed_run(*, runtime_factory, settings, **_kwargs):  # type: ignore[no-untyped-def]
-        assert runtime_factory is create_worker_runtime
-        seen.append(settings)
-
-    def forbidden_discovery(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("worker entrypoint performed Codex discovery")
-
-    runner = asyncio.Runner()
-    monkeypatch.setattr(shutil, "which", forbidden_discovery)
-    monkeypatch.setattr(tapper_ingestion_worker, "run", fixed_run)
-    monkeypatch.setattr(tapper_ingestion_worker.asyncio, "run", runner.run)
-    try:
-        with pytest.raises(ValueError, match="TAPPER_ANSWER_BACKEND=codex is unavailable"):
-            tapper_ingestion_worker.main(_tapper_environment(TAPPER_ANSWER_BACKEND="codex"))
-    finally:
-        runner.close()
-
-    assert seen == []
 
 
 def test_worker_main_suppresses_worker_thread_rpc_details_for_the_full_process_lifetime(

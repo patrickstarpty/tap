@@ -22,12 +22,12 @@ class _Gateway:
 
 @pytest.mark.asyncio
 async def test_catalog_exposes_only_enabled_public_model_fields() -> None:
-    codex = ModelDescriptor(
-        alias="tapper-chat-codex",
-        display_name="GPT-5.6 Sol · Codex",
+    additional = ModelDescriptor(
+        alias="gpt-5.6-sol",
+        display_name="GPT-5.6 Sol",
         capabilities=frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
     )
-    catalog = ModelCatalog(_Gateway(), additional_models=(codex,))
+    catalog = ModelCatalog(_Gateway(), additional_models=(additional,))
 
     result = await catalog.list_models(VALIDATION_SCOPE)
 
@@ -38,7 +38,7 @@ async def test_catalog_exposes_only_enabled_public_model_fields() -> None:
             capabilities=frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
             enabled=True,
         ),
-        codex,
+        additional,
     )
     assert not hasattr(result[0], "provider")
     assert not hasattr(result[0], "reasoning_effort")

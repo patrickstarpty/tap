@@ -11,9 +11,15 @@ import httpx
 import pytest
 from PIL import Image
 
-from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.adapters.litellm import (
+    LiteLLMModelGateway,
+    LiteLLMModelGatewayConfig,
+    ProviderModelMapping,
+)
 from tap.modules.knowledge.adapters.document_chunker import StructuralChunker
 from tap.modules.knowledge.adapters.document_parsers import ParserRegistry
+from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.modules.knowledge.domain.documents import (
     BlockKind,
@@ -843,7 +849,7 @@ async def test_stage_hook_fails_before_stage_io_once_and_retry_resumes_checkpoin
 
 @pytest.mark.asyncio
 async def test_worker_composes_directly_with_litellm_document_embedding_port() -> None:
-    """A real Task 5 adapter must cross Task 4's embedding stage without a wrapper."""
+    """The governed knowledge gateway must cross the embedding stage without a wrapper."""
     requests: list[httpx.Request] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -852,7 +858,7 @@ async def test_worker_composes_directly_with_litellm_document_embedding_port() -
             200,
             json={
                 "id": "embedding-worker-1",
-                "model": "tapper-embedding",
+                "model": "dashscope/text-embedding-v4",
                 "object": "list",
                 "data": [
                     {
@@ -875,21 +881,33 @@ async def test_worker_composes_directly_with_litellm_document_embedding_port() -
     artifacts = StatefulArtifacts()
     index = Index()
     clock = FakeClock()
-    config = LiteLLMConfig(
+    config = LiteLLMModelGatewayConfig(
         base_url="https://litellm.example",
         api_key="not-a-real-key",
-        embedding_model_id="tapper-embedding",
-        answer_model_id="tap-answer-fixed-v1",
-        answer_profile_id="grounded-answer-v2",
+        chat_alias="tapper-chat",
+        embedding_alias="tapper-embedding",
+        chat_model=ProviderModelMapping("dashscope", "qwen-plus"),
+        embedding_model=ProviderModelMapping("dashscope", "text-embedding-v4"),
         embedding_dimension=3,
-        allowed_embedding_model_labels=frozenset({"tapper-embedding", "provider-embed-v1"}),
-        allowed_answer_model_labels=frozenset({"tap-answer-fixed-v1"}),
-        allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
-        deadline_seconds=1,
+        timeout_seconds=1,
         max_retries=0,
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        adapter = LiteLLMAdapter(config, client=client)
+
+    async def redact(text: str) -> str:
+        return text
+
+    async with httpx.AsyncClient(
+        base_url="https://litellm.example", transport=httpx.MockTransport(handler)
+    ) as client:
+        adapter = KnowledgeModelGateway(
+            LiteLLMModelGateway(config, scope=VALIDATION_SCOPE, redact=redact, client=client),
+            scope=VALIDATION_SCOPE,
+            redact=redact,
+            embedding_alias="tapper-embedding",
+            chat_alias="tapper-chat",
+            embedding_dimension=3,
+            timeout_seconds=1,
+        )
         worker = build_worker(repository, artifacts, adapter, index, clock)
         result = await worker.run_once(limit=1)
 

@@ -34,8 +34,8 @@ export function renderKnowledgeApp(
         capabilities: ["chat", "structured"],
       },
       {
-        alias: "tapper-chat-codex",
-        displayName: "GPT-5.6 Sol · Codex",
+        alias: "gpt-5.6-sol",
+        displayName: "GPT-5.6 Sol",
         capabilities: ["chat", "structured"],
       },
     ],

@@ -727,48 +727,6 @@ async def test_governed_model_only_chat_closes_identity_after_custom_instruction
 
 
 @pytest.mark.asyncio
-async def test_knowledge_answer_routes_the_codex_alias_to_its_bounded_adapter():
-    from test_knowledge_api import _claim_resolution_evidence
-
-    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
-    from tap.modules.knowledge.ports.models import AnswerGeneration
-
-    calls = []
-
-    class CodexAnswers:
-        async def answer(self, query, evidence, profile_id):
-            calls.append((query, evidence, profile_id))
-            return AnswerGeneration(
-                "Grounded",
-                (),
-                "gpt-5.6-sol",
-                profile_id,
-                None,
-            )
-
-    models = KnowledgeModelGateway(
-        configured_gateway(success),
-        scope=VALIDATION_SCOPE,
-        redact=redact,
-        embedding_alias="tapper-embedding",
-        chat_alias="tapper-chat",
-        embedding_dimension=2,
-        timeout_seconds=1,
-        alternate_answers={"tapper-chat-codex": CodexAnswers()},
-    )
-
-    result = await models.answer(
-        "query",
-        (_claim_resolution_evidence(),),
-        "quick-hybrid-v1",
-        model_alias="tapper-chat-codex",
-    )
-
-    assert len(calls) == 1
-    assert result.model_id == "tapper-chat-codex"
-
-
-@pytest.mark.asyncio
 async def test_knowledge_answer_applies_frozen_agent_and_skill_authority_to_model_request():
     from test_knowledge_api import _claim_resolution_evidence
 

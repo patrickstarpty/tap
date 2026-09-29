@@ -209,7 +209,6 @@ EXPECTED_ENV = {
     "TAPPER_WEB_HOST",
     "TAPPER_WEB_PORT",
     "TAPPER_MODEL_BACKEND",
-    "TAPPER_ANSWER_BACKEND",
     "LITELLM_TAPPER_EMBEDDING_MODEL",
 }
 _RECORDED_ENVIRONMENT_NAMES = (
@@ -217,9 +216,6 @@ _RECORDED_ENVIRONMENT_NAMES = (
     "AZURE_STORAGE_CONNECTION_STRING",
     "BAILIAN_API_BASE",
     "BAILIAN_API_KEY",
-    "CODEX_API_BASE",
-    "CODEX_API_KEY",
-    "CODEX_HOME",
     "DASHSCOPE_API_BASE",
     "DASHSCOPE_API_KEY",
     "DASHSCOPE_BASE_URL",
@@ -684,13 +680,10 @@ LITELLM_TAPPER_EMBEDDING_MODEL=provider-secret-route
 LITELLM_EMBEDDING_MODEL=provider-secret-model
 LITELLM_EMBEDDING_API_KEY=provider-secret
 LITELLM_EMBEDDING_API_BASE=https://provider-secret.invalid/v1
-CODEX_HOME=/provider-secret/codex-home
-CODEX_API_KEY=provider-secret
 OPENAI_BASE_URL=https://provider-secret.invalid/openai
 OPENAI_API_BASE=https://provider-secret.invalid/openai-api
 DASHSCOPE_BASE_URL=https://provider-secret.invalid/dashscope
 DASHSCOPE_API_BASE=https://provider-secret.invalid/dashscope-api
-CODEX_API_BASE=https://provider-secret.invalid/codex-api
 LITELLM_MASTER_KEY=provider-secret
 MILVUS_READER_PASSWORD=provider-secret
 MILVUS_WRITER_PASSWORD=provider-secret
@@ -760,7 +753,7 @@ case " $* " in
     printf 'uv|settings\n' >> "$TAPPER_E2E_STUB_LOG"
     environment_names="$(tapper-env-names)"
     printf 'env|settings|%s\n' "$environment_names" >> "$TAPPER_E2E_STUB_LOG"
-    [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND:$TAPPER_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 71
+    [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND" = e2e:fake ] || exit 71
     [ "${TAPPER_VISION_TIMEOUT_SECONDS:-}" = 60 ] || exit 71
     [ "${TAPPER_OBJECT_STORE_PROVIDER:-}" = minio ] || exit 79
     [ "${TAPPER_S3_ENDPOINT:-}" = http://127.0.0.1:29000 ] || exit 79
@@ -774,7 +767,6 @@ case " $* " in
     [ "$DASHSCOPE_API_BASE" = http://127.0.0.1:14000 ] || exit 76
     [ -z "${OPENAI_API_KEY+x}${BAILIAN_API_KEY+x}${BAILIAN_API_BASE+x}" ] || exit 77
     [ -z "${LITELLM_EMBEDDING_API_KEY+x}${LITELLM_EMBEDDING_API_BASE+x}" ] || exit 78
-    [ -z "${CODEX_HOME+x}${CODEX_API_KEY+x}" ] || exit 78
     ;;
   *" python - "*)
     printf 'uv|probe\n' >> "$TAPPER_E2E_STUB_LOG"
@@ -828,7 +820,7 @@ case " $* " in
     [ "$middleware_ports" = 13306:16379:11000:14000 ] || exit 82
     app_ports="$MILVUS_PORT:$MILVUS_HEALTH_PORT:$TAPPER_API_PORT:$TAPPER_WEB_PORT"
     [ "$app_ports" = 29530:19091:18000:15173 ] || exit 83
-    [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND:$TAPPER_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 84
+    [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND" = e2e:fake ] || exit 84
     expected_database='mysql+asyncmy://tap:tap-e2e@127.0.0.1:13306/tap?charset=utf8mb4'
     [ "$TAP_DATABASE_URL" = "$expected_database" ] || exit 85
     [ "$TAP_REDIS_URL" = 'redis://127.0.0.1:16379/0' ] || exit 86
@@ -1566,48 +1558,6 @@ def test_tapper_ensure_cli_reports_configuration_failure_before_any_resource_sta
     assert "provider-secret-invalid-host" not in output.err
 
 
-def test_tapper_ensure_rejects_codex_selection_without_discovery(
-    monkeypatch,
-    capsys,
-) -> None:  # type: ignore[no-untyped-def]
-    import shutil
-
-    spec = importlib.util.spec_from_file_location(
-        "tapper_collection_codex_configuration_contract",
-        ROOT / "scripts/tapper_collection.py",
-    )
-    assert spec is not None and spec.loader is not None
-    tapper_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(tapper_collection)
-    seen: list[str] = []
-
-    async def ensure(settings, **_kwargs):  # type: ignore[no-untyped-def]
-        seen.append(settings.answer_backend)
-
-    def forbidden_discovery(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("collection ensure performed Codex discovery")
-
-    monkeypatch.setattr(shutil, "which", forbidden_discovery)
-    monkeypatch.setattr(tapper_collection, "ensure", ensure)
-
-    result = tapper_collection.main(
-        ["ensure"],
-        {
-            "TAPPER_ANSWER_BACKEND": "codex",
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        },
-    )
-
-    output = capsys.readouterr()
-    assert result == 1
-    assert seen == []
-    assert output.out == ""
-    assert output.err == (
-        "Tapper resource ensure failed at configuration; check local middleware configuration.\n"
-    )
-
-
 def test_tapper_ensure_cli_redacts_provider_failures(
     monkeypatch,
     capsys,
@@ -2215,37 +2165,21 @@ def test_safe_models_probe_requires_provider_config_and_uses_get_models_only(
 
 
 @pytest.mark.parametrize(
-    ("answer_backend", "provider"),
+    "provider",
     [
-        (
-            "litellm",
-            {"DASHSCOPE_API_KEY": " \t"},
-        ),
-        (
-            "litellm",
-            {"OPENAI_API_KEY": "configured"},
-        ),
-        (
-            "codex",
-            {"DASHSCOPE_API_KEY": " ", "OPENAI_API_KEY": "configured"},
-        ),
+        {"DASHSCOPE_API_KEY": " \t"},
+        {"OPENAI_API_KEY": "configured"},
     ],
 )
 def test_safe_models_provider_gate_fails_before_construction_or_network(
     monkeypatch,
-    answer_backend: str,
     provider: dict[str, str],
 ) -> None:  # type: ignore[no-untyped-def]
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    if answer_backend == "codex":
-        with pytest.raises(ValueError):
-            TapperSettings.from_mapping({"TAPPER_ANSWER_BACKEND": answer_backend})
-        return
     settings = TapperSettings.from_mapping(
         {
-            "TAPPER_ANSWER_BACKEND": answer_backend,
             "LITELLM_MODEL": "openai/test-chat",
             "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
             "LITELLM_EMBEDDING_MODEL": "direct-research-only",
@@ -2427,7 +2361,6 @@ def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> N
     for name in ("mysql", "redis", "azurite", "litellm", "milvus"):
         assert "healthcheck" in services[name]
     assert services["litellm"]["environment"]["DASHSCOPE_API_KEY"] == ("${DASHSCOPE_API_KEY:-}")
-    assert "CODEX_API_KEY" not in services["litellm"]["environment"]
 
 
 def test_vite_config_is_strict_and_exposes_only_same_origin_api_proxies() -> None:
@@ -2615,17 +2548,9 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
         "TAPPER_WORKER_ID",
         "TAPPER_API_PORT",
         "TAPPER_WEB_PORT",
-        "TAPPER_ANSWER_BACKEND",
-        "TAPPER_CODEX_MODEL",
-        "TAPPER_CODEX_REASONING_EFFORT",
-        "TAPPER_CODEX_TIMEOUT_SECONDS",
     }
     assert required <= values.keys()
     assert values["TAPPER_MODEL_BACKEND"] == "litellm"
-    assert values["TAPPER_ANSWER_BACKEND"] == "litellm"
-    assert values["TAPPER_CODEX_MODEL"] == "gpt-5.6-sol"
-    assert values["TAPPER_CODEX_REASONING_EFFORT"] == "ultra"
-    assert values["TAPPER_CODEX_TIMEOUT_SECONDS"] == "300"
     assert values["LITELLM_TAPPER_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
     assert values["DASHSCOPE_API_KEY"] == ""
     assert values["TAP_DEMO_MODE"] == ""
@@ -2635,9 +2560,7 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
     assert "BAILIAN_API_KEY" not in values
     assert "BAILIAN_API_BASE" not in values
     example = (ROOT / ".env.example").read_text(encoding="utf-8")
-    assert "query and selected Evidence are sent to OpenAI" in example
     assert "Embedding content is sent to Alibaba Bailian" in example
-    assert "Codex uses local ChatGPT login; it does not require OPENAI_API_KEY" in example
     assert values["DASHSCOPE_API_HOST"] == ("ws-your-workspace-id.cn-beijing.maas.aliyuncs.com")
     assert values["DASHSCOPE_API_BASE"] == (
         "https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
@@ -2876,17 +2799,14 @@ def test_dev_supervisor_scrubs_provider_environment_at_every_child_boundary(
     supervisor, environment, log = _supervisor_fixture(tmp_path)
     environment.update(
         {
-            "CODEX_HOME": "/caller/codex-home",
             "OPENAI_API_KEY": "caller-openai-key",
             "DASHSCOPE_API_KEY": "caller-dashscope-key",
-            "CODEX_API_KEY": "caller-codex-key",
             "LITELLM_EMBEDDING_API_KEY": "caller-embedding-key",
             "LITELLM_EMBEDDING_API_BASE": "https://caller.invalid/embedding",
             "OPENAI_BASE_URL": "https://caller.invalid/openai",
             "OPENAI_API_BASE": "https://caller.invalid/openai-api",
             "DASHSCOPE_BASE_URL": "https://caller.invalid/dashscope",
             "DASHSCOPE_API_BASE": "https://caller.invalid/dashscope-api",
-            "CODEX_API_BASE": "https://caller.invalid/codex-api",
         }
     )
     if source == "dotenv":
@@ -2894,15 +2814,12 @@ def test_dev_supervisor_scrubs_provider_environment_at_every_child_boundary(
         (supervisor.parents[1] / ".env").write_text(
             """OPENAI_API_KEY=provider-secret
 DASHSCOPE_API_KEY=provider-secret
-CODEX_HOME=/provider-secret/codex-home
-CODEX_API_KEY=provider-secret
 LITELLM_EMBEDDING_API_KEY=provider-secret
 LITELLM_EMBEDDING_API_BASE=https://provider-secret.invalid/embedding
 OPENAI_BASE_URL=https://provider-secret.invalid/openai
 OPENAI_API_BASE=https://provider-secret.invalid/openai-api
 DASHSCOPE_BASE_URL=https://provider-secret.invalid/dashscope
 DASHSCOPE_API_BASE=https://provider-secret.invalid/dashscope-api
-CODEX_API_BASE=https://provider-secret.invalid/codex-api
 """,
             encoding="utf-8",
         )
@@ -2953,20 +2870,15 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
     forbidden_provider_names = {
         "OPENAI_API_KEY",
         "DASHSCOPE_API_KEY",
-        "CODEX_API_KEY",
         "LITELLM_EMBEDDING_API_KEY",
         "LITELLM_EMBEDDING_API_BASE",
         "OPENAI_BASE_URL",
         "OPENAI_API_BASE",
         "DASHSCOPE_BASE_URL",
         "DASHSCOPE_API_BASE",
-        "CODEX_API_BASE",
     }
-    assert "CODEX_HOME" not in environment_names["api"]
-    for role, names in environment_names.items():
+    for names in environment_names.values():
         assert not forbidden_provider_names & names
-        if role != "api":
-            assert "CODEX_HOME" not in names
     assert {
         "TAP_DATABASE_URL",
         "TAP_REDIS_URL",
@@ -3176,34 +3088,6 @@ def test_e2e_runner_overrides_env_and_runs_exact_restart_volume_phases(
     assert list((runner.parents[1] / "tmp").glob("tap-tapper-e2e.*")) == []
 
 
-@pytest.mark.parametrize("source", ["caller", "dotenv"])
-def test_e2e_runner_rejects_codex_after_loading_the_final_environment(
-    tmp_path: Path,
-    source: str,
-) -> None:
-    runner, environment, log = _e2e_runner_fixture(tmp_path)
-    if source == "caller":
-        environment["TAPPER_ANSWER_BACKEND"] = "codex"
-    else:
-        with (runner.parents[1] / ".env").open("a", encoding="utf-8") as handle:
-            handle.write("TAPPER_ANSWER_BACKEND=codex\n")
-
-    completed = subprocess.run(
-        ["/bin/bash", str(runner), "--preflight-only"],
-        cwd=runner.parents[1],
-        env=environment,
-        text=True,
-        capture_output=True,
-        timeout=15,
-        check=False,
-    )
-
-    assert completed.returncode == 2
-    assert completed.stdout == ""
-    assert completed.stderr == "Tapper E2E does not allow the Codex answer backend.\n"
-    assert not log.exists() or log.read_text(encoding="utf-8") == ""
-
-
 def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoints(
     tmp_path: Path,
 ) -> None:
@@ -3217,8 +3101,6 @@ def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoin
             "BAILIAN_API_KEY": "caller-bailian-key",
             "BAILIAN_API_BASE": "https://caller.invalid/bailian",
             "DASHSCOPE_API_KEY": "caller-dashscope-key",
-            "CODEX_HOME": "/caller/codex-home",
-            "CODEX_API_KEY": "caller-codex-key",
             "LITELLM_TAPPER_EMBEDDING_MODEL": "caller-secret-route",
             "LITELLM_EMBEDDING_MODEL": "caller-secret-model",
             "LITELLM_EMBEDDING_API_KEY": "caller-embedding-key",
@@ -3227,7 +3109,6 @@ def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoin
             "OPENAI_API_BASE": "https://caller.invalid/openai-api",
             "DASHSCOPE_BASE_URL": "https://caller.invalid/dashscope",
             "DASHSCOPE_API_BASE": "https://caller.invalid/dashscope-api",
-            "CODEX_API_BASE": "https://caller.invalid/codex-api",
         }
     )
 
@@ -3260,12 +3141,9 @@ def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoin
             "OPENAI_API_KEY",
             "BAILIAN_API_KEY",
             "BAILIAN_API_BASE",
-            "CODEX_HOME",
-            "CODEX_API_KEY",
             "OPENAI_BASE_URL",
             "OPENAI_API_BASE",
             "DASHSCOPE_BASE_URL",
-            "CODEX_API_BASE",
             "LITELLM_EMBEDDING_API_KEY",
             "LITELLM_EMBEDDING_API_BASE",
         }

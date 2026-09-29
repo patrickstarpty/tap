@@ -607,7 +607,7 @@ def source_snapshot() -> dict[str, Any]:
         if (
             excluded.intersection(path.parts)
             or path.suffix == ".md"
-            or path.parts[0] in {"docs", ".agents", ".codex"}
+            or path.parts[0] in {"docs", ".agents"}
         ):
             continue
         if not (

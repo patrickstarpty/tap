@@ -74,7 +74,6 @@ async def _embed_through_production_route() -> TapperSettings:
     settings = TapperSettings.from_mapping(os.environ)
     if (
         settings.model_backend != "litellm"
-        or settings.answer_backend != "litellm"
         or settings.e2e_mode
         or settings.chat_alias != _CHAT_ALIAS
         or settings.embedding_alias != _EMBEDDING_ALIAS

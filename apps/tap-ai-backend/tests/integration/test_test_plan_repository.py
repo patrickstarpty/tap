@@ -267,7 +267,7 @@ async def test_generation_from_turn_rejects_non_design_capable_model_alias(
                 .where(turn_input_snapshot.c.turn_id == "turn_checkout")
                 .values(
                     snapshot={
-                        "model_alias": "tapper-chat-codex",
+                        "model_alias": "tapper-vision",
                         "agent_revision_id": "validation-knowledge-agent-v2",
                         "skill_revision_ids": ["validation-citation-skill-v2"],
                     }
@@ -280,7 +280,7 @@ async def test_generation_from_turn_rejects_non_design_capable_model_alias(
                 conversation_id="conversation_checkout",
                 turn_id="turn_checkout",
                 objective="Design checkout tests",
-                idempotency_key="reject-codex-test-design",
+                idempotency_key="reject-non-design-test-design",
                 now=datetime(2026, 9, 13, 12, 1),
             )
     finally:

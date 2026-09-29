@@ -7,7 +7,6 @@ import json
 import logging
 import math
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -176,18 +175,6 @@ def valid_settings() -> dict[str, str]:
         "MILVUS_PROVISIONER_USERNAME": "tap_provisioner",
         "MILVUS_PROVISIONER_PASSWORD": "provisioner-secret",
     }
-
-
-def test_answer_backend_defaults_to_litellm_without_codex_discovery(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(
-        shutil,
-        "which",
-        lambda _name: (_ for _ in ()).throw(AssertionError("unexpected discovery")),
-    )
-
-    settings = _runtime().TapperSettings.from_mapping(valid_settings())
-
-    assert settings.answer_backend == "litellm"
 
 
 def test_settings_close_the_exact_runtime_defaults_and_aliases() -> None:
@@ -360,12 +347,8 @@ def test_real_model_response_labels_are_derived_from_two_exact_routes() -> None:
     assert "dashscope/text-embedding-v4" not in repr(settings)
 
 
-@pytest.mark.parametrize("answer_backend", ["litellm"])
-def test_tapper_embedding_route_ignores_every_direct_research_setting(
-    answer_backend: str,
-) -> None:
+def test_tapper_embedding_route_ignores_every_direct_research_setting() -> None:
     values = valid_settings() | {
-        "TAPPER_ANSWER_BACKEND": answer_backend,
         "LITELLM_EMBEDDING_MODEL": "direct-research-poison",
         "LITELLM_EMBEDDING_API_KEY": "direct-research-key-poison",
         "LITELLM_EMBEDDING_API_BASE": "https://direct-research-poison.invalid/v1",

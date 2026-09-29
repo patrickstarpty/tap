@@ -138,55 +138,6 @@ async def test_model_generation_consumes_pinned_template_and_preserves_schema():
 
 
 @pytest.mark.asyncio
-async def test_legacy_alternate_adapter_cannot_bypass_pinned_answer_template():
-    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
-    from tap.modules.knowledge.ports.errors import AnswerUnavailable
-    from tap.modules.knowledge.ports.models import AnswerGeneration
-    from tests.contract.test_knowledge_api import _claim_resolution_evidence
-
-    calls = []
-
-    class Alternate:
-        async def answer(self, query, evidence, profile_id):
-            calls.append(query)
-            return AnswerGeneration("Unpinned", (), "alternate", profile_id, None)
-
-    async def redact(text):
-        return text
-
-    model = KnowledgeModelGateway(
-        object(),
-        scope=VALIDATION_SCOPE,
-        redact=redact,
-        embedding_alias="embed",
-        chat_alias="tapper-chat",
-        embedding_dimension=2,
-        timeout_seconds=5,
-        alternate_answers={"alternate": Alternate()},
-    )
-    module = templates()
-    selected = module.get_template("factual", "1")
-    assembled = module.assemble_answer(
-        template_id="factual",
-        template_version="1",
-        template_digest=selected.digest,
-        original_question="E104",
-        standalone_question="E104",
-        evidence_map={"q1": ("S1",)},
-    )
-    with pytest.raises(AnswerUnavailable, match="model-unavailable"):
-        await model.answer(
-            "E104",
-            (_claim_resolution_evidence(),),
-            "quick-hybrid-v1",
-            model_alias="alternate",
-            answer_input=assembled,
-        )
-    assert calls == []
-
-
-@pytest.mark.asyncio
 async def test_direct_generation_is_bound_to_plan_identity():
     import inspect
     from types import SimpleNamespace
