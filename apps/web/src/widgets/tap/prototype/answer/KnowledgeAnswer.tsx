@@ -41,14 +41,14 @@ export function KnowledgeAnswer({
   const t = (en: string, zh: string) => (turn.locale === "zh" ? zh : en);
   if (turn.answerState === "queued")
     return (
-      <div role="status">
+      <div className="tap-answer-state" data-state="queued" role="status">
         <p>{t("Waiting to start…", "等待开始…")}</p>
         <Button onClick={onStop}>{t("Stop", "停止生成")}</Button>
       </div>
     );
   if (turn.answerState === "running")
     return (
-      <div role="status">
+      <div className="tap-answer-state" data-state="running" role="status">
         <p>
           {t(
             `Using ${turn.sourceReferences.length} sources · Generating answer…`,
@@ -60,7 +60,7 @@ export function KnowledgeAnswer({
     );
   if (turn.answerState === "canceled" || turn.answerState === "failed")
     return (
-      <div>
+      <div className="tap-answer-state" data-state="failed">
         <p>
           {turn.answerState === "canceled"
             ? t("Generation stopped.", "已停止生成。")
@@ -74,7 +74,7 @@ export function KnowledgeAnswer({
     );
   if (turn.answerState === "insufficient")
     return (
-      <div>
+      <div className="tap-answer-state" data-state="insufficient">
         <p>
           {t(
             "The available sources do not contain enough evidence to answer this question.",
@@ -91,7 +91,7 @@ export function KnowledgeAnswer({
     );
   if (turn.answerState === "conflict")
     return (
-      <div>
+      <div className="tap-answer-state" data-state="conflict">
         <p>
           {t(
             "The two sources reach different conclusions.",
@@ -103,7 +103,7 @@ export function KnowledgeAnswer({
     );
   if (turn.answerState === "source-changed")
     return (
-      <div>
+      <div className="tap-answer-state" data-state="source-changed">
         <p>
           {t(
             "Sources were updated while answering. Please resubmit.",
@@ -115,7 +115,7 @@ export function KnowledgeAnswer({
     );
   if (turn.answerState === "interrupted")
     return (
-      <div>
+      <div className="tap-answer-state" data-state="interrupted">
         <p>
           {t(
             "Conversation updates stopped. Your message is saved.",
@@ -129,7 +129,7 @@ export function KnowledgeAnswer({
     <div className="tap-knowledge-answer">
       <AnswerEvidence turn={turn} />
       {turn.retrievalLimited ? (
-        <p role="status">
+        <p className="tap-answer-retrieval-limited" role="status">
           {t(
             "Some sources could not be searched. This answer uses the remaining sources.",
             "部分来源暂时无法检索，回答仅基于其余来源。",

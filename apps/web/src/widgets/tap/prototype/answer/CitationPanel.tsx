@@ -45,7 +45,7 @@ export function CitationPanel({
         </div>
       </header>
       {citation.source.hasNewerRevision ? (
-        <div role="alert">
+        <div className="tap-citation-notice" data-tone="warning" role="alert">
           <p>
             {t(
               "This source has been updated. The cited passage may have changed.",
@@ -58,7 +58,7 @@ export function CitationPanel({
         </div>
       ) : null}
       {verificationFailed ? (
-        <div role="alert">
+        <div className="tap-citation-notice" data-tone="error" role="alert">
           <p>{t("The citation could not be verified.", "引用核验失败。")}</p>
           <Button onClick={() => setVerificationFailed(false)}>
             {t("Retry verification", "重试核验")}
