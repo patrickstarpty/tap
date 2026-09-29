@@ -1,6 +1,6 @@
 # TAP — Test Automation Platform
 
-TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能平台：Tapper 用企业知识回答问题并生成测试设计，Test Management 保存可审查的测试资产，Low Code Automation 把 BDD 映射成可录制、可执行、可追溯的 Web 自动化。当前已接受的路线先在固定 Validation Scope 中验证知识问答、Knowledge Graph、Test Plan、Web LCA/Recorder、Playwright/Jenkins 与结果闭环；验证通过后再实现用户、RBAC、多 Project 和生产治理。
+TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能平台：Tapper 用企业知识回答问题并生成测试设计，Test Management 保存可审查的测试资产，Low Code Automation 把 BDD 映射成可录制、可执行、可追溯的 Web 自动化。V1 聚焦 TAP AI 的 5 项能力（可靠问答、知识图谱展示、图谱脉络分析、自定义与导入 Skills/Agents、对话可观测性），范围与验收见 [V1 总纲](docs/superpowers/plans/2026-09-29-v1-roadmap.md)。
 
 ## 最新产品原型：以 main 为准
 
@@ -12,7 +12,7 @@ TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能�
 corepack pnpm --dir apps/web dev --port 15176
 ```
 
-打开 `http://127.0.0.1:15176/prototype`。后续需求必须在此基准上增量修改，保留 Tapper（New chat、Agents、Skills、Library、Knowledge Graph）、Test Management、Test Insights、Low Code Automation、跨模块关联与悬浮助手；不得另建一套原型或因近期实施范围缩窄而删除既有模块。UI 展示拟交付产品的用户界面，不放演示开关、模拟场景控件或实现说明。模块清单、截图回归与边界见[产品原型基准规范](docs/reference/2026-09-22-product-prototype-baseline.md)。
+打开 `http://127.0.0.1:15176/prototype`。后续需求必须在此基准上增量修改，保留 Tapper（New chat、Agents、Skills、Library、Knowledge Graph）、Test Management、Test Insights、Low Code Automation、跨模块关联与悬浮助手；不得另建一套原型或因近期实施范围缩窄而删除既有模块。UI 展示拟交付产品的用户界面，不放演示开关、模拟场景控件或实现说明。模块清单、截图回归与边界见[产品原型基准规范](docs/guides/2026-09-22-product-prototype-baseline.md)。
 
 当前原型包含 Dify 式切片配置、预览与维护（保存索引后直接可用）、原件查看、知识问答引用、项目维度的 Test Insights 和数据接入。`/prototype` 是完整产品设计入口；下方独立应用入口及历史截图用于各自的实现和追溯，不代替最新原型。
 
@@ -20,7 +20,12 @@ Tapper 品牌形象自 2026-09-28 起为猫头鹰，替换原 Listening/Aha 啄�
 
 当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [知识切片维护](docs/assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png)。实际交互以 `main` 上运行的 `/prototype` 为准。
 
-2026-09-26 的 [Task 14 联合交付门禁](docs/reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md) 已通过合成脱敏 fixture 的隔离旅程、故障恢复、保留式升级和完整原型回归；该结论不替代真实业务资料、外部 CI、真实模型、生产身份、规模硬件或具名签字，M1–M4 业务 Gate 仍为 `PENDING`，实施计划保持 `active`。
+## 文档
+
+- [现状架构](docs/architecture.md)：代码中可验证的系统结构与已知差距。
+- [V1 总纲](docs/superpowers/plans/2026-09-29-v1-roadmap.md)：V1 能力、验收标准与子项目顺序。
+- [文档索引](docs/index.md)：指南、设计 spec、实施计划与架构决策。
+- [历史文档归档](docs/archive/index.md)：2026-09-29 前的 RFC、计划、评审与参考，只读。
 
 ## TAP AI 独立应用
 
@@ -28,11 +33,11 @@ TAP AI 的前后端分别位于 `apps/tap-ai-frontend` 和 `apps/tap-ai-backend`
 
 TAP AI 可在不启动 TAP 前后端的情况下运行。先执行 `make tap-ai-bootstrap` 安装 TAP AI 冻结依赖，按 `.env.example` 配置并启动本机基础服务（现有 Demo 可用 `make demo-up`，或连接自行配置的服务），执行 `make tap-ai-migrate`，再执行 `make tap-ai-dev`；这会在回环地址启动 TAP AI API、Relay、后台任务和前端。结束 `tap-ai-dev` 会清理这些应用进程；现有 Demo 的基础服务可用 `make demo-down` 停止并保留卷。`make tap-ai-api` 与 `make tap-ai-web` 可分别启动两端；`make tap-web-dev`、`make tap-backend-dev` 则分别启动 TAP 非 AI 应用。`make tap-ai-check` 和 `make tap-ai-test` 只检查 TAP AI。当前入口仍是本机无认证 Demo，不承担局域网或生产访问。
 
-产品边界与验收见 [TAP AI 产品边界与本机独立部署](docs/architecture/2026-09-15-tap-ai-product-boundary.md)。TAP AI 与 TAP 仍独立实现和部署；各独立应用入口不能替代上方完整设计基准。下方截图记录的是拆分前的页面，完整组合原型已恢复为持续演进的设计基准，这不表示相关后端能力均已实现。
+产品边界与验收见 [TAP AI 产品边界与本机独立部署](docs/archive/architecture/2026-09-15-tap-ai-product-boundary.md)。TAP AI 与 TAP 仍独立实现和部署；各独立应用入口不能替代上方完整设计基准。下方截图记录的是拆分前的页面，完整组合原型已恢复为持续演进的设计基准，这不表示相关后端能力均已实现。
 
 当前 AI 页面截图可运行 `corepack pnpm --dir apps/tap-ai-frontend run prototype:capture`：仅使用隔离的示例 API 响应，输出 6 张截图到应用的 `test-results/prototype-capture/`，不改写下方历史截图；追加 `--list` 可查看采集范围。
 
-旧版浏览器中的 Automation 编辑和模拟 Run 需按[浏览器原型工作区升级](docs/architecture/2026-09-15-tap-ai-product-boundary.md#浏览器原型工作区升级)迁移：同源可自动恢复；默认端口从 5173 变为 5174 时，使用 TAP 自有的 `Local workspace` 导出/导入功能转移。
+旧版浏览器中的 Automation 编辑和模拟 Run 需按[浏览器原型工作区升级](docs/archive/architecture/2026-09-15-tap-ai-product-boundary.md#浏览器原型工作区升级)迁移：同源可自动恢复；默认端口从 5173 变为 5174 时，使用 TAP 自有的 `Local workspace` 导出/导入功能转移。
 
 ## 产品原型参考截图（2026-09-06 采集）
 
@@ -42,7 +47,7 @@ TAP AI 可在不启动 TAP 前后端的情况下运行。先执行 `make tap-ai-
 - **知识检索**：Library 默认打开 Knowledge Graph，搜索文档、概念或实体后可点击结果定位、高亮节点并查看关系。清空搜索恢复总览；`Documents`（文档列表）提供名称、类型与状态筛选。图谱支持平移、缩放、全屏及收起辅助面板；文档节点可跳到对应来源记录，尚无原文预览。
 - **跨页面助手**：Test Management 与 Low Code Automation 右下角提供 Tapper 悬浮入口，支持当前页面上下文、快捷提问、轻量对话和“在 Tapper 中继续”。悬浮入口使用猫头鹰形象，收起后收到回复时显示未读标记；回复是基于页面数据的确定性原型建议。
 
-按业务流程组织的操作步骤、现场话术与当前能力边界见 [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)。历史交互设计见 [RFC-008](docs/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)，正式产品和技术范围见 [RFC-009](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)。使用本页上方固定 `/prototype` 入口查看当前设计。下图为其中六个页面，使用 2560×1440 无损 PNG，按整行展示，可点击图片查看原尺寸细节：
+按业务流程组织的操作步骤、现场话术与当前能力边界见 [TAP 客户原型演示指南](docs/guides/2026-09-04-customer-prototype-demo-guide.md)。历史交互设计见 [RFC-008](docs/archive/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)，正式产品和技术范围见 [RFC-009](docs/archive/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)。使用本页上方固定 `/prototype` 入口查看当前设计。下图为其中六个页面，使用 2560×1440 无损 PNG，按整行展示，可点击图片查看原尺寸细节：
 
 **Tapper 统一对话入口**
 
@@ -72,13 +77,9 @@ TAP AI 可在不启动 TAP 前后端的情况下运行。先执行 `make tap-ai-
 
 ## 一句话架构
 
+以下为长期目标架构；V1 范围见 [V1 总纲](docs/superpowers/plans/2026-09-29-v1-roadmap.md)，现状见[现状架构](docs/architecture.md)。
+
 TAP 以 **可信知识 + 统一测试模型（Test IR）+ TAP-managed Revision + 统一执行证据** 为核心，采用 **React + TypeScript 前端、Python + FastAPI/ASGI 后端**。MySQL 保存权威业务状态与 Outbox，Redis 只作可重建唤醒，MinIO 保存原件/Bundle/Evidence，Milvus 保存可重建 `doc` 检索投影，MySQL 同时保存 Knowledge Graph；模型经 LiteLLM，首个 Execution Provider 是外置 Jenkins。Git 是可选导出/同步 Adapter，不是发布和执行的必要事实源。
-
-目标 AI 编排由 [ADR-029](docs/decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 固定：TAP AI 的 Chat 与 AI Task 进入同一版本化 LangGraph，分别支持低延迟 Fast Chat、可恢复 Durable Workflow 和受预算限制的 Bounded Agentic Task；知识检索经 `SearchPort → Milvus 混合检索 → 可选的有界 MySQL Graph 扩展`，历史指标经 `TAP Insights API → ClickHouse`，模型调用经 `ModelGateway → LiteLLM`。任务分类位于图内，模型选择位于 ModelGateway，不部署独立 Query Router 或 Model Router 服务。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，是明确例外。这是已接受的目标架构，不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
-
-[RFC-011 主动 Agent](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#2-主动-agent) 将**主动测试运营 Agent** 列为平台目标能力：受信需求/知识、构建与运行事件触发项目影响分析、回归建议和失败跟进，先形成可审阅方案，再经授权调用领域接口执行并回收反馈。项目工作记忆、建议收件箱、订阅降噪与版本化批准共同支持该闭环；默认仅分析/草稿，首期不监听个人桌面。该功能目标已随 RFC-011 于 2026-09-23 确认审批通过，当前代码完成状态仍须单独验收。
-
-RFC-011 当前聚焦**知识问答与基础 Test Insights**，对应原第 1、2 阶段的部分能力；基础 Insights 先接已有 CI 或外部真实报告。测试管理扩展、自建 Web/App 执行、完整 Insights/协作、负载与完整主动 Agent 闭环保留后续目标，详细设计待补。各阶段设计深度与范围见[交付范围标注](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#迁移或发布方式)，不据此改写现有阶段完成状态。
 
 ### Test IR 是什么？
 
@@ -140,39 +141,6 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 - 不让非确定性的 Agent 判断替代确定性的测试门禁。
 - 不把 Codex CLI/SDK 变成 Knowledge、授权、摄取、Milvus/Graph 写入或测试执行的必需依赖。
 
-## 文档导航
-
-- [Tapper 知识与 Web 自动化平台架构](docs/architecture/2026-09-04-tapper-knowledge-web-automation-overview.md)：当前边界、组件、数据、流程、安全、可靠性与部署。
-- [RFC-011：跨平台测试与 AI 编排目标设计](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md)：统一 LangGraph、主动测试运营 Agent、Milvus 知识工具、Insights API/ClickHouse 指标工具与可选 chDB 文件分析。
-- [ADR-029：LangGraph 统一编排 TAP AI 的 AI 交互与任务](docs/decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md)：记录 Fast Chat、Durable Workflow、Bounded Agentic Task 及工具、模型、指标边界。
-- [RFC-009：平台设计](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)：完整产品旅程、数据模型、API、事件、质量门禁和阶段边界。
-- [Tapper 知识与 Web 自动化平台实施计划](docs/plans/2026-09-04-tapper-knowledge-web-automation-platform.md)：V0–P1 的精确文件、TDD 步骤、命令与提交边界。
-- [Tapper 平台设计基线评审](docs/reviews/2026-09-05-tapper-platform-design-baseline-review.md)：记录已关闭的关键问题、最终 READY 结论和“可进入 V0、尚未实现或生产就绪”的授权边界。
-- TAP AI 技术架构总览：[PNG 预览](docs/assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.png) / [SVG](docs/assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.svg) / [draw.io 源文件](docs/assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.drawio)：面向技术与产品/管理联合评审，展示主动事件、统一 LangGraph、行动提案与授权反馈、领域端口及数据底座。
-- TAP 平台架构简图：[draw.io 源文件](docs/architecture/2026-08-27-tap-platform-architecture.drawio) / [SVG 预览](docs/architecture/2026-08-27-tap-platform-architecture.svg)：面向管理层说明输入、统一平台、业务结果与共享底座。
-- RAG 知识问答简图：[draw.io 源文件](docs/architecture/rag/2026-08-27-rag-knowledge-business-flow.drawio) / [SVG 预览](docs/architecture/rag/2026-08-27-rag-knowledge-business-flow.svg)：用知识建设与在线问答两条主线说明从数据源到可溯源回答的完整链路。
-- [整体架构评审](docs/reviews/2026-08-21-architecture-review.md)：评审结论、优先级问题、整改建议与分阶段决策门禁。
-- [Milvus 本地检索实验评审](docs/reviews/2026-08-27-milvus-local-search-experiment.md)：记录真实数据库、空卷重建、embedding 预算证据与严格的决策边界。
-- [Tapper 本地知识 Demo RFC](docs/proposals/2026-08-27-rfc-005-tapper-local-knowledge-demo.md)：本地来源优先工作区、运行边界与验收标准。
-- [Tapper 本地知识 Demo 计划](docs/plans/2026-08-27-tapper-local-knowledge-demo.md)：纵向实现步骤与确定性门禁。
-- [Tapper 本地知识 Demo 验收](docs/reviews/2026-08-27-tapper-local-knowledge-demo.md)：本地中间件、浏览器、持久化和可选真实模型的证据记录。
-- [Tapper 本地回答后端 RFC](docs/proposals/2026-08-31-rfc-006-tapper-local-codex-answer-backend.md)：记录 LiteLLM/Codex 独占选择、固定 Embedding 与 fail-closed 验收。
-- [Tapper 单智能体、无工具 Codex 决策](docs/decisions/2026-09-01-adr-018-tapper-local-codex-tool-free-answer.md)：记录精确 CLI/model/catalog 契约及其本地边界。
-- [历史 Phase 1 Intelligence Layer 探索](docs/proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md)：保留 durable task、Artifact、Validator 与 Review 设计；交付优先级已被 RFC-009/ADR-021 替代。
-- [前端开发上手指引](docs/reference/2026-09-27-frontend-developer-onboarding.md)：页面入口、联调、业务组件与首次改动验证。
-- [后端开发上手指引](docs/reference/2026-09-27-backend-developer-onboarding.md)：服务启动、业务调用链、契约和持久化验证。
-- [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)：按资料发布、引用问答、测试设计、报告分析和解释串联演示，说明客户收益与当前能力边界。
-- [Knowledge/RAG 基础](docs/architecture/rag/2026-08-21-foundation.md)：当前 Milvus 文档路径与历史 Azure 四索引设计的范围说明。
-- [数据切片与溯源](docs/architecture/rag/2026-08-21-chunking-and-provenance.md)：稳定身份、revision lineage、Citation、删除与重建。
-- [Azure AI Search 索引设计（历史/provider-specific）](docs/architecture/rag/2026-08-21-ai-search-index.md)：被替代的四索引专项参考。
-- [检索调优方案](docs/architecture/rag/2026-08-21-retrieval-tuning.md)：可复用评测原则与历史 Azure 实验阶梯。
-- [TAP Knowledge Chat](docs/architecture/2026-08-21-knowledge-chat-ui.md)：V1 持久 Conversation/SSE/Citation 交互输入。
-- [历史 Codex Agent Runtime RFC](docs/proposals/2026-08-21-rfc-001-codex-agent-runtime.md)：已拒绝的旧 Phase 1.5 设计；可复用 Runtime 隔离原则由 RFC-007/ADR-014 保留，现行产品范围由 RFC-009 管理。
-- [当前核心契约](docs/reference/2026-09-04-tapper-platform-contracts.md)：Scope、Knowledge、Conversation、Test Plan、Test IR、Recorder、Jenkins Run/Evidence 和错误语义。
-- [架构决策](docs/decisions/index.md)：架构决策、取舍与被覆盖的历史方案。
-- [交付路线图](docs/plans/2026-08-20-roadmap.md)：从架构基线到可用 MVP 的阶段计划。
-- [来源与可追溯性](docs/reference/2026-08-20-source-notes.md)：`engprod` 会话索引、官方资料和推断边界。
-
 ## 核心原则
 
 1. **Test IR 是稳定中间层**：自然语言、BDD、低代码和脚本都映射到版本化 IR。
@@ -183,25 +151,13 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 6. **确定性门禁优先**：Agent 可以建议、生成和诊断，最终门禁必须落到明确规则。
 7. **不可信输入默认隔离**：代码、网页内容、模型输出和第三方回调都不可信。
 
-## 当前状态
-
-- 架构状态：`v0.4 accepted — validation-first knowledge and web automation`
-- 实现状态：`V0/V1 gate-passed; V2/V3 gate-reopened; V4 blocked`
-- RFC-011 本轮状态：`Task 14 isolated structural gate-passed; M1–M4 business gates pending`
-- 当前交付重点：`关闭 V2/V3 更正门禁`
-- 后续顺序：`V2/V3 re-review → V4 Web LCA/Recorder → V5 Jenkins → VG → P0 → P1`
-- 默认仓库可见性：建议 `private`
-- 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
-
-V0 的固定 Validation Scope、Project 授权、Audit、恢复、MinIO 和隔离 Parser 已通过[完整出口](docs/reviews/2026-09-06-v0-validation-scope-reliability-gate.md)。V1 的 Source、统一 ModelGateway、AI Agent/Skill、持久 Conversation/SSE、真实 Web 接线和知识质量已通过[可信知识门禁](docs/reviews/2026-09-09-v1-trusted-knowledge-gate.md)。V2/V3 已有 Knowledge Graph、Test Plan 与对应 Web/API 主体实现，但后续独立审查重新打开了门禁：多 Revision Graph 一致性、真实 Test Design 人审绑定和完整 Web 评审旅程仍需补证，V4 暂不放行。当前状态见 [V2/V3 门禁更正评审](docs/reviews/2026-09-14-v2-v3-gate-correction.md)，开发入口、调用链和扩展位置见 [Tapper 开发者指南](docs/reference/2026-09-13-tapper-developer-guide.md)。
-
 ## Tapper 本地知识工作区
 
 Tapper 当前产品入口在已确认的 TAP 壳层中使用真实 Project API。Library 支持 Source create/list/detail/delete/retry、真实上传与六阶段 ingestion；Conversation 支持服务端历史、不可变 Turn 快照、可恢复 SSE、取消、引用与 Artifact Link；Knowledge Answer 可使用当前授权的 Milvus 文档证据和有界 Graph Context。Library 的 Knowledge Graph 使用真实 Snapshot/Evidence API；Tapper 可请求生成 grounded Test Plan Draft，Test Management Web 支持明细 Review 和人工发布，编辑与冲突恢复仍只具备 API 能力。本地 Milvus `doc-schema-v2` 使用 canonical Enterprise/Project/Source/Document/Revision 投影。
 
-当前仍未交付登录、产品身份/RBAC、多 Project 产品化、OCR、Web Recorder、正式 Playwright Bundle、Jenkins 结果闭环和生产加固。API、Web 和所有中间件只绑定精确 loopback；固定 Validation 身份仅适用于验证环境，不能直接开放到局域网或生产环境。V2/V3 当前为 `gate-reopened`，不能作为 V4/V5、产品身份或生产加固已经完成的依据。
+当前仍未交付登录、产品身份/RBAC、多 Project 产品化、OCR、Web Recorder、正式 Playwright Bundle、Jenkins 结果闭环和生产加固。API、Web 和所有中间件只绑定精确 loopback；固定 Validation 身份仅适用于验证环境，不能直接开放到局域网或生产环境。
 
-支持文本可提取的 PDF、DOCX、Markdown（MD）、TXT 和 XLSX，并支持单张 PNG/JPEG 流程图。XLSX 的表头、公式与显示格式处理见[知识审核工作台](docs/reference/2026-09-27-knowledge-review-workbench.md)。配置 `LITELLM_TAPPER_VISION_MODEL` 后，视觉解析提出节点、方向和条件；人工可更正节点、箭头和条件，生成新修订重新审核；发布后流程语义经现有文字 Embedding 进入 `doc` 索引，问答按已批准连线执行有界路径校验（每次最多 20 条），原图保留供核对。未建立独立图像向量索引，真实模型识别质量仍需样本验证；边界见[流程图图片知识设计](docs/reference/2026-09-27-flowchart-image-knowledge-design.md)。PDF 不执行 OCR；扫描件返回 `ocr-required`。服务端硬上限为每文件 `25 MiB`、最多 `50` 份未删除文档、每次回答最多选择 `20` 份 ready 文档。
+支持文本可提取的 PDF、DOCX、Markdown（MD）、TXT 和 XLSX，并支持单张 PNG/JPEG 流程图。XLSX 的表头、公式与显示格式处理见[知识审核工作台](docs/guides/2026-09-27-knowledge-review-workbench.md)。配置 `LITELLM_TAPPER_VISION_MODEL` 后，视觉解析提出节点、方向和条件；人工可更正节点、箭头和条件，生成新修订重新审核；发布后流程语义经现有文字 Embedding 进入 `doc` 索引，问答按已批准连线执行有界路径校验（每次最多 20 条），原图保留供核对。未建立独立图像向量索引，真实模型识别质量仍需样本验证；边界见[流程图图片知识设计](docs/archive/reference/2026-09-27-flowchart-image-knowledge-design.md)。PDF 不执行 OCR；扫描件返回 `ocr-required`。服务端硬上限为每文件 `25 MiB`、最多 `50` 份未删除文档、每次回答最多选择 `20` 份 ready 文档。
 
 首次启动：
 
@@ -336,7 +292,7 @@ TAP_ALLOW_INITIAL_MILVUS_ROOT=1 \
   make test-milvus-rebuild-empty
 ```
 
-真实 embedding profile 是显式授权的付费研究入口，只能在注入未跟踪 provider 配置并单独批准后运行 `TAP_RUN_PAID_EMBEDDING_RESEARCH=1 make research-embeddings`。上述命令或单次 GREEN 只证明固定实验门禁，不表示 V1、共享环境、P0 身份或 P1 生产门禁已经通过；生命周期建议以[本次实验评审](docs/reviews/2026-08-27-milvus-local-search-experiment.md)的完整证据为准。
+真实 embedding profile 是显式授权的付费研究入口，只能在注入未跟踪 provider 配置并单独批准后运行 `TAP_RUN_PAID_EMBEDDING_RESEARCH=1 make research-embeddings`。上述命令或单次 GREEN 只证明固定实验门禁，不表示 V1、共享环境、P0 身份或 P1 生产门禁已经通过；生命周期建议以[本次实验评审](docs/archive/reviews/2026-08-27-milvus-local-search-experiment.md)的完整证据为准。
 
 ## 开发工作区与契约
 

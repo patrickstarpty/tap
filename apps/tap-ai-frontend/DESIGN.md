@@ -2,7 +2,7 @@
 
 <!-- impeccable:design-schema 1 -->
 
-Updated: 2026-09-28. Applies to the TAP product shell, Tapper, Library/Graph, Agent/Skills, Test Management, Automation. Product truth: [PRODUCT.md](PRODUCT.md). Approved visual brief: [TAP light design](../../docs/reference/2026-09-05-tap-light-design.md).
+Updated: 2026-09-28. Applies to the TAP product shell, Tapper, Library/Graph, Agent/Skills, Test Management, Automation. Product truth: [PRODUCT.md](PRODUCT.md). Approved visual brief: [TAP light design](../../docs/guides/2026-09-05-tap-light-design.md).
 
 ## Direction
 

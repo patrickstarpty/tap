@@ -29,4 +29,4 @@ related-rfcs: [RFC-011]
 
 历史审批数据继续可读；既有 published-sources 路径为兼容来源选择器返回当前可用资料，直接生效来源的 publicationId 和 expiresAt 为 null。历史严格发布适配器保留供既有记录核验，默认 Tapper 运行时采用本决策。
 
-设计和实施证据见[能力对齐设计](../proposals/2026-09-27-dify-knowledge-chunk-parity.md)与[实施计划](../plans/2026-09-27-dify-knowledge-chunk-parity.md)。本决策获批不等于所有实现验收均完成。
+设计和实施证据见[能力对齐设计](../archive/proposals/2026-09-27-dify-knowledge-chunk-parity.md)与[实施计划](../archive/plans/2026-09-27-dify-knowledge-chunk-parity.md)。本决策获批不等于所有实现验收均完成。

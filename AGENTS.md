@@ -10,17 +10,19 @@
 
 ## Project Structure & Module Organization
 
-TAP AI lives in `apps/tap-ai-backend/` (Python 3.13/FastAPI) and `apps/tap-ai-frontend/` (React/TypeScript/Vite). TAP non-AI app boundaries live in `apps/backend/` and `apps/web/`. Generated AI contracts remain in `contracts/`; runtime tooling lives in `scripts/` and `deploy/`. The Tapper local slice uses MySQL, Redis, Azurite, LiteLLM and Milvus; API, Relay and worker entrypoints remain separate. Place docs in `architecture/`, `proposals/`, `decisions/`, `plans/`, `reviews/` or `reference/`. Except for indexes and templates, use `YYYY-MM-DD-<lower-kebab-case>.md` filenames.
+TAP AI lives in `apps/tap-ai-backend/` (Python 3.13/FastAPI) and `apps/tap-ai-frontend/` (React/TypeScript/Vite). TAP non-AI app boundaries live in `apps/backend/` and `apps/web/`. Generated AI contracts remain in `contracts/`; runtime tooling lives in `scripts/` and `deploy/`. The Tapper local slice uses MySQL, Redis, LiteLLM, Milvus and an object store selected by `TAPPER_OBJECT_STORE_PROVIDER` (`azure` → Azurite is the code default; `.env.example` and isolated E2E use `minio` → `tap-minio`); API, Relay and worker entrypoints remain separate. The LangGraph interaction graph is currently a fixed `classify → admit → execute` pipeline. Place specs in `docs/superpowers/specs/` and plans in `docs/superpowers/plans/`; guides in `docs/guides/`; cross-module decisions in `docs/decisions/`; `docs/archive/` is read-only. Use `YYYY-MM-DD-<topic>[-design].md` filenames.
 
 ## Documentation Governance
 
-Before materially changing `docs/`, read `docs/reference/2026-08-22-document-governance.md`. Use `docs/proposals/rfc-template.md` and `docs/decisions/adr-template.md` for RFCs and ADRs.
+- Produce specs and plans through the superpowers brainstorming and writing-plans flow and store them at the paths above; `docs/superpowers/plans/2026-09-29-v1-roadmap.md` is the single V1 roadmap.
+- Use ADRs only for cross-module decisions, with a single `status` field (`docs/decisions/adr-template.md`).
+- Do not maintain RFC or Plan lifecycle states; plan checkboxes record progress.
 
 ## Product Prototype Baseline
 
 The `main` branch must always carry the latest approved complete product prototype. Merge confirmed prototype changes, required assets and README entry instructions into `main`; never leave the authoritative version only on a feature branch, worktree or temporary path. Keep the latest-prototype section at the top of README current.
 
-Before changing product UI or interaction design, read [the product prototype baseline](docs/reference/2026-09-22-product-prototype-baseline.md). The complete combined prototype at `apps/web` route `/prototype`, rooted in `apps/web/src/widgets/tap/TapProductPrototype.tsx`, is the sole evolving design baseline. Extend it incrementally; do not create a separate prototype or shell for each requirement, replace it with an independent application entry, or remove existing modules because near-term implementation scope narrows. Preserve Tapper (New chat, Agents, Skills, Library, Knowledge Graph), Test Management, Test Insights, Low Code Automation, cross-module links and the floating assistant. Show the intended delivered product UI: no demo switches, simulated-scenario controls or implementation explanations in product screens. Keep fixture setup and capability disclosures in test tooling and documentation. Verify module navigation and cross-module journeys and compare before/after screenshots for UI changes. This design baseline does not merge TAP AI and TAP runtime boundaries or establish backend completion.
+Before changing product UI or interaction design, read [the product prototype baseline](docs/guides/2026-09-22-product-prototype-baseline.md). The complete combined prototype at `apps/web` route `/prototype`, rooted in `apps/web/src/widgets/tap/TapProductPrototype.tsx`, is the sole evolving design baseline. Extend it incrementally; do not create a separate prototype or shell for each requirement, replace it with an independent application entry, or remove existing modules because near-term implementation scope narrows. Preserve Tapper (New chat, Agents, Skills, Library, Knowledge Graph), Test Management, Test Insights, Low Code Automation, cross-module links and the floating assistant. Show the intended delivered product UI: no demo switches, simulated-scenario controls or implementation explanations in product screens. Keep fixture setup and capability disclosures in test tooling and documentation. Verify module navigation and cross-module journeys and compare before/after screenshots for UI changes. This design baseline does not merge TAP AI and TAP runtime boundaries or establish backend completion.
 
 ## Build, Test, and Development Commands
 
@@ -46,7 +48,7 @@ git diff -- README.md docs/ AGENTS.md
 
 ## Coding Style & Naming Conventions
 
-Follow existing conventions. Markdown uses UTF-8, ATX headings, relative links and tagged fences; preserve table and Mermaid styles. Retain canonical terms: `TAP AI` (always all caps), `Tapper`, `Test IR`, `Knowledge Chat`, `Azure AI Search`. Python follows Ruff and type-safe async boundaries; Web follows repository ESLint/TypeScript/Vitest and generated API types. Use lower snake_case domain IDs where specified. Architecture changes must synchronize applicable README, baseline, contracts, decisions, roadmap and source notes while separating local behavior, target state, proposals and open inputs.
+Follow existing conventions. Markdown uses UTF-8, ATX headings, relative links and tagged fences; preserve table and Mermaid styles. Retain canonical terms: `TAP AI` (always all caps), `Tapper`, `Test IR`, `Knowledge Chat`, `Azure AI Search`. Python follows Ruff and type-safe async boundaries; Web follows repository ESLint/TypeScript/Vitest and generated API types. Use lower snake_case domain IDs where specified. Architecture changes must update `docs/architecture.md` and, when scope changes, the V1 roadmap.
 
 ## Testing Guidelines
 
