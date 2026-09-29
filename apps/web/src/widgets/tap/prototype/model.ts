@@ -57,6 +57,12 @@ export interface AutomationStepSnapshot {
   value: string;
 }
 
+export interface AnswerTrace {
+  searchedSources: number;
+  matchedPassages: number;
+  citations: number;
+}
+
 export interface AssistantTurn {
   answerState?:
     "running" | "completed" | "insufficient" | "canceled" | "failed";
@@ -67,6 +73,7 @@ export interface AssistantTurn {
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
   catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
+  trace?: AnswerTrace;
   pageContext?: {
     label: string;
     summary: string;

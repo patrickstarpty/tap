@@ -1,8 +1,8 @@
 import {
   DocumentReview,
-  KnowledgeAnswer,
   useDocumentReview,
 } from "./prototype/DocumentReview";
+import { KnowledgeAnswer } from "./prototype/answer/KnowledgeAnswer";
 import { CodeOutlined, FileTextOutlined } from "@ant-design/icons";
 import { Button } from "antd";
 import {
@@ -881,6 +881,11 @@ export function TapProductPrototype() {
           prompt,
           sourceReferences: evidence,
           ...(catalogReferences.length > 0 ? { catalogReferences } : {}),
+          trace: {
+            searchedSources: sourceReferences.length,
+            matchedPassages: evidence.length * 2 + 1,
+            citations: evidence.length,
+          },
           answerState: "running",
         });
         answerTimers.current.set(
