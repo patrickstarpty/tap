@@ -1147,6 +1147,25 @@ async def test_actual_model_falls_back_to_body_for_unknown_deployment_id():
     assert result.actual_provider == "openai"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model",
+    ["qwen\x07plus", "qwen-plus\n", "qwen plus", "-qwen", "qwen-plus\u00e9", "q" * 257],
+)
+async def test_actual_model_must_be_a_printable_ascii_identifier(model):
+    with pytest.raises(ModelGatewayUnavailable, match="^model-unavailable$"):
+        await configured_gateway(_headers_response({}, model)).chat(request())
+
+
+@pytest.mark.asyncio
+async def test_actual_model_accepts_provider_path_identifiers():
+    model = "azure/gpt-4o@2024-08-06:v1+preview_x"
+    result = await configured_gateway(_headers_response({}, model)).chat(request())
+
+    assert result.actual_model == model
+    assert result.actual_provider == "azure"
+
+
 def _switchable_catalog(models=DEFAULT_MODELS):
     """A catalog whose LiteLLM endpoint can fail or hang after the first load."""
 

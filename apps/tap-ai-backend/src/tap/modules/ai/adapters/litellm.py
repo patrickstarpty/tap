@@ -38,6 +38,9 @@ from tap.modules.ai.domain.models import (
 
 Redact = Callable[[str], Awaitable[str]]
 
+# Audited upstream model identifiers: printable ASCII only, bounded to 256 characters.
+ACTUAL_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}")
+
 
 @dataclass(frozen=True, slots=True)
 class LiteLLMModelGatewayConfig:
@@ -427,7 +430,7 @@ class LiteLLMModelGateway:
         if not isinstance(returned, str) or not returned.strip():
             raise ModelGatewayUnavailable()
         actual = upstream_model if upstream_model is not None else returned
-        if len(actual) > 256:
+        if ACTUAL_MODEL_PATTERN.fullmatch(actual) is None:
             raise ModelGatewayUnavailable()
         provider = actual.split("/", 1)[0] if "/" in actual else "unknown"
         if not provider:
