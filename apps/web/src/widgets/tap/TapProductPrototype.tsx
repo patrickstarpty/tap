@@ -517,6 +517,9 @@ export function TapProductPrototype() {
   const [localSources] = useState<
     readonly Pick<LibrarySource, "id" | "name" | "type">[]
   >(() => initialSnapshot?.library?.localSources ?? []);
+  const [removedSourceIds, setRemovedSourceIds] = useState<readonly string[]>(
+    () => initialSnapshot?.library?.removedSourceIds ?? [],
+  );
   const nextConversationId = useRef(
     nextNumericId(
       (
@@ -634,6 +637,7 @@ export function TapProductPrototype() {
         examplesLoaded: true,
         sampleLoaded: true,
         localSources,
+        removedSourceIds,
       },
     });
   }, [
@@ -642,6 +646,7 @@ export function TapProductPrototype() {
     conversations,
     activeModule,
     localSources,
+    removedSourceIds,
   ]);
 
   useEffect(
@@ -707,18 +712,24 @@ export function TapProductPrototype() {
   ]);
 
   const sources = useMemo<readonly LibrarySource[]>(
-    () => [
-      ...review.sources,
-      ...SAMPLE_FILES,
-      ...SAMPLE_REPRESENTATIVE_SOURCES,
-      ...localSources.map((source) => ({
-        ...source,
-        origin: "page-local" as const,
-        status: "ready" as const,
-        description: copy.library.localSourceDescription,
-      })),
+    () =>
+      [
+        ...review.sources,
+        ...SAMPLE_FILES,
+        ...SAMPLE_REPRESENTATIVE_SOURCES,
+        ...localSources.map((source) => ({
+          ...source,
+          origin: "page-local" as const,
+          status: "ready" as const,
+          description: copy.library.localSourceDescription,
+        })),
+      ].filter((source) => !removedSourceIds.includes(source.id)),
+    [
+      copy.library.localSourceDescription,
+      localSources,
+      review.sources,
+      removedSourceIds,
     ],
-    [copy.library.localSourceDescription, localSources, review.sources],
   );
   const openCitationPanel = useCallback(
     (citation: OpenCitation) => {
@@ -1454,6 +1465,30 @@ export function TapProductPrototype() {
     review.upload(source.name);
   };
 
+  const deleteSource = (sourceId: string) => {
+    setRemovedSourceIds((current) =>
+      current.includes(sourceId) ? current : [...current, sourceId],
+    );
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.selectedSourceIds.includes(sourceId)
+          ? {
+              ...conversation,
+              selectedSourceIds: conversation.selectedSourceIds.filter(
+                (id) => id !== sourceId,
+              ),
+            }
+          : conversation,
+      ),
+    );
+    setAttachments((current) =>
+      current.filter((attachment) => attachment.sourceId !== sourceId),
+    );
+    setOpenCitation((current) =>
+      current && current.source.id === sourceId ? null : current,
+    );
+  };
+
   return (
     <div
       className={`tap-product-shell${tapperWorkspaceActive ? " tap-product-shell--tapper-workspace" : ""}${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
@@ -1702,6 +1737,8 @@ export function TapProductPrototype() {
             sources={sources}
             onAddSource={addLocalSource}
             onInspectSource={review.inspect}
+            onRetrySource={review.retry}
+            onDeleteSource={deleteSource}
           />
         ) : null}
         {activeModule === "test-insights" ? (

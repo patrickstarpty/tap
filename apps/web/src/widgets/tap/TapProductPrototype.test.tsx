@@ -147,6 +147,68 @@ it("processes a replacement document into manageable chunks", async () => {
   ).toBeVisible();
 });
 
+it("retries a failed document from the library source detail dialog", async () => {
+  render(<TapProductPrototype />);
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "View Underwriting rules — scanned.pdf",
+    }),
+  );
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByText("Failed")).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+  expect(within(dialog).getByText("Processing")).toBeVisible();
+  await waitFor(
+    () => expect(within(dialog).getByText("Ready")).toBeVisible(),
+    { timeout: 3_000 },
+  );
+});
+
+it("deletes a source after confirmation", () => {
+  render(<TapProductPrototype />);
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "View Life underwriting guide · v1.2.md",
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete source" }));
+  expect(
+    screen.getByText(
+      "Delete this source? It will be removed from Library and knowledge sources.",
+    ),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  expect(
+    screen.queryByRole("button", {
+      name: "Manage chunks Life underwriting guide · v1.2.md",
+    }),
+  ).not.toBeInTheDocument();
+});
+
+it("removes a deleted source from the active selection", () => {
+  render(<TapProductPrototype />);
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /Underwriting test rules\.pdf/ }),
+  );
+  expect(screen.getByText("1 selected")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Underwriting test rules.pdf" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete source" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  fireEvent.click(screen.getByRole("button", { name: "Tapper" }));
+  expect(
+    screen.queryByRole("checkbox", { name: /Underwriting test rules\.pdf/ }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("0 selected")).toBeVisible();
+});
+
 function selectUnderwritingSources() {
   fireEvent.click(
     screen.getByRole("checkbox", {

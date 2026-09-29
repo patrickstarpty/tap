@@ -19,6 +19,7 @@ export interface PrototypeSnapshot {
     examplesLoaded: boolean;
     sampleLoaded: boolean;
     localSources: readonly Pick<LibrarySource, "id" | "name" | "type">[];
+    removedSourceIds: readonly string[];
   };
 }
 
@@ -93,6 +94,11 @@ export function readPrototypeSnapshot(
                     typeof source.type === "string",
                 )
                 .map(({ id, name, type }) => ({ id, name, type }))
+            : [],
+          removedSourceIds: Array.isArray(value.library.removedSourceIds)
+            ? value.library.removedSourceIds.filter(
+                (id): id is string => typeof id === "string",
+              )
             : [],
         }
       : undefined;

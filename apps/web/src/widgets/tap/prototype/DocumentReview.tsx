@@ -173,9 +173,7 @@ export function useDocumentReview(locale: Locale) {
       () =>
         setDocuments((current) =>
           current.map((d) =>
-            d.state !== "processing"
-              ? d
-              : { ...d, state: /scan/i.test(d.name) ? "failed" : "review" },
+            d.state !== "processing" ? d : { ...d, state: "review" },
           ),
         ),
       900,
@@ -266,6 +264,15 @@ export function useDocumentReview(locale: Locale) {
     opener.current = trigger ?? null;
     setInspected(id);
   }
+  function retry(id: string) {
+    setDocuments((current) =>
+      current.map((d) =>
+        d.id === id && d.state === "failed"
+          ? { ...d, state: "processing" }
+          : d,
+      ),
+    );
+  }
   function upload(name: string, options: { inspect?: boolean } = {}) {
     const id = crypto.randomUUID();
     setDocuments((current) => [
@@ -290,6 +297,7 @@ export function useDocumentReview(locale: Locale) {
     inspect,
     update,
     upload,
+    retry,
     opener,
     close: () => setInspected(null),
     t,

@@ -21,6 +21,7 @@ import { getFileTypeFamily } from "./fileTypes";
 import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
 import { KnowledgeGraph } from "./KnowledgeGraph";
+import { SourceDetailDialog } from "./SourceDetailDialog";
 import type { LibrarySource } from "./model";
 
 type LibraryMode = "list" | "graph";
@@ -30,6 +31,8 @@ interface LibraryWorkspaceProps {
   copy: PrototypeCopy;
   onInspectSource?: (sourceId: string, trigger: HTMLElement) => void;
   onAddSource: (source: Pick<LibrarySource, "name" | "type">) => void;
+  onRetrySource: (sourceId: string) => void;
+  onDeleteSource: (sourceId: string) => void;
   sources: readonly LibrarySource[];
 }
 
@@ -41,6 +44,8 @@ export function LibraryWorkspace({
   copy,
   onAddSource,
   onInspectSource,
+  onRetrySource,
+  onDeleteSource,
   sources,
 }: LibraryWorkspaceProps) {
   const [view, setView] = useState<"list" | "cards">("cards");
@@ -50,7 +55,9 @@ export function LibraryWorkspace({
   const [statusFilter, setStatusFilter] = useState<LibraryStatusFilter>("all");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [detailSourceId, setDetailSourceId] = useState<string | null>(null);
   const addDialogTriggerRef = useRef<HTMLElement | null>(null);
+  const detailTriggerRef = useRef<HTMLElement | null>(null);
   const listTabRef = useRef<HTMLButtonElement>(null);
   const graphTabRef = useRef<HTMLButtonElement>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -111,6 +118,16 @@ export function LibraryWorkspace({
     setSelectedFile(null);
     setAddDialogOpen(false);
   };
+
+  const openDetail = (sourceId: string, trigger: HTMLElement) => {
+    detailTriggerRef.current = trigger;
+    setDetailSourceId(sourceId);
+  };
+
+  const closeDetail = () => setDetailSourceId(null);
+
+  const detailSource =
+    sources.find((source) => source.id === detailSourceId) ?? null;
 
   const addSource = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -323,6 +340,15 @@ export function LibraryWorkspace({
                               : "管理切片"}
                           </Button>
                         ) : null}
+                        <Button
+                          type="text"
+                          aria-label={`${copy.library.viewSourceButton} ${source.name}`}
+                          onClick={(event) =>
+                            openDetail(source.id, event.currentTarget)
+                          }
+                        >
+                          {copy.library.viewSourceButton}
+                        </Button>
                         {source.downloadUrl ? (
                           <a
                             className="tap-file-download"
@@ -395,6 +421,17 @@ export function LibraryWorkspace({
             </div>
           </form>
         </AccessibleDialog>
+      ) : null}
+
+      {detailSource ? (
+        <SourceDetailDialog
+          copy={copy}
+          source={detailSource}
+          opener={detailTriggerRef.current}
+          onClose={closeDetail}
+          onRetry={onRetrySource}
+          onDelete={onDeleteSource}
+        />
       ) : null}
     </section>
   );

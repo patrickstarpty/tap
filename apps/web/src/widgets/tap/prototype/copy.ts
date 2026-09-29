@@ -201,6 +201,13 @@ export interface PrototypeCopy {
     searchResults: string;
     noMatchingNodes: string;
     viewSource: string;
+    viewSourceButton: string;
+    close: string;
+    sourceDocuments: string;
+    retryDocument: string;
+    deleteSource: string;
+    deleteSourceConfirm: string;
+    confirmDelete: string;
     selectNode: string;
     community: string;
     relationships: string;
@@ -542,6 +549,14 @@ export const PROTOTYPE_COPY = {
       noMatchingNodes:
         "No matching documents, concepts or entities. Try another keyword or clear the filters.",
       viewSource: "View source in document list",
+      viewSourceButton: "View",
+      close: "Close",
+      sourceDocuments: "Documents",
+      retryDocument: "Retry",
+      deleteSource: "Delete source",
+      deleteSourceConfirm:
+        "Delete this source? It will be removed from Library and knowledge sources.",
+      confirmDelete: "Delete",
       selectNode: "Select a node to inspect its relationships.",
       community: "Topic group",
       relationships: "Relationships",
@@ -874,6 +889,13 @@ export const PROTOTYPE_COPY = {
       searchResults: "搜索结果",
       noMatchingNodes: "没有匹配的文档、概念或实体，请更换关键词或清除筛选。",
       viewSource: "在文档列表中查看来源",
+      viewSourceButton: "查看",
+      close: "关闭",
+      sourceDocuments: "文档",
+      retryDocument: "重试",
+      deleteSource: "删除来源",
+      deleteSourceConfirm: "删除该来源？它将从知识库和知识来源中移除。",
+      confirmDelete: "删除",
       selectNode: "选择节点以查看其关系。",
       community: "主题分组",
       relationships: "关系",
