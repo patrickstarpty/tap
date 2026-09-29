@@ -7,6 +7,7 @@ from tap.interfaces.http.app import create_app
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
 from tap.modules.chat.application.conversations import (
+    ConversationIntegrityError,
     ConversationService,
     InMemoryConversationRepository,
 )
@@ -135,6 +136,23 @@ def test_delete_is_idempotent_creator_only_and_hides_every_read_path():
         headers={"Idempotency-Key": "after-delete"},
     )
     assert append.status_code == 404
+
+
+def test_conversation_integrity_fault_is_a_non_retryable_problem():
+    client, service = _client("Broken")
+
+    async def broken_load(_conversation_id):
+        raise ConversationIntegrityError("Turn input snapshot is missing for a persisted Turn")
+
+    service.repository.load = broken_load
+    response = client.get(f"{BASE}/conversation-0")
+
+    assert response.status_code == 500, response.text
+    body = response.json()
+    assert body["type"].endswith("/conversation-integrity")
+    assert body["retryable"] is False
+    assert "snapshot" not in body["detail"]
+    assert isinstance(ConversationIntegrityError("x"), ValueError)
 
 
 def test_list_search_filters_titles_and_composes_with_cursor():

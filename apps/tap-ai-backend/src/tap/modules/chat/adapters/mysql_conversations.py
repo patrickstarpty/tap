@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -25,10 +26,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.events import ProjectEventEnvelope
+from tap.contracts.problems import build_problem
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
+    ConversationIntegrityError,
     ConversationNotFound,
     ConversationOwnership,
     InvalidConversationCursor,
@@ -157,6 +160,7 @@ turn_artifact_link = _scoped(
 
 
 _LIKE_ESCAPE = "!"
+_LOGGER = logging.getLogger(__name__)
 
 
 def _title_pattern(query: str) -> str:
@@ -461,7 +465,7 @@ class MysqlConversationRepository:
         )
         if snapshot is None:
             # Every persisted Turn is written with its input snapshot; never synthesize one.
-            raise ValueError("Turn input snapshot is missing for a persisted Turn")
+            raise ConversationIntegrityError("Turn input snapshot is missing for a persisted Turn")
         raw = snapshot["snapshot"]
         value = TurnInput(
             message=raw["message"],
@@ -1185,6 +1189,10 @@ class MysqlConversationRepository:
                         )
                         if not graph_lease_reclaimable:
                             continue
+                if not await self._has_input_snapshot(session, row["turn_id"]):
+                    # A permanent fault: settle the Turn instead of wedging every claim batch.
+                    await self._fail_integrity_turn(session, row, graph is not None, now)
+                    continue
                 lease_token = uuid4().hex
                 lease_until = _naive(now + timedelta(seconds=60))
                 event = await self._next_event(
@@ -1249,6 +1257,69 @@ class MysqlConversationRepository:
                 mutable["processing_lease_expires_at"] = lease_until
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
         return tuple(claimed)
+
+    async def _has_input_snapshot(self, session, turn_id: str) -> bool:
+        return (
+            await session.scalar(
+                select(turn_input_snapshot.c.turn_id).where(
+                    *scope_predicates(turn_input_snapshot, self.scope),
+                    turn_input_snapshot.c.turn_id == turn_id,
+                )
+            )
+        ) is not None
+
+    async def _fail_integrity_turn(self, session, row, has_graph: bool, now: datetime) -> None:
+        from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+
+        _LOGGER.warning(
+            "conversation turn failed integrity check",
+            extra={"turn_id": row["turn_id"], "reason": "input-snapshot-missing"},
+        )
+        event = await self._next_event(
+            session,
+            row["chat_id"],
+            ConversationEvent(
+                uuid4().hex,
+                1,
+                "turn.failed",
+                {
+                    "problem": build_problem(
+                        "conversation-integrity", correlation_id=row["turn_id"]
+                    ).model_dump(mode="json", by_alias=True)
+                },
+                now,
+            ),
+        )
+        await self._stream_event(session, event, row["turn_id"])
+        await session.execute(
+            update(chat_turn)
+            .where(
+                *scope_predicates(chat_turn, self.scope),
+                chat_turn.c.turn_id == row["turn_id"],
+            )
+            .values(
+                state="failed",
+                last_sequence=event.sequence,
+                processing_lease_token=None,
+                processing_lease_expires_at=None,
+            )
+        )
+        if has_graph:
+            await session.execute(
+                update(graph_run)
+                .where(
+                    *scope_predicates(graph_run, self.scope),
+                    graph_run.c.run_id == row["turn_id"],
+                )
+                .values(
+                    status="FAILED",
+                    waiting_reason=None,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=None,
+                    updated_at=_naive(now),
+                )
+            )
 
     async def renew_processing_lease(
         self,

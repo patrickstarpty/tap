@@ -212,6 +212,14 @@ PROBLEM_REGISTRY = MappingProxyType(
                 None,
             ),
             ProblemDefinition(
+                "conversation-integrity",
+                "Conversation integrity fault",
+                500,
+                "The Conversation has inconsistent persisted facts and cannot be served.",
+                False,
+                None,
+            ),
+            ProblemDefinition(
                 "scope-mismatch",
                 "Scope mismatch",
                 403,

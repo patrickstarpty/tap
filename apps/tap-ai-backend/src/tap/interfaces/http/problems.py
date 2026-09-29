@@ -22,6 +22,7 @@ from tap.modules.ai.domain.models import (
 )
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
+    ConversationIntegrityError,
     ConversationNotFound,
     InvalidConversationCursor,
 )
@@ -222,6 +223,12 @@ def register_problem_handlers(app: FastAPI) -> None:
     @app.exception_handler(ConversationNotFound)
     async def conversation_not_found(request: Request, error: ConversationNotFound) -> JSONResponse:
         return problem_response("conversation-not-found", request)
+
+    @app.exception_handler(ConversationIntegrityError)
+    async def conversation_integrity_problem(
+        request: Request, _error: ConversationIntegrityError
+    ) -> JSONResponse:
+        return problem_response("conversation-integrity", request)
 
     @app.exception_handler(InvalidConversationCursor)
     async def conversation_cursor_invalid(

@@ -76,6 +76,14 @@
       "type": "https://tap.example/problems/citation-unavailable"
     },
     {
+      "code": "conversation-integrity",
+      "detail": "The Conversation has inconsistent persisted facts and cannot be served.",
+      "retryable": false,
+      "status": 500,
+      "title": "Conversation integrity fault",
+      "type": "https://tap.example/problems/conversation-integrity"
+    },
+    {
       "code": "conversation-not-found",
       "detail": "The Conversation is unavailable in this Project.",
       "retryable": false,

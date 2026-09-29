@@ -847,6 +847,28 @@
         {
           "properties": {
             "detail": {
+              "const": "The Conversation has inconsistent persisted facts and cannot be served."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 500
+            },
+            "title": {
+              "const": "Conversation integrity fault"
+            },
+            "type": {
+              "const": "https://tap.example/problems/conversation-integrity"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The Conversation is unavailable in this Project."
             },
             "failureStage": {
@@ -1621,6 +1643,7 @@
             "https://tap.example/problems/automation-mapping-required",
             "https://tap.example/problems/citation-stale",
             "https://tap.example/problems/citation-unavailable",
+            "https://tap.example/problems/conversation-integrity",
             "https://tap.example/problems/conversation-not-found",
             "https://tap.example/problems/document-limit-reached",
             "https://tap.example/problems/document-not-found",

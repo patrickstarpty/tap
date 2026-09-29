@@ -36,6 +36,10 @@ class InvalidConversationCursor(ValueError):
     pass
 
 
+class ConversationIntegrityError(ValueError):
+    """Persisted Conversation facts are permanently inconsistent; retrying cannot help."""
+
+
 @dataclass(frozen=True, slots=True)
 class ConversationOwnership:
     """Minimal owner facts, visible even after a soft delete, for owner-only commands."""

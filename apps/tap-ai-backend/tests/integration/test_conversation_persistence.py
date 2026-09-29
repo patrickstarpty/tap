@@ -7,7 +7,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
-from tap.modules.chat.application.conversations import ConversationConflict, ConversationService
+from tap.modules.chat.application.conversations import (
+    ConversationConflict,
+    ConversationIntegrityError,
+    ConversationService,
+)
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     CitationEvidence,
@@ -247,8 +251,62 @@ def test_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
                 )
                 await connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
 
-            with pytest.raises(ValueError, match="input snapshot is missing"):
+            with pytest.raises(ConversationIntegrityError, match="input snapshot is missing"):
                 await service.load("snapshotless")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_claim_fails_snapshotless_queued_turn_and_keeps_claiming_others(owned_project_mysql):
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            service = ConversationService(repository, scope=VALIDATION_SCOPE)
+            await service.create("broken", "broken-turn", "broken", _input("Broken"))
+            await service.create("healthy", "healthy-turn", "healthy", _input("Healthy"))
+            async with engine.begin() as connection:
+                await connection.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+                await connection.execute(
+                    text("DELETE FROM turn_input_snapshot WHERE turn_id='broken-turn'")
+                )
+                await connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+
+            claimed = await repository.claim_queued(limit=5)
+
+            assert [(chat_id, turn.turn_id) for chat_id, turn in claimed] == [
+                ("healthy", "healthy-turn")
+            ]
+            assert await repository.claim_queued(limit=5) == ()
+            async with engine.connect() as connection:
+                state = await connection.scalar(
+                    text("SELECT state FROM chat_turn WHERE turn_id='broken-turn'")
+                )
+                lease = await connection.scalar(
+                    text("SELECT processing_lease_token FROM chat_turn WHERE turn_id='broken-turn'")
+                )
+                events = (
+                    await connection.execute(
+                        text(
+                            "SELECT event_type, payload FROM chat_event "
+                            "WHERE turn_id='broken-turn' ORDER BY sequence"
+                        )
+                    )
+                ).all()
+            assert state == "failed"
+            assert lease is None
+            assert events[-1][0] == "turn.failed"
+            payload = events[-1][1]
+            payload = json.loads(payload) if isinstance(payload, str) else payload
+            assert payload["problem"]["type"].endswith("/conversation-integrity")
+            assert payload["problem"]["retryable"] is False
+            assert "turn.started" not in [event_type for event_type, _ in events]
         finally:
             await engine.dispose()
 
