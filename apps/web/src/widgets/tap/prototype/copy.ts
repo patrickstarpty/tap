@@ -68,6 +68,8 @@ export interface PrototypeCopy {
     loading: string;
     noReadySources: string;
     noResults: string;
+    loadFailed: string;
+    allProcessing: string;
     manageKnowledge: string;
     provenanceHint: string;
     immutableRevision: string;
@@ -185,6 +187,8 @@ export interface PrototypeCopy {
     processing: string;
     failed: string;
     noResults: string;
+    loadFailed: string;
+    emptyHeading: string;
     illustrative: string;
     communities: string;
     selectAllTopics: string;
@@ -409,6 +413,8 @@ export const PROTOTYPE_COPY = {
       loading: "Loading sources",
       noReadySources: "No ready sources",
       noResults: "No matching sources",
+      loadFailed: "Knowledge sources could not be loaded.",
+      allProcessing: "Sources are processing. They can be selected when ready.",
       manageKnowledge: "Manage knowledge",
       provenanceHint:
         "Answers and generated assets record the source context selected for each turn.",
@@ -531,6 +537,8 @@ export const PROTOTYPE_COPY = {
       processing: "Processing",
       failed: "Failed",
       noResults: "No matching sources",
+      loadFailed: "Library could not be loaded.",
+      emptyHeading: "No knowledge sources yet",
       illustrative:
         "Select a topic or relationship to explore its connected sources.",
       communities: "Topic groups",
@@ -758,6 +766,8 @@ export const PROTOTYPE_COPY = {
       loading: "正在加载来源",
       noReadySources: "没有可用来源",
       noResults: "没有匹配的来源",
+      loadFailed: "知识来源加载失败。",
+      allProcessing: "来源正在处理，完成后可选用。",
       manageKnowledge: "管理知识库",
       provenanceHint: "回答和生成的资产会记录每轮对话选择的来源上下文。",
       immutableRevision: "已发布版本",
@@ -873,6 +883,8 @@ export const PROTOTYPE_COPY = {
       processing: "处理中",
       failed: "失败",
       noResults: "没有匹配的来源",
+      loadFailed: "知识库加载失败。",
+      emptyHeading: "还没有知识来源",
       illustrative: "选择主题或关系，查看关联知识与原文来源。",
       communities: "主题分组",
       selectAllTopics: "全选",
