@@ -3,6 +3,11 @@ import {
   useDocumentReview,
 } from "./prototype/DocumentReview";
 import { KnowledgeAnswer } from "./prototype/answer/KnowledgeAnswer";
+import {
+  CitationPanel,
+  type OpenCitation,
+} from "./prototype/answer/CitationPanel";
+import { takePrototypeFault } from "./prototype/prototypeFaults";
 import { CodeOutlined, FileTextOutlined } from "@ant-design/icons";
 import { Button } from "antd";
 import {
@@ -482,6 +487,7 @@ export function TapProductPrototype() {
   const [activeConversationId, setActiveConversationId] = useState(
     () => initialSnapshot?.activeConversationId ?? "chat-1",
   );
+  const [openCitation, setOpenCitation] = useState<OpenCitation | null>(null);
   const [artifactState, dispatchArtifact] = useReducer(
     artifactReducer,
     initialSnapshot?.artifacts ?? createInitialArtifactState(),
@@ -591,6 +597,10 @@ export function TapProductPrototype() {
   }, [isCompactViewport]);
 
   useEffect(() => {
+    setOpenCitation(null);
+  }, [activeConversationId]);
+
+  useEffect(() => {
     document.documentElement.lang = locale === "en" ? "en" : "zh-CN";
   }, [locale]);
 
@@ -691,6 +701,34 @@ export function TapProductPrototype() {
       })),
     ],
     [copy.library.localSourceDescription, localSources, review.sources],
+  );
+  const openCitationPanel = useCallback(
+    (citation: OpenCitation) => {
+      const fullSource = sources.find(
+        (source) => source.id === citation.source.id,
+      );
+      setOpenCitation({
+        ...citation,
+        source: {
+          ...citation.source,
+          hasNewerRevision: fullSource?.hasNewerRevision,
+        },
+        verificationFailed: takePrototypeFault(
+          "citation-verification-failed",
+        ),
+      });
+      if (sourcesCollapsed) expandKnowledgeSources();
+    },
+    [expandKnowledgeSources, sources, sourcesCollapsed],
+  );
+  const openCitationOriginal = useCallback(
+    (sourceId: string) => {
+      setActiveModule("library");
+      if (review.sources.some((source) => source.id === sourceId)) {
+        review.inspect(sourceId);
+      }
+    },
+    [review],
   );
   const activeConversation =
     conversations.find(
@@ -1481,6 +1519,7 @@ export function TapProductPrototype() {
                     turn={turn}
                     onRetry={() => resendTurn(turn)}
                     onStop={() => stopTurn(turn.id)}
+                    onOpenCitation={openCitationPanel}
                   />
                 ) : (
                   <AssistantResponse
@@ -1524,22 +1563,31 @@ export function TapProductPrototype() {
               data-collapsed={sourcesCollapsed}
               inert={sourcesCollapsed ? true : undefined}
             >
-              <KnowledgeSourcesPanel
-                copy={copy}
-                isLoading={false}
-                onCollapse={dismissKnowledgeSources}
-                onToggleSource={(sourceId) =>
-                  updateActiveConversation((conversation) => ({
-                    ...conversation,
-                    selectedSourceIds: toggleSelection(
-                      conversation.selectedSourceIds,
-                      sourceId,
-                    ),
-                  }))
-                }
-                selectedSourceIds={activeConversation.selectedSourceIds}
-                sources={sources}
-              />
+              {openCitation !== null ? (
+                <CitationPanel
+                  citation={openCitation}
+                  locale={locale}
+                  onClose={() => setOpenCitation(null)}
+                  onOpenOriginal={openCitationOriginal}
+                />
+              ) : (
+                <KnowledgeSourcesPanel
+                  copy={copy}
+                  isLoading={false}
+                  onCollapse={dismissKnowledgeSources}
+                  onToggleSource={(sourceId) =>
+                    updateActiveConversation((conversation) => ({
+                      ...conversation,
+                      selectedSourceIds: toggleSelection(
+                        conversation.selectedSourceIds,
+                        sourceId,
+                      ),
+                    }))
+                  }
+                  selectedSourceIds={activeConversation.selectedSourceIds}
+                  sources={sources}
+                />
+              )}
             </div>
           </div>
         </div>

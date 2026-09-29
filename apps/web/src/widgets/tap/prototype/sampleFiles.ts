@@ -25,6 +25,7 @@ export const SAMPLE_FILES: readonly LibrarySource[] = [
     origin: "page-local",
     status: "ready",
     isExample: true,
+    hasNewerRevision: true,
   },
   {
     id: "sample-beneficiary",

@@ -1,20 +1,19 @@
-import { useRef, useState } from "react";
 import { Button } from "antd";
-import { AccessibleDialog } from "../../../../legacy/AccessibleDialog";
 import type { AssistantTurn } from "../model";
 import { AnswerEvidence } from "./AnswerEvidence";
+import type { OpenCitation } from "./CitationPanel";
 
 export function KnowledgeAnswer({
   turn,
   onRetry,
   onStop,
+  onOpenCitation,
 }: {
   turn: AssistantTurn;
   onRetry: () => void;
   onStop: () => void;
+  onOpenCitation: (citation: OpenCitation) => void;
 }) {
-  const [citation, setCitation] = useState(false);
-  const opener = useRef<HTMLElement | null>(null);
   const t = (en: string, zh: string) => (turn.locale === "zh" ? zh : en);
   if (turn.answerState === "running")
     return (
@@ -63,45 +62,17 @@ export function KnowledgeAnswer({
           "缺少健康告知时，应阻止提交并返回 HTTP 422 与 HEALTH_DISCLOSURE_REQUIRED。保留已填信息，提示申请人补充后再提交。",
         )}
       </p>
-      <Button
-        type="link"
-        onClick={(event) => {
-          opener.current = event.currentTarget;
-          setCitation(true);
-        }}
-      >
-        [1] {t("Health disclosure · Section 4", "健康告知 · 第 4 节")}
-      </Button>
-      {citation ? (
-        <AccessibleDialog
-          ariaLabel={t("Source citation", "原文引用")}
-          className="tap-document-review tap-document-citation"
-          opener={opener.current}
-          onClose={() => setCitation(false)}
+      {turn.sourceReferences.map((source, index) => (
+        <Button
+          key={source.id}
+          type="link"
+          onClick={() =>
+            onOpenCitation({ turnId: turn.id, index: index + 1, source })
+          }
         >
-          <header>
-            <div>
-              <h2>{turn.sourceReferences[0]?.name}</h2>
-              <p>{t("Source version · Section 4", "来源版本 · 第 4 节")}</p>
-            </div>
-            <Button
-              onClick={() => setCitation(false)}
-              aria-label={t("Close citation", "关闭引用")}
-            >
-              {t("Close", "关闭")}
-            </Button>
-          </header>
-          <article className="tap-document-original">
-            <h3>{t("Health disclosure", "健康告知")}</h3>
-            <mark>
-              {t(
-                "If disclosure is missing, block submission and return HTTP 422 with HEALTH_DISCLOSURE_REQUIRED.",
-                "缺少健康告知时，阻止提交并返回 HTTP 422，错误码 HEALTH_DISCLOSURE_REQUIRED。",
-              )}
-            </mark>
-          </article>
-        </AccessibleDialog>
-      ) : null}
+          [{index + 1}] {source.name}
+        </Button>
+      ))}
     </div>
   );
 }

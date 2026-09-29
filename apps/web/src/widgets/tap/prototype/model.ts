@@ -126,6 +126,7 @@ export interface LibrarySource {
     | "published"
     | "withdrawn";
   isExample?: boolean;
+  hasNewerRevision?: boolean;
   downloadUrl?: string;
   preview?: { imageUrl?: string; text?: string };
   id: string;
