@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 
@@ -431,3 +433,73 @@ def test_vision_role_requires_response_schema():
     problems = ModelRoles("qwen-plus", "text-embedding-v4", "vl").problems(routes)
 
     assert problems == ("TAPPER_VISION_MODEL=vl does not support response schema",)
+
+
+@pytest.mark.asyncio
+async def test_routes_is_not_blocked_by_in_flight_fresh_routes():
+    now = [0.0]
+    release_health = asyncio.Event()
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            # The health poll's fetch stalls until the test releases it.
+            await release_health.wait()
+        return model_info_response(deployment("qwen-plus", supports_response_schema=True))
+
+    catalog = catalog_with_handler(handler, ttl_seconds=10, clock=lambda: now[0])
+    await catalog.routes()
+    now[0] = 11.0
+    health = asyncio.create_task(catalog.fresh_routes())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    routes = await asyncio.wait_for(catalog.routes(), timeout=1)
+
+    assert routes.get("qwen-plus") is not None
+    assert not health.done()
+    release_health.set()
+    assert (await health).get("qwen-plus") is not None
+    await catalog.aclose()
+
+
+@pytest.mark.asyncio
+async def test_slow_fresh_routes_does_not_replace_a_newer_cache():
+    now = [0.0]
+    release_health = asyncio.Event()
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await release_health.wait()
+            return model_info_response(deployment("old-model", supports_response_schema=True))
+        return model_info_response(deployment("new-model", supports_response_schema=True))
+
+    catalog = catalog_with_handler(handler, ttl_seconds=10, clock=lambda: now[0])
+    health = asyncio.create_task(catalog.fresh_routes())
+    await asyncio.sleep(0)
+    now[0] = 1.0
+    await asyncio.wait_for(catalog.routes(), timeout=1)
+    release_health.set()
+    await health
+
+    assert catalog.cached_routes().get("new-model") is not None
+    await catalog.aclose()
+
+
+@pytest.mark.parametrize("api_key", ["", "k" * 4097])
+def test_catalog_rejects_missing_or_oversized_credential(api_key):
+    with pytest.raises(ValueError, match="bounded credential"):
+        LiteLLMCatalog(base_url="https://litellm.example", api_key=api_key)
+
+
+@pytest.mark.parametrize("ttl_seconds", [0, -1.0])
+def test_catalog_rejects_non_positive_ttl(ttl_seconds):
+    with pytest.raises(ValueError, match="positive ttl"):
+        LiteLLMCatalog(
+            base_url="https://litellm.example", api_key="test-key", ttl_seconds=ttl_seconds
+        )

@@ -263,10 +263,19 @@ class LiteLLMCatalog:
                 raise
 
     async def fresh_routes(self) -> LiteLLMRoutes:
-        """Routes for health checks: always fetched; never falls back to the cache."""
+        """Routes for health checks: always fetched; never falls back to the cache.
 
+        The network fetch runs outside the lock so a slow health poll never stalls
+        model calls; the lock only guards the cache swap.
+        """
+
+        started_at = self._clock()
+        routes = await self._fetch_checked()
         async with self._lock:
-            return await self._refresh()
+            # A slower health fetch must not replace routes loaded after it started.
+            if self._fetched_at is None or self._fetched_at <= started_at:
+                self._store(routes)
+        return routes
 
     def _is_fresh(self) -> bool:
         return (
@@ -276,8 +285,17 @@ class LiteLLMCatalog:
         )
 
     async def _refresh(self) -> LiteLLMRoutes:
+        routes = await self._fetch_checked()
+        self._store(routes)
+        return routes
+
+    def _store(self, routes: LiteLLMRoutes) -> None:
+        self._routes = routes
+        self._fetched_at = self._clock()
+
+    async def _fetch_checked(self) -> LiteLLMRoutes:
         try:
-            routes = await self._fetch()
+            return await self._fetch()
         except (
             httpx.HTTPError,
             ValueError,
@@ -286,9 +304,6 @@ class LiteLLMCatalog:
             ModelGatewayUnavailable,
         ):
             raise ModelGatewayUnavailable() from None
-        self._routes = routes
-        self._fetched_at = self._clock()
-        return routes
 
     async def _fetch(self) -> LiteLLMRoutes:
         if self._client is None:
