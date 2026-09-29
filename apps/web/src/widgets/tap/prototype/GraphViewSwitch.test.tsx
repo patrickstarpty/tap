@@ -106,6 +106,31 @@ it("shows an empty state for a source without a published graph", () => {
   ).not.toBeInTheDocument();
 });
 
+it("keeps showing a selected published graph when a filter excludes it from the facet list", () => {
+  renderWorkspace([
+    beneficiarySource,
+    underwritingSource,
+    exploratorySource,
+  ]);
+
+  fireEvent.click(screen.getByText("Published source graph"));
+  const select = screen.getByRole("combobox", {
+    name: "Source",
+  }) as HTMLSelectElement;
+  expect(select.value).toBe("sample-beneficiary");
+
+  fireEvent.change(screen.getByRole("combobox", { name: "Type" }), {
+    target: { value: "PDF" },
+  });
+
+  expect(
+    screen.queryByText("This source has no published graph yet."),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByLabelText("Life insurance knowledge graph"),
+  ).toBeVisible();
+});
+
 it("retries a failed graph load", () => {
   setPrototypeFaults(["graph-load-failed"]);
   renderWorkspace([underwritingSource]);

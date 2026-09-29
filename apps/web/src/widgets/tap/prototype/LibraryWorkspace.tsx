@@ -498,7 +498,7 @@ export function LibraryWorkspace({
                 ) : (
                   (() => {
                     const selectedSource =
-                      facetSources.find(
+                      sources.find(
                         (source) => source.id === graphView.sourceId,
                       ) ?? null;
                     if (!selectedSource?.hasPublishedGraph) {
