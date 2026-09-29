@@ -108,10 +108,12 @@ function sampleTurn(index: number, spec: SampleTurnSpec): AssistantTurn {
   return turn;
 }
 
+const SAMPLE_CONVERSATION_ID_PREFIX = "sample-chat-";
+
 /** Older, previously created chats shown after the fresh chat and any new chats in history. */
 export const SAMPLE_CONVERSATIONS: readonly Conversation[] =
   SAMPLE_TURN_SPECS.map((spec, index) => ({
-    id: `sample-chat-${index + 1}`,
+    id: `${SAMPLE_CONVERSATION_ID_PREFIX}${index + 1}`,
     title: spec.prompt,
     turns: [sampleTurn(index, spec)],
     modelId: DEFAULT_CODEX_MODEL_ID,
@@ -119,3 +121,24 @@ export const SAMPLE_CONVERSATIONS: readonly Conversation[] =
     selectedAgentIds: [],
     selectedSkillIds: [],
   }));
+
+/**
+ * Inserts a newly created conversation ahead of the seeded sample chats, so a
+ * user-created chat always sorts before the older sample history instead of
+ * being appended after it (and possibly hidden behind history paging).
+ * Relative order of every other conversation is preserved.
+ */
+export function insertConversation(
+  conversations: readonly Conversation[],
+  conversation: Conversation,
+): readonly Conversation[] {
+  const sampleIndex = conversations.findIndex((item) =>
+    item.id.startsWith(SAMPLE_CONVERSATION_ID_PREFIX),
+  );
+  if (sampleIndex === -1) return [...conversations, conversation];
+  return [
+    ...conversations.slice(0, sampleIndex),
+    conversation,
+    ...conversations.slice(sampleIndex),
+  ];
+}

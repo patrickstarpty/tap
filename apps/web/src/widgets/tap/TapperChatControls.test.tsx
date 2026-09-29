@@ -68,12 +68,6 @@ function createTwoConversations() {
   advance(1800);
   fireEvent.click(screen.getByRole("button", { name: "New chat" }));
   send(BDD_REQUEST);
-  // The prototype seeds sample chat history, so a newly created chat can
-  // land past the first history page; reveal the rest before locating it.
-  const loadMore = within(history()).queryByRole("button", {
-    name: "Load more",
-  });
-  if (loadMore !== null) fireEvent.click(loadMore);
 }
 
 describe("chat history controls", () => {

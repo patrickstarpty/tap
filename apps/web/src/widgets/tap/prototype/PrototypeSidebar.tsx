@@ -446,185 +446,185 @@ export function PrototypeSidebar({
               </div>
             ) : (
               <>
-              <label className="tap-chat-history-search">
-                <SearchOutlined aria-hidden="true" />
-                <input
-                  ref={searchRef}
-                  type="search"
-                  aria-label={copy.navigation.searchChats}
-                  placeholder={copy.navigation.searchChats}
-                  value={historyQuery}
-                  onChange={(event) => setHistoryQuery(event.target.value)}
-                />
-              </label>
-              {deleteFailed ? (
-                <p className="tap-chat-history-delete-error" role="alert">
-                  {copy.navigation.deleteFailed}
-                </p>
-              ) : null}
-              {pagedConversationHistory.length === 0 ? (
-                <p className="tap-chat-history-empty" role="status">
-                  {copy.navigation.noMatchingChats}
-                </p>
-              ) : null}
-              {pagedConversationHistory.map((conversation) => {
-                const label = getConversationLabel(conversation);
-                const title = getConversationTitle(conversation);
-                const menuOpen = menuConversationId === conversation.id;
-                const isRenaming = renaming?.conversationId === conversation.id;
-                const renameHintId = `tap-chat-rename-hint-${conversation.id}`;
+                <label className="tap-chat-history-search">
+                  <SearchOutlined aria-hidden="true" />
+                  <input
+                    ref={searchRef}
+                    type="search"
+                    aria-label={copy.navigation.searchChats}
+                    placeholder={copy.navigation.searchChats}
+                    value={historyQuery}
+                    onChange={(event) => setHistoryQuery(event.target.value)}
+                  />
+                </label>
+                {deleteFailed ? (
+                  <p className="tap-chat-history-delete-error" role="alert">
+                    {copy.navigation.deleteFailed}
+                  </p>
+                ) : null}
+                {pagedConversationHistory.length === 0 ? (
+                  <p className="tap-chat-history-empty" role="status">
+                    {copy.navigation.noMatchingChats}
+                  </p>
+                ) : null}
+                {pagedConversationHistory.map((conversation) => {
+                  const label = getConversationLabel(conversation);
+                  const title = getConversationTitle(conversation);
+                  const menuOpen = menuConversationId === conversation.id;
+                  const isRenaming = renaming?.conversationId === conversation.id;
+                  const renameHintId = `tap-chat-rename-hint-${conversation.id}`;
 
-                return (
-                  <div
-                    key={conversation.id}
-                    className="tap-chat-history-row"
-                    data-active={conversation.id === activeConversationId}
-                    data-menu-open={menuOpen || undefined}
-                  >
-                    {isRenaming ? (
-                      <div className="tap-chat-history-rename">
-                        <MessageOutlined aria-hidden="true" />
-                        <input
-                          ref={renameInputRef}
-                          aria-label={copy.navigation.chatName}
-                          aria-invalid={renaming?.invalid || undefined}
-                          aria-describedby={
-                            renaming?.invalid ? renameHintId : undefined
-                          }
-                          maxLength={CONVERSATION_TITLE_MAX_LENGTH}
-                          value={renaming?.value ?? ""}
-                          onChange={(event) =>
-                            setRenaming({
-                              conversationId: conversation.id,
-                              value: event.target.value,
-                              invalid: false,
-                            })
-                          }
-                          onKeyDown={(event) => {
-                            if (event.nativeEvent.isComposing) return;
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              finishRename(true);
-                            } else if (event.key === "Escape") {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              finishRename(false);
-                            }
-                          }}
-                          onBlur={() => {
-                            const current = renamingRef.current;
-                            if (current?.conversationId !== conversation.id)
-                              return;
-                            const trimmed = current.value.trim();
-                            finishRename(
-                              trimmed.length > 0 &&
-                                trimmed.length <= CONVERSATION_TITLE_MAX_LENGTH,
-                            );
-                          }}
-                        />
-                        {renaming?.invalid ? (
-                          <small id={renameHintId} role="alert">
-                            {copy.navigation.chatNameHint}
-                          </small>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="tap-chat-history-item"
-                        aria-label={label}
-                        aria-current={
-                          conversation.id === activeConversationId
-                            ? "page"
-                            : undefined
-                        }
-                        title={label}
-                        onClick={() => onSelectConversation(conversation.id)}
-                      >
-                        <MessageOutlined aria-hidden="true" />
-                        <span>{label}</span>
-                      </button>
-                    )}
-                    {onRenameConversation === undefined ||
-                    onDeleteConversation === undefined ? null : (
-                    <button
-                      ref={(element) => {
-                        if (element === null)
-                          menuTriggerRefs.current.delete(conversation.id);
-                        else menuTriggerRefs.current.set(conversation.id, element);
-                      }}
-                      type="button"
-                      className="tap-chat-history-more"
-                      aria-label={copy.navigation.moreOptionsFor.replace(
-                        "{title}",
-                        title,
-                      )}
-                      aria-haspopup="menu"
-                      aria-expanded={menuOpen}
-                      hidden={isRenaming}
-                      onClick={() =>
-                        setMenuConversationId(menuOpen ? null : conversation.id)
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                          event.preventDefault();
-                          setMenuConversationId(conversation.id);
-                        }
-                      }}
+                  return (
+                    <div
+                      key={conversation.id}
+                      className="tap-chat-history-row"
+                      data-active={conversation.id === activeConversationId}
+                      data-menu-open={menuOpen || undefined}
                     >
-                      <MoreOutlined aria-hidden="true" />
-                    </button>
-                    )}
-                    {menuOpen ? (
-                      <div
-                        ref={menuRef}
-                        className="tap-chat-history-menu"
-                        role="menu"
+                      {isRenaming ? (
+                        <div className="tap-chat-history-rename">
+                          <MessageOutlined aria-hidden="true" />
+                          <input
+                            ref={renameInputRef}
+                            aria-label={copy.navigation.chatName}
+                            aria-invalid={renaming?.invalid || undefined}
+                            aria-describedby={
+                              renaming?.invalid ? renameHintId : undefined
+                            }
+                            maxLength={CONVERSATION_TITLE_MAX_LENGTH}
+                            value={renaming?.value ?? ""}
+                            onChange={(event) =>
+                              setRenaming({
+                                conversationId: conversation.id,
+                                value: event.target.value,
+                                invalid: false,
+                              })
+                            }
+                            onKeyDown={(event) => {
+                              if (event.nativeEvent.isComposing) return;
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                finishRename(true);
+                              } else if (event.key === "Escape") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                finishRename(false);
+                              }
+                            }}
+                            onBlur={() => {
+                              const current = renamingRef.current;
+                              if (current?.conversationId !== conversation.id)
+                                return;
+                              const trimmed = current.value.trim();
+                              finishRename(
+                                trimmed.length > 0 &&
+                                  trimmed.length <= CONVERSATION_TITLE_MAX_LENGTH,
+                              );
+                            }}
+                          />
+                          {renaming?.invalid ? (
+                            <small id={renameHintId} role="alert">
+                              {copy.navigation.chatNameHint}
+                            </small>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="tap-chat-history-item"
+                          aria-label={label}
+                          aria-current={
+                            conversation.id === activeConversationId
+                              ? "page"
+                              : undefined
+                          }
+                          title={label}
+                          onClick={() => onSelectConversation(conversation.id)}
+                        >
+                          <MessageOutlined aria-hidden="true" />
+                          <span>{label}</span>
+                        </button>
+                      )}
+                      {onRenameConversation === undefined ||
+                      onDeleteConversation === undefined ? null : (
+                      <button
+                        ref={(element) => {
+                          if (element === null)
+                            menuTriggerRefs.current.delete(conversation.id);
+                          else menuTriggerRefs.current.set(conversation.id, element);
+                        }}
+                        type="button"
+                        className="tap-chat-history-more"
                         aria-label={copy.navigation.moreOptionsFor.replace(
                           "{title}",
                           title,
                         )}
-                        onKeyDown={handleMenuKeyDown}
+                        aria-haspopup="menu"
+                        aria-expanded={menuOpen}
+                        hidden={isRenaming}
+                        onClick={() =>
+                          setMenuConversationId(menuOpen ? null : conversation.id)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                            event.preventDefault();
+                            setMenuConversationId(conversation.id);
+                          }
+                        }}
                       >
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => startRename(conversation)}
+                        <MoreOutlined aria-hidden="true" />
+                      </button>
+                      )}
+                      {menuOpen ? (
+                        <div
+                          ref={menuRef}
+                          className="tap-chat-history-menu"
+                          role="menu"
+                          aria-label={copy.navigation.moreOptionsFor.replace(
+                            "{title}",
+                            title,
+                          )}
+                          onKeyDown={handleMenuKeyDown}
                         >
-                          <EditOutlined aria-hidden="true" />
-                          {copy.navigation.renameChat}
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          data-danger="true"
-                          onClick={() => {
-                            setMenuConversationId(null);
-                            setDeleteFailed(false);
-                            setDeleteTarget(conversation);
-                          }}
-                        >
-                          <DeleteOutlined aria-hidden="true" />
-                          {copy.navigation.deleteChat}
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-              {canLoadMoreHistory ? (
-                <button
-                  type="button"
-                  className="tap-chat-history-load-more"
-                  onClick={() =>
-                    setVisibleHistoryCount(
-                      (current) => current + HISTORY_PAGE_SIZE,
-                    )
-                  }
-                >
-                  {copy.navigation.loadMore}
-                </button>
-              ) : null}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => startRename(conversation)}
+                          >
+                            <EditOutlined aria-hidden="true" />
+                            {copy.navigation.renameChat}
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            data-danger="true"
+                            onClick={() => {
+                              setMenuConversationId(null);
+                              setDeleteFailed(false);
+                              setDeleteTarget(conversation);
+                            }}
+                          >
+                            <DeleteOutlined aria-hidden="true" />
+                            {copy.navigation.deleteChat}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {canLoadMoreHistory ? (
+                  <button
+                    type="button"
+                    className="tap-chat-history-load-more"
+                    onClick={() =>
+                      setVisibleHistoryCount(
+                        (current) => current + HISTORY_PAGE_SIZE,
+                      )
+                    }
+                  >
+                    {copy.navigation.loadMore}
+                  </button>
+                ) : null}
               </>
             )}
           </nav>

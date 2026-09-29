@@ -62,7 +62,10 @@ import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
 import { SAMPLE_REPRESENTATIVE_SOURCES } from "./prototype/sampleKnowledge";
 import { SAMPLE_FILES } from "./prototype/sampleFiles";
-import { SAMPLE_CONVERSATIONS } from "./prototype/sampleConversations";
+import {
+  insertConversation,
+  SAMPLE_CONVERSATIONS,
+} from "./prototype/sampleConversations";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import {
   resolveComposerAttachments,
@@ -814,7 +817,9 @@ export function TapProductPrototype() {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
-    setConversations((current) => [...current, createConversation(id)]);
+    setConversations((current) =>
+      insertConversation(current, createConversation(id)),
+    );
     setActiveConversationId(id);
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
@@ -1135,10 +1140,12 @@ export function TapProductPrototype() {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
-    setConversations((current) => [
-      ...current.filter(({ id: itemId }) => itemId !== conversationId),
-      createConversation(id),
-    ]);
+    setConversations((current) =>
+      insertConversation(
+        current.filter(({ id: itemId }) => itemId !== conversationId),
+        createConversation(id),
+      ),
+    );
     setActiveConversationId(id);
     setActiveModule("tapper");
     return true;

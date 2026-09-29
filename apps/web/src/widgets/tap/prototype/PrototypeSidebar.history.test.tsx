@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -158,6 +164,66 @@ it("keeps the chat when deletion fails", () => {
   expect(
     screen.getByText("The chat could not be deleted. Please try again."),
   ).toBeVisible();
+});
+
+it("keeps user-created chats ahead of seeded sample history", () => {
+  vi.useFakeTimers();
+  try {
+    render(<TapProductPrototype />);
+    const composer = () =>
+      screen.getByLabelText("Message Tapper") as HTMLTextAreaElement;
+    const advance = (ms: number) =>
+      act(() => {
+        vi.advanceTimersByTime(ms);
+      });
+    const historyNav = () =>
+      screen.getByRole("navigation", { name: "Chat history" });
+
+    fireEvent.change(composer(), {
+      target: { value: "What is the free look period?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    advance(400);
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    fireEvent.change(composer(), {
+      target: { value: "What triggers a policy lapse?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    advance(400);
+
+    // Both user-created chats stay on the first history page, ahead of the
+    // 12 seeded sample chats, without needing "Load more".
+    expect(
+      within(historyNav()).getByRole("button", {
+        name: "What is the free look period?",
+      }),
+    ).toBeVisible();
+    expect(
+      within(historyNav()).getByRole("button", {
+        name: "What triggers a policy lapse?",
+      }),
+    ).toBeVisible();
+
+    // With 2 user chats ahead of the 12 seeded samples, the later samples
+    // are pushed past the first history page (page size 10) and are still
+    // reachable after "Load more".
+    expect(
+      within(historyNav()).queryByRole("button", {
+        name: "What test plan validates the underwriting rate lookup?",
+      }),
+    ).toBeNull();
+    fireEvent.click(
+      within(historyNav()).getByRole("button", { name: "Load more" }),
+    );
+    expect(
+      within(historyNav()).getByRole("button", {
+        name: "What test plan validates the underwriting rate lookup?",
+      }),
+    ).toBeVisible();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("loads a snapshot without seeded history fields", () => {
