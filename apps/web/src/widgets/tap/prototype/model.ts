@@ -6,12 +6,13 @@ export type CodexModelId =
 export const CODEX_MODELS: readonly {
   id: CodexModelId;
   label: string;
+  available: boolean;
 }[] = [
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-  { id: "gpt-5.5", label: "GPT-5.5" },
-  { id: "gpt-5.4", label: "GPT-5.4" },
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", available: true },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", available: true },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", available: true },
+  { id: "gpt-5.5", label: "GPT-5.5", available: true },
+  { id: "gpt-5.4", label: "GPT-5.4", available: false },
 ] as const;
 
 export const DEFAULT_CODEX_MODEL_ID: CodexModelId = "gpt-5.6-sol";

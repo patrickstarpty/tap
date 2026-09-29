@@ -96,6 +96,11 @@ export interface PrototypeCopy {
     reviewInLibrary: string;
     unsupportedFile: string;
     fileTooLarge: string;
+    sendFailed: string;
+    stopFailed: string;
+    modelUnavailable: string;
+    noModels: string;
+    contextNote: string;
   };
   catalog: {
     agents: string;
@@ -423,6 +428,13 @@ export const PROTOTYPE_COPY = {
       unsupportedFile:
         "This file type isn’t supported. Upload a PDF, DOCX, MD or TXT file.",
       fileTooLarge: "Files must be 25 MB or smaller.",
+      sendFailed:
+        "Message was not sent. Your draft is still here. Please try again.",
+      stopFailed:
+        "The response may still be running. Please try again shortly.",
+      modelUnavailable: "Unavailable",
+      noModels: "No models available",
+      contextNote: "Each turn records the knowledge context you select.",
     },
     catalog: {
       agents: "Agents",
@@ -751,6 +763,11 @@ export const PROTOTYPE_COPY = {
       reviewInLibrary: "在知识库中打开",
       unsupportedFile: "不支持此文件类型。请上传 PDF、DOCX、MD 或 TXT 文件。",
       fileTooLarge: "文件大小不能超过 25 MB。",
+      sendFailed: "消息未发送，草稿已保留，请重试。",
+      stopFailed: "回答可能仍在生成，请稍后再试。",
+      modelUnavailable: "不可用",
+      noModels: "暂无可用模型",
+      contextNote: "每轮对话会记录你选择的知识来源。",
     },
     catalog: {
       agents: "智能体",

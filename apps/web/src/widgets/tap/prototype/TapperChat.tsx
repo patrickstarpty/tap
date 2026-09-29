@@ -40,6 +40,7 @@ import {
   validateAttachmentFile,
   type ComposerAttachmentView,
 } from "./composerAttachments";
+import { isPrototypeFaultActive } from "./prototypeFaults";
 import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 
 type PickerKind = "library" | "agents" | "skills";
@@ -56,8 +57,10 @@ interface TapperChatProps {
   pageContext?: AssistantTurn["pageContext"];
   onClearPageContext: () => void;
   onModelChange: (modelId: CodexModelId) => void;
-  onSend: (prompt: string) => void;
+  onSend: (prompt: string) => boolean;
   onStop?: () => void;
+  sendError?: string | null;
+  stopError?: string | null;
   onRegenerate?: (turn: AssistantTurn) => void;
   onEditTurn?: (turn: AssistantTurn) => void;
   onUploadFile?: (file: File) => void;
@@ -131,6 +134,8 @@ export function TapperChat({
   onModelChange,
   onSend,
   onStop,
+  sendError = null,
+  stopError = null,
   onRegenerate,
   onEditTurn,
   onUploadFile,
@@ -316,6 +321,8 @@ export function TapperChat({
       document.removeEventListener("pointerdown", closeOnOutsidePointer);
   }, [modelMenuOpen]);
 
+  const noModelsAvailable = isPrototypeFaultActive("no-models");
+
   const selectedModel =
     CODEX_MODELS.find((model) => model.id === conversation.modelId) ??
     CODEX_MODELS[0]!;
@@ -420,8 +427,8 @@ export function TapperChat({
     event.preventDefault();
     const prompt = message.trim();
     if (prompt.length === 0 || isSending || conversationIsGenerating) return;
-    onSend(prompt);
-    setMessage("");
+    const sent = onSend(prompt);
+    if (sent) setMessage("");
     composerRef.current?.focus();
   };
 
@@ -846,6 +853,9 @@ export function TapperChat({
             }}
           />
         </div>
+        <span className="tap-composer-context-note">
+          {copy.composer.contextNote}
+        </span>
         <div className="tap-composer-model-control">
           <button
             ref={modelTriggerRef}
@@ -859,7 +869,9 @@ export function TapperChat({
               setModelMenuOpen((current) => !current);
             }}
           >
-            <span>{selectedModel.label}</span>
+            <span>
+              {noModelsAvailable ? copy.composer.noModels : selectedModel.label}
+            </span>
             <DownOutlined aria-hidden="true" />
           </button>
           {modelMenuOpen ? (
@@ -872,18 +884,26 @@ export function TapperChat({
             >
               {CODEX_MODELS.map((model) => {
                 const selected = model.id === selectedModel.id;
+                const available = model.available && !noModelsAvailable;
                 return (
                   <button
                     key={model.id}
                     type="button"
                     role="menuitemradio"
                     aria-checked={selected}
+                    aria-disabled={available ? undefined : "true"}
                     onClick={() => {
+                      if (!available) return;
                       onModelChange(model.id);
                       setModelMenuOpen(false);
                     }}
                   >
                     <span>{model.label}</span>
+                    {available ? null : (
+                      <span className="tap-model-unavailable">
+                        {copy.composer.modelUnavailable}
+                      </span>
+                    )}
                     {selected ? <CheckOutlined aria-hidden="true" /> : null}
                   </button>
                 );
@@ -913,7 +933,9 @@ export function TapperChat({
             data-state={isSending ? "sending" : undefined}
             aria-label={isSending ? copy.chat.sending : copy.chat.send}
             aria-busy={isSending || undefined}
-            disabled={isSending || message.trim().length === 0}
+            disabled={
+              isSending || message.trim().length === 0 || noModelsAvailable
+            }
           >
             <span className="tap-composer-send-face">
               {isSending ? (
@@ -1193,6 +1215,17 @@ export function TapperChat({
         >
           {questionPreview.content}
         </span>
+      ) : null}
+
+      {sendError !== null ? (
+        <p className="tap-composer-error" role="alert">
+          {sendError}
+        </p>
+      ) : null}
+      {stopError !== null ? (
+        <p className="tap-composer-error" role="alert">
+          {stopError}
+        </p>
       ) : null}
 
       {composer}

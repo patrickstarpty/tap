@@ -941,6 +941,20 @@
   font-size: 12px;
 }
 
+.tap-model-menu button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.tap-model-unavailable {
+  color: var(--tap-muted);
+  font-size: 11px;
+}
+
+.tap-composer-context-note {
+  text-align: right;
+}
+
 .tap-picker-backdrop {
   position: fixed;
   z-index: 1000;

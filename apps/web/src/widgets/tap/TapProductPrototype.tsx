@@ -500,6 +500,8 @@ export function TapProductPrototype() {
   );
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [messageDraft, setMessageDraft] = useState("");
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [stopError, setStopError] = useState<string | null>(null);
   const [composerContext, setComposerContext] =
     useState<FloatingAssistantContext | null>(null);
   const [agents, setAgents] = useState<readonly CatalogItem[]>(BUILT_IN_AGENTS);
@@ -873,9 +875,18 @@ export function TapProductPrototype() {
     );
   };
 
-  const sendMessage = (prompt: string, override?: TurnContextOverride) => {
-    if (pendingSendRef.current !== null) return;
-    if (activeConversation.turns.some((turn) => isGenerating(turn))) return;
+  const sendMessage = (
+    prompt: string,
+    override?: TurnContextOverride,
+  ): boolean => {
+    if (pendingSendRef.current !== null) return false;
+    if (activeConversation.turns.some((turn) => isGenerating(turn)))
+      return false;
+    if (takePrototypeFault("send-failed")) {
+      setSendError(copy.composer.sendFailed);
+      return false;
+    }
+    setSendError(null);
     const conversationId = activeConversation.id;
     const turnLocale = locale;
     if (composerContext && override === undefined) {
@@ -884,7 +895,7 @@ export function TapProductPrototype() {
       acceptTurn(conversationId, () =>
         sendFloatingMessage(prompt, context, conversationId, turnLocale),
       );
-      return;
+      return true;
     }
     const intent = detectIntent(prompt);
     const selectedSourceIds =
@@ -988,7 +999,7 @@ export function TapProductPrototype() {
           }, 500),
         );
       });
-      return;
+      return true;
     }
     const turnId = `turn-${nextTurnId.current++}`;
     acceptTurn(conversationId, () =>
@@ -1011,6 +1022,7 @@ export function TapProductPrototype() {
             : undefined,
       }),
     );
+    return true;
   };
 
   const resendTurn = (turn: AssistantTurn) =>
@@ -1020,6 +1032,18 @@ export function TapProductPrototype() {
     });
 
   const stopTurn = (turnId: string) => {
+    if (takePrototypeFault("stop-failed")) {
+      setStopError(copy.composer.stopFailed);
+      clearTimeout(answerTimers.current.get("stop-error"));
+      answerTimers.current.set(
+        "stop-error",
+        setTimeout(() => {
+          answerTimers.current.delete("stop-error");
+          setStopError(null);
+        }, 3000),
+      );
+      return;
+    }
     clearTimeout(answerTimers.current.get(turnId));
     answerTimers.current.delete(turnId);
     setConversations((current) =>
@@ -1480,7 +1504,10 @@ export function TapProductPrototype() {
               copy={copy}
               isInert={compactSourcesDrawerOpen}
               message={messageDraft}
-              onMessageChange={setMessageDraft}
+              onMessageChange={(value) => {
+                setMessageDraft(value);
+                setSendError(null);
+              }}
               pageContext={composerContext ?? undefined}
               onClearPageContext={() => setComposerContext(null)}
               onModelChange={(modelId: CodexModelId) =>
@@ -1490,6 +1517,8 @@ export function TapProductPrototype() {
                 }))
               }
               onSend={(prompt) => sendMessage(prompt)}
+              sendError={sendError}
+              stopError={stopError}
               isSending={pendingSendConversationId === activeConversation.id}
               onStop={() => {
                 const running = activeConversation.turns.find((turn) =>

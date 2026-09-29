@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TapProductPrototype } from "./TapProductPrototype";
 import { resolveComposerAttachments } from "./prototype/composerAttachments";
 import type { LibrarySource } from "./prototype/model";
+import { setPrototypeFaults } from "./prototype/prototypeFaults";
 
 const HEALTH_QUESTION = "What does the health disclosure rule require?";
 const BDD_REQUEST = "Create BDD test cases for life insurance underwriting";
@@ -24,6 +25,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  setPrototypeFaults([]);
 });
 
 const advance = (ms: number) =>
@@ -402,6 +404,72 @@ describe("composer and turn controls", () => {
     expect(
       resolveComposerAttachments([attachment], [source("published")]),
     ).toEqual({ pending: [], ready: [attachment] });
+  });
+
+  it("keeps the draft when sending fails", () => {
+    setPrototypeFaults(["send-failed"]);
+    render(<TapProductPrototype />);
+    type(HEALTH_QUESTION);
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Message was not sent.",
+    );
+    expect(composer()).toHaveValue(HEALTH_QUESTION);
+    expect(userMessages()).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    advance(400);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(composer()).toHaveValue("");
+    expect(userMessages()).toEqual([HEALTH_QUESTION]);
+  });
+
+  it("reports a failed stop", () => {
+    render(<TapProductPrototype />);
+    setPrototypeFaults(["stop-failed"]);
+    send(HEALTH_QUESTION);
+    fireEvent.click(screen.getByRole("button", { name: "Stop generating" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The response may still be running.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Stop generating" }),
+    ).toBeVisible();
+    advance(3000);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("disables unavailable models", () => {
+    render(<TapProductPrototype />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Select model/ }),
+    );
+    const option = screen.getByRole("menuitemradio", { name: /GPT-5.4/ });
+    expect(option).toHaveAttribute("aria-disabled", "true");
+    expect(option).toHaveTextContent("Unavailable");
+    fireEvent.click(option);
+    expect(
+      screen.getByRole("button", { name: /Select model/ }),
+    ).toHaveTextContent("GPT-5.6 Sol");
+  });
+
+  it("blocks sending when no model is available", () => {
+    setPrototypeFaults(["no-models"]);
+    render(<TapProductPrototype />);
+    expect(
+      screen.getByRole("button", { name: /Select model/ }),
+    ).toHaveTextContent("No models available");
+    type(HEALTH_QUESTION);
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("explains that each turn records context", () => {
+    render(<TapProductPrototype />);
+    expect(
+      screen.getByText(
+        "Each turn records the knowledge context you select.",
+      ),
+    ).toBeVisible();
   });
 });
 
