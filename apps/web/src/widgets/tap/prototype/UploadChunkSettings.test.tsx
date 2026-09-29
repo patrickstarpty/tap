@@ -43,6 +43,17 @@ it("exposes maximum length, overlap and child maximum length controls", () => {
   ).toBeVisible();
 });
 
+it("disables Preview chunks for invalid settings", () => {
+  render(<Harness />);
+  fireEvent.change(
+    screen.getByRole("spinbutton", { name: "Maximum length" }),
+    { target: { value: "0" } },
+  );
+  expect(
+    screen.getByRole("button", { name: "Preview chunks" }),
+  ).toBeDisabled();
+});
+
 it("reports max length changes through onChange", () => {
   render(<Harness />);
   fireEvent.change(screen.getByRole("spinbutton", { name: "Maximum length" }), {

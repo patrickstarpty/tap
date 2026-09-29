@@ -25,7 +25,11 @@ import { GraphViewSwitch, type GraphView } from "./GraphViewSwitch";
 import { KnowledgeGraph } from "./KnowledgeGraph";
 import { SourceDetailDialog } from "./SourceDetailDialog";
 import { UploadChunkSettings } from "./UploadChunkSettings";
-import { DEFAULT_CHUNK_SETTINGS, type ChunkSettings } from "./ChunkManager";
+import {
+  DEFAULT_CHUNK_SETTINGS,
+  isValidChunkSettings,
+  type ChunkSettings,
+} from "./ChunkManager";
 import type { LibrarySource } from "./model";
 import {
   clearPrototypeFault,
@@ -186,7 +190,12 @@ export function LibraryWorkspace({
 
   const addSource = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (selectedFile === null || uploading) return;
+    if (
+      selectedFile === null ||
+      uploading ||
+      !isValidChunkSettings(chunkSettings)
+    )
+      return;
     const file = selectedFile;
     const settings = chunkSettings;
     const failed = takePrototypeFault("upload-failed");
@@ -603,6 +612,7 @@ export function LibraryWorkspace({
                     loading={uploading}
                     aria-busy={uploading}
                     aria-label={copy.library.addSource}
+                    disabled={!isValidChunkSettings(chunkSettings)}
                   >
                     {copy.library.addSource}
                   </Button>

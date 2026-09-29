@@ -98,6 +98,20 @@ it("previews the first chunks for the chosen settings", () => {
   expect(dialog().getAllByText(/child chunks/).length).toBeGreaterThan(0);
 });
 
+it("disables Add source for invalid chunk settings", () => {
+  const onAddSource = vi.fn();
+  renderWorkspace(onAddSource);
+  openDialogWithFile();
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+  fireEvent.change(
+    screen.getByRole("spinbutton", { name: "Maximum length" }),
+    { target: { value: "0" } },
+  );
+
+  expect(dialog().getByRole("button", { name: "Add source" })).toBeDisabled();
+});
+
 it("uploads with the chosen chunk settings", () => {
   const onAddSource = vi.fn();
   renderWorkspace(onAddSource);

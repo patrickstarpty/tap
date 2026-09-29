@@ -31,6 +31,14 @@ export const DEFAULT_CHUNK_SETTINGS: ChunkSettings = {
   whitespace: true,
   removeLinks: false,
 };
+export function isValidChunkSettings(settings: ChunkSettings): boolean {
+  return (
+    settings.max >= 1 &&
+    settings.childMax >= 1 &&
+    settings.overlap >= 0 &&
+    settings.overlap < settings.max
+  );
+}
 export const SAMPLE_CHUNK_SOURCE_TEXT =
   "The application records the applicant information and supporting disclosures. Check the applicable version and scope before using this guide.\n\nAn application must include a completed health disclosure before submission. If disclosure is missing, block submission and return HTTP 422 with HEALTH_DISCLOSURE_REQUIRED. Keep entered information and allow the applicant to complete missing fields before resubmitting.\n\nReview the application and completed disclosure together before resubmitting. Previously entered information remains available while the applicant completes missing fields.";
 const makeChunk = (content: string): Chunk => ({
@@ -454,12 +462,7 @@ export function ChunkManager({
               {t("Remove URLs and email addresses", "移除网址和电子邮件地址")}
             </label>
             <Button
-              disabled={
-                settings.max < 1 ||
-                settings.childMax < 1 ||
-                settings.overlap < 0 ||
-                settings.overlap >= settings.max
-              }
+              disabled={!isValidChunkSettings(settings)}
               onClick={() => setPreview(generateChunks(SAMPLE_CHUNK_SOURCE_TEXT, settings))}
             >
               {t("Preview chunks", "预览切片")}

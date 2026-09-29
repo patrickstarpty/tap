@@ -8,7 +8,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DocumentReview, useDocumentReview } from "./DocumentReview";
-import { ChunkManager } from "./ChunkManager";
+import {
+  ChunkManager,
+  DEFAULT_CHUNK_SETTINGS,
+  isValidChunkSettings,
+} from "./ChunkManager";
 function Harness() {
   const review = useDocumentReview("en");
   return (
@@ -19,6 +23,22 @@ function Harness() {
   );
 }
 beforeEach(() => localStorage.clear());
+
+it("flags invalid chunk settings", () => {
+  expect(isValidChunkSettings(DEFAULT_CHUNK_SETTINGS)).toBe(true);
+  expect(isValidChunkSettings({ ...DEFAULT_CHUNK_SETTINGS, max: 0 })).toBe(
+    false,
+  );
+  expect(
+    isValidChunkSettings({
+      ...DEFAULT_CHUNK_SETTINGS,
+      overlap: DEFAULT_CHUNK_SETTINGS.max,
+    }),
+  ).toBe(false);
+  expect(
+    isValidChunkSettings({ ...DEFAULT_CHUNK_SETTINGS, childMax: 0 }),
+  ).toBe(false);
+});
 it("saves edited chunks directly, persists changes and prevents disabled editing", async () => {
   const view = render(<Harness />);
   fireEvent.click(screen.getByText("Open"));

@@ -4,6 +4,7 @@ import type { PrototypeCopy } from "./copy";
 import {
   SAMPLE_CHUNK_SOURCE_TEXT,
   generateChunks,
+  isValidChunkSettings,
   type Chunk,
   type ChunkSettings,
 } from "./ChunkManager";
@@ -88,6 +89,7 @@ export function UploadChunkSettings({
       ) : null}
       <Button
         htmlType="button"
+        disabled={!isValidChunkSettings(value)}
         onClick={() =>
           setPreview(
             generateChunks(SAMPLE_CHUNK_SOURCE_TEXT, value).slice(0, 3),
