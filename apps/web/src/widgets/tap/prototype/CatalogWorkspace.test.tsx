@@ -104,3 +104,25 @@ it("validates the name and previews SKILL.md while creating", () => {
   const preview = screen.getByLabelText("SKILL.md preview");
   expect(preview).toHaveTextContent("name: bdd-writer");
 });
+
+it("does not show a SKILL.md preview while creating an agent", () => {
+  render(
+    <CatalogWorkspace
+      copy={copy}
+      items={items}
+      kind="agent"
+      onCreate={vi.fn()}
+      onUpdate={vi.fn()}
+      onUse={vi.fn()}
+    />,
+  );
+
+  fireEvent.click(
+    screen.getByRole("button", { name: copy.catalog.createAgent }),
+  );
+
+  expect(
+    screen.queryByLabelText("SKILL.md preview"),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText(copy.catalog.previewHeading)).not.toBeInTheDocument();
+});

@@ -277,12 +277,14 @@ export function CatalogWorkspace({
                 </Button>
               </div>
             </form>
-            <aside className="tap-catalog-preview">
-              <h3>{copy.catalog.previewHeading}</h3>
-              <pre aria-label="SKILL.md preview">
-                {toSkillMarkdown(draft)}
-              </pre>
-            </aside>
+            {isAgent ? null : (
+              <aside className="tap-catalog-preview">
+                <h3>{copy.catalog.previewHeading}</h3>
+                <pre aria-label={copy.catalog.previewHeading}>
+                  {toSkillMarkdown(draft)}
+                </pre>
+              </aside>
+            )}
           </div>
         </AccessibleDialog>
       )}
