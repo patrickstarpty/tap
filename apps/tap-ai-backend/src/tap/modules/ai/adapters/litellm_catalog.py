@@ -273,7 +273,7 @@ class LiteLLMCatalog:
         routes = await self._fetch_checked()
         async with self._lock:
             # A slower health fetch must not replace routes loaded after it started.
-            if self._fetched_at is None or self._fetched_at <= started_at:
+            if self._fetched_at is None or self._fetched_at < started_at:
                 self._store(routes)
         return routes
 

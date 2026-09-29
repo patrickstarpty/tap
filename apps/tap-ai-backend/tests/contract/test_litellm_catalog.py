@@ -491,6 +491,31 @@ async def test_slow_fresh_routes_does_not_replace_a_newer_cache():
     await catalog.aclose()
 
 
+@pytest.mark.asyncio
+async def test_equal_timestamp_fresh_routes_does_not_replace_a_newer_cache():
+    release_health = asyncio.Event()
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await release_health.wait()
+            return model_info_response(deployment("old-model", supports_response_schema=True))
+        return model_info_response(deployment("new-model", supports_response_schema=True))
+
+    # A coarse clock: the health fetch start and the newer refresh share one timestamp.
+    catalog = catalog_with_handler(handler, ttl_seconds=10, clock=lambda: 5.0)
+    health = asyncio.create_task(catalog.fresh_routes())
+    await asyncio.sleep(0)
+    await asyncio.wait_for(catalog.routes(), timeout=1)
+    release_health.set()
+    await health
+
+    assert catalog.cached_routes().get("new-model") is not None
+    await catalog.aclose()
+
+
 @pytest.mark.parametrize("api_key", ["", "k" * 4097])
 def test_catalog_rejects_missing_or_oversized_credential(api_key):
     with pytest.raises(ValueError, match="bounded credential"):
