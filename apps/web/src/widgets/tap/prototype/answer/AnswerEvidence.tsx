@@ -7,8 +7,10 @@ export function AnswerEvidence({ turn }: { turn: AssistantTurn }) {
   const t = (en: string, zh: string) => (turn.locale === "zh" ? zh : en);
   if (!turn.trace) return null;
   const { searchedSources, matchedPassages, citations } = turn.trace;
+  const plural = (count: number, singular: string, plural: string) =>
+    count === 1 ? singular : plural;
   const summary = t(
-    `Searched ${searchedSources} sources · ${matchedPassages} passages matched · ${citations} citations`,
+    `Searched ${searchedSources} ${plural(searchedSources, "source", "sources")} · ${matchedPassages} ${plural(matchedPassages, "passage", "passages")} matched · ${citations} ${plural(citations, "citation", "citations")}`,
     `已检索 ${searchedSources} 份来源 · 命中 ${matchedPassages} 段 · 引用 ${citations} 处`,
   );
   const knowledgeSources = turn.sourceReferences;

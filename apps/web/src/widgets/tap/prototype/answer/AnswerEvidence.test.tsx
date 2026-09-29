@@ -34,6 +34,21 @@ it("summarizes the answer trace collapsed by default", () => {
   expect(screen.getByText("Search")).toBeVisible();
 });
 
+it("singularizes the English summary for a count of one", () => {
+  render(
+    <AnswerEvidence
+      turn={completedTurn({
+        trace: { searchedSources: 1, matchedPassages: 3, citations: 1 },
+      })}
+    />,
+  );
+  expect(
+    screen.getByRole("button", {
+      name: "Searched 1 source · 3 passages matched · 1 citation",
+    }),
+  ).toBeVisible();
+});
+
 it("groups sources, agents and skills used by the turn", () => {
   render(
     <AnswerEvidence
