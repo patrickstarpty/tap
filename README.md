@@ -156,7 +156,7 @@ Tapper 当前产品入口在已确认的 TAP 壳层中使用真实 Project API�
 
 当前仍未交付登录、产品身份/RBAC、多 Project 产品化、OCR、Web Recorder、正式 Playwright Bundle、Jenkins 结果闭环和生产加固。API、Web 和所有中间件只绑定精确 loopback；固定 Validation 身份仅适用于验证环境，不能直接开放到局域网或生产环境。
 
-支持文本可提取的 PDF、DOCX、Markdown（MD）、TXT 和 XLSX，并支持单张 PNG/JPEG 流程图。XLSX 的表头、公式与显示格式处理见[知识审核工作台](docs/guides/2026-09-27-knowledge-review-workbench.md)。配置 `LITELLM_TAPPER_VISION_MODEL` 后，视觉解析提出节点、方向和条件；人工可更正节点、箭头和条件，生成新修订重新审核；发布后流程语义经现有文字 Embedding 进入 `doc` 索引，问答按已批准连线执行有界路径校验（每次最多 20 条），原图保留供核对。未建立独立图像向量索引，真实模型识别质量仍需样本验证；边界见[流程图图片知识设计](docs/archive/reference/2026-09-27-flowchart-image-knowledge-design.md)。PDF 不执行 OCR；扫描件返回 `ocr-required`。服务端硬上限为每文件 `25 MiB`、最多 `50` 份未删除文档、每次回答最多选择 `20` 份 ready 文档。
+支持文本可提取的 PDF、DOCX、Markdown（MD）、TXT 和 XLSX，并支持单张 PNG/JPEG 流程图。XLSX 的表头、公式与显示格式处理见[知识审核工作台](docs/guides/2026-09-27-knowledge-review-workbench.md)。配置 `TAPPER_VISION_MODEL` 后，视觉解析提出节点、方向和条件；人工可更正节点、箭头和条件，生成新修订重新审核；发布后流程语义经现有文字 Embedding 进入 `doc` 索引，问答按已批准连线执行有界路径校验（每次最多 20 条），原图保留供核对。未建立独立图像向量索引，真实模型识别质量仍需样本验证；边界见[流程图图片知识设计](docs/archive/reference/2026-09-27-flowchart-image-knowledge-design.md)。PDF 不执行 OCR；扫描件返回 `ocr-required`。服务端硬上限为每文件 `25 MiB`、最多 `50` 份未删除文档、每次回答最多选择 `20` 份 ready 文档。
 
 首次启动：
 
@@ -177,13 +177,7 @@ make demo-dev
 
 从旧版本升级：先执行 `make demo-reset` 再重新导入。旧模型名、旧 Azurite 数据与旧定位符不做迁移。
 
-模型配置至少同步下面三项；旧 OpenAI model route 会覆盖 Compose 默认值，不能继续保留：
-
-```dotenv
-LITELLM_MODEL=dashscope/qwen-plus
-LITELLM_TAPPER_EMBEDDING_MODEL=dashscope/text-embedding-v4
-DASHSCOPE_API_BASE=https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-```
+上游模型写在 `deploy/local/litellm/config.yaml` 里，`.env` 只放凭据（`DASHSCOPE_API_KEY`、`DASHSCOPE_API_BASE`）；后端角色由 `TAPPER_DEFAULT_CHAT_MODEL`、`TAPPER_EMBEDDING_MODEL`、`TAPPER_VISION_MODEL` 指向 `config.yaml` 里的 `model_name`，详见 [LiteLLM 模型目录指南](docs/guides/2026-09-29-litellm-models.md)。
 
 `make demo-up` 启动并初始化 MySQL、Redis、MinIO、Milvus 与 LiteLLM；`make demo-dev` 在 `127.0.0.1:8000` 运行 FastAPI，在 `127.0.0.1:5173` 运行 Vite Web，并启动 Relay、Ingestion、Conversation Generation、Graph 与 Test Design Worker。默认本地端口如下：
 
