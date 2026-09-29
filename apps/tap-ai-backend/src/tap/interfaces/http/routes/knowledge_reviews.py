@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
 from tap.contracts.http import (
+    KnowledgeFlowchart,
+    KnowledgeFlowchartCorrection,
     KnowledgePublicationDetail,
     KnowledgePublicationPage,
     KnowledgePublishRequest,
@@ -188,6 +190,55 @@ async def compare_review_item(
     request: Request, review_id: str, item_id: str
 ) -> KnowledgeReviewItemComparison:
     return await knowledge_review_service(request).compare_review_item(review_id, item_id)
+
+
+@router.get(
+    "/knowledge/reviews/{review_id}/items/{item_id}/original-image",
+    operation_id="knowledge_read_review_original_image",
+    dependencies=[
+        Depends(project_authorization("knowledge.original.read", resource_id_param="review_id"))
+    ],
+)
+async def read_review_original_image(request: Request, review_id: str, item_id: str) -> Response:
+    data, media_type = await knowledge_review_service(request).read_original_image(
+        review_id, item_id
+    )
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get(
+    "/knowledge/reviews/{review_id}/flowchart",
+    operation_id="knowledge_get_review_flowchart",
+    response_model=KnowledgeFlowchart,
+    dependencies=[
+        Depends(project_authorization("knowledge.original.read", resource_id_param="review_id"))
+    ],
+)
+async def get_review_flowchart(request: Request, review_id: str) -> KnowledgeFlowchart:
+    return await knowledge_review_service(request).get_flowchart(review_id)
+
+
+@router.put(
+    "/knowledge/reviews/{review_id}/flowchart",
+    operation_id="knowledge_correct_review_flowchart",
+    response_model=KnowledgeFlowchartCorrection,
+    dependencies=[
+        Depends(project_authorization("knowledge.review.edit", resource_id_param="review_id"))
+    ],
+)
+async def correct_review_flowchart(
+    request: Request,
+    review_id: str,
+    body: KnowledgeFlowchart,
+    expected_version: int = Depends(review_expected_version),
+) -> KnowledgeFlowchartCorrection:
+    return await knowledge_review_service(request).correct_flowchart(
+        review_id, body.model_dump(mode="json"), expected_version
+    )
 
 
 @router.put(

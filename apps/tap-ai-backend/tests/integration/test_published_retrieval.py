@@ -397,3 +397,134 @@ async def test_independent_publications_bind_each_hit_to_its_own_approval_and_ge
     await authority.revalidate(selected_first)
     with pytest.raises(AuthorizationDenied):
         await authority.revalidate(binding)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edge_count", (4, 16))
+async def test_answer_traverses_published_retry_path_and_retrieves_rule_candidates(
+    edge_count,
+) -> None:
+    """Exercise the real Knowledge answer boundary, including post-generation withdrawal."""
+    contents = (
+        "流程图连线 risk → pay：风险 → 支付；条件：高风险",
+        "流程图连线 pay → retry：支付 → 重试；条件：失败",
+        "流程图连线 retry → pay：重试 → 支付；条件：允许重试",
+        "流程图连线 pay → done：支付 → 完成；条件：成功",
+        *(f"流程图连线 x{i} → y{i}：额外节点 → 额外结束" for i in range(edge_count - 4)),
+        "高风险业务规则：金额超过1000需人工审批。",
+    )
+    rows = tuple(
+        ReadyDocumentRevision(
+            f"document-{i}",
+            f"revision-{i}",
+            DIGEST,
+            "src_" + str(i) * 32,
+        )
+        for i in (1, 2)
+    )
+    repository = PublicationRepository(
+        _publication(
+            project_id="tapper-demo",
+            approved_item_ids=tuple(f"item-{i}" for i in range(edge_count + 1)),
+        )
+    )
+    authority = PublishedKnowledgeAuthority(repository, now=lambda: NOW)
+    hits = []
+    for index, content in enumerate(contents):
+        row = rows[0 if index < edge_count else 1]
+        hit = _hit(row.revision_id, f"item-{index}")
+        hits.append(
+            replace(
+                hit,
+                content=content,
+                local_rank=index + 1,
+                chunk_content_hash="sha256:"
+                + __import__("hashlib").sha256(content.encode()).hexdigest(),
+                index_revision=IndexRevision("knowledge-project-1-v7", "v1", "tapper-demo-v1"),
+                source=replace(
+                    hit.source,
+                    source_id=row.source_id,
+                    anchor=DocumentAnchor(
+                        bbox=(0, 0, 20, 20) if index < edge_count else (),
+                        inventory_item_id=f"item-{index}",
+                        start_offset=0,
+                        end_offset=len(content),
+                    ),
+                ),
+            )
+        )
+
+    class FlowModels(Models):
+        contradict = False
+
+        async def answer(self, query, evidence, profile_id, **kwargs):
+            self.context = kwargs["graph_context"][-1]
+            self.evidence = evidence
+            if self.contradict:
+                return AnswerGeneration(
+                    "Unsupported combined path.",
+                    (GeneratedClaim("Unsupported combined path.", ("S1", "S5")),),
+                    "answer-v1",
+                    profile_id,
+                    "answer-request",
+                )
+            return await super().answer(query, evidence, profile_id)
+
+    class RuleSearch(Search):
+        async def search(self, execution):
+            self.executions.append(execution)
+            return tuple(
+                hits[edge_count:]
+                if "business rules thresholds" in execution.plan.sanitized_query
+                else hits[:4]
+            )
+
+        async def flowchart_edges(self, execution):
+            self.executions.append(execution)
+            return tuple(hits[:edge_count])
+
+    models = FlowModels(repository)
+    search = RuleSearch(())
+    ids = iter(f"flow-id-{i}" for i in range(200))
+    knowledge = KnowledgeAPI(
+        search=search,
+        embeddings=models,
+        answers=models,
+        policy_verifier=CurrentPolicy(),
+        redactor=Redactor(),
+        id_factory=lambda: next(ids),
+        publication_authority=authority,
+    )
+    request = AnswerRequest(
+        query="高风险支付失败后重试成功经过什么路径？",
+        answer_mode=AnswerMode.QUICK,
+        source_families=(SourceFamily.DOC,),
+        resource_refs=tuple(
+            ResourceRef(
+                SourceFamily.DOC,
+                row.source_id,
+                ResourceMode.SCOPE,
+                requested_revision=row.revision_id,
+            )
+            for row in rows
+        ),
+    )
+    response = await knowledge.answer(request, build_demo_policy_context(rows))
+    assert len(search.executions) == 3
+    assert models.context["coverage"] == "complete-published-approved-edge-set"
+    assert models.context["businessRulesStatus"] == "unknown-from-image"
+    assert models.context["businessRuleCandidateEvidenceLabels"] == [f"S{edge_count + 1}"]
+    assert any(
+        path["nodeIds"] == ["risk", "pay", "retry", "pay", "done"]
+        for path in models.context["paths"]
+    )
+    assert len(response.citations) == edge_count + 1
+    assert all(citation.publication_id == "publication-1" for citation in response.citations)
+    if edge_count == 16:
+        models.contradict = True
+        rejected = await knowledge.answer(request, build_demo_policy_context(rows))
+        assert rejected.abstained
+        models.contradict = False
+    models.withdraw_during_answer = True
+    with pytest.raises(AuthorizationDenied):
+        await knowledge.answer(request, build_demo_policy_context(rows))

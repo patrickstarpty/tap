@@ -64,6 +64,7 @@ import {
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
 import { DocumentChunks } from "../../features/knowledge/components/DocumentChunks";
+import { KnowledgeReview } from "../../features/knowledge/components/KnowledgeReview";
 import {
   appendTurn,
   createConversation,
@@ -468,6 +469,8 @@ function DurableInsightsResponse({
   );
 }
 
+const isFlowchartImage = (filename: string) =>
+  /\.(png|jpe?g)$/iu.test(filename);
 interface ResendContext {
   sourceIds: readonly string[];
   agentIds: readonly string[];
@@ -823,8 +826,9 @@ function ProjectLibraryWorkspace({
                       {item.status} · {item.stage}
                     </p>
                     <small>{item.revisionId}</small>
+                    {/* Flowchart images keep review: model-read arrows need a person to correct and publish them. */}
                     <Button
-                      aria-label={`管理切片 ${item.filename}`}
+                      aria-label={`${isFlowchartImage(item.filename) ? "审核流程图" : "管理切片"} ${item.filename}`}
                       aria-expanded={reviewDocumentId === item.documentId}
                       onClick={() =>
                         setReviewDocumentId((current) =>
@@ -832,15 +836,22 @@ function ProjectLibraryWorkspace({
                         )
                       }
                     >
-                      管理切片
+                      {isFlowchartImage(item.filename)
+                        ? "审核流程图"
+                        : "管理切片"}
                     </Button>
                     {reviewDocumentId === item.documentId ? (
-                      <>
+                      isFlowchartImage(item.filename) ? (
+                        <KnowledgeReview
+                          documentId={item.documentId}
+                          sourceRevisionId={item.revisionId}
+                        />
+                      ) : (
                         <DocumentChunks
                           projectId={projectId}
                           documentId={item.documentId}
                         />
-                      </>
+                      )
                     ) : null}
                     {item.errorCode != null && <p>{item.errorCode}</p>}
                     {item.status === "failed" && (
@@ -1906,6 +1917,8 @@ export function TapProductPrototype({
       kind: "selector",
       selector: ".tap-composer textarea",
     };
+    // An explicit choice made before history loads must not be replaced by it.
+    initialDurableSelection.current = true;
     setConversations((current) =>
       durable
         ? [createConversation(id), ...current.filter((item) => item.id !== id)]
@@ -1940,6 +1953,7 @@ export function TapProductPrototype({
       kind: "selector",
       selector: ".tap-composer textarea",
     };
+    initialDurableSelection.current = true;
     setActiveConversationId(conversationId);
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);

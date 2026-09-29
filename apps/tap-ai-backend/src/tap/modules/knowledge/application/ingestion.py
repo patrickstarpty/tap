@@ -21,6 +21,7 @@ from tap.modules.knowledge.domain.documents import (
     chunk_id_for,
     logical_chunk_id_for,
 )
+from tap.modules.knowledge.domain.flowcharts import FlowchartRejected
 from tap.modules.knowledge.domain.parse_inventory import (
     ParseInventoryItem,
     failed_document_inventory,
@@ -37,6 +38,7 @@ from tap.modules.knowledge.ports.documents import (
     DocumentIndexPort,
     DocumentParserPort,
     DocumentRepository,
+    FlowchartVisionPort,
     IngestionWork,
     JobFailure,
     JobKind,
@@ -70,6 +72,7 @@ _DIAGNOSTIC_CODES = frozenset(
         "injected-stage-failure",
         "parser-rejected",
         "parser-call-failed",
+        "visual-analysis-failed",
         "chunker-rejected",
         "chunker-call-failed",
         "artifact-read-failed",
@@ -195,6 +198,7 @@ class IngestionWorker:
         index_version: str,
         clock: WorkerClock | None = None,
         stage_hook: IngestionStageHook | None = None,
+        vision: FlowchartVisionPort | None = None,
     ) -> None:
         if not isinstance(worker_id, str) or not worker_id.strip():
             raise ValueError("worker_id must be nonblank")
@@ -216,6 +220,7 @@ class IngestionWorker:
         self._embedding_dimension = embedding_dimension
         self._index_version = index_version
         self._stage_hook = stage_hook or _NoopIngestionStageHook()
+        self._vision = vision
 
     async def run_once(self, limit: int) -> WorkerRun:
         if type(limit) is not int or not 1 <= limit <= MAX_WORKER_BATCH:
@@ -344,19 +349,18 @@ class IngestionWorker:
             source_bytes = await self._artifact_call(
                 stage, self._artifacts.read_original(work.original_locator)
             )
+            source = DocumentSource(
+                filename=work.filename,
+                media_type=MediaType(work.media_type),
+                content=source_bytes,
+                document_id=DocumentId(work.document_id),
+                revision_id=RevisionId(work.revision_id),
+            )
             try:
                 normalized = await self._provider_call(
                     job,
                     stage,
-                    lambda: self._parser.parse(
-                        DocumentSource(
-                            filename=work.filename,
-                            media_type=MediaType(work.media_type),
-                            content=source_bytes,
-                            document_id=DocumentId(work.document_id),
-                            revision_id=RevisionId(work.revision_id),
-                        )
-                    ),
+                    lambda: self._parser.parse(source),
                 )
             except DocumentParseRejected as error:
                 raise _SafeStageError(
@@ -366,6 +370,33 @@ class IngestionWorker:
                 raise _SafeStageError(
                     stage, "parser-unavailable", "parser-call-failed", "provider-error"
                 ) from error
+            if source.media_type in {MediaType.PNG, MediaType.JPEG}:
+                vision = self._vision
+                if vision is None:
+                    raise _SafeStageError(
+                        stage,
+                        "visual-analysis-unavailable",
+                        "visual-analysis-failed",
+                        "provider-error",
+                    )
+                try:
+                    normalized = await self._provider_call(
+                        job, stage, lambda: vision.analyze(source, normalized)
+                    )
+                except FlowchartRejected as error:
+                    raise _SafeStageError(
+                        stage,
+                        "visual-analysis-invalid",
+                        "visual-analysis-failed",
+                        "provider-error",
+                    ) from error
+                except Exception as error:
+                    raise _SafeStageError(
+                        stage,
+                        "visual-analysis-unavailable",
+                        "visual-analysis-failed",
+                        "provider-error",
+                    ) from error
             if normalized.source_hash != work.source_content_hash:
                 raise _SafeStageError(
                     stage, "invalid-document", "parser-rejected", "contract-error"

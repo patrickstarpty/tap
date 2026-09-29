@@ -20,8 +20,13 @@ from tap.modules.access.domain.policy import (
 from tap.modules.knowledge.application.answer_templates import assemble_answer
 from tap.modules.knowledge.application.planned_answer import AuthorizedAnswerExecution
 from tap.modules.knowledge.application.publication import (
+    FlowchartPublicationGate,
     PublicationBinding,
     PublishedKnowledgeAuthority,
+)
+from tap.modules.knowledge.domain.flowchart_paths import (
+    flowchart_claim_is_consistent,
+    flowchart_path_context,
 )
 from tap.modules.knowledge.domain.models import (
     AbstentionReason,
@@ -180,6 +185,7 @@ class AuthorizedRetrieval:
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str],
         publication_authority: PublishedKnowledgeAuthority | None = None,
+        flowchart_gate: FlowchartPublicationGate | None = None,
     ) -> None:
         self._search = search
         if models is not None:
@@ -196,6 +202,8 @@ class AuthorizedRetrieval:
         self._redactor = redactor
         self._id_factory = id_factory
         self._publication_authority = publication_authority
+        # Direct chunk lifecycles skip publication, except for reviewed flowchart images.
+        self._flowchart_gate = None if publication_authority is not None else flowchart_gate
 
     async def search(
         self,
@@ -232,6 +240,120 @@ class AuthorizedRetrieval:
                 frozen_policy=frozen_policy,
                 authorize=authorize,
             )
+            answer_input = assemble_answer(
+                template_id=answer_execution.template_id,
+                template_version=answer_execution.template_version,
+                template_digest=answer_execution.template_digest,
+                original_question=request.query,
+                standalone_question=answer_execution.standalone_question,
+                evidence_map=evidence_map,
+                output_requirements=answer_execution.output_requirements,
+                queries=answer_execution.queries,
+            )
+            answer_input.context["planId"] = answer_execution.plan_id
+            missing = bool(answer_input.context["missingEvidence"])
+        original_evidence = run.response.evidence
+        flow_context = flowchart_path_context(run.response.evidence)
+        complete_edges = False
+        has_flow_image = any(
+            item.publication_id
+            and item.approved_item_id
+            and isinstance(item.source.anchor, DocumentAnchor)
+            and item.source.anchor.bbox
+            and item.content.startswith(("流程图节点 ", "流程图连线 "))
+            for item in run.response.evidence
+        )
+        if has_flow_image and callable(getattr(self._search, "flowchart_edges", None)):
+            topology = await self._retrieve(
+                request.as_search_request(),
+                policy,
+                frozen_policy=frozen_policy,
+                answer_plan_id=None if answer_execution is None else answer_execution.plan_id,
+                authorize=authorize,
+                exact_flowchart=True,
+            )
+            if self._publication_authority is not None and run.publication is not None:
+                await self._publication_authority.revalidate(run.publication)
+            # Every enumerated arrow retains its own citation. Image node snippets
+            # must not consume the bounded answer's edge coverage.
+            run = topology
+            flow_context = flowchart_path_context(run.response.evidence)
+            complete_edges = bool(flow_context)
+        if flow_context:
+            # A separate bounded query seeks textual business rules within exactly
+            # the same selected, published authority as the original question.
+            capacity = 20 - len(run.response.evidence)
+            if capacity > 0:
+                if authorize is not None:
+                    await authorize()
+                try:
+                    rules = await self._retrieve(
+                        replace(
+                            request.as_search_request(),
+                            query=(
+                                f"{request.query} 业务规则 条件 阈值 "
+                                "优先级 business rules thresholds"
+                            ),
+                            top_k=min(4, capacity),
+                        ),
+                        policy,
+                        frozen_policy=frozen_policy,
+                        answer_plan_id=None
+                        if answer_execution is None
+                        else answer_execution.plan_id,
+                        authorize=authorize,
+                    )
+                    if self._publication_authority is not None and rules.publication is not None:
+                        await self._publication_authority.revalidate(rules.publication)
+                    if self._publication_authority is not None and run.publication is not None:
+                        await self._publication_authority.revalidate(run.publication)
+                    existing = {
+                        (item.source.source_id, item.source.revision, item.chunk_id)
+                        for item in run.response.evidence
+                    }
+                    merged = list(run.response.evidence)
+                    for item in rules.response.evidence:
+                        identity = (item.source.source_id, item.source.revision, item.chunk_id)
+                        if identity not in existing and len(merged) < 20:
+                            existing.add(identity)
+                            merged.append(replace(item, evidence_label=f"S{len(merged) + 1}"))
+                    publication = run.publication
+                    if self._publication_authority is not None:
+                        publication = await self._publication_authority.authorize_selection(
+                            policy.project_id,
+                            tuple(sorted({item.source.revision for item in merged})),
+                        )
+                    run = replace(
+                        run,
+                        response=replace(run.response, evidence=tuple(merged)),
+                        publication=publication,
+                    )
+                except (SearchUnavailable, ModelUnavailable):
+                    pass
+            flow_context = flowchart_path_context(run.response.evidence)
+            if complete_edges:
+                flow_context["coverage"] = "complete-published-approved-edge-set"
+                flow_context["instruction"] += (
+                    " All published approved edges were enumerated. Excluded or unconfirmed "
+                    "connections are not represented; this is not proof of the original process's "
+                    "completeness. Paths may still be truncated by traversal bounds."
+                )
+            graph_context = (*graph_context, flow_context)
+        if answer_execution is not None and flow_context:
+            current_labels = {
+                (item.source.source_id, item.source.revision, item.chunk_id): item.evidence_label
+                for item in run.response.evidence
+            }
+            remapped = {
+                item.evidence_label: current_labels.get(
+                    (item.source.source_id, item.source.revision, item.chunk_id)
+                )
+                for item in original_evidence
+            }
+            evidence_map = {
+                key: tuple(remapped[label] for label in labels if remapped.get(label))
+                for key, labels in evidence_map.items()
+            }
             answer_input = assemble_answer(
                 template_id=answer_execution.template_id,
                 template_version=answer_execution.template_version,
@@ -291,6 +413,11 @@ class AuthorizedRetrieval:
         self._validate_binding(current, run.plan, run.context_snapshot)
         if self._publication_authority is not None and run.publication is not None:
             await self._publication_authority.revalidate(run.publication)
+        if flow_context and any(
+            not flowchart_claim_is_consistent(claim.evidence_labels, flow_context)
+            for claim in generation.claims
+        ):
+            return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
         claims = _resolve_generated_claims(
             generation,
             run.response.evidence,
@@ -443,6 +570,7 @@ class AuthorizedRetrieval:
         frozen_policy: bool = False,
         answer_plan_id: str | None = None,
         authorize=None,
+        exact_flowchart: bool = False,
     ) -> _RetrievalRun:
         if (
             frozen_policy
@@ -520,18 +648,35 @@ class AuthorizedRetrieval:
             publication = await self._publication_authority.authorize_selection(
                 current.project_id, tuple(resource.revision for resource in plan.resources)
             )
-        hits = await self._search.search(
+        flowcharts = (
+            None
+            if self._flowchart_gate is None
+            else await self._flowchart_gate.current(current.project_id)
+        )
+        approved_item_scope = (
+            None
+            if publication is None
+            else tuple(
+                (revision, publication.for_revision(revision).approved_item_ids)
+                for revision in sorted({resource.revision for resource in plan.resources})
+            )
+        )
+        if exact_flowchart and publication is None and flowcharts is not None:
+            approved_item_scope = tuple(
+                (revision, flowcharts.for_revision(revision).approved_item_ids)
+                for revision in sorted({resource.revision for resource in plan.resources})
+                if revision in flowcharts.source_revision_ids
+            )
+        search_method = (
+            getattr(self._search, "flowchart_edges") if exact_flowchart else self._search.search
+        )
+        hits = await search_method(
             SearchExecution(
                 policy=current,
                 plan=plan,
                 context_snapshot=context_snapshot,
                 query_vector=embedding.vector,
-                approved_item_scope=None
-                if publication is None
-                else tuple(
-                    (revision, publication.for_revision(revision).approved_item_ids)
-                    for revision in sorted({resource.revision for resource in plan.resources})
-                ),
+                approved_item_scope=approved_item_scope,
             )
         )
         current = current if frozen_policy else await self._verify_current(current)
@@ -541,7 +686,11 @@ class AuthorizedRetrieval:
         if self._publication_authority is not None and publication is not None:
             await self._publication_authority.authorize_hits(current.project_id, hits)
             await self._publication_authority.revalidate(publication)
-        authorized_hits = hits
+        authorized_hits = (
+            hits
+            if self._flowchart_gate is None
+            else tuple(hit for hit in hits if _flowchart_hit_is_approved(hit, flowcharts))
+        )
         family_order = {family: index for index, family in enumerate(SourceFamily)}
         ordered_hits = sorted(
             authorized_hits,
@@ -558,10 +707,16 @@ class AuthorizedRetrieval:
                 position,
                 current.decision_id,
                 self._fused_score(hit, plan.resources, profile),
-                publication,
+                publication
+                if publication is not None
+                or flowcharts is None
+                or hit.source.revision not in flowcharts.source_revision_ids
+                else flowcharts,
             )
             for position, hit in enumerate(
-                ordered_hits[: min(profile.final_result_limit, candidate_limit)],
+                ordered_hits[
+                    : 20 if exact_flowchart else min(profile.final_result_limit, candidate_limit)
+                ],
                 start=1,
             )
         )
@@ -1064,3 +1219,15 @@ class AuthorizedRetrieval:
             "timeStart": anchor.time_start,
             "type": "failure",
         }
+
+
+def _flowchart_hit_is_approved(hit: SearchHit, flowcharts: PublicationBinding | None) -> bool:
+    """Image-region evidence answers only as an approved item of a published review."""
+    anchor = hit.source.anchor
+    if not isinstance(anchor, DocumentAnchor) or not anchor.bbox:
+        return True
+    if flowcharts is None or hit.source.revision not in flowcharts.source_revision_ids:
+        return False
+    return (
+        anchor.inventory_item_id in flowcharts.for_revision(hit.source.revision).approved_item_ids
+    )

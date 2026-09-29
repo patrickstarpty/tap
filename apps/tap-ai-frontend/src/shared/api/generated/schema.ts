@@ -741,6 +741,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/flowchart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Review Flowchart */
+        get: operations["knowledge_get_review_flowchart"];
+        /** Correct Review Flowchart */
+        put: operations["knowledge_correct_review_flowchart"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/history": {
         parameters: {
             query?: never;
@@ -818,6 +836,23 @@ export interface paths {
         };
         /** Read Review Original */
         get: operations["knowledge_read_review_original"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/original-image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Review Original Image */
+        get: operations["knowledge_read_review_original_image"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1801,7 +1836,7 @@ export interface components {
              * Mediatype
              * @enum {string}
              */
-            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "text/markdown" | "text/plain";
+            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "text/markdown" | "text/plain" | "image/png" | "image/jpeg";
             /**
              * Normalizedpreview
              * @default null
@@ -1877,7 +1912,7 @@ export interface components {
              * Mediatype
              * @enum {string}
              */
-            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "text/markdown" | "text/plain";
+            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "text/markdown" | "text/plain" | "image/png" | "image/jpeg";
             /** Sourceid */
             sourceId: string;
             stage: components["schemas"]["IngestionStage"];
@@ -2383,6 +2418,40 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** KnowledgeFlowchart */
+        KnowledgeFlowchart: {
+            /** Edges */
+            edges: components["schemas"]["KnowledgeFlowchartEdge"][];
+            /** Nodes */
+            nodes: components["schemas"]["KnowledgeFlowchartNode"][];
+        };
+        /** KnowledgeFlowchartCorrection */
+        KnowledgeFlowchartCorrection: {
+            /** Sourcerevisionid */
+            sourceRevisionId: string;
+        };
+        /** KnowledgeFlowchartEdge */
+        KnowledgeFlowchartEdge: {
+            /** Certain */
+            certain: boolean;
+            /** Condition */
+            condition: string;
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+        };
+        /** KnowledgeFlowchartNode */
+        KnowledgeFlowchartNode: {
+            /** Box */
+            box: number[];
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Lane */
+            lane: string;
+        };
         /** KnowledgePublicationDetail */
         KnowledgePublicationDetail: {
             /** Approvaldigest */
@@ -2576,7 +2645,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "document" | "page" | "paragraph" | "heading" | "table" | "image" | "list" | "code";
+            kind: "document" | "page" | "paragraph" | "heading" | "table" | "image" | "list" | "code" | "flow_node" | "flow_edge";
             /** Locator */
             locator: string;
             /** Reason */
@@ -3697,7 +3766,7 @@ export interface components {
              * Mediatype
              * @enum {string}
              */
-            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "text/markdown" | "text/plain";
+            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "text/markdown" | "text/plain" | "image/png" | "image/jpeg";
             /** Normalizedpreview */
             normalizedPreview?: string | null;
             /** Revisionid */
@@ -7409,6 +7478,148 @@ export interface operations {
             };
         };
     };
+    knowledge_get_review_flowchart: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeFlowchart"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_correct_review_flowchart: {
+        parameters: {
+            query?: never;
+            header: {
+                "if-match": string;
+            };
+            path: {
+                review_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeFlowchart"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeFlowchartCorrection"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     knowledge_list_review_history: {
         parameters: {
             query?: {
@@ -7715,6 +7926,75 @@ export interface operations {
                 };
                 content: {
                     "application/octet-stream": string;
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge review request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_read_review_original_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_id: string;
+                item_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Project scope or authorization denied */

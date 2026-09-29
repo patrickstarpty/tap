@@ -24,6 +24,9 @@ const ACCEPTED_EXTENSIONS = [
   ".md",
   ".markdown",
   ".txt",
+  ".png",
+  ".jpg",
+  ".jpeg",
 ];
 const ACCEPT_ATTRIBUTE = ACCEPTED_EXTENSIONS.join(",");
 

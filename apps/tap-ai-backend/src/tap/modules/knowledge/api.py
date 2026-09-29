@@ -59,7 +59,10 @@ from tap.modules.knowledge.application.planned_answer import (
     AuthorizedAnswerExecution,
     AuthorizedAnswerQuery,
 )
-from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+from tap.modules.knowledge.application.publication import (
+    FlowchartPublicationGate,
+    PublishedKnowledgeAuthority,
+)
 from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
@@ -115,6 +118,7 @@ class KnowledgeAPI:
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str] | None = None,
         publication_authority: PublishedKnowledgeAuthority | None = None,
+        flowchart_gate: FlowchartPublicationGate | None = None,
     ) -> None:
         self._retrieval = AuthorizedRetrieval(
             search=search,
@@ -125,6 +129,7 @@ class KnowledgeAPI:
             redactor=redactor,
             id_factory=id_factory or (lambda: str(uuid4())),
             publication_authority=publication_authority,
+            flowchart_gate=flowchart_gate,
         )
 
     async def search(

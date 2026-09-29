@@ -1859,7 +1859,9 @@
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
               "text/markdown",
-              "text/plain"
+              "text/plain",
+              "image/png",
+              "image/jpeg"
             ],
             "title": "Mediatype",
             "type": "string"
@@ -2086,7 +2088,9 @@
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
               "text/markdown",
-              "text/plain"
+              "text/plain",
+              "image/png",
+              "image/jpeg"
             ],
             "title": "Mediatype",
             "type": "string"
@@ -3524,6 +3528,126 @@
         "title": "KnowledgeChunkVersion",
         "type": "object"
       },
+      "KnowledgeFlowchart": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeFlowchartEdge"
+            },
+            "maxItems": 200,
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeFlowchartNode"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodes",
+          "edges"
+        ],
+        "title": "KnowledgeFlowchart",
+        "type": "object"
+      },
+      "KnowledgeFlowchartCorrection": {
+        "additionalProperties": false,
+        "properties": {
+          "sourceRevisionId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Sourcerevisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceRevisionId"
+        ],
+        "title": "KnowledgeFlowchartCorrection",
+        "type": "object"
+      },
+      "KnowledgeFlowchartEdge": {
+        "additionalProperties": false,
+        "properties": {
+          "certain": {
+            "title": "Certain",
+            "type": "boolean"
+          },
+          "condition": {
+            "maxLength": 200,
+            "title": "Condition",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "condition",
+          "certain"
+        ],
+        "title": "KnowledgeFlowchartEdge",
+        "type": "object"
+      },
+      "KnowledgeFlowchartNode": {
+        "additionalProperties": false,
+        "properties": {
+          "box": {
+            "items": {
+              "maximum": 8192.0,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Box",
+            "type": "array"
+          },
+          "id": {
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "lane": {
+            "maxLength": 100,
+            "title": "Lane",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "lane",
+          "box"
+        ],
+        "title": "KnowledgeFlowchartNode",
+        "type": "object"
+      },
       "KnowledgePublicationDetail": {
         "additionalProperties": false,
         "properties": {
@@ -4273,7 +4397,9 @@
               "table",
               "image",
               "list",
-              "code"
+              "code",
+              "flow_node",
+              "flow_edge"
             ],
             "title": "Kind",
             "type": "string"
@@ -7065,7 +7191,9 @@
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
               "text/markdown",
-              "text/plain"
+              "text/plain",
+              "image/png",
+              "image/jpeg"
             ],
             "title": "Mediatype",
             "type": "string"
@@ -14215,6 +14343,209 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/flowchart": {
+      "get": {
+        "operationId": "knowledge_get_review_flowchart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "title": "Review Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeFlowchart"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          }
+        },
+        "summary": "Get Review Flowchart",
+        "tags": [
+          "knowledge"
+        ]
+      },
+      "put": {
+        "operationId": "knowledge_correct_review_flowchart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "title": "Review Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": true,
+            "schema": {
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeFlowchart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeFlowchartCorrection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          }
+        },
+        "summary": "Correct Review Flowchart",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/history": {
       "get": {
         "operationId": "knowledge_list_review_history",
@@ -14781,6 +15112,106 @@
           }
         },
         "summary": "Read Review Original",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/original-image": {
+      "get": {
+        "operationId": "knowledge_read_review_original_image",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "title": "Review Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge review request failed"
+          }
+        },
+        "summary": "Read Review Original Image",
         "tags": [
           "knowledge"
         ]

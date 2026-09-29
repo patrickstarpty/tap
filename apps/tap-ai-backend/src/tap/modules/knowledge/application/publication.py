@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.knowledge.domain.models import DocumentAnchor
 from tap.modules.knowledge.domain.review import KnowledgePublication, canonical_digest
+from tap.modules.knowledge.ports.answers import DocumentStateChanged, ReadyDocumentRevision
 from tap.modules.knowledge.ports.models import SearchHit
+
+_FLOWCHART_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
+
+
+def is_flowchart_image(filename: str | None) -> bool:
+    """Flowchart images are the only sources whose meaning a model proposes."""
+    return filename is not None and filename.lower().endswith(_FLOWCHART_IMAGE_SUFFIXES)
 
 
 class CurrentPublicationRepository(Protocol):
@@ -158,3 +166,58 @@ def _binding(publications: tuple[KnowledgePublication, ...]) -> PublicationBindi
         expires_at=min(item.expires_at for item in publications),
         publications=publications,
     )
+
+
+class FlowchartPublicationGate:
+    """Keep human review for flowchart images while other sources index directly.
+
+    Model-proposed nodes and arrows may only answer after a reviewer corrects and
+    publishes them, so an image revision is usable only inside a current publication,
+    and only its approved items may become evidence.
+    """
+
+    def __init__(self, authority: PublishedKnowledgeAuthority) -> None:
+        self._authority = authority
+
+    async def current(self, project_id: str) -> PublicationBinding | None:
+        try:
+            return await self._authority._current(project_id)
+        except AuthorizationDenied:
+            return None
+
+    async def require_published(
+        self, project_id: str, rows: Iterable[ReadyDocumentRevision]
+    ) -> PublicationBinding | None:
+        images = {row.revision_id for row in rows if is_flowchart_image(row.filename)}
+        if not images:
+            return None
+        binding = await self.current(project_id)
+        if binding is None or not images <= set(binding.source_revision_ids):
+            raise DocumentStateChanged("flowchart image requires a published review")
+        return binding
+
+    async def filter_sources(self, project_id: str, page: Any) -> Any:
+        binding = await self.current(project_id)
+        published = (
+            {}
+            if binding is None
+            else {
+                revision: binding.for_revision(revision) for revision in binding.source_revision_ids
+            }
+        )
+        items = []
+        for item in page.items:
+            if not is_flowchart_image(item.filename):
+                items.append(item)
+            elif item.revision_id in published:
+                owner = published[item.revision_id]
+                items.append(
+                    item.model_copy(
+                        update={
+                            "publication_id": owner.publication_id,
+                            "expires_at": owner.expires_at,
+                            "approved_item_count": len(owner.approved_item_ids),
+                        }
+                    )
+                )
+        return page.model_copy(update={"items": items})

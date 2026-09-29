@@ -11,6 +11,7 @@ from tap.modules.access.domain.policy import PolicyUnavailable, RetrievalPolicyC
 from tap.modules.ai.domain.models import GenerationGovernance
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 from tap.modules.knowledge.application.publication import (
+    FlowchartPublicationGate,
     PublicationBinding,
     PublishedKnowledgeAuthority,
 )
@@ -77,10 +78,12 @@ class AnswerService:
         knowledge: KnowledgeAnswerGateway,
         corpus_version: str = "tapper-demo-v1",
         publication_authority: PublishedKnowledgeAuthority | None = None,
+        flowchart_gate: FlowchartPublicationGate | None = None,
     ) -> None:
         self._repository = repository
         self._knowledge = knowledge
         self._publication_authority = publication_authority
+        self._flowchart_gate = None if publication_authority is not None else flowchart_gate
         if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
             raise ValueError("unsupported projection corpus")
         self._corpus_version = corpus_version
@@ -243,6 +246,8 @@ class AnswerService:
         if {item.revision_id for item in rows} != set(revision_ids):
             raise DocumentStateChanged("conversation revision is not current and ready")
         ordered = tuple(sorted(rows, key=lambda item: item.document_id))
+        if self._flowchart_gate is not None:
+            await self._flowchart_gate.require_published(self.scope.project_id, ordered)
         return ordered, build_demo_policy_context(ordered, corpus_version=self._corpus_version)
 
     async def _load_selected_revisions(
@@ -266,6 +271,8 @@ class AnswerService:
         self, rows: tuple[ReadyDocumentRevision, ...]
     ) -> PublicationBinding | None:
         if self._publication_authority is None:
+            if self._flowchart_gate is not None:
+                await self._flowchart_gate.require_published(self.scope.project_id, rows)
             return None
         return await self._publication_authority.authorize_selection(
             self.scope.project_id,

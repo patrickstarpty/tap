@@ -205,7 +205,11 @@ export function CitationViewer({
       ) : null}
       {preview !== null && active !== null ? (
         <div className="tapper-citation-content">
-          <Typography.Title level={4}>{text.citationEvidence}</Typography.Title>
+          <Typography.Title level={4}>
+            {/\.(png|jpe?g)$/iu.test(preview.filename)
+              ? text.citationImageEvidence
+              : text.citationEvidence}
+          </Typography.Title>
           <Typography.Text strong>{preview.filename}</Typography.Text>
           <p>
             <a
@@ -231,6 +235,11 @@ export function CitationViewer({
             <Descriptions.Item label={text.page}>
               {preview.anchor.page ?? "—"}
             </Descriptions.Item>
+            {preview.anchor.bbox?.length === 4 ? (
+              <Descriptions.Item label={text.imageRegion}>
+                {preview.anchor.bbox.join(", ")}
+              </Descriptions.Item>
+            ) : null}
             <Descriptions.Item label={text.offsets}>
               {preview.anchor.startOffset === null ||
               preview.anchor.startOffset === undefined ||
