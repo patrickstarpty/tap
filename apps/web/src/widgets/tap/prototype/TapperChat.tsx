@@ -1010,8 +1010,9 @@ export function TapperChat({
                   )}
                   <div className="tap-user-message">{turn.prompt}</div>
                 </div>
-                {(turn.sourceReferences.length > 0 ||
-                  (turn.catalogReferences?.length ?? 0) > 0) && (
+                {turn.answerState !== "completed" &&
+                (turn.sourceReferences.length > 0 ||
+                  (turn.catalogReferences?.length ?? 0) > 0) ? (
                   <details className="tap-message-context">
                     <summary>
                       {turn.locale === "zh" ? "本轮上下文" : "Message context"}{" "}
@@ -1031,7 +1032,7 @@ export function TapperChat({
                       ))}
                     </ul>
                   </details>
-                )}
+                ) : null}
                 <div className="tap-assistant-message">
                   {renderAssistantTurn(turn)}
                 </div>

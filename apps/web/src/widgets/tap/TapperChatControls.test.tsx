@@ -259,7 +259,12 @@ describe("composer and turn controls", () => {
     advance(1800);
     expect(userMessages()).toEqual([HEALTH_QUESTION, HEALTH_QUESTION]);
     expect(screen.getByText("Generation stopped.")).toBeVisible();
-    expect(screen.getAllByText("Message context · 1")).toHaveLength(2);
+    // The stopped turn keeps the numbered disclosure; the completed retry
+    // shows the trace-based "Sources and configuration used" panel instead.
+    expect(screen.getByText("Message context · 1")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Sources and configuration used" }),
+    ).toBeVisible();
     expect(
       screen.getByText(/Block submission when health disclosure is missing/),
     ).toBeVisible();
@@ -298,7 +303,12 @@ describe("composer and turn controls", () => {
     expect(
       screen.getAllByText(/Block submission when health disclosure is missing/),
     ).toHaveLength(2);
-    expect(screen.getAllByText("Message context · 1")).toHaveLength(2);
+    expect(screen.queryByText(/Message context/)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", {
+        name: "Sources and configuration used",
+      }),
+    ).toHaveLength(2);
     expect(screen.getAllByRole("button", { name: "Regenerate" })).toHaveLength(2);
   });
 
@@ -334,7 +344,12 @@ describe("composer and turn controls", () => {
       HEALTH_QUESTION,
       "What does the health disclosure rule require for minors?",
     ]);
-    expect(screen.getAllByText("Message context · 1")).toHaveLength(2);
+    // The first turn completed and shows the trace-based panel; the second
+    // is still queued, so it keeps the numbered disclosure.
+    expect(
+      screen.getByRole("button", { name: "Sources and configuration used" }),
+    ).toBeVisible();
+    expect(screen.getByText("Message context · 1")).toBeVisible();
   });
 
   it("uploads a file to Library and adds it to the message once searchable", () => {
@@ -504,6 +519,13 @@ describe("composer and turn controls", () => {
     fireEvent.keyDown(composer(), { key: "Enter" });
     advance(400);
     expect(userMessages()).toEqual([]);
+  });
+
+  it("keeps the message context disclosure for turns without an answer trace", () => {
+    render(<TapProductPrototype />);
+    selectUnderwritingSource();
+    send(BDD_REQUEST);
+    expect(screen.getByText("Message context · 1")).toBeVisible();
   });
 
   it("explains that each turn records context", () => {
