@@ -606,8 +606,8 @@ class ArtifactStore(Protocol):
     `ArtifactUnavailable`; an `art1.`/`stg1.` reference whose payload is malformed or whose
     binding (revision, kind, digest) differs raises `ArtifactIntegrityFailure`. Provider
     faults raise `ArtifactUnavailable`. Validate a whole deletion batch before any
-    mutation and keep staging scavenging bounded. A new provider must pass `exercise_artifact_round_trip` in
-    `tests/contract/artifact_store_conformance.py` (run by
+    mutation and keep staging scavenging bounded. A new provider must pass
+    `exercise_artifact_round_trip` in `tests/contract/artifact_store_conformance.py` (run by
     `tests/contract/test_object_artifacts.py` and `tests/integration/test_minio_artifacts.py`).
     """
 
