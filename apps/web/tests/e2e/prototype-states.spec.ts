@@ -630,3 +630,95 @@ test.describe("prototype states: A-D interaction states", () => {
     await capture(page, "d-skill-preview");
   });
 });
+
+test.describe("prototype states: cross-module journeys", () => {
+  test.skip(
+    captureSet !== "after",
+    `capture set is ${captureSet}, skipping journeys suite`,
+  );
+
+  test("floating-assistant-handoff", async ({ page }) => {
+    await openFresh(page, "/prototype?module=test-management");
+    await expect(
+      page.getByRole("heading", { name: "Test Management" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Ask Tapper" }).click();
+    const continueButton = page.getByRole("button", {
+      name: "Continue in Tapper",
+    });
+    await expect(continueButton).toBeVisible();
+    await continueButton.click();
+    await expect(
+      page.getByPlaceholder("Ask about life insurance or testing..."),
+    ).toBeVisible();
+  });
+
+  test("tapper-test-plan-automation-link", async ({ page }) => {
+    await openFresh(page, "/prototype");
+    await ask(
+      page,
+      "Generate an automation script for a life insurance application",
+    );
+
+    const createPlanFirst = page.getByRole("button", {
+      name: "Create Test Plan first",
+    });
+    await expect(createPlanFirst).toBeVisible({ timeout: 3_000 });
+    await createPlanFirst.click();
+
+    const generateLinked = page.getByRole("button", {
+      name: "Generate linked automation",
+    });
+    await expect(generateLinked).toBeVisible();
+    await generateLinked.click();
+
+    const createWebAutomation = page.getByRole("button", {
+      name: "Create Web automation",
+    });
+    await expect(createWebAutomation).toBeVisible();
+    await createWebAutomation.click();
+
+    const openTestPlanFromChat = page.getByRole("button", {
+      name: "Open Test Plan",
+      exact: true,
+    });
+    await expect(openTestPlanFromChat).toBeVisible();
+    await openTestPlanFromChat.click();
+
+    // Hop 1: Tapper -> Test Plan.
+    const testPlanHeading = page.locator("#test-plan-detail-heading");
+    await expect(testPlanHeading).toBeVisible();
+    const testPlanId = await page
+      .locator(".tap-test-plan-detail-header .tap-asset-id")
+      .textContent();
+    const testPlanTitle = await testPlanHeading.textContent();
+    expect(testPlanId).toMatch(/^TP-/);
+
+    // Hop 2: Test Plan -> linked Automation.
+    const openAutomationButton = page.getByRole("button", {
+      name: /^Open Automation AUTO-/,
+    });
+    await expect(openAutomationButton).toBeVisible();
+    await openAutomationButton.click();
+
+    const automationHeading = page.locator("#automation-detail-heading");
+    await expect(automationHeading).toBeVisible();
+    const automationId = await page
+      .locator(".tap-automation-title-row .tap-asset-id")
+      .textContent();
+    expect(automationId).toMatch(/^AUTO-/);
+
+    // Hop 3: Automation -> back to the same linked Test Plan.
+    const openTestPlanFromAutomation = page.getByRole("button", {
+      name: new RegExp(`^Open Test Plan ${testPlanId}$`),
+    });
+    await expect(openTestPlanFromAutomation).toBeVisible();
+    await openTestPlanFromAutomation.click();
+
+    await expect(testPlanHeading).toBeVisible();
+    await expect(testPlanHeading).toHaveText(testPlanTitle ?? "");
+    await expect(
+      page.locator(".tap-test-plan-detail-header .tap-asset-id"),
+    ).toHaveText(testPlanId ?? "");
+  });
+});
