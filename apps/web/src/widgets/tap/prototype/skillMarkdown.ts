@@ -6,6 +6,15 @@ export function isValidCatalogName(name: string): boolean {
   return CATALOG_NAME_PATTERN.test(name);
 }
 
+function toYamlDoubleQuotedString(value: string): string {
+  const escaped = value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("\n", "\\n");
+  return `"${escaped}"`;
+}
+
 export function toSkillMarkdown(draft: CatalogDraft): string {
-  return `---\nname: ${draft.name}\ndescription: ${draft.description}\n---\n\n${draft.instructions}\n`;
+  const description = toYamlDoubleQuotedString(draft.description);
+  return `---\nname: ${draft.name}\ndescription: ${description}\n---\n\n${draft.instructions}\n`;
 }

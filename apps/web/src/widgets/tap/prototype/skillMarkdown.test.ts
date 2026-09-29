@@ -18,7 +18,19 @@ describe("skillMarkdown", () => {
         instructions: "Use Given/When/Then.",
       }),
     ).toBe(
-      "---\nname: bdd-writer\ndescription: Writes BDD\n---\n\nUse Given/When/Then.\n",
+      '---\nname: bdd-writer\ndescription: "Writes BDD"\n---\n\nUse Given/When/Then.\n',
+    );
+  });
+
+  it("quotes and escapes a description with a colon and a newline", () => {
+    expect(
+      toSkillMarkdown({
+        name: "bdd-writer",
+        description: 'Writes BDD: uses "Given/When/Then"\nfor scenarios',
+        instructions: "Use Given/When/Then.",
+      }),
+    ).toBe(
+      '---\nname: bdd-writer\ndescription: "Writes BDD: uses \\"Given/When/Then\\"\\nfor scenarios"\n---\n\nUse Given/When/Then.\n',
     );
   });
 });
