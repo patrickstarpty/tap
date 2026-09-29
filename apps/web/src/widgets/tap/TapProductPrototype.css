@@ -2042,6 +2042,22 @@
   font-size: 20px;
 }
 
+.tap-source-detail-dialog header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tap-source-detail-dialog header h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tap-source-detail-dialog header button {
+  flex-shrink: 0;
+}
+
 .tap-catalog-dialog-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
