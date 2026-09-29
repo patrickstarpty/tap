@@ -57,6 +57,7 @@ class UploadInput:
     filename: str
     media_type: str
     content: AsyncIterable[bytes]
+    chunk_settings: dict[str, object] | None = None
 
 
 class KnowledgeHttpService(Protocol):
@@ -144,6 +145,7 @@ class KnowledgeReviewHttpService(Protocol):
     async def get_publication(self, publication_id: str) -> KnowledgePublicationDetail: ...
     async def get_current_publication(self) -> KnowledgePublicationDetail: ...
     async def list_published_sources(self) -> PublishedKnowledgeSourcePage: ...
+    async def read_original(self, review_id: str, item_id: str) -> tuple[bytes, str]: ...
     async def compare_review_item(
         self, review_id: str, item_id: str
     ) -> KnowledgeReviewItemComparison: ...
@@ -224,6 +226,7 @@ class HttpServices:
     graph: GraphStorePort | None = None
     test_plans: TestPlanApplication | None = None
     knowledge_reviews: KnowledgeReviewHttpService | None = None
+    chunk_manager: object | None = None
     insights_explanation: object | None = None
     insights_knowledge_search: object | None = None
     insights_publication_authority: object | None = None

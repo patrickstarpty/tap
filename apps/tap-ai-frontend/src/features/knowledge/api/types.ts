@@ -1,3 +1,4 @@
+import type { ChunkSettings } from "./chunks";
 import type { components, paths } from "../../../shared/api/generated/schema";
 
 export type CitationPreview = components["schemas"]["CitationPreview"];
@@ -91,6 +92,7 @@ export interface KnowledgeClient {
     reviewId: string,
     afterPublicationId?: string,
   ): Promise<KnowledgePublicationPage>;
+  readReviewOriginal?(reviewId: string, itemId: string): Promise<Blob>;
   compareReviewItem(
     reviewId: string,
     itemId: string,
@@ -130,6 +132,7 @@ export interface KnowledgeClient {
     onProgress: (ratio: number) => void,
     signal?: AbortSignal,
     idempotencyKey?: string,
+    settings?: ChunkSettings,
   ): Promise<SourceAccepted>;
   retrySource(
     sourceId: string,
@@ -147,6 +150,7 @@ export interface KnowledgeClient {
     onProgress: (ratio: number) => void,
     signal?: AbortSignal,
     idempotencyKey?: string,
+    settings?: ChunkSettings,
   ): Promise<DocumentAccepted>;
   retryDocument(
     documentId: string,

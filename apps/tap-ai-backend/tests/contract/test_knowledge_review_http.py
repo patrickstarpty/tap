@@ -120,6 +120,10 @@ class ReviewHttpSpy:
             ]
         }
 
+    async def read_original(self, review_id, item_id):
+        self.calls.append(("original", review_id, item_id))
+        return b"%PDF-1.4 source", "application/pdf"
+
     async def compare_review_item(self, review_id, item_id):  # type: ignore[no-untyped-def]
         self.calls.append(("compare", review_id, item_id))
         return {
@@ -802,3 +806,19 @@ def test_flowchart_graph_validation_failure_is_not_a_version_conflict():
     )
     assert response.status_code == 422
     assert response.json()["type"].endswith("/request-validation")
+
+
+def test_original_download_requires_original_read_permission():
+    denied, spy = client(DenyPolicy())
+    response = denied.get(BASE + "/items/pi_001/original")
+    assert response.status_code == 403
+    assert not spy.calls
+    policy = RecordingPolicy()
+    allowed, spy = client(policy)
+    response = allowed.get(BASE + "/items/pi_001/original")
+    assert response.status_code == 200
+    assert response.content == b"%PDF-1.4 source"
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-disposition"] == "attachment"
+    assert ("knowledge.original.read", "knowledge-original", "krv_001") in policy.calls

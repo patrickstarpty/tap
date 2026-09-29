@@ -19,7 +19,7 @@ it("retains all baseline modules in one product shell", () => {
   for (const name of [
     "Tapper",
     "Test Management",
-    "Test Analytics",
+    "Test Insights",
     "Low Code Automation",
   ])
     expect(screen.getByRole("button", { name })).toBeVisible();
@@ -35,104 +35,85 @@ it("retains all baseline modules in one product shell", () => {
     screen.queryByText(/交互原型|数据场景|演示上传|填入示例问题/),
   ).not.toBeInTheDocument();
 });
-it("places document review inside the existing Library", () => {
+it("places chunk management inside the existing Library", () => {
   render(<TapProductPrototype />);
   fireEvent.click(screen.getByRole("button", { name: "Library" }));
   fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
   expect(
     screen.getByRole("button", {
-      name: "Review Life underwriting guide · v1.2.md",
+      name: "Manage chunks Life underwriting guide · v1.2.md",
     }),
   ).toBeVisible();
 });
 
-it("reviews a flowchart image with its nodes and directed branch", () => {
+it("uses one review workbench for long text, PDF and Excel sources", () => {
+  render(<TapProductPrototype />);
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  for (const [name, location] of [
+    ["Life underwriting guide · v1.2.md", "4. Health disclosure"],
+    ["Underwriting evidence.pdf", "Page 4"],
+    ["Premium rates.xlsx", "Rates!A4:C4"],
+  ]) {
+    fireEvent.click(
+      screen.getByRole("button", { name: `Manage chunks ${name}` }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Original document" }));
+    expect(
+      screen.getByRole("navigation", { name: "Document outline" }),
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: location })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Mark selected text" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  }
+});
+
+it("uses indexed chunks directly and removes disabled documents from sources", async () => {
   render(<TapProductPrototype />);
   fireEvent.click(screen.getByRole("button", { name: "Library" }));
   fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
   fireEvent.click(
-    screen.getByRole("button", { name: "Review Approval flowchart.png" }),
-  );
-
-  expect(screen.getByRole("img", { name: "Approval flowchart" })).toBeVisible();
-  expect(screen.getByText("Submit request → Manager approval")).toBeVisible();
-  expect(screen.getByText("Condition: Amount exceeds 1000")).toBeVisible();
-  expect(
-    screen.getByLabelText("Arrow direction matches the image"),
-  ).toBeVisible();
-});
-
-it("hands submitted work to an independent reviewer and only publishes an approved fixture", () => {
-  const view = render(<TapProductPrototype />);
-  fireEvent.click(screen.getByRole("button", { name: "Library" }));
-  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
-  fireEvent.click(
     screen.getByRole("button", {
-      name: "Review Life underwriting guide · v1.2.md",
+      name: "Manage chunks Life underwriting guide · v1.2.md",
     }),
   );
   expect(
-    screen.getByRole("button", { name: "Submit for review" }),
-  ).toBeDisabled();
-  for (const label of [
-    "Text and key values match the original",
-    "Source locations are correct",
-    "Version and scope are correct",
-    "Conditions and exceptions match the original",
-  ])
-    fireEvent.click(screen.getByLabelText(label));
-  fireEvent.click(screen.getByRole("button", { name: "Submit for review" }));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Awaiting independent review",
-  );
-  expect(screen.queryByRole("button", { name: "Approve review" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  fireEvent.click(
-    screen.getByRole("button", {
-      name: "View Health disclosure policy · approved.md",
-    }),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Publish" }));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Published to knowledge library",
-  );
+    screen.queryByRole("button", { name: "Publish" }),
+  ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Ask Tapper" }));
   expect(
-    screen.getByRole("checkbox", {
-      name: /Health disclosure policy · approved.md/,
-    }),
-  ).toBeChecked();
-  view.unmount();
-  render(<TapProductPrototype />);
-  expect(
-    screen.getByRole("checkbox", {
-      name: /Health disclosure policy · approved.md/,
-    }),
+    screen.getByRole("checkbox", { name: /Life underwriting guide · v1.2.md/ }),
   ).toBeChecked();
   fireEvent.click(screen.getByRole("button", { name: "Library" }));
   fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
   fireEvent.click(
     screen.getByRole("button", {
-      name: "View Health disclosure policy · approved.md",
+      name: "Manage chunks Life underwriting guide · v1.2.md",
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
+  fireEvent.click(screen.getByLabelText("Select page"));
+  fireEvent.click(screen.getByRole("button", { name: "Disable selected" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Ask Tapper" })).toBeDisabled(),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   fireEvent.click(screen.getByRole("button", { name: "New chat" }));
   expect(
     screen.queryByRole("checkbox", {
-      name: /Health disclosure policy · approved.md/,
+      name: /Life underwriting guide · v1.2.md/,
     }),
-  ).toBeNull();
+  ).not.toBeInTheDocument();
 }, 15_000);
 
-it("keeps the full checklist when replacing a failed document", async () => {
+it("processes a replacement document into manageable chunks", async () => {
   const view = render(<TapProductPrototype />);
   fireEvent.click(screen.getByRole("button", { name: "Library" }));
   fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
   fireEvent.click(
     screen.getByRole("button", {
-      name: "View Underwriting rules — scanned.pdf",
+      name: "Manage chunks Underwriting rules — scanned.pdf",
     }),
   );
   const replacement = new File(["# text"], "replacement.md", {
@@ -141,14 +122,10 @@ it("keeps the full checklist when replacing a failed document", async () => {
   fireEvent.change(screen.getByLabelText("Replace file"), {
     target: { files: [replacement] },
   });
-  expect(
-    screen.getByRole("heading", { name: "Processing document…" }),
-  ).toBeVisible();
+  expect(screen.getByText("Processing document…")).toBeVisible();
   await waitFor(
     () =>
-      expect(
-        screen.getByLabelText("Conditions and exceptions match the original"),
-      ).toBeVisible(),
+      expect(screen.getByRole("button", { name: "Add chunk" })).toBeVisible(),
     { timeout: 2_000 },
   );
   view.unmount();
@@ -156,36 +133,6 @@ it("keeps the full checklist when replacing a failed document", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Library" }));
   fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
   expect(
-    screen.getByRole("button", { name: "Review replacement.md" }),
+    screen.getByRole("button", { name: "Manage chunks replacement.md" }),
   ).toBeVisible();
-});
-
-it("corrects flow direction and condition with a fresh review revision", () => {
-  render(<TapProductPrototype />);
-  fireEvent.click(screen.getByRole("button", { name: "Library" }));
-  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
-  fireEvent.click(
-    screen.getByRole("button", { name: "Review Approval flowchart.png" }),
-  );
-  fireEvent.click(screen.getByLabelText("Arrow direction matches the image"));
-  fireEvent.click(screen.getByRole("button", { name: "Edit flowchart" }));
-  fireEvent.click(screen.getByRole("button", { name: "Reverse direction" }));
-  fireEvent.change(screen.getByLabelText("Branch condition"), {
-    target: { value: "Return for correction" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Save corrections" }));
-  expect(screen.getByText("Manager approval → Submit request")).toBeVisible();
-  expect(screen.getByText("Condition: Return for correction")).toBeVisible();
-  expect(
-    screen.getByLabelText("Arrow direction matches the image"),
-  ).not.toBeChecked();
-  expect(
-    screen.getByRole("button", { name: "Submit for review" }),
-  ).toBeDisabled();
-  expect(screen.getByText(/flowchart_corrected/)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  fireEvent.click(
-    screen.getByRole("button", { name: "Review Approval flowchart.png" }),
-  );
-  expect(screen.getByText("Manager approval → Submit request")).toBeVisible();
 });

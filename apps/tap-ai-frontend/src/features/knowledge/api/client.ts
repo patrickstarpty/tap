@@ -22,6 +22,7 @@ const MEDIA_TYPES_BY_EXTENSION: Readonly<Record<string, string>> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
 interface KnowledgeClientOptions {
@@ -306,6 +307,22 @@ export function createKnowledgeClient(
       );
       return result.data!;
     },
+    async readReviewOriginal(reviewId, itemId) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/original",
+        {
+          params: {
+            path: {
+              project_id: projectId,
+              review_id: reviewId,
+              item_id: itemId,
+            },
+          },
+          parseAs: "blob",
+        },
+      );
+      return result.data!;
+    },
     async compareReviewItem(reviewId, itemId) {
       const result = await http.GET(
         "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/comparison",
@@ -438,10 +455,12 @@ export function createKnowledgeClient(
       onProgress,
       signal,
       idempotencyKey = crypto.randomUUID(),
+      settings,
     ) {
       onProgress(0);
       const form = new FormData();
       form.append("upload", canonicalUploadFile(file));
+      if (settings) form.append("settings", JSON.stringify(settings));
       const result = await http.POST(SOURCE_PATH, {
         params: {
           path: { project_id: projectId },
@@ -516,6 +535,7 @@ export function createKnowledgeClient(
       onProgress,
       signal,
       idempotencyKey = crypto.randomUUID(),
+      settings,
     ) {
       return new Promise<DocumentAccepted>((resolve, reject) => {
         const request = xhrFactory();
@@ -578,6 +598,7 @@ export function createKnowledgeClient(
 
         const form = new FormData();
         form.append("upload", canonicalUploadFile(file));
+        if (settings) form.append("settings", JSON.stringify(settings));
         request.send(form);
       });
     },

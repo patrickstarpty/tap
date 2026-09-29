@@ -12,13 +12,13 @@ TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能�
 corepack pnpm --dir apps/web dev --port 15176
 ```
 
-打开 `http://127.0.0.1:15176/prototype`。后续需求必须在此基准上增量修改，保留 Tapper（New chat、Agents、Skills、Library、Knowledge Graph）、Test Management、Test Analytics/Insights、Low Code Automation、跨模块关联与悬浮助手；不得另建一套原型或因近期实施范围缩窄而删除既有模块。UI 展示拟交付产品的用户界面，不放演示开关、模拟场景控件或实现说明。模块清单、截图回归与边界见[产品原型基准规范](docs/reference/2026-09-22-product-prototype-baseline.md)。
+打开 `http://127.0.0.1:15176/prototype`。后续需求必须在此基准上增量修改，保留 Tapper（New chat、Agents、Skills、Library、Knowledge Graph）、Test Management、Test Insights、Low Code Automation、跨模块关联与悬浮助手；不得另建一套原型或因近期实施范围缩窄而删除既有模块。UI 展示拟交付产品的用户界面，不放演示开关、模拟场景控件或实现说明。模块清单、截图回归与边界见[产品原型基准规范](docs/reference/2026-09-22-product-prototype-baseline.md)。
 
-当前原型包含资料核对与发布、知识问答引用、项目维度的 Test Insights 和数据接入。`/prototype` 是完整产品设计入口；下方独立应用入口及历史截图用于各自的实现和追溯，不代替最新原型。
+当前原型包含 Dify 式切片配置、预览与维护（保存索引后直接可用）、原件查看、知识问答引用、项目维度的 Test Insights 和数据接入。`/prototype` 是完整产品设计入口；下方独立应用入口及历史截图用于各自的实现和追溯，不代替最新原型。
 
 Tapper 品牌形象自 2026-09-28 起为猫头鹰，替换原 Listening/Aha 啄木鸟；素材包见 [Tapper Owl](apps/tap-ai-frontend/assets/brand/tapper/owl/README.md)。
 
-当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [资料核对与发布](docs/assets/prototype-current/document-review.png)。实际交互以 `main` 上运行的 `/prototype` 为准。
+当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [知识切片维护](docs/assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png)。实际交互以 `main` 上运行的 `/prototype` 为准。
 
 2026-09-26 的 [Task 14 联合交付门禁](docs/reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md) 已通过合成脱敏 fixture 的隔离旅程、故障恢复、保留式升级和完整原型回归；该结论不替代真实业务资料、外部 CI、真实模型、生产身份、规模硬件或具名签字，M1–M4 业务 Gate 仍为 `PENDING`，实施计划保持 `active`。
 
@@ -42,7 +42,7 @@ TAP AI 可在不启动 TAP 前后端的情况下运行。先执行 `make tap-ai-
 - **知识检索**：Library 默认打开 Knowledge Graph，搜索文档、概念或实体后可点击结果定位、高亮节点并查看关系。清空搜索恢复总览；`Documents`（文档列表）提供名称、类型与状态筛选。图谱支持平移、缩放、全屏及收起辅助面板；文档节点可跳到对应来源记录，尚无原文预览。
 - **跨页面助手**：Test Management 与 Low Code Automation 右下角提供 Tapper 悬浮入口，支持当前页面上下文、快捷提问、轻量对话和“在 Tapper 中继续”。悬浮入口使用猫头鹰形象，收起后收到回复时显示未读标记；回复是基于页面数据的确定性原型建议。
 
-历史操作步骤、现场话术、能力边界及 2026-09-06 采集的 44 张截图见 [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)。历史交互设计见 [RFC-008](docs/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)，正式产品和技术范围见 [RFC-009](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)。使用本页上方固定 `/prototype` 入口查看当前设计。下图为其中六个页面，使用 2560×1440 无损 PNG，按整行展示，可点击图片查看原尺寸细节：
+按业务流程组织的操作步骤、现场话术与当前能力边界见 [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)。历史交互设计见 [RFC-008](docs/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)，正式产品和技术范围见 [RFC-009](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)。使用本页上方固定 `/prototype` 入口查看当前设计。下图为其中六个页面，使用 2560×1440 无损 PNG，按整行展示，可点击图片查看原尺寸细节：
 
 **Tapper 统一对话入口**
 
@@ -159,7 +159,9 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 - [Tapper 本地回答后端 RFC](docs/proposals/2026-08-31-rfc-006-tapper-local-codex-answer-backend.md)：记录 LiteLLM/Codex 独占选择、固定 Embedding 与 fail-closed 验收。
 - [Tapper 单智能体、无工具 Codex 决策](docs/decisions/2026-09-01-adr-018-tapper-local-codex-tool-free-answer.md)：记录精确 CLI/model/catalog 契约及其本地边界。
 - [历史 Phase 1 Intelligence Layer 探索](docs/proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md)：保留 durable task、Artifact、Validator 与 Review 设计；交付优先级已被 RFC-009/ADR-021 替代。
-- [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)：按客户讲解顺序汇总 Tapper、Library、Test Management、Low Code Automation 的逐页截图、演示话术和能力边界。
+- [前端开发上手指引](docs/reference/2026-09-27-frontend-developer-onboarding.md)：页面入口、联调、业务组件与首次改动验证。
+- [后端开发上手指引](docs/reference/2026-09-27-backend-developer-onboarding.md)：服务启动、业务调用链、契约和持久化验证。
+- [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)：按资料发布、引用问答、测试设计、报告分析和解释串联演示，说明客户收益与当前能力边界。
 - [Knowledge/RAG 基础](docs/architecture/rag/2026-08-21-foundation.md)：当前 Milvus 文档路径与历史 Azure 四索引设计的范围说明。
 - [数据切片与溯源](docs/architecture/rag/2026-08-21-chunking-and-provenance.md)：稳定身份、revision lineage、Citation、删除与重建。
 - [Azure AI Search 索引设计（历史/provider-specific）](docs/architecture/rag/2026-08-21-ai-search-index.md)：被替代的四索引专项参考。
@@ -199,7 +201,7 @@ Tapper 当前产品入口在已确认的 TAP 壳层中使用真实 Project API�
 
 当前仍未交付登录、产品身份/RBAC、多 Project 产品化、OCR、Web Recorder、正式 Playwright Bundle、Jenkins 结果闭环和生产加固。API、Web 和所有中间件只绑定精确 loopback；固定 Validation 身份仅适用于验证环境，不能直接开放到局域网或生产环境。V2/V3 当前为 `gate-reopened`，不能作为 V4/V5、产品身份或生产加固已经完成的依据。
 
-支持文本可提取的 PDF、DOCX、Markdown（MD）和 TXT，并支持单张 PNG/JPEG 流程图。配置 `LITELLM_TAPPER_VISION_MODEL` 后，视觉解析提出节点、方向和条件；人工可更正节点、箭头和条件，生成新修订重新审核；发布后流程语义经现有文字 Embedding 进入 `doc` 索引，问答按已批准连线执行有界路径校验（每次最多 20 条），原图保留供核对。未建立独立图像向量索引，真实模型识别质量仍需样本验证；边界见[流程图图片知识设计](docs/reference/2026-09-27-flowchart-image-knowledge-design.md)。PDF 不执行 OCR；扫描件返回 `ocr-required`。服务端硬上限为每文件 `25 MiB`、最多 `50` 份未删除文档、每次回答最多选择 `20` 份 ready 文档。
+支持文本可提取的 PDF、DOCX、Markdown（MD）、TXT 和 XLSX，并支持单张 PNG/JPEG 流程图。XLSX 的表头、公式与显示格式处理见[知识审核工作台](docs/reference/2026-09-27-knowledge-review-workbench.md)。配置 `LITELLM_TAPPER_VISION_MODEL` 后，视觉解析提出节点、方向和条件；人工可更正节点、箭头和条件，生成新修订重新审核；发布后流程语义经现有文字 Embedding 进入 `doc` 索引，问答按已批准连线执行有界路径校验（每次最多 20 条），原图保留供核对。未建立独立图像向量索引，真实模型识别质量仍需样本验证；边界见[流程图图片知识设计](docs/reference/2026-09-27-flowchart-image-knowledge-design.md)。PDF 不执行 OCR；扫描件返回 `ocr-required`。服务端硬上限为每文件 `25 MiB`、最多 `50` 份未删除文档、每次回答最多选择 `20` 份 ready 文档。
 
 首次启动：
 

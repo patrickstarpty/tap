@@ -58,7 +58,7 @@ describe("CitationViewer", () => {
       />,
       { api: fakeKnowledgeClient() },
     );
-    await userEvent.click(screen.getByRole("button", { name: "关闭原文" }));
+    await userEvent.click(screen.getByRole("button", { name: "关闭引用内容" }));
     expect(trigger).toHaveFocus();
     trigger.remove();
   });
@@ -86,10 +86,12 @@ describe("CitationViewer", () => {
       />,
       { api: fakeKnowledgeClient() },
     );
-    expect(screen.getByRole("heading", { name: "Source text" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Cited content" }),
+    ).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("no longer resolves");
     expect(screen.getByRole("alert")).toHaveTextContent("withdrawn");
-    expect(screen.queryByText("原文核验未完成")).not.toBeInTheDocument();
+    expect(screen.queryByText("引用内容核验未完成")).not.toBeInTheDocument();
   });
   it("accepts a governed preview when Source and Document identities differ", async () => {
     const sourceId = `src_${"1".repeat(32)}`;

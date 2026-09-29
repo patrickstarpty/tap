@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -173,6 +173,155 @@ describe("KnowledgeReview", () => {
       await screen.findByText(
         "这条连线的方向或端点尚未确认，请编辑流程图更正，或排除此项。",
       ),
+    ).toBeVisible();
+  });
+
+  it("filters loaded locations and navigates only matching items", async () => {
+    const user = userEvent.setup();
+    const base = review();
+    const first = base.inventory.items[0]!;
+    const api = fakeKnowledgeClient().withReviews([
+      review({
+        blockingItemIds: [ITEM],
+        inventory: {
+          ...base.inventory,
+          totalCount: 120,
+          nextCursor: "next",
+          items: [
+            first,
+            { ...first, itemId: "pi_next", locator: "page:5:paragraph:1" },
+            {
+              ...first,
+              itemId: "pi_parsed",
+              locator: "page:9:paragraph:1",
+              status: "parsed",
+            },
+          ],
+        },
+      }),
+    ]);
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    expect(await screen.findByText("已加载 3 / 120 项")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "阻断" }));
+    expect(
+      screen.queryByRole("button", { name: /page:5/u }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "全部" }));
+    await user.type(
+      screen.getByRole("searchbox", { name: "搜索已加载位置" }),
+      "page:5",
+    );
+    expect(
+      screen.queryByRole("button", { name: /page:4/u }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /page:5/u }));
+    expect(screen.getByRole("button", { name: "上一项" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "下一项" })).toBeDisabled();
+    await user.clear(screen.getByRole("searchbox", { name: "搜索已加载位置" }));
+    await user.click(screen.getByRole("button", { name: "上一项" }));
+    expect(screen.getByRole("button", { name: /page:4/u })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    await user.click(screen.getByRole("button", { name: "下一项" }));
+    expect(screen.getByRole("button", { name: /page:5/u })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    expect(
+      screen.getByText("筛选和搜索仅覆盖已加载清单。继续加载可查看更多位置。"),
+    ).toBeVisible();
+  });
+
+  it("offers all loaded material when the pending filter has no matches", async () => {
+    const user = userEvent.setup();
+    const base = review();
+    const api = fakeKnowledgeClient().withReviews([
+      review({
+        inventory: {
+          ...base.inventory,
+          items: [{ ...base.inventory.items[0]!, status: "parsed" }],
+          totalCount: 120,
+          parsedCount: 120,
+          needsReviewCount: 0,
+          nextCursor: "next",
+        },
+      }),
+    ]);
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    expect(
+      await screen.findByText(
+        "已加载清单中没有待核对项，可查看全部资料继续核对。",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText("筛选和搜索仅覆盖已加载清单。继续加载可查看更多位置。"),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "查看全部资料" }));
+    expect(screen.getByRole("button", { name: /page:4/u })).toBeVisible();
+    expect(screen.getByRole("button", { name: "全部" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("adds a located extraction quote to the persisted note and enforces its limit", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient()
+      .withReviews([review()])
+      .withComparison({
+        reviewId: "krv_1",
+        itemId: ITEM,
+        original: {
+          availability: "unavailable",
+          excerpt: null,
+          reason: "unavailable",
+        },
+        extracted: {
+          availability: "available",
+          excerpt: "Policy amount is 500",
+          reason: null,
+        },
+      });
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    await user.click(await screen.findByRole("button", { name: /page:4/u }));
+    const excerpt = await screen.findByText("Policy amount is 500");
+    const range = document.createRange();
+    range.selectNodeContents(excerpt);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    fireEvent.mouseUp(excerpt);
+    fireEvent.change(screen.getByRole("textbox", { name: "核对说明" }), {
+      target: { value: "a".repeat(990) },
+    });
+    expect(
+      screen.getByRole("button", { name: "将选中文字加入说明" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText("引文加入后超过 1000 字，请缩短说明或重新选择文字。"),
+    ).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "核对说明" }), {
+      target: { value: "" },
+    });
+    await user.click(
+      screen.getByRole("button", { name: "将选中文字加入说明" }),
+    );
+    expect(screen.getByRole("textbox", { name: "核对说明" })).toHaveValue(
+      "【page:4:paragraph:2】“Policy amount is 500”",
+    );
+    expect(screen.getByRole("textbox", { name: "核对说明" })).toHaveAttribute(
+      "maxlength",
+      "1000",
+    );
+    await user.click(screen.getByRole("button", { name: "保存核对" }));
+    expect(
+      await screen.findByText(/【page:4:paragraph:2】“Policy amount is 500”/u),
     ).toBeVisible();
   });
 
@@ -394,7 +543,7 @@ describe("KnowledgeReview", () => {
     ).toBeEnabled();
   });
 
-  it("clears a draft note when switching item and focuses the opened comparison", async () => {
+  it("keeps drafts isolated when switching item and focuses the opened comparison", async () => {
     const user = userEvent.setup();
     const first = review();
     const otherItem = {
@@ -445,6 +594,12 @@ describe("KnowledgeReview", () => {
     );
     expect(screen.getByRole("textbox", { name: "核对说明" })).toHaveValue("");
     expect(screen.getByRole("button", { name: "保存核对" })).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: /page:4:paragraph:2/u }),
+    );
+    expect(screen.getByRole("textbox", { name: "核对说明" })).toHaveValue(
+      "Note for first item",
+    );
   });
 
   it("shows item-aligned original and extraction together when both are available", async () => {

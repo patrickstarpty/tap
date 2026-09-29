@@ -30,14 +30,14 @@ export const COPY = {
   uploadTitle: "添加来源",
   dropTitle: "拖放文档到这里",
   dropDescription: "或按 Enter 选择文件 · 单次添加一份文档",
-  acceptedFormats: "PDF、DOCX、Markdown、TXT、PNG 或 JPEG · 最大 25 MiB",
+  acceptedFormats: "PDF、DOCX、XLSX、Markdown、TXT、PNG 或 JPEG · 最大 25 MiB",
   chooseDocument: "选择文档",
   dropZoneLabel: "拖放或选择文档",
   selectedFile: "已选择",
   startUpload: "开始添加",
   cancel: "取消",
   uploadProgress: (percentage: number) => `上传 ${percentage}%`,
-  invalidFormat: "支持 PDF、DOCX、Markdown、TXT、PNG 和 JPEG 文件。",
+  invalidFormat: "支持 PDF、DOCX、XLSX、Markdown、TXT、PNG 和 JPEG 文件。",
   oversizedFile: "文件超过 25 MiB，请选择更小的文档。",
   duplicateReceipt: "这个内容已经在知识库中，已显示现有来源。",
   uploadAccepted: "来源已接收，后台处理会继续进行。",
@@ -78,18 +78,18 @@ export const COPY = {
   pendingSearch: "检索所选来源",
   pendingAnswer: "组织可核验回答",
   answerEmpty: "选择来源并提问后，回答会显示在这里。",
-  citationTitle: "原文",
-  citationEmpty: "选择回答中的引用以核验原文。",
-  citationEvidence: "原文依据",
+  citationTitle: "引用内容",
+  citationEmpty: "选择回答中的引用以核验引用内容。",
+  citationEvidence: "引用依据",
   citationImageEvidence: "经核对的流程图解析",
   citationOpen: "打开来源",
-  citationLoading: "正在核验原文",
-  closeCitation: "关闭原文",
+  citationLoading: "正在核验引用内容",
+  closeCitation: "关闭引用内容",
   retryCitation: "重新核验",
   citationStale: "引用已失效：来源可能已撤回或版本已变化，请重新提交问题。",
-  citationUnavailable: "原文暂时无法核验，请稍后重试。",
-  citationInvalid: "原文校验失败，请重新提交问题。",
-  citationGenericFailure: "原文核验未完成，请稍后重试。",
+  citationUnavailable: "引用内容暂时无法核验，请稍后重试。",
+  citationInvalid: "引用内容校验失败，请重新提交问题。",
+  citationGenericFailure: "引用内容核验未完成，请稍后重试。",
   sourceContentHash: "Source content SHA-256",
   chunkContentHash: "Chunk content SHA-256",
   headingPath: "标题路径",
@@ -99,20 +99,20 @@ export const COPY = {
 } as const;
 
 export const CITATION_EN = {
-  citationTitle: "Source text",
-  citationEmpty: "Select an answer citation to check the original text.",
-  citationEvidence: "Cited source",
+  citationTitle: "Cited content",
+  citationEmpty: "Select an answer citation to check the cited content.",
+  citationEvidence: "Cited evidence",
   citationImageEvidence: "Reviewed flowchart extraction",
   citationOpen: "Open source",
-  citationLoading: "Checking source text…",
-  closeCitation: "Close source text",
+  citationLoading: "Checking cited content…",
+  closeCitation: "Close cited content",
   close: "Close",
   retryCitation: "Retry verification",
   citationStale:
-    "This citation no longer resolves to its original source revision. The source may have been withdrawn; ask again using a published source.",
-  citationUnavailable: "Source text is temporarily unavailable. Try again.",
+    "This citation no longer resolves to its cited source revision. The source may have been withdrawn; ask again using an indexed, enabled source.",
+  citationUnavailable: "Cited content is temporarily unavailable. Try again.",
   citationInvalid: "The source preview does not match the citation. Ask again.",
-  citationGenericFailure: "Source text could not be checked. Try again.",
+  citationGenericFailure: "Cited content could not be checked. Try again.",
   revisionId: "Revision ID",
   sourceContentHash: "Source content SHA-256",
   chunkContentHash: "Chunk content SHA-256",
@@ -238,6 +238,11 @@ export function mediaTypeCopy(mediaType: string): string {
   ) {
     return "DOCX";
   }
+  if (
+    mediaType ===
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  )
+    return "XLSX";
   if (mediaType === "text/markdown") return "Markdown";
   return "TXT";
 }

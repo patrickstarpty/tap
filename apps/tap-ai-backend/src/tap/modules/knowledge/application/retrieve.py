@@ -20,6 +20,7 @@ from tap.modules.access.domain.policy import (
 from tap.modules.knowledge.application.answer_templates import assemble_answer
 from tap.modules.knowledge.application.planned_answer import AuthorizedAnswerExecution
 from tap.modules.knowledge.application.publication import (
+    FlowchartPublicationGate,
     PublicationBinding,
     PublishedKnowledgeAuthority,
 )
@@ -184,6 +185,7 @@ class AuthorizedRetrieval:
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str],
         publication_authority: PublishedKnowledgeAuthority | None = None,
+        flowchart_gate: FlowchartPublicationGate | None = None,
     ) -> None:
         self._search = search
         if models is not None:
@@ -200,6 +202,8 @@ class AuthorizedRetrieval:
         self._redactor = redactor
         self._id_factory = id_factory
         self._publication_authority = publication_authority
+        # Direct chunk lifecycles skip publication, except for reviewed flowchart images.
+        self._flowchart_gate = None if publication_authority is not None else flowchart_gate
 
     async def search(
         self,
@@ -644,6 +648,25 @@ class AuthorizedRetrieval:
             publication = await self._publication_authority.authorize_selection(
                 current.project_id, tuple(resource.revision for resource in plan.resources)
             )
+        flowcharts = (
+            None
+            if self._flowchart_gate is None
+            else await self._flowchart_gate.current(current.project_id)
+        )
+        approved_item_scope = (
+            None
+            if publication is None
+            else tuple(
+                (revision, publication.for_revision(revision).approved_item_ids)
+                for revision in sorted({resource.revision for resource in plan.resources})
+            )
+        )
+        if exact_flowchart and publication is None and flowcharts is not None:
+            approved_item_scope = tuple(
+                (revision, flowcharts.for_revision(revision).approved_item_ids)
+                for revision in sorted({resource.revision for resource in plan.resources})
+                if revision in flowcharts.source_revision_ids
+            )
         search_method = (
             getattr(self._search, "flowchart_edges") if exact_flowchart else self._search.search
         )
@@ -653,12 +676,7 @@ class AuthorizedRetrieval:
                 plan=plan,
                 context_snapshot=context_snapshot,
                 query_vector=embedding.vector,
-                approved_item_scope=None
-                if publication is None
-                else tuple(
-                    (revision, publication.for_revision(revision).approved_item_ids)
-                    for revision in sorted({resource.revision for resource in plan.resources})
-                ),
+                approved_item_scope=approved_item_scope,
             )
         )
         current = current if frozen_policy else await self._verify_current(current)
@@ -668,7 +686,11 @@ class AuthorizedRetrieval:
         if self._publication_authority is not None and publication is not None:
             await self._publication_authority.authorize_hits(current.project_id, hits)
             await self._publication_authority.revalidate(publication)
-        authorized_hits = hits
+        authorized_hits = (
+            hits
+            if self._flowchart_gate is None
+            else tuple(hit for hit in hits if _flowchart_hit_is_approved(hit, flowcharts))
+        )
         family_order = {family: index for index, family in enumerate(SourceFamily)}
         ordered_hits = sorted(
             authorized_hits,
@@ -685,7 +707,11 @@ class AuthorizedRetrieval:
                 position,
                 current.decision_id,
                 self._fused_score(hit, plan.resources, profile),
-                publication,
+                publication
+                if publication is not None
+                or flowcharts is None
+                or hit.source.revision not in flowcharts.source_revision_ids
+                else flowcharts,
             )
             for position, hit in enumerate(
                 ordered_hits[
@@ -1193,3 +1219,15 @@ class AuthorizedRetrieval:
             "timeStart": anchor.time_start,
             "type": "failure",
         }
+
+
+def _flowchart_hit_is_approved(hit: SearchHit, flowcharts: PublicationBinding | None) -> bool:
+    """Image-region evidence answers only as an approved item of a published review."""
+    anchor = hit.source.anchor
+    if not isinstance(anchor, DocumentAnchor) or not anchor.bbox:
+        return True
+    if flowcharts is None or hit.source.revision not in flowcharts.source_revision_ids:
+        return False
+    return (
+        anchor.inventory_item_id in flowcharts.for_revision(hit.source.revision).approved_item_ids
+    )

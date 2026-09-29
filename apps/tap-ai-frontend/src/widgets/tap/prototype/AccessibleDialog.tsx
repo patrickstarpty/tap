@@ -66,6 +66,12 @@ export function AccessibleDialog({
   }, [initialFocusSelector]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    // Nested editor portals own their keyboard and focus lifecycle.
+    if (
+      event.target instanceof Node &&
+      !dialogRef.current?.contains(event.target)
+    )
+      return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();

@@ -60,6 +60,7 @@ import {
 } from "../../features/conversations/model/stream";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
+import { DocumentChunks } from "../../features/knowledge/components/DocumentChunks";
 import { KnowledgeReview } from "../../features/knowledge/components/KnowledgeReview";
 import {
   appendTurn,
@@ -465,6 +466,9 @@ function DurableInsightsResponse({
   );
 }
 
+const isFlowchartImage = (filename: string) =>
+  /\.(png|jpe?g)$/iu.test(filename);
+
 function AssistantResponse({
   contentCopy,
   turn,
@@ -731,12 +735,13 @@ function ProjectLibraryWorkspace({
           opener.current = trigger;
           setInspected(sourceId);
         }}
-        onAddSource={async (file) => {
+        onAddSource={async (file, settings) => {
           const idempotencyKey =
             uploadIntents.current.get(file) ?? crypto.randomUUID();
           uploadIntents.current.set(file, idempotencyKey);
           await upload.mutateAsync({
             file,
+            settings,
             onProgress: () => undefined,
             idempotencyKey,
           });
@@ -792,8 +797,9 @@ function ProjectLibraryWorkspace({
                       {item.status} · {item.stage}
                     </p>
                     <small>{item.revisionId}</small>
+                    {/* Flowchart images keep review: model-read arrows need a person to correct and publish them. */}
                     <Button
-                      aria-label={`Review ${item.filename}`}
+                      aria-label={`${isFlowchartImage(item.filename) ? "审核流程图" : "管理切片"} ${item.filename}`}
                       aria-expanded={reviewDocumentId === item.documentId}
                       onClick={() =>
                         setReviewDocumentId((current) =>
@@ -801,13 +807,22 @@ function ProjectLibraryWorkspace({
                         )
                       }
                     >
-                      审核记录
+                      {isFlowchartImage(item.filename)
+                        ? "审核流程图"
+                        : "管理切片"}
                     </Button>
                     {reviewDocumentId === item.documentId ? (
-                      <KnowledgeReview
-                        documentId={item.documentId}
-                        sourceRevisionId={item.revisionId}
-                      />
+                      isFlowchartImage(item.filename) ? (
+                        <KnowledgeReview
+                          documentId={item.documentId}
+                          sourceRevisionId={item.revisionId}
+                        />
+                      ) : (
+                        <DocumentChunks
+                          projectId={projectId}
+                          documentId={item.documentId}
+                        />
+                      )
                     ) : null}
                     {item.errorCode != null && <p>{item.errorCode}</p>}
                     {item.status === "failed" && (
@@ -1548,8 +1563,8 @@ export function TapProductPrototype({
         status: "ready",
         description:
           source.partial || prior?.description.includes("部分范围可用")
-            ? "已发布 · 部分范围可用"
-            : "已发布",
+            ? "索引就绪 · 部分范围可用"
+            : "索引就绪",
       });
     }
     return [...grouped.values()];

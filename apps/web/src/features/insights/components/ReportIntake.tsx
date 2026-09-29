@@ -7,6 +7,17 @@ import type {
 } from "../api/client";
 
 const terminal = new Set(["ready", "rejected", "conflicted", "failed"]);
+const attention = new Set(["rejected", "conflicted", "failed"]);
+const fileLabel = {
+  pytest: "pytest XML report",
+  allure: "Allure Results ZIP",
+  junit: "JUnit XML report",
+} as const;
+const fileError = {
+  pytest: "Choose a pytest XML file.",
+  allure: "Choose an Allure Results ZIP file.",
+  junit: "Choose a JUnit XML file.",
+} as const;
 export type ReceiptEventSource = "restored" | "updated";
 
 function requestErrorCopy(cause: unknown) {
@@ -14,6 +25,7 @@ function requestErrorCopy(cause: unknown) {
   if (status === 401) return "Sign in to manage project reports.";
   if (status === 403) return "You do not have access to this project's reports.";
   if (status === 404) return "The saved report receipt no longer exists.";
+  if (status === 415) return "The file does not match the selected report format.";
   if (status && status >= 500) return "Report intake is temporarily unavailable.";
   return cause instanceof Error ? cause.message : "Report intake is temporarily unavailable.";
 }
@@ -40,12 +52,16 @@ export function ReportIntake({
   knownReceiptIds?: string[];
   onReceipt(receipt: ReportReceipt, source: ReceiptEventSource): void;
 }) {
+  const [reportFormat, setReportFormat] = useState<"pytest" | "allure" | "junit">("pytest");
+  const [historyComplete, setHistoryComplete] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [receipt, setReceipt] = useState<ReportReceipt | null>(null);
   const [error, setError] = useState("");
   const [duplicate, setDuplicate] = useState(false);
   const [uploading, setUploading] = useState(false);
   const form = useRef<HTMLFormElement>(null);
+  const panel = useRef<HTMLDetailsElement>(null);
+  const needsAttention = error !== "" || (receipt !== null && attention.has(receipt.state));
   const restoredReceipt = useRef(false);
 
   useEffect(() => {
@@ -59,6 +75,11 @@ export function ReportIntake({
       setError(requestErrorCopy(cause));
     });
   }, [adapter, knownReceiptIds, onReceipt, projectId]);
+
+  useEffect(() => {
+    // Rejection reasons, request errors and retry live inside the panel.
+    if (needsAttention && panel.current) panel.current.open = true;
+  }, [needsAttention]);
 
   useEffect(() => {
     if (!receipt || terminal.has(receipt.state)) return;
@@ -95,6 +116,7 @@ export function ReportIntake({
     }
     const manifest: ReportManifest = {
       projectId,
+      reportFormat,
       sourceId: text("sourceId"),
       externalRunId: text("externalRunId"),
       batchId: text("batchId"),
@@ -138,10 +160,11 @@ export function ReportIntake({
   };
 
   return (
-    <details className="ti-intake" open={receipt !== null || error !== "" || undefined}>
-      <summary>Upload JUnit report</summary>
+    <details className="ti-intake" ref={panel}>
+      <summary><span>Upload test report</span>{receipt ? <small className={`ti-intake-state ti-intake-state--${receipt.state}`}>{receipt.state === "ready" ? "Ready for Insights" : `Report ${receipt.state}`}</small> : null}</summary>
       <form ref={form} onSubmit={(event) => event.preventDefault()}>
         <div className="ti-intake-grid">
+          <label>Report format<select aria-label="Report format" value={reportFormat} onChange={(event) => { setReportFormat(event.target.value as typeof reportFormat); setFile(null); setHistoryComplete(false); setError(""); }}><option value="pytest">pytest JUnit XML</option><option value="allure">Allure Results ZIP</option><option value="junit">JUnit XML (explicit identities)</option></select></label>
           <label>Source<input name="sourceId" /></label>
           <label>Run<input name="externalRunId" /></label>
           <label>Report build<input name="buildId" /></label>
@@ -155,12 +178,14 @@ export function ReportIntake({
           <label>Configuration<input name="configuration" /></label>
           <label>Started at<input name="startedAt" type="datetime-local" /></label>
           <label>Correction<input name="correctionNo" type="number" min="0" defaultValue="0" /></label>
-          <label className="ti-check"><input name="containsCompleteAttempts" type="checkbox" defaultChecked /> Complete attempt history</label>
-          <label className="ti-file">JUnit XML report<input accept=".xml,application/xml,text/xml" type="file" onChange={(event) => {
+          <label className="ti-check"><input name="containsCompleteAttempts" type="checkbox" checked={historyComplete} onChange={(event) => setHistoryComplete(event.target.checked)} /> Complete attempt history</label>
+          <small>Confirm complete history only when this report includes every attempt from the run. Missing history keeps first-pass and retry metrics unavailable.</small>
+          <label className="ti-file">{fileLabel[reportFormat]}<input key={reportFormat} accept={reportFormat === "allure" ? ".zip,application/zip" : ".xml,application/xml,text/xml"} type="file" onChange={(event) => {
+            setHistoryComplete(false);
             const next = event.target.files?.[0] ?? null;
-            if (next && !next.name.toLowerCase().endsWith(".xml")) {
+            if (next && !next.name.toLowerCase().endsWith(reportFormat === "allure" ? ".zip" : ".xml")) {
               setFile(null);
-              setError("Choose a JUnit XML file.");
+              setError(fileError[reportFormat]);
               return;
             }
             setFile(next);
@@ -174,7 +199,7 @@ export function ReportIntake({
       {duplicate ? <p role="status">Existing receipt reused; no duplicate facts were created.</p> : null}
       {receipt ? (
         <div className="ti-receipt" aria-live="polite">
-          <strong>{receipt.state === "ready" ? "Ready for Insights" : `Report ${receipt.state}`}</strong>
+          <strong>Processing receipt</strong>
           <span>Receipt {receipt.receiptId}</span>
           <span>Report completeness: {receipt.completeness}</span>
           {receipt.completeness !== "complete" ? <small>First/retry metrics may be unavailable; missing history is never inferred.</small> : null}

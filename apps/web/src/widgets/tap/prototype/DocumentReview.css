@@ -68,28 +68,46 @@
   background: #fff0d1;
   line-height: 2;
 }
-.tap-document-flowchart svg {
+.tap-review-table-scroll {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+}
+.tap-review-flowchart-preview {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.tap-review-flowchart-preview img {
   display: block;
   width: 100%;
   height: auto;
-  color: var(--tap-ink);
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: var(--tap-canvas);
 }
-.tap-document-flowchart rect {
-  fill: var(--tap-canvas);
-  stroke: var(--tap-line);
-  stroke-width: 2;
+.tap-review-flowchart-preview a {
+  justify-self: start;
+  color: var(--tap-accent);
+  text-underline-offset: 3px;
 }
-.tap-document-flowchart path {
-  fill: none;
-  stroke: var(--tap-accent);
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.tap-review-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
 }
-.tap-document-flowchart text {
-  fill: currentColor;
-  font-size: 14px;
-  font-weight: 600;
+.tap-review-table-scroll th,
+.tap-review-table-scroll td {
+  min-width: 100px;
+  border-right: 1px solid var(--tap-line);
+  border-bottom: 1px solid var(--tap-line);
+  padding: 10px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+.tap-review-table-scroll th {
+  background: var(--tap-soft);
 }
 .tap-document-checks {
   display: grid;
@@ -155,33 +173,377 @@
     flex-direction: column;
   }
 }
-
-.tap-flow-correction {
-  display: grid;
-  gap: 12px;
+.tap-document-review:not(.tap-document-citation) {
+  width: min(1180px, calc(100vw - 32px));
+  padding: 24px;
 }
-.tap-flow-correction label {
+.tap-document-review:not(.tap-document-citation) > header {
+  position: sticky;
+  top: -24px;
+  z-index: 3;
+  background: var(--tap-canvas);
+  border-bottom: 1px solid var(--tap-line);
+  padding: 12px 0;
+}
+.tap-review-workbench {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 270px;
+  margin: 22px 0;
+  border-top: 1px solid var(--tap-line);
+  border-bottom: 1px solid var(--tap-line);
+}
+.tap-review-outline {
+  padding: 18px 16px 18px 0;
+  border-right: 1px solid var(--tap-line);
+}
+.tap-review-modes {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.tap-review-outline button {
+  border: 0;
+  background: transparent;
+  color: var(--tap-ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  padding: 10px;
+  border-radius: 6px;
+}
+.tap-review-modes button {
+  padding: 8px;
+  font-size: 12px;
+}
+.tap-review-outline button:hover {
+  background: var(--tap-surface);
+}
+.tap-review-outline button[aria-pressed="true"],
+.tap-review-outline button[aria-current] {
+  background: var(--tap-surface);
+  color: var(--tap-accent);
+  font-weight: 600;
+}
+.tap-review-outline input {
+  width: 100%;
+  min-width: 0;
+  margin-bottom: 10px;
+}
+.tap-review-outline nav {
   display: grid;
   gap: 6px;
+  margin-top: 14px;
 }
-.tap-flow-correction input {
-  min-width: 0;
+.tap-review-outline nav small,
+.tap-review-problems small {
+  display: block;
+  margin-top: 5px;
+  font-weight: 400;
+}
+.tap-review-problems button {
   width: 100%;
-  box-sizing: border-box;
-  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+.tap-review-reader {
+  min-width: 0;
+  padding: 18px 22px;
+}
+.tap-review-reader-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  font-size: 13px;
+}
+.tap-review-reader .tap-document-original {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  min-height: 225px;
+}
+.tap-review-reader .tap-document-original h3 {
+  font-size: 20px;
+  margin-bottom: 18px;
+}
+.tap-review-reader .tap-document-original p {
+  margin: 0 0 14px;
+}
+.tap-review-reader-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  justify-items: start;
+}
+.tap-review-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 20px;
+}
+.tap-review-comments {
+  min-width: 0;
+  padding: 18px 0 18px 18px;
+  border-left: 1px solid var(--tap-line);
+}
+.tap-review-comments h3 {
+  margin-bottom: 8px;
+}
+.tap-review-comment-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+.tap-review-comment-form p,
+.tap-review-comment p {
+  margin: 0;
+}
+.tap-review-comment-form label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.tap-review-comment-form .ant-btn {
+  justify-self: start;
+}
+.tap-review-workbench input,
+.tap-review-workbench textarea {
   border: 1px solid var(--tap-line);
   border-radius: 6px;
+  padding: 9px 10px;
   background: var(--tap-canvas);
   color: var(--tap-ink);
   font: inherit;
+  caret-color: var(--tap-accent);
 }
-.tap-flow-correction input:focus-visible {
+.tap-review-workbench textarea {
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+}
+.tap-review-workbench :focus-visible {
   outline: 2px solid var(--tap-accent);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
-.tap-flow-correction-actions {
-  display: flex;
-  flex-wrap: wrap;
+.tap-review-workbench ::selection {
+  background: #d5e8ff;
+  color: #172b4d;
+}
+.tap-review-workbench blockquote {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 1px solid var(--tap-accent);
+  background: var(--tap-surface);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.tap-review-comment {
+  display: grid;
   gap: 10px;
-  margin-top: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--tap-line);
+  overflow-wrap: anywhere;
+}
+.tap-review-comment .ant-btn {
+  justify-self: start;
+}
+.tap-review-open-notice {
+  font-size: 12px;
+}
+.tap-document-confirmation {
+  padding-bottom: 16px;
+}
+.tap-document-confirmation summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.tap-document-confirmation .tap-document-checks {
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+  margin-top: 16px;
+}
+.tap-document-history {
+  font-size: 12px;
+}
+.tap-document-history h3 {
+  font-size: 14px;
+}
+.tap-document-review h2 {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1000px) {
+  .tap-review-workbench {
+    grid-template-columns: 160px minmax(0, 1fr);
+  }
+  .tap-review-comments {
+    grid-column: 1 / -1;
+    border-left: 0;
+    border-top: 1px solid var(--tap-line);
+    padding: 18px 0;
+  }
+}
+@media (max-width: 700px) {
+  .tap-document-review:not(.tap-document-citation) {
+    padding: 16px;
+  }
+  .tap-review-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tap-review-outline {
+    padding: 14px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--tap-line);
+  }
+  .tap-review-outline nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .tap-review-outline nav button {
+    padding: 8px 5px;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .tap-review-reader {
+    padding: 18px 0;
+  }
+  .tap-review-pagination .ant-btn {
+    padding-inline: 10px;
+  }
+  .tap-document-confirmation .tap-document-checks {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tap-chunk-manager {
+  margin: 20px 0;
+  position: relative;
+}
+.tap-chunk-tabs,
+.tap-chunk-toolbar,
+.tap-chunk-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.tap-chunk-tabs {
+  border-bottom: 1px solid var(--tap-line);
+  padding-bottom: 12px;
+}
+.tap-chunk-toolbar {
+  margin: 16px 0;
+}
+.tap-chunk-manager input:not([type="checkbox"]),
+.tap-chunk-manager select,
+.tap-chunk-manager textarea {
+  border: 1px solid var(--tap-line);
+  border-radius: 6px;
+  background: var(--tap-surface);
+  color: var(--tap-ink);
+  padding: 9px 12px;
+  font: inherit;
+  min-width: 0;
+}
+.tap-chunk-manager input[type="search"] {
+  flex: 1;
+  min-width: 170px;
+}
+.tap-chunk-manager input[type="checkbox"] {
+  accent-color: var(--tap-accent);
+  margin-right: 7px;
+}
+.tap-chunk-manager :focus-visible {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 3px;
+}
+.tap-chunk-manager button:disabled {
+  cursor: not-allowed;
+}
+.tap-chunk-list article,
+.tap-chunk-settings article {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--tap-line);
+}
+.tap-chunk-list article p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 12px 0;
+}
+.tap-chunk-row small {
+  margin-left: auto;
+}
+.tap-chunk-settings {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 28px;
+}
+.tap-chunk-settings label {
+  display: block;
+  margin: 12px 0;
+}
+.tap-chunk-settings label input:not([type="checkbox"]),
+.tap-chunk-settings select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+.tap-chunk-settings section {
+  border-left: 1px solid var(--tap-line);
+  padding-left: 24px;
+}
+.tap-chunk-editor {
+  position: sticky;
+  bottom: 0;
+  padding: 22px;
+  border: 1px solid var(--tap-line);
+  background: var(--tap-canvas);
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 8%);
+  border-radius: 12px;
+}
+.tap-chunk-editor textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  margin: 8px 0 14px;
+}
+.tap-chunk-editor label {
+  display: block;
+  margin-bottom: 12px;
+}
+.tap-chunk-import {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  max-width: 175px;
+}
+.tap-chunk-import input {
+  width: 100%;
+  font-size: 11px !important;
+  padding: 4px !important;
+}
+.tap-chunk-child {
+  margin: 12px 0 12px 20px;
+  padding: 12px;
+  background: var(--tap-surface);
+}
+.tap-chunk-manager summary {
+  cursor: pointer;
+  margin-top: 14px;
+}
+@media (max-width: 640px) {
+  .tap-chunk-settings {
+    grid-template-columns: 1fr;
+  }
+  .tap-chunk-settings section {
+    border-left: 0;
+    padding-left: 0;
+  }
+  .tap-document-review {
+    padding: 16px;
+  }
+  .tap-chunk-row small {
+    margin-left: 0;
+  }
 }

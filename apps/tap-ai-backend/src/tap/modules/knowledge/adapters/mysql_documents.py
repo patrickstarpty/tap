@@ -143,6 +143,20 @@ ANSWER_SNAPSHOT_LOCK_ACQUIRE_SQL = "SELECT GET_LOCK(:lock_name, 5)"
 ANSWER_SNAPSHOT_LOCK_RELEASE_SQL = "SELECT RELEASE_LOCK(:lock_name)"
 _MAX_MYSQL_CONNECTION_ID = 2**64 - 1
 
+
+def managed_chunks_visible(scope: ProjectScopeContext):  # type: ignore[no-untyped-def]
+    """Pending managed content must never expose the previous index generation."""
+    from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents
+
+    return ~exists(
+        select(managed_documents.c.document_id).where(
+            *scope_predicates(managed_documents, scope),
+            managed_documents.c.document_id == knowledge_document.c.document_id,
+            managed_documents.c.index_status != "ready",
+        )
+    )
+
+
 knowledge_source = Table(
     "knowledge_source",
     metadata,
@@ -882,6 +896,28 @@ class MysqlDocumentRepository:
             resource_id=resource_id,
         )
 
+    async def record_revision_ready(
+        self, session: AsyncSession, revision_id: str, *, now: datetime, job_id: str
+    ) -> None:
+        """Publish durable READY effects within the caller's generation transaction."""
+        revision = (
+            (
+                await session.execute(
+                    select(knowledge_document_revision).where(
+                        *scope_predicates(knowledge_document_revision, self._scope),
+                        knowledge_document_revision.c.revision_id == revision_id,
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        await self._revision_event(session, revision, ready=True, now=now, job_id=job_id)
+        if self._ready_projection is not None:
+            await self._ready_projection.after_ready(
+                session, self._scope, revision, now=now, ingestion_job_id=job_id
+            )
+
     async def _revision_event(
         self, session: AsyncSession, row: RowMapping, *, ready: bool, now: datetime, job_id: str
     ) -> None:
@@ -1051,6 +1087,8 @@ class MysqlDocumentRepository:
                             self._active_source(),
                             knowledge_document.c.source_id.in_(source_ids),
                             knowledge_document.c.status == DocumentState.READY.value,
+                            knowledge_document.c.chunk_count > 0,
+                            managed_chunks_visible(self._scope),
                             knowledge_document.c.activated_at.is_not(None),
                             knowledge_document.c.deleted_at.is_(None),
                         )
@@ -1184,6 +1222,8 @@ class MysqlDocumentRepository:
                             *scope_predicates(knowledge_document_revision, self._scope),
                             knowledge_document.c.document_id.in_(ordered_ids),
                             knowledge_document.c.status == DocumentState.READY.value,
+                            knowledge_document.c.chunk_count > 0,
+                            managed_chunks_visible(self._scope),
                             knowledge_document.c.activated_at.is_not(None),
                             knowledge_document.c.deleted_at.is_(None),
                         )
@@ -1230,6 +1270,8 @@ class MysqlDocumentRepository:
                             self._active_source(),
                             knowledge_document.c.current_revision_id.in_(revision_ids),
                             knowledge_document.c.status == DocumentState.READY.value,
+                            knowledge_document.c.chunk_count > 0,
+                            managed_chunks_visible(self._scope),
                             knowledge_document.c.activated_at.is_not(None),
                             knowledge_document.c.deleted_at.is_(None),
                         )
@@ -1419,7 +1461,15 @@ class MysqlDocumentRepository:
                     .where(
                         *scope_predicates(knowledge_document, self._scope),
                         knowledge_document.c.document_id.in_(document_ids),
-                        *(() if allow_historical else (self._active_source(),)),
+                        *(
+                            ()
+                            if allow_historical
+                            else (
+                                self._active_source(),
+                                knowledge_document.c.chunk_count > 0,
+                                managed_chunks_visible(self._scope),
+                            )
+                        ),
                     )
                     .order_by(knowledge_document.c.document_id)
                     .with_for_update()
@@ -1723,6 +1773,14 @@ class MysqlDocumentRepository:
                     *scope_predicates(knowledge_source, self._scope),
                     knowledge_source.c.deleted_at.is_(None),
                     knowledge_document.c.document_id == row["citation_document_id"],
+                    *(
+                        ()
+                        if historical
+                        else (
+                            knowledge_document.c.chunk_count > 0,
+                            managed_chunks_visible(self._scope),
+                        )
+                    ),
                 )
             )
         if row is None or (source_active is None and not historical):
@@ -2040,6 +2098,11 @@ class MysqlDocumentRepository:
             "size": request.size,
             "contentHash": request.source_content_hash,
             "sourceId": request.source_id,
+            **(
+                {"chunkSettings": request.chunk_settings}
+                if request.chunk_settings is not None
+                else {}
+            ),
         }
 
     async def _source_command(
@@ -2105,7 +2168,10 @@ class MysqlDocumentRepository:
         return reservation
 
     async def _source_summary(self, session: AsyncSession, source_id: str):
+        from sqlalchemy import case
+
         from tap.contracts.http import SourceSummary
+        from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents
 
         row = (
             (
@@ -2122,7 +2188,35 @@ class MysqlDocumentRepository:
         states = (
             (
                 await session.execute(
-                    select(knowledge_document.c.status).where(
+                    select(
+                        case(
+                            (
+                                (knowledge_document.c.status == "ready")
+                                & (managed_documents.c.index_status == "error"),
+                                "failed",
+                            ),
+                            (
+                                (knowledge_document.c.status == "ready")
+                                & (managed_documents.c.index_status.is_not(None))
+                                & (managed_documents.c.index_status != "ready"),
+                                "processing",
+                            ),
+                            (
+                                (knowledge_document.c.status == "ready")
+                                & (knowledge_document.c.chunk_count == 0),
+                                "empty",
+                            ),
+                            else_=knowledge_document.c.status,
+                        )
+                    )
+                    .select_from(
+                        knowledge_document.outerjoin(
+                            managed_documents,
+                            (knowledge_document.c.document_id == managed_documents.c.document_id)
+                            & (knowledge_document.c.project_id == managed_documents.c.project_id),
+                        )
+                    )
+                    .where(
                         *scope_predicates(knowledge_document, self._scope),
                         knowledge_document.c.source_id == source_id,
                         knowledge_document.c.deleted_at.is_(None),
@@ -2286,6 +2380,25 @@ class MysqlDocumentRepository:
                 await self._require_source(session, duplicate["source_id"])
                 if command.source_id is not None and command.source_id != duplicate["source_id"]:
                     raise SourceUnavailable("source-dedupe-conflict")
+                if command.chunk_settings is not None:
+                    from tap.modules.knowledge.adapters.mysql_managed_chunks import (
+                        managed_documents,
+                    )
+
+                    configured = (
+                        await session.execute(
+                            select(managed_documents.c.settings_json)
+                            .where(
+                                *scope_predicates(managed_documents, self._scope),
+                                managed_documents.c.document_id == duplicate["document_id"],
+                            )
+                            .with_for_update()
+                        )
+                    ).scalar_one_or_none()
+                    if configured != command.chunk_settings:
+                        raise SourceCommandConflict(
+                            "duplicate document has different chunk settings"
+                        )
                 document_id = cast(str, duplicate["document_id"])
                 revision_id = (
                     cast(str, duplicate["current_revision_id"])
@@ -2298,6 +2411,28 @@ class MysqlDocumentRepository:
                 )
                 if duplicate["activated_at"] is not None:
                     record = await self._record_for_row(session, duplicate)
+                    from tap.modules.knowledge.adapters.mysql_managed_chunks import (
+                        managed_documents,
+                    )
+
+                    # An upload receipt identifies the job that accepted the original
+                    # file. Current generation jobs belong to document details instead.
+                    original_job_id = await session.scalar(
+                        select(knowledge_ingestion_job.c.job_id)
+                        .join(
+                            managed_documents,
+                            knowledge_ingestion_job.c.revision_id
+                            == managed_documents.c.original_revision_id,
+                        )
+                        .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
+                            *scope_predicates(managed_documents, self._scope),
+                            managed_documents.c.document_id == document_id,
+                            knowledge_ingestion_job.c.kind == JobKind.INGESTION.value,
+                        )
+                    )
+                    if original_job_id is not None:
+                        record = replace(record, job_id=original_job_id)
                     return await self._bind_upload_command(
                         session,
                         command,
@@ -2392,6 +2527,10 @@ class MysqlDocumentRepository:
                     updated_at=now,
                 )
             )
+            if command.chunk_settings is not None:
+                await self._reserve_chunk_settings(
+                    session, str(document_id), source_id, str(revision_id), command.chunk_settings
+                )
             return await self._bind_upload_command(
                 session,
                 command,
@@ -2411,6 +2550,58 @@ class MysqlDocumentRepository:
                     expires_at=expires_at,
                 ),
             )
+
+    async def _reserve_chunk_settings(
+        self,
+        session: AsyncSession,
+        document_id: str,
+        source_id: str,
+        revision_id: str,
+        settings: dict[str, object],
+    ) -> None:
+        from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents
+
+        await session.execute(
+            select(knowledge_source.c.source_id)
+            .where(
+                *scope_predicates(knowledge_source, self._scope),
+                knowledge_source.c.source_id == source_id,
+            )
+            .with_for_update()
+        )
+        peers = (
+            (
+                await session.execute(
+                    select(managed_documents.c.settings_json)
+                    .join(
+                        knowledge_document,
+                        (managed_documents.c.document_id == knowledge_document.c.document_id)
+                        & (managed_documents.c.project_id == knowledge_document.c.project_id),
+                    )
+                    .where(
+                        *scope_predicates(managed_documents, self._scope),
+                        knowledge_document.c.source_id == source_id,
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if any(peer["mode"] != settings["mode"] for peer in peers):
+            raise SourceCommandConflict("chunk mode is fixed for this source")
+        await session.execute(
+            insert(managed_documents).values(
+                document_id=document_id,
+                original_revision_id=revision_id,
+                version=1,
+                settings_json=settings,
+                chunks_json=[],
+                index_status="waiting_ingestion",
+                index_error=None,
+                **scope_values(self._scope),
+            )
+        )
 
     async def activate_upload(
         self, reservation: UploadReservation, original: ArtifactLocator
@@ -4320,7 +4511,52 @@ class MysqlDocumentRepository:
             .mappings()
             .one()
         )
-        return self._record(row, _job_from_row(job_row))
+        record = self._record(row, _job_from_row(job_row))
+        if record.status is DocumentState.READY:
+            from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents
+
+            managed = (
+                (
+                    await session.execute(
+                        select(
+                            managed_documents.c.index_status, managed_documents.c.index_error
+                        ).where(
+                            *scope_predicates(managed_documents, self._scope),
+                            managed_documents.c.document_id == record.document_id,
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if managed is not None and managed["index_status"] != "ready":
+                failed = managed["index_status"] == "error"
+                stage = (
+                    JobStage.EMBEDDING
+                    if managed["index_status"] in {"pending", "error"}
+                    else JobStage.CHUNKING
+                )
+                stages = tuple(
+                    StageResult(
+                        item.stage,
+                        StageState.FAILED if failed else StageState.PROCESSING,
+                        error_code="index-unavailable" if failed else None,
+                    )
+                    if item.stage is stage
+                    else StageResult(item.stage, StageState.PENDING)
+                    if list(JobStage).index(item.stage) > list(JobStage).index(stage)
+                    else item
+                    for item in record.stages
+                )
+                record = replace(
+                    record,
+                    status=DocumentState.FAILED if failed else DocumentState.PROCESSING,
+                    stage=stage,
+                    stages=stages,
+                    error_code="index-unavailable" if failed else None,
+                    error_summary=managed["index_error"] if failed else None,
+                )
+        return record
 
     @staticmethod
     def _record(row: RowMapping, job: IngestionJob) -> DocumentRecord:

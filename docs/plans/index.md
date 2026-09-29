@@ -3,6 +3,7 @@
 本目录保存实施、交付和路线图计划。
 
 - [流程图图片知识实施计划](2026-09-27-flowchart-image-knowledge.md)（`active`）：在既有可信知识链路上增加 PNG/JPEG 流程图解析、人工复核、语义文字向量与有引用问答。
+- [Dify 知识切片能力实施计划](2026-09-27-dify-knowledge-chunk-parity.md)（`active`）：真实切片管理、直接索引生效及完整原型同步。
 
 - [可信知识、测试设计与基础 Insights 实施计划](2026-09-23-trusted-knowledge-test-design-insights.md)（`active`，本轮实施入口）：依据 RFC-011、完整产品原型及 2026-09-23 范围确认，分批交付知识审核/问答、既有测试设计闭环和外部真实报告 Insights；开发契约先由显式合成 fixture 冻结，真实 M0 Gate 仍待输入，Web 自动化延后且不改变历史门禁状态。
 

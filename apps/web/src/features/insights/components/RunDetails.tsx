@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { AttemptEvidence } from "./AttemptEvidence";
+import { useRef, useState } from "react";
 
 import type {
   AttemptDetail,
   InsightsDataAdapter,
+  ReportEvidence,
   RunSummary,
 } from "../api/client";
 
@@ -24,6 +26,17 @@ export function RunDetails({
   onClose(): void;
 }) {
   const [evidenceError, setEvidenceError] = useState("");
+  // Every attempt from one receipt shares a single evidence document.
+  const evidence = useRef(new Map<string, Promise<ReportEvidence>>());
+  const loadEvidence = (receiptId: string) => {
+    let pending = evidence.current.get(receiptId);
+    if (!pending) {
+      pending = adapter.getReportEvidence(projectId, receiptId);
+      pending.catch(() => evidence.current.delete(receiptId));
+      evidence.current.set(receiptId, pending);
+    }
+    return pending;
+  };
   const handoffUrl = new URL(tapperBaseUrl);
   handoffUrl.searchParams.set("projectId", projectId);
   handoffUrl.searchParams.set("queryId", queryId);
@@ -40,7 +53,7 @@ export function RunDetails({
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `${receiptId}.xml`;
+      anchor.download = `${receiptId}.${blob.type === "application/zip" ? "zip" : "xml"}`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (cause) {
@@ -89,7 +102,7 @@ export function RunDetails({
         <div className="ti-attempts">
           {instances.map(([key, instanceAttempts]) => (
             <article key={key} aria-label={`${instanceAttempts[0]!.stableTestId ?? instanceAttempts[0]!.sourceTestIdentity} instance`}>
-              <h3>{instanceAttempts[0]!.stableTestId ?? instanceAttempts[0]!.sourceTestIdentity}</h3>
+              <h3>{instanceAttempts[0]!.sourceTestIdentity}</h3>
               <dl className="ti-instance-identity">
                 <div><dt>Source identity</dt><dd>{instanceAttempts[0]!.sourceTestIdentity}</dd></div>
                 <div><dt>Data row</dt><dd>{instanceAttempts[0]!.dataRow ?? "No data row reported"}</dd></div>
@@ -101,8 +114,7 @@ export function RunDetails({
                     <div><dt>Result</dt><dd>{attempt.result}</dd></div>
                     <div><dt>Duration</dt><dd>{attempt.durationSeconds === null ? "Not reported" : `${attempt.durationSeconds.toFixed(2)} s`}</dd></div>
                   </dl>
-                  <p>Step details were not provided by this report.</p>
-                  <p>No screenshot was attached to this attempt.</p>
+                  {attempt.evidenceRefs.map((receiptId) => <AttemptEvidence key={receiptId} adapter={adapter} projectId={projectId} receiptId={receiptId} factKey={attempt.factKey} loadEvidence={loadEvidence} />)}
                   {attempt.evidenceRefs.map((receiptId) => (
                     <button key={receiptId} type="button" onClick={() => download(receiptId)}>Download raw report</button>
                   ))}

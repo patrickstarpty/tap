@@ -69,8 +69,10 @@ def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -
         not isinstance(artifact, NormalizedArtifact)
         or str(artifact.revision_id) != revision_id
         or artifact.document_id is None
-        or str(revision_id_for(artifact.document_id, artifact.source_hash, artifact.parser_version))
-        != revision_id
+        or _revision_parser_version(
+            artifact.document_id, artifact.source_hash, revision_id, artifact.parser_version
+        )
+        is None
     ):
         raise ArtifactIntegrityError("normalized artifact identity does not match revision")
     inventory_enabled = bool(artifact.parse_inventory and artifact.parser_config_digest is not None)
@@ -139,7 +141,9 @@ def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -
         }
     if artifact.flowchart_data is not None:
         payload["flowchartData"] = artifact.flowchart_data
-    if artifact.parser_version != PARSER_VERSION:
+    # Only human corrections carry explicit provenance; managed chunk artifacts keep the
+    # original payload shape and are recognized from their revision identity.
+    if re.fullmatch(r"human-correction-[0-9a-f]{64}", artifact.parser_version):
         payload["parserVersion"] = artifact.parser_version
         payload["correctionSourceRevisionId"] = artifact.correction_source_revision_id
     payload_bytes = _canonical_line(payload)
@@ -251,8 +255,13 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
                 )
             )
         document_id = DocumentId(_text(payload["documentId"], maximum=256))
-        parser_version = _parser_version(payload.get("parserVersion", PARSER_VERSION))
-        if str(revision_id_for(document_id, source_hash, parser_version)) != expected_revision:
+        parser_version = _revision_parser_version(
+            document_id,
+            source_hash,
+            expected_revision,
+            payload.get("parserVersion", PARSER_VERSION),
+        )
+        if parser_version is None:
             raise ValueError
         if legacy:
             inventory = historical_unreviewed_inventory(expected_revision, source_hash)
@@ -314,7 +323,10 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
             parser_config_digest=config_digest,
             parse_inventory_digest=inventory_artifact_digest,
             vision_input=vision_input,
-            parser_version=parser_version,
+            # Managed chunk revisions keep parser output provenance on the artifact.
+            parser_version=(
+                parser_version if parser_version.startswith("human-correction-") else PARSER_VERSION
+            ),
             correction_source_revision_id=(
                 None
                 if "correctionSourceRevisionId" not in payload
@@ -350,8 +362,10 @@ def encode_chunks_artifact(revision_id: str, chunks: tuple[ChunkDraft, ...]) -> 
         raise ArtifactIntegrityError("chunk artifact source hash is not exact")
     source_hash = _digest(next(iter(source_hashes)))
     document_id = DocumentId(_text(next(iter(document_ids)), maximum=256))
-    parser_version = _parser_version(next(iter(parser_versions)))
-    if str(revision_id_for(document_id, source_hash, parser_version)) != revision_id:
+    parser_version = _revision_parser_version(
+        document_id, source_hash, revision_id, next(iter(parser_versions))
+    )
+    if parser_version is None:
         raise ArtifactIntegrityError("chunk artifact revision provenance is inconsistent")
     payload = b"".join(_canonical_line(_chunk_payload(chunk, revision_id)) for chunk in chunks)
     header = {
@@ -735,11 +749,35 @@ def _safe_path_segment(value: str) -> str:
     return value
 
 
+_MANAGED_CHUNKS_VERSION = "managed-chunks-v1"
+
+
 def _parser_version(value: object) -> str:
     version = _text(value, maximum=128)
     if (
-        version != PARSER_VERSION
+        version not in {PARSER_VERSION, _MANAGED_CHUNKS_VERSION}
         and re.fullmatch(r"human-correction-[0-9a-f]{64}", version) is None
     ):
         raise ArtifactIntegrityError("unsupported parser provenance")
     return version
+
+
+def _revision_parser_version(
+    document_id: DocumentId, source_hash: str, revision_id: str, declared: object
+) -> str | None:
+    """Return the known parser provenance that derives exactly this revision."""
+    candidates = [PARSER_VERSION, _MANAGED_CHUNKS_VERSION]
+    try:
+        declared_version = _parser_version(declared)
+    except ArtifactIntegrityError:
+        declared_version = None
+    if declared_version is not None and declared_version not in candidates:
+        candidates.insert(0, declared_version)
+    return next(
+        (
+            version
+            for version in candidates
+            if str(revision_id_for(document_id, source_hash, version)) == revision_id
+        ),
+        None,
+    )

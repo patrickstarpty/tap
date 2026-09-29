@@ -60,6 +60,7 @@ class KnowledgeReviewHttpService:
         scope: ProjectScopeContext,
         authorization_policy: AuthorizationPolicy,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        ready_sources: Callable[[], Awaitable[PublishedKnowledgeSourcePage]] | None = None,
         source_impact_notifier: (
             Callable[[tuple[str, ...], str, str, datetime], Awaitable[object]] | None
         ) = None,
@@ -69,6 +70,7 @@ class KnowledgeReviewHttpService:
         self._authorization_policy = authorization_policy
         self._clock = clock
         self._source_impact_notifier = source_impact_notifier
+        self._ready_sources = ready_sources
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -196,6 +198,8 @@ class KnowledgeReviewHttpService:
         return _publication_detail(await self._application.current_publication())
 
     async def list_published_sources(self) -> PublishedKnowledgeSourcePage:
+        if self._ready_sources is not None:
+            return await self._ready_sources()
         return PublishedKnowledgeSourcePage(
             items=[
                 PublishedKnowledgeSource(
@@ -213,6 +217,9 @@ class KnowledgeReviewHttpService:
                 for item in await self._application.list_published_sources(now=self._clock())
             ]
         )
+
+    async def read_original(self, review_id: str, item_id: str) -> tuple[bytes, str]:
+        return await self._application.read_original(review_id, item_id)
 
     async def compare_review_item(
         self, review_id: str, item_id: str

@@ -74,6 +74,7 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.adapters.milvus.transport import MilvusReader, PyMilvusReader
     from tap.modules.knowledge.adapters.milvus_documents import MilvusDocumentIndex
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
+    from tap.modules.knowledge.adapters.mysql_managed_chunks import MysqlManagedChunks
     from tap.modules.knowledge.adapters.mysql_projection import MysqlProjectionCoordinator
     from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
     from tap.modules.knowledge.application.ingestion import IngestionStageHook
@@ -770,10 +771,17 @@ async def create_api_runtime(
         )
         scope_provider, authorization_policy = _create_validation_authority(engine)
         asset_catalog = await _create_asset_catalog(engine, repository.scope)
+        from tap.modules.knowledge.adapters.managed_chunk_search import ManagedChunkSearch
+
+        chunk_index = await _create_document_index(settings, engine)
+        resources.push(chunk_index)
+        chunk_manager = _create_chunk_manager(
+            settings, engine, repository, artifacts, embeddings, chunk_index
+        )
         services = _assemble_http_services(
             repository=repository,
             artifacts=artifacts,
-            search=search,
+            search=ManagedChunkSearch(search, chunk_manager),
             embeddings=embeddings,
             readiness=readiness,
             redactor=PatternEgressRedactor(),
@@ -788,11 +796,9 @@ async def create_api_runtime(
             parser_socket=settings.parser_socket,
             corpus_version=settings.corpus_version,
         )
+        services = replace(services, chunk_manager=chunk_manager)
         if settings.insights_base_url:
-            if (
-                services.insights_knowledge_search is None
-                or services.insights_publication_authority is None
-            ):
+            if services.insights_knowledge_search is None:
                 raise ValueError("Insights knowledge evidence authority is unavailable")
             from tap.interfaces.http.insights_explanation_runtime import (
                 ConfiguredInsightsExplanation,
@@ -830,7 +836,8 @@ async def create_api_runtime(
                     knowledge_evidence_factory=lambda selection: PublishedKnowledgeEvidence(
                         searches=cast(AnswerService, services.insights_knowledge_search),
                         publication_authority=cast(
-                            PublishedKnowledgeAuthority, services.insights_publication_authority
+                            PublishedKnowledgeAuthority | None,
+                            services.insights_publication_authority,
                         ),
                         selection=selection,
                     ),
@@ -869,7 +876,7 @@ async def create_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
         # projection coordinator.  Register only this complete aggregate.
         resources.push(index)
         stage_hook = _create_stage_controller(settings, redis)
-        return _assemble_worker_runtime(
+        runtime = _assemble_worker_runtime(
             settings=settings,
             repository=repository,
             artifacts=artifacts,
@@ -879,9 +886,39 @@ async def create_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
             resources=resources,
             stage_hook=stage_hook,
         )
+        manager = _create_chunk_manager(settings, engine, repository, artifacts, embeddings, index)
+        return replace(runtime, pending_work=manager.run_pending)
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("worker resource settlement unexpectedly returned")
+
+
+def _create_chunk_manager(
+    settings: TapperSettings,
+    engine: AsyncEngine,
+    repository: MysqlDocumentRepository,
+    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
+    embeddings: TapperEmbeddingPort,
+    index: MilvusDocumentIndex,
+) -> MysqlManagedChunks:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from tap.modules.knowledge.adapters.isolated_parser import IsolatedParser
+    from tap.modules.knowledge.adapters.mysql_managed_chunks import MysqlManagedChunks
+    from tap.modules.knowledge.ports.documents import ArtifactStore
+
+    return MysqlManagedChunks(
+        sessions=async_sessionmaker(engine, expire_on_commit=False),
+        repository=repository,
+        scope=repository.scope,
+        artifacts=cast(ArtifactStore, artifacts),
+        embeddings=embeddings,
+        index=index,
+        embedding_model_alias=settings.embedding_alias,
+        embedding_dimension=settings.embedding_dimension,
+        index_version=settings.index_version,
+        parser=IsolatedParser(settings.parser_socket),
+    )
 
 
 def _create_stage_controller(
@@ -1047,6 +1084,7 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
                 scope=scope,
                 model_alias=settings.chat_alias,
                 model_mapping=_test_design_model_mapping(settings),
+                knowledge_requires_publication=False,
             ),
             generator=generator,
             scope=scope,
@@ -1129,6 +1167,17 @@ def _create_redis(settings: TapperSettings) -> Redis:
 
 async def _redact_model_context(text: str) -> str:
     return await PatternEgressRedactor(max_chars=262144).redact_text(text)
+
+
+def _gated_ready_sources(list_sources, flowchart_gate, project_id: str):
+    """Hide flowchart images from chat sources until their review is published."""
+    if flowchart_gate is None:
+        return list_sources
+
+    async def gated():
+        return await flowchart_gate.filter_sources(project_id, await list_sources())
+
+    return gated
 
 
 def _answer_planner(models: KnowledgeModelGateway):
@@ -1661,15 +1710,20 @@ def _assemble_http_services(
 
     review_repository = None
     publication_authority = None
+    flowchart_gate = None
     if review_sessions is not None:
         from tap.modules.knowledge.adapters.mysql_review import MysqlKnowledgeReviewRepository
-        from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+        from tap.modules.knowledge.application.publication import (
+            FlowchartPublicationGate,
+            PublishedKnowledgeAuthority,
+        )
 
         review_repository = MysqlKnowledgeReviewRepository(
             review_sessions,
             scope=repository.scope,  # type: ignore[arg-type]
         )
-        publication_authority = PublishedKnowledgeAuthority(review_repository)
+        # Chunks index directly; flowchart images still answer only after review.
+        flowchart_gate = FlowchartPublicationGate(PublishedKnowledgeAuthority(review_repository))
 
     documents = DocumentService(repository=document_repository, artifacts=artifact_store)
     knowledge = KnowledgeAPI(
@@ -1683,12 +1737,14 @@ def _assemble_http_services(
         ),
         redactor=redactor,
         publication_authority=publication_authority,
+        flowchart_gate=flowchart_gate,
     )
     answer_service = AnswerService(
         repository=cast(AnswerSnapshotRepository, repository),
         knowledge=knowledge,
         corpus_version=corpus_version,
         publication_authority=publication_authority,
+        flowchart_gate=flowchart_gate,
     )
     search_service = answer_service
     citations = CitationResolver(
@@ -1726,12 +1782,14 @@ def _assemble_http_services(
                 scope=repository.scope,  # type: ignore[arg-type]
                 model_alias=embeddings.chat_alias,
                 model_mapping=test_design_model_mapping,
+                knowledge_requires_publication=False,
             )
         )
     knowledge_reviews = None
     if review_sessions is not None:
         from tap.interfaces.http.knowledge_review_service import KnowledgeReviewHttpService
         from tap.modules.knowledge.adapters.isolated_parser import IsolatedParser
+        from tap.modules.knowledge.adapters.mysql_ready_sources import MysqlReadySources
         from tap.modules.knowledge.adapters.mysql_review import (
             MysqlApprovedProjectionVerifier,
         )
@@ -1750,6 +1808,11 @@ def _assemble_http_services(
             ),
             scope=repository.scope,
             authorization_policy=authorization_policy,
+            ready_sources=_gated_ready_sources(
+                MysqlReadySources(review_sessions, repository.scope).list_sources,
+                flowchart_gate,
+                repository.scope.project_id,
+            ),
             source_impact_notifier=(
                 None if test_plans is None else test_plans.mark_knowledge_sources_changed
             ),

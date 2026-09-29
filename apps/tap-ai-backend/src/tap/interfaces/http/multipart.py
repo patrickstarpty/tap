@@ -23,7 +23,7 @@ MAX_BODY = MAX_FILE + 64 * 1024
 
 class BoundedMultipartParser(MultiPartParser):
     def __init__(self, request: Request) -> None:
-        super().__init__(request.headers, self._stream(request), max_files=1, max_fields=0)
+        super().__init__(request.headers, self._stream(request), max_files=1, max_fields=1)
         self.file_bytes = 0
         self.header_bytes = 0
         self.header_count = 0
@@ -103,13 +103,16 @@ class BoundedMultipartParser(MultiPartParser):
         name = params.get(b"name", b"").decode("utf-8", errors="strict")
         if _authority_key(name):
             raise AuthorizationDenied("caller-authority-forbidden")
-        if disposition != b"form-data" or name != "upload" or b"filename" not in params:
+        if disposition != b"form-data" or not (
+            (name == "upload" and b"filename" in params)
+            or (name == "settings" and b"filename" not in params)
+        ):
             raise InvalidDocumentUpload()
         super().on_headers_finished()
 
     def on_part_data(self, data: bytes, start: int, end: int) -> None:
         self.file_bytes += end - start
-        if self.file_bytes > MAX_FILE:
+        if self.file_bytes > (MAX_FILE if self._current_part.file is not None else 8192):
             raise InvalidDocumentUpload("document-too-large")
         super().on_part_data(data, start, end)
 
@@ -124,7 +127,7 @@ class BoundedMultipartParser(MultiPartParser):
 class BoundedUploadRoute(APIRoute):
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         original = super().get_route_handler()
-        if self.endpoint.__name__ not in {"upload_document", "upload_source"}:
+        if self.endpoint.__name__ not in {"upload_document", "upload_source", "preview_upload"}:
             return original
 
         async def bounded(request: Request) -> Response:
@@ -156,7 +159,12 @@ class BoundedUploadRoute(APIRoute):
                 parser = BoundedMultipartParser(request)
                 async with asyncio.timeout(30):
                     request._form = await parser.parse()  # bounded cache shared with dependencies
-                if not parser.ended or len(request._form.multi_items()) != 1:
+                if (
+                    not parser.ended
+                    or len(request._form.getlist("upload")) != 1
+                    or len(request._form.getlist("settings")) > 1
+                    or len(request._form.multi_items()) not in {1, 2}
+                ):
                     raise InvalidDocumentUpload()
                 return await original(request)
             except (MultiPartException, MultipartParseError, UnicodeError, TimeoutError):

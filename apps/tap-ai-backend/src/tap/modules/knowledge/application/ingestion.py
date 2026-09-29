@@ -882,10 +882,13 @@ def _closed_parser_code(code: str) -> str:
 
 
 def _deletion_target(work: IngestionWork) -> DeletionTarget:
+    # Managed generations reference the immutable original owned by an older
+    # revision. Keep that historical artifact; adapters enforce revision ownership.
+    original_locator = None if work.parser_version == "managed-chunks-v1" else work.original_locator
     locators = tuple(
         locator
         for locator in (
-            work.original_locator,
+            original_locator,
             work.normalized_locator,
             work.chunks_locator,
             work.embeddings_locator,

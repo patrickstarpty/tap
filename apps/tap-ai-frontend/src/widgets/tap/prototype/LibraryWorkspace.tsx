@@ -1,3 +1,8 @@
+import { UploadChunkPreview } from "../../../features/knowledge/components/UploadChunkPreview";
+import {
+  DEFAULT_CHUNK_SETTINGS,
+  type ChunkSettings,
+} from "../../../features/knowledge/api/chunks";
 import {
   AppstoreOutlined,
   BarsOutlined,
@@ -35,7 +40,7 @@ type LibraryStatusFilter = "all" | LibrarySource["status"];
 
 interface LibraryWorkspaceProps {
   copy: PrototypeCopy;
-  onAddSource?: (file: File) => Promise<void> | void;
+  onAddSource?: (file: File, settings?: ChunkSettings) => Promise<void> | void;
   onInspectSource?: (sourceId: string, opener: HTMLElement) => void;
   sources: readonly LibrarySource[];
   loadState?: "loading" | "loaded" | "error";
@@ -262,9 +267,11 @@ export function LibraryWorkspace({
     selectMode(currentMode === "list" ? "graph" : "list");
   };
 
+  const [chunkSettings, setChunkSettings] = useState(DEFAULT_CHUNK_SETTINGS);
   const openAddDialog = (event: MouseEvent<HTMLElement>) => {
     addDialogTriggerRef.current = event.currentTarget;
     setSelectedFile(null);
+    setChunkSettings(DEFAULT_CHUNK_SETTINGS);
     setUploadFailed(false);
     setAddDialogOpen(true);
   };
@@ -282,7 +289,10 @@ export function LibraryWorkspace({
     setUploadPending(true);
     setUploadFailed(false);
     try {
-      await onAddSource(selectedFile);
+      await onAddSource(
+        selectedFile,
+        graphProjectId ? chunkSettings : undefined,
+      );
       setSelectedFile(null);
       setAddDialogOpen(false);
     } catch {
@@ -573,12 +583,21 @@ export function LibraryWorkspace({
                 type="file"
                 disabled={uploadPending}
                 aria-label={copy.library.sourceFile}
-                accept=".pdf,.docx,.md,.txt"
+                accept=".pdf,.docx,.xlsx,.md,.markdown,.txt"
                 onChange={(event) =>
                   setSelectedFile(event.target.files?.item(0) ?? null)
                 }
               />
             </label>
+            {graphProjectId && selectedFile && (
+              <UploadChunkPreview
+                key={`${selectedFile.name}:${selectedFile.lastModified}`}
+                projectId={graphProjectId}
+                file={selectedFile}
+                value={chunkSettings}
+                onChange={setChunkSettings}
+              />
+            )}
             {uploadFailed ? <p role="alert">{copy.library.failed}</p> : null}
             <div className="tap-dialog-actions">
               <Button disabled={uploadPending} onClick={closeAddDialog}>

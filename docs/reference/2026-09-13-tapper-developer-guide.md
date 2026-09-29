@@ -1,5 +1,7 @@
 # Tapper 开发者指南
 
+首次上手请先阅读按 2026-09-27 实现整理的[前端指引](2026-09-27-frontend-developer-onboarding.md)或[后端指引](2026-09-27-backend-developer-onboarding.md)。本文保留领域调用链与扩展规则；当前验收状态以[联合交付门禁](../reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md)为准。
+
 本文面向继续开发 TAP 内部 AI Chatbot、Knowledge Graph 和 AI Test Design 的工程人员。它是任务导航，不替代架构、契约、ADR、实施计划或 Gate Review。
 
 ## 1. 当前基线

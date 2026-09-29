@@ -7,7 +7,7 @@
     "linux/arm64": {"manifest_digest": "sha256:34b27ac66ecf318887b55ea3c71f0db9307895efe631210231a66cc3fa130cf9", "wheel_tag": "manylinux2014_aarch64"},
     "linux/amd64": {"manifest_digest": "sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6", "wheel_tag": "manylinux2014_x86_64"}
   },
-  "packages": ["pypdf", "python-docx", "lxml", "typing-extensions", "pillow"],
+  "packages": ["pypdf", "python-docx", "lxml", "typing-extensions", "openpyxl", "et-xmlfile", "pillow"],
   "sources": [
     "apps/tap-ai-backend/src/tap/__init__.py",
     "apps/tap-ai-backend/src/tap/modules/access/domain/context.py",

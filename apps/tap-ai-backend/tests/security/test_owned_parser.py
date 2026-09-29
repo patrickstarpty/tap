@@ -501,3 +501,32 @@ def test_actual_dev_launcher_cold_restart_reconciles_persisted_owner(tmp_path):
                 break
             time.sleep(0.1)
         assert not existing.intersection(owned_pids), "owned launcher children remain"
+
+
+def test_owned_parser_xlsx_preserves_cells_and_marks_display_semantics():
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "业务规则"
+    sheet.append(["规则", "比例"])
+    sheet.append(["申请提交前核验身份", 0.05])
+    sheet["B2"].number_format = "0%"
+    payload = BytesIO()
+    workbook.save(payload)
+    with isolated_parser() as owned:
+
+        async def check():
+            result = await IsolatedParser(owned.socket_path).parse(
+                source("rules.xlsx", MediaType.XLSX.value, payload.getvalue())
+            )
+            assert any("申请提交前核验身份" in block.text for block in result.blocks)
+            assert any("业务规则" in block.heading_path for block in result.blocks)
+            assert any(
+                item.reason == "cell-display-format-not-rendered" and "B2" in item.locator
+                for item in result.parse_inventory
+            )
+
+        asyncio.run(check())

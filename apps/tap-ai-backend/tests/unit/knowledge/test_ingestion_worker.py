@@ -1452,3 +1452,20 @@ async def test_legacy_inflight_ready_reconciles_receipts_before_completion():
     assert repository.commits == [JobStage.READY]
     assert index.upsert_calls == 2
     assert embeddings.calls == original_calls
+
+
+@pytest.mark.asyncio
+async def test_managed_revision_deletion_preserves_original_owned_by_history() -> None:
+    worker, repository, artifacts, _, index, _ = worker_parts(kind=JobKind.DELETION)
+    repository.work = replace(
+        repository.work,
+        parser_version="managed-chunks-v1",
+        normalized_locator=ArtifactLocator("artifact:normalized"),
+        chunks_locator=ArtifactLocator("artifact:chunks"),
+        embeddings_locator=ArtifactLocator("artifact:embeddings"),
+    )
+    result = await worker.run_once(limit=1)
+    assert result.deleted == 1
+    assert index.events[:3] == ["fence-index", "delete-index", "negative-probe"]
+    assert artifacts.deleted == {"artifact:normalized", "artifact:chunks", "artifact:embeddings"}
+    assert "artifact:original" in artifacts.values

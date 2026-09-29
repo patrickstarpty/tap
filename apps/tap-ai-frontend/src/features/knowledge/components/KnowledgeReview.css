@@ -1,0 +1,79 @@
+.tapper-review-tools,
+.tapper-review-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.tapper-review-tools > .ant-input {
+  flex: 1 1 240px;
+  max-width: 420px;
+}
+
+.tapper-review-range {
+  font-variant-numeric: tabular-nums;
+}
+
+.tapper-review-hint {
+  color: var(--tap-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.tapper-review-list .ant-btn {
+  height: auto;
+  min-height: 36px;
+  white-space: normal;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.tapper-review-list [aria-current="true"] {
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent-dark);
+}
+
+.tapper-review-navigation > span,
+.tapper-review-quote {
+  overflow-wrap: anywhere;
+}
+
+.tapper-review-quote {
+  margin: 0;
+  padding: 12px;
+  background: var(--tap-soft);
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.tapper-review-comparison article pre::selection {
+  color: var(--tap-ink);
+  background: var(--tap-accent-line);
+}
+
+.tapper-review-decision > .tapper-review-hint,
+.tapper-review-decision > .tapper-review-quote {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 640px) {
+  .tapper-review-tools > .ant-input {
+    max-width: none;
+    flex-basis: 100%;
+  }
+
+  .tapper-review-tools .ant-btn,
+  .tapper-review-navigation .ant-btn {
+    min-height: 44px;
+  }
+}
+
+.tapper-review-list {
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--tap-line-strong) var(--tap-soft);
+}

@@ -52,6 +52,7 @@ from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 PublicMediaType = Literal[
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "text/markdown",
     "text/plain",
     "image/png",
@@ -99,7 +100,14 @@ class DocumentService:
             raise DocumentParseRejected("empty-document")
         try:
             reservation = await self._repository.reserve_upload(
-                replace(ReserveUpload.from_staged(staged, now=self._clock()), command=command)
+                replace(
+                    ReserveUpload.from_staged(staged, now=self._clock()),
+                    command=command,
+                    # Flowchart images are corrected through review, never chunk editing.
+                    chunk_settings=None
+                    if media_type in {MediaType.PNG, MediaType.JPEG}
+                    else getattr(upload, "chunk_settings", None),
+                )
             )
         except BaseException as error:
             try:

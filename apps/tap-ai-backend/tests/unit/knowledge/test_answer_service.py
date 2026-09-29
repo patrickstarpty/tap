@@ -844,3 +844,36 @@ async def test_canonical_source_expands_documents_and_preserves_document_chunk_i
         (ref.source_id, ref.requested_revision) for ref in gateway.requests[0].resource_refs
     ] == [(source_id, "rev_a"), (source_id, "rev_b")]
     assert repository.snapshots[0].citations[0].document_id == "doc_a"
+
+
+@pytest.mark.asyncio
+async def test_unpublished_flowchart_images_are_refused_while_text_sources_answer_directly():
+    from test_flowchart_publication_gate import gate, publication
+
+    text = ready()
+    image = replace(
+        ready("doc_b", "rev_b", SECOND_HASH), filename="flow.png", source_name="flow.png"
+    )
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    repository = MemoryAnswerRepository((text, image))
+    repository.scope = VALIDATION_SCOPE  # type: ignore[attr-defined]
+    unpublished = AnswerService(
+        repository=repository, knowledge=Gateway(None), flowchart_gate=gate()
+    )
+
+    rows, _policy = await unpublished.resolve_conversation_selection(("rev_a",))
+    assert rows == (text,)
+    with pytest.raises(DocumentStateChanged, match="published review"):
+        await unpublished.resolve_conversation_selection(("rev_a", "rev_b"))
+    with pytest.raises(DocumentStateChanged, match="published review"):
+        await unpublished.authorize_frozen_selection((text, image))
+
+    published = AnswerService(
+        repository=repository,
+        knowledge=Gateway(None),
+        flowchart_gate=gate(publication("rev_b")),
+    )
+    rows, _policy = await published.resolve_conversation_selection(("rev_a", "rev_b"))
+    assert {row.revision_id for row in rows} == {"rev_a", "rev_b"}
+    await published.authorize_frozen_selection((text, image))

@@ -10,7 +10,7 @@ from tap_platform.insights.adapters.clickhouse import (
     ClickHouseInsightsStore,
     ProjectionBatch,
 )
-from tap_platform.insights.adapters.junit import PARSER_VERSION, parse_junit
+from tap_platform.insights.adapters.report_parser import parse_report, parser_version
 from tap_platform.insights.domain.projection import (
     PROJECTION_PAYLOAD_VERSION,
     ProjectionReservation,
@@ -22,6 +22,7 @@ from tap_platform.insights.domain.reports import (
     ReportReceipt,
     ReportState,
     TestAttemptFact,
+    legacy_v1_fact_key,
     logical_attempt_key,
     attempt_content_checksum,
 )
@@ -167,12 +168,12 @@ class ProjectionRebuilder:
                 or hashlib.sha256(raw).hexdigest() != receipt.checksum
             ):
                 raise RuntimeError("raw object integrity mismatch during rebuild")
-            if receipt.parser_version != PARSER_VERSION:
+            if receipt.parser_version != parser_version(manifest):
                 raise RuntimeError(
                     "unsupported recorded parser version during rebuild: "
                     f"{receipt.parser_version}"
                 )
-            attempts = parse_junit(raw, manifest)
+            attempts = parse_report(raw, manifest, receipt.parser_version)
             semantic = _semantic_projection(receipt, manifest, attempts)
             semantic_batches.append(semantic)
             coordinator._project(
@@ -305,24 +306,7 @@ def _semantic_projection_v1(
     semantic = _semantic_projection(receipt, manifest, attempts)
     keys: dict[str, str] = {}
     for row, fact in zip(semantic["attempts"], attempts, strict=True):
-        old_key = _checksum(
-            [
-                receipt.project_id,
-                receipt.source_id,
-                receipt.external_run_id,
-                receipt.batch_id,
-                receipt.shard_id,
-                manifest.application_commit,
-                manifest.script_commit,
-                manifest.environment,
-                manifest.configuration,
-                manifest.timezone,
-                receipt.correction_no,
-                fact.stable_test_id or fact.source_test_identity,
-                fact.data_row,
-                fact.attempt,
-            ]
-        )
+        old_key = legacy_v1_fact_key(receipt, manifest, fact)
         keys[str(row["fact_key"])] = old_key
         row["fact_key"] = old_key
         del row["fact_checksum"]

@@ -228,6 +228,76 @@ it("offers a multi-document published Source only once", async () => {
   ).toHaveLength(1);
 });
 
+it("opens flowchart review instead of chunk management for an image document", async () => {
+  const api = fakeKnowledgeClient();
+  const source = {
+    sourceId: "src_" + "b".repeat(32),
+    name: "Approval flow",
+    documentCount: 2,
+    readyCount: 2,
+    failedCount: 0,
+    createdAt: "2026-09-08T00:00:00Z",
+  };
+  api.listSources = vi
+    .fn()
+    .mockResolvedValue({ items: [source], nextCursor: null });
+  api.getSource = vi.fn().mockResolvedValue({
+    ...source,
+    documents: {
+      items: [
+        {
+          ...documentDetail({
+            documentId: "doc_flow",
+            filename: "approval-flow.png",
+            status: "ready",
+            revisionId: "rev_flow",
+          }),
+          sourceId: source.sourceId,
+          attempt: 1,
+        },
+        {
+          ...documentDetail({
+            documentId: "doc_text",
+            filename: "rules.md",
+            status: "ready",
+            revisionId: "rev_text",
+          }),
+          sourceId: source.sourceId,
+          attempt: 1,
+        },
+      ],
+      nextCursor: null,
+    },
+  });
+  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    api,
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Library" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "View Approval flow" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Approval flow" });
+
+  expect(
+    await within(dialog).findByRole("button", {
+      name: "管理切片 rules.md",
+    }),
+  ).toBeVisible();
+  expect(
+    within(dialog).queryByRole("button", {
+      name: "管理切片 approval-flow.png",
+    }),
+  ).toBeNull();
+  await userEvent.click(
+    within(dialog).getByRole("button", {
+      name: "审核流程图 approval-flow.png",
+    }),
+  );
+  expect(
+    await within(dialog).findByRole("region", { name: "业务审核" }),
+  ).toBeVisible();
+});
+
 it("shows Source documents in Library and targets retry and confirmed deletion", async () => {
   const api = fakeKnowledgeClient();
   const source = {
@@ -280,10 +350,10 @@ it("shows Source documents in Library and targets retry and confirmed deletion",
   });
   expect(await within(dialog).findByText("failed.txt")).toBeVisible();
   await userEvent.click(
-    within(dialog).getByRole("button", { name: "Review failed.txt" }),
+    within(dialog).getByRole("button", { name: "管理切片 failed.txt" }),
   );
   expect(
-    await within(dialog).findByRole("heading", { name: "业务审核" }),
+    await within(dialog).findByRole("heading", { name: "切片管理" }),
   ).toBeVisible();
   await userEvent.click(
     within(dialog).getByRole("button", { name: "Retry failed.txt" }),

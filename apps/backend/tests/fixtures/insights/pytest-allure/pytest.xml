@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="1" tests="4" time="0.022" timestamp="2026-09-27T20:01:15.129502+08:00" hostname="synthetic-runner"><testcase classname="sample_business" name="test_payment[card]" time="0.002" /><testcase classname="sample_business" name="test_payment[cash]" time="0.001" /><testcase classname="sample_business" name="test_identity_required" time="0.001"><failure message="AssertionError: Synthetic missing identity evidence&#10;assert False">def test_identity_required():
+        with allure.step('Validate identity'):
+            allure.attach(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='), 'Synthetic diagnostic image', allure.attachment_type.PNG)
+&gt;           assert False, 'Synthetic missing identity evidence'
+E           AssertionError: Synthetic missing identity evidence
+E           assert False
+
+sample_business.py:19: AssertionError</failure></testcase><testcase classname="sample_business" name="test_unavailable" time="0.000"><skipped type="pytest.skip" message="Synthetic unavailable dependency">/private/tmp/tap-allure-generated/sample_business.py:21: Synthetic unavailable dependency</skipped></testcase></testsuite></testsuites>

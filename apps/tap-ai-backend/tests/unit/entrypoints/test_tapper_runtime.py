@@ -1004,7 +1004,10 @@ def test_http_readiness_uses_injected_service_and_keeps_http_200_for_unready() -
     assert readiness.calls == 1
 
 
-def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> None:
+@pytest.mark.parametrize("keep_review_history", [False, True])
+def test_api_graph_reuses_one_repository_and_blob_across_existing_services(
+    keep_review_history,
+) -> None:
     """The composition root must assemble the approved graph, not a parallel RAG stack."""
 
     repository = SimpleNamespace(scope=VALIDATION_SCOPE)
@@ -1025,6 +1028,7 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
         redactor=redactor,
         scope_provider=scope_provider,
         authorization_policy=authorization_policy,
+        review_sessions=object() if keep_review_history else None,
     )
 
     assert services.readiness is readiness
@@ -1046,6 +1050,18 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
     assert retrieval._policy_verifier._authorization_policy is authorization_policy
     assert retrieval._policy_verifier._repository is repository
     assert retrieval._redactor is redactor
+    from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
+
+    # Keeping old review records must not require an approval for ready knowledge.
+    asyncio.run(
+        answers.authorize_frozen_selection(
+            (
+                ReadyDocumentRevision(
+                    "document", "revision", "sha256:" + "a" * 64, "src_" + "1" * 32
+                ),
+            )
+        )
+    )
 
 
 def test_review_graph_uses_configured_isolated_parser() -> None:
@@ -1127,6 +1143,7 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     )
     search = Resource("search")
     models_probe = Resource("models-probe")
+    chunk_index = Resource("chunk-index")
     readiness = object()
 
     async def create_database(_settings):  # type: ignore[no-untyped-def]
@@ -1140,6 +1157,11 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
     monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
     monkeypatch.setattr(module, "_create_search", create_search)
+
+    async def create_index(_settings, _engine):
+        return chunk_index
+
+    monkeypatch.setattr(module, "_create_document_index", create_index)
     monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: models_probe)
     monkeypatch.setattr(
         module,
@@ -1159,7 +1181,12 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     assert runtime.failure_controller is None
     await runtime.aclose()
     await runtime.aclose()
-    assert events == ["models-probe", "search", "model", "redis", "blob", "engine"]
+    assert runtime.http_services.chunk_manager.index is chunk_index
+    assert runtime.http_services.chunk_manager.repository is repository
+    search_adapter = runtime.http_services.knowledge._answers._knowledge._retrieval._search
+    assert search_adapter.search_port is search
+    assert search_adapter.authority is runtime.http_services.chunk_manager
+    assert events == ["chunk-index", "models-probe", "search", "model", "redis", "blob", "engine"]
 
 
 @pytest.mark.asyncio
@@ -1187,6 +1214,7 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
     redis = RedisResource()
     model = object()
     search = Resource()
+    chunk_index = Resource()
 
     async def database(_settings):  # type: ignore[no-untyped-def]
         return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
@@ -1199,6 +1227,11 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
     monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
     monkeypatch.setattr(module, "_create_search", create_search)
+
+    async def create_index(_settings, _engine):
+        return chunk_index
+
+    monkeypatch.setattr(module, "_create_document_index", create_index)
     monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: None)
     monkeypatch.setattr(module, "_create_readiness", lambda **_kwargs: object())
 

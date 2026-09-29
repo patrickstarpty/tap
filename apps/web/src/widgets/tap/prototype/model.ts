@@ -27,7 +27,7 @@ export type ProductModule =
   | "library"
   | "test-management"
   | "low-code"
-  | "test-analytics";
+  | "test-insights";
 
 export type TapperSurface = "chat" | "agents" | "skills" | "library";
 
