@@ -68,6 +68,12 @@ function createTwoConversations() {
   advance(1800);
   fireEvent.click(screen.getByRole("button", { name: "New chat" }));
   send(BDD_REQUEST);
+  // The prototype seeds sample chat history, so a newly created chat can
+  // land past the first history page; reveal the rest before locating it.
+  const loadMore = within(history()).queryByRole("button", {
+    name: "Load more",
+  });
+  if (loadMore !== null) fireEvent.click(loadMore);
 }
 
 describe("chat history controls", () => {
@@ -180,7 +186,12 @@ describe("chat history controls", () => {
       screen.getByRole("heading", { name: "What can I do for you?" }),
     ).toBeVisible();
     expect(userMessages()).toEqual([]);
-    expect(screen.queryByRole("navigation", { name: "Chat history" })).toBeNull();
+    expect(
+      within(history()).queryByRole("button", { name: BDD_REQUEST }),
+    ).toBeNull();
+    expect(
+      within(history()).queryByRole("button", { name: HEALTH_QUESTION }),
+    ).toBeNull();
   });
 
   it("filters chat history by title without case sensitivity", () => {
@@ -198,7 +209,7 @@ describe("chat history controls", () => {
       within(history()).queryByRole("button", { name: HEALTH_QUESTION }),
     ).toBeNull();
 
-    fireEvent.change(search, { target: { value: "claims" } });
+    fireEvent.change(search, { target: { value: "zzznomatch" } });
     expect(within(history()).getByText("No matching chats")).toBeVisible();
   });
 });

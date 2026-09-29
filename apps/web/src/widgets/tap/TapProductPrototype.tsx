@@ -62,6 +62,7 @@ import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
 import { SAMPLE_REPRESENTATIVE_SOURCES } from "./prototype/sampleKnowledge";
 import { SAMPLE_FILES } from "./prototype/sampleFiles";
+import { SAMPLE_CONVERSATIONS } from "./prototype/sampleConversations";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import {
   resolveComposerAttachments,
@@ -484,7 +485,11 @@ export function TapProductPrototype() {
     () => window.matchMedia("(max-width: 1100px)").matches,
   );
   const [conversations, setConversations] = useState<readonly Conversation[]>(
-    () => initialSnapshot?.conversations ?? [createConversation("chat-1")],
+    () =>
+      initialSnapshot?.conversations ?? [
+        createConversation("chat-1"),
+        ...SAMPLE_CONVERSATIONS,
+      ],
   );
   const [activeConversationId, setActiveConversationId] = useState(
     () => initialSnapshot?.activeConversationId ?? "chat-1",
@@ -511,7 +516,12 @@ export function TapProductPrototype() {
   >(() => initialSnapshot?.library?.localSources ?? []);
   const nextConversationId = useRef(
     nextNumericId(
-      (initialSnapshot?.conversations ?? [createConversation("chat-1")]).map(
+      (
+        initialSnapshot?.conversations ?? [
+          createConversation("chat-1"),
+          ...SAMPLE_CONVERSATIONS,
+        ]
+      ).map(
         ({ id }) => id,
       ),
       "chat",
@@ -1095,9 +1105,10 @@ export function TapProductPrototype() {
       ),
     );
 
-  const deleteConversation = (conversationId: string) => {
+  const deleteConversation = (conversationId: string): boolean => {
     const deleted = conversations.find(({ id }) => id === conversationId);
-    if (deleted === undefined) return;
+    if (deleted === undefined) return true;
+    if (takePrototypeFault("conversation-delete-failed")) return false;
     for (const turn of deleted.turns) {
       clearTimeout(answerTimers.current.get(turn.id));
       answerTimers.current.delete(turn.id);
@@ -1115,7 +1126,7 @@ export function TapProductPrototype() {
       setConversations((current) =>
         current.filter(({ id }) => id !== conversationId),
       );
-      return;
+      return true;
     }
     const id = `chat-${nextConversationId.current++}`;
     setMessageDraft("");
@@ -1130,6 +1141,7 @@ export function TapProductPrototype() {
     ]);
     setActiveConversationId(id);
     setActiveModule("tapper");
+    return true;
   };
 
   const uploadAttachment = (file: File) => {

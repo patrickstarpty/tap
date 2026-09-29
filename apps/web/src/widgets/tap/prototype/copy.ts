@@ -18,6 +18,10 @@ export interface PrototypeCopy {
     localWorkspace: string;
     searchChats: string;
     noMatchingChats: string;
+    historyLoadFailed: string;
+    retry: string;
+    loadMore: string;
+    deleteFailed: string;
     moreOptionsFor: string;
     renameChat: string;
     deleteChat: string;
@@ -339,6 +343,10 @@ export const PROTOTYPE_COPY = {
       localWorkspace: "Local workspace",
       searchChats: "Search chats",
       noMatchingChats: "No matching chats",
+      historyLoadFailed: "Chat history could not be loaded.",
+      retry: "Retry",
+      loadMore: "Load more",
+      deleteFailed: "The chat could not be deleted. Please try again.",
       moreOptionsFor: "More options for {title}",
       renameChat: "Rename",
       deleteChat: "Delete",
@@ -679,6 +687,10 @@ export const PROTOTYPE_COPY = {
       localWorkspace: "本地工作区",
       searchChats: "搜索对话",
       noMatchingChats: "没有匹配的对话",
+      historyLoadFailed: "历史加载失败。",
+      retry: "重试",
+      loadMore: "加载更多",
+      deleteFailed: "删除失败，请重试。",
       moreOptionsFor: "更多操作：{title}",
       renameChat: "重命名",
       deleteChat: "删除",
