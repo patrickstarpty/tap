@@ -623,3 +623,128 @@ def test_mutations_persist_reindex_and_fence_old_revisions(owned_project_mysql, 
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_source_delete_survives_a_managed_revision_published_after_its_snapshot(
+    owned_project_mysql,
+):
+    async def run():
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        artifacts, embeddings, index = Artifacts(), Embeddings(), Index()
+        try:
+            content = "Original alpha paragraph.\n\nSecond beta paragraph."
+            source_hash = canonical_sha256(content.encode())
+            artifacts.values["artifact:original"] = content.encode()
+            reserved = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="race.md",
+                    media_type="text/markdown",
+                    source_content_hash=source_hash,
+                    size=len(content),
+                    now=datetime.now(),
+                    staging_key="stage:race",
+                    chunk_settings=asdict(ChunkSettings()),
+                )
+            )
+            await repository.activate_upload(reserved, ArtifactLocator("artifact:original"))
+            document_id = reserved.document_id
+            async with sessions() as session:
+                document = (
+                    (
+                        await session.execute(
+                            select(knowledge_document).where(
+                                knowledge_document.c.document_id == document_id
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            original_revision = document["current_revision_id"]
+            normalized = NormalizedArtifact(
+                "race.md",
+                MediaType.MARKDOWN,
+                source_hash,
+                (NormalizedBlock("b1", "paragraph", content, (), None, 0, 0, len(content)),),
+                DocumentId(document_id),
+                RevisionId(original_revision),
+            )
+            normalized_locator = await artifacts.write_normalized(original_revision, normalized)
+            chunks_locator = await artifacts.write_chunks(
+                original_revision, StructuralChunker().chunk(normalized)
+            )
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_document_revision)
+                    .where(knowledge_document_revision.c.revision_id == original_revision)
+                    .values(
+                        normalized_blob_locator=normalized_locator,
+                        chunks_blob_locator=chunks_locator,
+                    )
+                )
+                await session.execute(
+                    update(knowledge_document)
+                    .where(knowledge_document.c.document_id == document_id)
+                    .values(status="ready", stage="ready", chunk_count=1)
+                )
+            manager = MysqlManagedChunks(
+                sessions=sessions,
+                repository=repository,
+                scope=VALIDATION_SCOPE,
+                artifacts=artifacts,
+                embeddings=embeddings,
+                index=index,
+                embedding_model_alias="test",
+                embedding_dimension=2,
+                index_version="test-v1",
+            )
+
+            # The delete's first consistent read fixes its snapshot before the
+            # managed worker publishes a new current revision.
+            snapshot_taken, publish_done = asyncio.Event(), asyncio.Event()
+            original_source_command = repository._source_command
+
+            async def gated_source_command(*args, **kwargs):
+                result = await original_source_command(*args, **kwargs)
+                snapshot_taken.set()
+                await publish_done.wait()
+                return result
+
+            repository._source_command = gated_source_command
+            deleting = asyncio.create_task(
+                repository.delete_source(
+                    document["source_id"],
+                    command=SourceCommand("delete-race", "source.delete", "correlation-race"),
+                )
+            )
+            await asyncio.wait_for(snapshot_taken.wait(), timeout=5)
+            await manager.run_pending()
+            async with sessions() as session:
+                published = await session.scalar(
+                    select(knowledge_document.c.current_revision_id).where(
+                        knowledge_document.c.document_id == document_id
+                    )
+                )
+            assert published != original_revision
+            publish_done.set()
+            await asyncio.wait_for(deleting, timeout=15)
+
+            assert await repository.get_document(document_id) is None
+            async with sessions() as session:
+                assert (
+                    await session.scalar(
+                        select(knowledge_document.c.status).where(
+                            knowledge_document.c.document_id == document_id
+                        )
+                    )
+                    == "deleting"
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
