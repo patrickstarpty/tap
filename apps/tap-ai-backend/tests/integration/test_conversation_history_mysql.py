@@ -29,9 +29,7 @@ def test_mysql_rename_soft_delete_and_title_search(owned_project_mysql):
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         try:
             service = ConversationService(
-                MysqlConversationRepository(
-                    sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
-                ),
+                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
                 scope=VALIDATION_SCOPE,
             )
             titles = ("Release plan", "100% coverage", "snake_case plan", "Other", "Plan! b")

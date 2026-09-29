@@ -318,14 +318,11 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
             catalog = MysqlAssetCatalog(
                 async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
             )
-            conversation = await MysqlConversationRepository(
-                async_sessionmaker(engine, expire_on_commit=False),
-                scope=VALIDATION_SCOPE,
-                default_chat_model="qwen-plus",
-            ).load("legacy-chat")
-            assert [(event.sequence, event.event_id) for event in conversation.events] == [
-                (1, "legacy-event")
-            ]
+            with pytest.raises(ValueError, match="input snapshot is missing"):
+                await MysqlConversationRepository(
+                    async_sessionmaker(engine, expire_on_commit=False),
+                    scope=VALIDATION_SCOPE,
+                ).load("legacy-chat")
             with pytest.raises(AssetRevisionRejected):
                 await catalog.resolve_agent(
                     VALIDATION_SCOPE,
@@ -641,8 +638,8 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
         settings = tapper_runtime.TapperSettings.from_mapping(S3_SETTINGS)
         runtime = await tapper_runtime.create_api_runtime(settings)
         try:
-            loaded = await runtime.http_services.conversations.load("legacy-chat")
-            assert loaded.turns[0].turn_id == "legacy-turn"
+            with pytest.raises(ValueError, match="input snapshot is missing"):
+                await runtime.http_services.conversations.load("legacy-chat")
             catalog = runtime.http_services.asset_catalog
             current = validation_asset_seed(VALIDATION_SCOPE)
             assert await catalog.resolve_agent(
@@ -691,17 +688,14 @@ def test_0012_preserves_legacy_chat_as_conversation(monkeypatch):
     assert result["conversation_downgrade_replay"] == "passed"
 
 
-def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_project_mysql):
+def test_0012a_legacy_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
     import asyncio
-    from dataclasses import replace
 
-    import httpx
-    from scripts.migration_support import LEGACY_TIME, seed_baseline
+    from scripts.migration_support import seed_baseline
     from sqlalchemy import create_engine, text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from tap.entrypoints.tapper_runtime import create_project_audit
-    from tap.interfaces.http.app import create_app
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
     from tap.modules.chat.application.conversations import ConversationService
@@ -714,7 +708,6 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
     )
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
     from tap.modules.knowledge.ports.answers import DocumentStateChanged
-    from tests.conftest import validation_http_services
 
     owned_project_mysql.rebuild("0005_projection_lineage")
     sync_engine = create_engine(owned_project_mysql.url)
@@ -752,18 +745,10 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
             repository = MysqlConversationRepository(
                 async_sessionmaker(engine, expire_on_commit=False),
                 scope=VALIDATION_SCOPE,
-                default_chat_model="qwen-plus",
             )
-            loaded = await repository.load("legacy-chat")
-            assert loaded.created_at.replace(tzinfo=None) == LEGACY_TIME
-            assert [(turn.turn_id, turn.input_snapshot.value.message) for turn in loaded.turns] == [
-                ("legacy-turn", "Legacy knowledge question"),
-                ("legacy-turn-2", "Second legacy question"),
-            ]
-            assert [(event.sequence, event.event_id) for event in loaded.events] == [
-                (1, "legacy-event"),
-                (2, "legacy-event-2"),
-            ]
+            # Pre-snapshot legacy Turns are not synthesized; they surface as integrity errors.
+            with pytest.raises(ValueError, match="input snapshot is missing"):
+                await repository.load("legacy-chat")
             async with engine.connect() as connection:
                 preserved = (
                     (
@@ -779,26 +764,6 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
                 )
             assert [row["sequence"] for row in preserved] == [1, 1]
             assert preserved[1]["payload"] == preserved[0]["payload"]
-            app = create_app(
-                replace(
-                    validation_http_services(),
-                    conversations=ConversationService(repository, scope=VALIDATION_SCOPE),
-                )
-            )
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-            ) as client:
-                first_stream = await client.get(
-                    "/api/v1/projects/tapper-demo/conversations/legacy-chat/stream"
-                )
-                assert first_stream.text.count("id: 1\n") == 1
-                assert first_stream.text.count("id: 2\n") == 1
-                resumed_stream = await client.get(
-                    "/api/v1/projects/tapper-demo/conversations/legacy-chat/stream",
-                    headers={"Last-Event-ID": "1"},
-                )
-                assert "id: 1\n" not in resumed_stream.text
-                assert resumed_stream.text.count("id: 2\n") == 1
             documents = MysqlDocumentRepository(
                 async_sessionmaker(engine, expire_on_commit=False),
                 scope=VALIDATION_SCOPE,

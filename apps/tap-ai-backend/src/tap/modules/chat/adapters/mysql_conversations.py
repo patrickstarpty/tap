@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -195,13 +194,9 @@ class MysqlConversationRepository:
         sessions: async_sessionmaker[AsyncSession],
         *,
         scope: ProjectScopeContext,
-        default_chat_model: str,
     ):
         self.sessions = sessions
         self.scope = require_project_scope(scope)
-        if not isinstance(default_chat_model, str) or not default_chat_model:
-            raise ValueError("conversation repository requires the default chat model")
-        self._default_chat_model = default_chat_model
 
     async def resolve_citations(
         self, trace_id: str, citation_ids: tuple[str, ...]
@@ -465,62 +460,47 @@ class MysqlConversationRepository:
             .one_or_none()
         )
         if snapshot is None:
-            value = TurnInput(
-                message=row["message"],
-                actor_id=row["actor_id"],
-                identity_mode=row["identity_mode"],
-                model_alias=self._default_chat_model,
-            )
-            input_value = TurnInputSnapshot.create(
-                snapshot_id="legacy-"
-                + hashlib.sha256(f"{self.scope.project_id}/{row['turn_id']}".encode()).hexdigest()[
-                    :32
-                ],
-                project_id=self.scope.project_id,
-                turn_id=row["turn_id"],
-                value=value,
-                now=row["created_at"].replace(tzinfo=timezone.utc),
-            )
-        else:
-            raw = snapshot["snapshot"]
-            value = TurnInput(
-                message=raw["message"],
-                actor_id=raw["actor_id"],
-                identity_mode=raw["identity_mode"],
-                model_alias=raw["model_alias"],
-                source_revision_ids=tuple(raw["source_revision_ids"]),
-                document_revision_ids=tuple(raw["document_revision_ids"]),
-                resolved_resources=tuple(
-                    FrozenResource(**item) for item in raw.get("resolved_resources", [])
-                ),
-                agent_revision_id=raw["agent_revision_id"],
-                agent_revision_digest=raw["agent_revision_digest"],
-                agent_label=raw.get("agent_label"),
-                skill_revision_ids=tuple(raw["skill_revision_ids"]),
-                skill_revision_digests=tuple(raw["skill_revision_digests"]),
-                skill_labels=tuple(raw.get("skill_labels", [])),
-                agent_system_instruction=raw.get("agent_system_instruction"),
-                agent_system_instruction_digest=raw.get("agent_system_instruction_digest"),
-                agent_tool_allowlist=tuple(raw.get("agent_tool_allowlist", [])),
-                agent_output_schema_json=raw.get("agent_output_schema_json"),
-                agent_output_schema_digest=raw.get("agent_output_schema_digest"),
-                skill_instruction_templates=tuple(raw.get("skill_instruction_templates", [])),
-                skill_instruction_template_digests=tuple(
-                    raw.get("skill_instruction_template_digests", [])
-                ),
-                acl_digest=raw.get("acl_digest", "sha256:" + "0" * 64),
-                retrieval_policy_digest=raw["retrieval_policy_digest"],
-                insights_query_id=raw.get("insights_query_id"),
-                insights_report_refs=tuple(raw.get("insights_report_refs", [])),
-            )
-            input_value = TurnInputSnapshot(
-                snapshot["snapshot_id"],
-                self.scope.project_id,
-                row["turn_id"],
-                value,
-                snapshot["snapshot_digest"],
-                snapshot["created_at"].replace(tzinfo=timezone.utc),
-            )
+            # Every persisted Turn is written with its input snapshot; never synthesize one.
+            raise ValueError("Turn input snapshot is missing for a persisted Turn")
+        raw = snapshot["snapshot"]
+        value = TurnInput(
+            message=raw["message"],
+            actor_id=raw["actor_id"],
+            identity_mode=raw["identity_mode"],
+            model_alias=raw["model_alias"],
+            source_revision_ids=tuple(raw["source_revision_ids"]),
+            document_revision_ids=tuple(raw["document_revision_ids"]),
+            resolved_resources=tuple(
+                FrozenResource(**item) for item in raw.get("resolved_resources", [])
+            ),
+            agent_revision_id=raw["agent_revision_id"],
+            agent_revision_digest=raw["agent_revision_digest"],
+            agent_label=raw.get("agent_label"),
+            skill_revision_ids=tuple(raw["skill_revision_ids"]),
+            skill_revision_digests=tuple(raw["skill_revision_digests"]),
+            skill_labels=tuple(raw.get("skill_labels", [])),
+            agent_system_instruction=raw.get("agent_system_instruction"),
+            agent_system_instruction_digest=raw.get("agent_system_instruction_digest"),
+            agent_tool_allowlist=tuple(raw.get("agent_tool_allowlist", [])),
+            agent_output_schema_json=raw.get("agent_output_schema_json"),
+            agent_output_schema_digest=raw.get("agent_output_schema_digest"),
+            skill_instruction_templates=tuple(raw.get("skill_instruction_templates", [])),
+            skill_instruction_template_digests=tuple(
+                raw.get("skill_instruction_template_digests", [])
+            ),
+            acl_digest=raw.get("acl_digest", "sha256:" + "0" * 64),
+            retrieval_policy_digest=raw["retrieval_policy_digest"],
+            insights_query_id=raw.get("insights_query_id"),
+            insights_report_refs=tuple(raw.get("insights_report_refs", [])),
+        )
+        input_value = TurnInputSnapshot(
+            snapshot["snapshot_id"],
+            self.scope.project_id,
+            row["turn_id"],
+            value,
+            snapshot["snapshot_digest"],
+            snapshot["created_at"].replace(tzinfo=timezone.utc),
+        )
         answer_row = (
             (
                 await session.execute(

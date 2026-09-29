@@ -56,17 +56,13 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
             await connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
         try:
             service = ConversationService(
-                MysqlConversationRepository(
-                    sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
-                ),
+                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
                 scope=VALIDATION_SCOPE,
             )
             accepted = await service.create("conversation-1", "turn-1", "request-1", _input())
             original_digest = accepted.input_snapshot.digest
             restarted = ConversationService(
-                MysqlConversationRepository(
-                    sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
-                ),
+                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
                 scope=VALIDATION_SCOPE,
             )
             loaded = await restarted.load("conversation-1")
@@ -228,6 +224,32 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
                 for table in owned:
                     await connection.execute(text(f"DELETE FROM {table}"))
                 await connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            service = ConversationService(repository, scope=VALIDATION_SCOPE)
+            await service.create("snapshotless", "snapshotless-turn", "snapshotless", _input())
+            async with engine.begin() as connection:
+                await connection.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+                await connection.execute(
+                    text("DELETE FROM turn_input_snapshot WHERE turn_id='snapshotless-turn'")
+                )
+                await connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+
+            with pytest.raises(ValueError, match="input snapshot is missing"):
+                await service.load("snapshotless")
+        finally:
             await engine.dispose()
 
     asyncio.run(scenario())

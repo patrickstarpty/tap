@@ -1506,7 +1506,6 @@ def _assemble_http_services(
             MysqlConversationRepository(
                 conversation_sessions,  # type: ignore[arg-type]
                 scope=repository.scope,
-                default_chat_model=embeddings.chat_alias,
             ),
             scope=repository.scope,
         )
