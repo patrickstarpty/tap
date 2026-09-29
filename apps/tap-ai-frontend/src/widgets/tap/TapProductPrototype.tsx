@@ -62,6 +62,7 @@ import {
   reduceStreamEvent,
 } from "../../features/conversations/model/stream";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
+import { useModelCatalog } from "../../features/knowledge/api/modelCatalog";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
 import { DocumentChunks } from "../../features/knowledge/components/DocumentChunks";
 import { KnowledgeReview } from "../../features/knowledge/components/KnowledgeReview";
@@ -1017,6 +1018,23 @@ export function TapProductPrototype({
     durable ? projectId : null,
     durable && activeConversationId !== "draft" ? activeConversationId : null,
   );
+  const modelCatalog = useModelCatalog(durable ? projectId : null);
+  // Mirrors the composer's picker: only chat models with structured output are selectable.
+  const selectableModelAliases = useMemo(
+    () =>
+      modelCatalog.isError || modelCatalog.data === undefined
+        ? null
+        : new Set(
+            modelCatalog.data.items
+              .filter(
+                (model) =>
+                  model.capabilities.includes("chat") &&
+                  model.capabilities.includes("structured"),
+              )
+              .map((model) => model.alias),
+          ),
+    [modelCatalog.data, modelCatalog.isError],
+  );
   const [requestedStreamTarget, setRequestedStreamTarget] = useState<{
     conversationId: string;
     turnId: string;
@@ -1380,8 +1398,18 @@ export function TapProductPrototype({
               ...(conversationDetail.data.turns.at(-1) === undefined
                 ? {}
                 : {
-                    modelId:
+                    // A model that left the catalog keeps the catalog default instead of
+                    // bouncing back on every refetch.
+                    ...(selectableModelAliases !== null &&
+                    !selectableModelAliases.has(
                       conversationDetail.data.turns.at(-1)!.input.modelAlias,
+                    )
+                      ? {}
+                      : {
+                          modelId:
+                            conversationDetail.data.turns.at(-1)!.input
+                              .modelAlias,
+                        }),
                     selectedSourceIds:
                       conversationDetail.data.turns
                         .at(-1)!
@@ -1422,6 +1450,7 @@ export function TapProductPrototype({
     conversationStream.error,
     durable,
     recoveredStreamState,
+    selectableModelAliases,
     streamState,
   ]);
   const tapperWorkspaceActive = [

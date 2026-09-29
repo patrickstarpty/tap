@@ -56,15 +56,21 @@ const ANSWER = {
 interface Scenario {
   state: "completed" | "failed" | "canceled" | "running";
   appendResponse?: () => Promise<Response>;
+  modelAlias?: string;
 }
 
-function durableConversation({ state, appendResponse }: Scenario) {
+function durableConversation({
+  state,
+  appendResponse,
+  modelAlias = "qwen-plus",
+}: Scenario) {
   const appended: Request[] = [];
   const canceled: string[] = [];
   const renamed: unknown[] = [];
   const deleted: string[] = [];
   const searches: string[] = [];
   let title = "What is the rule?";
+  let detailReads = 0;
   vi.stubGlobal("fetch", async (request: Request) => {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -109,12 +115,14 @@ function durableConversation({ state, appendResponse }: Scenario) {
       deleted.push(path.split("/").pop()!);
       return new Response(null, { status: 204 });
     }
-    if (path.endsWith("/conversations/conversation-a"))
+    if (path.endsWith("/conversations/conversation-a")) {
+      detailReads += 1;
       return json({
         conversationId: "conversation-a",
         title: "What is the rule?",
         createdAt: "2026-09-29T08:00:00Z",
-        updatedAt: "2026-09-29T08:00:00Z",
+        // Each read is a new detail payload, as after a real appended turn.
+        updatedAt: `2026-09-29T08:00:${String(detailReads).padStart(2, "0")}Z`,
         turns: [
           {
             turnId: "turn-1",
@@ -124,7 +132,7 @@ function durableConversation({ state, appendResponse }: Scenario) {
             answerEvidenceSnapshotDigest: null,
             input: {
               message: "What is the rule?",
-              modelAlias: "qwen-plus",
+              modelAlias,
               sourceRevisionIds: ["rev_policy"],
               documentRevisionIds: [],
               resolvedResources: [
@@ -145,6 +153,7 @@ function durableConversation({ state, appendResponse }: Scenario) {
           },
         ],
       });
+    }
     if (path.endsWith("/conversations/conversation-a/events"))
       return json({
         items:
@@ -188,7 +197,16 @@ function durableConversation({ state, appendResponse }: Scenario) {
     <TapProductPrototype conversationSource="api" />,
     { api },
   );
-  return { api, appended, canceled, renamed, deleted, searches, ...rendered };
+  return {
+    api,
+    appended,
+    canceled,
+    renamed,
+    deleted,
+    searches,
+    detailReads: () => detailReads,
+    ...rendered,
+  };
 }
 
 it("regenerates a completed answer as a new turn with the same question and sources", async () => {
@@ -219,6 +237,54 @@ it.each(["failed", "canceled"] as const)(
     });
   },
 );
+
+it("keeps the catalog default when the last turn's model left the catalog", async () => {
+  const { appended, detailReads } = durableConversation({
+    state: "completed",
+    modelAlias: "retired-model",
+  });
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: "Regenerate" });
+  await screen.findByRole("button", { name: /Qwen Plus/ });
+  const unavailable: string[] = [];
+  // Record every insertion: a bounce renders and removes the fallback within one task.
+  const observer = new MutationObserver((records) => {
+    for (const record of records)
+      for (const node of record.addedNodes)
+        if (node.textContent?.includes("Model unavailable"))
+          unavailable.push("shown");
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  try {
+    // Sending refetches the Conversation detail; a bounce would flash the retired model.
+    await user.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(appended).toHaveLength(1));
+    expect(await appended[0]!.json()).toMatchObject({
+      modelAlias: "qwen-plus",
+    });
+    await waitFor(() => expect(detailReads()).toBeGreaterThan(1));
+    await screen.findByRole("button", { name: /Qwen Plus/ });
+    expect(unavailable).toEqual([]);
+  } finally {
+    observer.disconnect();
+  }
+});
+
+it("adopts the last turn's model when it is still selectable", async () => {
+  const { appended } = durableConversation({
+    state: "completed",
+    modelAlias: "qwen-max",
+  });
+  const user = userEvent.setup();
+
+  expect(
+    await screen.findByRole("button", { name: /Qwen Max/ }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Regenerate" }));
+  await waitFor(() => expect(appended).toHaveLength(1));
+  expect(await appended[0]!.json()).toMatchObject({ modelAlias: "qwen-max" });
+});
 
 it("replaces Send with Stop generating while a reply is running", async () => {
   const { canceled } = durableConversation({ state: "running" });
