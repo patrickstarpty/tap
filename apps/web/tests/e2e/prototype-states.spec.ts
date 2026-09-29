@@ -409,9 +409,9 @@ test.describe("prototype states: A-D interaction states", () => {
 
   test("b8-history-load-more", async ({ page }) => {
     await openFresh(page, "/prototype");
-    await expect(
-      page.getByRole("button", { name: "Load more" }),
-    ).toBeVisible();
+    const loadMore = page.getByRole("button", { name: "Load more" });
+    await expect(loadMore).toBeVisible();
+    await loadMore.scrollIntoViewIfNeeded();
     await capture(page, "b8-history-load-more");
   });
 
