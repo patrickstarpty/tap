@@ -5,6 +5,7 @@ import {
   createConversationClient,
   parseInsightsHandoff,
 } from "./client";
+import { retryConversationRequest } from "./queries";
 
 describe("parseInsightsHandoff", () => {
   it("accepts only a number-free handoff for the current authorized project", () => {
@@ -260,5 +261,44 @@ describe("ConversationClient", () => {
       .catch((value: unknown) => value);
     expect(error).toBeInstanceOf(ConversationClientError);
     expect(error).toMatchObject({ status: 404, code: "citation-stale" });
+  });
+
+  it("reports an unselectable model as a non-retryable client failure", async () => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            type: "https://tap.example/problems/model-not-selectable",
+            status: 422,
+            retryable: false,
+          }),
+          {
+            status: 422,
+            headers: { "content-type": "application/problem+json" },
+          },
+        ),
+    );
+    const client = createConversationClient({
+      projectId: "project-1",
+      fetch: fetcher,
+    });
+    const error = await client
+      .create(
+        {
+          message: "Hello",
+          modelAlias: "retired-model",
+          sourceRevisionIds: [],
+          documentRevisionIds: [],
+          skillRevisionIds: [],
+        },
+        "request-unselectable",
+      )
+      .catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(ConversationClientError);
+    expect(error).toMatchObject({ status: 422, retryable: false });
+    expect(retryConversationRequest(0, error)).toBe(false);
+    expect(
+      retryConversationRequest(0, new ConversationClientError(503, true)),
+    ).toBe(true);
   });
 });

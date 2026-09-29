@@ -15,7 +15,11 @@ from tap.contracts.problems import ProblemDetails, build_problem
 from tap.interfaces.http.dependencies import GraphUnavailable, KnowledgeRuntimeUnavailable
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
 from tap.modules.ai.domain.assets import AssetRevisionRejected
-from tap.modules.ai.domain.models import ModelGatewayRejected, ModelGatewayUnavailable
+from tap.modules.ai.domain.models import (
+    ModelGatewayRejected,
+    ModelGatewayUnavailable,
+    ModelNotSelectable,
+)
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
@@ -305,6 +309,12 @@ def register_problem_handlers(app: FastAPI) -> None:
         request: Request, _error: ModelGatewayUnavailable
     ) -> JSONResponse:
         return problem_response("model-unavailable", request)
+
+    @app.exception_handler(ModelNotSelectable)
+    async def model_not_selectable_problem(
+        request: Request, _error: ModelNotSelectable
+    ) -> JSONResponse:
+        return problem_response("model-not-selectable", request)
 
     @app.exception_handler(ModelGatewayRejected)
     async def model_gateway_rejected_problem(

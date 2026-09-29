@@ -324,7 +324,7 @@ export function useConversationStream(
   };
 }
 
-function retryConversationRequest(count: number, error: unknown): boolean {
+export function retryConversationRequest(count: number, error: unknown): boolean {
   return (
     count < 3 &&
     (!(error instanceof ConversationClientError) || error.retryable)

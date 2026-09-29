@@ -207,6 +207,14 @@
       "type": "https://tap.example/problems/knowledge-runtime-unavailable"
     },
     {
+      "code": "model-not-selectable",
+      "detail": "The requested model is not available for this request.",
+      "retryable": false,
+      "status": 422,
+      "title": "Model not selectable",
+      "type": "https://tap.example/problems/model-not-selectable"
+    },
+    {
       "code": "model-unavailable",
       "detail": "The model service is currently unavailable.",
       "failureStage": "model",

@@ -307,6 +307,14 @@ PROBLEM_REGISTRY = MappingProxyType(
                 "graph",
             ),
             ProblemDefinition(
+                "model-not-selectable",
+                "Model not selectable",
+                422,
+                "The requested model is not available for this request.",
+                False,
+                None,
+            ),
+            ProblemDefinition(
                 "model-unavailable",
                 "Model unavailable",
                 503,

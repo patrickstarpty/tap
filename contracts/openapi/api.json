@@ -5425,6 +5425,28 @@
           {
             "properties": {
               "detail": {
+                "const": "The requested model is not available for this request."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 422
+              },
+              "title": {
+                "const": "Model not selectable"
+              },
+              "type": {
+                "const": "https://tap.example/problems/model-not-selectable"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
                 "const": "The model service is currently unavailable."
               },
               "failureStage": {
@@ -5832,6 +5854,7 @@
               "https://tap.example/problems/knowledge-review-not-found",
               "https://tap.example/problems/knowledge-review-state-conflict",
               "https://tap.example/problems/knowledge-runtime-unavailable",
+              "https://tap.example/problems/model-not-selectable",
               "https://tap.example/problems/model-unavailable",
               "https://tap.example/problems/recorder-unavailable",
               "https://tap.example/problems/request-validation",
@@ -10516,7 +10539,7 @@
                 }
               }
             },
-            "description": "Request validation failed"
+            "description": "Request validation failed or model not selectable"
           },
           "503": {
             "content": {
@@ -10526,7 +10549,7 @@
                 }
               }
             },
-            "description": "Runtime unavailable"
+            "description": "Runtime or model catalog unavailable"
           }
         },
         "summary": "Create",
@@ -11011,7 +11034,17 @@
                 }
               }
             },
-            "description": "Request validation failed"
+            "description": "Request validation failed or model not selectable"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Runtime or model catalog unavailable"
           }
         },
         "summary": "Append",
