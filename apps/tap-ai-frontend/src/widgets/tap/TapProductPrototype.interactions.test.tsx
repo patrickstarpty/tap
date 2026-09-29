@@ -2725,3 +2725,97 @@ describe("Tap product prototype interactions", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("governed model catalog selection", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("offers only models that support structured answers", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderPrototype();
+    await act(async () => {
+      queryClient.setQueriesData(
+        { queryKey: ["model-catalog"] },
+        {
+          defaultAlias: "qwen-plus",
+          items: [
+            {
+              alias: "qwen-plus",
+              displayName: "Qwen Plus",
+              capabilities: ["chat", "structured"],
+            },
+            {
+              alias: "qwen-flash",
+              displayName: "Qwen Flash",
+              capabilities: ["chat"],
+            },
+          ],
+        },
+      );
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Select model, current model Qwen Plus",
+      }),
+    );
+
+    expect(
+      within(screen.getByRole("menu", { name: "Models" }))
+        .getAllByRole("menuitemradio")
+        .map((option) => option.textContent?.trim()),
+    ).toEqual(["Qwen Plus"]);
+  });
+
+  it("starts a new chat from the catalog default model", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderPrototype();
+    await act(async () => {
+      queryClient.setQueriesData(
+        { queryKey: ["model-catalog"] },
+        {
+          defaultAlias: "qwen-max",
+          items: [
+            {
+              alias: "qwen-plus",
+              displayName: "Qwen Plus",
+              capabilities: ["chat", "structured"],
+            },
+            {
+              alias: "qwen-max",
+              displayName: "Qwen Max",
+              capabilities: ["chat", "structured"],
+            },
+          ],
+        },
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: "New chat" }));
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Select model, current model Qwen Max",
+      }),
+    ).toBeVisible();
+  });
+
+  it("restores a Conversation whose model left the catalog on the default model", async () => {
+    writePrototypeSnapshot(window.localStorage, {
+      version: PROTOTYPE_SNAPSHOT_VERSION,
+      activeConversationId: "chat-1",
+      conversations: [
+        { ...createConversation("chat-1"), modelId: "retired-model" },
+      ],
+    });
+
+    renderPrototype();
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Select model, current model Qwen Plus",
+      }),
+    ).toBeVisible();
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createConversation } from "../model";
+import { createConversation, PENDING_MODEL_ID } from "../model";
 import {
   loadPrototypeSnapshot,
   PROTOTYPE_SNAPSHOT_VERSION,
@@ -153,7 +153,7 @@ describe("prototype persistence", () => {
     expect(readPrototypeSnapshot(null)).toBeNull();
   });
 
-  it("adds the governed default alias when restoring a legacy Conversation", () => {
+  it("leaves a legacy Conversation on the pre-catalog placeholder for the catalog default", () => {
     const legacyConversation = createConversation(
       "chat-1",
     ) as unknown as Record<string, unknown>;
@@ -167,6 +167,6 @@ describe("prototype persistence", () => {
       }),
     );
 
-    expect(restored?.conversations[0]?.modelId).toBe("qwen-plus");
+    expect(restored?.conversations[0]?.modelId).toBe(PENDING_MODEL_ID);
   });
 });
