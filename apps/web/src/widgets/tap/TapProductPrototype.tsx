@@ -488,6 +488,7 @@ export function TapProductPrototype() {
     () => initialSnapshot?.activeConversationId ?? "chat-1",
   );
   const [openCitation, setOpenCitation] = useState<OpenCitation | null>(null);
+  const citationOpenSeq = useRef(0);
   const [artifactState, dispatchArtifact] = useReducer(
     artifactReducer,
     initialSnapshot?.artifacts ?? createInitialArtifactState(),
@@ -704,6 +705,7 @@ export function TapProductPrototype() {
   );
   const openCitationPanel = useCallback(
     (citation: OpenCitation) => {
+      citationOpenSeq.current += 1;
       const fullSource = sources.find(
         (source) => source.id === citation.source.id,
       );
@@ -1565,6 +1567,7 @@ export function TapProductPrototype() {
             >
               {openCitation !== null ? (
                 <CitationPanel
+                  key={`${openCitation.turnId}:${openCitation.index}:${citationOpenSeq.current}`}
                   citation={openCitation}
                   locale={locale}
                   onClose={() => setOpenCitation(null)}
