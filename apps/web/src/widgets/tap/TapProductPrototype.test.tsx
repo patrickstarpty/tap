@@ -136,7 +136,7 @@ it("processes a replacement document into manageable chunks", async () => {
   await waitFor(
     () =>
       expect(screen.getByRole("button", { name: "Add chunk" })).toBeVisible(),
-    { timeout: 2_000 },
+    { timeout: 3_000 },
   );
   view.unmount();
   render(<TapProductPrototype />);
@@ -176,7 +176,7 @@ it("opens citations in the sources panel instead of a dialog", async () => {
           name: "[2] Underwriting test rules.pdf",
         }),
       ).toBeVisible(),
-    { timeout: 2_000 },
+    { timeout: 3_000 },
   );
   fireEvent.click(
     screen.getByRole("button", { name: "[2] Underwriting test rules.pdf" }),
@@ -203,7 +203,7 @@ it("returns to sources when the conversation changes", async () => {
           name: "[1] Life underwriting guide · v1.2.md",
         }),
       ).toBeVisible(),
-    { timeout: 2_000 },
+    { timeout: 3_000 },
   );
   fireEvent.click(
     screen.getByRole("button", {
@@ -233,7 +233,7 @@ it("shows a verification failure alert when the citation fault is injected", asy
           name: "[1] Life underwriting guide · v1.2.md",
         }),
       ).toBeVisible(),
-    { timeout: 2_000 },
+    { timeout: 3_000 },
   );
   fireEvent.click(
     screen.getByRole("button", {
@@ -257,7 +257,7 @@ it("re-seeds the citation panel when a different citation is opened without clos
           name: "[1] Life underwriting guide · v1.2.md",
         }),
       ).toBeVisible(),
-    { timeout: 2_000 },
+    { timeout: 3_000 },
   );
   fireEvent.click(
     screen.getByRole("button", {
@@ -287,7 +287,7 @@ it("opens the original review document from a knowledge-base citation", async ()
           name: "[1] Life underwriting guide · v1.2.md",
         }),
       ).toBeVisible(),
-    { timeout: 2_000 },
+    { timeout: 3_000 },
   );
   fireEvent.click(
     screen.getByRole("button", {
@@ -317,7 +317,7 @@ it("opens the Library without a review dialog from a sample-file citation", asyn
           name: "[2] Underwriting test rules.pdf",
         }),
       ).toBeVisible(),
-    { timeout: 2_000 },
+    { timeout: 3_000 },
   );
   fireEvent.click(
     screen.getByRole("button", { name: "[2] Underwriting test rules.pdf" }),
@@ -340,7 +340,7 @@ it("expands the collapsed sources panel when a citation is opened", async () => 
           name: "[1] Life underwriting guide · v1.2.md",
         }),
       ).toBeVisible(),
-    { timeout: 2_000 },
+    { timeout: 3_000 },
   );
   fireEvent.click(
     screen.getByRole("button", { name: "Collapse Knowledge sources" }),

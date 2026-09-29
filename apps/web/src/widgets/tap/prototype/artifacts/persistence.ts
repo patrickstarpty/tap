@@ -61,7 +61,8 @@ export function readPrototypeSnapshot(
             isRecord(turn)
               ? {
                   ...turn,
-                  ...(turn.answerState === "running"
+                  ...(turn.answerState === "running" ||
+                  turn.answerState === "queued"
                     ? { answerState: "failed" }
                     : {}),
                   modelId: isCodexModelId(turn.modelId)

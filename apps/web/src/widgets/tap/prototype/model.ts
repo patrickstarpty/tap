@@ -65,7 +65,16 @@ export interface AnswerTrace {
 
 export interface AssistantTurn {
   answerState?:
-    "running" | "completed" | "insufficient" | "canceled" | "failed";
+    | "queued"
+    | "running"
+    | "completed"
+    | "insufficient"
+    | "conflict"
+    | "source-changed"
+    | "interrupted"
+    | "canceled"
+    | "failed";
+  retrievalLimited?: boolean;
   id: string;
   intent: AssistantIntent;
   locale: Locale;
@@ -127,6 +136,7 @@ export interface LibrarySource {
     | "withdrawn";
   isExample?: boolean;
   hasNewerRevision?: boolean;
+  partiallyIndexed?: boolean;
   downloadUrl?: string;
   preview?: { imageUrl?: string; text?: string };
   id: string;
@@ -340,6 +350,12 @@ export function createConversation(
     selectedAgentIds: [...(options.selectedAgentIds ?? [])],
     selectedSkillIds: [...(options.selectedSkillIds ?? [])],
   };
+}
+
+export function isGenerating(
+  turn: Pick<AssistantTurn, "answerState">,
+): boolean {
+  return turn.answerState === "queued" || turn.answerState === "running";
 }
 
 export function appendTurn(

@@ -200,6 +200,12 @@ export function useDocumentReview(locale: Locale) {
               ? "processing"
               : "ready",
         reviewState: d.state,
+        ...(d.id === "underwriting-evidence-pdf" &&
+        d.state !== "failed" &&
+        d.state !== "processing" &&
+        d.available !== false
+          ? { partiallyIndexed: true }
+          : {}),
         description:
           d.state === "failed"
             ? t("Text extraction failed", "文本提取失败")
@@ -207,7 +213,9 @@ export function useDocumentReview(locale: Locale) {
               ? t("Processing document", "正在处理资料")
               : d.available === false
                 ? t("No searchable chunks", "暂无可检索切片")
-                : t("Ready for retrieval", "可检索"),
+                : d.id === "underwriting-evidence-pdf"
+                  ? t("Some pages are still indexing", "部分页面仍在索引中")
+                  : t("Ready for retrieval", "可检索"),
       })),
     [documents, locale],
   );

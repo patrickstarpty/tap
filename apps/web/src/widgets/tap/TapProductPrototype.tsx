@@ -7,6 +7,7 @@ import {
   CitationPanel,
   type OpenCitation,
 } from "./prototype/answer/CitationPanel";
+import { decideAnswerOutcome } from "./prototype/answer/answerOutcome";
 import { takePrototypeFault } from "./prototype/prototypeFaults";
 import { CodeOutlined, FileTextOutlined } from "@ant-design/icons";
 import { Button } from "antd";
@@ -71,6 +72,7 @@ import {
   createConversation,
   detectAutomationType,
   detectIntent,
+  isGenerating,
   type AssistantTurn,
   type CatalogItem,
   type CodexModelId,
@@ -873,8 +875,7 @@ export function TapProductPrototype() {
 
   const sendMessage = (prompt: string, override?: TurnContextOverride) => {
     if (pendingSendRef.current !== null) return;
-    if (activeConversation.turns.some((turn) => turn.answerState === "running"))
-      return;
+    if (activeConversation.turns.some((turn) => isGenerating(turn))) return;
     const conversationId = activeConversation.id;
     const turnLocale = locale;
     if (composerContext && override === undefined) {
@@ -908,9 +909,16 @@ export function TapProductPrototype() {
         ),
       );
     if (intent === "answer") {
-      const evidence = sourceReferences.filter((source) =>
-        /underwriting|健康|核保/i.test(source.name),
+      const selectedSources = sources.filter(
+        (source) =>
+          source.status === "ready" && selectedSourceIds.includes(source.id),
       );
+      const decision = decideAnswerOutcome(prompt, selectedSources);
+      const evidence = decision.evidence.map(({ id, name, origin }) => ({
+        id,
+        name,
+        origin,
+      }));
       const turnId = `turn-${nextTurnId.current++}`;
       acceptTurn(conversationId, () => {
         appendToConversation({
@@ -922,11 +930,12 @@ export function TapProductPrototype() {
           sourceReferences: evidence,
           ...(catalogReferences.length > 0 ? { catalogReferences } : {}),
           trace: {
-            searchedSources: sourceReferences.length,
+            searchedSources: selectedSources.length,
             matchedPassages: evidence.length * 2 + 1,
             citations: evidence.length,
           },
-          answerState: "running",
+          retrievalLimited: decision.retrievalLimited,
+          answerState: "queued",
         });
         answerTimers.current.set(
           turnId,
@@ -937,25 +946,46 @@ export function TapProductPrototype() {
                   ? {
                       ...conversation,
                       turns: conversation.turns.map((turn) =>
-                        turn.id === turnId && turn.answerState === "running"
-                          ? {
-                              ...turn,
-                              answerState:
-                                evidence.length > 0 &&
-                                /health|disclosure|underwriting|健康|告知|核保/i.test(
-                                  prompt,
-                                )
-                                  ? "completed"
-                                  : "insufficient",
-                            }
+                        turn.id === turnId && turn.answerState === "queued"
+                          ? { ...turn, answerState: "running" }
                           : turn,
                       ),
                     }
                   : conversation,
               ),
             );
-            answerTimers.current.delete(turnId);
-          }, 1200),
+            answerTimers.current.set(
+              turnId,
+              setTimeout(() => {
+                const interrupted = takePrototypeFault("stream-interrupted");
+                const sourceChanged =
+                  !interrupted &&
+                  takePrototypeFault("source-version-changed");
+                const finalState: NonNullable<AssistantTurn["answerState"]> =
+                  interrupted
+                    ? "interrupted"
+                    : sourceChanged
+                      ? "source-changed"
+                      : decision.outcome;
+                setConversations((current) =>
+                  current.map((conversation) =>
+                    conversation.id === conversationId
+                      ? {
+                          ...conversation,
+                          turns: conversation.turns.map((turn) =>
+                            turn.id === turnId &&
+                            turn.answerState === "running"
+                              ? { ...turn, answerState: finalState }
+                              : turn,
+                          ),
+                        }
+                      : conversation,
+                  ),
+                );
+                answerTimers.current.delete(turnId);
+              }, 1200),
+            );
+          }, 500),
         );
       });
       return;
@@ -996,7 +1026,7 @@ export function TapProductPrototype() {
       current.map((conversation) => ({
         ...conversation,
         turns: conversation.turns.map((item) =>
-          item.id === turnId && item.answerState === "running"
+          item.id === turnId && isGenerating(item)
             ? { ...item, answerState: "canceled" }
             : item,
         ),
@@ -1462,8 +1492,8 @@ export function TapProductPrototype() {
               onSend={(prompt) => sendMessage(prompt)}
               isSending={pendingSendConversationId === activeConversation.id}
               onStop={() => {
-                const running = activeConversation.turns.find(
-                  (turn) => turn.answerState === "running",
+                const running = activeConversation.turns.find((turn) =>
+                  isGenerating(turn),
                 );
                 if (running !== undefined) stopTurn(running.id);
               }}

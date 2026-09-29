@@ -63,7 +63,7 @@ function history() {
 function createTwoConversations() {
   selectUnderwritingSource();
   send(HEALTH_QUESTION);
-  advance(1300);
+  advance(1800);
   fireEvent.click(screen.getByRole("button", { name: "New chat" }));
   send(BDD_REQUEST);
 }
@@ -244,7 +244,7 @@ describe("composer and turn controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop generating" }));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     advance(400);
-    advance(1300);
+    advance(1800);
     expect(userMessages()).toEqual([HEALTH_QUESTION, HEALTH_QUESTION]);
     expect(screen.getByText("Generation stopped.")).toBeVisible();
     expect(screen.getAllByText("Message context · 1")).toHaveLength(2);
@@ -273,7 +273,7 @@ describe("composer and turn controls", () => {
     render(<TapProductPrototype />);
     selectUnderwritingSource();
     send(HEALTH_QUESTION);
-    advance(1300);
+    advance(1800);
     expect(
       screen.queryByRole("button", { name: "Stop generating" }),
     ).toBeNull();
@@ -281,7 +281,7 @@ describe("composer and turn controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     advance(400);
     expect(screen.getByRole("button", { name: "Regenerate" })).toBeDisabled();
-    advance(1300);
+    advance(1800);
     expect(userMessages()).toEqual([HEALTH_QUESTION, HEALTH_QUESTION]);
     expect(
       screen.getAllByText(/Block submission when health disclosure is missing/),
@@ -293,7 +293,7 @@ describe("composer and turn controls", () => {
   it("offers regenerate for an abstained answer", () => {
     render(<TapProductPrototype />);
     send("What is the claims turnaround?");
-    advance(1300);
+    advance(1800);
     fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     advance(400);
     expect(userMessages()).toHaveLength(2);
@@ -303,7 +303,7 @@ describe("composer and turn controls", () => {
     render(<TapProductPrototype />);
     selectUnderwritingSource();
     send(HEALTH_QUESTION);
-    advance(1300);
+    advance(1800);
     expect(
       screen.queryByRole("button", { name: "Remove Underwriting test rules.pdf" }),
     ).toBeNull();

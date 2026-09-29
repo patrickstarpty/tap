@@ -3,6 +3,30 @@ import type { AssistantTurn } from "../model";
 import { AnswerEvidence } from "./AnswerEvidence";
 import type { OpenCitation } from "./CitationPanel";
 
+function CitationButtons({
+  turn,
+  onOpenCitation,
+}: {
+  turn: AssistantTurn;
+  onOpenCitation: (citation: OpenCitation) => void;
+}) {
+  return (
+    <>
+      {turn.sourceReferences.map((source, index) => (
+        <Button
+          key={source.id}
+          type="link"
+          onClick={() =>
+            onOpenCitation({ turnId: turn.id, index: index + 1, source })
+          }
+        >
+          [{index + 1}] {source.name}
+        </Button>
+      ))}
+    </>
+  );
+}
+
 export function KnowledgeAnswer({
   turn,
   onRetry,
@@ -15,10 +39,22 @@ export function KnowledgeAnswer({
   onOpenCitation: (citation: OpenCitation) => void;
 }) {
   const t = (en: string, zh: string) => (turn.locale === "zh" ? zh : en);
+  if (turn.answerState === "queued")
+    return (
+      <div role="status">
+        <p>{t("Waiting to start…", "等待开始…")}</p>
+        <Button onClick={onStop}>{t("Stop", "停止生成")}</Button>
+      </div>
+    );
   if (turn.answerState === "running")
     return (
       <div role="status">
-        <p>{t("Searching enabled sources…", "正在检索已启用资料…")}</p>
+        <p>
+          {t(
+            `Using ${turn.sourceReferences.length} sources · Generating answer…`,
+            `使用 ${turn.sourceReferences.length} 份来源 · 正在生成回答…`,
+          )}
+        </p>
         <Button onClick={onStop}>{t("Stop", "停止生成")}</Button>
       </div>
     );
@@ -53,26 +89,60 @@ export function KnowledgeAnswer({
         </p>
       </div>
     );
+  if (turn.answerState === "conflict")
+    return (
+      <div>
+        <p>
+          {t(
+            "The two sources reach different conclusions.",
+            "两份资料结论不一致。",
+          )}
+        </p>
+        <CitationButtons turn={turn} onOpenCitation={onOpenCitation} />
+      </div>
+    );
+  if (turn.answerState === "source-changed")
+    return (
+      <div>
+        <p>
+          {t(
+            "Sources were updated while answering. Please resubmit.",
+            "回答期间资料已更新，请重新提交。",
+          )}
+        </p>
+        <Button onClick={onRetry}>{t("Resubmit", "重新提交")}</Button>
+      </div>
+    );
+  if (turn.answerState === "interrupted")
+    return (
+      <div>
+        <p>
+          {t(
+            "Conversation updates stopped. Your message is saved.",
+            "对话更新已中断，你的消息已保存。",
+          )}
+        </p>
+        <Button onClick={onRetry}>{t("Retry", "重试")}</Button>
+      </div>
+    );
   return (
     <div className="tap-knowledge-answer">
       <AnswerEvidence turn={turn} />
+      {turn.retrievalLimited ? (
+        <p role="status">
+          {t(
+            "Some sources could not be searched. This answer uses the remaining sources.",
+            "部分来源暂时无法检索，回答仅基于其余来源。",
+          )}
+        </p>
+      ) : null}
       <p>
         {t(
           "Block submission when health disclosure is missing. Return HTTP 422 with HEALTH_DISCLOSURE_REQUIRED, retain entered information, and prompt the applicant to complete the disclosure before resubmitting.",
           "缺少健康告知时，应阻止提交并返回 HTTP 422 与 HEALTH_DISCLOSURE_REQUIRED。保留已填信息，提示申请人补充后再提交。",
         )}
       </p>
-      {turn.sourceReferences.map((source, index) => (
-        <Button
-          key={source.id}
-          type="link"
-          onClick={() =>
-            onOpenCitation({ turnId: turn.id, index: index + 1, source })
-          }
-        >
-          [{index + 1}] {source.name}
-        </Button>
-      ))}
+      <CitationButtons turn={turn} onOpenCitation={onOpenCitation} />
     </div>
   );
 }

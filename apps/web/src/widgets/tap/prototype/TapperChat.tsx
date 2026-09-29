@@ -33,7 +33,7 @@ import type {
   Conversation,
   LibrarySource,
 } from "./model";
-import { CODEX_MODELS } from "./model";
+import { CODEX_MODELS, isGenerating } from "./model";
 import { FileTypeIcon } from "./FileTypeIcon";
 import {
   ATTACHMENT_ACCEPT,
@@ -178,8 +178,8 @@ export function TapperChat({
     turnId: string | null;
   } | null>(null);
   const hasTurns = conversation.turns.length > 0;
-  const isGenerating = conversation.turns.some(
-    (turn) => turn.answerState === "running",
+  const conversationIsGenerating = conversation.turns.some((turn) =>
+    isGenerating(turn),
   );
 
   useEffect(() => {
@@ -419,7 +419,7 @@ export function TapperChat({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = message.trim();
-    if (prompt.length === 0 || isSending || isGenerating) return;
+    if (prompt.length === 0 || isSending || conversationIsGenerating) return;
     onSend(prompt);
     setMessage("");
     composerRef.current?.focus();
@@ -891,7 +891,7 @@ export function TapperChat({
             </div>
           ) : null}
         </div>
-        {isGenerating && !isSending ? (
+        {conversationIsGenerating && !isSending ? (
           <button
             key="stop"
             className="tap-composer-send-button"
@@ -1013,7 +1013,7 @@ export function TapperChat({
                     <button
                       type="button"
                       className="tap-turn-action"
-                      disabled={isGenerating || isSending}
+                      disabled={conversationIsGenerating || isSending}
                       onClick={() => onRegenerate(turn)}
                     >
                       <ReloadOutlined aria-hidden="true" />
