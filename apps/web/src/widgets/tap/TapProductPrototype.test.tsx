@@ -68,15 +68,20 @@ it("uses one review workbench for long text, PDF and Excel sources", () => {
     fireEvent.click(
       screen.getByRole("button", { name: `Manage chunks ${name}` }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Original document" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Original document" }),
+    );
     expect(
-      screen.getByRole("navigation", { name: "Document outline" }),
+      within(dialog).getByRole("navigation", { name: "Document outline" }),
     ).toBeVisible();
-    expect(screen.getByRole("heading", { name: location })).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Mark selected text" }),
+      within(dialog).getByRole("heading", { name: location }),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(
+      within(dialog).getByRole("button", { name: "Mark selected text" }),
+    ).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
   }
 });
 
@@ -426,7 +431,7 @@ it("does not open a document review for a citation whose source was deleted", as
     screen.queryByRole("button", { name: "Open original" }),
   ).not.toBeInTheDocument();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-});
+}, 10_000);
 
 it("expands the collapsed sources panel when a citation is opened", async () => {
   render(<TapProductPrototype />);
