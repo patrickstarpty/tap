@@ -182,6 +182,31 @@ async def test_refresh_failure_keeps_last_good_routes():
 
 
 @pytest.mark.asyncio
+async def test_malformed_refresh_keeps_last_good_routes():
+    calls = 0
+    current_time = 1000.0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return model_info_response(deployment("qwen-plus"))
+        return httpx.Response(200, json={"data": "not-a-list"})
+
+    catalog = catalog_with_handler(handler, ttl_seconds=60.0, clock=lambda: current_time)
+
+    first = await catalog.routes()
+    assert first.get("qwen-plus") is not None
+
+    current_time += 61
+    second = await catalog.routes()
+
+    assert second.get("qwen-plus") is not None
+    assert calls == 2
+    await catalog.aclose()
+
+
+@pytest.mark.asyncio
 async def test_never_loaded_raises_unavailable():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json={"error": "boom"})

@@ -190,7 +190,13 @@ class LiteLLMCatalog:
                 return self._routes
             try:
                 routes = await self._fetch()
-            except (httpx.HTTPError, ValueError, TypeError, KeyError):
+            except (
+                httpx.HTTPError,
+                ValueError,
+                TypeError,
+                KeyError,
+                ModelGatewayUnavailable,
+            ):
                 if self._routes is not None:
                     return self._routes
                 raise ModelGatewayUnavailable() from None
