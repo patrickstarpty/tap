@@ -249,6 +249,22 @@ export interface PrototypeCopy {
     creates: string;
     evaluates: string;
     determines: string;
+    stepFile: string;
+    stepChunks: string;
+    next: string;
+    back: string;
+    recommended: string;
+    previewChunks: string;
+    childChunks: string;
+    uploading: string;
+    uploadFailed: string;
+    supportedFormats: string;
+    chunkMode: string;
+    chunkModeGeneral: string;
+    chunkModeParentChild: string;
+    chunkMax: string;
+    chunkOverlap: string;
+    chunkChildMax: string;
   };
   artifacts: {
     bddPlanReady: string;
@@ -603,6 +619,23 @@ export const PROTOTYPE_COPY = {
       creates: "creates",
       evaluates: "evaluates",
       determines: "determines",
+      stepFile: "Choose file",
+      stepChunks: "Chunk settings",
+      next: "Next",
+      back: "Back",
+      recommended:
+        "Recommended settings are applied. You can submit directly.",
+      previewChunks: "Preview chunks",
+      childChunks: "{n} child chunks",
+      uploading: "Uploading…",
+      uploadFailed: "Upload failed. Please try again.",
+      supportedFormats: "PDF, DOCX, Markdown, TXT, XLSX, PNG or JPG",
+      chunkMode: "Segmentation",
+      chunkModeGeneral: "General",
+      chunkModeParentChild: "Parent-child",
+      chunkMax: "Maximum length",
+      chunkOverlap: "Overlap",
+      chunkChildMax: "Child maximum length",
     },
     artifacts: {
       bddPlanReady: "BDD test plan ready",
@@ -945,6 +978,22 @@ export const PROTOTYPE_COPY = {
       creates: "生成",
       evaluates: "评估",
       determines: "决定",
+      stepFile: "选择文件",
+      stepChunks: "切片设置",
+      next: "下一步",
+      back: "上一步",
+      recommended: "已应用推荐设置，可直接提交。",
+      previewChunks: "预览切片",
+      childChunks: "{n} 个子块",
+      uploading: "正在上传…",
+      uploadFailed: "上传失败，请重试。",
+      supportedFormats: "支持 PDF、DOCX、Markdown、TXT、XLSX、PNG、JPG",
+      chunkMode: "分段方式",
+      chunkModeGeneral: "通用",
+      chunkModeParentChild: "父子分段",
+      chunkMax: "最大长度",
+      chunkOverlap: "重叠长度",
+      chunkChildMax: "子块最大长度",
     },
     artifacts: {
       bddPlanReady: "BDD 测试计划已就绪",

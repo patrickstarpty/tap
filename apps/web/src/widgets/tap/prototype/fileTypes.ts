@@ -13,6 +13,9 @@ export const FILE_TYPE_EXTENSIONS = {
 
 export type FileTypeFamily = keyof typeof FILE_TYPE_EXTENSIONS;
 
+export const ACCEPTED_SOURCE_EXTENSIONS =
+  ".pdf,.docx,.md,.markdown,.txt,.xlsx,.png,.jpg,.jpeg";
+
 export function getFileTypeFamily(typeOrFilename: string): FileTypeFamily {
   const extension = typeOrFilename.trim().split(".").pop()?.toUpperCase() ?? "";
   for (const [family, extensions] of Object.entries(FILE_TYPE_EXTENSIONS)) {

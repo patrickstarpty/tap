@@ -3,7 +3,13 @@ import { Button } from "antd";
 import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 import type { LibrarySource, Locale } from "./model";
 import "./DocumentReview.css";
-import { ChunkManager } from "./ChunkManager";
+import {
+  ChunkManager,
+  SAMPLE_CHUNK_SOURCE_TEXT,
+  generateChunks,
+  type ChunkSettings,
+} from "./ChunkManager";
+import { ACCEPTED_SOURCE_EXTENSIONS } from "./fileTypes";
 
 type DocumentState =
   | "processing"
@@ -273,7 +279,10 @@ export function useDocumentReview(locale: Locale) {
       ),
     );
   }
-  function upload(name: string, options: { inspect?: boolean } = {}) {
+  function upload(
+    name: string,
+    options: { inspect?: boolean; chunkSettings?: ChunkSettings } = {},
+  ) {
     const id = crypto.randomUUID();
     setDocuments((current) => [
       ...current,
@@ -282,13 +291,32 @@ export function useDocumentReview(locale: Locale) {
         name,
         version: "v1.0",
         state: "review",
-        chunkSetup: true,
+        chunkSetup: !options.chunkSettings,
         checks: [false, false, false, false],
         revision: 1,
         history: [],
       },
     ]);
-    if (options.inspect ?? true) setInspected(id);
+    if (options.chunkSettings) {
+      const chunks = generateChunks(
+        SAMPLE_CHUNK_SOURCE_TEXT,
+        options.chunkSettings,
+      );
+      try {
+        localStorage.setItem(
+          `tap.prototype.chunks.v1.${id}`,
+          JSON.stringify({
+            settings: options.chunkSettings,
+            chunks,
+            versions: [chunks],
+          }),
+        );
+      } catch {
+        /* session state remains */
+      }
+    } else if (options.inspect ?? true) {
+      setInspected(id);
+    }
     return id;
   }
   return {
@@ -350,7 +378,7 @@ export function DocumentReview({
             {t("Replace file", "替换文件")}
             <input
               type="file"
-              accept=".pdf,.docx,.md,.txt,.xlsx"
+              accept={ACCEPTED_SOURCE_EXTENSIONS}
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (file)

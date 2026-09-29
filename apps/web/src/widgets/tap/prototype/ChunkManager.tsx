@@ -1,14 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "antd";
 
-type Chunk = {
+export type Chunk = {
   id: string;
   content: string;
   enabled: boolean;
   edited: boolean;
   children: Chunk[];
 };
-type Settings = {
+export type ChunkSettings = {
   mode: "general" | "parent-child";
   parent: "paragraph" | "full-doc";
   delimiter: string;
@@ -19,7 +19,7 @@ type Settings = {
   whitespace: boolean;
   removeLinks: boolean;
 };
-const defaults: Settings = {
+export const DEFAULT_CHUNK_SETTINGS: ChunkSettings = {
   mode: "general",
   parent: "paragraph",
   delimiter: "\\n\\n",
@@ -30,7 +30,7 @@ const defaults: Settings = {
   whitespace: true,
   removeLinks: false,
 };
-const original =
+export const SAMPLE_CHUNK_SOURCE_TEXT =
   "The application records the applicant information and supporting disclosures. Check the applicable version and scope before using this guide.\n\nAn application must include a completed health disclosure before submission. If disclosure is missing, block submission and return HTTP 422 with HEALTH_DISCLOSURE_REQUIRED. Keep entered information and allow the applicant to complete missing fields before resubmitting.\n\nReview the application and completed disclosure together before resubmitting. Previously entered information remains available while the applicant completes missing fields.";
 const makeChunk = (content: string): Chunk => ({
   id: crypto.randomUUID(),
@@ -59,7 +59,7 @@ export function splitChunkText(
       return result;
     });
 }
-function generate(text: string, s: Settings): Chunk[] {
+export function generateChunks(text: string, s: ChunkSettings): Chunk[] {
   const clean = s.removeLinks
     ? text.replace(/https?:\/\/\S+|[\w.+-]+@[\w.-]+\.[a-z]+/gi, "")
     : text;
@@ -132,7 +132,7 @@ export function ChunkManager({
 }) {
   const key = `tap.prototype.chunks.v1.${id}`;
   const [saved, setSaved] = useState<{
-    settings: Settings;
+    settings: ChunkSettings;
     chunks: Chunk[];
     versions?: Chunk[][];
   }>(() => {
@@ -142,7 +142,10 @@ export function ChunkManager({
     } catch {
       /* use source */
     }
-    return { settings: defaults, chunks: generate(original, defaults) };
+    return {
+      settings: DEFAULT_CHUNK_SETTINGS,
+      chunks: generateChunks(SAMPLE_CHUNK_SOURCE_TEXT, DEFAULT_CHUNK_SETTINGS),
+    };
   });
   const [settings, setSettings] = useState(saved.settings);
   const [tab, setTab] = useState(initialSettings ? "settings" : "chunks");
@@ -203,9 +206,9 @@ export function ChunkManager({
   const full =
     saved.settings.mode === "parent-child" &&
     saved.settings.parent === "full-doc";
-  const patchSetting = <K extends keyof Settings>(
+  const patchSetting = <K extends keyof ChunkSettings>(
     key: K,
-    value: Settings[K],
+    value: ChunkSettings[K],
   ) => {
     setSettings((s) => ({ ...s, [key]: value }));
     setPreview(null);
@@ -305,7 +308,7 @@ export function ChunkManager({
                 value={settings.mode}
                 disabled={!initialSettings || Boolean(saved.versions?.length)}
                 onChange={(e) =>
-                  patchSetting("mode", e.target.value as Settings["mode"])
+                  patchSetting("mode", e.target.value as ChunkSettings["mode"])
                 }
               >
                 <option value="general">{t("General", "通用")}</option>
@@ -328,7 +331,7 @@ export function ChunkManager({
                 <select
                   value={settings.parent}
                   onChange={(e) =>
-                    patchSetting("parent", e.target.value as Settings["parent"])
+                    patchSetting("parent", e.target.value as ChunkSettings["parent"])
                   }
                 >
                   <option value="paragraph">{t("Paragraph", "段落")}</option>
@@ -424,7 +427,7 @@ export function ChunkManager({
                 settings.overlap < 0 ||
                 settings.overlap >= settings.max
               }
-              onClick={() => setPreview(generate(original, settings))}
+              onClick={() => setPreview(generateChunks(SAMPLE_CHUNK_SOURCE_TEXT, settings))}
             >
               {t("Preview chunks", "预览切片")}
             </Button>{" "}

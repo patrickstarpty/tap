@@ -2,6 +2,7 @@ import {
   DocumentReview,
   useDocumentReview,
 } from "./prototype/DocumentReview";
+import type { ChunkSettings } from "./prototype/ChunkManager";
 import { KnowledgeAnswer } from "./prototype/answer/KnowledgeAnswer";
 import {
   CitationPanel,
@@ -1461,8 +1462,11 @@ export function TapProductPrototype() {
     setSidebarCollapsed(isNarrowViewport);
   };
 
-  const addLocalSource = (source: Pick<LibrarySource, "name" | "type">) => {
-    review.upload(source.name);
+  const addLocalSource = (
+    source: Pick<LibrarySource, "name" | "type">,
+    chunkSettings: ChunkSettings,
+  ) => {
+    review.upload(source.name, { chunkSettings });
   };
 
   const deleteSource = (sourceId: string) => {

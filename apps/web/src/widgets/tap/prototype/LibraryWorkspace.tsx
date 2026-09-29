@@ -6,6 +6,7 @@ import {
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -17,13 +18,19 @@ import {
 import ReactMarkdown from "react-markdown";
 
 import { FileTypeIcon } from "./FileTypeIcon";
-import { getFileTypeFamily } from "./fileTypes";
+import { ACCEPTED_SOURCE_EXTENSIONS, getFileTypeFamily } from "./fileTypes";
 import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
 import { KnowledgeGraph } from "./KnowledgeGraph";
 import { SourceDetailDialog } from "./SourceDetailDialog";
+import { UploadChunkSettings } from "./UploadChunkSettings";
+import { DEFAULT_CHUNK_SETTINGS, type ChunkSettings } from "./ChunkManager";
 import type { LibrarySource } from "./model";
-import { clearPrototypeFault, isPrototypeFaultActive } from "./prototypeFaults";
+import {
+  clearPrototypeFault,
+  isPrototypeFaultActive,
+  takePrototypeFault,
+} from "./prototypeFaults";
 
 type LibraryMode = "list" | "graph";
 type LibraryStatusFilter = "all" | LibrarySource["status"];
@@ -31,7 +38,10 @@ type LibraryStatusFilter = "all" | LibrarySource["status"];
 interface LibraryWorkspaceProps {
   copy: PrototypeCopy;
   onInspectSource?: (sourceId: string, trigger: HTMLElement) => void;
-  onAddSource: (source: Pick<LibrarySource, "name" | "type">) => void;
+  onAddSource: (
+    source: Pick<LibrarySource, "name" | "type">,
+    chunkSettings: ChunkSettings,
+  ) => void;
   onRetrySource: (sourceId: string) => void;
   onDeleteSource: (sourceId: string) => void;
   sources: readonly LibrarySource[];
@@ -55,7 +65,13 @@ export function LibraryWorkspace({
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<LibraryStatusFilter>("all");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [addStep, setAddStep] = useState<"file" | "chunks">("file");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [chunkSettings, setChunkSettings] = useState<ChunkSettings>(
+    DEFAULT_CHUNK_SETTINGS,
+  );
+  const [uploading, setUploading] = useState(false);
+  const [uploadFailed, setUploadFailed] = useState(false);
   const [detailSourceId, setDetailSourceId] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(() =>
     isPrototypeFaultActive("library-load-failed"),
@@ -64,6 +80,14 @@ export function LibraryWorkspace({
   const detailTriggerRef = useRef<HTMLElement | null>(null);
   const listTabRef = useRef<HTMLButtonElement>(null);
   const graphTabRef = useRef<HTMLButtonElement>(null);
+  const uploadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (uploadTimerRef.current) clearTimeout(uploadTimerRef.current);
+    },
+    [],
+  );
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const availableTypes = useMemo(
     () => [...new Set(sources.map((source) => source.type))].sort(),
@@ -115,11 +139,24 @@ export function LibraryWorkspace({
   const openAddDialog = (event: MouseEvent<HTMLElement>) => {
     addDialogTriggerRef.current = event.currentTarget;
     setSelectedFile(null);
+    setAddStep("file");
+    setChunkSettings(DEFAULT_CHUNK_SETTINGS);
+    setUploading(false);
+    setUploadFailed(false);
     setAddDialogOpen(true);
   };
 
   const closeAddDialog = () => {
+    if (uploading) return;
+    if (uploadTimerRef.current) {
+      clearTimeout(uploadTimerRef.current);
+      uploadTimerRef.current = null;
+    }
     setSelectedFile(null);
+    setAddStep("file");
+    setChunkSettings(DEFAULT_CHUNK_SETTINGS);
+    setUploading(false);
+    setUploadFailed(false);
     setAddDialogOpen(false);
   };
 
@@ -133,14 +170,33 @@ export function LibraryWorkspace({
   const detailSource =
     sources.find((source) => source.id === detailSourceId) ?? null;
 
+  const goToChunkStep = () => {
+    if (selectedFile === null) return;
+    setAddStep("chunks");
+  };
+
+  const goToFileStep = () => {
+    setAddStep("file");
+  };
+
   const addSource = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (selectedFile === null) return;
-    onAddSource({
-      name: selectedFile.name,
-      type: sourceType(selectedFile.name),
-    });
-    closeAddDialog();
+    if (selectedFile === null || uploading) return;
+    const file = selectedFile;
+    const settings = chunkSettings;
+    const failed = takePrototypeFault("upload-failed");
+    setUploadFailed(false);
+    setUploading(true);
+    uploadTimerRef.current = setTimeout(() => {
+      uploadTimerRef.current = null;
+      setUploading(false);
+      if (failed) {
+        setUploadFailed(true);
+        return;
+      }
+      onAddSource({ name: file.name, type: sourceType(file.name) }, settings);
+      closeAddDialog();
+    }, 1000);
   };
 
   const sourceStatus = (source: LibrarySource) => {
@@ -426,30 +482,78 @@ export function LibraryWorkspace({
           opener={addDialogTriggerRef.current}
         >
           <header>
-            <h2>{copy.library.addSource}</h2>
+            <h2>
+              {addStep === "file"
+                ? copy.library.stepFile
+                : copy.library.stepChunks}
+            </h2>
           </header>
           <form onSubmit={addSource}>
-            <label>
-              <span>{copy.library.sourceFile}</span>
-              <input
-                type="file"
-                aria-label={copy.library.sourceFile}
-                accept=".pdf,.docx,.md,.txt,.png,.jpg,.jpeg"
-                onChange={(event) =>
-                  setSelectedFile(event.target.files?.item(0) ?? null)
-                }
-              />
-            </label>
-            <div className="tap-dialog-actions">
-              <Button onClick={closeAddDialog}>{copy.library.cancel}</Button>
-              <Button
-                type="primary"
-                htmlType="submit"
-                disabled={selectedFile === null}
-              >
-                {copy.library.addSource}
-              </Button>
-            </div>
+            {addStep === "file" ? (
+              <>
+                <label>
+                  <span>{copy.library.sourceFile}</span>
+                  <input
+                    type="file"
+                    aria-label={copy.library.sourceFile}
+                    accept={ACCEPTED_SOURCE_EXTENSIONS}
+                    onChange={(event) =>
+                      setSelectedFile(event.target.files?.[0] ?? null)
+                    }
+                  />
+                </label>
+                <p>{copy.library.supportedFormats}</p>
+                <div className="tap-dialog-actions">
+                  <Button onClick={closeAddDialog}>
+                    {copy.library.cancel}
+                  </Button>
+                  <Button
+                    type="primary"
+                    htmlType="button"
+                    disabled={selectedFile === null}
+                    onClick={goToChunkStep}
+                  >
+                    {copy.library.next}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <UploadChunkSettings
+                  copy={copy}
+                  value={chunkSettings}
+                  onChange={setChunkSettings}
+                />
+                <p>{copy.library.recommended}</p>
+                {uploading ? (
+                  <p role="status">{copy.library.uploading}</p>
+                ) : null}
+                {uploadFailed ? (
+                  <p role="alert">{copy.library.uploadFailed}</p>
+                ) : null}
+                <div className="tap-dialog-actions">
+                  <Button onClick={closeAddDialog} disabled={uploading}>
+                    {copy.library.cancel}
+                  </Button>
+                  <Button
+                    htmlType="button"
+                    onClick={goToFileStep}
+                    disabled={uploading}
+                  >
+                    {copy.library.back}
+                  </Button>
+                  <Button
+                    type="primary"
+                    htmlType="submit"
+                    loading={uploading}
+                    aria-busy={uploading}
+                    aria-label={copy.library.addSource}
+                  >
+                    {copy.library.addSource}
+                  </Button>
+                </div>
+              </>
+            )}
           </form>
         </AccessibleDialog>
       ) : null}
