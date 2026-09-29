@@ -16,6 +16,7 @@ import {
 import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
 import type { CatalogItem, CatalogKind } from "./model";
+import { isValidCatalogName, toSkillMarkdown } from "./skillMarkdown";
 
 export interface CatalogDraft {
   description: string;
@@ -64,6 +65,9 @@ export function CatalogWorkspace({
   const catalogLabel = isAgent
     ? copy.catalog.agentCatalog
     : copy.catalog.skillCatalog;
+  const trimmedName = draft.name.trim();
+  const isNameInvalid =
+    trimmedName.length > 0 && !isValidCatalogName(trimmedName);
 
   const visibleItems = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -104,7 +108,7 @@ export function CatalogWorkspace({
   const saveItem = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedDraft = { ...draft, name: draft.name.trim() };
-    if (normalizedDraft.name.length === 0) return;
+    if (!isValidCatalogName(normalizedDraft.name)) return;
     if (dialogMode === "edit" && editingItemId !== null) {
       onUpdate(editingItemId, normalizedDraft);
     } else {
@@ -173,17 +177,19 @@ export function CatalogWorkspace({
                 ) : null}
               </article>
               <div className="tap-catalog-actions">
-                <Button
-                  icon={<EditOutlined aria-hidden="true" />}
-                  aria-label={
-                    editLabel.startsWith("Edit")
-                      ? `Edit ${item.name}`
-                      : `${editLabel} ${item.name}`
-                  }
-                  onClick={(event) => openEditDialog(item, event)}
-                >
-                  {editLabel}
-                </Button>
+                {item.origin === "built-in" ? null : (
+                  <Button
+                    icon={<EditOutlined aria-hidden="true" />}
+                    aria-label={
+                      editLabel.startsWith("Edit")
+                        ? `Edit ${item.name}`
+                        : `${editLabel} ${item.name}`
+                    }
+                    onClick={(event) => openEditDialog(item, event)}
+                  >
+                    {editLabel}
+                  </Button>
+                )}
                 <Button
                   type="primary"
                   ghost
@@ -212,59 +218,74 @@ export function CatalogWorkspace({
           <header>
             <h2>{dialogMode === "create" ? createLabel : editLabel}</h2>
           </header>
-          <form onSubmit={saveItem}>
-            <label>
-              <span>{copy.catalog.name}</span>
-              <Input
-                aria-label={copy.catalog.name}
-                value={draft.name}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    name: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label>
-              <span>{copy.catalog.description}</span>
-              <Input.TextArea
-                aria-label={copy.catalog.description}
-                rows={2}
-                value={draft.description}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    description: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label>
-              <span>{copy.catalog.instructions}</span>
-              <Input.TextArea
-                aria-label={copy.catalog.instructions}
-                rows={4}
-                value={draft.instructions}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    instructions: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <div className="tap-dialog-actions">
-              <Button onClick={closeDialog}>{copy.catalog.cancel}</Button>
-              <Button
-                type="primary"
-                htmlType="submit"
-                disabled={draft.name.trim().length === 0}
-              >
-                {saveLabel}
-              </Button>
-            </div>
-          </form>
+          <div className="tap-catalog-dialog-layout">
+            <form onSubmit={saveItem}>
+              <label>
+                <span>{copy.catalog.name}</span>
+                <Input
+                  aria-label={copy.catalog.name}
+                  aria-invalid={isNameInvalid}
+                  status={isNameInvalid ? "error" : undefined}
+                  value={draft.name}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                />
+                <span className="tap-catalog-name-hint">
+                  {copy.catalog.nameRule}
+                </span>
+              </label>
+              <label>
+                <span>{copy.catalog.description}</span>
+                <Input.TextArea
+                  aria-label={copy.catalog.description}
+                  rows={2}
+                  value={draft.description}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      description: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                <span>{copy.catalog.instructions}</span>
+                <Input.TextArea
+                  aria-label={copy.catalog.instructions}
+                  rows={4}
+                  value={draft.instructions}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      instructions: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <div className="tap-dialog-actions">
+                <Button onClick={closeDialog}>{copy.catalog.cancel}</Button>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  disabled={!isValidCatalogName(draft.name.trim())}
+                >
+                  {saveLabel}
+                </Button>
+              </div>
+            </form>
+            {isAgent ? null : (
+              <aside className="tap-catalog-preview">
+                <h3>{copy.catalog.previewHeading}</h3>
+                <pre aria-label={copy.catalog.previewHeading}>
+                  {toSkillMarkdown(draft)}
+                </pre>
+              </aside>
+            )}
+          </div>
         </AccessibleDialog>
       )}
     </section>

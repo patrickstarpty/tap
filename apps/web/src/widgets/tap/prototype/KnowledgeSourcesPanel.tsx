@@ -1,11 +1,12 @@
 import { BookOutlined } from "@ant-design/icons";
-import { Checkbox, Input, Spin } from "antd";
+import { Button, Checkbox, Input, Spin } from "antd";
 import { useMemo, useState } from "react";
 
 import type { PrototypeCopy } from "./copy";
 import type { LibrarySource } from "./model";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { PanelToggleIcon } from "./PanelToggleIcon";
+import { clearPrototypeFault, isPrototypeFaultActive } from "./prototypeFaults";
 
 interface KnowledgeSourcesPanelProps {
   copy: PrototypeCopy;
@@ -25,8 +26,15 @@ export function KnowledgeSourcesPanel({
   sources,
 }: KnowledgeSourcesPanelProps) {
   const [query, setQuery] = useState("");
+  const [loadFailed, setLoadFailed] = useState(() =>
+    isPrototypeFaultActive("sources-load-failed"),
+  );
   const readySources = useMemo(
     () => sources.filter((source) => source.status === "ready"),
+    [sources],
+  );
+  const hasProcessingSources = useMemo(
+    () => sources.some((source) => source.status === "processing"),
     [sources],
   );
   const visibleSources = useMemo(() => {
@@ -77,12 +85,26 @@ export function KnowledgeSourcesPanel({
           <Spin size="small" />
           <span>{copy.sources.loading}</span>
         </div>
+      ) : loadFailed ? (
+        <div className="tap-sources-load-error">
+          <p role="alert">{copy.sources.loadFailed}</p>
+          <Button
+            onClick={() => {
+              clearPrototypeFault("sources-load-failed");
+              setLoadFailed(false);
+            }}
+          >
+            {copy.navigation.retry}
+          </Button>
+        </div>
       ) : visibleSources.length === 0 ? (
         <div className="tap-sources-empty">
           <BookOutlined aria-hidden="true" />
           <span>
             {readySources.length === 0
-              ? copy.sources.noReadySources
+              ? hasProcessingSources
+                ? copy.sources.allProcessing
+                : copy.sources.noReadySources
               : copy.sources.noResults}
           </span>
         </div>
