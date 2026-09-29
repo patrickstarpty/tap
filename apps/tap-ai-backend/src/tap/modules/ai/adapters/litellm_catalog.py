@@ -6,7 +6,7 @@ import asyncio
 import json
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -30,9 +30,14 @@ class LiteLLMModel:
 @dataclass(frozen=True, slots=True)
 class LiteLLMRoutes:
     models: Mapping[str, LiteLLMModel]
+    # LiteLLM deployment id (`model_info.id`, echoed as `x-litellm-model-id`) → upstream model.
+    deployments: Mapping[str, str] = field(default_factory=dict)
 
     def get(self, name: str) -> LiteLLMModel | None:
         return self.models.get(name)
+
+    def upstream_model(self, deployment_id: str) -> str | None:
+        return self.deployments.get(deployment_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +152,21 @@ def _parse_routes(body: dict[str, Any]) -> LiteLLMRoutes:
         merged = _merge(entries)
         if merged is not None:
             models[name] = merged
-    return LiteLLMRoutes(models)
+    deployments: dict[str, str] = {}
+    for row in rows:
+        model_info = row.get("model_info")
+        params = row.get("litellm_params")
+        deployment_id = model_info.get("id") if isinstance(model_info, dict) else None
+        upstream = params.get("model") if isinstance(params, dict) else None
+        if (
+            isinstance(deployment_id, str)
+            and deployment_id
+            and isinstance(upstream, str)
+            and upstream
+            and len(upstream) <= 256
+        ):
+            deployments[deployment_id] = upstream
+    return LiteLLMRoutes(models, deployments)
 
 
 class LiteLLMCatalog:

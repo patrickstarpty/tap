@@ -2598,6 +2598,20 @@
       "HealthComponent": {
         "additionalProperties": false,
         "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
           "name": {
             "$ref": "#/components/schemas/HealthComponentName"
           },

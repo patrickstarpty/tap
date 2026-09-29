@@ -143,8 +143,9 @@ class KnowledgeModelGateway:
         self.embedding_model_id = embedding_alias
         self.embedding_dimension = embedding_dimension
         self.chat_alias = chat_alias
-        self.chat_aliases = chat_aliases or frozenset({chat_alias})
-        if chat_alias not in self.chat_aliases:
+        # None: the gateway's LiteLLM catalog decides which chat models exist, per call.
+        self.chat_aliases = chat_aliases
+        if chat_aliases is not None and chat_alias not in chat_aliases:
             raise ValueError("default chat alias must be in the approved chat catalog")
         self.timeout_seconds = timeout_seconds
 
@@ -159,7 +160,7 @@ class KnowledgeModelGateway:
     ) -> AnswerGeneration:
         """Generate a model-only answer when the user selected no Knowledge corpus."""
 
-        if model_alias not in self.chat_aliases:
+        if self.chat_aliases is not None and model_alias not in self.chat_aliases:
             raise AnswerUnavailable("model-unavailable")
         context = await self._redact(query)
         direct_chat_prompt = (
@@ -312,7 +313,7 @@ class KnowledgeModelGateway:
         ):
             raise AnswerUnavailable("model-unavailable")
         alias = model_alias or self.chat_alias
-        if alias not in self.chat_aliases:
+        if self.chat_aliases is not None and alias not in self.chat_aliases:
             raise AnswerUnavailable("model-unavailable")
         # Redact copies only; canonical evidence, hashes and citation authority stay intact.
         context_value = {

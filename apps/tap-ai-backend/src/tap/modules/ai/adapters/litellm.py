@@ -217,11 +217,18 @@ class LiteLLMModelGateway:
             raise ModelGatewayRejected()
         model = (await self._catalog.routes()).get(request.alias)
         expected_mode = "embedding" if operation is ModelOperation.EMBED else "chat"
+        wants_image = request.image_bytes is not None
+        role_models = {roles.default_chat_model, roles.embedding_model}
+        if wants_image and roles.vision_model is not None:
+            role_models.add(roles.vision_model)
+        # A misconfigured role is an outage; any other unknown or unfit model is a bad request.
+        role_request = request.alias in role_models
         if model is None or model.mode != expected_mode:
-            # A misconfigured role is an outage; any other unknown model is a bad request.
-            if request.alias in {roles.default_chat_model, roles.embedding_model}:
+            if role_request:
                 raise ModelGatewayUnavailable()
             raise ModelGatewayRejected()
+        if wants_image and request.alias == roles.vision_model and not model.supports_vision:
+            raise ModelGatewayUnavailable()
         if operation is ModelOperation.STRUCTURED and not model.supports_response_schema:
             raise ModelGatewayRejected()
         return model
@@ -314,7 +321,7 @@ class LiteLLMModelGateway:
                             }
                         )
                 body, headers = await self._post(request, payload)
-                return self._normalize(request, body, headers)
+                return self._normalize(request, body, headers, await self._upstream_model(headers))
         except ModelGatewayRejected:
             raise
         except (
@@ -380,11 +387,27 @@ class LiteLLMModelGateway:
                     raise ModelGatewayUnavailable() from None
         raise ModelGatewayUnavailable()
 
+    async def _upstream_model(self, headers: httpx.Headers) -> str | None:
+        """Map LiteLLM's served deployment id to its configured upstream model, if known."""
+
+        deployment_id = headers.get("x-litellm-model-id")
+        if not deployment_id:
+            return None
+        return (await self._catalog.routes()).upstream_model(deployment_id)
+
     def _normalize(
-        self, request: ModelRequest, body: dict[str, Any], headers: httpx.Headers
+        self,
+        request: ModelRequest,
+        body: dict[str, Any],
+        headers: httpx.Headers,
+        upstream_model: str | None = None,
     ) -> ModelResult:
-        actual = body["model"]
-        if not isinstance(actual, str) or not actual.strip() or len(actual) > 256:
+        # LiteLLM may echo the model without its provider prefix; the deployment id is exact.
+        returned = body["model"]
+        if not isinstance(returned, str) or not returned.strip():
+            raise ModelGatewayUnavailable()
+        actual = upstream_model if upstream_model is not None else returned
+        if len(actual) > 256:
             raise ModelGatewayUnavailable()
         provider = actual.split("/", 1)[0] if "/" in actual else "unknown"
         if not provider:

@@ -273,3 +273,26 @@ def test_vision_role_requires_supports_vision():
     assert "qwen-plus does not support vision" in problems[0] or any(
         "does not support vision" in problem for problem in problems
     )
+
+
+@pytest.mark.asyncio
+async def test_keeps_deployment_id_to_upstream_model_map():
+    def handler(request: httpx.Request) -> httpx.Response:
+        plus = deployment("qwen-plus", supports_response_schema=True)
+        plus["model_info"]["id"] = "deployment-plus"
+        plus_backup = deployment("qwen-plus", supports_response_schema=True)
+        plus_backup["model_info"]["id"] = "deployment-plus-backup"
+        plus_backup["litellm_params"] = {"model": "openai/gpt-4o-mini"}
+        no_id = deployment("text-embedding-v4", mode="embedding")
+        return model_info_response(plus, plus_backup, no_id)
+
+    catalog = catalog_with_handler(handler)
+    routes = await catalog.routes()
+
+    assert dict(routes.deployments) == {
+        "deployment-plus": "dashscope/qwen-plus",
+        "deployment-plus-backup": "openai/gpt-4o-mini",
+    }
+    assert routes.upstream_model("deployment-plus") == "dashscope/qwen-plus"
+    assert routes.upstream_model("unknown") is None
+    await catalog.aclose()

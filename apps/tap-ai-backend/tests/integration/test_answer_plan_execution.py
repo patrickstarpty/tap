@@ -385,7 +385,6 @@ async def test_worker_routes_in_graph_persists_plan_and_binds_completion(questio
     )
 
     class Models:
-        chat_aliases = frozenset({"qwen-plus"})
         count = 0
 
         async def chat(self, *args, **kwargs):
@@ -609,12 +608,7 @@ async def test_http_selected_plan_returns_citations_from_existing_answer_boundar
             assert kwargs["answer_execution"].plan_id == plan.plan_id
             return answer_response()
 
-    service = KnowledgeHttpService(
-        documents=Scoped(),
-        answers=Scoped(),
-        citations=Scoped(),
-        models=SimpleNamespace(chat_aliases=frozenset({"qwen-plus"})),
-    )
+    service = KnowledgeHttpService(documents=Scoped(), answers=Scoped(), citations=Scoped())
     result = await service.answer_conversation(
         RetrievalAnswerRequest(query=frozen.message), frozen, answer_plan=plan
     )
@@ -627,8 +621,6 @@ async def test_revocation_after_embedding_prevents_search():
     revoked = False
 
     class Models(PlannedModels):
-        chat_aliases = frozenset({"qwen-plus"})
-
         async def embed(self, query):
             nonlocal revoked
             result = await super().embed(query)
@@ -772,8 +764,6 @@ async def test_direct_answer_respects_persisted_deadline_before_any_model_call()
         scope = VALIDATION_SCOPE
 
     class Models:
-        chat_aliases = frozenset({"qwen-plus"})
-
         async def chat(self, *args, **kwargs):
             return AnswerGeneration("Hello", (), "qwen-plus", "direct-chat-v1", None)
 
@@ -830,7 +820,6 @@ async def test_direct_plan_rejects_template_drift_before_generation(drift):
     from tap.modules.knowledge.ports.models import AnswerGeneration
 
     class Models:
-        chat_aliases = frozenset({"qwen-plus"})
         calls = 0
 
         async def chat(self, *args, **kwargs):
@@ -855,9 +844,9 @@ async def test_clarification_asks_for_the_validated_missing_field(missing, requi
 
     frozen, plan = await model_only_plan("比较本次与目标结果")
     plan = replace(plan, missing=(missing,))
-    result = await nonretrieval_service(
-        SimpleNamespace(chat_aliases=frozenset({"qwen-plus"}))
-    ).answer_conversation(RetrievalAnswerRequest(query=frozen.message), frozen, answer_plan=plan)
+    result = await nonretrieval_service(object()).answer_conversation(
+        RetrievalAnswerRequest(query=frozen.message), frozen, answer_plan=plan
+    )
     assert required in result.answer
     assert "对象和版本" not in result.answer
 
@@ -871,8 +860,6 @@ async def test_direct_plan_passes_pinned_assembly_to_generation():
     inputs = []
 
     class Models:
-        chat_aliases = frozenset({"qwen-plus"})
-
         async def chat(self, *args, **kwargs):
             inputs.append(kwargs.get("answer_input"))
             return AnswerGeneration("Hello", (), "qwen-plus", "direct-chat-v1", None)

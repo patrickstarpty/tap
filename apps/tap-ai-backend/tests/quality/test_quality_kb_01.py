@@ -246,8 +246,6 @@ def _execution(
                         "runnerCallId": f"runner-{call}",
                         "requestedAlias": "qwen-plus",
                         "requestedOperation": "structured",
-                        "requestedProvider": "approved-provider",
-                        "requestedModel": "approved-provider/approved-model",
                         "startedAtUtc": "2026-09-09T00:00:00Z",
                         "endedAtUtc": "2026-09-09T00:00:00.002Z",
                         "status": "success",
@@ -800,9 +798,8 @@ def test_every_answer_call_must_match_approval_and_dataset_governance() -> None:
     observations["cases"][0]["execution"]["attempts"][0]["providerCalls"][0]["promptDigest"] = _sha(
         "f"
     )
-    observations["cases"][1]["execution"]["attempts"][0]["providerCalls"][0][
-        "requestedProvider"
-    ] = "unapproved-provider"
+    unapproved_call = observations["cases"][1]["execution"]["attempts"][0]["providerCalls"][0]
+    unapproved_call["requestedAlias"] = unapproved_call["alias"] = "qwen-max"
 
     report = module.evaluate_run(
         dataset,
@@ -815,7 +812,51 @@ def test_every_answer_call_must_match_approval_and_dataset_governance() -> None:
     assert report["status"] == "fail"
     assert "unapproved answer identity" in " ".join(report["failures"])
     assert "prompt governance mismatch" in " ".join(report["failures"])
-    assert "unapproved requested provider route" in " ".join(report["failures"])
+    assert "unapproved requested model alias" in " ".join(report["failures"])
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "approved"),
+    [
+        ("dashscope", "dashscope/qwen-plus", True),
+        ("unknown", "qwen-plus", False),
+    ],
+)
+def test_served_identity_must_match_the_approved_dashscope_upstream(
+    provider: str, model: str, approved: bool
+) -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    approval = deepcopy(APPROVED)
+    approval["routes"] = deepcopy(APPROVED["routes"])
+    for route in approval["routes"]:
+        route["actualProvider"] = "dashscope"
+        route["actualModel"] = (
+            "dashscope/text-embedding-v4"
+            if route["operation"] == "embed"
+            else "dashscope/qwen-plus"
+        )
+    observations = _observations(dataset)
+    for case in observations["cases"]:
+        for attempt in case["execution"]["attempts"]:
+            for call in attempt["providerCalls"]:
+                if call["status"] == "success":
+                    call["actualProvider"] = provider
+                    call["actualModel"] = model
+
+    report = module.evaluate_run(
+        dataset,
+        observations,
+        min_cases=4,
+        require_real=True,
+        approved_mapping=approval,
+    )
+
+    identity_failures = [item for item in report["failures"] if "unapproved" in item]
+    if approved:
+        assert identity_failures == []
+    else:
+        assert any("unapproved answer identity" in item for item in identity_failures)
 
 
 @pytest.mark.parametrize(
@@ -1675,8 +1716,9 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
     assert attempts[1]["retryReason"] == "ModelGatewayUnavailable"
     assert receipts[1][0]["status"] == "success"
     assert receipts[1][0]["requestedAlias"] == PRODUCTION_ROUTES[operation]["logicalAlias"]
-    assert receipts[1][0]["requestedProvider"] == PRODUCTION_ROUTES[operation]["actualProvider"]
-    assert receipts[1][0]["requestedModel"] == PRODUCTION_ROUTES[operation]["actualModel"]
+    # Requested-route attestation is dropped: only the served identity is recorded.
+    assert "requestedProvider" not in receipts[1][0]
+    assert "requestedModel" not in receipts[1][0]
 
     budget_posts: list[httpx.Request] = []
 

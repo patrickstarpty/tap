@@ -142,7 +142,52 @@ async def test_vision_role_without_supports_vision_reports_unhealthy() -> None:
 
     problems = await models.gateway.health_problems()
     assert any("TAPPER_VISION_MODEL" in item for item in problems)
-    assert await readiness._checks[4]() is False
+    health = await readiness.check()
+    models_component = health.components[-1]
+    assert health.status == "unready"
+    assert models_component.name == HealthComponentName.MODELS
+    assert models_component.state == HealthComponentState.FAILED
+    assert models_component.detail == "; ".join(problems)
+    assert "TAPPER_VISION_MODEL" in models_component.detail
+    assert all(item.detail is None for item in health.components[:-1])
+
+    from dataclasses import replace
+
+    from tap.modules.ai.domain.models import (
+        ModelGatewayUnavailable,
+        ModelOperation,
+        ModelRequest,
+        schema_digest,
+        text_digest,
+    )
+
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    vision_request = ModelRequest(
+        VALIDATION_SCOPE,
+        "qwen-plus",
+        ModelOperation.STRUCTURED,
+        "Read the flowchart.",
+        text_digest("Read the flowchart."),
+        "flowchart image",
+        1,
+        "vision-role-1",
+        schema,
+        schema_digest(schema),
+    )
+    # A misconfigured vision role is an outage (503), not a caller error.
+    with pytest.raises(ModelGatewayUnavailable):
+        await models.gateway.generate_structured(
+            replace(
+                vision_request,
+                image_bytes=b"\x89PNG\r\n\x1a\nvalid",
+                image_media_type="image/png",
+            )
+        )
     await models.aclose()
 
 
@@ -996,6 +1041,35 @@ def test_http_readiness_uses_injected_service_and_keeps_http_200_for_unready() -
         "models",
     ]
     assert readiness.calls == 1
+
+
+def test_http_readiness_reports_model_role_problems_as_component_detail() -> None:
+    module = _runtime()
+    problem = "TAPPER_VISION_MODEL=qwen-plus does not support vision"
+
+    async def healthy() -> bool:
+        return True
+
+    async def models() -> bool:
+        raise module.ReadinessProblem(problem)
+
+    service = module.ReadinessService(
+        mysql=healthy,
+        redis=healthy,
+        blob=healthy,
+        milvus=healthy,
+        models=models,
+        timeout_seconds=2,
+    )
+    client = TestClient(create_app(HttpServices(readiness=service)))
+
+    body = client.get("/health/ready").json()
+
+    assert body["status"] == "unready"
+    components = {item["name"]: item for item in body["components"]}
+    assert components["models"]["state"] == "failed"
+    assert components["models"]["detail"] == problem
+    assert components["mysql"].get("detail") is None
 
 
 @pytest.mark.parametrize("keep_review_history", [False, True])

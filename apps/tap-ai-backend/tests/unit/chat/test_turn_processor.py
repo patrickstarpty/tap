@@ -862,7 +862,6 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
         answers=answers,
         citations=Citations(),
         corpus_version=settings.corpus_version,
-        models=SimpleNamespace(chat_aliases=frozenset({settings.default_chat_model})),
     )
     frozen = fixtures.ready()
     policy = build_demo_policy_context((frozen,), corpus_version=expected_corpus)

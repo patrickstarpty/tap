@@ -493,13 +493,15 @@ def _validate_execution(
             if status not in {"success", "error"} or type(retryable) is not bool:
                 raise ValueError(f"case {case_id} provider call status is invalid")
             approved_route = approved_routes.get(operation)
+            # Requested-route attestation is limited to the LiteLLM model name: LiteLLM owns the
+            # name → upstream mapping (and may fall back), so the runner cannot attest a requested
+            # provider/model. Legacy requestedProvider/requestedModel fields are ignored; the
+            # served actualProvider/actualModel below must still match the approval.
             if require_real and (
                 approved_route is None
                 or requested_alias != approved_route["logicalAlias"]
-                or call.get("requestedProvider") != approved_route["actualProvider"]
-                or call.get("requestedModel") != approved_route["actualModel"]
             ):
-                failures.append(f"case {case_id} unapproved requested provider route")
+                failures.append(f"case {case_id} unapproved requested model alias")
             if operation in {"chat", "structured"}:
                 if alias != root["bindings"].get("modelAlias"):
                     failures.append(f"case {case_id} logical model alias mismatch")

@@ -557,6 +557,16 @@ def _consume_background_task(task: asyncio.Future[object]) -> None:
 ReadinessCheck = Callable[[], Awaitable[bool]]
 
 
+class ReadinessProblem(Exception):
+    """A failed check with an operator-safe reason surfaced as the component detail."""
+
+    def __init__(self, detail: str) -> None:
+        if not isinstance(detail, str) or not detail.strip():
+            raise ValueError("readiness problem requires a detail")
+        super().__init__(detail[:2048])
+        self.detail = detail[:2048]
+
+
 class ReadinessService:
     """Run every fixed dependency probe independently under one closed timeout."""
 
@@ -609,22 +619,25 @@ class ReadinessService:
                 name=name,
                 state=HealthComponentState.OK if healthy else HealthComponentState.FAILED,
                 remediation_code=None if healthy else self._REMEDIATION[name],
+                detail=None if healthy else detail,
             )
-            for name, healthy in zip(self._ORDER, results, strict=True)
+            for name, (healthy, detail) in zip(self._ORDER, results, strict=True)
         ]
         return ReadyHealth(
-            status="ready" if all(results) else "unready",
+            status="ready" if all(healthy for healthy, _detail in results) else "unready",
             components=components,
         )
 
-    async def _bounded(self, check: ReadinessCheck) -> bool:
+    async def _bounded(self, check: ReadinessCheck) -> tuple[bool, str | None]:
         try:
             async with asyncio.timeout(self._timeout_seconds):
-                return await check() is True
+                return await check() is True, None
         except asyncio.CancelledError:
             raise
+        except ReadinessProblem as problem:
+            return False, problem.detail
         except Exception:
-            return False
+            return False, None
 
 
 def create_project_audit(
@@ -1403,7 +1416,10 @@ def _create_readiness(
         gateway = getattr(embeddings, "gateway", None)
         if not isinstance(gateway, LiteLLMModelGateway):
             return False
-        return not await gateway.health_problems()
+        problems = await gateway.health_problems()
+        if problems:
+            raise ReadinessProblem("; ".join(problems))
+        return True
 
     return ReadinessService(
         mysql=mysql_ready,

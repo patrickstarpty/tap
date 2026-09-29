@@ -62,7 +62,7 @@ def model_entry(name: str, mode: str, **model_info: object) -> dict[str, object]
     return {
         "model_name": name,
         "litellm_params": {"model": f"dashscope/{name}"},
-        "model_info": {"mode": mode, **model_info},
+        "model_info": {"id": f"deployment-{name}", "mode": mode, **model_info},
     }
 
 
@@ -1108,3 +1108,40 @@ def test_gateway_config_hides_credential_and_validates_bounds():
             embedding_dimension=0,
         )
     assert "private-provider-key" not in repr(configured_gateway(success)._config)
+
+
+def _headers_response(headers: dict[str, str], model: str):
+    def respond(incoming):
+        return httpx.Response(
+            200, headers=headers, json=success(incoming).json() | {"model": model}
+        )
+
+    return respond
+
+
+@pytest.mark.asyncio
+async def test_actual_model_comes_from_deployment_header_mapping():
+    result = await configured_gateway(
+        _headers_response({"x-litellm-model-id": "deployment-qwen-plus"}, "qwen-plus")
+    ).chat(request())
+
+    assert result.actual_model == result.audit.actual_model == "dashscope/qwen-plus"
+    assert result.actual_provider == result.audit.actual_provider == "dashscope"
+
+
+@pytest.mark.asyncio
+async def test_actual_model_falls_back_to_body_without_deployment_header():
+    result = await configured_gateway(_headers_response({}, "qwen-plus")).chat(request())
+
+    assert result.actual_model == "qwen-plus"
+    assert result.actual_provider == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_actual_model_falls_back_to_body_for_unknown_deployment_id():
+    result = await configured_gateway(
+        _headers_response({"x-litellm-model-id": "deployment-gone"}, "openai/gpt-4o-mini")
+    ).chat(request())
+
+    assert result.actual_model == "openai/gpt-4o-mini"
+    assert result.actual_provider == "openai"

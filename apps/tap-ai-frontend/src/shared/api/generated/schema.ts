@@ -2100,6 +2100,11 @@ export interface components {
         };
         /** HealthComponent */
         HealthComponent: {
+            /**
+             * Detail
+             * @default null
+             */
+            detail?: string | null;
             name: components["schemas"]["HealthComponentName"];
             /** @default null */
             remediationCode?: components["schemas"]["HealthRemediationCode"] | null;

@@ -160,8 +160,9 @@ class CapturingModelGateway:
             "runnerCallId": str(uuid4()),
             "requestedAlias": request.alias,
             "requestedOperation": request.operation.value,
-            "requestedProvider": route["actualProvider"],
-            "requestedModel": route["actualModel"],
+            # No requestedProvider/requestedModel: the gateway routes by LiteLLM model name
+            # only, so the requested upstream is not attestable. The served upstream is
+            # recorded below as actualProvider/actualModel and verified against the approval.
             "startedAtUtc": _utc_text(call_started_at),
             "status": "started",
             "operation": request.operation.value,
@@ -271,9 +272,7 @@ async def run_dataset(
     if approved_mapping is not None:
         if production_routes is None:
             raise ValueError("production ModelGateway routes are required")
-        production_routes = _require_approved_production_routes(
-            approved_mapping, production_routes
-        )
+        _require_approved_production_routes(approved_mapping, production_routes)
     minimum_provider_calls = sum(
         case["authorizationExpected"] == "allow" for case in cases
     )
@@ -938,8 +937,8 @@ def _production_routes_from_gateway(
 
 def _require_approved_production_routes(
     approved: dict[str, Any], production_routes: dict[str, dict[str, Any]]
-) -> dict[str, dict[str, Any]]:
-    """Match gateway-governed fields and return the full approved routes by operation."""
+) -> None:
+    """Match the gateway-governed fields; approved upstreams are checked per served call."""
 
     routes = approved.get("routes")
     approved_routes = (
@@ -956,7 +955,6 @@ def _require_approved_production_routes(
 
     if not approved_routes or governed(approved_routes) != governed(production_routes):
         raise ValueError("approval routes do not match production ModelGateway routes")
-    return approved_routes
 
 
 def _approved_mapping_from_env(*, now: datetime | None = None) -> dict[str, Any]:
@@ -1060,9 +1058,8 @@ async def _main_async(args: argparse.Namespace) -> int:
         original_gateway = _require_single_http_attempt_gateway(
             runtime.quality_models.gateway
         )
-        production_routes = _require_approved_production_routes(
-            approved, _production_routes_from_gateway(original_gateway)
-        )
+        production_routes = _production_routes_from_gateway(original_gateway)
+        _require_approved_production_routes(approved, production_routes)
 
         def path_factory(capture: CapturingModelGateway) -> RuntimeKnowledgePath:
             runtime.quality_models.gateway = capture
