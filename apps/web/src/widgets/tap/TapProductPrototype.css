@@ -1704,10 +1704,20 @@
   font-size: 10px;
 }
 
+.tap-citation-panel > header {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .tap-citation-panel header p {
   margin: 4px 0 0;
   color: var(--tap-muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.tap-citation-panel .tap-document-original,
+.tap-citation-panel .tap-document-original mark {
+  overflow-wrap: anywhere;
 }
 
 .tap-citation-notice {
