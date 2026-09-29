@@ -178,7 +178,7 @@ class AnswerSnapshot:
                 or item.content_role is not ContentRole.SOURCE
                 or source.source_type != "doc"
                 or source.revision_kind is not RevisionKind.BLOB_VERSION
-                or source.anchor.bbox
+                # An image region is bound through anchor_json into the recomputed chunk ID.
                 or source.anchor.start_offset is None
                 or source.anchor.end_offset is None
                 or source.anchor.end_offset <= source.anchor.start_offset
@@ -271,6 +271,8 @@ def _document_anchor_json(anchor: DocumentAnchor) -> str:
         value["page"] = anchor.page
     if anchor.inventory_item_id is not None:
         value["inventoryItemId"] = anchor.inventory_item_id
+    if anchor.bbox:
+        value["bbox"] = list(anchor.bbox)
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 

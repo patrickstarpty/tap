@@ -26,9 +26,11 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MILVUS_OUTPUT_FIELDS,
     MilvusChannelRequest,
     MilvusHybridRequest,
+    MilvusQueryRequest,
     MilvusReader,
 )
 from tap.modules.knowledge.domain.models import (
+    DocumentAnchor,
     FilterableSubtree,
     ResolvedResourceRef,
     ResourceMode,
@@ -69,7 +71,15 @@ class MilvusSearchAdapter(SearchPort):
         audit_target = config.targets.get(SourceFamily.DOC)
         self._audit_target = audit_target if isinstance(audit_target, MilvusIndexTarget) else None
 
-    async def search(self, execution: SearchExecution) -> tuple[SearchHit, ...]:
+    async def flowchart_edges(self, execution: SearchExecution) -> tuple[SearchHit, ...]:
+        """Enumerate the approved edge slice with one overflow sentinel, never top-k."""
+        if execution.approved_item_scope is None or self._owners is None:
+            raise SearchUnavailable("flowchart enumeration requires published ownership")
+        return await self.search(execution, exact_flowchart=True)
+
+    async def search(
+        self, execution: SearchExecution, *, exact_flowchart: bool = False
+    ) -> tuple[SearchHit, ...]:
         started = time.monotonic()
         physical_collection: str | None = None
         provider_row_count = 0
@@ -116,11 +126,28 @@ class MilvusSearchAdapter(SearchPort):
                 min(execution.plan.candidate_limit, self._config.candidate_limit),
                 owned=owners is not None,
             )
-            rows = await self._reader.hybrid_search(request)
+            if exact_flowchart:
+                rows = await self._reader.query(
+                    MilvusQueryRequest(
+                        collection_name=bound.physical_collection,
+                        filter_expression=f'({filter_expression}) and content like "流程图连线 %"',
+                        output_fields=request.output_fields,
+                        limit=21,
+                    )
+                )
+                if len(rows) > 20:
+                    raise SearchBoundsExceeded(
+                        "approved flowchart exceeds twenty-edge answer bound"
+                    )
+                rows = tuple(
+                    {**dict(row), "score": 1.0, "provider_request_id": None} for row in rows
+                )
+            else:
+                rows = await self._reader.hybrid_search(request)
             if not isinstance(rows, tuple):
                 raise SearchUnavailable("search provider returned a malformed result page")
             provider_row_count = len(rows)
-            if provider_row_count > request.limit:
+            if provider_row_count > (20 if exact_flowchart else request.limit):
                 rejected_row_count = provider_row_count
                 raise SearchUnavailable("search provider returned too many rows")
             try:
@@ -131,6 +158,15 @@ class MilvusSearchAdapter(SearchPort):
             except SearchUnavailable:
                 rejected_row_count = provider_row_count
                 raise
+            if exact_flowchart and any(
+                not hit.content.startswith("流程图连线 ")
+                or not isinstance(hit.source.anchor, DocumentAnchor)
+                or not hit.source.anchor.bbox
+                or not hit.source.anchor.inventory_item_id
+                for hit in hits
+            ):
+                rejected_row_count = provider_row_count
+                raise SearchUnavailable("flowchart enumeration returned non-edge evidence")
             provider_request_ids = _provider_request_ids(hits)
         except SearchBoundsExceeded as error:
             await self._emit_failure_without_masking(

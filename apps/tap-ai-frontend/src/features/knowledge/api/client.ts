@@ -19,6 +19,9 @@ const MEDIA_TYPES_BY_EXTENSION: Readonly<Record<string, string>> = {
   ".md": "text/markdown",
   ".pdf": "application/pdf",
   ".txt": "text/plain",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
@@ -282,6 +285,28 @@ export function createKnowledgeClient(
       );
       return result.data!;
     },
+    async getReviewFlowchart(reviewId) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/flowchart",
+        {
+          params: { path: { project_id: projectId, review_id: reviewId } },
+        },
+      );
+      return result.data!;
+    },
+    async correctReviewFlowchart(reviewId, version, body) {
+      const result = await http.PUT(
+        "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/flowchart",
+        {
+          params: {
+            path: { project_id: projectId, review_id: reviewId },
+            header: { "if-match": `"${version}"` },
+          },
+          body,
+        },
+      );
+      return result.data!;
+    },
     async readReviewOriginal(reviewId, itemId) {
       const result = await http.GET(
         "/api/v1/projects/{project_id}/knowledge/reviews/{review_id}/items/{item_id}/original",
@@ -312,6 +337,12 @@ export function createKnowledgeClient(
         },
       );
       return result.data!;
+    },
+    originalImageUrl(reviewId, itemId) {
+      return requestUrl(
+        baseUrl,
+        `/api/v1/projects/${encodeURIComponent(projectId)}/knowledge/reviews/${encodeURIComponent(reviewId)}/items/${encodeURIComponent(itemId)}/original-image`,
+      );
     },
     async decideReviewItem(reviewId, itemId, version, body) {
       const result = await http.PUT(

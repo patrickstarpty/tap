@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 from dataclasses import replace
@@ -8,8 +9,11 @@ from datetime import datetime, timedelta
 
 import httpx
 import pytest
+from PIL import Image
 
 from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
+from tap.modules.knowledge.adapters.document_chunker import StructuralChunker
+from tap.modules.knowledge.adapters.document_parsers import ParserRegistry
 from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.modules.knowledge.domain.documents import (
     BlockKind,
@@ -25,6 +29,7 @@ from tap.modules.knowledge.domain.documents import (
     chunk_id_for,
     logical_chunk_id_for,
 )
+from tap.modules.knowledge.domain.flowcharts import normalize_flowchart
 from tap.modules.knowledge.domain.parse_inventory import (
     ParseInventoryItem,
     ParseInventoryKind,
@@ -236,6 +241,7 @@ class StatefulRepository:
 class StatefulArtifacts:
     def __init__(self) -> None:
         self.values: dict[str, object] = {"artifact:original": SOURCE_BYTES}
+        self.expected_source_hash = SOURCE_HASH
         self.deleted: set[str] = set()
         self.fail_delete_once = False
 
@@ -269,7 +275,7 @@ class StatefulArtifacts:
         *,
         source_content_hash: str,
     ) -> ArtifactLocator:
-        assert source_content_hash == SOURCE_HASH
+        assert source_content_hash == self.expected_source_hash
         locator = ArtifactLocator(f"artifact:{revision_id}:embeddings")
         self.values[str(locator)] = artifact
         return locator
@@ -548,6 +554,7 @@ def build_worker(
     parser: Parser | None = None,
     chunker: Chunker | None = None,
     stage_hook: object | None = None,
+    vision: object | None = None,
 ) -> IngestionWorker:
     values = {
         "repository": repository,
@@ -564,9 +571,132 @@ def build_worker(
     }
     if stage_hook is not None:
         values["stage_hook"] = stage_hook
+    if vision is not None:
+        values["vision"] = vision
     return IngestionWorker(  # type: ignore[arg-type]
         **values,
     )
+
+
+@pytest.mark.asyncio
+async def test_image_parsing_runs_visual_analysis_before_persisting_normalized_revision():
+    _, repository, artifacts, embeddings, index, clock = worker_parts()
+    output = io.BytesIO()
+    Image.new("RGB", (100, 60), "white").save(output, format="PNG")
+    image_bytes = output.getvalue()
+    repository.job = replace(repository.job, stage=JobStage.PARSING)
+    repository.work = replace(
+        repository.work,
+        stage=JobStage.PARSING,
+        filename="flow.png",
+        media_type=MediaType.PNG.value,
+        source_content_hash=canonical_sha256(image_bytes),
+    )
+    artifacts.values["artifact:original"] = image_bytes
+    artifacts.expected_source_hash = canonical_sha256(image_bytes)
+
+    class IsolatedParser:
+        async def parse(self, source: DocumentSource) -> NormalizedArtifact:
+            return ParserRegistry().parse(source)
+
+    class Vision:
+        async def analyze(self, source: DocumentSource, parsed: NormalizedArtifact):
+            return normalize_flowchart(
+                source,
+                parsed,
+                (100, 60),
+                {
+                    "nodes": [
+                        {"id": "start", "label": "提交申请", "box": [1, 1, 40, 20], "lane": ""}
+                    ],
+                    "edges": [],
+                },
+            )
+
+    worker = build_worker(
+        repository,
+        artifacts,
+        embeddings,
+        index,
+        clock,
+        parser=IsolatedParser(),
+        vision=Vision(),
+    )
+    await worker._run_ingestion_stage(repository.job, repository.work)
+
+    normalized = await artifacts.read_normalized(repository.work.normalized_locator)
+    assert normalized.blocks[0].text == "流程图节点 start：提交申请"
+    assert repository.commits == [JobStage.PARSING]
+
+
+@pytest.mark.asyncio
+async def test_flowchart_nodes_and_directed_condition_reach_text_vector_index():
+    _, repository, artifacts, _, index, clock = worker_parts()
+    output = io.BytesIO()
+    Image.new("RGB", (100, 60), "white").save(output, format="PNG")
+    image_bytes = output.getvalue()
+    repository.work = replace(
+        repository.work,
+        filename="flow.png",
+        media_type=MediaType.PNG.value,
+        source_content_hash=canonical_sha256(image_bytes),
+    )
+    artifacts.values["artifact:original"] = image_bytes
+    artifacts.expected_source_hash = canonical_sha256(image_bytes)
+
+    class IsolatedParser:
+        async def parse(self, source: DocumentSource) -> NormalizedArtifact:
+            return ParserRegistry().parse(source)
+
+    class Vision:
+        async def analyze(self, source: DocumentSource, parsed: NormalizedArtifact):
+            return normalize_flowchart(
+                source,
+                parsed,
+                (100, 60),
+                {
+                    "nodes": [
+                        {"id": "a", "label": "提交申请", "box": [1, 1, 30, 20], "lane": "申请人"},
+                        {"id": "b", "label": "经理审批", "box": [60, 1, 90, 20], "lane": "经理"},
+                    ],
+                    "edges": [
+                        {
+                            "source": "a",
+                            "target": "b",
+                            "condition": "金额超过 1000 元",
+                            "certain": True,
+                        }
+                    ],
+                },
+            )
+
+    class RecordingEmbeddings(Embeddings):
+        texts: tuple[str, ...] = ()
+
+        async def embed_documents(self, texts, *, model_alias, chunk_ids):  # type: ignore[no-untyped-def]
+            self.texts = texts
+            return await super().embed_documents(
+                texts, model_alias=model_alias, chunk_ids=chunk_ids
+            )
+
+    embeddings = RecordingEmbeddings()
+    worker = build_worker(
+        repository,
+        artifacts,
+        embeddings,
+        index,
+        clock,
+        parser=IsolatedParser(),
+        chunker=StructuralChunker(),
+        vision=Vision(),
+    )
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1, repository.failed.error_code if repository.failed else None
+    assert len(index.rows) == 3
+    assert any("提交申请 → 经理审批" in text for text in embeddings.texts)
+    assert any("金额超过 1000 元" in text for text in embeddings.texts)
 
 
 async def wait_until_provider_started_or_worker_stopped(

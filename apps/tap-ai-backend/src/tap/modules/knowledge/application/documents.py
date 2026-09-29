@@ -55,6 +55,8 @@ PublicMediaType = Literal[
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "text/markdown",
     "text/plain",
+    "image/png",
+    "image/jpeg",
 ]
 _T = TypeVar("_T")
 UPLOAD_CLEANUP_SETTLEMENT_TIMEOUT_SECONDS = 2.0
@@ -101,7 +103,10 @@ class DocumentService:
                 replace(
                     ReserveUpload.from_staged(staged, now=self._clock()),
                     command=command,
-                    chunk_settings=getattr(upload, "chunk_settings", None),
+                    # Flowchart images are corrected through review, never chunk editing.
+                    chunk_settings=None
+                    if media_type in {MediaType.PNG, MediaType.JPEG}
+                    else getattr(upload, "chunk_settings", None),
                 )
             )
         except BaseException as error:

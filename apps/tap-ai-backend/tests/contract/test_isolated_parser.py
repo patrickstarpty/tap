@@ -149,6 +149,26 @@ def test_parser_build_inputs_start_worker_protocol_from_staged_sources(tmp_path)
     assert result.stdout.strip() == PARSER_VERSION
 
 
+def test_parser_build_inputs_include_image_decoder():
+    root = Path(__file__).resolve().parents[4]
+    inputs = json.loads((root / "deploy/parser/build-inputs.json").read_text())
+    assert "pillow" in inputs["packages"]
+
+
+def test_parser_build_selects_pinned_linux_image_decoder_wheel():
+    import tomllib
+
+    from scripts.parser_build import compatible_wheels
+
+    root = Path(__file__).resolve().parents[4]
+    lock = tomllib.loads((root / "uv.lock").read_text())
+    pillow = next(package for package in lock["package"] if package["name"] == "pillow")
+    arm = compatible_wheels(pillow["wheels"], "manylinux2014_aarch64")
+    x86 = compatible_wheels(pillow["wheels"], "manylinux2014_x86_64")
+    assert len(arm) == 1 and "manylinux_2_27_aarch64" in arm[0]["url"]
+    assert len(x86) == 1 and "manylinux_2_27_x86_64" in x86[0]["url"]
+
+
 def test_e2e_manifest_rejects_missing_spec_and_native_skip(tmp_path):
     root = Path(__file__).resolve().parents[4]
     import importlib.util

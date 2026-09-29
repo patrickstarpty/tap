@@ -580,6 +580,61 @@ def test_provider_unavailability_is_not_misreported_as_zero_evidence(failure: Ex
     asyncio.run(scenario())
 
 
+def test_published_image_region_citation_is_snapshotted_with_its_bound_region() -> None:
+    """Flowchart answers cite approved image regions; the snapshot must keep, not refuse, them."""
+
+    async def scenario() -> None:
+        anchor = DocumentAnchor(
+            heading_path=("Flowchart",),
+            start_offset=0,
+            end_offset=40,
+            inventory_item_id="pi_edge",
+            bbox=(10, 20, 300, 90),
+        )
+        anchor_json = json.dumps(
+            {
+                "bbox": [10, 20, 300, 90],
+                "endOffset": 40,
+                "headingPath": ["Flowchart"],
+                "inventoryItemId": "pi_edge",
+                "startOffset": 0,
+                "type": "document",
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        base = citation()
+        image = replace(
+            base,
+            chunk_id=str(chunk_id_for(RevisionId("rev_a"), anchor_json, CHUNK_HASH)),
+            logical_chunk_id="h_"
+            + str(logical_chunk_id_for(DocumentId("doc_a"), anchor_json)).removeprefix("lc_"),
+            source=replace(base.source, anchor=anchor),
+        )
+        answer_service, repository, _gateway = service(response=answer_response(citations=(image,)))
+
+        await answer_service.answer(request_for("doc_a"))
+
+        assert json.loads(repository.snapshots[0].citations[0].anchor_json)["bbox"] == [
+            10,
+            20,
+            300,
+            90,
+        ]
+
+        forged = replace(
+            image, source=replace(image.source, anchor=replace(anchor, bbox=(0, 0, 1, 1)))
+        )
+        answer_service, repository, _gateway = service(
+            response=answer_response(citations=(forged,))
+        )
+        with pytest.raises(AnswerSnapshotUnavailable):
+            await answer_service.answer(request_for("doc_a"))
+        assert repository.snapshots == []
+
+    asyncio.run(scenario())
+
+
 def test_snapshot_rejects_claims_or_citations_outside_the_selected_set() -> None:
     async def scenario() -> None:
         outside = answer_response(
@@ -789,3 +844,36 @@ async def test_canonical_source_expands_documents_and_preserves_document_chunk_i
         (ref.source_id, ref.requested_revision) for ref in gateway.requests[0].resource_refs
     ] == [(source_id, "rev_a"), (source_id, "rev_b")]
     assert repository.snapshots[0].citations[0].document_id == "doc_a"
+
+
+@pytest.mark.asyncio
+async def test_unpublished_flowchart_images_are_refused_while_text_sources_answer_directly():
+    from test_flowchart_publication_gate import gate, publication
+
+    text = ready()
+    image = replace(
+        ready("doc_b", "rev_b", SECOND_HASH), filename="flow.png", source_name="flow.png"
+    )
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    repository = MemoryAnswerRepository((text, image))
+    repository.scope = VALIDATION_SCOPE  # type: ignore[attr-defined]
+    unpublished = AnswerService(
+        repository=repository, knowledge=Gateway(None), flowchart_gate=gate()
+    )
+
+    rows, _policy = await unpublished.resolve_conversation_selection(("rev_a",))
+    assert rows == (text,)
+    with pytest.raises(DocumentStateChanged, match="published review"):
+        await unpublished.resolve_conversation_selection(("rev_a", "rev_b"))
+    with pytest.raises(DocumentStateChanged, match="published review"):
+        await unpublished.authorize_frozen_selection((text, image))
+
+    published = AnswerService(
+        repository=repository,
+        knowledge=Gateway(None),
+        flowchart_gate=gate(publication("rev_b")),
+    )
+    rows, _policy = await published.resolve_conversation_selection(("rev_a", "rev_b"))
+    assert {row.revision_id for row in rows} == {"rev_a", "rev_b"}
+    await published.authorize_frozen_selection((text, image))

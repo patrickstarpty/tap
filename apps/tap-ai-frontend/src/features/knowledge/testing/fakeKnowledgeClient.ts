@@ -333,6 +333,15 @@ export function fakeKnowledgeClient(
     async listReviewInventory(reviewId) {
       return (await api.getReview(reviewId)).inventory;
     },
+    async getReviewFlowchart() {
+      throw new Error("Flowchart fixture not configured");
+    },
+    async correctReviewFlowchart() {
+      throw new Error("Flowchart fixture not configured");
+    },
+    originalImageUrl(reviewId, itemId) {
+      return `/api/v1/projects/${projectId}/knowledge/reviews/${reviewId}/items/${itemId}/original-image`;
+    },
     async listReviewDecisionHistory(reviewId) {
       const review = await api.getReview(reviewId);
       return {

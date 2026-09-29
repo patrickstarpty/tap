@@ -83,6 +83,99 @@ function review(
 }
 
 describe("KnowledgeReview", () => {
+  it("shows the authorized original image beside a flow node extraction", async () => {
+    const user = userEvent.setup();
+    const imageReview = review({
+      inventory: {
+        ...review().inventory,
+        items: [
+          {
+            ...review().inventory.items[0]!,
+            kind: "flow_node",
+            locator: "image:1/node:start",
+          },
+        ],
+      },
+    });
+    const api = fakeKnowledgeClient()
+      .withReviews([imageReview])
+      .withComparison({
+        reviewId: "krv_1",
+        itemId: ITEM,
+        original: {
+          availability: "unsupported",
+          excerpt: null,
+          reason: "image-region-not-text",
+        },
+        extracted: {
+          availability: "available",
+          excerpt: "流程图节点：开始",
+          reason: null,
+        },
+      });
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: /image:1\/node:start/u }),
+    );
+
+    expect(
+      await screen.findByRole("img", { name: "待核对的流程图原图" }),
+    ).toHaveAttribute(
+      "src",
+      `/api/v1/projects/${api.projectId}/knowledge/reviews/krv_1/items/${ITEM}/original-image`,
+    );
+    expect(screen.getByText("流程图节点：开始")).toBeVisible();
+  });
+
+  it("offers correction or exclusion for an uncertain connection", async () => {
+    const user = userEvent.setup();
+    const uncertain = review({
+      inventory: {
+        ...review().inventory,
+        items: [
+          {
+            ...review().inventory.items[0]!,
+            kind: "flow_edge",
+            locator: "image:1/edge:1",
+            reason: "uncertain-connection",
+          },
+        ],
+      },
+    });
+    const api = fakeKnowledgeClient()
+      .withReviews([uncertain])
+      .withComparison({
+        reviewId: "krv_1",
+        itemId: ITEM,
+        original: {
+          availability: "unsupported",
+          excerpt: null,
+          reason: "image-region-not-text",
+        },
+        extracted: {
+          availability: "unavailable",
+          excerpt: null,
+          reason: "not-extracted",
+        },
+      });
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: /image:1\/edge:1/u }),
+    );
+
+    expect(
+      await screen.findByText(
+        "这条连线的方向或端点尚未确认，请编辑流程图更正，或排除此项。",
+      ),
+    ).toBeVisible();
+  });
+
   it("filters loaded locations and navigates only matching items", async () => {
     const user = userEvent.setup();
     const base = review();

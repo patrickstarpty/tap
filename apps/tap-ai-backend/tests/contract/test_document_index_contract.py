@@ -1524,6 +1524,52 @@ def test_direct_milvus_publication_rejects_coordinated_revision_rebinding() -> N
         )
 
 
+def test_image_correction_revision_can_be_indexed_with_recomputed_chunk_identity() -> None:
+    index = index_for(MemoryMilvus())
+    parser_version = "human-correction-" + "a" * 64
+    original_work = work()
+    corrected_revision = revision_id_for(
+        DocumentId(original_work.document_id), original_work.source_content_hash, parser_version
+    )
+    corrected_work = replace(
+        original_work,
+        revision_id=str(corrected_revision),
+        parser_version=parser_version,
+        media_type="image/png",
+    )
+    original_chunk = chunk()
+    corrected_chunk = replace(
+        original_chunk,
+        chunk_id=chunk_id_for(
+            corrected_revision, original_chunk.anchor_json, original_chunk.chunk_content_hash
+        ),
+    )
+    embeddings = EmbeddingArtifact(
+        TAPPER_EMBEDDING_MODEL,
+        1536,
+        ((0.1,) * 1536,),
+        (str(corrected_chunk.chunk_id),),
+    )
+    rows = index._revision_rows(
+        TAPPER_PHYSICAL_COLLECTION,
+        corrected_work,
+        (corrected_chunk,),
+        embeddings,
+        "tapper-index-v1",
+    )
+    assert len(rows) == 1
+    assert rows[0]["source_revision"] == str(corrected_revision)
+
+    with pytest.raises(ValueError, match="provenance"):
+        index._revision_rows(
+            TAPPER_PHYSICAL_COLLECTION,
+            replace(corrected_work, media_type="text/markdown"),
+            (corrected_chunk,),
+            embeddings,
+            "tapper-index-v1",
+        )
+
+
 @pytest.mark.asyncio
 async def test_rebuild_persists_exact_ownership_receipt_before_provider_create() -> None:
     """A provider create without a prior durable receipt must never confer later drop authority."""

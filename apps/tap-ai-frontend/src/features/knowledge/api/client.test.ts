@@ -52,6 +52,33 @@ class TestUploadRequest {
 }
 
 describe("KnowledgeClient", () => {
+  it("reads and saves the complete correction with a quoted optimistic version", async () => {
+    const requests: Request[] = [];
+    const graph = {
+      nodes: [{ id: "a", label: "开始", lane: "", box: [0, 0, 10, 10] }],
+      edges: [],
+    };
+    const client = createKnowledgeClient({
+      projectId: "project/a",
+      fetch: async (request) => {
+        requests.push(request);
+        return Response.json(
+          request.method === "GET" ? graph : { sourceRevisionId: "rev_new" },
+        );
+      },
+    });
+    expect(await client.getReviewFlowchart("review/a")).toEqual(graph);
+    expect(await client.correctReviewFlowchart("review/a", 3, graph)).toEqual({
+      sourceRevisionId: "rev_new",
+    });
+    expect(requests[1]!.method).toBe("PUT");
+    expect(requests[1]!.headers.get("If-Match")).toBe('"3"');
+    expect(new URL(requests[1]!.url).pathname).toBe(
+      "/api/v1/projects/project%2Fa/knowledge/reviews/review%2Fa/flowchart",
+    );
+    expect(await requests[1]!.json()).toEqual(graph);
+  });
+
   it("opens a review for an authoritative document revision with one caller intent", async () => {
     const requests: Request[] = [];
     const client = createKnowledgeClient({

@@ -41,6 +41,8 @@ SAFE_JOB_ERRORS = frozenset(
         "ocr-required",
         "document-too-complex",
         "parser-unavailable",
+        "visual-analysis-unavailable",
+        "visual-analysis-invalid",
         "embedding-unavailable",
         "embedding-dimension-mismatch",
         "index-unavailable",
@@ -56,6 +58,8 @@ SAFE_ERROR_SUMMARIES = {
     "ocr-required": "文档没有可提取文本，需要先进行 OCR。",
     "document-too-complex": "文档结构过于复杂，无法在当前限制内处理。",
     "parser-unavailable": "文档解析服务暂时不可用，请稍后重试。",
+    "visual-analysis-unavailable": "流程图视觉解析服务暂时不可用，请稍后重试。",
+    "visual-analysis-invalid": "流程图解析结果无法核验，请检查图片或重试。",
     "embedding-unavailable": "向量生成服务暂时不可用，请稍后重试。",
     "embedding-dimension-mismatch": "向量维度与当前索引不一致。",
     "index-unavailable": "索引服务暂时不可用，请稍后重试。",
@@ -745,6 +749,12 @@ class DocumentParserPort(Protocol):
     """Cancellable isolated parsing; terminal return includes remote cleanup."""
 
     async def parse(self, source: DocumentSource) -> NormalizedArtifact: ...
+
+
+class FlowchartVisionPort(Protocol):
+    async def analyze(
+        self, source: DocumentSource, parsed: NormalizedArtifact
+    ) -> NormalizedArtifact: ...
 
 
 class DocumentChunker(Protocol):

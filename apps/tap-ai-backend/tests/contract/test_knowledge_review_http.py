@@ -21,6 +21,17 @@ class ReviewHttpSpy:
         self.open_target_review_id = review_id_for("tapper-demo", ("rev_001",))
         self.open_target_conflict: str | None = None
 
+    async def get_flowchart(self, review_id):
+        self.calls.append(("flowchart", review_id))
+        return {
+            "nodes": [{"id": "a", "label": "开始", "lane": "", "box": [0, 0, 10, 10]}],
+            "edges": [],
+        }
+
+    async def correct_flowchart(self, review_id, graph, expected_version):
+        self.calls.append(("correct-flowchart", review_id, graph, expected_version))
+        return {"sourceRevisionId": "rev_corrected"}
+
     async def resolve_open_review(self, document_id, source_revision_id):  # type: ignore[no-untyped-def]
         self.calls.append(("resolve-open", document_id, source_revision_id))
         if self.open_target_conflict is not None:
@@ -121,6 +132,10 @@ class ReviewHttpSpy:
             "original": {"availability": "unsupported", "reason": "preview-not-supported"},
             "extracted": {"availability": "unavailable", "reason": "not-extracted"},
         }
+
+    async def read_original_image(self, review_id, item_id):  # type: ignore[no-untyped-def]
+        self.calls.append(("original-image", review_id, item_id))
+        return b"\x89PNG\r\n\x1a\n", "image/png"
 
     async def update_item_decision(  # type: ignore[no-untyped-def]
         self, review_id, item_id, body, expected_version
@@ -331,6 +346,29 @@ def test_original_comparison_permission_denial_never_reaches_artifact_service():
     assert response.status_code == 403
     assert spy.calls == []
     assert policy.calls == [("knowledge.original.read", "knowledge-original", "krv_001")]
+
+
+def test_original_image_is_authorized_and_private():
+    http, spy = client()
+
+    response = http.get(BASE + "/items/pi_001/original-image")
+
+    assert response.status_code == 200
+    assert response.content == b"\x89PNG\r\n\x1a\n"
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert spy.calls == [("original-image", "krv_001", "pi_001")]
+
+
+def test_original_image_permission_denial_never_reaches_artifact_service():
+    policy = DenyPolicy()
+    http, spy = client(policy)
+
+    response = http.get(BASE + "/items/pi_001/original-image")
+
+    assert response.status_code == 403
+    assert spy.calls == []
 
 
 def test_ready_document_review_is_opened_idempotently_without_client_authority():
@@ -715,6 +753,59 @@ def test_review_authority_tables_scope_external_keys_and_publication_links():
             if len(constraint.elements) == 2
         )
     assert tables["knowledge_current_publication"].c.pointer_id.type.length == 128
+
+
+def test_flowchart_correction_is_authorized_and_versioned():
+    policy = RecordingPolicy()
+    http, spy = client(policy)
+    graph = {
+        "nodes": [{"id": "a", "label": "开始", "lane": "", "box": [0, 0, 10, 10]}],
+        "edges": [],
+    }
+    response = http.get(BASE + "/flowchart")
+    assert response.status_code == 200
+    assert response.json() == graph
+    saved = http.put(BASE + "/flowchart", json=graph, headers={"Origin": ORIGIN, "If-Match": '"3"'})
+    assert saved.status_code == 200
+    assert saved.json() == {"sourceRevisionId": "rev_corrected"}
+    assert spy.calls[-1] == ("correct-flowchart", "krv_001", graph, 3)
+    assert ("knowledge.review.edit", "knowledge-review", "krv_001") in policy.calls
+    assert ("knowledge.original.read", "knowledge-original", "krv_001") in policy.calls
+    malformed = http.put(
+        BASE + "/flowchart",
+        json={**graph, "nodes": [{**graph["nodes"][0], "box": [0, 0, True, 10]}]},
+        headers={"Origin": ORIGIN, "If-Match": '"3"'},
+    )
+    assert malformed.status_code == 422
+
+
+def test_flowchart_correction_denial_never_reaches_service():
+    http, spy = client(DenyPolicy())
+    graph = {
+        "nodes": [{"id": "a", "label": "开始", "lane": "", "box": [0, 0, 10, 10]}],
+        "edges": [],
+    }
+    response = http.put(
+        BASE + "/flowchart", json=graph, headers={"Origin": ORIGIN, "If-Match": '"3"'}
+    )
+    assert response.status_code == 403
+    assert spy.calls == []
+
+
+def test_flowchart_graph_validation_failure_is_not_a_version_conflict():
+    http, spy = client()
+
+    async def reject(*args):
+        raise ReviewStateConflict("invalid-flowchart-correction")
+
+    spy.correct_flowchart = reject
+    response = http.put(
+        BASE + "/flowchart",
+        json={"nodes": [{"id": "a", "label": "a", "lane": "", "box": [0, 0, 10, 10]}], "edges": []},
+        headers={"Origin": ORIGIN, "If-Match": '"3"'},
+    )
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("/request-validation")
 
 
 def test_original_download_requires_original_read_permission():
