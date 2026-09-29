@@ -36,6 +36,7 @@ from tap.modules.knowledge.ports.documents import ArtifactLocator, ReserveUpload
 from tap.platform.db.session import create_engine_and_session_factory
 from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
 from tap.testing.deterministic_model_gateway import StaticLiteLLMCatalog
+from tests.object_settings import S3_SETTINGS
 
 DATABASE_URL = os.getenv(
     "TAP_DATABASE_URL",
@@ -77,6 +78,7 @@ def _tapper_environment(**overrides: str) -> dict[str, str]:
         "TAP_REDIS_COMMAND_STREAM": "tap-tapper-e2e:commands",
         "LITELLM_BASE_URL": "http://127.0.0.1:14000",
         "MILVUS_URI": "http://127.0.0.1:29530",
+        **S3_SETTINGS,
     }
     values.update(overrides)
     return values

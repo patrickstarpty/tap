@@ -17,7 +17,6 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from azure.core.exceptions import ResourceNotFoundError
 from pymilvus.decorators import _log_rpc_error  # type: ignore[import-untyped]
 from sqlalchemy import select
 from sqlalchemy.engine import RowMapping, make_url
@@ -38,11 +37,6 @@ from tap.entrypoints.tapper_runtime import (
 )
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.knowledge.adapters.blob_artifacts import (
-    ARTIFACTS_CONTAINER,
-    ORIGINALS_CONTAINER,
-    AzureBlobArtifactStore,
-)
 from tap.modules.knowledge.adapters.milvus.targets import bind_target
 from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusQueryRequest,
@@ -292,24 +286,6 @@ async def _one(connection: AsyncConnection, statement: Any, code: str) -> RowMap
     return rows[0]
 
 
-def _expected_locators(
-    document: DocumentState, settings: TapperSettings
-) -> tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator]:
-    revision = document.revision_id
-    return (
-        ArtifactLocator(
-            f"{ORIGINALS_CONTAINER}/revisions/{revision}/"
-            f"{document.source_content_hash.removeprefix('sha256:')}"
-        ),
-        ArtifactLocator(f"{ARTIFACTS_CONTAINER}/revisions/{revision}/normalized-v1.json"),
-        ArtifactLocator(f"{ARTIFACTS_CONTAINER}/revisions/{revision}/chunks-v1.jsonl.gz"),
-        ArtifactLocator(
-            f"{ARTIFACTS_CONTAINER}/revisions/{revision}/embeddings/"
-            f"{settings.embedding_model}/{settings.embedding_dimension}-v1.jsonl.gz"
-        ),
-    )
-
-
 def _persisted_locators(
     revision: Mapping[Any, Any],
     document: DocumentState,
@@ -317,10 +293,6 @@ def _persisted_locators(
     original: DocumentState | None = None,
 ) -> tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator]:
     original = document if original is None else original
-    if settings.object_store_provider == "azure":
-        current = _expected_locators(document, settings)
-        return (_expected_locators(original, settings)[0], *current[1:])
-    _require(settings.object_store_provider == "minio", "object-provider")
     locators = []
     for kind in ("original", "normalized", "chunks", "embeddings"):
         value = revision[f"{kind}_blob_locator"]
@@ -607,38 +579,24 @@ async def _verify_database(
     return evidence
 
 
-async def _blob_missing(
-    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore, locator: ArtifactLocator
-) -> bool:
-    if isinstance(artifacts, KnowledgeArtifactStore):
-        _revision, _kind, ref = _parse(locator)
-        try:
-            await artifacts.objects.open_verified(ref)
-        except ObjectMissingError:
-            return True
-        return False
-    container, blob_name = str(locator).split("/", 1)
-    client = artifacts._service.get_blob_client(container, blob_name)  # noqa: SLF001
+async def _blob_missing(artifacts: KnowledgeArtifactStore, locator: ArtifactLocator) -> bool:
+    _revision, _kind, ref = _parse(locator)
     try:
-        await asyncio.wait_for(
-            client.get_blob_properties(),
-            timeout=artifacts._config.operation_timeout_seconds,  # noqa: SLF001
-        )
-    except ResourceNotFoundError:
+        await artifacts.objects.open_verified(ref)
+    except ObjectMissingError:
         return True
     return False
 
 
 async def _verify_blobs(
-    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
+    artifacts: KnowledgeArtifactStore,
     settings: TapperSettings,
     state: JourneyState,
     evidence: Mapping[str, RevisionEvidence],
 ) -> None:
     for document in state.survivors:
         revision = evidence[document.document_id]
-        if isinstance(artifacts, KnowledgeArtifactStore):
-            await _verify_object_binding(artifacts, revision.locators, document, settings)
+        await _verify_object_binding(artifacts, revision.locators, document, settings)
         original = await artifacts.read_original(revision.locators[0])
         normalized = await artifacts.read_normalized(revision.locators[1])
         chunks = await artifacts.read_chunks(revision.locators[2])
@@ -1058,24 +1016,15 @@ def _verify_owned_environment(settings: TapperSettings) -> None:
         and settings.milvus_uri == "http://127.0.0.1:29530",
         "settings-isolation",
     )
-    if settings.object_store_provider == "minio":
-        _require(
-            settings.s3_endpoint == "http://127.0.0.1:29000"
-            and settings.s3_bucket == "tapper-e2e-objects"
-            and settings.s3_store_id == "tapper-e2e"
-            and settings.s3_region == "us-east-1"
-            and bool(settings.s3_access_key)
-            and bool(settings.s3_secret_key)
-            and not settings.legacy_azure_enabled,
-            "settings-isolation",
-        )
-    else:
-        _require(
-            settings.object_store_provider == "azure"
-            and "BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1"
-            in settings.blob_connection_string,
-            "settings-isolation",
-        )
+    _require(
+        settings.s3_endpoint == "http://127.0.0.1:29000"
+        and settings.s3_bucket == "tapper-e2e-objects"
+        and settings.s3_store_id == "tapper-e2e"
+        and settings.s3_region == "us-east-1"
+        and bool(settings.s3_access_key)
+        and bool(settings.s3_secret_key),
+        "settings-isolation",
+    )
 
 
 def _exact_e2e_settings() -> TapperSettings:
@@ -1396,7 +1345,6 @@ def _minio_verifier_fixture() -> tuple[DocumentState, TapperSettings, dict[str, 
     settings = cast(
         TapperSettings,
         SimpleNamespace(
-            object_store_provider="minio",
             s3_store_id="tapper-e2e",
             embedding_model="embed",
             embedding_dimension=3,
@@ -1513,15 +1461,12 @@ def test_minio_verifier_enforces_owned_environment(drift: str | None) -> None:
         database_url="mysql+asyncmy://tap:tap-e2e@127.0.0.1:13306/tap?charset=utf8mb4",
         redis_url="redis://127.0.0.1:16379/0",
         milvus_uri="http://127.0.0.1:29530",
-        object_store_provider="minio",
         s3_endpoint="http://127.0.0.1:29000",
         s3_bucket="tapper-e2e-objects",
         s3_store_id="tapper-e2e",
         s3_region="us-east-1",
         s3_access_key="tap-e2e-objects",
         s3_secret_key="tap-e2e-objects-password",
-        legacy_azure_enabled=False,
-        blob_connection_string="",
     )
     names = {
         "endpoint": "s3_endpoint",

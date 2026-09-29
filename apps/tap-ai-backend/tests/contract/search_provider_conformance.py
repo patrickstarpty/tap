@@ -3,17 +3,12 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 
 from test_milvus_filter import _execution_with_resources, _resource, doc_execution
 from test_milvus_mapping import valid_doc_row
 from test_milvus_search_strict import RecordingAuditSink, RecordingReader, config
 
-from tap.modules.knowledge.adapters.azure_ai_search import (
-    AzureAISearchAdapter,
-    AzureIndexTarget,
-    AzureSearchConfig,
-)
 from tap.modules.knowledge.adapters.milvus.search import MilvusSearchAdapter
 from tap.modules.knowledge.adapters.milvus.transport import MilvusHybridRequest
 from tap.modules.knowledge.domain.models import FilterableSubtree, ResourceMode, SourceFamily
@@ -38,7 +33,7 @@ class ConformanceResult:
 
 
 class SearchProviderConformanceHarness(Protocol):
-    provider_name: Literal["azure", "milvus"]
+    provider_name: Literal["milvus"]
 
     async def run_case(self, case_id: str) -> ConformanceResult: ...
 
@@ -141,68 +136,6 @@ def conformance_case(case_id: str) -> ConformanceCase:
     raise ValueError("unknown conformance case")
 
 
-def _azure_row(row: Mapping[str, object]) -> dict[str, Any]:
-    return {
-        "@search.score": row["score"],
-        "indexFamily": row["index_family"],
-        "chunkId": row["chunk_id"],
-        "logicalChunkId": row["logical_chunk_id"],
-        "rootId": row["root_id"],
-        "parentId": row["parent_id"],
-        "title": row["title"],
-        "content": row["content"],
-        "sourceId": row["source_id"],
-        "sourceType": row["source_type"],
-        "sourceRevision": row["source_revision"],
-        "anchorJson": row["anchor_json"],
-        "sourceContentHash": row["source_content_hash"],
-        "chunkContentHash": row["chunk_content_hash"],
-        "contentRole": row["content_role"],
-        "derivedFromChunkIds": row["derived_from_chunk_ids"],
-        "corpusVersion": row["corpus_version"],
-        "schemaVersion": row["schema_version"],
-        "embeddingModelVersion": row["embedding_model_version"],
-    }
-
-
-class _AzureResults:
-    def __init__(self, rows: tuple[Mapping[str, object], ...]) -> None:
-        self._rows = rows
-        self.request_id = "azure-conformance-request"
-        self.partial = False
-
-    def __aiter__(self):
-        async def iterate():
-            for row in self._rows:
-                yield row
-
-        return iterate()
-
-
-class _AzureClient:
-    def __init__(self, case: ConformanceCase) -> None:
-        self.case = case
-        self.calls: list[dict[str, Any]] = []
-        self.returned_rows: tuple[Mapping[str, object], ...] = ()
-
-    async def search(self, **kwargs: Any) -> _AzureResults:
-        self.calls.append(kwargs)
-        if self.case.unavailable:
-            raise SearchUnavailable("controlled provider outage")
-        expression = kwargs.get("filter")
-        if not isinstance(expression, str):
-            raise AssertionError("Azure request did not carry a filter")
-        self.returned_rows = tuple(
-            document.row
-            for document in self.case.documents
-            if azure_filter_allows(expression, document, self.case.execution)
-        )
-        return _AzureResults(tuple(_azure_row(row) for row in self.returned_rows))
-
-    async def close(self) -> None:
-        return None
-
-
 class _MilvusReader(RecordingReader):
     def __init__(self, case: ConformanceCase) -> None:
         super().__init__(rows=())
@@ -228,45 +161,6 @@ class _MilvusReader(RecordingReader):
         return self.returned_rows
 
 
-class AzureConformanceHarness:
-    provider_name: Literal["azure"] = "azure"
-
-    async def run_case(self, case_id: str) -> ConformanceResult:
-        case = conformance_case(case_id)
-        client = _AzureClient(case)
-        target = AzureIndexTarget(
-            query_index="kb-doc-read",
-            physical_index="kb_doc_v1_corpus_fixture_v1",
-            schema_version="doc-schema-v1",
-            embedding_model_id="research-embedding-v1",
-            vector_dimension=1536,
-            allowed_source_types=frozenset({"doc"}),
-        )
-        adapter = AzureAISearchAdapter(
-            AzureSearchConfig(
-                endpoint="https://search.example",
-                indexes={SourceFamily.DOC: target},
-                query_api_key="not-a-real-key",
-                allow_query_key_auth=True,
-                max_retries=0,
-                per_index_candidates=50,
-            ),
-            client_factory=lambda _index: client,
-        )
-        hits = await adapter.search(case.execution)
-        recorded = client.calls[0]
-        channels = observed_azure_channels(recorded)
-        outbound_filter = recorded.get("filter")
-        assert isinstance(outbound_filter, str)
-        return ConformanceResult(
-            channels=channels,
-            outbound_filters=tuple(outbound_filter for _channel in channels),
-            expected_filter=expected_azure_filter(case.execution),
-            provider_rows=client.returned_rows,
-            hits=hits,
-        )
-
-
 class MilvusConformanceHarness:
     provider_name: Literal["milvus"] = "milvus"
 
@@ -285,31 +179,6 @@ class MilvusConformanceHarness:
         )
 
 
-def observed_azure_channels(request: Mapping[str, object]) -> tuple[str, ...]:
-    channels = []
-    if isinstance(request.get("search_text"), str) and request["search_text"]:
-        channels.append("bm25")
-    vector_queries = request.get("vector_queries")
-    if isinstance(vector_queries, list) and vector_queries:
-        channels.append("dense")
-    return tuple(channels)
-
-
-def expected_azure_filter(execution: SearchExecution) -> str:
-    clauses = [
-        _azure_tenant_clause(execution),
-        _azure_project_clause(execution),
-        _azure_group_clause(execution),
-        _azure_classification_clause(execution),
-        _azure_environment_clause(execution),
-        _azure_corpus_clause(execution),
-    ]
-    scope = _azure_scope_clause(execution)
-    if scope is not None:
-        clauses.append(scope)
-    return " and ".join(clauses)
-
-
 def expected_milvus_filter(execution: SearchExecution) -> str:
     clauses = [
         _milvus_tenant_clause(execution),
@@ -324,40 +193,6 @@ def expected_milvus_filter(execution: SearchExecution) -> str:
     if scope is not None:
         clauses.append(scope)
     return " and ".join(clauses)
-
-
-def azure_filter_allows(
-    expression: str,
-    document: ProviderDocument,
-    execution: SearchExecution,
-) -> bool:
-    allowed_ranks = {
-        _CLASSIFICATION_RANK[item.value] for item in execution.policy.allowed_classifications
-    }
-    environments = {"global"}
-    if execution.plan.effective_environment is not None:
-        environments.add(execution.plan.effective_environment)
-    checks = (
-        (_azure_tenant_clause(execution), document.tenant_id == execution.policy.tenant_id),
-        (_azure_project_clause(execution), document.project_id == execution.policy.project_id),
-        (
-            _azure_group_clause(execution),
-            bool(document.allowed_group_ids & execution.policy.actor.allowed_group_ids),
-        ),
-        (
-            _azure_classification_clause(execution),
-            document.classification_rank in allowed_ranks,
-        ),
-        (_azure_environment_clause(execution), document.environment in environments),
-        (
-            _azure_corpus_clause(execution),
-            document.corpus_version == execution.plan.corpus_version,
-        ),
-    )
-    if any(clause in expression and not matches for clause, matches in checks):
-        return False
-    scope = _azure_scope_clause(execution)
-    return scope is None or scope not in expression or _document_matches_scope(document, execution)
 
 
 def milvus_filter_allows(
@@ -399,15 +234,6 @@ def conformance_guard_clause(provider: str, case: ConformanceCase) -> str:
     mismatch = case.mismatch
     execution = case.execution
     clauses = {
-        "azure": {
-            "groups": _azure_group_clause(execution),
-            "tenant": _azure_tenant_clause(execution),
-            "project": _azure_project_clause(execution),
-            "classification": _azure_classification_clause(execution),
-            "environment": _azure_environment_clause(execution),
-            "corpus": _azure_corpus_clause(execution),
-            "scope": _azure_scope_clause(execution),
-        },
         "milvus": {
             "groups": _milvus_group_clause(execution),
             "tenant": _milvus_tenant_clause(execution),
@@ -450,75 +276,6 @@ def _document_matches_scope(
         ):
             return True
     return False
-
-
-def _azure_literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-def _azure_search_in(values: tuple[str, ...]) -> str:
-    return _azure_literal("|".join(value.replace("|", "||") for value in values))
-
-
-def _azure_tenant_clause(execution: SearchExecution) -> str:
-    return f"tenantId eq {_azure_literal(execution.policy.tenant_id)}"
-
-
-def _azure_project_clause(execution: SearchExecution) -> str:
-    return f"projectId eq {_azure_literal(execution.policy.project_id)}"
-
-
-def _azure_group_clause(execution: SearchExecution) -> str:
-    groups = tuple(sorted(execution.policy.actor.allowed_group_ids))
-    return f"allowedGroupIds/any(g: search.in(g, {_azure_search_in(groups)}, '|'))"
-
-
-def _azure_classification_clause(execution: SearchExecution) -> str:
-    values = tuple(
-        value
-        for value in ("public", "internal", "confidential", "restricted")
-        if any(item.value == value for item in execution.policy.allowed_classifications)
-    )
-    return f"search.in(classification, {_azure_search_in(values)}, '|')"
-
-
-def _azure_environment_clause(execution: SearchExecution) -> str:
-    values = (
-        ("global",)
-        if execution.plan.effective_environment is None
-        else ("global", execution.plan.effective_environment)
-    )
-    return f"search.in(environment, {_azure_search_in(values)}, '|')"
-
-
-def _azure_corpus_clause(execution: SearchExecution) -> str:
-    return f"corpusVersion eq {_azure_literal(execution.plan.corpus_version)}"
-
-
-def _azure_scope_clause(execution: SearchExecution) -> str | None:
-    resource_clauses = []
-    for resource in execution.plan.resources:
-        if resource.family is not SourceFamily.DOC or resource.mode is not ResourceMode.SCOPE:
-            continue
-        parts = [
-            f"sourceId eq {_azure_literal(resource.source_id)}",
-            f"sourceRevision eq {_azure_literal(resource.revision)}",
-            f"sourceContentHash eq {_azure_literal(resource.source_content_hash)}",
-        ]
-        if resource.subtree is not None:
-            locators = [
-                *(f"rootId eq {_azure_literal(value)}" for value in resource.subtree.root_ids),
-                *(f"parentId eq {_azure_literal(value)}" for value in resource.subtree.parent_ids),
-                *(
-                    f"logicalChunkId eq {_azure_literal(value)}"
-                    for value in resource.subtree.logical_chunk_ids
-                ),
-            ]
-            parts.append("(" + " or ".join(locators) + ")")
-        resource_clauses.append("(" + " and ".join(parts) + ")")
-    if not resource_clauses:
-        return None
-    return "(" + " or ".join(resource_clauses) + ")"
 
 
 def _compact_json(value: object) -> str:
@@ -588,10 +345,6 @@ def _milvus_scope_clause(execution: SearchExecution) -> str | None:
     if not resource_clauses:
         return None
     return "(" + " or ".join(resource_clauses) + ")"
-
-
-def azure_harness() -> SearchProviderConformanceHarness:
-    return AzureConformanceHarness()
 
 
 def milvus_harness() -> SearchProviderConformanceHarness:

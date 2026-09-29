@@ -21,12 +21,13 @@ from tap.modules.ai.ports.insights import (
     MetricQuery,
     MetricResult,
 )
+from tests.object_settings import S3_SETTINGS
 
 NOW = datetime(2026, 9, 25, 8, tzinfo=UTC)
 
 
 def test_insights_settings_require_complete_matching_server_delegation() -> None:
-    values = {
+    values = S3_SETTINGS | {
         "TAP_INSIGHTS_BASE_URL": "http://127.0.0.1:8001",
         "TAP_INSIGHTS_DELEGATED_USER_TOKEN": "delegated-user-token-0001",
         "TAP_INSIGHTS_SERVICE_TOKEN": "service-token-00000001",

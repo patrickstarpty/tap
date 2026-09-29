@@ -59,7 +59,6 @@ if TYPE_CHECKING:
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
     from tap.modules.governance.ports.audit import ProjectAuditPort
-    from tap.modules.knowledge.adapters.blob_artifacts import AzureBlobArtifactStore
     from tap.modules.knowledge.adapters.milvus.config import (
         MilvusIndexTarget,
         MilvusSearchConfig,
@@ -123,7 +122,6 @@ class TapperSettings:
     alembic_database_url: str = field(repr=False)
     redis_url: str = field(repr=False)
     redis_stream: str
-    blob_connection_string: str = field(repr=False)
     litellm_base_url: str
     litellm_api_key: str = field(repr=False)
     milvus_uri: str
@@ -137,14 +135,12 @@ class TapperSettings:
     e2e_mode: bool
     vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
-    object_store_provider: str = "azure"
     s3_endpoint: str = ""
     s3_bucket: str = ""
     s3_region: str = ""
     s3_access_key: str = field(default="", repr=False)
     s3_secret_key: str = field(default="", repr=False)
     s3_store_id: str = ""
-    legacy_azure_enabled: bool = False
     tenant_id: str = _FIXED_TENANT
     project_id: str = _FIXED_PROJECT
     group_id: str = _FIXED_GROUP
@@ -240,51 +236,31 @@ class TapperSettings:
             expected_path="/0",
             expected_query="",
         )
-        object_provider = _fixed_choice(
-            values,
-            "TAPPER_OBJECT_STORE_PROVIDER",
-            default="azure",
-            choices=frozenset({"azure", "minio"}),
-        )
-        legacy_azure = (
-            _fixed_choice(
-                values, "TAPPER_LEGACY_AZURE_ENABLED", default="0", choices=frozenset({"0", "1"})
-            )
-            == "1"
-        )
-        if legacy_azure and object_provider != "minio":
-            raise ValueError("legacy Azure compatibility requires MinIO mode")
         s3_values = {
             name: _value(values, "TAPPER_S3_" + name.upper(), "")
             for name in ("endpoint", "bucket", "region", "access_key", "secret_key", "store_id")
         }
-        if object_provider == "minio":
-            from pydantic import SecretStr
+        from pydantic import SecretStr
 
-            from tap.platform.storage.s3 import S3ObjectConfig
+        from tap.platform.storage.s3 import S3ObjectConfig
 
-            if any(not value for value in s3_values.values()):
-                raise ValueError("MinIO requires explicit object configuration")
-            _loopback_url(
-                values,
-                "TAPPER_S3_ENDPOINT",
-                "",
-                schemes=frozenset({"http"}),
-                allow_userinfo=False,
-                root_only=True,
-            )
-            S3ObjectConfig(
-                endpoint=s3_values["endpoint"],
-                bucket=s3_values["bucket"],
-                region=s3_values["region"],
-                access_key=SecretStr(s3_values["access_key"]),
-                secret_key=SecretStr(s3_values["secret_key"]),
-                store_id=s3_values["store_id"],
-            )
-        if legacy_azure and not _value(values, "AZURE_STORAGE_CONNECTION_STRING", ""):
-            raise ValueError("legacy Azure requires an explicit connection string")
-        blob_connection_string = (
-            _blob_connection_string(values) if object_provider == "azure" or legacy_azure else ""
+        if any(not value for value in s3_values.values()):
+            raise ValueError("MinIO requires explicit object configuration")
+        _loopback_url(
+            values,
+            "TAPPER_S3_ENDPOINT",
+            "",
+            schemes=frozenset({"http"}),
+            allow_userinfo=False,
+            root_only=True,
+        )
+        S3ObjectConfig(
+            endpoint=s3_values["endpoint"],
+            bucket=s3_values["bucket"],
+            region=s3_values["region"],
+            access_key=SecretStr(s3_values["access_key"]),
+            secret_key=SecretStr(s3_values["secret_key"]),
+            store_id=s3_values["store_id"],
         )
         litellm_base_url = _loopback_url(
             values,
@@ -407,15 +383,12 @@ class TapperSettings:
             alembic_database_url=alembic_database_url,
             redis_url=redis_url,
             redis_stream=_identity(values, "TAP_REDIS_COMMAND_STREAM", "tap:commands"),
-            blob_connection_string=blob_connection_string,
-            object_store_provider=object_provider,
             s3_endpoint=s3_values["endpoint"],
             s3_bucket=s3_values["bucket"],
             s3_region=s3_values["region"],
             s3_access_key=s3_values["access_key"],
             s3_secret_key=s3_values["secret_key"],
             s3_store_id=s3_values["store_id"],
-            legacy_azure_enabled=legacy_azure,
             litellm_base_url=litellm_base_url,
             litellm_api_key=_secret(values, "LITELLM_MASTER_KEY", "tap-local-master-key"),
             vision_model=vision_model,
@@ -829,7 +802,7 @@ def _create_chunk_manager(
     settings: TapperSettings,
     engine: AsyncEngine,
     repository: MysqlDocumentRepository,
-    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
+    artifacts: KnowledgeArtifactStore,
     embeddings: TapperEmbeddingPort,
     index: MilvusDocumentIndex,
 ) -> MysqlManagedChunks:
@@ -1038,50 +1011,25 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
         raise AssertionError("test design worker resource settlement unexpectedly returned")
 
 
-def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore | KnowledgeArtifactStore:
+def _create_blob(settings: TapperSettings) -> KnowledgeArtifactStore:
     from pydantic import SecretStr
 
-    from tap.modules.knowledge.adapters.blob_artifacts import (
-        AzureBlobArtifactConfig,
-        AzureBlobArtifactStore,
-    )
+    from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
+    from tap.platform.storage.s3 import S3ObjectConfig, S3ObjectStore
 
-    if settings.object_store_provider == "minio":
-        from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
-        from tap.platform.storage.s3 import S3ObjectConfig, S3ObjectStore
-
-        legacy = (
-            AzureBlobArtifactStore(
-                scope=VALIDATION_SCOPE,
-                config=AzureBlobArtifactConfig(
-                    connection_string=SecretStr(settings.blob_connection_string),
-                    operation_timeout_seconds=settings.blob_timeout_seconds,
-                ),
-            )
-            if settings.legacy_azure_enabled
-            else None
-        )
-        return KnowledgeArtifactStore(
-            S3ObjectStore(
-                S3ObjectConfig(
-                    endpoint=settings.s3_endpoint,
-                    bucket=settings.s3_bucket,
-                    region=settings.s3_region,
-                    access_key=SecretStr(settings.s3_access_key),
-                    secret_key=SecretStr(settings.s3_secret_key),
-                    store_id=settings.s3_store_id,
-                    timeout_seconds=settings.blob_timeout_seconds,
-                ),
-                scope=VALIDATION_SCOPE,
+    return KnowledgeArtifactStore(
+        S3ObjectStore(
+            S3ObjectConfig(
+                endpoint=settings.s3_endpoint,
+                bucket=settings.s3_bucket,
+                region=settings.s3_region,
+                access_key=SecretStr(settings.s3_access_key),
+                secret_key=SecretStr(settings.s3_secret_key),
+                store_id=settings.s3_store_id,
+                timeout_seconds=settings.blob_timeout_seconds,
             ),
-            legacy=legacy,
+            scope=VALIDATION_SCOPE,
         )
-    return AzureBlobArtifactStore(
-        scope=VALIDATION_SCOPE,
-        config=AzureBlobArtifactConfig(
-            connection_string=SecretStr(settings.blob_connection_string),
-            operation_timeout_seconds=settings.blob_timeout_seconds,
-        ),
     )
 
 
@@ -1332,35 +1280,12 @@ def _build_search_adapter(
     )
 
 
-def _is_private_blob_container(properties: object) -> bool:
-    return (
-        isinstance(properties, Mapping)
-        and "public_access" in properties
-        and properties["public_access"] is None
-    )
-
-
-async def _artifacts_private(artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore) -> bool:
-    from tap.modules.knowledge.adapters.blob_artifacts import (
-        ARTIFACTS_CONTAINER,
-        ORIGINALS_CONTAINER,
-    )
-    from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
-
-    if isinstance(artifacts, KnowledgeArtifactStore):
-        return await artifacts.is_private()
-    for container in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
-        if not _is_private_blob_container(await artifacts.container_properties(container)):
-            return False
-    return True
-
-
 def _create_readiness(
     *,
     settings: TapperSettings,
     engine: AsyncEngine,
     redis: Redis,
-    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
+    artifacts: KnowledgeArtifactStore,
     embeddings: QueryEmbeddingPort,
     milvus_reader: MilvusReader,
     milvus_target: MilvusIndexTarget,
@@ -1384,7 +1309,7 @@ def _create_readiness(
         return await redis.ping() is True
 
     async def blob_ready() -> bool:
-        return await _artifacts_private(artifacts)
+        return await artifacts.is_private()
 
     async def milvus_ready() -> bool:
         bound = await bind_target(milvus_reader, milvus_target)
@@ -1475,7 +1400,7 @@ async def _create_asset_catalog(engine: AsyncEngine, scope: ProjectScopeContext)
 def _assemble_http_services(
     *,
     repository: MysqlDocumentRepository,
-    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
+    artifacts: KnowledgeArtifactStore,
     search: SearchPort,
     embeddings: KnowledgeModelGateway,
     readiness: ReadinessHttpService,
@@ -1655,7 +1580,7 @@ def _assemble_worker_runtime(
     *,
     settings: TapperSettings,
     repository: MysqlDocumentRepository,
-    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
+    artifacts: KnowledgeArtifactStore,
     embeddings: TapperEmbeddingPort,
     index: MilvusDocumentIndex,
     redis: Redis,
@@ -1864,50 +1789,4 @@ def _secret(values: Mapping[str, str], name: str, default: str) -> str:
     value = _value(values, name, default)
     if not value or len(value) > 4096 or "\x00" in value:
         raise ValueError(f"{name} must be a nonblank bounded secret")
-    return value
-
-
-def _blob_connection_string(values: Mapping[str, str]) -> str:
-    name = "AZURE_STORAGE_CONNECTION_STRING"
-    value = _value(values, name, "UseDevelopmentStorage=true")
-    if value == "UseDevelopmentStorage=true":
-        return value
-    pairs: dict[str, str] = {}
-    try:
-        for item in value.split(";"):
-            if not item:
-                continue
-            key, raw = item.split("=", 1)
-            if key in pairs or not key or not raw:
-                raise ValueError
-            pairs[key] = raw
-    except ValueError:
-        raise ValueError(f"{name} must be a valid Blob-only connection string") from None
-    if (
-        set(pairs)
-        != {
-            "DefaultEndpointsProtocol",
-            "AccountName",
-            "AccountKey",
-            "BlobEndpoint",
-        }
-        or pairs.get("DefaultEndpointsProtocol") != "http"
-        or pairs.get("AccountName") != ("devstoreaccount1")
-    ):
-        raise ValueError(f"{name} must contain only the fixed Blob connection fields")
-    endpoint_mapping = {"_BLOB_ENDPOINT": pairs["BlobEndpoint"]}
-    try:
-        _loopback_url(
-            endpoint_mapping,
-            "_BLOB_ENDPOINT",
-            "http://127.0.0.1:10000/devstoreaccount1",
-            schemes=frozenset({"http"}),
-            allow_userinfo=False,
-            expected_path="/devstoreaccount1",
-            expected_query="",
-        )
-    except ValueError:
-        raise ValueError(f"{name} must use the exact loopback Blob endpoint") from None
-    if len(value) > 8192 or "\x00" in value:
-        raise ValueError(f"{name} must be a bounded connection string")
     return value

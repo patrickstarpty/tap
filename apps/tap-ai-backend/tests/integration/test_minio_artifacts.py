@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import pytest_asyncio
 from pydantic import SecretStr
-from scripts.azurite_test_support import require_owned_azurite
 from scripts.minio_test_support import require_owned_minio
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
@@ -123,48 +122,6 @@ async def test_owned_minio_actual_payload_tamper_rejected(store):
         await store.open_verified(ref)
     await store.delete(ref)
     await store.delete(staged.ref)
-
-
-@pytest.mark.asyncio
-async def test_owned_mixed_azure_recovery_and_minio_artifacts_preserve_legacy_refs(store):
-    from tap.modules.knowledge.adapters.blob_artifacts import (
-        AzureBlobArtifactConfig,
-        AzureBlobArtifactStore,
-    )
-    from tap.modules.knowledge.ports.documents import DeletionTarget
-    from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure
-    from tests.contract.artifact_store_conformance import (
-        DOCUMENT_ID,
-        REVISION,
-        Upload,
-        normalized_artifact,
-    )
-
-    if os.getenv("TAP_RUN_AZURITE_INTEGRATION") != "1":
-        pytest.fail("mixed conformance requires the owned Azure wrapper")
-    azure = require_owned_azurite()
-    legacy = AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(connection_string=SecretStr(azure.connection_string)),
-        scope=VALIDATION_SCOPE,
-    )
-    try:
-        await legacy.ensure_containers()
-        staged = await legacy.stage_original(Upload(), max_bytes=1024)
-        combined = KnowledgeArtifactStore(store, legacy=legacy)
-        old_ref = await combined.recover_original(staged.staging_key, REVISION)
-        assert old_ref.startswith("tapper-originals/")
-        assert await combined.read_original(old_ref) == b"Tapper policy."
-        new_ref = await combined.write_normalized(REVISION, normalized_artifact())
-        assert new_ref.startswith("art1.")
-        await combined.delete_revision_artifacts(
-            DeletionTarget(str(DOCUMENT_ID), REVISION, (), (old_ref, new_ref))
-        )
-        with pytest.raises(ArtifactIntegrityFailure):
-            await combined.read_original(old_ref)
-        with pytest.raises(ArtifactIntegrityFailure):
-            await combined.read_normalized(new_ref)
-    finally:
-        await legacy.aclose()
 
 
 @pytest.mark.asyncio

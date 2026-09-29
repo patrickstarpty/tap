@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.object_settings import S3_SETTINGS
+
 ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -636,7 +638,7 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
         monkeypatch.setattr(tapper_runtime, "_create_search", create_search)
         monkeypatch.setattr(tapper_runtime, "_create_models_probe_client", lambda _settings: None)
         monkeypatch.setattr(tapper_runtime, "_create_readiness", lambda **_kwargs: object())
-        settings = tapper_runtime.TapperSettings.from_mapping({})
+        settings = tapper_runtime.TapperSettings.from_mapping(S3_SETTINGS)
         runtime = await tapper_runtime.create_api_runtime(settings)
         try:
             loaded = await runtime.http_services.conversations.load("legacy-chat")

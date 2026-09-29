@@ -1,4 +1,4 @@
-"""Same canonical Knowledge artifact journey for Azure and composed object storage."""
+"""Canonical Knowledge artifact journey every `ArtifactStore` provider must pass."""
 
 import pytest
 

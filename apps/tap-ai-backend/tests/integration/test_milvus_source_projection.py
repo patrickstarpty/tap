@@ -372,8 +372,6 @@ async def test_real_owned_source_selection_cutover_and_explicit_rollback(reposit
                 {
                     "TAP_TAPPER_COMPOSE_PROJECT": os.environ["TAP_TASK6A_OWNED_PROJECT"],
                     "TAPPER_SCHEMA_VERSION": "doc-schema-v2",
-                    "TAPPER_OBJECT_STORE_PROVIDER": "minio",
-                    "TAPPER_LEGACY_AZURE_ENABLED": "0",
                     "TAPPER_S3_ENDPOINT": "http://127.0.0.1:41000",
                     "TAPPER_S3_BUCKET": "task6a-owned-artifacts",
                     "TAPPER_S3_REGION": "us-east-1",

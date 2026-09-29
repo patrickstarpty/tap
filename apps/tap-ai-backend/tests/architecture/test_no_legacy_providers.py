@@ -41,7 +41,6 @@ def test_src_has_no_codex_imports() -> None:
     assert _violations(_CODEX) == []
 
 
-@pytest.mark.xfail(strict=True, reason="removed in Task 6")
 def test_src_has_no_azure_imports() -> None:
     assert _violations(_AZURE) == []
 

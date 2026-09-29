@@ -211,12 +211,13 @@ async def test_enabled_smoke_setup_uses_governed_gateway_without_provider_io(mon
     from tap.modules.ai.ports.gateway import ModelGateway
     from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
     from tap.testing.deterministic_model_gateway import StaticLiteLLMCatalog
+    from tests.object_settings import S3_SETTINGS
 
     module = __import__(__name__)
     monkeypatch.setattr(
         module,
         "os",
-        SimpleNamespace(environ={"TAP_RUN_TAPPER_REAL_MODEL_SMOKE": "1"}),
+        SimpleNamespace(environ=S3_SETTINGS | {"TAP_RUN_TAPPER_REAL_MODEL_SMOKE": "1"}),
     )
     factory = _create_embeddings
     models = []

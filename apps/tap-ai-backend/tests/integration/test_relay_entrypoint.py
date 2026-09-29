@@ -6,6 +6,7 @@ import signal
 import pytest
 
 from tap.entrypoints import relay_reconciler
+from tests.object_settings import S3_SETTINGS
 
 
 def _tapper_environment(**overrides: str) -> dict[str, str]:
@@ -24,6 +25,7 @@ def _tapper_environment(**overrides: str) -> dict[str, str]:
         "TAP_REDIS_COMMAND_STREAM": "tap-tapper-e2e:commands",
         "LITELLM_BASE_URL": "http://127.0.0.1:14000",
         "MILVUS_URI": "http://127.0.0.1:29530",
+        **S3_SETTINGS,
     }
     values.update(overrides)
     return values

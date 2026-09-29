@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tap.entrypoints.tapper_runtime import TapperSettings
+from tests.object_settings import S3_SETTINGS
 
 
 def test_v1_knowledge_models_share_one_gateway() -> None:
@@ -10,7 +11,7 @@ def test_v1_knowledge_models_share_one_gateway() -> None:
     from tap.modules.ai.ports.gateway import ModelGateway
     from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 
-    models = _create_embeddings(TapperSettings.from_mapping({}))
+    models = _create_embeddings(TapperSettings.from_mapping(S3_SETTINGS))
     assert isinstance(models, KnowledgeModelGateway)
     assert isinstance(models.gateway, ModelGateway)
 
@@ -27,7 +28,7 @@ def test_v1_composition_has_no_narrow_answer_provider_slot() -> None:
 def test_default_api_has_no_deprecated_knowledge_or_catalog_aliases() -> None:
     from tap.entrypoints.tapper_api import app, build_runtime_app
 
-    for application in (app, build_runtime_app(TapperSettings.from_mapping({}))):
+    for application in (app, build_runtime_app(TapperSettings.from_mapping(S3_SETTINGS))):
         paths = {getattr(route, "path", "") for route in application.routes}
         assert "/api/v1/projects/{project_id}/ai/models" in paths
         assert not any(

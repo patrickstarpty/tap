@@ -2,24 +2,18 @@ from __future__ import annotations
 
 import pytest
 from search_provider_conformance import (
-    azure_filter_allows,
-    azure_harness,
     conformance_case,
     conformance_guard_clause,
-    expected_azure_filter,
     expected_milvus_filter,
     milvus_filter_allows,
     milvus_harness,
-    observed_azure_channels,
 )
 
 from tap.modules.knowledge.ports.errors import SearchUnavailable
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "harness_factory", (azure_harness, milvus_harness), ids=("azure", "milvus")
-)
+@pytest.mark.parametrize("harness_factory", (milvus_harness,), ids=("milvus",))
 @pytest.mark.parametrize(
     "case_id",
     (
@@ -67,7 +61,7 @@ def test_each_negative_case_contains_one_real_mismatched_provider_document(
     assert case.documents[0].row
 
 
-@pytest.mark.parametrize("provider", ("azure", "milvus"))
+@pytest.mark.parametrize("provider", ("milvus",))
 @pytest.mark.parametrize(
     "case_id",
     (
@@ -87,12 +81,8 @@ def test_controlled_provider_exposes_the_negative_row_if_its_guard_is_omitted(
     """A fake that ignores outbound filters would survive production filter omissions."""
     case = conformance_case(case_id)
     document = case.documents[0]
-    if provider == "azure":
-        expected = expected_azure_filter(case.execution)
-        allows = azure_filter_allows
-    else:
-        expected = expected_milvus_filter(case.execution)
-        allows = milvus_filter_allows
+    expected = expected_milvus_filter(case.execution)
+    allows = milvus_filter_allows
     guard = conformance_guard_clause(provider, case)
     weakened = expected.replace(guard, "true", 1)
 
@@ -101,19 +91,8 @@ def test_controlled_provider_exposes_the_negative_row_if_its_guard_is_omitted(
     assert allows(weakened, document, case.execution) is True
 
 
-def test_azure_channels_are_observed_from_the_recorded_request_shape() -> None:
-    """Hard-coded channel labels would not detect a missing keyword or dense request."""
-    both = {"search_text": "query", "vector_queries": [{"kind": "vector"}]}
-
-    assert observed_azure_channels(both) == ("bm25", "dense")
-    assert observed_azure_channels({**both, "search_text": ""}) == ("dense",)
-    assert observed_azure_channels({**both, "vector_queries": []}) == ("bm25",)
-
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "harness_factory", (azure_harness, milvus_harness), ids=("azure", "milvus")
-)
+@pytest.mark.parametrize("harness_factory", (milvus_harness,), ids=("milvus",))
 async def test_search_provider_allowed_case_maps_one_strict_hit(harness_factory) -> None:
     """Dropping valid results or diverging filters would break provider interchangeability."""
     result = await harness_factory().run_case("allowed")
@@ -125,9 +104,7 @@ async def test_search_provider_allowed_case_maps_one_strict_hit(harness_factory)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "harness_factory", (azure_harness, milvus_harness), ids=("azure", "milvus")
-)
+@pytest.mark.parametrize("harness_factory", (milvus_harness,), ids=("milvus",))
 async def test_search_provider_unavailable_case_is_provider_neutral(harness_factory) -> None:
     """Provider-specific failures would make callers branch on the selected backend."""
     with pytest.raises(SearchUnavailable):

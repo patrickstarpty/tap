@@ -42,10 +42,11 @@ from tap.modules.knowledge.domain.models import (
     SourceFamily,
     SourceRevisionRef,
 )
+from tests.object_settings import S3_SETTINGS
 
 
 def test_tapper_settings_use_the_new_namespace() -> None:
-    settings = TapperSettings.from_mapping({})
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
 
     assert settings.collection == "kb_doc_v2_tapper_demo"
     assert settings.alias == "kb_doc_tapper_demo_active"
@@ -56,7 +57,8 @@ def test_tapper_settings_use_the_new_namespace() -> None:
 
 def test_settings_read_model_roles() -> None:
     settings = TapperSettings.from_mapping(
-        {"TAPPER_DEFAULT_CHAT_MODEL": "qwen-max", "TAPPER_EMBEDDING_MODEL": "text-embedding-v4"}
+        S3_SETTINGS
+        | {"TAPPER_DEFAULT_CHAT_MODEL": "qwen-max", "TAPPER_EMBEDDING_MODEL": "text-embedding-v4"}
     )
 
     assert settings.default_chat_model == "qwen-max"
@@ -65,13 +67,15 @@ def test_settings_read_model_roles() -> None:
 
 
 def test_settings_defaults() -> None:
-    settings = TapperSettings.from_mapping({"TAPPER_VISION_MODEL": ""})
+    settings = TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_VISION_MODEL": ""})
 
     assert settings.default_chat_model == "qwen-plus"
     assert settings.embedding_model == "text-embedding-v4"
     assert settings.vision_model is None
     assert (
-        TapperSettings.from_mapping({"TAPPER_VISION_MODEL": "qwen3-vl-plus"}).vision_model
+        TapperSettings.from_mapping(
+            S3_SETTINGS | {"TAPPER_VISION_MODEL": "qwen3-vl-plus"}
+        ).vision_model
         == "qwen3-vl-plus"
     )
 
@@ -82,12 +86,13 @@ def test_settings_defaults() -> None:
 @pytest.mark.parametrize("value", ["Qwen Plus", "dashscope/qwen-plus", "qwen--plus", "-qwen"])
 def test_settings_reject_invalid_model_name(name: str, value: str) -> None:
     with pytest.raises(ValueError, match=name):
-        TapperSettings.from_mapping({name: value})
+        TapperSettings.from_mapping(S3_SETTINGS | {name: value})
 
 
 def test_legacy_model_variables_are_ignored() -> None:
     settings = TapperSettings.from_mapping(
-        {
+        S3_SETTINGS
+        | {
             "TAPPER_CHAT_ALIAS": "x",
             "TAPPER_EMBEDDING_ALIAS": "y",
             "LITELLM_MODEL": "openai/gpt-4o-mini",
@@ -107,7 +112,9 @@ async def test_vision_role_without_supports_vision_reports_unhealthy() -> None:
     from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog
 
     module = _runtime()
-    settings = module.TapperSettings.from_mapping({"TAPPER_VISION_MODEL": "qwen-plus"})
+    settings = module.TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_VISION_MODEL": "qwen-plus"}
+    )
 
     def model_info(incoming: httpx.Request) -> httpx.Response:
         assert incoming.url.path == "/v1/model/info"
@@ -192,7 +199,7 @@ async def test_vision_role_without_supports_vision_reports_unhealthy() -> None:
 
 
 def test_source_projection_runtime_profile_requires_matching_explicit_rollback():
-    settings = TapperSettings.from_mapping({"TAPPER_SCHEMA_VERSION": "doc-schema-v1"})
+    settings = TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_SCHEMA_VERSION": "doc-schema-v1"})
     assert (settings.schema_version, settings.collection, settings.corpus_version) == (
         "doc-schema-v1",
         "kb_doc_v1_tapper_demo",
@@ -204,29 +211,23 @@ def test_source_projection_runtime_profile_requires_matching_explicit_rollback()
         {"TAPPER_SCHEMA_VERSION": "doc-schema-v1", "TAPPER_CORPUS_VERSION": "tapper-demo-v2"},
     ):
         with pytest.raises(ValueError):
-            TapperSettings.from_mapping(overrides)
+            TapperSettings.from_mapping(S3_SETTINGS | overrides)
 
 
 def test_minio_settings_require_closed_explicit_credentials_and_compose_shared_port() -> None:
     from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
 
-    values = {
-        "TAPPER_OBJECT_STORE_PROVIDER": "minio",
-        "TAPPER_S3_ENDPOINT": "http://127.0.0.1:29000",
-        "TAPPER_S3_BUCKET": "tapper-test-objects",
-        "TAPPER_S3_REGION": "us-east-1",
-        "TAPPER_S3_ACCESS_KEY": "owned-key",
-        "TAPPER_S3_SECRET_KEY": "owned-secret",
-        "TAPPER_S3_STORE_ID": "owned-store",
-    }
+    values = dict(S3_SETTINGS)
     settings = TapperSettings.from_mapping(values)
     store = _runtime()._create_blob(settings)
     assert isinstance(store, KnowledgeArtifactStore)
-    assert store.legacy is None
+    assert not hasattr(store, "legacy")
+    assert not hasattr(settings, "object_store_provider")
+    assert not hasattr(settings, "blob_connection_string")
     for key in tuple(values):
-        if key.startswith("TAPPER_S3_"):
-            with pytest.raises(ValueError):
-                TapperSettings.from_mapping({k: v for k, v in values.items() if k != key})
+        reduced = {k: v for k, v in values.items() if k != key}
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(reduced)
     assert "owned-secret" not in repr(settings)
 
 
@@ -293,11 +294,8 @@ def valid_settings() -> dict[str, str]:
         ),
         "TAP_REDIS_URL": "redis://:redis-secret@127.0.0.1:16379/0",
         "TAP_REDIS_COMMAND_STREAM": "tap-tapper-e2e:commands",
-        "AZURE_STORAGE_CONNECTION_STRING": (
-            "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;"
-            "AccountKey=blob-secret;"
-            "BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1;"
-        ),
+        **S3_SETTINGS,
+        "TAPPER_S3_SECRET_KEY": "blob-secret",
         "LITELLM_BASE_URL": "http://127.0.0.1:14000",
         "LITELLM_MASTER_KEY": "model-secret",
         "LITELLM_EMBEDDING_MODEL": "openai/text-embedding-3-small",
@@ -376,27 +374,10 @@ def test_settings_close_the_exact_runtime_defaults_and_aliases() -> None:
         ("TAP_REDIS_URL", "redis://127.0.0.1:16379/1"),
         ("TAP_REDIS_URL", "redis://127.0.0.1:16379/0?secret=value"),
         ("TAP_REDIS_URL", "redis://127.0.0.1:16379/0#secret"),
-        (
-            "AZURE_STORAGE_CONNECTION_STRING",
-            "DefaultEndpointsProtocol=http;AccountName=other;AccountKey=secret;"
-            "BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1;",
-        ),
-        (
-            "AZURE_STORAGE_CONNECTION_STRING",
-            "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=secret;"
-            "BlobEndpoint=http://secret@127.0.0.1:11000/devstoreaccount1;",
-        ),
-        (
-            "AZURE_STORAGE_CONNECTION_STRING",
-            "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=secret;"
-            "BlobEndpoint=http://127.0.0.1:11000/other;",
-        ),
-        (
-            "AZURE_STORAGE_CONNECTION_STRING",
-            "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=secret;"
-            "BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1;"
-            "QueueEndpoint=http://127.0.0.1:11001/devstoreaccount1;",
-        ),
+        ("TAPPER_S3_ENDPOINT", "http://example.com:29000"),
+        ("TAPPER_S3_ENDPOINT", "https://127.0.0.1:29000"),
+        ("TAPPER_S3_ENDPOINT", "http://secret@127.0.0.1:29000"),
+        ("TAPPER_S3_ENDPOINT", "http://127.0.0.1:29000/bucket"),
     ],
 )
 def test_settings_reject_unsafe_or_widened_values(name: str, value: str) -> None:
@@ -1403,7 +1384,7 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
     )
     try:
         assert repository._sessions.kw["bind"] is engine
-        assert blob._config.operation_timeout_seconds == settings.blob_timeout_seconds
+        assert blob.objects._config.timeout_seconds == settings.blob_timeout_seconds
         assert model.embedding_model_id == "text-embedding-v4"
         assert model.chat_alias == "qwen-plus"
         assert model.gateway._config.roles.embedding_model == settings.embedding_model
@@ -2248,9 +2229,9 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
             return True
 
     class Blob:
-        async def container_properties(self, name: str) -> dict[str, object]:
-            calls.append(f"blob:{name}")
-            return {"public_access": None}
+        async def is_private(self) -> bool:
+            calls.append("blob:private")
+            return True
 
     _, reader, target = await module._create_search(settings, audit_sink=_UnusedSearchAudit())
 
@@ -2318,8 +2299,7 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
 
     assert result.status == "ready"
     assert "redis-ping" in calls
-    assert calls.count("blob:tapper-originals") == 1
-    assert calls.count("blob:tapper-artifacts") == 1
+    assert calls.count("blob:private") == 1
     assert calls.count("milvus-query:1") == 1
     assert calls.count("models:/v1/model/info") == 1
     await models.aclose()
@@ -2517,22 +2497,6 @@ def test_api_runtime_app_uses_one_settings_snapshot_for_lifespan() -> None:
     assert received == [settings]
     assert received[0] is settings
     assert runtime.closed is True
-
-
-@pytest.mark.parametrize(
-    ("properties", "expected"),
-    [
-        ({"public_access": None}, True),
-        ({}, False),
-        ({"public_access": "container"}, False),
-        (None, False),
-    ],
-)
-def test_blob_private_properties_require_the_explicit_public_access_field(
-    properties: object,
-    expected: bool,
-) -> None:
-    assert _runtime()._is_private_blob_container(properties) is expected
 
 
 class _UnusedSearchAudit:

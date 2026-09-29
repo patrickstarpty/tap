@@ -23,6 +23,15 @@ os.environ.update(_environment_before_pymilvus_import)
 del _environment_before_pymilvus_import
 
 ROOT = Path(__file__).resolve().parents[4]
+# Mirrors tests/object_settings.py; this module must also load via runpy from the repo root.
+S3_SETTINGS = {
+    "TAPPER_S3_ENDPOINT": "http://127.0.0.1:29000",
+    "TAPPER_S3_BUCKET": "tapper-test-objects",
+    "TAPPER_S3_REGION": "us-east-1",
+    "TAPPER_S3_ACCESS_KEY": "owned-key",
+    "TAPPER_S3_SECRET_KEY": "owned-secret",
+    "TAPPER_S3_STORE_ID": "owned-store",
+}
 
 
 def task6a_collection_module():
@@ -64,9 +73,7 @@ def test_task6a_collection_refuses_default_project_before_docker_or_providers(
         module.verify_owned_migration(SimpleNamespace(compose_project="tap-tapper-demo"), tmp_path)
 
 
-@pytest.mark.parametrize(
-    "changed", [None, "database_url", "milvus_uri", "s3_endpoint", "legacy_azure_enabled"]
-)
+@pytest.mark.parametrize("changed", [None, "database_url", "milvus_uri", "s3_endpoint"])
 @pytest.mark.parametrize("mysql_service", ["mysql-cli", "mysql-cli-final"])
 def test_task6a_collection_owned_guard_binds_every_provider_endpoint(
     tmp_path, monkeypatch, changed, mysql_service
@@ -116,16 +123,10 @@ def test_task6a_collection_owned_guard_binds_every_provider_endpoint(
         database_url="mysql+asyncmy://tap:test@127.0.0.1:35306/tap",
         alembic_database_url="mysql+pymysql://tap:test@127.0.0.1:35306/tap",
         milvus_uri="http://127.0.0.1:40530",
-        object_store_provider="minio",
-        legacy_azure_enabled=False,
         s3_endpoint="http://127.0.0.1:41000",
     )
     if changed is not None:
-        setattr(
-            settings,
-            changed,
-            True if changed == "legacy_azure_enabled" else "http://127.0.0.1:9999",
-        )
+        setattr(settings, changed, "http://127.0.0.1:9999")
         with pytest.raises(ValueError):
             module.verify_owned_migration(settings, tmp_path)
     else:
@@ -182,7 +183,7 @@ def test_task6a_collection_closes_only_opened_clients_on_migration_settlement(mo
         "MysqlOperationRepository",
         lambda *args, **kwargs: SimpleNamespace(ready_work=ready_work),
     )
-    settings = TapperSettings.from_mapping({})
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
     if fail:
         with pytest.raises(RuntimeError, match="injected"):
             asyncio.run(module.migrate_projection(settings, "migrate-v1-to-v2", None, 20))
@@ -1302,9 +1303,9 @@ def test_tapper_ensure_creates_and_verifies_both_private_containers_before_index
         async def ensure_containers(self) -> None:
             events.append("ensure:containers")
 
-        async def container_properties(self, name: str) -> dict[str, object]:
-            events.append(f"verify:{name}")
-            return {"public_access": None}
+        async def is_private(self) -> bool:
+            events.append("verify:private")
+            return True
 
         async def aclose(self) -> None:
             events.append("close:blob")
@@ -1330,14 +1331,13 @@ def test_tapper_ensure_creates_and_verifies_both_private_containers_before_index
     monkeypatch.setattr(tapper_collection, "_create_database", database)
     monkeypatch.setattr(tapper_collection, "_create_blob", lambda _settings: Blob())
     monkeypatch.setattr(tapper_collection, "_create_document_index", index)
-    settings = TapperSettings.from_mapping({})
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
 
     asyncio.run(tapper_collection.ensure(settings))
 
     assert events == [
         "ensure:containers",
-        "verify:tapper-originals",
-        "verify:tapper-artifacts",
+        "verify:private",
         "ensure:index",
         "close:index",
         "close:blob",
@@ -1362,7 +1362,7 @@ def test_tapper_ensure_creates_and_verifies_both_private_containers_before_index
                 "database",
                 "blob",
                 "blob:containers",
-                "blob:tapper-originals",
+                "blob:private",
                 "close:blob",
                 "close:engine",
             ],
@@ -1374,8 +1374,7 @@ def test_tapper_ensure_creates_and_verifies_both_private_containers_before_index
                 "database",
                 "blob",
                 "blob:containers",
-                "blob:tapper-originals",
-                "blob:tapper-artifacts",
+                "blob:private",
                 "milvus-client",
                 "close:blob",
                 "close:engine",
@@ -1388,8 +1387,7 @@ def test_tapper_ensure_creates_and_verifies_both_private_containers_before_index
                 "database",
                 "blob",
                 "blob:containers",
-                "blob:tapper-originals",
-                "blob:tapper-artifacts",
+                "blob:private",
                 "milvus-client",
                 "milvus-target",
                 "close:index",
@@ -1404,8 +1402,7 @@ def test_tapper_ensure_creates_and_verifies_both_private_containers_before_index
                 "database",
                 "blob",
                 "blob:containers",
-                "blob:tapper-originals",
-                "blob:tapper-artifacts",
+                "blob:private",
                 "milvus-client",
                 "milvus-target",
                 "close:index",
@@ -1441,11 +1438,11 @@ def test_tapper_ensure_cli_reports_only_the_closed_failure_stage_and_settles_pri
             if failure_point == "blob-containers":
                 raise RuntimeError("provider-secret-detail")
 
-        async def container_properties(self, name: str) -> dict[str, object]:
-            events.append(f"blob:{name}")
+        async def is_private(self) -> bool:
+            events.append("blob:private")
             if failure_point == "blob-properties":
                 raise RuntimeError("provider-secret-detail")
-            return {"public_access": None}
+            return True
 
         async def aclose(self) -> None:
             events.append("close:blob")
@@ -1494,7 +1491,7 @@ def test_tapper_ensure_cli_reports_only_the_closed_failure_stage_and_settles_pri
     monkeypatch.setattr(tapper_collection, "_create_document_index", index)
     result = tapper_collection.main(
         ["ensure"],
-        {},
+        S3_SETTINGS,
     )
     output = capsys.readouterr()
 
@@ -1528,7 +1525,8 @@ def test_tapper_ensure_cli_reports_configuration_failure_before_any_resource_sta
 
     result = tapper_collection.main(
         ["ensure"],
-        {
+        S3_SETTINGS
+        | {
             "TAPPER_API_HOST": "provider-secret-invalid-host",
         },
     )
@@ -1564,7 +1562,7 @@ def test_tapper_ensure_cli_redacts_provider_failures(
     monkeypatch.setattr(tapper_collection, "ensure", fail)
     result = tapper_collection.main(
         ["ensure"],
-        {},
+        S3_SETTINGS,
     )
     output = capsys.readouterr()
 
@@ -1596,7 +1594,7 @@ def test_tapper_ensure_cli_maps_keyboard_interrupt_to_130_without_output(
 
     result = tapper_collection.main(
         ["ensure"],
-        {},
+        S3_SETTINGS,
     )
     output = capsys.readouterr()
 
@@ -1625,7 +1623,7 @@ def test_tapper_ensure_cli_redacts_direct_cancelled_error(
 
     result = tapper_collection.main(
         ["ensure"],
-        {},
+        S3_SETTINGS,
     )
     output = capsys.readouterr()
 
@@ -1658,9 +1656,9 @@ def test_tapper_ensure_cli_redacts_cancelled_error_and_cleanup_group(
         async def ensure_containers(self) -> None:
             events.append("ensure:containers")
 
-        async def container_properties(self, name: str) -> dict[str, object]:
-            events.append(f"verify:{name}")
-            return {"public_access": None}
+        async def is_private(self) -> bool:
+            events.append("verify:private")
+            return True
 
         async def aclose(self) -> None:
             events.append("close:blob")
@@ -1688,7 +1686,7 @@ def test_tapper_ensure_cli_redacts_cancelled_error_and_cleanup_group(
 
     result = tapper_collection.main(
         ["ensure"],
-        {},
+        S3_SETTINGS,
     )
     output = capsys.readouterr()
 
@@ -1696,8 +1694,7 @@ def test_tapper_ensure_cli_redacts_cancelled_error_and_cleanup_group(
     assert events == [
         "database",
         "ensure:containers",
-        "verify:tapper-originals",
-        "verify:tapper-artifacts",
+        "verify:private",
         "index",
         "ensure:index",
         "close:index",
@@ -1761,7 +1758,7 @@ def test_tapper_ensure_cli_maps_only_closed_target_failure_stages(
 
     result = tapper_collection.main(
         ["ensure"],
-        {},
+        S3_SETTINGS,
     )
     output = capsys.readouterr()
 
@@ -1811,7 +1808,7 @@ def test_tapper_ensure_cli_suppresses_worker_thread_rpc_details(
     try:
         result = tapper_collection.main(
             ["ensure"],
-            {},
+            S3_SETTINGS,
         )
         _emit_provider_rpc_error("ensure-filter-restored-after-main")
     finally:
@@ -1926,7 +1923,7 @@ def test_safe_check_milvus_reader_uses_configured_schema() -> None:
     from tap.operations.milvus.doc_schema import doc_schema_sha256
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping({"TAPPER_SCHEMA_VERSION": "doc-schema-v2"})
+    settings = TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_SCHEMA_VERSION": "doc-schema-v2"})
 
     _reader, target = safe_check._milvus_reader(settings)
 
@@ -1939,7 +1936,7 @@ def test_safe_check_runs_all_five_probes_independently(
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping({})
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
     events: list[str] = []
 
     def probe(name: str, result: bool = True):  # type: ignore[no-untyped-def]
@@ -1979,7 +1976,7 @@ def test_safe_check_cli_suppresses_worker_thread_rpc_details(
 
     monkeypatch.setattr(safe_check, "checks", noisy_checks)
     try:
-        result = safe_check.main({})
+        result = safe_check.main(S3_SETTINGS)
     finally:
         logger.removeHandler(handler)
     output = capsys.readouterr()
@@ -2002,43 +1999,31 @@ def test_safe_blob_canary_delete_failure_is_failed_and_still_closes(
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping({})
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
     events: list[str] = []
 
-    class Download:
-        async def readall(self) -> bytes:
-            events.append("read")
-            return b"canary"
+    class Objects:
+        async def put_staged(self, request):  # type: ignore[no-untyped-def]
+            events.append("put")
+            assert b"".join([chunk async for chunk in request.content]) == b"canary"
+            return SimpleNamespace(ref="stg1.canary")
 
-    class BlobClient:
-        async def upload_blob(self, payload: bytes, *, overwrite: bool) -> None:
-            assert payload == b"canary"
-            assert overwrite is False
-            events.append("upload")
+        async def open_verified(self, ref):  # type: ignore[no-untyped-def]
+            assert ref == "stg1.canary"
+            events.append("open")
+            return SimpleNamespace(data=b"canary")
 
-        async def download_blob(self) -> Download:
-            events.append("download")
-            return Download()
-
-        async def delete_blob(self) -> None:
+        async def delete(self, ref) -> None:  # type: ignore[no-untyped-def]
+            assert ref == "stg1.canary"
             events.append("delete")
             raise RuntimeError("provider-secret-detail")
 
-    class Service:
-        def get_blob_client(self, container: str, name: str) -> BlobClient:
-            assert container == "tapper-artifacts"
-            assert name.startswith("readiness/canary-")
-            return BlobClient()
-
     class Blob:
-        _service = Service()
+        objects = Objects()
 
-        async def _bounded(self, awaitable):  # type: ignore[no-untyped-def]
-            return await awaitable
-
-        async def container_properties(self, name: str) -> dict[str, object]:
-            events.append(f"container:{name}")
-            return {"public_access": None}
+        async def is_private(self) -> bool:
+            events.append("private")
+            return True
 
         async def aclose(self) -> None:
             events.append("close")
@@ -2056,15 +2041,7 @@ def test_safe_blob_canary_delete_failure_is_failed_and_still_closes(
     states = asyncio.run(safe_check.checks(settings, {}))
 
     assert states["blob"] is False
-    assert events == [
-        "container:tapper-originals",
-        "container:tapper-artifacts",
-        "upload",
-        "download",
-        "read",
-        "delete",
-        "close",
-    ]
+    assert events == ["private", "put", "open", "delete", "close"]
 
 
 def _model_info_catalog(handler):  # type: ignore[no-untyped-def]
@@ -2101,7 +2078,7 @@ def test_safe_models_probe_requires_provider_config_and_reads_model_info_only(
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping({})
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
     requests: list[tuple[str, str]] = []
 
     def handler(request):  # type: ignore[no-untyped-def]
@@ -2134,7 +2111,7 @@ def test_safe_models_provider_gate_fails_before_construction_or_network(
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping({})
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("provider construction occurred before credential gate")
@@ -2156,7 +2133,7 @@ def test_safe_models_probe_requires_both_roles_and_closes_all_owners(monkeypatch
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping({})
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
     closed = []
 
     class Gateway:
@@ -2200,7 +2177,7 @@ def test_safe_models_probe_closes_all_owners_when_health_check_fails(monkeypatch
     with pytest.raises(RuntimeError, match="private provider detail"):
         asyncio.run(
             safe_check._check_models(
-                TapperSettings.from_mapping({}), {"DASHSCOPE_API_KEY": "configured"}
+                TapperSettings.from_mapping(S3_SETTINGS), {"DASHSCOPE_API_KEY": "configured"}
             )
         )
     assert events == ["embeddings"]
@@ -2540,8 +2517,7 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
                 "uv run --project apps/tap-ai-backend python -c 'import os; "
                 "from tap.entrypoints.tapper_runtime import TapperSettings; "
                 "settings=TapperSettings.from_mapping(dict(os.environ)); "
-                'assert settings.object_store_provider == "minio" '
-                'and settings.s3_bucket == "tapper-objects"\''
+                'assert settings.s3_bucket == "tapper-objects"\''
             ),
         ],
         cwd=ROOT,

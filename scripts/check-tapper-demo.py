@@ -20,13 +20,7 @@ from tap.entrypoints.tapper_runtime import (
     _create_embeddings,
     _create_redis,
     _discover_alembic_head,
-    _is_private_blob_container,
-    _artifacts_private,
     _push_if_owned,
-)
-from tap.modules.knowledge.adapters.blob_artifacts import (
-    ARTIFACTS_CONTAINER,
-    ORIGINALS_CONTAINER,
 )
 from tap.modules.knowledge.adapters.milvus.config import (
     MilvusIndexTarget,
@@ -80,44 +74,22 @@ async def _check_redis(settings: TapperSettings, _values: Mapping[str, str]) -> 
 async def _blob_canary(settings: TapperSettings) -> bool:
     artifacts = _create_blob(settings)
     try:
-        from tap.modules.knowledge.adapters.object_artifacts import (
-            KnowledgeArtifactStore,
-        )
         from tap.platform.storage.objects import PutObjectRequest
 
-        if isinstance(artifacts, KnowledgeArtifactStore):
-            if not await _artifacts_private(artifacts):
-                return False
-            payload = secrets.token_bytes(32)
-
-            async def content():
-                yield payload
-
-            staged = await artifacts.objects.put_staged(
-                PutObjectRequest(content(), 32, "application/octet-stream")
-            )
-            try:
-                return (
-                    await artifacts.objects.open_verified(staged.ref)
-                ).data == payload
-            finally:
-                await artifacts.objects.delete(staged.ref)
-        for container in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
-            properties = await artifacts.container_properties(container)
-            if not _is_private_blob_container(properties):
-                return False
-        name = f"readiness/canary-{secrets.token_hex(16)}"
-        client = artifacts._service.get_blob_client(ARTIFACTS_CONTAINER, name)
+        if not await artifacts.is_private():
+            return False
         payload = secrets.token_bytes(32)
-        matched = False
+
+        async def content():
+            yield payload
+
+        staged = await artifacts.objects.put_staged(
+            PutObjectRequest(content(), 32, "application/octet-stream")
+        )
         try:
-            await artifacts._bounded(client.upload_blob(payload, overwrite=False))
-            download = await artifacts._bounded(client.download_blob())
-            body = await artifacts._bounded(download.readall())
-            matched = body == payload
+            return (await artifacts.objects.open_verified(staged.ref)).data == payload
         finally:
-            await artifacts._bounded(client.delete_blob())
-        return matched
+            await artifacts.objects.delete(staged.ref)
     finally:
         await artifacts.aclose()
 

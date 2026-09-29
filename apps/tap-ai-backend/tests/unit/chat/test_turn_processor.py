@@ -826,9 +826,10 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
         content_digest,
     )
     from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+    from tests.object_settings import S3_SETTINGS
     from tests.unit.knowledge import test_answer_service as fixtures
 
-    settings = TapperSettings.from_mapping(settings_values)
+    settings = TapperSettings.from_mapping(S3_SETTINGS | settings_values)
     composed = _assemble_http_services(
         repository=SimpleNamespace(scope=VALIDATION_SCOPE),
         artifacts=object(),

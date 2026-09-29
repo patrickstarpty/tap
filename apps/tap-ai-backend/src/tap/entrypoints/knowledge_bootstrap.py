@@ -24,15 +24,11 @@ def build_search_port(
     settings: Mapping[str, str],
     *,
     milvus_reader_factory: Callable[[MilvusSearchConfig], MilvusReader],
-    azure_factory: Callable[[Mapping[str, str]], SearchPort],
     audit_sink: SearchAuditSink,
 ) -> SearchPort:
-    """Build exactly the explicitly selected provider without touching the inactive one."""
-    backend = settings.get("TAP_SEARCH_BACKEND")
-    if backend == "azure":
-        return azure_factory(settings)
-    if backend != "milvus":
-        raise ValueError("TAP_SEARCH_BACKEND must be exactly 'azure' or 'milvus'")
+    """Build the explicitly selected Milvus provider; other providers implement SearchPort."""
+    if settings.get("TAP_SEARCH_BACKEND") != "milvus":
+        raise ValueError("TAP_SEARCH_BACKEND must be exactly 'milvus'")
 
     dimension_text = _required(settings, "TAP_MILVUS_DOC_VECTOR_DIMENSION")
     if _POSITIVE_INTEGER.fullmatch(dimension_text) is None:

@@ -6,7 +6,6 @@ import asyncio
 import base64
 import json
 from collections.abc import Awaitable, Callable, Coroutine
-from dataclasses import replace
 from datetime import datetime
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
@@ -20,12 +19,6 @@ from tap.modules.knowledge.adapters.artifact_codecs import (
     encode_chunks_artifact,
     encode_embeddings_artifact,
     encode_normalized_artifact,
-)
-from tap.modules.knowledge.adapters.blob_artifacts import (
-    AzureBlobArtifactStore,
-    _parse_locator,
-    _parse_versioned_original_locator,
-    _revision_from_artifact_name,
 )
 from tap.modules.knowledge.domain.documents import ChunkDraft, NormalizedArtifact, canonical_sha256
 from tap.modules.knowledge.ports.documents import (
@@ -102,14 +95,19 @@ def _parse(locator: ArtifactLocator) -> tuple[str, str, ObjectRef]:
         raise ArtifactIntegrityFailure("artifact reference is malformed") from None
 
 
+def _require_locator(locator: ArtifactLocator) -> None:
+    if not isinstance(locator, str) or not locator.startswith("art1."):
+        raise ArtifactUnavailable("artifact reference is not served by this provider")
+
+
+def _require_staging(staging_key: str) -> None:
+    if not isinstance(staging_key, str) or not staging_key.startswith("stg1."):
+        raise ArtifactUnavailable("staged artifact reference is not served by this provider")
+
+
 class KnowledgeArtifactStore:
-    def __init__(
-        self, objects: ManagedObjectStore, *, legacy: AzureBlobArtifactStore | None = None
-    ) -> None:
-        if legacy is not None and legacy.scope != objects.scope:
-            raise ValueError("artifact provider scope differs")
+    def __init__(self, objects: ManagedObjectStore) -> None:
         self.objects = objects
-        self.legacy = legacy
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -122,28 +120,7 @@ class KnowledgeArtifactStore:
         return await self.objects.is_private()
 
     async def aclose(self) -> None:
-        try:
-            await self.objects.aclose()
-        finally:
-            if self.legacy is not None:
-                await self.legacy.aclose()
-
-    def _legacy(self, locator: ArtifactLocator) -> AzureBlobArtifactStore:
-        try:
-            if _parse_versioned_original_locator(locator) is None:
-                _parse_locator(locator)
-        except (ValueError, TypeError):
-            raise ArtifactIntegrityFailure("unknown artifact reference") from None
-        if self.legacy is None:
-            raise ArtifactUnavailable("legacy artifact provider is not enabled")
-        return self.legacy
-
-    def _legacy_staging(self, staging: str) -> AzureBlobArtifactStore:
-        if not isinstance(staging, str) or not staging.startswith("staging/"):
-            raise ArtifactIntegrityFailure("unknown staged artifact reference")
-        if self.legacy is None:
-            raise ArtifactUnavailable("legacy artifact provider is not enabled")
-        return self.legacy
+        await self.objects.aclose()
 
     @_boundary
     async def stage_original(self, upload: UploadStream, *, max_bytes: int) -> StagedOriginal:
@@ -175,10 +152,7 @@ class KnowledgeArtifactStore:
 
     @_boundary
     async def recover_original(self, staging_key: str, revision_id: str) -> ArtifactLocator:
-        if not staging_key.startswith("stg1."):
-            return await self._legacy_staging(staging_key).recover_original(
-                staging_key, revision_id
-            )
+        _require_staging(staging_key)
         value = await self.objects.open_verified(StagingRef(staging_key))
         return await self.commit_original(
             StagedOriginal(staging_key, "recovered", value.content_type, value.size, value.sha256),
@@ -191,12 +165,11 @@ class KnowledgeArtifactStore:
 
     @_boundary
     async def discard_staging(self, staging_key: str) -> None:
-        if not staging_key.startswith("stg1."):
-            await self._legacy_staging(staging_key).discard_staging(staging_key)
-            return
+        _require_staging(staging_key)
         await self.objects.delete(StagingRef(staging_key))
 
     async def _read(self, locator: ArtifactLocator, kind: str) -> tuple[str, VerifiedObject]:
+        _require_locator(locator)
         revision, actual_kind, ref = _parse(locator)
         if kind != actual_kind:
             raise ArtifactIntegrityFailure("artifact kind differs")
@@ -218,8 +191,6 @@ class KnowledgeArtifactStore:
 
     @_boundary
     async def read_original(self, locator: ArtifactLocator) -> bytes:
-        if not locator.startswith("art1."):
-            return await self._legacy(locator).read_original(locator)
         return (await self._read(locator, "original"))[1].data
 
     @_boundary
@@ -234,15 +205,7 @@ class KnowledgeArtifactStore:
         excerpt_digest: str,
     ) -> bytes:
         revision_id = _persisted_identity("revision", revision_id)
-        if not locator.startswith("art1."):
-            return await self._legacy(locator).read_original_excerpt(
-                locator,
-                revision_id=revision_id,
-                source_digest=source_digest,
-                start_byte=start_byte,
-                end_byte=end_byte,
-                excerpt_digest=excerpt_digest,
-            )
+        _require_locator(locator)
         locator_revision, kind, ref = _parse(locator)
         if locator_revision != revision_id or kind != "original":
             raise ArtifactIntegrityFailure("artifact range binding differs")
@@ -287,8 +250,6 @@ class KnowledgeArtifactStore:
 
     @_boundary
     async def read_normalized(self, locator: ArtifactLocator) -> NormalizedArtifact:
-        if not locator.startswith("art1."):
-            return await self._legacy(locator).read_normalized(locator)
         revision, value = await self._read(locator, "normalized")
         return decode_normalized_artifact(value.data, expected_revision=revision)
 
@@ -302,8 +263,6 @@ class KnowledgeArtifactStore:
 
     @_boundary
     async def read_chunks(self, locator: ArtifactLocator) -> tuple[ChunkDraft, ...]:
-        if not locator.startswith("art1."):
-            return await self._legacy(locator).read_chunks(locator)
         revision, value = await self._read(locator, "chunks")
         return decode_chunks_artifact(value.data, expected_revision=revision)
 
@@ -322,8 +281,6 @@ class KnowledgeArtifactStore:
 
     @_boundary
     async def read_embeddings(self, locator: ArtifactLocator) -> EmbeddingArtifact:
-        if not locator.startswith("art1."):
-            return await self._legacy(locator).read_embeddings(locator)
         revision, value = await self._read(locator, "embeddings")
         return decode_embeddings_artifact(value.data, expected_revision=revision)
 
@@ -332,31 +289,19 @@ class KnowledgeArtifactStore:
         if not isinstance(target, DeletionTarget):
             raise TypeError("artifact deletion requires an exact target")
         refs: list[tuple[ArtifactLocator, str, ObjectRef]] = []
-        legacy_refs: list[ArtifactLocator] = []
-        # Validate the complete batch before any provider mutation, including mixed providers.
+        # Validate the complete batch before any provider mutation.
         for locator in target.artifact_locators:
-            if locator.startswith("art1."):
-                revision, kind, ref = _parse(locator)
-                if revision != target.revision_id:
-                    raise ArtifactIntegrityFailure("artifact deletion revision differs")
-                refs.append((locator, kind, ref))
-            else:
-                self._legacy(locator)
-                versioned = _parse_versioned_original_locator(locator)
-                _, name = versioned[:2] if versioned is not None else _parse_locator(locator)
-                if _revision_from_artifact_name(name) != target.revision_id:
-                    raise ArtifactIntegrityFailure("legacy deletion revision differs")
-                legacy_refs.append(locator)
+            _require_locator(locator)
+            revision, kind, ref = _parse(locator)
+            if revision != target.revision_id:
+                raise ArtifactIntegrityFailure("artifact deletion revision differs")
+            refs.append((locator, kind, ref))
         for _, kind, ref in refs:
             try:
                 descriptor = await self.objects.describe_verified(ref)
             except ObjectMissingError:
                 continue
             self._validate_binding(descriptor, target.revision_id, kind)
-        if legacy_refs and self.legacy is not None:
-            await self.legacy.delete_revision_artifacts(
-                replace(target, artifact_locators=tuple(legacy_refs))
-            )
         for _, _, ref in refs:
             await self.objects.delete(ref)
 
@@ -366,15 +311,6 @@ class KnowledgeArtifactStore:
     ) -> ArtifactScavengeReceipt:
         refs = frozenset(StagingRef(ref) for ref in visible_staging_keys if ref.startswith("stg1."))
         receipt = await self.objects.scavenge_staging(now=now, visible_refs=refs, limit=limit)
-        scanned, removed = receipt.scanned, [str(ref) for ref in receipt.removed]
-        if self.legacy is not None and scanned < limit:
-            old = await self.legacy.scavenge_staging(
-                now=now,
-                visible_staging_keys=frozenset(
-                    ref for ref in visible_staging_keys if ref.startswith("staging/")
-                ),
-                limit=limit - scanned,
-            )
-            scanned += old.scanned
-            removed.extend(old.removed)
-        return ArtifactScavengeReceipt(scanned=scanned, removed=tuple(removed))
+        return ArtifactScavengeReceipt(
+            scanned=receipt.scanned, removed=tuple(str(ref) for ref in receipt.removed)
+        )
