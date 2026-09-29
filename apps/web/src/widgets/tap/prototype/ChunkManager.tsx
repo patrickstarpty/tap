@@ -7,6 +7,7 @@ export type Chunk = {
   enabled: boolean;
   edited: boolean;
   children: Chunk[];
+  indexState?: "indexed" | "indexing" | "failed";
 };
 export type ChunkSettings = {
   mode: "general" | "parent-child";
@@ -142,9 +143,18 @@ export function ChunkManager({
     } catch {
       /* use source */
     }
+    const chunks = generateChunks(
+      SAMPLE_CHUNK_SOURCE_TEXT,
+      DEFAULT_CHUNK_SETTINGS,
+    );
     return {
       settings: DEFAULT_CHUNK_SETTINGS,
-      chunks: generateChunks(SAMPLE_CHUNK_SOURCE_TEXT, DEFAULT_CHUNK_SETTINGS),
+      chunks:
+        id === "underwriting-evidence-pdf" && chunks[1]
+          ? chunks.map((c, i) =>
+              i === 1 ? { ...c, indexState: "failed" as const } : c,
+            )
+          : chunks,
     };
   });
   const [settings, setSettings] = useState(saved.settings);
@@ -163,6 +173,29 @@ export function ChunkManager({
   const [confirm, setConfirm] = useState<"delete" | "reprocess" | null>(null);
   const [notice, setNotice] = useState("");
   const [indexing, setIndexing] = useState(false);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!retryingId) return;
+    const timer = setTimeout(() => {
+      setSaved((s) => ({
+        ...s,
+        chunks: s.chunks.map((c) =>
+          c.id === retryingId ? { ...c, indexState: "indexed" as const } : c,
+        ),
+      }));
+      setRetryingId(null);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [retryingId]);
+  const retryIndexing = (id: string) => {
+    setSaved((s) => ({
+      ...s,
+      chunks: s.chunks.map((c) =>
+        c.id === id ? { ...c, indexState: "indexing" as const } : c,
+      ),
+    }));
+    setRetryingId(id);
+  };
   useEffect(() => {
     try {
       localStorage.setItem(key, JSON.stringify(saved));
@@ -603,10 +636,24 @@ export function ChunkManager({
                       ? t("Enabled", "已启用")
                       : t("Disabled", "已禁用")}
                     {c.edited ? ` · ${t("Edited", "已编辑")}` : ""}
+                    {c.indexState === "failed" || c.indexState === "indexing"
+                      ? " · "
+                      : ""}
+                    {c.indexState === "failed" && (
+                      <span>{t("Index failed", "索引失败")}</span>
+                    )}
+                    {c.indexState === "indexing" && (
+                      <span>{t("Indexing…", "索引中…")}</span>
+                    )}
                   </small>
                 </div>
                 <p>{c.content}</p>
                 <div className="tap-chunk-row">
+                  {c.indexState === "failed" && (
+                    <Button onClick={() => retryIndexing(c.id)}>
+                      {t("Retry indexing", "重试索引")}
+                    </Button>
+                  )}
                   <Button
                     aria-label={t("Edit chunk", "编辑切片")}
                     disabled={!c.enabled || full}

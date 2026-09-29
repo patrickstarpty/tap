@@ -1,12 +1,14 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
   within,
   waitFor,
 } from "@testing-library/react";
-import { beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DocumentReview, useDocumentReview } from "./DocumentReview";
+import { ChunkManager } from "./ChunkManager";
 function Harness() {
   const review = useDocumentReview("en");
   return (
@@ -138,6 +140,69 @@ it("fixes the collection mode after processing and keeps full-document parent re
   expect(screen.getByRole("button", { name: "Edit chunk" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Chunk settings" }));
   expect(screen.getByLabelText("Chunk mode")).toBeDisabled();
+});
+afterEach(() => vi.useRealTimers());
+it("retries indexing a failed chunk", () => {
+  vi.useFakeTimers();
+  render(
+    <ChunkManager
+      id="underwriting-evidence-pdf"
+      t={(en) => en}
+      originalView={null}
+      onAvailability={() => {}}
+    />,
+  );
+  expect(screen.getAllByText("Index failed")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Retry indexing" }));
+  expect(screen.getByText("Indexing…")).toBeVisible();
+  act(() => {
+    vi.advanceTimersByTime(800);
+  });
+  expect(screen.queryByText("Index failed")).not.toBeInTheDocument();
+  expect(screen.queryByText("Indexing…")).not.toBeInTheDocument();
+});
+it("loads saved chunks without index state", () => {
+  localStorage.setItem(
+    "tap.prototype.chunks.v1.underwriting-evidence-pdf",
+    JSON.stringify({
+      settings: {
+        mode: "general",
+        parent: "paragraph",
+        delimiter: "\\n\\n",
+        max: 500,
+        overlap: 50,
+        childDelimiter: "\\n",
+        childMax: 200,
+        whitespace: true,
+        removeLinks: false,
+      },
+      chunks: [
+        {
+          id: "a",
+          content: "First chunk",
+          enabled: true,
+          edited: false,
+          children: [],
+        },
+        {
+          id: "b",
+          content: "Second chunk",
+          enabled: true,
+          edited: false,
+          children: [],
+        },
+      ],
+    }),
+  );
+  render(
+    <ChunkManager
+      id="underwriting-evidence-pdf"
+      t={(en) => en}
+      originalView={null}
+      onAvailability={() => {}}
+    />,
+  );
+  expect(screen.queryByText("Index failed")).not.toBeInTheDocument();
 });
 it("keeps a new upload unavailable until chunk settings are processed", () => {
   function Upload() {
