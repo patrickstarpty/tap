@@ -194,7 +194,7 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
 ):
     import asyncio
 
-    from scripts.migration_support import seed_baseline
+    from scripts.migration_support import LEGACY_TIME, seed_baseline
     from sqlalchemy import create_engine, inspect, text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -203,6 +203,7 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
     from tap.modules.ai.application.assets import resolve_skill_selection, validation_asset_seed
     from tap.modules.ai.domain.assets import AssetRevisionRejected
     from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
+    from tap.modules.chat.application.conversations import ConversationIntegrityError
 
     owned_project_mysql.rebuild("0005_projection_lineage")
     sync_engine = create_engine(owned_project_mysql.url)
@@ -320,11 +321,26 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
             catalog = MysqlAssetCatalog(
                 async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
             )
-            with pytest.raises(ValueError, match="input snapshot is missing"):
+            with pytest.raises(ConversationIntegrityError, match="input snapshot is missing"):
                 await MysqlConversationRepository(
                     async_sessionmaker(engine, expire_on_commit=False),
                     scope=VALIDATION_SCOPE,
                 ).load("legacy-chat")
+            # The legacy facts survive the upgrade unchanged even though they are not served.
+            async with engine.connect() as connection:
+                legacy_event = (
+                    await connection.execute(
+                        text(
+                            "SELECT sequence,stream_sequence FROM chat_event "
+                            "WHERE event_id='legacy-event'"
+                        )
+                    )
+                ).one()
+                legacy_created_at = await connection.scalar(
+                    text("SELECT created_at FROM conversation WHERE conversation_id='legacy-chat'")
+                )
+            assert tuple(legacy_event) == (1, 1)
+            assert legacy_created_at == LEGACY_TIME
             with pytest.raises(AssetRevisionRejected):
                 await catalog.resolve_agent(
                     VALIDATION_SCOPE,
@@ -700,14 +716,17 @@ def test_0012_preserves_legacy_chat_as_conversation(monkeypatch):
 def test_0012a_legacy_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
     import asyncio
 
-    from scripts.migration_support import seed_baseline
+    from scripts.migration_support import LEGACY_TIME, seed_baseline
     from sqlalchemy import create_engine, text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from tap.entrypoints.tapper_runtime import create_project_audit
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
-    from tap.modules.chat.application.conversations import ConversationService
+    from tap.modules.chat.application.conversations import (
+        ConversationIntegrityError,
+        ConversationService,
+    )
     from tap.modules.chat.domain.conversations import (
         AnswerEvidence,
         FrozenResource,
@@ -756,9 +775,29 @@ def test_0012a_legacy_turn_without_input_snapshot_is_an_integrity_error(owned_pr
                 scope=VALIDATION_SCOPE,
             )
             # Pre-snapshot legacy Turns are not synthesized; they surface as integrity errors.
-            with pytest.raises(ValueError, match="input snapshot is missing"):
+            with pytest.raises(ConversationIntegrityError, match="input snapshot is missing"):
                 await repository.load("legacy-chat")
             async with engine.connect() as connection:
+                legacy_created_at = await connection.scalar(
+                    text("SELECT created_at FROM conversation WHERE conversation_id='legacy-chat'")
+                )
+                legacy_turns = (
+                    await connection.execute(
+                        text(
+                            "SELECT turn_id FROM chat_turn WHERE chat_id='legacy-chat' "
+                            "ORDER BY created_at,turn_id"
+                        )
+                    )
+                ).all()
+                legacy_stream = (
+                    await connection.execute(
+                        text(
+                            "SELECT event_id,stream_sequence FROM chat_event "
+                            "WHERE event_id IN ('legacy-event','legacy-event-2') "
+                            "ORDER BY stream_sequence"
+                        )
+                    )
+                ).all()
                 preserved = (
                     (
                         await connection.execute(
@@ -773,6 +812,12 @@ def test_0012a_legacy_turn_without_input_snapshot_is_an_integrity_error(owned_pr
                 )
             assert [row["sequence"] for row in preserved] == [1, 1]
             assert preserved[1]["payload"] == preserved[0]["payload"]
+            assert legacy_created_at == LEGACY_TIME
+            assert [row[0] for row in legacy_turns] == ["legacy-turn", "legacy-turn-2"]
+            assert [tuple(row) for row in legacy_stream] == [
+                ("legacy-event", 1),
+                ("legacy-event-2", 2),
+            ]
             documents = MysqlDocumentRepository(
                 async_sessionmaker(engine, expire_on_commit=False),
                 scope=VALIDATION_SCOPE,
