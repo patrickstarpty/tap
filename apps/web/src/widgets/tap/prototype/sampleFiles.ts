@@ -26,6 +26,7 @@ export const SAMPLE_FILES: readonly LibrarySource[] = [
     status: "ready",
     isExample: true,
     hasNewerRevision: true,
+    hasPublishedGraph: true,
   },
   {
     id: "sample-beneficiary",
@@ -39,6 +40,7 @@ export const SAMPLE_FILES: readonly LibrarySource[] = [
     origin: "page-local",
     status: "ready",
     isExample: true,
+    hasPublishedGraph: true,
   },
   {
     id: "sample-exploratory",

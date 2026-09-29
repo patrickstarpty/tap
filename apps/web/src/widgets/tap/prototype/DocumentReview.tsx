@@ -204,6 +204,7 @@ export function useDocumentReview(locale: Locale) {
               ? "processing"
               : "ready",
         reviewState: d.state,
+        hasPublishedGraph: d.state === "published",
         ...(d.id === "underwriting-evidence-pdf" &&
         d.state !== "failed" &&
         d.state !== "processing" &&

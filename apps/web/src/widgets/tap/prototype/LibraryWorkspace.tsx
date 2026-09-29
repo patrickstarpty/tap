@@ -21,6 +21,7 @@ import { FileTypeIcon } from "./FileTypeIcon";
 import { ACCEPTED_SOURCE_EXTENSIONS, getFileTypeFamily } from "./fileTypes";
 import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
+import { GraphViewSwitch, type GraphView } from "./GraphViewSwitch";
 import { KnowledgeGraph } from "./KnowledgeGraph";
 import { SourceDetailDialog } from "./SourceDetailDialog";
 import { UploadChunkSettings } from "./UploadChunkSettings";
@@ -75,6 +76,10 @@ export function LibraryWorkspace({
   const [detailSourceId, setDetailSourceId] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(() =>
     isPrototypeFaultActive("library-load-failed"),
+  );
+  const [graphView, setGraphView] = useState<GraphView>({ kind: "domain" });
+  const [graphLoadFailed, setGraphLoadFailed] = useState(() =>
+    isPrototypeFaultActive("graph-load-failed"),
   );
   const addDialogTriggerRef = useRef<HTMLElement | null>(null);
   const detailTriggerRef = useRef<HTMLElement | null>(null);
@@ -459,16 +464,66 @@ export function LibraryWorkspace({
             role="tabpanel"
             aria-labelledby="tap-library-graph-tab"
           >
-            <KnowledgeGraph
-              copy={copy}
-              query={query}
-              sources={facetSources}
-              onViewSource={(source) => {
-                setQuery(source.name);
-                setMode("list");
-                listTabRef.current?.focus();
-              }}
-            />
+            {graphLoadFailed ? (
+              <div className="tap-library-load-error">
+                <p role="alert">{copy.library.graphLoadFailed}</p>
+                <Button
+                  onClick={() => {
+                    clearPrototypeFault("graph-load-failed");
+                    setGraphLoadFailed(false);
+                  }}
+                >
+                  {copy.navigation.retry}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <GraphViewSwitch
+                  copy={copy}
+                  sources={facetSources}
+                  value={graphView}
+                  onChange={setGraphView}
+                />
+                {graphView.kind === "domain" ? (
+                  <KnowledgeGraph
+                    copy={copy}
+                    query={query}
+                    sources={facetSources}
+                    onViewSource={(source) => {
+                      setQuery(source.name);
+                      setMode("list");
+                      listTabRef.current?.focus();
+                    }}
+                  />
+                ) : (
+                  (() => {
+                    const selectedSource =
+                      facetSources.find(
+                        (source) => source.id === graphView.sourceId,
+                      ) ?? null;
+                    if (!selectedSource?.hasPublishedGraph) {
+                      return (
+                        <div className="tap-catalog-empty">
+                          {copy.library.graphEmpty}
+                        </div>
+                      );
+                    }
+                    return (
+                      <KnowledgeGraph
+                        copy={copy}
+                        query={query}
+                        sources={[selectedSource]}
+                        onViewSource={(source) => {
+                          setQuery(source.name);
+                          setMode("list");
+                          listTabRef.current?.focus();
+                        }}
+                      />
+                    );
+                  })()
+                )}
+              </>
+            )}
           </div>
         )}
         </>

@@ -167,6 +167,11 @@ export interface PrototypeCopy {
     addSource: string;
     all: string;
     knowledgeGraph: string;
+    graphDomain: string;
+    graphPublished: string;
+    graphSource: string;
+    graphEmpty: string;
+    graphLoadFailed: string;
     sources: string;
     sourceCount: string;
     typeFilter: string;
@@ -533,6 +538,11 @@ export const PROTOTYPE_COPY = {
       addSource: "Add source",
       all: "Documents",
       knowledgeGraph: "Knowledge Graph",
+      graphDomain: "Domain overview",
+      graphPublished: "Published source graph",
+      graphSource: "Source",
+      graphEmpty: "This source has no published graph yet.",
+      graphLoadFailed: "The knowledge graph could not be loaded.",
       sources: "Library sources",
       sourceCount: "sources",
       typeFilter: "Type",
@@ -896,6 +906,11 @@ export const PROTOTYPE_COPY = {
       addSource: "添加来源",
       all: "文档列表",
       knowledgeGraph: "知识图谱",
+      graphDomain: "领域总览",
+      graphPublished: "已发布来源图谱",
+      graphSource: "来源",
+      graphEmpty: "该来源尚无已发布图谱。",
+      graphLoadFailed: "知识图谱加载失败。",
       sources: "知识库来源",
       sourceCount: "个来源",
       typeFilter: "类型",

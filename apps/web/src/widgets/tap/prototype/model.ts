@@ -137,6 +137,7 @@ export interface LibrarySource {
     | "withdrawn";
   isExample?: boolean;
   hasNewerRevision?: boolean;
+  hasPublishedGraph?: boolean;
   partiallyIndexed?: boolean;
   downloadUrl?: string;
   preview?: { imageUrl?: string; text?: string };
