@@ -4,6 +4,11 @@ import { TapProductPrototype } from "./TapProductPrototype";
 import { resolveComposerAttachments } from "./prototype/composerAttachments";
 import type { LibrarySource } from "./prototype/model";
 import { setPrototypeFaults } from "./prototype/prototypeFaults";
+import {
+  PROTOTYPE_SNAPSHOT_VERSION,
+  PROTOTYPE_STORAGE_KEY,
+} from "./prototype/artifacts/persistence";
+import { createInitialArtifactState } from "../../legacy/artifacts/fixtures";
 
 const HEALTH_QUESTION = "What does the health disclosure rule require?";
 const BDD_REQUEST = "Create BDD test cases for life insurance underwriting";
@@ -466,6 +471,39 @@ describe("composer and turn controls", () => {
     ).toHaveTextContent("No models available");
     type(HEALTH_QUESTION);
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    fireEvent.keyDown(composer(), { key: "Enter" });
+    advance(400);
+    expect(userMessages()).toEqual([]);
+  });
+
+  it("blocks sending when the conversation's model is unavailable", () => {
+    localStorage.setItem(
+      PROTOTYPE_STORAGE_KEY,
+      JSON.stringify({
+        version: PROTOTYPE_SNAPSHOT_VERSION,
+        activeConversationId: "chat-old-snapshot",
+        conversations: [
+          {
+            id: "chat-old-snapshot",
+            title: "Old snapshot chat",
+            turns: [],
+            modelId: "gpt-5.4",
+            selectedSourceIds: [],
+            selectedAgentIds: [],
+            selectedSkillIds: [],
+          },
+        ],
+        artifacts: createInitialArtifactState(),
+      }),
+    );
+    render(<TapProductPrototype />);
+    type(HEALTH_QUESTION);
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    fireEvent.keyDown(composer(), { key: "Enter" });
+    advance(400);
+    expect(userMessages()).toEqual([]);
   });
 
   it("explains that each turn records context", () => {

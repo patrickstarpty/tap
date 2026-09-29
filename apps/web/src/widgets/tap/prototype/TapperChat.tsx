@@ -326,6 +326,7 @@ export function TapperChat({
   const selectedModel =
     CODEX_MODELS.find((model) => model.id === conversation.modelId) ??
     CODEX_MODELS[0]!;
+  const sendBlockedByModel = noModelsAvailable || !selectedModel.available;
 
   const selectedSources = sources.filter((source) =>
     conversation.selectedSourceIds.includes(source.id),
@@ -426,7 +427,13 @@ export function TapperChat({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = message.trim();
-    if (prompt.length === 0 || isSending || conversationIsGenerating) return;
+    if (
+      prompt.length === 0 ||
+      isSending ||
+      conversationIsGenerating ||
+      sendBlockedByModel
+    )
+      return;
     const sent = onSend(prompt);
     if (sent) setMessage("");
     composerRef.current?.focus();
@@ -934,7 +941,7 @@ export function TapperChat({
             aria-label={isSending ? copy.chat.sending : copy.chat.send}
             aria-busy={isSending || undefined}
             disabled={
-              isSending || message.trim().length === 0 || noModelsAvailable
+              isSending || message.trim().length === 0 || sendBlockedByModel
             }
           >
             <span className="tap-composer-send-face">
