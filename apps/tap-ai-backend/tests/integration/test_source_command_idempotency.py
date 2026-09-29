@@ -145,7 +145,7 @@ async def test_operator_snapshot_carries_active_source_owner_and_rejects_tombsto
                 parent_id=None,
                 anchor_json={"type": "document"},
                 chunk_content_hash=content_hash,
-                embedding_model_version="tapper-embedding",
+                embedding_model_version="text-embedding-v4",
                 index_version="tapper-index-v1",
                 created_at=request.now,
             )
@@ -171,7 +171,7 @@ async def test_operator_snapshot_carries_active_source_owner_and_rejects_tombsto
         work,
         (chunk,),
         EmbeddingArtifact(
-            "tapper-embedding",
+            "text-embedding-v4",
             1536,
             ((0.1,) * 1536,),
             (str(chunk.chunk_id),),

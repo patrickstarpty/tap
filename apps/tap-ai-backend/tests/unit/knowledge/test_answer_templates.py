@@ -120,7 +120,7 @@ async def test_model_generation_consumes_pinned_template_and_preserves_schema():
         scope=VALIDATION_SCOPE,
         redact=redact,
         embedding_alias="embed",
-        chat_alias="tapper-chat",
+        chat_alias="qwen-plus",
         embedding_dimension=2,
         timeout_seconds=5,
     )
@@ -168,11 +168,11 @@ async def test_direct_generation_is_bound_to_plan_identity():
         scope=VALIDATION_SCOPE,
         redact=redact,
         embedding_alias="embed",
-        chat_alias="tapper-chat",
+        chat_alias="qwen-plus",
         embedding_dimension=2,
         timeout_seconds=5,
     )
-    result = await model.chat("你好", model_alias="tapper-chat", answer_plan_id="plan-a")
+    result = await model.chat("你好", model_alias="qwen-plus", answer_plan_id="plan-a")
     assert result.text == "Hello"
     assert requests[0].idempotency_key == "plan-a:generation"
 
@@ -217,12 +217,12 @@ async def test_direct_model_consumes_pinned_template_and_schema():
         scope=VALIDATION_SCOPE,
         redact=redact,
         embedding_alias="embed",
-        chat_alias="tapper-chat",
+        chat_alias="qwen-plus",
         embedding_dimension=2,
         timeout_seconds=5,
     )
     result = await model.chat(
-        "你好", model_alias="tapper-chat", answer_plan_id="plan-a", answer_input=assembled
+        "你好", model_alias="qwen-plus", answer_plan_id="plan-a", answer_input=assembled
     )
     assert result.text == "Hello"
     assert selected.instruction in requests[0].prompt

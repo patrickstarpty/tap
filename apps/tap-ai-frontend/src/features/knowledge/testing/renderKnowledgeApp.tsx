@@ -26,16 +26,16 @@ export function renderKnowledgeApp(
     actorId: "actor-test",
   });
   queryClient.setQueryData(["model-catalog", api.projectId], {
-    defaultAlias: "tapper-chat",
+    defaultAlias: "qwen-plus",
     items: [
       {
-        alias: "tapper-chat",
+        alias: "qwen-plus",
         displayName: "Qwen Plus",
         capabilities: ["chat", "structured"],
       },
       {
-        alias: "gpt-5.6-sol",
-        displayName: "GPT-5.6 Sol",
+        alias: "qwen-max",
+        displayName: "Qwen Max",
         capabilities: ["chat", "structured"],
       },
     ],

@@ -9,7 +9,7 @@
   "bindings": {
     "policyDigest": null,
     "approvalDigest": null,
-    "modelAlias": "tapper-chat",
+    "modelAlias": "qwen-plus",
     "promptDigest": null,
     "agentRevisionDigest": null,
     "skillRevisionDigests": [],

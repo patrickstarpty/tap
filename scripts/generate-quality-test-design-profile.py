@@ -64,7 +64,7 @@ def build() -> dict[str, object]:
             "labelingMethod": "named-review-with-deterministic-adjudication",
         },
         "bindings": {
-            "modelAlias": "tapper-chat",
+            "modelAlias": "qwen-plus",
             "actualModel": "pending/real-model-run",
             "agentRevisionId": "validation-test-design-agent-v1",
             "skillRevisionIds": ["validation-test-design-skill-v1"],

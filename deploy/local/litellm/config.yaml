@@ -1,39 +1,48 @@
 model_list:
-  - model_name: tapper-chat
+  - model_name: qwen-plus
     litellm_params:
-      model: os.environ/LITELLM_MODEL
+      model: dashscope/qwen-plus
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
     model_info:
-      id: os.environ/LITELLM_MODEL
-  - model_name: tapper-chat-flash
+      mode: chat
+      supports_response_schema: true
+      tapper_display_name: Qwen Plus
+  - model_name: qwen-flash
     litellm_params:
-      model: os.environ/LITELLM_FLASH_MODEL
+      model: dashscope/qwen-flash
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
     model_info:
-      id: os.environ/LITELLM_FLASH_MODEL
-  - model_name: tapper-chat-max
+      mode: chat
+      supports_response_schema: true
+      tapper_display_name: Qwen Flash
+  - model_name: qwen-max
     litellm_params:
-      model: os.environ/LITELLM_MAX_MODEL
+      model: dashscope/qwen-max
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
     model_info:
-      id: os.environ/LITELLM_MAX_MODEL
-  - model_name: tapper-embedding
+      mode: chat
+      supports_response_schema: true
+      tapper_display_name: Qwen Max
+  - model_name: qwen3-vl-plus
     litellm_params:
-      model: os.environ/LITELLM_TAPPER_EMBEDDING_MODEL
+      model: dashscope/qwen3-vl-plus
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
     model_info:
-      id: os.environ/LITELLM_TAPPER_EMBEDDING_MODEL
-  - model_name: tapper-vision
+      mode: chat
+      supports_vision: true
+      supports_response_schema: true
+      tapper_display_name: Qwen3 VL Plus
+  - model_name: text-embedding-v4
     litellm_params:
-      model: os.environ/LITELLM_TAPPER_VISION_MODEL
+      model: dashscope/text-embedding-v4
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
     model_info:
-      id: os.environ/LITELLM_TAPPER_VISION_MODEL
+      mode: embedding
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 

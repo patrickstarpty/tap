@@ -23,8 +23,6 @@ def _tapper_environment(**overrides: str) -> dict[str, str]:
         "TAP_REDIS_URL": "redis://127.0.0.1:16379/0",
         "TAP_REDIS_COMMAND_STREAM": "tap-tapper-e2e:commands",
         "LITELLM_BASE_URL": "http://127.0.0.1:14000",
-        "LITELLM_MODEL": "openai/test-chat",
-        "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         "MILVUS_URI": "http://127.0.0.1:29530",
     }
     values.update(overrides)

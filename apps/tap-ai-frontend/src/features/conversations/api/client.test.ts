@@ -114,7 +114,7 @@ describe("ConversationClient", () => {
     });
     const input = {
       message: "What applies?",
-      modelAlias: "tapper-chat",
+      modelAlias: "qwen-plus",
       sourceRevisionIds: ["revision-1"],
       documentRevisionIds: [],
       agentRevisionId: "agent-r1",

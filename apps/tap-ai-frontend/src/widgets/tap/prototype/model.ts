@@ -5,7 +5,7 @@ export type Locale = "en" | "zh";
 
 export type ModelId = string;
 
-export const DEFAULT_MODEL_ID: ModelId = "tapper-chat";
+export const DEFAULT_MODEL_ID: ModelId = "qwen-plus";
 
 export function isModelId(value: unknown): value is ModelId {
   return typeof value === "string" && /^[a-z][a-z0-9._-]{0,127}$/.test(value);

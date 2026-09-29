@@ -8,7 +8,7 @@
     "notice": "The generated corpus and all 200 expected judgments were approved by human reviewer patrick on 2026-09-13."
   },
   "bindings": {
-    "modelAlias": "tapper-chat",
+    "modelAlias": "qwen-plus",
     "actualModel": "pending/real-model-run",
     "promptDigest": "sha256:cf2bf56771e0766ad84b49f72e9fa212befa4fa8488cc6607366e15a825bb7a1",
     "schemaDigest": "sha256:4896c693809d08d7f8f6b78972705d282a905c6956286f7465a8a43245bd0761",

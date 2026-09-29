@@ -23,7 +23,7 @@ describe("prototype persistence", () => {
               id: "turn-1",
               intent: "automation",
               locale: "en",
-              modelId: "tapper-chat",
+              modelId: "qwen-plus",
               prompt: "Generate automation",
               sourceReferences: [],
               automationWorkflow: { automationId: "AUTO-101" },
@@ -167,6 +167,6 @@ describe("prototype persistence", () => {
       }),
     );
 
-    expect(restored?.conversations[0]?.modelId).toBe("tapper-chat");
+    expect(restored?.conversations[0]?.modelId).toBe("qwen-plus");
   });
 });

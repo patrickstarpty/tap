@@ -112,7 +112,7 @@ it("preserves the draft and prevents sending when the governed model is unavaila
   await act(async () => {
     queryClient.setQueriesData(
       { queryKey: ["model-catalog"] },
-      { defaultAlias: "tapper-chat", items: [] },
+      { defaultAlias: "qwen-plus", items: [] },
     );
   });
   expect(await screen.findByText("Model unavailable")).toBeVisible();
@@ -1145,18 +1145,18 @@ describe("Tap product prototype interactions", () => {
       within(menu)
         .getAllByRole("menuitemradio")
         .map((option) => option.textContent?.trim()),
-    ).toEqual(["Qwen Plus", "GPT-5.6 Sol"]);
+    ).toEqual(["Qwen Plus", "Qwen Max"]);
     expect(within(menu).queryByText(/Fast|Ultra/)).toBeNull();
 
     await user.click(
       within(menu).getByRole("menuitemradio", {
-        name: "GPT-5.6 Sol",
+        name: "Qwen Max",
       }),
     );
 
     expect(
       within(composer).getByRole("button", {
-        name: "Select model, current model GPT-5.6 Sol",
+        name: "Select model, current model Qwen Max",
       }),
     ).toBeVisible();
     expect(screen.queryByRole("menu", { name: "Models" })).toBeNull();
@@ -1188,9 +1188,7 @@ describe("Tap product prototype interactions", () => {
         name: "Select model, current model Qwen Plus",
       }),
     );
-    await user.click(
-      screen.getByRole("menuitemradio", { name: "GPT-5.6 Sol" }),
-    );
+    await user.click(screen.getByRole("menuitemradio", { name: "Qwen Max" }));
     await user.type(
       screen.getByRole("textbox", { name: "Message Tapper" }),
       prompt,
@@ -1211,7 +1209,7 @@ describe("Tap product prototype interactions", () => {
     );
     expect(
       screen.getByRole("button", {
-        name: "Select model, current model GPT-5.6 Sol",
+        name: "Select model, current model Qwen Max",
       }),
     ).toBeVisible();
   });

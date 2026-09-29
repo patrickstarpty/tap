@@ -190,9 +190,18 @@ def _input_json(value):
 
 
 class MysqlConversationRepository:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext):
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        scope: ProjectScopeContext,
+        default_chat_model: str,
+    ):
         self.sessions = sessions
         self.scope = require_project_scope(scope)
+        if not isinstance(default_chat_model, str) or not default_chat_model:
+            raise ValueError("conversation repository requires the default chat model")
+        self._default_chat_model = default_chat_model
 
     async def resolve_citations(
         self, trace_id: str, citation_ids: tuple[str, ...]
@@ -460,7 +469,7 @@ class MysqlConversationRepository:
                 message=row["message"],
                 actor_id=row["actor_id"],
                 identity_mode=row["identity_mode"],
-                model_alias="tapper-chat",
+                model_alias=self._default_chat_model,
             )
             input_value = TurnInputSnapshot.create(
                 snapshot_id="legacy-"

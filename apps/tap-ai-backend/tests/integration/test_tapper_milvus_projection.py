@@ -422,7 +422,7 @@ async def test_real_milvus_ensure_upsert_delete_and_durable_late_write_fence(rea
         work(),
         chunks,
         EmbeddingArtifact(
-            "tapper-embedding",
+            "text-embedding-v4",
             1536,
             (vector(0.1), vector(0.3)),
             tuple(str(item.chunk_id) for item in chunks),
@@ -446,7 +446,7 @@ async def test_real_milvus_ensure_upsert_delete_and_durable_late_write_fence(rea
             work(),
             chunks,
             EmbeddingArtifact(
-                "tapper-embedding",
+                "text-embedding-v4",
                 1536,
                 (vector(0.1), vector(0.3)),
                 tuple(str(item.chunk_id) for item in chunks),

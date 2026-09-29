@@ -23,7 +23,7 @@ def _input(message="Persist this"):
         message=message,
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode="validation",
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         agent_revision_id="validation-knowledge-agent-v1",
         agent_revision_digest="sha256:" + "a" * 64,
         skill_revision_ids=("validation-citation-skill-v1",),
@@ -56,13 +56,17 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
             await connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
         try:
             service = ConversationService(
-                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+                MysqlConversationRepository(
+                    sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+                ),
                 scope=VALIDATION_SCOPE,
             )
             accepted = await service.create("conversation-1", "turn-1", "request-1", _input())
             original_digest = accepted.input_snapshot.digest
             restarted = ConversationService(
-                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+                MysqlConversationRepository(
+                    sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+                ),
                 scope=VALIDATION_SCOPE,
             )
             loaded = await restarted.load("conversation-1")

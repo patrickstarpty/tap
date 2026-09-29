@@ -71,7 +71,7 @@ class ModelRoles:
         return []
 
 
-def _validate_base_url(base_url: str) -> None:
+def validate_litellm_base_url(base_url: str) -> None:
     url = urlsplit(base_url)
     if (
         url.username
@@ -84,7 +84,7 @@ def _validate_base_url(base_url: str) -> None:
             and not (url.scheme == "http" and url.hostname in {"localhost", "127.0.0.1", "::1"})
         )
     ):
-        raise ValueError("model catalog requires HTTPS or loopback HTTP")
+        raise ValueError("LiteLLM requires HTTPS or loopback HTTP")
 
 
 def _flag(model_info: dict[str, Any], key: str) -> bool:
@@ -160,7 +160,7 @@ class LiteLLMCatalog:
         ttl_seconds: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        _validate_base_url(base_url)
+        validate_litellm_base_url(base_url)
         if not api_key or len(api_key) > 4096:
             raise ValueError("model catalog requires a bounded credential")
         if ttl_seconds <= 0:

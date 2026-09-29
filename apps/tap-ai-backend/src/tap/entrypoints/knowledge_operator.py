@@ -89,7 +89,11 @@ class RuntimeOperationEffects:
 
     async def execute(self, command: str, *, limit: int) -> dict[str, int]:
         if command == "recover-uploads":
-            documents = tapper_runtime._build_document_repository(self._sessions, scope=self._scope)
+            documents = tapper_runtime._build_document_repository(
+                self._sessions,
+                scope=self._scope,
+                default_chat_model=self._settings.default_chat_model,
+            )
             service = DocumentService(
                 repository=documents, artifacts=cast("ArtifactStore", self._blob())
             )

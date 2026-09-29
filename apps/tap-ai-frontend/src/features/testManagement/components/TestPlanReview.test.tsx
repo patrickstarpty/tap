@@ -118,7 +118,7 @@ const fixture = {
   coverageDenominator: 1,
   coveredRequirementCount: 1,
   approvedKnowledgeRevisionIds: ["source_checkout"],
-  modelRevisionId: "tapper-chat-2026-09",
+  modelRevisionId: "qwen-plus-2026-09",
   agentRevisionId: "agent_checkout",
   skillRevisionIds: ["skill_checkout"],
   authorActorId: "draft_author",

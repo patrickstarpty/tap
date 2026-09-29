@@ -77,7 +77,10 @@ async def test_insights_turn_reload_and_checkpoint_reclaim_preserve_result_and_a
     turn_id = "insights-recovery-turn"
     try:
         conversations = ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE), scope=VALIDATION_SCOPE
+            MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+            ),
+            scope=VALIDATION_SCOPE,
         )
         await conversations.create(
             conversation_id,
@@ -111,7 +114,9 @@ async def test_insights_turn_reload_and_checkpoint_reclaim_preserve_result_and_a
                     .values(lease_until=func.utc_timestamp() - text("INTERVAL 1 SECOND"))
                 )
             restarted = ConversationService(
-                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+                MysqlConversationRepository(
+                    sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+                ),
                 scope=VALIDATION_SCOPE,
             )
             explanation.allowed = not withdraw_before_reclaim
@@ -123,7 +128,10 @@ async def test_insights_turn_reload_and_checkpoint_reclaim_preserve_result_and_a
             )
 
         loaded = await ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE), scope=VALIDATION_SCOPE
+            MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+            ),
+            scope=VALIDATION_SCOPE,
         ).load(conversation_id)
         turn = loaded.turns[0]
         assert len(explanation.calls) == 1

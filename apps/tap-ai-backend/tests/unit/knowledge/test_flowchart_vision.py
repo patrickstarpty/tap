@@ -233,12 +233,14 @@ async def test_vision_adapter_requests_image_and_returns_reviewable_meaning():
                 },
             )()
 
-    result = await ModelGatewayFlowchartVision(Gateway(), VALIDATION_SCOPE).analyze(source, parsed)
+    result = await ModelGatewayFlowchartVision(
+        Gateway(), VALIDATION_SCOPE, alias="qwen3-vl-plus"
+    ).analyze(source, parsed)
 
     assert "开始 → 结束" in result.blocks[-1].text
     assert requests[0].image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
     assert requests[0].image_media_type == "image/png"
-    assert requests[0].alias == "tapper-vision"
+    assert requests[0].alias == "qwen3-vl-plus"
     context = json.loads(requests[0].context)
     assert context["image_width"] == 200
     assert context["image_height"] == 100
@@ -274,7 +276,7 @@ async def test_vision_sends_pixels_without_embedded_image_metadata():
                 },
             )()
 
-    await ModelGatewayFlowchartVision(Gateway(), VALIDATION_SCOPE).analyze(
+    await ModelGatewayFlowchartVision(Gateway(), VALIDATION_SCOPE, alias="qwen3-vl-plus").analyze(
         source, ParserRegistry().parse(source)
     )
 
@@ -316,7 +318,9 @@ async def test_large_valid_image_is_bounded_for_vision_and_boxes_map_to_original
                 },
             )()
 
-    result = await ModelGatewayFlowchartVision(Gateway(), VALIDATION_SCOPE).analyze(source, parsed)
+    result = await ModelGatewayFlowchartVision(
+        Gateway(), VALIDATION_SCOPE, alias="qwen3-vl-plus"
+    ).analyze(source, parsed)
 
     assert len(requests[0].image_bytes) <= 4 * 1024 * 1024
     assert result.parse_inventory[1].kind is ParseInventoryKind.FLOW_NODE
@@ -359,9 +363,9 @@ async def test_declared_normalized_boxes_map_to_original_pixels_without_guessing
                 },
             )
 
-    result = await ModelGatewayFlowchartVision(Gateway(), VALIDATION_SCOPE).analyze(
-        source, ParserRegistry().parse(source)
-    )
+    result = await ModelGatewayFlowchartVision(
+        Gateway(), VALIDATION_SCOPE, alias="qwen3-vl-plus"
+    ).analyze(source, ParserRegistry().parse(source))
     assert result.blocks[0].bbox == (1023, 771, 1233, 846)
     graph = json.loads(result.flowchart_data)
     assert set(graph) == {"nodes", "edges"}
@@ -397,7 +401,9 @@ async def test_vision_rejects_undeclared_or_invalid_coordinate_contract(change):
             )
 
     with pytest.raises(FlowchartRejected):
-        await ModelGatewayFlowchartVision(Gateway(), VALIDATION_SCOPE).analyze(source, parsed)
+        await ModelGatewayFlowchartVision(
+            Gateway(), VALIDATION_SCOPE, alias="qwen3-vl-plus"
+        ).analyze(source, parsed)
 
 
 def test_correction_provenance_survives_normalized_and_chunk_artifacts():

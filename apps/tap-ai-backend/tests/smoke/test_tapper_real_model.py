@@ -27,8 +27,8 @@ from tap.entrypoints.tapper_runtime import (
 from tap.modules.ai.adapters.litellm import LiteLLMModelGateway
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 
-_CHAT_ALIAS = "tapper-chat"
-_EMBEDDING_ALIAS = "tapper-embedding"
+_CHAT_ALIAS = "qwen-plus"
+_EMBEDDING_ALIAS = "text-embedding-v4"
 _EMBEDDING_DIMENSION = 1_536
 _SMOKE_QUERY = "请仅依据所选来源概括其主要内容，并给出可核验引用。"
 _CROSS_LANGUAGE_INPUTS = (
@@ -75,8 +75,8 @@ async def _embed_through_production_route() -> TapperSettings:
     if (
         settings.model_backend != "litellm"
         or settings.e2e_mode
-        or settings.chat_alias != _CHAT_ALIAS
-        or settings.embedding_alias != _EMBEDDING_ALIAS
+        or settings.default_chat_model != _CHAT_ALIAS
+        or settings.embedding_model != _EMBEDDING_ALIAS
         or settings.embedding_dimension != _EMBEDDING_DIMENSION
     ):
         raise AssertionError("the fixed Tapper model route is not configured")
@@ -210,14 +210,13 @@ async def test_enabled_smoke_setup_uses_governed_gateway_without_provider_io(mon
 
     from tap.modules.ai.ports.gateway import ModelGateway
     from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+    from tap.testing.deterministic_model_gateway import StaticLiteLLMCatalog
 
     module = __import__(__name__)
     monkeypatch.setattr(
         module,
         "os",
-        SimpleNamespace(
-            environ={"TAP_RUN_TAPPER_REAL_MODEL_SMOKE": "1", "LITELLM_MODEL": "dashscope/qwen-plus"}
-        ),
+        SimpleNamespace(environ={"TAP_RUN_TAPPER_REAL_MODEL_SMOKE": "1"}),
     )
     factory = _create_embeddings
     models = []
@@ -248,6 +247,7 @@ async def test_enabled_smoke_setup_uses_governed_gateway_without_provider_io(mon
         assert isinstance(model, KnowledgeModelGateway)
         assert isinstance(model.gateway, ModelGateway)
         model.gateway._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        model.gateway._catalog = StaticLiteLLMCatalog()
         models.append(model)
         return model
 
@@ -263,4 +263,4 @@ async def test_enabled_smoke_setup_uses_governed_gateway_without_provider_io(mon
     assert len(answer_settings) == 1
     output = capsys.readouterr().out
     assert "zh_to_en=true en_to_zh=true" in output
-    assert "qwen" not in output and "dashscope" not in output
+    assert "dashscope" not in output

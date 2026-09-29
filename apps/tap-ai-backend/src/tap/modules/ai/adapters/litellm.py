@@ -11,11 +11,16 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.adapters.litellm_catalog import (
+    LiteLLMCatalog,
+    LiteLLMModel,
+    ModelRoles,
+    validate_litellm_base_url,
+)
 from tap.modules.ai.application.schema import check_schema, validate_output
 from tap.modules.ai.domain.models import (
     ModelCallAudit,
@@ -35,109 +40,20 @@ Redact = Callable[[str], Awaitable[str]]
 
 
 @dataclass(frozen=True, slots=True)
-class ProviderModelMapping:
-    """Explicit private upstream identity, distinct from a governed routing alias."""
-
-    provider: str = field(repr=False)
-    model: str = field(repr=False)
-
-    def __post_init__(self) -> None:
-        if (
-            not isinstance(self.provider, str)
-            or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", self.provider) is None
-            or not isinstance(self.model, str)
-            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}", self.model) is None
-        ):
-            raise ValueError("model gateway requires an explicit provider/model mapping")
-
-    @classmethod
-    def from_route(cls, route: str) -> ProviderModelMapping:
-        if not isinstance(route, str) or "/" not in route:
-            raise ValueError("model gateway requires an explicit provider/model mapping")
-        provider, model = route.split("/", 1)
-        return cls(provider, model)
-
-    @property
-    def route(self) -> str:
-        return f"{self.provider}/{self.model}"
-
-
-@dataclass(frozen=True, slots=True)
-class ChatModelRoute:
-    """One approved browser-facing alias bound to one private upstream model."""
-
-    alias: str
-    display_name: str
-    target: ProviderModelMapping = field(repr=False)
-    image_input: bool = False
-
-    def __post_init__(self) -> None:
-        if (
-            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", self.alias) is None
-            or not isinstance(self.display_name, str)
-            or not self.display_name.strip()
-            or len(self.display_name) > 128
-            or not isinstance(self.target, ProviderModelMapping)
-            or type(self.image_input) is not bool
-        ):
-            raise ValueError("chat model route must be a bounded approved mapping")
-
-
-@dataclass(frozen=True, slots=True)
 class LiteLLMModelGatewayConfig:
     base_url: str
     api_key: str = field(repr=False)
-    chat_alias: str
-    embedding_alias: str
-    chat_model: ProviderModelMapping = field(repr=False)
-    embedding_model: ProviderModelMapping = field(repr=False)
+    roles: ModelRoles
     embedding_dimension: int
     timeout_seconds: float = 15.0
     max_retries: int = 1
-    disabled_aliases: frozenset[str] = frozenset()
-    additional_chat_models: tuple[ChatModelRoute, ...] = ()
 
     def __post_init__(self) -> None:
-        url = urlsplit(self.base_url)
-        if (
-            url.username
-            or url.password
-            or url.query
-            or url.fragment
-            or not url.hostname
-            or (
-                url.scheme != "https"
-                and not (url.scheme == "http" and url.hostname in {"localhost", "127.0.0.1", "::1"})
-            )
-        ):
-            raise ValueError("model gateway requires HTTPS or loopback HTTP")
+        validate_litellm_base_url(self.base_url)
         if not self.api_key or len(self.api_key) > 4096:
             raise ValueError("model gateway requires a bounded credential")
-        for value in (self.chat_alias, self.embedding_alias):
-            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", value) is None:
-                raise ValueError("model gateway requires fixed bounded routes")
-        chat_routes = (
-            ChatModelRoute(self.chat_alias, "Qwen Plus", self.chat_model),
-            *self.additional_chat_models,
-        )
-        aliases = {item.alias for item in chat_routes} | {self.embedding_alias}
-        if len(aliases) != len(chat_routes) + 1:
-            raise ValueError("model gateway aliases must be disjoint")
-        for target in (
-            self.chat_model,
-            self.embedding_model,
-            *(item.target for item in chat_routes[1:]),
-        ):
-            if (
-                not isinstance(target, ProviderModelMapping)
-                or target.provider in aliases
-                or target.model in aliases
-                or target.model.rsplit("/", 1)[-1] in aliases
-                or target.route in aliases
-            ):
-                raise ValueError("provider/model mapping cannot use a logical alias")
-        if not self.disabled_aliases <= aliases:
-            raise ValueError("model gateway aliases must be disjoint")
+        if not isinstance(self.roles, ModelRoles):
+            raise ValueError("model gateway requires model roles")
         if type(self.embedding_dimension) is not int or not 1 <= self.embedding_dimension <= 4096:
             raise ValueError("model gateway dimension is invalid")
         if type(self.max_retries) is not int or not 0 <= self.max_retries <= 2:
@@ -157,6 +73,7 @@ class LiteLLMModelGateway:
         *,
         scope: ProjectScopeContext,
         redact: Redact,
+        catalog: LiteLLMCatalog,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         if type(scope) is not ProjectScopeContext:
@@ -164,39 +81,40 @@ class LiteLLMModelGateway:
         self._config = config
         self.scope = scope
         self._redact = redact
+        self._catalog = catalog
         self._owns_client = client is None
         self._client = client
         self._slots = asyncio.Semaphore(4)
 
     async def catalog(self, scope: ProjectScopeContext) -> tuple[ModelDescriptor, ...]:
         self._check_scope(scope)
-        descriptors = tuple(
+        models = (await self._catalog.routes()).models.values()
+        chat = tuple(
             ModelDescriptor(
-                item.alias,
+                item.name,
                 item.display_name,
-                frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
+                frozenset(
+                    {ModelCapability.CHAT, ModelCapability.STRUCTURED}
+                    if item.supports_response_schema
+                    else {ModelCapability.CHAT}
+                ),
             )
-            for item in self._chat_routes()
-            if not item.image_input
-        ) + (
-            ModelDescriptor(
-                self._config.embedding_alias,
-                "Tapper embeddings",
-                frozenset({ModelCapability.EMBED}),
-            ),
+            for item in models
+            if item.mode == "chat"
         )
-        return tuple(
-            item for item in descriptors if item.alias not in self._config.disabled_aliases
+        embedding = tuple(
+            ModelDescriptor(item.name, item.display_name, frozenset({ModelCapability.EMBED}))
+            for item in models
+            if item.mode == "embedding"
         )
+        return chat + embedding
 
-    def _chat_routes(self) -> tuple[ChatModelRoute, ...]:
-        return (
-            ChatModelRoute(self._config.chat_alias, "Qwen Plus", self._config.chat_model),
-            *self._config.additional_chat_models,
-        )
-
-    def _chat_route(self, alias: str) -> ChatModelRoute | None:
-        return next((item for item in self._chat_routes() if item.alias == alias), None)
+    async def health_problems(self) -> tuple[str, ...]:
+        try:
+            routes = await self._catalog.routes()
+        except ModelGatewayUnavailable:
+            return ("LiteLLM model catalog unavailable",)
+        return self._config.roles.problems(routes)
 
     async def chat(self, request: ModelRequest) -> ModelResult:
         return await self._execute(request, ModelOperation.CHAT)
@@ -208,8 +126,13 @@ class LiteLLMModelGateway:
         return await self._execute(request, ModelOperation.STRUCTURED)
 
     async def aclose(self) -> None:
-        if self._owns_client and self._client is not None:
-            await self._client.aclose()
+        """Close the owned transport and the catalog this gateway was built on."""
+
+        try:
+            if self._owns_client and self._client is not None:
+                await self._client.aclose()
+        finally:
+            await self._catalog.aclose()
 
     def _check_scope(self, scope: ProjectScopeContext) -> None:
         if type(scope) is not ProjectScopeContext or scope != self.scope:
@@ -225,23 +148,15 @@ class LiteLLMModelGateway:
 
     async def _validate(self, request: ModelRequest, operation: ModelOperation) -> None:
         self._check_scope(request.scope)
-        alias = self._config.embedding_alias if operation is ModelOperation.EMBED else request.alias
-        chat_route = None if operation is ModelOperation.EMBED else self._chat_route(request.alias)
-        if (
-            request.operation is not operation
-            or (operation is ModelOperation.EMBED and request.alias != alias)
-            or (operation is not ModelOperation.EMBED and chat_route is None)
-            or alias in self._config.disabled_aliases
-            or (chat_route is not None and chat_route.image_input and request.image_bytes is None)
-        ):
+        if request.operation is not operation:
             raise ModelGatewayRejected()
+        model = await self._model(request, operation)
         if request.image_bytes is not None or request.image_media_type is not None:
             image = request.image_bytes
             media_type = request.image_media_type
             if (
                 operation is not ModelOperation.STRUCTURED
-                or chat_route is None
-                or not chat_route.image_input
+                or not model.supports_vision
                 or type(image) is not bytes
                 or not 0 < len(image) <= 4 * 1024 * 1024
                 or media_type not in {"image/png", "image/jpeg"}
@@ -293,6 +208,23 @@ class LiteLLMModelGateway:
             await self._check_redacted(serialized_schema)
         elif request.schema is not None or request.schema_digest is not None:
             raise ModelGatewayRejected()
+
+    async def _model(self, request: ModelRequest, operation: ModelOperation) -> LiteLLMModel:
+        """Resolve the requested model against the LiteLLM catalog; never substitute another."""
+
+        roles = self._config.roles
+        if operation is ModelOperation.EMBED and request.alias != roles.embedding_model:
+            raise ModelGatewayRejected()
+        model = (await self._catalog.routes()).get(request.alias)
+        expected_mode = "embedding" if operation is ModelOperation.EMBED else "chat"
+        if model is None or model.mode != expected_mode:
+            # A misconfigured role is an outage; any other unknown model is a bad request.
+            if request.alias in {roles.default_chat_model, roles.embedding_model}:
+                raise ModelGatewayUnavailable()
+            raise ModelGatewayRejected()
+        if operation is ModelOperation.STRUCTURED and not model.supports_response_schema:
+            raise ModelGatewayRejected()
+        return model
 
     async def _execute(self, request: ModelRequest, operation: ModelOperation) -> ModelResult:
         try:
@@ -451,25 +383,12 @@ class LiteLLMModelGateway:
     def _normalize(
         self, request: ModelRequest, body: dict[str, Any], headers: httpx.Headers
     ) -> ModelResult:
-        route = self._chat_route(request.alias)
-        mapping = (
-            self._config.embedding_model
-            if request.operation is ModelOperation.EMBED
-            else (route.target if route is not None else self._config.chat_model)
-        )
-        returned_model = body["model"]
-        aliases = {item.alias for item in self._chat_routes()} | {self._config.embedding_alias}
-        deployment_id = headers.get("x-litellm-model-id")
-        if returned_model in aliases:
-            if returned_model != request.alias or deployment_id != mapping.route:
-                raise ModelGatewayUnavailable()
-        elif returned_model not in {mapping.route, mapping.model}:
+        actual = body["model"]
+        if not isinstance(actual, str) or not actual.strip() or len(actual) > 256:
             raise ModelGatewayUnavailable()
-        actual = mapping.route
-        group = headers.get("x-litellm-model-group")
-        if group is not None and group != request.alias:
+        provider = actual.split("/", 1)[0] if "/" in actual else "unknown"
+        if not provider:
             raise ModelGatewayUnavailable()
-        provider = mapping.provider
         usage = body.get("usage", {})
         if not isinstance(usage, dict):
             raise ModelGatewayUnavailable()

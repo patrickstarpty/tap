@@ -28,7 +28,7 @@ class Searches:
             corpus_version="tapper-demo-v1",
             retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
             evidence=(),
-            embedding_provenance=ModelCallProvenance("tapper-embedding", None),
+            embedding_provenance=ModelCallProvenance("text-embedding-v4", None),
         )
 
 
@@ -59,11 +59,12 @@ async def test_internal_search_maps_through_the_composed_service_without_an_http
 @pytest.mark.asyncio
 async def test_model_only_conversation_returns_an_ungrounded_answer_without_citations() -> None:
     class Models:
+        chat_aliases = frozenset({"qwen-plus"})
         scope = VALIDATION_SCOPE
 
         async def chat(self, query, *, model_alias, governance):
             assert query == "Hello"
-            assert model_alias == "tapper-chat"
+            assert model_alias == "qwen-plus"
             assert governance is None
             return AnswerGeneration(
                 "Hello from the model.",
@@ -85,7 +86,7 @@ async def test_model_only_conversation_returns_an_ungrounded_answer_without_cita
         message="Hello",
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode="validation",
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         acl_digest=content_digest({"mode": "model-only", "resources": []}),
         retrieval_policy_digest=content_digest({"mode": "model-only", "retrieval": "not-selected"}),
     )

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import ipaddress
-import json
 import math
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -28,11 +27,10 @@ from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvi
 from tap.modules.access.application.scope import RequestFacts
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.adapters.litellm import (
-    ChatModelRoute,
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
-    ProviderModelMapping,
 )
+from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, ModelRoles
 from tap.modules.ai.application.catalog import ModelCatalog
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.milvus.audit import (
@@ -51,7 +49,6 @@ from tap.modules.knowledge.ports.search import (
 from tap.operations.milvus.contracts import validate_milvus_role_usernames
 
 if TYPE_CHECKING:
-    import httpx
     from redis.asyncio import Redis
     from sqlalchemy.ext.asyncio import (
         AsyncConnection,
@@ -81,16 +78,10 @@ if TYPE_CHECKING:
 
 _PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{2,62}\Z")
 _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
-_MODEL_ROUTE = re.compile(
-    r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?:/[A-Za-z0-9][A-Za-z0-9._:-]{0,127})*\Z"
-)
+_MODEL_NAME = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*\Z")
 _FIXED_COLLECTION = "kb_doc_v1_tapper_demo"
 _FIXED_ALIAS = "kb_doc_tapper_demo_active"
 _FIXED_CORPUS = "tapper-demo-v1"
-_FIXED_CHAT_ALIAS = "tapper-chat"
-_FIXED_EMBEDDING_ALIAS = "tapper-embedding"
-_FIXED_VISION_ALIAS = "tapper-vision"
-_FIXED_LITELLM_EMBEDDING_ROUTE = "dashscope/text-embedding-v4"
 _FIXED_RETRIEVAL_PROFILE = "quick-hybrid-v1"
 _FIXED_SCHEMA_VERSION = "doc-schema-v1"
 _FIXED_TENANT = "local"
@@ -116,8 +107,8 @@ class TapperSettings:
     collection: str
     alias: str
     corpus_version: str
-    chat_alias: str
-    embedding_alias: str
+    default_chat_model: str
+    embedding_model: str
     retrieval_profile: str
     schema_version: str
     index_version: str
@@ -135,10 +126,6 @@ class TapperSettings:
     blob_connection_string: str = field(repr=False)
     litellm_base_url: str
     litellm_api_key: str = field(repr=False)
-    litellm_model: str = field(repr=False)
-    litellm_embedding_model: str = field(repr=False)
-    allowed_answer_model_labels: frozenset[str] = field(repr=False)
-    allowed_embedding_model_labels: frozenset[str] = field(repr=False)
     milvus_uri: str
     milvus_database: str
     milvus_reader_username: str
@@ -148,7 +135,7 @@ class TapperSettings:
     milvus_provisioner_username: str
     milvus_provisioner_password: str = field(repr=False)
     e2e_mode: bool
-    vision_model: str = ""
+    vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
     object_store_provider: str = "azure"
     s3_endpoint: str = ""
@@ -315,34 +302,6 @@ class TapperSettings:
             allow_userinfo=False,
             root_only=True,
         )
-        if backend == "litellm":
-            litellm_model = _model_route(values, "LITELLM_MODEL")
-            litellm_embedding_model = _fixed_value(
-                values,
-                "LITELLM_TAPPER_EMBEDDING_MODEL",
-                _FIXED_LITELLM_EMBEDDING_ROUTE,
-            )
-            vision_model = (
-                _model_route(values, "LITELLM_TAPPER_VISION_MODEL")
-                if values.get("LITELLM_TAPPER_VISION_MODEL")
-                else ""
-            )
-            allowed_answer_labels = _model_labels(_FIXED_CHAT_ALIAS, litellm_model)
-            allowed_embedding_labels = _model_labels(
-                _FIXED_EMBEDDING_ALIAS,
-                litellm_embedding_model,
-            )
-            if allowed_answer_labels & allowed_embedding_labels:
-                raise ValueError(
-                    "LITELLM_TAPPER_EMBEDDING_MODEL must not overlap LITELLM_MODEL response labels"
-                )
-        else:
-            litellm_model = _FIXED_CHAT_ALIAS
-            litellm_embedding_model = _FIXED_EMBEDDING_ALIAS
-            vision_model = ""
-            allowed_answer_labels = frozenset({_FIXED_CHAT_ALIAS})
-            allowed_embedding_labels = frozenset({_FIXED_EMBEDDING_ALIAS})
-
         schema_version = _fixed_choice(
             values,
             "TAPPER_SCHEMA_VERSION",
@@ -360,8 +319,9 @@ class TapperSettings:
             "TAPPER_CORPUS_VERSION",
             "tapper-demo-v2" if schema_version == "doc-schema-v2" else _FIXED_CORPUS,
         )
-        chat_alias = _fixed_value(values, "TAPPER_CHAT_ALIAS", _FIXED_CHAT_ALIAS)
-        embedding_alias = _fixed_value(values, "TAPPER_EMBEDDING_ALIAS", _FIXED_EMBEDDING_ALIAS)
+        default_chat_model = _model_name(values, "TAPPER_DEFAULT_CHAT_MODEL", "qwen-plus")
+        embedding_model = _model_name(values, "TAPPER_EMBEDDING_MODEL", "text-embedding-v4")
+        vision_model = _model_name(values, "TAPPER_VISION_MODEL", "") or None
         retrieval_profile = _fixed_value(
             values,
             "TAPPER_RETRIEVAL_PROFILE",
@@ -425,8 +385,8 @@ class TapperSettings:
             collection=collection,
             alias=alias,
             corpus_version=corpus,
-            chat_alias=chat_alias,
-            embedding_alias=embedding_alias,
+            default_chat_model=default_chat_model,
+            embedding_model=embedding_model,
             retrieval_profile=retrieval_profile,
             schema_version=schema_version,
             index_version=_fixed_value(values, "TAPPER_INDEX_VERSION", "tapper-index-v1"),
@@ -458,14 +418,10 @@ class TapperSettings:
             legacy_azure_enabled=legacy_azure,
             litellm_base_url=litellm_base_url,
             litellm_api_key=_secret(values, "LITELLM_MASTER_KEY", "tap-local-master-key"),
-            litellm_model=litellm_model,
-            litellm_embedding_model=litellm_embedding_model,
             vision_model=vision_model,
             vision_timeout_seconds=_duration(
                 values, "TAPPER_VISION_TIMEOUT_SECONDS", 60.0, maximum=60
             ),
-            allowed_answer_model_labels=allowed_answer_labels,
-            allowed_embedding_model_labels=allowed_embedding_labels,
             milvus_uri=milvus_uri,
             milvus_database=_identity(values, "MILVUS_DATABASE", "default"),
             milvus_reader_username=milvus_reader_username,
@@ -726,8 +682,6 @@ async def create_api_runtime(
             ),
         )
         resources.push(search)
-        models_probe_client = _create_models_probe_client(settings)
-        _push_if_owned(resources, models_probe_client)
         readiness = _create_readiness(
             settings=settings,
             engine=engine,
@@ -736,7 +690,6 @@ async def create_api_runtime(
             embeddings=embeddings,
             milvus_reader=reader,
             milvus_target=target,
-            models_probe_client=models_probe_client,
         )
         scope_provider, authorization_policy = _create_validation_authority(engine)
         asset_catalog = await _create_asset_catalog(engine, repository.scope)
@@ -760,7 +713,6 @@ async def create_api_runtime(
             conversation_sessions=async_sessionmaker(engine, expire_on_commit=False),
             graph_sessions=async_sessionmaker(engine, expire_on_commit=False),
             test_plan_sessions=async_sessionmaker(engine, expire_on_commit=False),
-            test_design_model_mapping=_test_design_model_mapping(settings),
             review_sessions=async_sessionmaker(engine, expire_on_commit=False),
             parser_socket=settings.parser_socket,
             corpus_version=settings.corpus_version,
@@ -881,7 +833,7 @@ def _create_chunk_manager(
         artifacts=cast(ArtifactStore, artifacts),
         embeddings=embeddings,
         index=index,
-        embedding_model_alias=settings.embedding_alias,
+        embedding_model_alias=settings.embedding_model,
         embedding_dimension=settings.embedding_dimension,
         index_version=settings.index_version,
         parser=IsolatedParser(settings.parser_socket),
@@ -915,7 +867,9 @@ async def _create_database(
     engine, sessions = _open_database(settings)
     try:
         scope = await ValidationScopeProvider().current(RequestFacts())
-        repository = _build_document_repository(sessions, scope=scope)
+        repository = _build_document_repository(
+            sessions, scope=scope, default_chat_model=settings.default_chat_model
+        )
     except BaseException as error:
         local = OwnedResources()
         local.push(engine)
@@ -936,6 +890,7 @@ def _build_document_repository(
     sessions: async_sessionmaker[AsyncSession],
     *,
     scope: ProjectScopeContext,
+    default_chat_model: str,
 ) -> MysqlDocumentRepository:
     from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore, MysqlGraphReadyProjection
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
@@ -945,7 +900,7 @@ def _build_document_repository(
         sessions,
         scope=scope,
         audit_factory=create_project_audit,
-        ready_projection=MysqlGraphReadyProjection(graph_jobs, model_alias="tapper-chat"),
+        ready_projection=MysqlGraphReadyProjection(graph_jobs, model_alias=default_chat_model),
     )
 
 
@@ -1049,8 +1004,7 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
             jobs=MysqlTestPlanRepository(
                 sessions,
                 scope=scope,
-                model_alias=settings.chat_alias,
-                model_mapping=_test_design_model_mapping(settings),
+                model_alias=settings.default_chat_model,
                 knowledge_requires_publication=False,
             ),
             generator=generator,
@@ -1156,21 +1110,23 @@ def _answer_planner(models: KnowledgeModelGateway):
     )
 
 
+def _create_model_catalog(settings: TapperSettings) -> LiteLLMCatalog:
+    """One LiteLLM model catalog per process, owned by the gateway built on it."""
+
+    return LiteLLMCatalog(base_url=settings.litellm_base_url, api_key=settings.litellm_api_key)
+
+
 def _create_embeddings(
     settings: TapperSettings,
     *,
     max_retries: int = 1,
+    catalog: LiteLLMCatalog | None = None,
 ) -> KnowledgeModelGateway:
     config = LiteLLMModelGatewayConfig(
         base_url=settings.litellm_base_url,
         api_key=settings.litellm_api_key,
-        chat_alias=settings.chat_alias,
-        embedding_alias=settings.embedding_alias,
-        chat_model=_test_design_model_mapping(settings),
-        embedding_model=(
-            ProviderModelMapping("fake", "deterministic-embedding-v1")
-            if settings.e2e_mode
-            else ProviderModelMapping.from_route(settings.litellm_embedding_model)
+        roles=ModelRoles(
+            settings.default_chat_model, settings.embedding_model, settings.vision_model
         ),
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=(
@@ -1179,18 +1135,6 @@ def _create_embeddings(
             else settings.model_timeout_seconds
         ),
         max_retries=max_retries,
-        additional_chat_models=(
-            (
-                ChatModelRoute(
-                    _FIXED_VISION_ALIAS,
-                    "Flowchart vision",
-                    ProviderModelMapping.from_route(settings.vision_model),
-                    image_input=True,
-                ),
-            )
-            if settings.vision_model
-            else ()
-        ),
     )
     gateway: LiteLLMModelGateway
     if settings.e2e_mode:
@@ -1200,23 +1144,20 @@ def _create_embeddings(
             config, scope=VALIDATION_SCOPE, redact=_redact_model_context
         )
     else:
-        gateway = LiteLLMModelGateway(config, scope=VALIDATION_SCOPE, redact=_redact_model_context)
+        gateway = LiteLLMModelGateway(
+            config,
+            scope=VALIDATION_SCOPE,
+            redact=_redact_model_context,
+            catalog=catalog or _create_model_catalog(settings),
+        )
     return KnowledgeModelGateway(
         gateway,
         scope=VALIDATION_SCOPE,
         redact=_redact_model_context,
-        embedding_alias=settings.embedding_alias,
-        chat_alias=settings.chat_alias,
+        embedding_alias=settings.embedding_model,
+        chat_alias=settings.default_chat_model,
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=settings.model_timeout_seconds,
-    )
-
-
-def _test_design_model_mapping(settings: TapperSettings) -> ProviderModelMapping:
-    return (
-        ProviderModelMapping("fake", "deterministic-chat-v1")
-        if settings.e2e_mode
-        else ProviderModelMapping.from_route(settings.litellm_model)
     )
 
 
@@ -1294,7 +1235,7 @@ def _build_document_index(
         alias=settings.alias,
         schema_version=settings.schema_version,
         corpus_version=settings.corpus_version,
-        embedding_model=settings.embedding_alias,
+        embedding_model=settings.embedding_model,
         vector_dimension=settings.embedding_dimension,
         tenant_id=settings.tenant_id,
         project_id=settings.project_id,
@@ -1332,7 +1273,7 @@ async def _create_search(
         schema_version=settings.schema_version,
         schema_sha256=doc_schema_sha256(settings.schema_version),
         corpus_version=settings.corpus_version,
-        embedding_model_version=settings.embedding_alias,
+        embedding_model_version=settings.embedding_model,
         vector_dimension=settings.embedding_dimension,
         exact_generation_names=True,
     )
@@ -1378,20 +1319,6 @@ def _build_search_adapter(
     )
 
 
-def _create_models_probe_client(settings: TapperSettings) -> httpx.AsyncClient | None:
-    if settings.e2e_mode:
-        return None
-    import httpx
-
-    return httpx.AsyncClient(
-        base_url=settings.litellm_base_url.rstrip("/") + "/",
-        headers={"Authorization": f"Bearer {settings.litellm_api_key}"},
-        timeout=httpx.Timeout(settings.ready_timeout_seconds),
-        limits=httpx.Limits(max_connections=2, max_keepalive_connections=2),
-        transport=httpx.AsyncHTTPTransport(retries=0),
-    )
-
-
 def _is_private_blob_container(properties: object) -> bool:
     return (
         isinstance(properties, Mapping)
@@ -1424,7 +1351,6 @@ def _create_readiness(
     embeddings: QueryEmbeddingPort,
     milvus_reader: MilvusReader,
     milvus_target: MilvusIndexTarget,
-    models_probe_client: httpx.AsyncClient | None,
 ) -> ReadinessService:
     from sqlalchemy import text
 
@@ -1464,7 +1390,7 @@ def _create_readiness(
             embedding = await embeddings.embed("Tapper deterministic readiness")
             vector = embedding.vector
             return (
-                embedding.model_id == settings.embedding_alias
+                embedding.model_id == settings.embedding_model
                 and isinstance(vector, tuple)
                 and len(vector) == settings.embedding_dimension
                 and all(type(value) is float and math.isfinite(value) for value in vector)
@@ -1474,13 +1400,10 @@ def _create_readiness(
                     rel_tol=1e-12,
                 )
             )
-        if models_probe_client is None:
+        gateway = getattr(embeddings, "gateway", None)
+        if not isinstance(gateway, LiteLLMModelGateway):
             return False
-        labels = await _read_models_labels(models_probe_client)
-        required_labels = {settings.embedding_alias, settings.chat_alias}
-        if labels is None or not required_labels <= labels:
-            return False
-        return True
+        return not await gateway.health_problems()
 
     return ReadinessService(
         mysql=mysql_ready,
@@ -1490,59 +1413,6 @@ def _create_readiness(
         models=models_ready,
         timeout_seconds=settings.ready_timeout_seconds,
     )
-
-
-async def _read_models_labels(client: httpx.AsyncClient) -> frozenset[str] | None:
-    """Read one bounded standard OpenAI models page without buffering overflow."""
-
-    async with client.stream("GET", "v1/models") as response:
-        if response.status_code != 200:
-            return None
-        body = bytearray()
-        async for chunk in response.aiter_bytes():
-            if not isinstance(chunk, bytes) or len(body) + len(chunk) > 1_048_576:
-                return None
-            body.extend(chunk)
-    try:
-        payload = json.loads(bytes(body))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if (
-        not isinstance(payload, Mapping)
-        or set(payload) != {"data", "object"}
-        or payload.get("object") != "list"
-    ):
-        return None
-    data = payload["data"]
-    if not isinstance(data, list) or not 1 <= len(data) <= 100:
-        return None
-    labels: set[str] = set()
-    for item in data:
-        if not isinstance(item, Mapping) or set(item) != {
-            "id",
-            "object",
-            "created",
-            "owned_by",
-        }:
-            return None
-        label = item.get("id")
-        owner = item.get("owned_by")
-        created = item.get("created")
-        if (
-            not isinstance(label, str)
-            or not label
-            or len(label) > 256
-            or item.get("object") != "model"
-            or type(created) is not int
-            or not 0 <= created <= 2**63 - 1
-            or not isinstance(owner, str)
-            or not owner
-            or len(owner) > 256
-            or any(ord(character) < 0x20 for character in owner)
-        ):
-            return None
-        labels.add(label)
-    return frozenset(labels)
 
 
 def _discover_alembic_head() -> str:
@@ -1600,7 +1470,6 @@ def _assemble_http_services(
     conversation_sessions: object | None = None,
     graph_sessions: object | None = None,
     test_plan_sessions: object | None = None,
-    test_design_model_mapping: ProviderModelMapping | None = None,
     review_sessions: async_sessionmaker[AsyncSession] | None = None,
     parser_socket: str | None = None,
     corpus_version: str = "tapper-demo-v1",
@@ -1675,7 +1544,11 @@ def _assemble_http_services(
         from tap.modules.chat.application.conversations import ConversationService
 
         conversations = ConversationService(
-            MysqlConversationRepository(conversation_sessions, scope=repository.scope),  # type: ignore[arg-type]
+            MysqlConversationRepository(
+                conversation_sessions,  # type: ignore[arg-type]
+                scope=repository.scope,
+                default_chat_model=embeddings.chat_alias,
+            ),
             scope=repository.scope,
         )
     graph = None
@@ -1691,14 +1564,11 @@ def _assemble_http_services(
         from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
         from tap.modules.test_management.application.plans import TestPlanApplication
 
-        if test_design_model_mapping is None:
-            raise ValueError("Test Plan service requires the actual model mapping")
         test_plans = TestPlanApplication(
             MysqlTestPlanRepository(
                 test_plan_sessions,  # type: ignore[arg-type]
                 scope=repository.scope,  # type: ignore[arg-type]
                 model_alias=embeddings.chat_alias,
-                model_mapping=test_design_model_mapping,
                 knowledge_requires_publication=False,
             )
         )
@@ -1800,7 +1670,7 @@ def _assemble_worker_runtime(
         vision = ModelGatewayFlowchartVision(
             gateway,
             repository.scope,
-            alias=_FIXED_VISION_ALIAS,
+            alias=settings.vision_model,
             timeout_seconds=settings.vision_timeout_seconds,
         )
     worker = IngestionWorker(
@@ -1811,7 +1681,7 @@ def _assemble_worker_runtime(
         embeddings=cast(DocumentEmbeddingPort, embeddings),
         index=cast(DocumentIndexPort, index),
         worker_id=settings.worker_id,
-        embedding_model_alias=settings.embedding_alias,
+        embedding_model_alias=settings.embedding_model,
         embedding_dimension=settings.embedding_dimension,
         index_version=settings.index_version,
         stage_hook=stage_hook,
@@ -1955,15 +1825,15 @@ def _identity(values: Mapping[str, str], name: str, default: str) -> str:
     return value
 
 
-def _model_route(values: Mapping[str, str], name: str) -> str:
-    value = _value(values, name, "dashscope/qwen-plus")
-    if len(value) > 256 or _MODEL_ROUTE.fullmatch(value) is None:
-        raise ValueError(f"{name} must be one bounded exact provider model route")
+def _model_name(values: Mapping[str, str], name: str, default: str) -> str:
+    """Read one LiteLLM `model_name`; an empty optional role stays empty."""
+
+    value = _value(values, name, default)
+    if value == "" and default == "":
+        return value
+    if len(value) > 128 or _MODEL_NAME.fullmatch(value) is None:
+        raise ValueError(f"{name} must be a lower-case LiteLLM model name")
     return value
-
-
-def _model_labels(alias: str, raw_route: str) -> frozenset[str]:
-    return frozenset({alias, raw_route, raw_route.rsplit("/", 1)[-1]})
 
 
 def _project(values: Mapping[str, str]) -> str:

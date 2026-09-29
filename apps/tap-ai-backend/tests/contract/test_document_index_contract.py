@@ -326,7 +326,7 @@ async def test_v2_upsert_accepts_the_chunkers_unicode_canonical_anchor():
     receipt = await index.upsert_revision(
         current,
         (item,),
-        EmbeddingArtifact("tapper-embedding", 1536, ((0.0,) * 1536,), (str(item.chunk_id),)),
+        EmbeddingArtifact("text-embedding-v4", 1536, ((0.0,) * 1536,), (str(item.chunk_id),)),
         index_version="tapper-index-v1",
     )
 

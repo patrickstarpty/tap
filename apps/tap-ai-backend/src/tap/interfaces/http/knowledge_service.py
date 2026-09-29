@@ -297,11 +297,7 @@ class KnowledgeHttpService:
         from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
         from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 
-        supported_aliases = (
-            frozenset({"tapper-chat"})
-            if self._models is None
-            else getattr(self._models, "chat_aliases", frozenset({"tapper-chat"}))
-        )
+        supported_aliases = frozenset() if self._models is None else self._models.chat_aliases
         if frozen_input.model_alias not in supported_aliases:
             raise ValueError("accepted conversation model alias is unsupported")
         revisions = tuple(

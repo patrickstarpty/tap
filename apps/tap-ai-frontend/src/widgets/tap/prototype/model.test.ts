@@ -57,7 +57,7 @@ describe("Tapper prototype model", () => {
   it("creates an empty conversation with independent context selections", () => {
     expect(createConversation("chat-2")).toMatchObject({
       id: "chat-2",
-      modelId: "tapper-chat",
+      modelId: "qwen-plus",
       turns: [],
       selectedAgentIds: [],
       selectedSkillIds: [],

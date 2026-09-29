@@ -34,7 +34,7 @@ def _client(*titles: str) -> tuple[TestClient, ConversationService]:
                     message=title,
                     actor_id=VALIDATION_SCOPE.actor_id,
                     identity_mode=VALIDATION_SCOPE.identity_mode.value,
-                    model_alias="tapper-chat",
+                    model_alias="qwen-plus",
                 ),
             )
         )
@@ -131,7 +131,7 @@ def test_delete_is_idempotent_creator_only_and_hides_every_read_path():
     assert rename.status_code == 404
     append = client.post(
         f"{BASE}/conversation-0/turns",
-        json={"message": "Again", "modelAlias": "tapper-chat"},
+        json={"message": "Again", "modelAlias": "qwen-plus"},
         headers={"Idempotency-Key": "after-delete"},
     )
     assert append.status_code == 404

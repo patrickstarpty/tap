@@ -92,7 +92,7 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
     headers: { Origin: ORIGIN, "Idempotency-Key": `test-plan-chat-${marker}` },
     data: {
       message: "Design tests for the documented successful card payment rule.",
-      modelAlias: "tapper-chat",
+      modelAlias: "qwen-plus",
       sourceRevisionIds: [sourceRevisionId],
       documentRevisionIds: [],
       agentRevisionId: agents.items[0]!.revisionId,

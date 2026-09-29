@@ -68,7 +68,7 @@ def test_conversation_events_http_reads_persisted_test_plan_lifecycle(
                 message="Design tests",
                 actor_id=VALIDATION_SCOPE.actor_id,
                 identity_mode=VALIDATION_SCOPE.identity_mode.value,
-                model_alias="tapper-chat",
+                model_alias="qwen-plus",
             ),
         )
     )
@@ -96,7 +96,7 @@ def test_conversation_accepts_a_model_only_turn_without_knowledge_revisions():
         scope = VALIDATION_SCOPE
 
         async def list_models(self, _scope):
-            return [SimpleNamespace(alias="tapper-chat")]
+            return [SimpleNamespace(alias="qwen-plus")]
 
     class Knowledge:
         scope = VALIDATION_SCOPE
@@ -118,7 +118,7 @@ def test_conversation_accepts_a_model_only_turn_without_knowledge_revisions():
 
     response = client.post(
         "/api/v1/projects/tapper-demo/conversations",
-        json={"message": "Hello", "modelAlias": "tapper-chat"},
+        json={"message": "Hello", "modelAlias": "qwen-plus"},
         headers={"Idempotency-Key": "model-only-chat"},
     )
 
@@ -138,7 +138,7 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
         scope = VALIDATION_SCOPE
 
         async def list_models(self, _scope):
-            return [SimpleNamespace(alias="tapper-chat")]
+            return [SimpleNamespace(alias="qwen-plus")]
 
     class Assets:
         scope = VALIDATION_SCOPE
@@ -208,7 +208,7 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
     client = TestClient(app, headers={"Origin": origin})
     body = {
         "message": "question",
-        "modelAlias": "tapper-chat",
+        "modelAlias": "qwen-plus",
         "sourceRevisionIds": ["revision-1"],
         "agentRevisionId": "agent-1",
         "skillRevisionIds": ["skill-1"],
@@ -247,7 +247,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
         scope = VALIDATION_SCOPE
 
         async def list_models(self, _scope):
-            return [SimpleNamespace(alias="tapper-chat")]
+            return [SimpleNamespace(alias="qwen-plus")]
 
     class Knowledge:
         scope = VALIDATION_SCOPE
@@ -286,7 +286,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
     )
     body = {
         "message": "  retain the exact user message  ",
-        "modelAlias": "tapper-chat",
+        "modelAlias": "qwen-plus",
         "sourceRevisionIds": ["source-revision-1"],
         "documentRevisionIds": ["document-revision-1"],
     }
@@ -303,7 +303,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
     assert detail.status_code == 200
     assert detail.json()["turns"][0]["input"] == {
         "message": "  retain the exact user message  ",
-        "modelAlias": "tapper-chat",
+        "modelAlias": "qwen-plus",
         "sourceRevisionIds": ["source-revision-1"],
         "documentRevisionIds": ["document-revision-1"],
         "resolvedResources": [
@@ -376,7 +376,7 @@ def test_conversation_citation_requires_the_turn_immutable_evidence_link():
         message="question",
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode=VALIDATION_SCOPE.identity_mode.value,
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
     )
     import asyncio
 

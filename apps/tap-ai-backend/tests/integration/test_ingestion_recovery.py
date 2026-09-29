@@ -425,7 +425,7 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
                     parent_id=None,
                     anchor_json=anchor_json,
                     chunk_content_hash=chunk_hash,
-                    embedding_model_version="tapper-embedding",
+                    embedding_model_version="text-embedding-v4",
                     index_version="tapper-index-v1",
                 ),
             )
@@ -453,7 +453,7 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
             await asyncio.sleep(1.05)
 
             embeddings = EmbeddingArtifact(
-                model_alias="tapper-embedding",
+                model_alias="text-embedding-v4",
                 dimension=3,
                 vectors=((0.0, 1.0, 2.0),),
                 chunk_ids=(manifest[0].chunk_id,),
@@ -487,7 +487,7 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
                 embeddings=completed_stage,
                 index=index,  # type: ignore[arg-type]
                 worker_id="worker-after-crash",
-                embedding_model_alias="tapper-embedding",
+                embedding_model_alias="text-embedding-v4",
                 embedding_dimension=3,
                 index_version="tapper-index-v1",
             )
@@ -856,7 +856,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                     parent_id=None,
                     anchor_json=anchor_json,
                     chunk_content_hash=chunk_hash,
-                    embedding_model_version="tapper-embedding",
+                    embedding_model_version="text-embedding-v4",
                     index_version="tapper-index-v1",
                 ),
             )
@@ -892,7 +892,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
 
             artifacts = DurableArtifacts(
                 EmbeddingArtifact(
-                    "tapper-embedding",
+                    "text-embedding-v4",
                     3,
                     ((0.0, 1.0, 2.0),),
                     (manifest[0].chunk_id,),
@@ -909,7 +909,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                 embeddings=completed_stage,
                 index=index,  # type: ignore[arg-type]
                 worker_id="blocked-publisher",
-                embedding_model_alias="tapper-embedding",
+                embedding_model_alias="text-embedding-v4",
                 embedding_dimension=3,
                 index_version="tapper-index-v1",
             )
@@ -923,7 +923,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                 embeddings=completed_stage,
                 index=index,  # type: ignore[arg-type]
                 worker_id="deleting-worker",
-                embedding_model_alias="tapper-embedding",
+                embedding_model_alias="text-embedding-v4",
                 embedding_dimension=3,
                 index_version="tapper-index-v1",
             )
@@ -1063,7 +1063,7 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
                 embeddings=completed,
                 index=index,  # type: ignore[arg-type]
                 worker_id="blocked-artifact-owner",
-                embedding_model_alias="tapper-embedding",
+                embedding_model_alias="text-embedding-v4",
                 embedding_dimension=3,
                 index_version="tapper-index-v1",
             )
@@ -1077,7 +1077,7 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
                 embeddings=completed,
                 index=index,  # type: ignore[arg-type]
                 worker_id="artifact-deletion-owner",
-                embedding_model_alias="tapper-embedding",
+                embedding_model_alias="text-embedding-v4",
                 embedding_dimension=3,
                 index_version="tapper-index-v1",
             )

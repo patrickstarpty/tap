@@ -161,7 +161,7 @@ async def test_real_azurite_round_trips_all_artifact_kinds_and_keeps_containers_
     embeddings = await store.write_embeddings(
         REVISION,
         EmbeddingArtifact(
-            "tapper-embedding",
+            "text-embedding-v4",
             3,
             ((0.1, 0.2, 0.3),),
             tuple(str(chunk.chunk_id) for chunk in chunk_artifact()),
@@ -173,7 +173,7 @@ async def test_real_azurite_round_trips_all_artifact_kinds_and_keeps_containers_
     assert await store.read_normalized(normalized) == normalized_artifact()
     assert await store.read_chunks(chunks) == chunk_artifact()
     assert await store.read_embeddings(embeddings) == EmbeddingArtifact(
-        "tapper-embedding",
+        "text-embedding-v4",
         3,
         ((0.1, 0.2, 0.3),),
         tuple(str(chunk.chunk_id) for chunk in chunk_artifact()),

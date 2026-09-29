@@ -340,7 +340,9 @@ async def test_mysql_checkpoint_accepts_task_writes_before_parent_commit(
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     service = ConversationService(
-        MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+        MysqlConversationRepository(
+            sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+        ),
         scope=VALIDATION_SCOPE,
     )
     await service.create("chat-parent-race", "turn-parent-race", "request-parent-race", _input())
@@ -500,7 +502,9 @@ async def test_permanent_checkpoint_error_terminalizes_once_and_does_not_reclaim
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         conversations = ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+            ),
             scope=VALIDATION_SCOPE,
         )
         await conversations.create(
@@ -584,7 +588,9 @@ async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_p
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         conversations = ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+            ),
             scope=VALIDATION_SCOPE,
         )
         await conversations.create("chat-takeover", "turn-takeover", "request-takeover", _input())
@@ -734,7 +740,9 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
             ),
         )
         conversations = ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+            ),
             scope=VALIDATION_SCOPE,
         )
         _revisions, policy = await knowledge.resolve_conversation_selection(("rev_mysql_001",))
@@ -863,7 +871,9 @@ async def test_expired_graph_lease_reclaim_and_cancel_have_one_terminal_winner(
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         conversations = ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+            ),
             scope=VALIDATION_SCOPE,
         )
         await conversations.create("chat-race", "turn-race", "request-race", _input())
@@ -915,7 +925,9 @@ async def test_waiting_graph_stays_parked_without_blocking_later_queued_turn(
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         conversations = ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+            ),
             scope=VALIDATION_SCOPE,
         )
         await conversations.create("chat-wait", "turn-wait", "request-wait", _input())
@@ -994,7 +1006,9 @@ async def test_active_graph_candidate_does_not_starve_later_queued_turn(
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         conversations = ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+            ),
             scope=VALIDATION_SCOPE,
         )
         await conversations.create("chat-blocked", "turn-blocked", "request-blocked", _input())
@@ -1026,8 +1040,12 @@ async def test_concurrent_reclaimers_transfer_expired_graph_lease_once(
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        first_repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
-        second_repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+        first_repository = MysqlConversationRepository(
+            sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+        )
+        second_repository = MysqlConversationRepository(
+            sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+        )
         conversations = ConversationService(first_repository, scope=VALIDATION_SCOPE)
         await conversations.create(
             "chat-reclaimers", "turn-reclaimers", "request-reclaimers", _input()
@@ -1096,7 +1114,9 @@ async def test_chat_terminal_business_graph_and_outbox_settle_atomically(
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         service = ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+            ),
             scope=VALIDATION_SCOPE,
         )
         await service.create("chat-atomic", "turn-atomic", "request-atomic", _input())
@@ -1156,7 +1176,9 @@ async def test_chat_checkpoint_is_fenced_and_cancel_releases_graph_lease(
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         service = ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, default_chat_model="qwen-plus"
+            ),
             scope=VALIDATION_SCOPE,
         )
         await service.create("chat-fence", "turn-fence", "request-fence", _input())

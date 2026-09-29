@@ -8,7 +8,6 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.ai.adapters.litellm import ProviderModelMapping
 from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
 from tap.modules.ai.application.assets import validation_asset_seed
 from tap.modules.chat.adapters.mysql import chat_turn
@@ -39,15 +38,12 @@ from tests.integration.test_knowledge_publication import (
     seed_authority,
 )
 
-TEST_DESIGN_MODEL_MAPPING = ProviderModelMapping("fake", "deterministic-chat-v1")
-
 
 def _repository(sessions):  # type: ignore[no-untyped-def]
     return MysqlTestPlanRepository(
         sessions,
         scope=VALIDATION_SCOPE,
-        model_alias="tapper-chat",
-        model_mapping=TEST_DESIGN_MODEL_MAPPING,
+        model_alias="qwen-plus",
     )
 
 
@@ -106,7 +102,7 @@ async def _seed_completed_turn(
                 turn_id=turn_id,
                 snapshot_digest="sha256:" + "1" * 64,
                 snapshot={
-                    "model_alias": "tapper-chat",
+                    "model_alias": "qwen-plus",
                     "agent_revision_id": "validation-knowledge-agent-v2",
                     "skill_revision_ids": ["validation-citation-skill-v2"],
                 },
@@ -153,7 +149,7 @@ def _request(publication=None, **changes: str) -> PlanGenerationRequest:  # type
         "turn_id": "turn_checkout",
         "input_snapshot_digest": "sha256:" + "1" * 64,
         "answer_evidence_snapshot_digest": "sha256:" + "2" * 64,
-        "model_alias": "tapper-chat",
+        "model_alias": "qwen-plus",
         "agent_revision_id": "validation-knowledge-agent-v2",
         "skill_revision_ids": ("validation-citation-skill-v2",),
         "objective": "Design checkout tests",
@@ -170,7 +166,7 @@ def _request(publication=None, **changes: str) -> PlanGenerationRequest:  # type
             ),
         ),
         "approved_knowledge_revision_ids": (source_revision_id,),
-        "model_revision_id": design_model_revision_id("tapper-chat", TEST_DESIGN_MODEL_MAPPING),
+        "model_revision_id": design_model_revision_id("qwen-plus"),
     }
     values.update(changes)
     return PlanGenerationRequest.create(**values)  # type: ignore[arg-type]
@@ -267,7 +263,7 @@ async def test_generation_from_turn_rejects_non_design_capable_model_alias(
                 .where(turn_input_snapshot.c.turn_id == "turn_checkout")
                 .values(
                     snapshot={
-                        "model_alias": "tapper-vision",
+                        "model_alias": "qwen3-vl-plus",
                         "agent_revision_id": "validation-knowledge-agent-v2",
                         "skill_revision_ids": ["validation-citation-skill-v2"],
                     }

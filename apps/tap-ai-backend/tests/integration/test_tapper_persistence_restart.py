@@ -305,7 +305,7 @@ def _expected_locators(
         ArtifactLocator(f"{ARTIFACTS_CONTAINER}/revisions/{revision}/chunks-v1.jsonl.gz"),
         ArtifactLocator(
             f"{ARTIFACTS_CONTAINER}/revisions/{revision}/embeddings/"
-            f"{settings.embedding_alias}/{settings.embedding_dimension}-v1.jsonl.gz"
+            f"{settings.embedding_model}/{settings.embedding_dimension}-v1.jsonl.gz"
         ),
     )
 
@@ -358,7 +358,7 @@ async def _verify_object_binding(
         value = await artifacts.objects.open_verified(ref)
         identity = f"{revision}/{kind}"
         if kind == "embeddings":
-            identity += f"/{settings.embedding_alias}/{settings.embedding_dimension}"
+            identity += f"/{settings.embedding_model}/{settings.embedding_dimension}"
         _require(
             value.identity == identity
             and value.attributes == tuple(sorted({"kind": kind, "revision": revision}.items()))
@@ -546,7 +546,7 @@ async def _verify_database(
                 _require(
                     manifest["ordinal"] == ordinal
                     and manifest["root_id"] == document.document_id
-                    and manifest["embedding_model_version"] == settings.embedding_alias
+                    and manifest["embedding_model_version"] == settings.embedding_model
                     and manifest["index_version"] == settings.index_version
                     and isinstance(manifest["chunk_id"], str)
                     and isinstance(manifest["chunk_content_hash"], str)
@@ -662,7 +662,7 @@ async def _verify_blobs(
                 for ordinal, chunk in enumerate(chunks)
                 for item in (revision.manifest[str(chunk.chunk_id)],)
             )
-            and embeddings.model_alias == settings.embedding_alias
+            and embeddings.model_alias == settings.embedding_model
             and embeddings.dimension == settings.embedding_dimension
             and embeddings.chunk_ids == chunk_ids,
             "blob-survivor-binding",
@@ -727,7 +727,7 @@ def _require_milvus_survivor_row(
         and row.get("index_family") == "doc"
         and row.get("schema_version") == settings.schema_version
         and row.get("corpus_version") == settings.corpus_version
-        and row.get("embedding_model_version") == settings.embedding_alias
+        and row.get("embedding_model_version") == settings.embedding_model
         and row.get("chunk_content_hash") == item.chunk_content_hash
         and row.get("anchor_json") == item.anchor_json,
         "milvus-survivor-binding",
@@ -835,7 +835,7 @@ async def _verify_milvus(
         and fence.get("anchor_json") == "{}"
         and fence.get("schema_version") == settings.schema_version
         and fence.get("corpus_version") == settings.corpus_version
-        and fence.get("embedding_model_version") == settings.embedding_alias,
+        and fence.get("embedding_model_version") == settings.embedding_model,
         "milvus-deletion-fence-binding",
     )
 
@@ -1398,7 +1398,7 @@ def _minio_verifier_fixture() -> tuple[DocumentState, TapperSettings, dict[str, 
         SimpleNamespace(
             object_store_provider="minio",
             s3_store_id="tapper-e2e",
-            embedding_alias="embed",
+            embedding_model="embed",
             embedding_dimension=3,
         ),
     )

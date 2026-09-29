@@ -182,12 +182,7 @@ def test_task6a_collection_closes_only_opened_clients_on_migration_settlement(mo
         "MysqlOperationRepository",
         lambda *args, **kwargs: SimpleNamespace(ready_work=ready_work),
     )
-    settings = TapperSettings.from_mapping(
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
-    )
+    settings = TapperSettings.from_mapping({})
     if fail:
         with pytest.raises(RuntimeError, match="injected"):
             asyncio.run(module.migrate_projection(settings, "migrate-v1-to-v2", None, 20))
@@ -209,7 +204,7 @@ EXPECTED_ENV = {
     "TAPPER_WEB_HOST",
     "TAPPER_WEB_PORT",
     "TAPPER_MODEL_BACKEND",
-    "LITELLM_TAPPER_EMBEDDING_MODEL",
+    "TAPPER_EMBEDDING_MODEL",
 }
 _RECORDED_ENVIRONMENT_NAMES = (
     "TAPPER_API_HOST",
@@ -219,7 +214,7 @@ _RECORDED_ENVIRONMENT_NAMES = (
     "DASHSCOPE_API_BASE",
     "DASHSCOPE_API_KEY",
     "DASHSCOPE_BASE_URL",
-    "LITELLM_TAPPER_EMBEDDING_MODEL",
+    "TAPPER_EMBEDDING_MODEL",
     "LITELLM_EMBEDDING_API_BASE",
     "LITELLM_EMBEDDING_API_KEY",
     "LITELLM_EMBEDDING_MODEL",
@@ -676,7 +671,7 @@ OPENAI_API_KEY=provider-secret
 BAILIAN_API_KEY=provider-secret
 BAILIAN_API_BASE=https://provider-secret.invalid/bailian
 DASHSCOPE_API_KEY=provider-secret
-LITELLM_TAPPER_EMBEDDING_MODEL=provider-secret-route
+TAPPER_EMBEDDING_MODEL=provider-secret-route
 LITELLM_EMBEDDING_MODEL=provider-secret-model
 LITELLM_EMBEDDING_API_KEY=provider-secret
 LITELLM_EMBEDDING_API_BASE=https://provider-secret.invalid/v1
@@ -760,8 +755,8 @@ case " $* " in
     [ "${TAPPER_S3_BUCKET:-}" = tapper-e2e-objects ] || exit 79
     [ "${TAPPER_S3_SECRET_KEY:-}" = tap-e2e-object-password ] || exit 79
     [ "${TAPPER_LEGACY_AZURE_ENABLED:-}" = 0 ] || exit 79
-    [ "$LITELLM_MODEL" = dashscope/e2e-chat-unused ] || exit 72
-    [ "$LITELLM_TAPPER_EMBEDDING_MODEL" = dashscope/text-embedding-v4 ] || exit 72
+    [ "$TAPPER_DEFAULT_CHAT_MODEL" = qwen-plus ] || exit 72
+    [ "$TAPPER_EMBEDDING_MODEL" = text-embedding-v4 ] || exit 72
     [ "$LITELLM_EMBEDDING_MODEL" = text-embedding-v4 ] || exit 73
     [ "$DASHSCOPE_API_KEY" = tap-e2e-unused ] || exit 75
     [ "$DASHSCOPE_API_BASE" = http://127.0.0.1:14000 ] || exit 76
@@ -1335,12 +1330,7 @@ def test_tapper_ensure_creates_and_verifies_both_private_containers_before_index
     monkeypatch.setattr(tapper_collection, "_create_database", database)
     monkeypatch.setattr(tapper_collection, "_create_blob", lambda _settings: Blob())
     monkeypatch.setattr(tapper_collection, "_create_document_index", index)
-    settings = TapperSettings.from_mapping(
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
-    )
+    settings = TapperSettings.from_mapping({})
 
     asyncio.run(tapper_collection.ensure(settings))
 
@@ -1504,10 +1494,7 @@ def test_tapper_ensure_cli_reports_only_the_closed_failure_stage_and_settles_pri
     monkeypatch.setattr(tapper_collection, "_create_document_index", index)
     result = tapper_collection.main(
         ["ensure"],
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        },
+        {},
     )
     output = capsys.readouterr()
 
@@ -1543,8 +1530,6 @@ def test_tapper_ensure_cli_reports_configuration_failure_before_any_resource_sta
         ["ensure"],
         {
             "TAPPER_API_HOST": "provider-secret-invalid-host",
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1579,10 +1564,7 @@ def test_tapper_ensure_cli_redacts_provider_failures(
     monkeypatch.setattr(tapper_collection, "ensure", fail)
     result = tapper_collection.main(
         ["ensure"],
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        },
+        {},
     )
     output = capsys.readouterr()
 
@@ -1614,10 +1596,7 @@ def test_tapper_ensure_cli_maps_keyboard_interrupt_to_130_without_output(
 
     result = tapper_collection.main(
         ["ensure"],
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        },
+        {},
     )
     output = capsys.readouterr()
 
@@ -1646,10 +1625,7 @@ def test_tapper_ensure_cli_redacts_direct_cancelled_error(
 
     result = tapper_collection.main(
         ["ensure"],
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        },
+        {},
     )
     output = capsys.readouterr()
 
@@ -1712,10 +1688,7 @@ def test_tapper_ensure_cli_redacts_cancelled_error_and_cleanup_group(
 
     result = tapper_collection.main(
         ["ensure"],
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        },
+        {},
     )
     output = capsys.readouterr()
 
@@ -1788,10 +1761,7 @@ def test_tapper_ensure_cli_maps_only_closed_target_failure_stages(
 
     result = tapper_collection.main(
         ["ensure"],
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        },
+        {},
     )
     output = capsys.readouterr()
 
@@ -1841,10 +1811,7 @@ def test_tapper_ensure_cli_suppresses_worker_thread_rpc_details(
     try:
         result = tapper_collection.main(
             ["ensure"],
-            {
-                "LITELLM_MODEL": "openai/test-chat",
-                "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-            },
+            {},
         )
         _emit_provider_rpc_error("ensure-filter-restored-after-main")
     finally:
@@ -1972,12 +1939,7 @@ def test_safe_check_runs_all_five_probes_independently(
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping(
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
-    )
+    settings = TapperSettings.from_mapping({})
     events: list[str] = []
 
     def probe(name: str, result: bool = True):  # type: ignore[no-untyped-def]
@@ -2017,12 +1979,7 @@ def test_safe_check_cli_suppresses_worker_thread_rpc_details(
 
     monkeypatch.setattr(safe_check, "checks", noisy_checks)
     try:
-        result = safe_check.main(
-            {
-                "LITELLM_MODEL": "openai/test-chat",
-                "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-            }
-        )
+        result = safe_check.main({})
     finally:
         logger.removeHandler(handler)
     output = capsys.readouterr()
@@ -2045,12 +2002,7 @@ def test_safe_blob_canary_delete_failure_is_failed_and_still_closes(
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping(
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
-    )
+    settings = TapperSettings.from_mapping({})
     events: list[str] = []
 
     class Download:
@@ -2115,53 +2067,57 @@ def test_safe_blob_canary_delete_failure_is_failed_and_still_closes(
     ]
 
 
-def test_safe_models_probe_requires_provider_config_and_uses_get_models_only(
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
+def _model_info_catalog(handler):  # type: ignore[no-untyped-def]
     import httpx
 
+    from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog
+
+    return LiteLLMCatalog(
+        base_url="http://127.0.0.1:4000",
+        api_key="tap-local-master-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
+def _model_info(*names: str):  # type: ignore[no-untyped-def]
+    import httpx
+
+    modes = {"text-embedding-v4": "embedding"}
+    return httpx.Response(
+        200,
+        json={
+            "data": [
+                {"model_name": name, "model_info": {"mode": modes.get(name, "chat")}}
+                for name in names
+            ]
+        },
+    )
+
+
+def test_safe_models_probe_requires_provider_config_and_reads_model_info_only(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    from tap.entrypoints import tapper_runtime
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping(
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
-    )
+    settings = TapperSettings.from_mapping({})
     requests: list[tuple[str, str]] = []
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request):  # type: ignore[no-untyped-def]
         requests.append((request.method, request.url.path))
-        return httpx.Response(
-            200,
-            json={
-                "object": "list",
-                "data": [
-                    {"id": "tapper-chat", "object": "model", "created": 0, "owned_by": "tap"},
-                    {
-                        "id": "tapper-embedding",
-                        "object": "model",
-                        "created": 0,
-                        "owned_by": "tap",
-                    },
-                ],
-            },
-        )
+        return _model_info("qwen-plus", "text-embedding-v4")
 
-    client = httpx.AsyncClient(
-        base_url="http://127.0.0.1:4000/",
-        transport=httpx.MockTransport(handler),
+    monkeypatch.setattr(
+        tapper_runtime, "_create_model_catalog", lambda _settings: _model_info_catalog(handler)
     )
-    monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda _settings: client)
     assert "_create_model" not in vars(safe_check)
     provider = {"DASHSCOPE_API_KEY": "configured"}
 
     assert asyncio.run(safe_check._check_models(settings, {})) is False
     assert requests == []
     assert asyncio.run(safe_check._check_models(settings, provider)) is True
-    assert requests == [("GET", "/v1/models")]
-    assert client.is_closed
+    assert requests == [("GET", "/v1/model/info")]
 
 
 @pytest.mark.parametrize(
@@ -2178,129 +2134,104 @@ def test_safe_models_provider_gate_fails_before_construction_or_network(
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping(
-        {
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-            "LITELLM_EMBEDDING_MODEL": "direct-research-only",
-        }
-    )
+    settings = TapperSettings.from_mapping({})
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("provider construction occurred before credential gate")
 
     monkeypatch.setattr(safe_check, "_create_embeddings", forbidden)
-    monkeypatch.setattr(safe_check, "_create_models_probe_client", forbidden)
 
     assert asyncio.run(safe_check._check_models(settings, provider)) is False
 
 
 @pytest.mark.parametrize(
-    ("labels", "expected"),
+    ("names", "expected"),
     [
-        (("tapper-embedding", "tapper-chat"), True),
-        (("tapper-embedding",), False),
-        (("tapper-chat",), False),
+        (("text-embedding-v4", "qwen-plus"), True),
+        (("text-embedding-v4",), False),
+        (("qwen-plus",), False),
     ],
 )
-def test_safe_models_probe_requires_both_aliases_and_closes_all_owners(
-    monkeypatch, labels, expected
-):
-    import httpx
-
+def test_safe_models_probe_requires_both_roles_and_closes_all_owners(monkeypatch, names, expected):  # type: ignore[no-untyped-def]
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
     settings = TapperSettings.from_mapping({})
     closed = []
 
+    class Gateway:
+        async def health_problems(self):  # type: ignore[no-untyped-def]
+            from tap.modules.ai.adapters.litellm_catalog import ModelRoles
+
+            routes = await _model_info_catalog(lambda _request: _model_info(*names)).routes()
+            return ModelRoles("qwen-plus", "text-embedding-v4", None).problems(routes)
+
     class Embeddings:
-        async def aclose(self):
+        gateway = Gateway()
+
+        async def aclose(self):  # type: ignore[no-untyped-def]
             closed.append("embeddings")
 
-    def handler(request):
-        assert request.method == "GET" and request.url.path == "/v1/models"
-        return httpx.Response(
-            200,
-            json={
-                "object": "list",
-                "data": [
-                    {"id": alias, "object": "model", "created": 0, "owned_by": "tap"}
-                    for alias in labels
-                ],
-            },
-        )
-
-    client = httpx.AsyncClient(
-        base_url="http://127.0.0.1:4000/", transport=httpx.MockTransport(handler)
-    )
     monkeypatch.setattr(safe_check, "_create_embeddings", lambda settings: Embeddings())
-    monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda settings: client)
     assert (
         asyncio.run(safe_check._check_models(settings, {"DASHSCOPE_API_KEY": "configured"}))
         is expected
     )
-    assert client.is_closed
     assert closed == ["embeddings"]
 
 
-def test_safe_models_probe_closes_all_owners_when_transport_fails(monkeypatch):
-    import httpx
-
+def test_safe_models_probe_closes_all_owners_when_health_check_fails(monkeypatch):  # type: ignore[no-untyped-def]
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
     events = []
 
+    class Gateway:
+        async def health_problems(self):  # type: ignore[no-untyped-def]
+            raise RuntimeError("private provider detail")
+
     class Embeddings:
-        async def aclose(self):
+        gateway = Gateway()
+
+        async def aclose(self):  # type: ignore[no-untyped-def]
             events.append("embeddings")
 
-    def fail(request):
-        raise RuntimeError("private provider detail")
-
-    client = httpx.AsyncClient(
-        base_url="http://127.0.0.1:4000/", transport=httpx.MockTransport(fail)
-    )
     monkeypatch.setattr(safe_check, "_create_embeddings", lambda settings: Embeddings())
-    monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda settings: client)
     with pytest.raises(RuntimeError, match="private provider detail"):
         asyncio.run(
             safe_check._check_models(
                 TapperSettings.from_mapping({}), {"DASHSCOPE_API_KEY": "configured"}
             )
         )
-    assert client.is_closed
     assert events == ["embeddings"]
 
 
-def test_litellm_exposes_only_the_fixed_tapper_aliases() -> None:
-    """A legacy or provider-named route must not become part of the Demo model surface."""
+def test_litellm_config_is_the_single_model_source() -> None:
+    """Model names, upstream models and capabilities live only in the LiteLLM config."""
 
     config = _load_yaml_as_json(ROOT / "deploy/local/litellm/config.yaml")
 
     assert [item["model_name"] for item in config["model_list"]] == [
-        "tapper-chat",
-        "tapper-chat-flash",
-        "tapper-chat-max",
-        "tapper-embedding",
-        "tapper-vision",
+        "qwen-plus",
+        "qwen-flash",
+        "qwen-max",
+        "qwen3-vl-plus",
+        "text-embedding-v4",
     ]
-    assert config["model_list"][0]["litellm_params"] == {
-        "model": "os.environ/LITELLM_MODEL",
-        "api_key": "os.environ/DASHSCOPE_API_KEY",
-        "api_base": "os.environ/DASHSCOPE_API_BASE",
+    for item in config["model_list"]:
+        assert item["litellm_params"] == {
+            "model": "dashscope/" + item["model_name"],
+            "api_key": "os.environ/DASHSCOPE_API_KEY",
+            "api_base": "os.environ/DASHSCOPE_API_BASE",
+        }
+    info = {item["model_name"]: item["model_info"] for item in config["model_list"]}
+    assert info["qwen-plus"] == {
+        "mode": "chat",
+        "supports_response_schema": True,
+        "tapper_display_name": "Qwen Plus",
     }
-    assert config["model_list"][3]["litellm_params"] == {
-        "model": "os.environ/LITELLM_TAPPER_EMBEDDING_MODEL",
-        "api_key": "os.environ/DASHSCOPE_API_KEY",
-        "api_base": "os.environ/DASHSCOPE_API_BASE",
-    }
-    assert config["model_list"][4]["litellm_params"] == {
-        "model": "os.environ/LITELLM_TAPPER_VISION_MODEL",
-        "api_key": "os.environ/DASHSCOPE_API_KEY",
-        "api_base": "os.environ/DASHSCOPE_API_BASE",
-    }
+    assert info["qwen3-vl-plus"]["supports_vision"] is True
+    assert info["text-embedding-v4"] == {"mode": "embedding"}
 
 
 def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> None:
@@ -2552,6 +2483,8 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
     assert required <= values.keys()
     assert values["TAPPER_MODEL_BACKEND"] == "litellm"
     assert values["LITELLM_TAPPER_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
+    assert values["TAPPER_DEFAULT_CHAT_MODEL"] == "qwen-plus"
+    assert values["TAPPER_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert values["DASHSCOPE_API_KEY"] == ""
     assert values["TAP_DEMO_MODE"] == ""
     assert values["TAP_ALLOW_INITIAL_MILVUS_ROOT"] == "0"
@@ -2570,6 +2503,8 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
     )
     assert values["LITELLM_MODEL"] == "dashscope/qwen-plus"
     assert values["LITELLM_TAPPER_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
+    assert values["TAPPER_DEFAULT_CHAT_MODEL"] == "qwen-plus"
+    assert values["TAPPER_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert values["LITELLM_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert {
         "MYSQL_PORT": values["MYSQL_PORT"],
@@ -3101,7 +3036,7 @@ def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoin
             "BAILIAN_API_KEY": "caller-bailian-key",
             "BAILIAN_API_BASE": "https://caller.invalid/bailian",
             "DASHSCOPE_API_KEY": "caller-dashscope-key",
-            "LITELLM_TAPPER_EMBEDDING_MODEL": "caller-secret-route",
+            "TAPPER_EMBEDDING_MODEL": "caller-secret-route",
             "LITELLM_EMBEDDING_MODEL": "caller-secret-model",
             "LITELLM_EMBEDDING_API_KEY": "caller-embedding-key",
             "LITELLM_EMBEDDING_API_BASE": "https://caller.invalid/embedding",
@@ -3133,7 +3068,7 @@ def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoin
     assert {
         "DASHSCOPE_API_KEY",
         "DASHSCOPE_API_BASE",
-        "LITELLM_TAPPER_EMBEDDING_MODEL",
+        "TAPPER_EMBEDDING_MODEL",
         "LITELLM_EMBEDDING_MODEL",
     } <= environment_names
     assert (

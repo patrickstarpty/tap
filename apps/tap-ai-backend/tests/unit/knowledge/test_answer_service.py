@@ -149,9 +149,9 @@ def answer_response(
             ),
         ),
         citations=evidence,
-        embedding_provenance=ModelCallProvenance("tapper-embedding", "embed-request"),
+        embedding_provenance=ModelCallProvenance("text-embedding-v4", "embed-request"),
         answer_provenance=(
-            None if abstained else ModelCallProvenance("tapper-chat", "answer-request")
+            None if abstained else ModelCallProvenance("qwen-plus", "answer-request")
         ),
     )
 

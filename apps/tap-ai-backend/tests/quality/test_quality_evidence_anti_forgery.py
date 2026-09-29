@@ -15,7 +15,7 @@ def _batch() -> tuple[dict, dict[str, object], dict[str, object], dict[str, obje
     dataset = {"version": "dataset-v1", "caseIds": ["case-1", "case-2"]}
     config = {"profile": "quality-v1", "threshold": 90}
     model = {
-        "alias": "tapper-chat",
+        "alias": "qwen-plus",
         "provider": "provider",
         "model": "model",
         "promptDigest": "sha256:" + "a" * 64,

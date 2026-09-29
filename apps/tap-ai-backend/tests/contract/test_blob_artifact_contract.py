@@ -191,7 +191,7 @@ def test_canonical_artifact_envelopes_are_deterministic_and_round_trip_exactly()
     normalized = normalized_artifact()
     chunks = chunk_artifact()
     embeddings = EmbeddingArtifact(
-        "tapper-embedding",
+        "text-embedding-v4",
         3,
         ((0.1, 0.2, 0.3),),
         tuple(str(chunk.chunk_id) for chunk in chunks),
@@ -234,7 +234,7 @@ def test_artifact_reads_reject_payload_hash_or_envelope_widening(kind: str) -> N
         decoder = decode_chunks_artifact
     else:
         artifact = EmbeddingArtifact(
-            "tapper-embedding",
+            "text-embedding-v4",
             3,
             ((0.1, 0.2, 0.3),),
             tuple(str(chunk.chunk_id) for chunk in chunk_artifact()),
@@ -376,7 +376,7 @@ def test_embedding_rows_bind_exact_chunk_identity_and_order() -> None:
     """Ordinal-only vectors would permit a manifest reorder without changing the envelope."""
     chunks = chunk_artifact()
     artifact = EmbeddingArtifact(
-        "tapper-embedding",
+        "text-embedding-v4",
         3,
         ((0.1, 0.2, 0.3),),
         (str(chunks[0].chunk_id),),

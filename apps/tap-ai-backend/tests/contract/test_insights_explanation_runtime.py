@@ -74,7 +74,7 @@ async def test_persisted_result_reauthorization_stalled_port_is_bounded() -> Non
     runtime = ConfiguredInsightsExplanation(
         insights=StalledInsights(),
         gateway=None,
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         max_micros_per_token=1,
         project_id="tapper-demo",
         delegated_user_token="delegated-user-token-0001",
@@ -132,7 +132,7 @@ async def test_runtime_verifies_historical_query_and_receipt_before_returning_fa
     runtime = ConfiguredInsightsExplanation(
         insights=Insights(),
         gateway=Gateway(),
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         max_micros_per_token=1,
         project_id="tapper-demo",
         delegated_user_token="delegated-user-token-0001",
@@ -171,7 +171,7 @@ async def test_empty_report_narrative_cannot_be_rendered_as_evidence() -> None:
     runtime = ConfiguredInsightsExplanation(
         insights=Insights(),
         gateway=Gateway(),
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         max_micros_per_token=1,
         project_id="tapper-demo",
         delegated_user_token="delegated-user-token-0001",
@@ -208,7 +208,7 @@ async def test_runtime_rejects_receipts_that_tap_does_not_authorize() -> None:
     runtime = ConfiguredInsightsExplanation(
         insights=Insights(),
         gateway=None,
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         max_micros_per_token=1,
         project_id="tapper-demo",
         delegated_user_token="delegated-user-token-0001",
@@ -242,7 +242,7 @@ async def test_runtime_rejects_unrelated_project_receipt_before_evidence_or_mode
     runtime = ConfiguredInsightsExplanation(
         insights=Insights(),
         gateway=Gateway(),
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         project_id="tapper-demo",
         delegated_user_token="delegated-user-token-0001",
         authorization_version="authz-1",
@@ -339,7 +339,7 @@ async def test_explanation_uses_real_tap_adapter_and_current_report_authority() 
     runtime = ConfiguredInsightsExplanation(
         insights=adapter,
         gateway=Gateway(),
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         project_id="tapper-demo",
         delegated_user_token="delegated-user-token-0001",
         authorization_version="authz-1",

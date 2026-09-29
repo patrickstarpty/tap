@@ -27,14 +27,15 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.litellm import (
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
-    ProviderModelMapping,
 )
+from tap.modules.ai.adapters.litellm_catalog import ModelRoles
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application.ingestion import WorkerRun
 from tap.modules.knowledge.ports.documents import ArtifactLocator, ReserveUpload
 from tap.platform.db.session import create_engine_and_session_factory
 from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
+from tap.testing.deterministic_model_gateway import StaticLiteLLMCatalog
 
 DATABASE_URL = os.getenv(
     "TAP_DATABASE_URL",
@@ -75,8 +76,6 @@ def _tapper_environment(**overrides: str) -> dict[str, str]:
         "TAP_REDIS_URL": "redis://127.0.0.1:16379/0",
         "TAP_REDIS_COMMAND_STREAM": "tap-tapper-e2e:commands",
         "LITELLM_BASE_URL": "http://127.0.0.1:14000",
-        "LITELLM_MODEL": "openai/test-chat",
-        "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         "MILVUS_URI": "http://127.0.0.1:29530",
     }
     values.update(overrides)
@@ -145,21 +144,19 @@ def worker_entrypoint() -> tuple[EmbeddingEntrypointWorker, httpx.AsyncClient]:
             LiteLLMModelGatewayConfig(
                 base_url="https://litellm.example",
                 api_key="not-a-real-key",
-                chat_alias="tapper-chat",
-                embedding_alias="tapper-embedding",
-                chat_model=ProviderModelMapping("dashscope", "qwen-plus"),
-                embedding_model=ProviderModelMapping("dashscope", "text-embedding-v4"),
+                roles=ModelRoles("qwen-plus", "text-embedding-v4", None),
                 embedding_dimension=2,
                 max_retries=0,
             ),
             scope=VALIDATION_SCOPE,
             redact=redact,
+            catalog=StaticLiteLLMCatalog(),
             client=client,
         ),
         scope=VALIDATION_SCOPE,
         redact=redact,
-        embedding_alias="tapper-embedding",
-        chat_alias="tapper-chat",
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
         embedding_dimension=2,
         timeout_seconds=1,
     )

@@ -317,7 +317,9 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
                 async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
             )
             conversation = await MysqlConversationRepository(
-                async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+                async_sessionmaker(engine, expire_on_commit=False),
+                scope=VALIDATION_SCOPE,
+                default_chat_model="qwen-plus",
             ).load("legacy-chat")
             assert [(event.sequence, event.event_id) for event in conversation.events] == [
                 (1, "legacy-event")
@@ -611,15 +613,17 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
                 owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
             )
             return engine, tapper_runtime._build_document_repository(
-                async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+                async_sessionmaker(engine, expire_on_commit=False),
+                scope=VALIDATION_SCOPE,
+                default_chat_model="qwen-plus",
             )
 
         model = KnowledgeModelGateway(
             object(),
             scope=VALIDATION_SCOPE,
             redact=tapper_runtime._redact_model_context,
-            embedding_alias="tapper-embedding",
-            chat_alias="tapper-chat",
+            embedding_alias="text-embedding-v4",
+            chat_alias="qwen-plus",
             embedding_dimension=1536,
             timeout_seconds=15,
         )
@@ -744,7 +748,9 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
         )
         try:
             repository = MysqlConversationRepository(
-                async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+                async_sessionmaker(engine, expire_on_commit=False),
+                scope=VALIDATION_SCOPE,
+                default_chat_model="qwen-plus",
             )
             loaded = await repository.load("legacy-chat")
             assert loaded.created_at.replace(tzinfo=None) == LEGACY_TIME
@@ -809,7 +815,7 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
                     message="bind legacy evidence",
                     actor_id=VALIDATION_SCOPE.actor_id,
                     identity_mode="validation",
-                    model_alias="tapper-chat",
+                    model_alias="qwen-plus",
                 ),
             )
             citations = await repository.resolve_citations("legacy-trace", ("legacy-citation",))
@@ -830,7 +836,7 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
                     message="bind legacy evidence",
                     actor_id=VALIDATION_SCOPE.actor_id,
                     identity_mode="validation",
-                    model_alias="tapper-chat",
+                    model_alias="qwen-plus",
                     resolved_resources=(
                         FrozenResource(
                             selected[0].source_id,

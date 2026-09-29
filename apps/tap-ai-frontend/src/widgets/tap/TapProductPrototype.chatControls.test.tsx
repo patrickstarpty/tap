@@ -124,7 +124,7 @@ function durableConversation({ state, appendResponse }: Scenario) {
             answerEvidenceSnapshotDigest: null,
             input: {
               message: "What is the rule?",
-              modelAlias: "tapper-chat",
+              modelAlias: "qwen-plus",
               sourceRevisionIds: ["rev_policy"],
               documentRevisionIds: [],
               resolvedResources: [

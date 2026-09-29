@@ -34,8 +34,8 @@ async def test_real_vision_preserves_underwriting_nodes_and_return_paths() -> No
     model = None
     failed = False
     try:
-        # Uses LITELLM_BASE_URL, LITELLM_MASTER_KEY, LITELLM_MODEL and
-        # LITELLM_TAPPER_VISION_MODEL through the same settings/factory as runtime.
+        # Uses LITELLM_BASE_URL, LITELLM_MASTER_KEY and TAPPER_VISION_MODEL
+        # through the same settings/factory as runtime.
         settings = TapperSettings.from_mapping(os.environ)
         assert not settings.e2e_mode and settings.vision_model
         assert settings.model_backend == "litellm"
@@ -58,6 +58,7 @@ async def test_real_vision_preserves_underwriting_nodes_and_return_paths() -> No
         result = await ModelGatewayFlowchartVision(
             model.gateway,
             VALIDATION_SCOPE,
+            alias=settings.vision_model,
             timeout_seconds=settings.vision_timeout_seconds,
         ).analyze(source, parsed)
         graph = json.loads(result.flowchart_data or "{}")

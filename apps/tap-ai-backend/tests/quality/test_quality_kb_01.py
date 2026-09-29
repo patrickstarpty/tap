@@ -29,21 +29,21 @@ APPROVAL_CONTENT = {
     "approvalId": "unit-v3",
     "routes": [
         {
-            "logicalAlias": "tapper-embedding",
+            "logicalAlias": "text-embedding-v4",
             "actualProvider": "approved-provider",
             "actualModel": "approved-provider/approved-embedding",
             "operation": "embed",
             "scope": {"enterpriseId": "tenant", "projectId": "project-a"},
         },
         {
-            "logicalAlias": "tapper-chat",
+            "logicalAlias": "qwen-plus",
             "actualProvider": "approved-provider",
             "actualModel": "approved-provider/approved-model",
             "operation": "chat",
             "scope": {"enterpriseId": "tenant", "projectId": "project-a"},
         },
         {
-            "logicalAlias": "tapper-chat",
+            "logicalAlias": "qwen-plus",
             "actualProvider": "approved-provider",
             "actualModel": "approved-provider/approved-model",
             "operation": "structured",
@@ -149,7 +149,7 @@ def _dataset() -> dict[str, object]:
         "bindings": {
             "policyDigest": _sha("1"),
             "approvalDigest": APPROVAL_DIGEST,
-            "modelAlias": "tapper-chat",
+            "modelAlias": "qwen-plus",
             "promptDigest": _sha("2"),
             "agentRevisionDigest": _sha("3"),
             "skillRevisionDigests": [_sha("4")],
@@ -244,7 +244,7 @@ def _execution(
                 "providerCalls": [
                     {
                         "runnerCallId": f"runner-{call}",
-                        "requestedAlias": "tapper-chat",
+                        "requestedAlias": "qwen-plus",
                         "requestedOperation": "structured",
                         "requestedProvider": "approved-provider",
                         "requestedModel": "approved-provider/approved-model",
@@ -253,7 +253,7 @@ def _execution(
                         "status": "success",
                         "retryable": False,
                         "operation": "structured",
-                        "alias": "tapper-chat",
+                        "alias": "qwen-plus",
                         "actualProvider": "approved-provider",
                         "actualModel": "approved-provider/approved-model",
                         "promptDigest": _sha("2"),
@@ -603,7 +603,7 @@ async def test_runner_calls_gateway_on_cache_miss_and_identity_comes_from_audit(
             await self.gateway.generate_structured(
                 ModelRequest(
                     scope,
-                    "tapper-chat",
+                    "qwen-plus",
                     ModelOperation.STRUCTURED,
                     "prompt",
                     _sha("2"),
@@ -1154,7 +1154,7 @@ async def test_runtime_policy_mismatch_precedes_every_model_operation() -> None:
             await captured.embed(
                 ModelRequest(
                     VALIDATION_SCOPE,
-                    "tapper-embedding",
+                    "text-embedding-v4",
                     ModelOperation.EMBED,
                     prompt,
                     text_digest(prompt),
@@ -1309,7 +1309,7 @@ async def test_failed_provider_io_receipt_drives_bounded_retry_then_success() ->
             await self.gateway.generate_structured(
                 ModelRequest(
                     scope,
-                    "tapper-chat",
+                    "qwen-plus",
                     ModelOperation.STRUCTURED,
                     "prompt",
                     _sha("2"),
@@ -1438,7 +1438,7 @@ async def test_runner_retries_a_successful_provider_call_with_unusable_grounded_
             await self.gateway.generate_structured(
                 ModelRequest(
                     scope,
-                    "tapper-chat",
+                    "qwen-plus",
                     ModelOperation.STRUCTURED,
                     "prompt",
                     _sha("2"),
@@ -1487,8 +1487,9 @@ def _production_litellm_gateway(handler, *, max_retries: int):
     from tap.modules.ai.adapters.litellm import (
         LiteLLMModelGateway,
         LiteLLMModelGatewayConfig,
-        ProviderModelMapping,
     )
+    from tap.modules.ai.adapters.litellm_catalog import ModelRoles
+    from tap.testing.deterministic_model_gateway import StaticLiteLLMCatalog
 
     async def redact(text: str) -> str:
         return text
@@ -1504,15 +1505,13 @@ def _production_litellm_gateway(handler, *, max_retries: int):
         LiteLLMModelGatewayConfig(
             base_url="https://litellm.example",
             api_key="not-a-real-key",
-            chat_alias="tapper-chat",
-            embedding_alias="tapper-embedding",
-            chat_model=ProviderModelMapping("approved-provider", "approved-model"),
-            embedding_model=ProviderModelMapping("approved-provider", "approved-embedding"),
+            roles=ModelRoles("qwen-plus", "text-embedding-v4", None),
             embedding_dimension=2,
             max_retries=max_retries,
         ),
         scope=scope,
         redact=redact,
+        catalog=StaticLiteLLMCatalog(),
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -1544,7 +1543,7 @@ def test_approval_routes_must_exactly_match_production_litellm_before_http() -> 
     production_routes = module._production_routes_from_gateway(gateway)
     mismatched = deepcopy(APPROVED)
     mismatched["routes"] = deepcopy(APPROVED["routes"])
-    mismatched["routes"][2]["actualModel"] = "configured-model-b"
+    mismatched["routes"][2]["logicalAlias"] = "qwen-max"
     with pytest.raises(ValueError, match="routes do not match"):
         module._require_approved_production_routes(mismatched, production_routes)
 
@@ -1630,7 +1629,7 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
             prompt = "quality transport probe"
             request = ModelRequest(
                 gateway.scope,
-                "tapper-embedding" if operation == "embed" else "tapper-chat",
+                "text-embedding-v4" if operation == "embed" else "qwen-plus",
                 model_operation,
                 prompt,
                 text_digest(prompt),
@@ -1751,7 +1750,7 @@ async def test_approval_expiry_stops_next_case_before_reserve_and_http() -> None
     prompt = "quality expiry probe"
     request = ModelRequest(
         gateway.scope,
-        "tapper-chat",
+        "qwen-plus",
         ModelOperation.STRUCTURED,
         prompt,
         text_digest(prompt),
@@ -1926,7 +1925,7 @@ async def test_provider_budget_stops_n_plus_one_before_delegate_io() -> None:
         async def run_case(self, case):
             request = ModelRequest(
                 scope,
-                "tapper-chat",
+                "qwen-plus",
                 ModelOperation.STRUCTURED,
                 "prompt",
                 _sha("2"),
@@ -2152,7 +2151,7 @@ def _trusted_profile() -> dict[str, object]:
         "profileId": "QUALITY-KB-TRUSTED-01",
         "dataset": {"version": "unit-v1", "reviewStatus": "pending"},
         "bindings": {
-            "modelAlias": "tapper-chat",
+            "modelAlias": "qwen-plus",
             "actualModel": "provider/model",
             "promptDigest": "sha256:" + "a" * 64,
             "schemaDigest": "sha256:" + "b" * 64,

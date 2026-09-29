@@ -225,7 +225,7 @@ async def _seed(engine, *revision_ids: str) -> None:  # type: ignore[no-untyped-
                     parent_id=None,
                     anchor_json="{}",
                     chunk_content_hash="sha256:" + "b" * 64,
-                    embedding_model_version="tapper-embedding",
+                    embedding_model_version="text-embedding-v4",
                     index_version=INDEX,
                 ),
             )
@@ -344,7 +344,7 @@ async def test_fixture_rejects_drifted_manifest_and_projection_facts(
                 parent_id=None,
                 anchor_json="{}",
                 chunk_content_hash="sha256:" + "b" * 64,
-                embedding_model_version="tapper-embedding",
+                embedding_model_version="text-embedding-v4",
                 index_version="changed-index",
             ),
         )
