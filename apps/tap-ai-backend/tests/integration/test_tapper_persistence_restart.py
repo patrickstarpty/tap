@@ -10,7 +10,7 @@ import stat
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,6 +49,7 @@ from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document_revision,
     knowledge_ingestion_job,
 )
+from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents
 from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore, _parse
 from tap.modules.knowledge.domain.documents import (
     CHUNKER_VERSION,
@@ -417,12 +418,52 @@ async def _verify_database(
                 ),
                 "mysql-revision",
             )
-            locators = _persisted_locators(revision, document, settings)
+            # A ready upload is republished as a managed-chunk revision that keeps
+            # the original object owned by the uploaded (parsed) revision.
+            managed = revision["pipeline_version"] == "managed-chunks-v1"
+            original = document
+            if managed:
+                managed_row = await _one(
+                    connection,
+                    select(managed_documents).where(
+                        *scope_predicates(managed_documents, VALIDATION_SCOPE),
+                        managed_documents.c.document_id == document.document_id,
+                    ),
+                    "mysql-managed-document",
+                )
+                uploaded = await _one(
+                    connection,
+                    select(knowledge_document_revision).where(
+                        *scope_predicates(knowledge_document_revision, VALIDATION_SCOPE),
+                        knowledge_document_revision.c.revision_id
+                        == managed_row["original_revision_id"],
+                    ),
+                    "mysql-original-revision",
+                )
+                _require(
+                    uploaded["document_id"] == document.document_id
+                    and uploaded["revision_id"] != document.revision_id
+                    and uploaded["original_blob_locator"] == revision["original_blob_locator"],
+                    "mysql-original-revision-binding",
+                )
+                original = replace(
+                    document,
+                    revision_id=cast(str, uploaded["revision_id"]),
+                    source_content_hash=cast(str, uploaded["source_content_hash"]),
+                )
+                _require_revision_binding(
+                    uploaded,
+                    original,
+                    _persisted_locators(uploaded, original, settings),
+                    settings.pipeline_version,
+                )
+            locators = _persisted_locators(revision, document, settings, original)
             _require_revision_binding(
                 revision,
                 document,
                 locators,
                 settings.pipeline_version,
+                managed=managed,
             )
 
             ingestion_job = await _one(
@@ -434,7 +475,7 @@ async def _verify_database(
                 "mysql-ingestion-job",
             )
             _require(
-                ingestion_job["revision_id"] == document.revision_id
+                ingestion_job["revision_id"] == original.revision_id
                 and ingestion_job["kind"] == "ingestion"
                 and ingestion_job["status"] == "completed",
                 "mysql-ingestion-job-binding",
@@ -452,7 +493,7 @@ async def _verify_database(
                 .all()
             )
             _require(
-                revision_ids == [document.revision_id],
+                sorted(revision_ids) == sorted({document.revision_id, original.revision_id}),
                 "mysql-document-revision-inventory",
             )
             revision_jobs = (
@@ -475,7 +516,11 @@ async def _verify_database(
             deletion_inventory = [job for job in revision_jobs if job["kind"] == "deletion"]
             _require(
                 len(ingestion_jobs) == 1
-                and ingestion_jobs[0]["job_id"] == document.job_id
+                and (
+                    ingestion_jobs[0]["job_id"].startswith("managed_")
+                    if managed
+                    else ingestion_jobs[0]["job_id"] == document.job_id
+                )
                 and ingestion_jobs[0]["status"] == "completed",
                 "mysql-ingestion-job-inventory",
             )
@@ -547,6 +592,8 @@ async def _verify_database(
                 )
             _require(len(manifest_by_id) == len(manifests), "mysql-manifest-identity")
             evidence[document.document_id] = RevisionEvidence(
+                state=document,
+                original=original,
                 locators=locators,
                 manifest=manifest_by_id,
             )
@@ -596,14 +643,16 @@ async def _verify_blobs(
 ) -> None:
     for document in state.survivors:
         revision = evidence[document.document_id]
-        await _verify_object_binding(artifacts, revision.locators, document, settings)
+        await _verify_object_binding(
+            artifacts, revision.locators, document, settings, revision.original
+        )
         original = await artifacts.read_original(revision.locators[0])
         normalized = await artifacts.read_normalized(revision.locators[1])
         chunks = await artifacts.read_chunks(revision.locators[2])
         embeddings = await artifacts.read_embeddings(revision.locators[3])
         chunk_ids = tuple(str(chunk.chunk_id) for chunk in chunks)
         _require(
-            canonical_sha256(original) == document.source_content_hash
+            canonical_sha256(original) == revision.original.source_content_hash
             and normalized.source_hash == document.source_content_hash
             and str(normalized.document_id) == document.document_id
             and str(normalized.revision_id) == document.revision_id
@@ -625,7 +674,10 @@ async def _verify_blobs(
             and embeddings.chunk_ids == chunk_ids,
             "blob-survivor-binding",
         )
-    for locator in evidence[state.deleted.document_id].locators:
+    deleted = evidence[state.deleted.document_id]
+    # A managed revision's deletion keeps the original owned by the uploaded revision.
+    owned = deleted.locators if deleted.original is deleted.state else deleted.locators[1:]
+    for locator in owned:
         _require(await _blob_missing(artifacts, locator), "blob-deleted-artifact")
 
 
