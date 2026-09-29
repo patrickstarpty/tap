@@ -1145,3 +1145,71 @@ async def test_actual_model_falls_back_to_body_for_unknown_deployment_id():
 
     assert result.actual_model == "openai/gpt-4o-mini"
     assert result.actual_provider == "openai"
+
+
+def _switchable_catalog(models=DEFAULT_MODELS):
+    """A catalog whose LiteLLM endpoint can fail or hang after the first load."""
+
+    state = {"mode": "ok", "now": 1000.0}
+    release = None
+
+    async def respond(incoming: httpx.Request) -> httpx.Response:
+        nonlocal release
+        if state["mode"] == "down":
+            return httpx.Response(500, json={"error": "boom"})
+        if state["mode"] == "hang":
+            import asyncio
+
+            release = asyncio.Event()
+            await release.wait()
+        return httpx.Response(200, json={"data": list(models)})
+
+    catalog = LiteLLMCatalog(
+        base_url="https://litellm.example",
+        api_key="private-provider-key",
+        client=httpx.AsyncClient(
+            base_url="https://litellm.example", transport=httpx.MockTransport(respond)
+        ),
+        clock=lambda: state["now"],
+    )
+    return catalog, state
+
+
+@pytest.mark.asyncio
+async def test_health_problems_fail_when_litellm_dies_after_first_load():
+    catalog, state = _switchable_catalog()
+    gateway = configured_gateway(success, catalog=catalog)
+    assert await gateway.health_problems() == ()
+
+    state["mode"] = "down"
+
+    assert await gateway.health_problems() == ("LiteLLM model catalog unavailable",)
+    assert (await catalog.routes()).get("qwen-plus") is not None
+
+
+@pytest.mark.asyncio
+async def test_health_problems_report_skipped_catalog_entries():
+    models = (*DEFAULT_MODELS, model_entry("Bad_Name", "chat", supports_response_schema=True))
+    gateway = configured_gateway(success, models=models)
+
+    problems = await gateway.health_problems()
+
+    assert len(problems) == 1
+    assert problems[0].startswith("LiteLLM model skipped: Bad_Name (")
+
+
+@pytest.mark.asyncio
+async def test_upstream_lookup_after_a_paid_call_never_touches_the_catalog():
+    catalog, state = _switchable_catalog()
+
+    def respond(incoming):
+        # The catalog expires and hangs while the paid call is in flight.
+        state["now"] += 3600
+        state["mode"] = "hang"
+        return _headers_response({"x-litellm-model-id": "deployment-qwen-plus"}, "qwen-plus")(
+            incoming
+        )
+
+    result = await configured_gateway(respond, catalog=catalog).chat(request())
+
+    assert result.actual_model == "dashscope/qwen-plus"

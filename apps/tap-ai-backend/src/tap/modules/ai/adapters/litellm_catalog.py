@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -15,6 +17,10 @@ import httpx
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
 
 _SUPPORTED_MODES = ("chat", "embedding")
+# Public contract bounds (`ModelCatalogPage.items`, `ModelCatalogItem.alias/display_name`).
+MAX_CATALOG_MODELS = 32
+MAX_MODEL_TEXT = 128
+MODEL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +38,8 @@ class LiteLLMRoutes:
     models: Mapping[str, LiteLLMModel]
     # LiteLLM deployment id (`model_info.id`, echoed as `x-litellm-model-id`) → upstream model.
     deployments: Mapping[str, str] = field(default_factory=dict)
+    # Operator-safe reasons for LiteLLM entries left out of the public catalog.
+    skipped: tuple[str, ...] = ()
 
     def get(self, name: str) -> LiteLLMModel | None:
         return self.models.get(name)
@@ -73,6 +81,9 @@ class ModelRoles:
             return [f"{variable}={model_name} is not a known model"]
         if model.mode != expected_mode:
             return [f"{variable}={model_name} has mode {model.mode}, expected {expected_mode}"]
+        if expected_mode == "chat" and not model.supports_response_schema:
+            # Grounded and Agent answers always use structured output.
+            return [f"{variable}={model_name} does not support response schema"]
         return []
 
 
@@ -148,10 +159,18 @@ def _parse_routes(body: dict[str, Any]) -> LiteLLMRoutes:
             raise ModelGatewayUnavailable()
         grouped.setdefault(name, []).append(row)
     models: dict[str, LiteLLMModel] = {}
+    skipped: list[str] = []
     for name, entries in grouped.items():
         merged = _merge(entries)
-        if merged is not None:
-            models[name] = merged
+        if merged is None:
+            continue
+        reason = _contract_violation(merged)
+        if reason is None and len(models) >= MAX_CATALOG_MODELS:
+            reason = f"catalog limit {MAX_CATALOG_MODELS} reached"
+        if reason is not None:
+            skipped.append(f"LiteLLM model skipped: {name[:64]} ({reason})")
+            continue
+        models[name] = merged
     deployments: dict[str, str] = {}
     for row in rows:
         model_info = row.get("model_info")
@@ -166,7 +185,17 @@ def _parse_routes(body: dict[str, Any]) -> LiteLLMRoutes:
             and len(upstream) <= 256
         ):
             deployments[deployment_id] = upstream
-    return LiteLLMRoutes(models, deployments)
+    return LiteLLMRoutes(models, deployments, tuple(skipped))
+
+
+def _contract_violation(model: LiteLLMModel) -> str | None:
+    if len(model.name) > MAX_MODEL_TEXT:
+        return f"name exceeds {MAX_MODEL_TEXT} characters"
+    if MODEL_NAME_PATTERN.fullmatch(model.name) is None:
+        return "name must be lowercase letters, digits, dots or hyphens"
+    if len(model.display_name) > MAX_MODEL_TEXT:
+        return f"display name exceeds {MAX_MODEL_TEXT} characters"
+    return None
 
 
 class LiteLLMCatalog:
@@ -177,6 +206,7 @@ class LiteLLMCatalog:
         api_key: str,
         client: httpx.AsyncClient | None = None,
         ttl_seconds: float = 60.0,
+        timeout_seconds: float = 5.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         validate_litellm_base_url(base_url)
@@ -184,6 +214,14 @@ class LiteLLMCatalog:
             raise ValueError("model catalog requires a bounded credential")
         if ttl_seconds <= 0:
             raise ValueError("model catalog requires a positive ttl")
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or not 0 < timeout_seconds <= 60
+        ):
+            raise ValueError("model catalog requires a bounded timeout")
+        self.timeout_seconds = float(timeout_seconds)
         self._base_url = base_url
         self._api_key = api_key
         self._owns_client = client is None
@@ -194,45 +232,68 @@ class LiteLLMCatalog:
         self._routes: LiteLLMRoutes | None = None
         self._fetched_at: float | None = None
 
+    def cached_routes(self) -> LiteLLMRoutes | None:
+        """Last successfully loaded routes, without any network access."""
+
+        return self._routes
+
     async def routes(self) -> LiteLLMRoutes:
-        now = self._clock()
-        if self._routes is not None and self._fetched_at is not None:
-            if now - self._fetched_at < self._ttl_seconds:
-                return self._routes
+        """Routes for model calls: refreshed after the TTL, stale on refresh failure."""
+
+        if self._is_fresh():
+            assert self._routes is not None
+            return self._routes
         async with self._lock:
-            now = self._clock()
-            if (
-                self._routes is not None
-                and self._fetched_at is not None
-                and now - self._fetched_at < self._ttl_seconds
-            ):
+            if self._is_fresh():
+                assert self._routes is not None
                 return self._routes
             try:
-                routes = await self._fetch()
-            except (
-                httpx.HTTPError,
-                ValueError,
-                TypeError,
-                KeyError,
-                ModelGatewayUnavailable,
-            ):
+                return await self._refresh()
+            except ModelGatewayUnavailable:
                 if self._routes is not None:
                     return self._routes
-                raise ModelGatewayUnavailable() from None
-            self._routes = routes
-            self._fetched_at = self._clock()
-            return routes
+                raise
+
+    async def fresh_routes(self) -> LiteLLMRoutes:
+        """Routes for health checks: always fetched; never falls back to the cache."""
+
+        async with self._lock:
+            return await self._refresh()
+
+    def _is_fresh(self) -> bool:
+        return (
+            self._routes is not None
+            and self._fetched_at is not None
+            and self._clock() - self._fetched_at < self._ttl_seconds
+        )
+
+    async def _refresh(self) -> LiteLLMRoutes:
+        try:
+            routes = await self._fetch()
+        except (
+            httpx.HTTPError,
+            ValueError,
+            TypeError,
+            KeyError,
+            ModelGatewayUnavailable,
+        ):
+            raise ModelGatewayUnavailable() from None
+        self._routes = routes
+        self._fetched_at = self._clock()
+        return routes
 
     async def _fetch(self) -> LiteLLMRoutes:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
+                timeout=self.timeout_seconds,
                 transport=httpx.AsyncHTTPTransport(retries=0),
             )
         async with self._client.stream(
             "GET",
             self._base_url.rstrip("/") + "/v1/model/info",
             headers={"authorization": f"Bearer {self._api_key}"},
+            timeout=self.timeout_seconds,
         ) as response:
             response.raise_for_status()
             raw = bytearray()

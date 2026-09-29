@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from tap.interfaces.http.app import create_app
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
+from tap.modules.ai.domain.models import ModelCapability, ModelDescriptor
 from tap.modules.chat.application.conversations import (
     ConversationService,
     InMemoryConversationRepository,
@@ -21,6 +22,55 @@ from tap.modules.chat.domain.conversations import (
     TurnInput,
 )
 from tests.conftest import validation_http_services
+
+STRUCTURED_CHAT_MODEL = ModelDescriptor(
+    "qwen-plus",
+    "Qwen Plus",
+    frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
+)
+CHAT_ONLY_MODEL = ModelDescriptor("qwen-flash", "Qwen Flash", frozenset({ModelCapability.CHAT}))
+
+
+@pytest.mark.parametrize("model_alias", ["missing-model", "qwen-flash"])
+def test_conversation_with_unknown_or_chat_only_model_is_model_unavailable(model_alias):
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Models:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            return [STRUCTURED_CHAT_MODEL, CHAT_ONLY_MODEL]
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_conversation_selection(self, _revision_ids):
+            raise AssertionError("An unavailable model must fail before Knowledge selection")
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={"message": "Hello", "modelAlias": model_alias},
+        headers={"Idempotency-Key": f"unavailable-{model_alias}"},
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"].endswith("/model-unavailable")
+    assert conversations.repository.values == {}
 
 
 def test_conversation_routes_are_registered_and_blank_first_message_is_rejected():
@@ -96,7 +146,7 @@ def test_conversation_accepts_a_model_only_turn_without_knowledge_revisions():
         scope = VALIDATION_SCOPE
 
         async def list_models(self, _scope):
-            return [SimpleNamespace(alias="qwen-plus")]
+            return [STRUCTURED_CHAT_MODEL]
 
     class Knowledge:
         scope = VALIDATION_SCOPE
@@ -138,7 +188,7 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
         scope = VALIDATION_SCOPE
 
         async def list_models(self, _scope):
-            return [SimpleNamespace(alias="qwen-plus")]
+            return [STRUCTURED_CHAT_MODEL]
 
     class Assets:
         scope = VALIDATION_SCOPE
@@ -247,7 +297,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
         scope = VALIDATION_SCOPE
 
         async def list_models(self, _scope):
-            return [SimpleNamespace(alias="qwen-plus")]
+            return [STRUCTURED_CHAT_MODEL]
 
     class Knowledge:
         scope = VALIDATION_SCOPE

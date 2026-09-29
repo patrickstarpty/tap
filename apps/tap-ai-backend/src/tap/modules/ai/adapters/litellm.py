@@ -110,11 +110,12 @@ class LiteLLMModelGateway:
         return chat + embedding
 
     async def health_problems(self) -> tuple[str, ...]:
+        # Health must observe LiteLLM now; model calls may keep using the stale cache.
         try:
-            routes = await self._catalog.routes()
+            routes = await self._catalog.fresh_routes()
         except ModelGatewayUnavailable:
             return ("LiteLLM model catalog unavailable",)
-        return self._config.roles.problems(routes)
+        return self._config.roles.problems(routes) + routes.skipped
 
     async def chat(self, request: ModelRequest) -> ModelResult:
         return await self._execute(request, ModelOperation.CHAT)
@@ -321,7 +322,7 @@ class LiteLLMModelGateway:
                             }
                         )
                 body, headers = await self._post(request, payload)
-                return self._normalize(request, body, headers, await self._upstream_model(headers))
+                return self._normalize(request, body, headers, self._upstream_model(headers))
         except ModelGatewayRejected:
             raise
         except (
@@ -387,13 +388,14 @@ class LiteLLMModelGateway:
                     raise ModelGatewayUnavailable() from None
         raise ModelGatewayUnavailable()
 
-    async def _upstream_model(self, headers: httpx.Headers) -> str | None:
-        """Map LiteLLM's served deployment id to its configured upstream model, if known."""
+    def _upstream_model(self, headers: httpx.Headers) -> str | None:
+        """Map LiteLLM's served deployment id to its upstream model from cached routes only."""
 
         deployment_id = headers.get("x-litellm-model-id")
-        if not deployment_id:
+        routes = self._catalog.cached_routes()
+        if not deployment_id or routes is None:
             return None
-        return (await self._catalog.routes()).upstream_model(deployment_id)
+        return routes.upstream_model(deployment_id)
 
     def _normalize(
         self,

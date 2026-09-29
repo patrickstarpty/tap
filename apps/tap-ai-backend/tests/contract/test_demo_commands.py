@@ -2079,7 +2079,13 @@ def _model_info(*names: str):  # type: ignore[no-untyped-def]
         200,
         json={
             "data": [
-                {"model_name": name, "model_info": {"mode": modes.get(name, "chat")}}
+                {
+                    "model_name": name,
+                    "model_info": {
+                        "mode": modes.get(name, "chat"),
+                        "supports_response_schema": modes.get(name, "chat") == "chat",
+                    },
+                }
                 for name in names
             ]
         },

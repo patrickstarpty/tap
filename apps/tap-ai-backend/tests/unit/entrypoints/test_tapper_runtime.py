@@ -2271,7 +2271,10 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
             200,
             json={
                 "data": [
-                    {"model_name": "qwen-plus", "model_info": {"mode": "chat"}},
+                    {
+                        "model_name": "qwen-plus",
+                        "model_info": {"mode": "chat", "supports_response_schema": True},
+                    },
                     {"model_name": "text-embedding-v4", "model_info": {"mode": "embedding"}},
                 ]
             },

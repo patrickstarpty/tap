@@ -192,7 +192,7 @@ make demo-dev
 
 模型调用只有一条路径：`ModelGateway → LiteLLM`。模型目录由 LiteLLM `GET /v1/model/info` 动态提供并缓存 60 秒，唯一配置来源是 `deploy/local/litellm/config.yaml`；新增模型只改这份配置并重启 LiteLLM，后端无需改代码或重启，详见 [LiteLLM 模型目录指南](docs/guides/2026-09-29-litellm-models.md)。
 
-该 Demo 的模型配置只来自服务端 `.env`，不在 UI 或单次请求暴露：
+模型角色由服务端 `.env` 指定；供应商凭据与上游模型不在 UI 或单次请求暴露。会话级模型选择器列出 LiteLLM 目录中 `mode: chat` 且 `supports_response_schema: true` 的模型，新会话默认选中 `TAPPER_DEFAULT_CHAT_MODEL`，所选模型随会话提交；不在目录中的模型返回 `model-unavailable`：
 
 ```dotenv
 TAPPER_MODEL_BACKEND=litellm

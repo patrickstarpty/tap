@@ -36,6 +36,12 @@ class StaticLiteLLMCatalog(LiteLLMCatalog):
     async def routes(self) -> LiteLLMRoutes:
         return self._static_routes
 
+    async def fresh_routes(self) -> LiteLLMRoutes:
+        return self._static_routes
+
+    def cached_routes(self) -> LiteLLMRoutes | None:
+        return self._static_routes
+
     async def aclose(self) -> None:
         return None
 

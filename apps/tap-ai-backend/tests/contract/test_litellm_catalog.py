@@ -296,3 +296,136 @@ async def test_keeps_deployment_id_to_upstream_model_map():
     assert routes.upstream_model("deployment-plus") == "dashscope/qwen-plus"
     assert routes.upstream_model("unknown") is None
     await catalog.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fresh_routes_fails_after_refresh_failure_while_routes_keeps_cache():
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return model_info_response(deployment("qwen-plus"))
+        return httpx.Response(500, json={"error": "boom"})
+
+    catalog = catalog_with_handler(handler)
+
+    assert (await catalog.fresh_routes()).get("qwen-plus") is not None
+    with pytest.raises(ModelGatewayUnavailable):
+        await catalog.fresh_routes()
+    assert (await catalog.routes()).get("qwen-plus") is not None
+    assert catalog.cached_routes() is not None
+    await catalog.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fresh_routes_success_updates_cache():
+    names = iter(("qwen-plus", "qwen-max"))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return model_info_response(deployment(next(names)))
+
+    catalog = catalog_with_handler(handler)
+    await catalog.routes()
+    await catalog.fresh_routes()
+
+    cached = catalog.cached_routes()
+    assert cached is not None and cached.get("qwen-max") is not None
+    assert (await catalog.routes()).get("qwen-max") is not None
+    await catalog.aclose()
+
+
+def test_catalog_has_explicit_default_request_timeout():
+    catalog = LiteLLMCatalog(base_url="https://litellm.example", api_key="test-key")
+
+    assert catalog.timeout_seconds == 5.0
+    with pytest.raises(ValueError):
+        LiteLLMCatalog(base_url="https://litellm.example", api_key="k", timeout_seconds=0)
+
+
+@pytest.mark.asyncio
+async def test_catalog_request_carries_explicit_timeout():
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(request.extensions["timeout"])
+        return model_info_response(deployment("qwen-plus"))
+
+    catalog = catalog_with_handler(handler, timeout_seconds=2.5)
+    await catalog.routes()
+
+    assert captured["read"] == 2.5
+    await catalog.aclose()
+
+
+@pytest.mark.asyncio
+async def test_entries_violating_contract_limits_are_skipped_and_reported():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return model_info_response(
+            deployment("qwen-plus", tapper_display_name="Qwen Plus"),
+            deployment("qwen-long", tapper_display_name="x" * 129),
+            deployment("m" * 129),
+            deployment("Bad_Name"),
+            deployment("text-embedding-v4", mode="embedding"),
+        )
+
+    catalog = catalog_with_handler(handler)
+    routes = await catalog.routes()
+
+    assert set(routes.models) == {"qwen-plus", "text-embedding-v4"}
+    assert any(item.startswith("LiteLLM model skipped: qwen-long (") for item in routes.skipped)
+    assert any("Bad_Name" in item for item in routes.skipped)
+    assert len(routes.skipped) == 3
+    await catalog.aclose()
+
+
+@pytest.mark.asyncio
+async def test_catalog_keeps_first_32_models_in_litellm_order():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return model_info_response(
+            *(deployment(f"model-{index:02d}") for index in range(33)),
+            deployment("image-gen", mode="image_generation"),
+        )
+
+    catalog = catalog_with_handler(handler)
+    routes = await catalog.routes()
+
+    assert list(routes.models) == [f"model-{index:02d}" for index in range(32)]
+    assert routes.skipped == ("LiteLLM model skipped: model-32 (catalog limit 32 reached)",)
+    await catalog.aclose()
+
+
+def test_default_chat_role_requires_response_schema():
+    from tap.modules.ai.adapters.litellm_catalog import LiteLLMRoutes
+
+    routes = LiteLLMRoutes(
+        models={
+            "qwen-flash": LiteLLMModel("qwen-flash", "Qwen Flash", "chat", False, False, False),
+            "text-embedding-v4": LiteLLMModel(
+                "text-embedding-v4", "text-embedding-v4", "embedding", False, False, False
+            ),
+        }
+    )
+
+    problems = ModelRoles("qwen-flash", "text-embedding-v4", None).problems(routes)
+
+    assert problems == ("TAPPER_DEFAULT_CHAT_MODEL=qwen-flash does not support response schema",)
+
+
+def test_vision_role_requires_response_schema():
+    from tap.modules.ai.adapters.litellm_catalog import LiteLLMRoutes
+
+    routes = LiteLLMRoutes(
+        models={
+            "qwen-plus": LiteLLMModel("qwen-plus", "Qwen Plus", "chat", False, True, False),
+            "vl": LiteLLMModel("vl", "VL", "chat", True, False, False),
+            "text-embedding-v4": LiteLLMModel(
+                "text-embedding-v4", "text-embedding-v4", "embedding", False, False, False
+            ),
+        }
+    )
+
+    problems = ModelRoles("qwen-plus", "text-embedding-v4", "vl").problems(routes)
+
+    assert problems == ("TAPPER_VISION_MODEL=vl does not support response schema",)
