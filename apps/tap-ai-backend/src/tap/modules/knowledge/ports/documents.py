@@ -600,11 +600,13 @@ class StagingScavenger(Protocol):
 class ArtifactStore(Protocol):
     """Durable Knowledge artifact storage; S3/MinIO (`KnowledgeArtifactStore`) is the only one.
 
-    Implementations must bind every locator to its revision and kind, verify content
-    digests on read, reject malformed or foreign references with `ArtifactIntegrityFailure`,
-    report references they do not serve and provider faults as `ArtifactUnavailable`,
-    validate a whole deletion batch before any mutation, and keep staging scavenging
-    bounded. A new provider must pass `exercise_artifact_round_trip` in
+    Implementations must bind every locator to its revision and kind and verify content
+    digests on read. Classify references by prefix: a locator without the `art1.` prefix
+    or a staging key without the `stg1.` prefix is not served by this provider and raises
+    `ArtifactUnavailable`; an `art1.`/`stg1.` reference whose payload is malformed or whose
+    binding (revision, kind, digest) differs raises `ArtifactIntegrityFailure`. Provider
+    faults raise `ArtifactUnavailable`. Validate a whole deletion batch before any
+    mutation and keep staging scavenging bounded. A new provider must pass `exercise_artifact_round_trip` in
     `tests/contract/artifact_store_conformance.py` (run by
     `tests/contract/test_object_artifacts.py` and `tests/integration/test_minio_artifacts.py`).
     """

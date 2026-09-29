@@ -18,6 +18,8 @@
 | `supports_function_calling` | 是否支持函数/工具调用 |
 | `tapper_display_name` | 唯一的 Tapper 自定义字段，可选；前端展示名，缺省回退为 `model_name` |
 
+视觉 chat 模型（例如 `qwen3-vl-plus`）只要同时声明 `supports_response_schema: true`，也会出现在会话模型选择器中，这是预期行为：选择器只看 `mode: chat` 与结构化输出能力，不区分是否支持图片。
+
 同名的多个部署条目（LiteLLM 负载均衡的多副本）会合并为一个模型：`mode` 必须一致，能力字段取交集，`tapper_display_name` 取第一个非空值。
 
 ## 命名规则
@@ -40,4 +42,15 @@
 
 ## 目录 60 秒缓存
 
-`LiteLLMCatalog.routes()` 首次调用时请求 `GET {LITELLM_BASE_URL}/v1/model/info`（请求超时默认 5 秒），结果缓存 60 秒；缓存内的后续调用直接复用，不重新请求。模型调用刷新失败时沿用上一次成功的结果；如果从未成功获取过，则抛出 `ModelGatewayUnavailable`，HTTP 层映射为 503 Problem Details。健康检查使用 `fresh_routes()` 每次实时请求目录，不使用缓存，因此 LiteLLM 停止后 `/health/ready` 会报告 `LiteLLM model catalog unavailable`。目录同时维护一份 `model_info.id → litellm_params.model` 的部署映射，用于把响应头 `x-litellm-model-id` 换算成实际命中的上游模型（只读缓存，不在模型调用成功后再请求目录），记录在 `ModelResult.actual_model`/`actual_provider` 中，不因为命中了 fallback 或负载均衡的另一个部署而拒绝请求。
+`LiteLLMCatalog.routes()` 首次调用时请求 `GET {LITELLM_BASE_URL}/v1/model/info`（请求超时默认 5 秒），结果缓存 60 秒；缓存内的后续调用直接复用，不重新请求。模型调用刷新失败时沿用上一次成功的结果；如果从未成功获取过，则抛出 `ModelGatewayUnavailable`，HTTP 层映射为 503 Problem Details。健康检查使用 `fresh_routes()` 每次实时请求目录，不使用缓存，因此 LiteLLM 停止后 `/health/ready` 会报告 `LiteLLM model catalog unavailable`；该请求在锁外进行，只在替换缓存时短暂持锁，慢的健康检查不会阻塞模型调用读取缓存。目录同时维护一份 `model_info.id → litellm_params.model` 的部署映射，用于把响应头 `x-litellm-model-id` 换算成实际命中的上游模型（只读缓存，不在模型调用成功后再请求目录），记录在 `ModelResult.actual_model`/`actual_provider` 中，不因为命中了 fallback 或负载均衡的另一个部署而拒绝请求。
+
+## 会话模型错误：422 与 503
+
+创建会话或追加轮次时，后端先按目录校验 `modelAlias`：
+
+| 情况 | HTTP | Problem 类型 | 可重试 |
+| --- | --- | --- | --- |
+| 模型不在目录中，或是缺少结构化输出能力的 chat 模型 | 422 | `model-not-selectable` | 否；客户端应改选目录中的模型 |
+| 目录暂不可用（LiteLLM 停止、从未成功加载目录） | 503 | `model-unavailable` | 是 |
+
+前端对 422 不做自动重试；503 表示临时故障，可稍后重试。
