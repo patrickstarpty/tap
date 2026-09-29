@@ -77,3 +77,93 @@ it("retries a failed verification", () => {
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(screen.getByText(/HEALTH_DISCLOSURE_REQUIRED/)).toBeVisible();
 });
+
+it("shows the cited document's name in the header", () => {
+  render(
+    <CitationPanel
+      citation={citation()}
+      locale="en"
+      onClose={vi.fn()}
+      onOpenOriginal={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByText("Life underwriting guide · v1.2.md"),
+  ).toBeVisible();
+});
+
+it("shows the beneficiary workflow passage for the workflow source", () => {
+  render(
+    <CitationPanel
+      citation={citation({
+        source: {
+          id: "sample-beneficiary",
+          name: "Beneficiary change workflow.docx",
+          origin: "knowledge-base",
+        },
+      })}
+      locale="en"
+      onClose={vi.fn()}
+      onOpenOriginal={vi.fn()}
+    />,
+  );
+  expect(screen.getByText(/100%/)).toBeVisible();
+  expect(screen.getByText(/immediately/)).toBeVisible();
+});
+
+it("shows a contradictory passage for the beneficiary test cases source", () => {
+  render(
+    <CitationPanel
+      citation={citation({
+        source: {
+          id: "sample-test-cases",
+          name: "Beneficiary test cases.xlsx",
+          origin: "knowledge-base",
+        },
+      })}
+      locale="en"
+      onClose={vi.fn()}
+      onOpenOriginal={vi.fn()}
+    />,
+  );
+  expect(screen.getByText(/insurer confirms/)).toBeVisible();
+});
+
+it("shows a neutral passage built from the source description for other sources", () => {
+  render(
+    <CitationPanel
+      citation={citation({
+        source: {
+          id: "sample-exploratory",
+          name: "Exploratory testing checklist.md",
+          origin: "knowledge-base",
+          description:
+            "Permissions, boundary values and recovery scenarios.",
+        },
+      })}
+      locale="en"
+      onClose={vi.fn()}
+      onOpenOriginal={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByText(/Permissions, boundary values and recovery scenarios\./),
+  ).toBeVisible();
+});
+
+it("hides Open original and shows an unavailable message when the source was removed", () => {
+  render(
+    <CitationPanel
+      citation={citation({ sourceRemoved: true })}
+      locale="en"
+      onClose={vi.fn()}
+      onOpenOriginal={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByText("This source is no longer available."),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Open original" }),
+  ).not.toBeInTheDocument();
+});

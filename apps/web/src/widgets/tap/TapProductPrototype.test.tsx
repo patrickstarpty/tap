@@ -391,6 +391,43 @@ it("opens the Library without a review dialog from a sample-file citation", asyn
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
+it("does not open a document review for a citation whose source was deleted", async () => {
+  render(<TapProductPrototype />);
+  selectUnderwritingSources();
+  askHealthDisclosureQuestion();
+  await waitFor(
+    () =>
+      expect(
+        screen.getByRole("button", {
+          name: "[1] Life underwriting guide · v1.2.md",
+        }),
+      ).toBeVisible(),
+    { timeout: 3_000 },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "View Life underwriting guide · v1.2.md",
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete source" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  fireEvent.click(screen.getByRole("button", { name: "Tapper" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "[1] Life underwriting guide · v1.2.md",
+    }),
+  );
+  expect(
+    screen.getByText("This source is no longer available."),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Open original" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
 it("expands the collapsed sources panel when a citation is opened", async () => {
   render(<TapProductPrototype />);
   selectUnderwritingSources();

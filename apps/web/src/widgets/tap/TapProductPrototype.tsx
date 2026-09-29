@@ -743,10 +743,12 @@ export function TapProductPrototype() {
         source: {
           ...citation.source,
           hasNewerRevision: fullSource?.hasNewerRevision,
+          description: fullSource?.description,
         },
         verificationFailed: takePrototypeFault(
           "citation-verification-failed",
         ),
+        sourceRemoved: fullSource === undefined,
       });
       if (sourcesCollapsed) expandKnowledgeSources();
     },
@@ -754,12 +756,13 @@ export function TapProductPrototype() {
   );
   const openCitationOriginal = useCallback(
     (sourceId: string) => {
+      if (!sources.some((source) => source.id === sourceId)) return;
       setActiveModule("library");
       if (review.sources.some((source) => source.id === sourceId)) {
         review.inspect(sourceId);
       }
     },
-    [review],
+    [review, sources],
   );
   const activeConversation =
     conversations.find(
