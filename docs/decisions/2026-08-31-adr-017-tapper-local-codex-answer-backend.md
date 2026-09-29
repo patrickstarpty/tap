@@ -51,4 +51,4 @@ Tapper 本地 Demo 当前用一个 `ModelPort` 同时承担 query Embedding 和 
 - 文档 prompt injection 的影响被限制在候选回答文本；任何工具事件、非法 claim 或 citation label 都使回答失败。
 - 企业 Knowledge Chat、Agent Runtime 和生产凭据边界不变；若未来要共享部署该能力，必须另立 RFC/ADR。
 
-详细设计和验收门禁见 [RFC-006](../proposals/2026-08-31-rfc-006-tapper-local-codex-answer-backend.md)。
+详细设计和验收门禁见 [RFC-006](../archive/proposals/2026-08-31-rfc-006-tapper-local-codex-answer-backend.md)。

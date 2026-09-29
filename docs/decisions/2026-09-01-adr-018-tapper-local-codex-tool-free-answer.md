@@ -44,4 +44,4 @@ related-rfcs:
 - 默认 300 秒 timeout、单 API 进程并发 1、有界 stdin/stdout/stderr/output、进程组清理、grounded claim/citation 复验和脱敏日志边界保持不变。
 - Tapper 本地仍依赖 LiteLLM 完成文档/query Embedding；本决策不表示本地 `doc` Milvus 投影已完成企业四索引、Entra、共享凭据或完整 Phase 1。
 
-实现与验收证据见 [RFC-006](../proposals/2026-08-31-rfc-006-tapper-local-codex-answer-backend.md)。
+实现与验收证据见 [RFC-006](../archive/proposals/2026-08-31-rfc-006-tapper-local-codex-answer-backend.md)。
