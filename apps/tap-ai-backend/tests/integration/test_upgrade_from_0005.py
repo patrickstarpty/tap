@@ -309,6 +309,8 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
             )
     finally:
         sync_engine.dispose()
+    # The current repositories read the head schema (e.g. 0024 conversation soft delete).
+    owned_project_mysql.upgrade("head")
 
     async def scenario() -> None:
         engine = create_async_engine(
@@ -598,6 +600,8 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
                 )
     finally:
         sync_engine.dispose()
+    # The current runtime reads the head schema (e.g. 0024 conversation soft delete).
+    owned_project_mysql.upgrade("head")
 
     async def scenario() -> None:
         class Resource:
@@ -633,7 +637,12 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
             tapper_runtime, "_create_embeddings", lambda _settings, **_kwargs: model
         )
         monkeypatch.setattr(tapper_runtime, "_create_search", create_search)
-        monkeypatch.setattr(tapper_runtime, "_create_models_probe_client", lambda _settings: None)
+
+        async def create_document_index(_settings, _engine):
+            # The managed-chunk Milvus index is outside the 0012 shape under test.
+            return Resource()
+
+        monkeypatch.setattr(tapper_runtime, "_create_document_index", create_document_index)
         monkeypatch.setattr(tapper_runtime, "_create_readiness", lambda **_kwargs: object())
         settings = tapper_runtime.TapperSettings.from_mapping(S3_SETTINGS)
         runtime = await tapper_runtime.create_api_runtime(settings)
