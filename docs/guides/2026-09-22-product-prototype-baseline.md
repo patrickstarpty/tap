@@ -55,3 +55,11 @@ corepack pnpm --dir apps/web dev --port 15176
 Library 在同一文档详情中提供切片、切片设置与原件三个入口，采用保存索引后直接使用的流程。完整原型仍使用浏览器样例数据；真实服务端持久化与索引位于 TAP AI 应用。能力与验收见[实施计划](../archive/plans/2026-09-27-dify-knowledge-chunk-parity.md)。
 
 [变更前](../assets/knowledge-chunks-2026-09-27/tap-chunks-before-detail.png) · [变更后](../assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png) · [移动布局](../assets/knowledge-chunks-2026-09-27/tap-chunks-after-mobile.png) · [跨模块旅程](../assets/knowledge-chunks-2026-09-27/tap-chunks-journey-automation.png)。
+
+## 2026-09-29 Tapper 交互补齐
+
+`apps/tap-ai-frontend` 实现中已存在、`/prototype` 缺失的 Tapper 交互（回答证据与引用、失败/空态/加载/重试、Library 来源管理、Agent/Skill 内置只读与命名校验）已补回 `/prototype`，使其重新成为唯一完整设计基准。范围与验收标准见[原型 Tapper 交互补齐设计](../superpowers/specs/2026-09-29-prototype-tapper-interaction-sync-design.md)；本轮新增的 30 个状态截图（自然触发与故障注入）见[原型状态截图集](2026-09-29-prototype-state-gallery.md)。本轮同时做了一次样式对齐，为已有类名钩子但缺少样式的新组件（来源详情、上传切片设置与预览、图谱视图切换、答案证据与引用侧栏、各类失败/空态提示）补充了复用现有变量与相邻模式的最小 CSS。
+
+**前后对照**：在相同 1280×720 视口、2× 像素密度下重新采集了 [`before`](../assets/prototype-states/before/) 与 [`after`](../assets/prototype-states/after/) 两组 9 张截图（Tapper 新对话、Tapper 回答、Library 列表、Library 图谱、Agents、Skills、Test Management、Low Code Automation、Test Insights）。逐张比较确认：Test Management、Low Code Automation、Test Insights 三张像素级一致（无变化）；Agents、Skills、Library 列表、Tapper 回答的差异集中在 A–D 相关区域（内置标记、图谱视图切换、回答证据与引用侧栏等新增 UI）；Tapper 新对话页因侧栏示例会话历史增加（用于验证"加载更多"分页）而有细微差异，属预期变化，不影响页面结构或其余内容。
+
+**新增规则**：新交互先在 `/prototype` 设计并确认，TAP AI 实现按原型开发，不直接在实现中设计新交互；异常状态经 `prototype/prototypeFaults.ts` 在页面外注入，页面本身不出现任何触发这些状态的开关或场景选择器。
