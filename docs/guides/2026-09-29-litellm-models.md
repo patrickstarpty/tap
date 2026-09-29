@@ -24,7 +24,7 @@
 
 `model_name` 即模型名，按模型命名：全小写、连字符，`<模型家族>-<型号>`，不含角色或供应商账号。上游模型直接写在配置中，`.env` 只放凭据。
 
-目录遵守公共契约上限：`model_name` 须匹配 `^[a-z0-9]+(?:[.-][a-z0-9]+)*$` 且不超过 128 个字符，展示名不超过 128 个字符，按 LiteLLM 返回顺序最多保留前 32 个 chat/embedding 模型。不符合的条目被跳过，其余模型照常可用；`/health/ready` 的 models 组件以 `LiteLLM model skipped: <name> (<原因>)` 报告被跳过的条目。
+目录遵守公共契约上限：`model_name` 须匹配 `^[a-z0-9]+(?:[.-][a-z0-9]+)*$` 且不超过 128 个字符，展示名不超过 128 个字符，按 LiteLLM 返回顺序最多保留前 32 个 chat/embedding 模型。不符合的条目被跳过，其余模型照常可用，就绪状态保持正常：`/health/ready` 的 models 组件仍为 `ok`，只在 `detail` 中以 `LiteLLM model skipped: <name> (<原因>)` 提示被跳过的条目。若被跳过的是角色模型（`TAPPER_DEFAULT_CHAT_MODEL`、`TAPPER_EMBEDDING_MODEL`、`TAPPER_VISION_MODEL`），则按角色问题处理：models 组件失败，`detail` 为 `TAPPER_<角色>_MODEL=<name> was skipped: <原因>`。
 
 ## 角色变量
 

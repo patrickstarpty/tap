@@ -38,8 +38,8 @@ class LiteLLMRoutes:
     models: Mapping[str, LiteLLMModel]
     # LiteLLM deployment id (`model_info.id`, echoed as `x-litellm-model-id`) → upstream model.
     deployments: Mapping[str, str] = field(default_factory=dict)
-    # Operator-safe reasons for LiteLLM entries left out of the public catalog.
-    skipped: tuple[str, ...] = ()
+    # LiteLLM entries left out of the public catalog: model name → operator-safe reason.
+    skipped: Mapping[str, str] = field(default_factory=dict)
 
     def get(self, name: str) -> LiteLLMModel | None:
         return self.models.get(name)
@@ -53,6 +53,12 @@ class ModelRoles:
     default_chat_model: str
     embedding_model: str
     vision_model: str | None
+
+    def names(self) -> frozenset[str]:
+        names = {self.default_chat_model, self.embedding_model}
+        if self.vision_model is not None:
+            names.add(self.vision_model)
+        return frozenset(names)
 
     def problems(self, routes: LiteLLMRoutes) -> tuple[str, ...]:
         problems: list[str] = []
@@ -77,6 +83,8 @@ class ModelRoles:
         self, variable: str, model_name: str, expected_mode: str, routes: LiteLLMRoutes
     ) -> list[str]:
         model = routes.get(model_name)
+        if model is None and model_name in routes.skipped:
+            return [f"{variable}={model_name} was skipped: {routes.skipped[model_name]}"]
         if model is None:
             return [f"{variable}={model_name} is not a known model"]
         if model.mode != expected_mode:
@@ -159,7 +167,7 @@ def _parse_routes(body: dict[str, Any]) -> LiteLLMRoutes:
             raise ModelGatewayUnavailable()
         grouped.setdefault(name, []).append(row)
     models: dict[str, LiteLLMModel] = {}
-    skipped: list[str] = []
+    skipped: dict[str, str] = {}
     for name, entries in grouped.items():
         merged = _merge(entries)
         if merged is None:
@@ -168,7 +176,7 @@ def _parse_routes(body: dict[str, Any]) -> LiteLLMRoutes:
         if reason is None and len(models) >= MAX_CATALOG_MODELS:
             reason = f"catalog limit {MAX_CATALOG_MODELS} reached"
         if reason is not None:
-            skipped.append(f"LiteLLM model skipped: {name[:64]} ({reason})")
+            skipped[name] = reason
             continue
         models[name] = merged
     deployments: dict[str, str] = {}
@@ -185,7 +193,7 @@ def _parse_routes(body: dict[str, Any]) -> LiteLLMRoutes:
             and len(upstream) <= 256
         ):
             deployments[deployment_id] = upstream
-    return LiteLLMRoutes(models, deployments, tuple(skipped))
+    return LiteLLMRoutes(models, deployments, skipped)
 
 
 def _contract_violation(model: LiteLLMModel) -> str | None:

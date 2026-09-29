@@ -528,7 +528,19 @@ def _consume_background_task(task: asyncio.Future[object]) -> None:
         pass
 
 
-ReadinessCheck = Callable[[], Awaitable[bool]]
+@dataclass(frozen=True, slots=True)
+class ReadinessNotice:
+    """A healthy check with operator-safe information surfaced as the component detail."""
+
+    detail: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.detail, str) or not self.detail.strip():
+            raise ValueError("readiness notice requires a detail")
+        object.__setattr__(self, "detail", self.detail[:2048])
+
+
+ReadinessCheck = Callable[[], Awaitable["bool | ReadinessNotice"]]
 
 
 class ReadinessProblem(Exception):
@@ -593,7 +605,7 @@ class ReadinessService:
                 name=name,
                 state=HealthComponentState.OK if healthy else HealthComponentState.FAILED,
                 remediation_code=None if healthy else self._REMEDIATION[name],
-                detail=None if healthy else detail,
+                detail=detail,
             )
             for name, (healthy, detail) in zip(self._ORDER, results, strict=True)
         ]
@@ -605,7 +617,10 @@ class ReadinessService:
     async def _bounded(self, check: ReadinessCheck) -> tuple[bool, str | None]:
         try:
             async with asyncio.timeout(self._timeout_seconds):
-                return await check() is True, None
+                result = await check()
+                if isinstance(result, ReadinessNotice):
+                    return True, result.detail
+                return result is True, None
         except asyncio.CancelledError:
             raise
         except ReadinessProblem as problem:
@@ -1324,7 +1339,7 @@ def _create_readiness(
         )
         return rows == ()
 
-    async def models_ready() -> bool:
+    async def models_ready() -> bool | ReadinessNotice:
         if settings.e2e_mode:
             embedding = await embeddings.embed("Tapper deterministic readiness")
             vector = embedding.vector
@@ -1342,9 +1357,11 @@ def _create_readiness(
         gateway = getattr(embeddings, "gateway", None)
         if not isinstance(gateway, LiteLLMModelGateway):
             return False
-        problems = await gateway.health_problems()
-        if problems:
-            raise ReadinessProblem("; ".join(problems))
+        health = await gateway.health()
+        if health.problems:
+            raise ReadinessProblem("; ".join(health.problems))
+        if health.notices:
+            return ReadinessNotice("; ".join(health.notices))
         return True
 
     return ReadinessService(

@@ -1188,14 +1188,34 @@ async def test_health_problems_fail_when_litellm_dies_after_first_load():
 
 
 @pytest.mark.asyncio
-async def test_health_problems_report_skipped_catalog_entries():
+async def test_skipped_non_role_entries_are_notices_not_problems():
     models = (*DEFAULT_MODELS, model_entry("Bad_Name", "chat", supports_response_schema=True))
     gateway = configured_gateway(success, models=models)
 
-    problems = await gateway.health_problems()
+    health = await gateway.health()
 
-    assert len(problems) == 1
-    assert problems[0].startswith("LiteLLM model skipped: Bad_Name (")
+    assert health.problems == ()
+    assert len(health.notices) == 1
+    assert health.notices[0].startswith("LiteLLM model skipped: Bad_Name (")
+    assert await gateway.health_problems() == ()
+
+
+@pytest.mark.asyncio
+async def test_skipped_role_model_is_a_role_problem():
+    models = (
+        model_entry(
+            "qwen-plus", "chat", supports_response_schema=True, tapper_display_name="x" * 129
+        ),
+        model_entry("text-embedding-v4", "embedding"),
+    )
+    gateway = configured_gateway(success, models=models)
+
+    health = await gateway.health()
+
+    assert health.notices == ()
+    assert health.problems == (
+        "TAPPER_DEFAULT_CHAT_MODEL=qwen-plus was skipped: display name exceeds 128 characters",
+    )
 
 
 @pytest.mark.asyncio

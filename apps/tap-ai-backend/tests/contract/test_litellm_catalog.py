@@ -374,9 +374,11 @@ async def test_entries_violating_contract_limits_are_skipped_and_reported():
     routes = await catalog.routes()
 
     assert set(routes.models) == {"qwen-plus", "text-embedding-v4"}
-    assert any(item.startswith("LiteLLM model skipped: qwen-long (") for item in routes.skipped)
-    assert any("Bad_Name" in item for item in routes.skipped)
-    assert len(routes.skipped) == 3
+    assert routes.skipped == {
+        "qwen-long": "display name exceeds 128 characters",
+        "m" * 129: "name exceeds 128 characters",
+        "Bad_Name": "name must be lowercase letters, digits, dots or hyphens",
+    }
     await catalog.aclose()
 
 
@@ -392,7 +394,7 @@ async def test_catalog_keeps_first_32_models_in_litellm_order():
     routes = await catalog.routes()
 
     assert list(routes.models) == [f"model-{index:02d}" for index in range(32)]
-    assert routes.skipped == ("LiteLLM model skipped: model-32 (catalog limit 32 reached)",)
+    assert routes.skipped == {"model-32": "catalog limit 32 reached"}
     await catalog.aclose()
 
 

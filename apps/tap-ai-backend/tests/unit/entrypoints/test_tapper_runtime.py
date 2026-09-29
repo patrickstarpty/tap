@@ -2190,10 +2190,29 @@ async def test_milvus_document_role_factory_owns_client_created_during_cancellat
     assert closed == ["tap_provisioner"]
 
 
+@pytest.mark.parametrize(
+    ("chat_info", "extra_rows", "expected_status", "expected_detail"),
+    [
+        ({}, [], "ready", None),
+        (
+            {},
+            [{"model_name": "Bad_Name", "model_info": {"mode": "chat"}}],
+            "ready",
+            "LiteLLM model skipped: Bad_Name (",
+        ),
+        (
+            {"tapper_display_name": "x" * 129},
+            [],
+            "unready",
+            "TAPPER_DEFAULT_CHAT_MODEL=qwen-plus was skipped",
+        ),
+    ],
+    ids=["clean", "skipped-non-role-is-notice", "skipped-role-fails"],
+)
 @pytest.mark.asyncio
-async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and_models_get() -> (
-    None
-):
+async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and_models_get(
+    chat_info, extra_rows, expected_status, expected_detail
+) -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
     expected_head = module._discover_alembic_head()
@@ -2273,9 +2292,14 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
                 "data": [
                     {
                         "model_name": "qwen-plus",
-                        "model_info": {"mode": "chat", "supports_response_schema": True},
+                        "model_info": {
+                            "mode": "chat",
+                            "supports_response_schema": True,
+                            **chat_info,
+                        },
                     },
                     {"model_name": "text-embedding-v4", "model_info": {"mode": "embedding"}},
+                    *extra_rows,
                 ]
             },
         )
@@ -2300,7 +2324,14 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
 
     result = await service.check()
 
-    assert result.status == "ready"
+    assert result.status == expected_status
+    models_component = next(item for item in result.components if item.name.value == "models")
+    if expected_detail is None:
+        assert models_component.detail is None
+    else:
+        assert models_component.detail is not None
+        assert expected_detail in models_component.detail
+    assert (models_component.state.value == "ok") is (expected_status == "ready")
     assert "redis-ping" in calls
     assert calls.count("blob:private") == 1
     assert calls.count("milvus-query:1") == 1

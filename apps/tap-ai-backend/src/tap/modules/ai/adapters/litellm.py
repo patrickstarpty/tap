@@ -66,6 +66,12 @@ class LiteLLMModelGatewayConfig:
             raise ValueError("model gateway timeout is invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class ModelHealth:
+    problems: tuple[str, ...]
+    notices: tuple[str, ...] = ()
+
+
 class LiteLLMModelGateway:
     def __init__(
         self,
@@ -109,13 +115,25 @@ class LiteLLMModelGateway:
         )
         return chat + embedding
 
-    async def health_problems(self) -> tuple[str, ...]:
+    async def health(self) -> ModelHealth:
+        """Failing problems (catalog down, role misconfigured) and informational notices."""
+
         # Health must observe LiteLLM now; model calls may keep using the stale cache.
         try:
             routes = await self._catalog.fresh_routes()
         except ModelGatewayUnavailable:
-            return ("LiteLLM model catalog unavailable",)
-        return self._config.roles.problems(routes) + routes.skipped
+            return ModelHealth(("LiteLLM model catalog unavailable",))
+        roles = self._config.roles
+        # A skipped role model is reported as a role problem, not as a notice.
+        notices = tuple(
+            f"LiteLLM model skipped: {name[:64]} ({reason})"
+            for name, reason in routes.skipped.items()
+            if name not in roles.names()
+        )
+        return ModelHealth(roles.problems(routes), notices)
+
+    async def health_problems(self) -> tuple[str, ...]:
+        return (await self.health()).problems
 
     async def chat(self, request: ModelRequest) -> ModelResult:
         return await self._execute(request, ModelOperation.CHAT)
