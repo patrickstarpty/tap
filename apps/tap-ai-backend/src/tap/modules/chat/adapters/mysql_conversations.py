@@ -31,6 +31,7 @@ from tap.modules.chat.adapters.mysql import chat_event, chat_turn
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
+    ConversationOwnership,
     InvalidConversationCursor,
 )
 from tap.modules.chat.domain.conversations import (
@@ -107,6 +108,8 @@ conversation = Table(
     Column("actor_id", String(128), nullable=False),
     Column("identity_mode", String(16), nullable=False),
     Column("identity_origin", String(16), nullable=False),
+    Column("deleted_at", DATETIME(fsp=6), nullable=True),
+    Column("deleted_by", String(128), nullable=True),
     UniqueConstraint("project_id", "conversation_id", name="uq_conversation_project_pk"),
     ForeignKeyConstraint(
         ["enterprise_id", "project_id"],
@@ -152,6 +155,20 @@ turn_artifact_link = _scoped(
     uniques=((("turn_id", "artifact_kind", "artifact_id"), "uq_turn_artifact_link_identity"),),
     parents=(("turn_id", "chat_turn", "turn_id", "fk_turn_artifact_link_turn"),),
 )
+
+
+_LIKE_ESCAPE = "!"
+
+
+def _title_pattern(query: str) -> str:
+    """Literal, case-insensitive substring pattern; LIKE wildcards never leak."""
+    escaped = (
+        query.lower()
+        .replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+    return f"%{escaped}%"
 
 
 def _naive(value):
@@ -386,6 +403,7 @@ class MysqlConversationRepository:
                     .where(
                         *scope_predicates(conversation, self.scope),
                         conversation.c.conversation_id == conversation_id,
+                        conversation.c.deleted_at.is_(None),
                     )
                     .with_for_update()
                 )
@@ -548,6 +566,7 @@ class MysqlConversationRepository:
                         select(conversation).where(
                             *scope_predicates(conversation, self.scope),
                             conversation.c.conversation_id == conversation_id,
+                            conversation.c.deleted_at.is_(None),
                         )
                     )
                 )
@@ -605,16 +624,105 @@ class MysqlConversationRepository:
             parent["updated_at"].replace(tzinfo=timezone.utc),
             turns,
             events,
+            actor_id=parent["actor_id"],
         )
 
-    async def list(self, *, limit, cursor):
+    async def ownership(self, conversation_id):
+        async with self.sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(conversation.c.actor_id, conversation.c.deleted_at).where(
+                            *scope_predicates(conversation, self.scope),
+                            conversation.c.conversation_id == conversation_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            raise ConversationNotFound
+        deleted_at = row["deleted_at"]
+        return ConversationOwnership(
+            row["actor_id"],
+            None if deleted_at is None else deleted_at.replace(tzinfo=timezone.utc),
+        )
+
+    async def rename(self, conversation_id, title, *, updated_at):
+        async with self.sessions() as session, session.begin():
+            result = await session.execute(
+                update(conversation)
+                .where(
+                    *scope_predicates(conversation, self.scope),
+                    conversation.c.conversation_id == conversation_id,
+                    conversation.c.deleted_at.is_(None),
+                )
+                .values(title=title, updated_at=_naive(updated_at))
+            )
+            if result.rowcount != 1:
+                raise ConversationNotFound
+            row = (
+                (
+                    await session.execute(
+                        select(conversation).where(
+                            *scope_predicates(conversation, self.scope),
+                            conversation.c.conversation_id == conversation_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        return Conversation(
+            row["conversation_id"],
+            self.scope.project_id,
+            row["title"],
+            row["created_at"].replace(tzinfo=timezone.utc),
+            row["updated_at"].replace(tzinfo=timezone.utc),
+            actor_id=row["actor_id"],
+        )
+
+    async def soft_delete(self, conversation_id, *, actor_id, deleted_at):
+        async with self.sessions() as session, session.begin():
+            existing = await session.scalar(
+                select(conversation.c.conversation_id)
+                .where(
+                    *scope_predicates(conversation, self.scope),
+                    conversation.c.conversation_id == conversation_id,
+                )
+                .with_for_update()
+            )
+            if existing is None:
+                raise ConversationNotFound
+            await session.execute(
+                update(conversation)
+                .where(
+                    *scope_predicates(conversation, self.scope),
+                    conversation.c.conversation_id == conversation_id,
+                    conversation.c.deleted_at.is_(None),
+                )
+                .values(deleted_at=_naive(deleted_at), deleted_by=actor_id)
+            )
+
+    async def list(self, *, limit, cursor, query=None):
+        search = query
         async with self.sessions() as session:
             query = (
                 select(conversation)
-                .where(*scope_predicates(conversation, self.scope))
+                .where(
+                    *scope_predicates(conversation, self.scope),
+                    conversation.c.deleted_at.is_(None),
+                )
                 .order_by(conversation.c.updated_at.desc(), conversation.c.conversation_id.desc())
                 .limit(limit + 1)
             )
+            if search:
+                query = query.where(
+                    func.lower(conversation.c.title).like(
+                        _title_pattern(search), escape=_LIKE_ESCAPE
+                    )
+                )
             if cursor:
                 try:
                     timestamp_value, identity = cursor.rsplit("|", 1)
@@ -638,6 +746,7 @@ class MysqlConversationRepository:
                 r["title"],
                 r["created_at"].replace(tzinfo=timezone.utc),
                 r["updated_at"].replace(tzinfo=timezone.utc),
+                actor_id=r["actor_id"],
             )
             for r in rows[:limit]
         )
@@ -982,7 +1091,15 @@ class MysqlConversationRepository:
                     await session.execute(
                         select(chat_turn)
                         .select_from(
-                            chat_turn.outerjoin(
+                            chat_turn.join(
+                                conversation,
+                                and_(
+                                    conversation.c.enterprise_id == chat_turn.c.enterprise_id,
+                                    conversation.c.project_id == chat_turn.c.project_id,
+                                    conversation.c.conversation_id == chat_turn.c.chat_id,
+                                    conversation.c.deleted_at.is_(None),
+                                ),
+                            ).outerjoin(
                                 graph_run,
                                 and_(
                                     graph_run.c.enterprise_id == chat_turn.c.enterprise_id,
@@ -1020,14 +1137,17 @@ class MysqlConversationRepository:
                 .all()
             )
             for candidate in rows:
-                await session.execute(
+                live_parent = await session.scalar(
                     select(conversation.c.conversation_id)
                     .where(
                         *scope_predicates(conversation, self.scope),
                         conversation.c.conversation_id == candidate["chat_id"],
+                        conversation.c.deleted_at.is_(None),
                     )
                     .with_for_update()
                 )
+                if live_parent is None:
+                    continue
                 row = (
                     (
                         await session.execute(

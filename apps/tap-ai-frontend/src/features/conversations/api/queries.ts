@@ -60,6 +60,55 @@ export function useConversationList(projectId: string | null) {
   });
 }
 
+export function useConversationSearch(projectId: string | null, query: string) {
+  const client = useConversationClient(projectId);
+  const search = query.trim();
+  return useQuery({
+    queryKey: [...conversationKeys.all(projectId), "search", search] as const,
+    enabled: client !== null && search.length > 0,
+    queryFn: ({ signal }) => client!.list({ limit: 50, query: search, signal }),
+    retry: retryConversationRequest,
+  });
+}
+
+export function useRenameConversation(projectId: string | null) {
+  const client = useConversationClient(projectId);
+  const cache = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      conversationId,
+      title,
+    }: {
+      conversationId: string;
+      title: string;
+    }) => {
+      if (client === null) throw new Error("Conversation is unavailable.");
+      return client.rename(conversationId, title);
+    },
+    onSuccess: () =>
+      cache.invalidateQueries({ queryKey: conversationKeys.all(projectId) }),
+  });
+}
+
+export function useDeleteConversation(projectId: string | null) {
+  const client = useConversationClient(projectId);
+  const cache = useQueryClient();
+  return useMutation({
+    mutationFn: (conversationId: string) => {
+      if (client === null) throw new Error("Conversation is unavailable.");
+      return client.remove(conversationId);
+    },
+    onSuccess: (_result, conversationId) => {
+      cache.removeQueries({
+        queryKey: conversationKeys.detail(projectId, conversationId),
+      });
+      return cache.invalidateQueries({
+        queryKey: conversationKeys.all(projectId),
+      });
+    },
+  });
+}
+
 export function useConversationDetail(
   projectId: string | null,
   conversationId: string | null,

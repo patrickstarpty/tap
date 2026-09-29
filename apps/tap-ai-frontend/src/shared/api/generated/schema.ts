@@ -113,10 +113,12 @@ export interface paths {
         get: operations["conversation_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete */
+        delete: operations["conversation_delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename */
+        patch: operations["conversation_rename"];
         trace?: never;
     };
     "/api/v1/projects/{project_id}/conversations/{conversation_id}/events": {
@@ -1623,6 +1625,14 @@ export interface components {
             items: components["schemas"]["ConversationSummary"][];
             /** Nextcursor */
             nextCursor?: string | null;
+        };
+        /**
+         * ConversationRenameRequest
+         * @description Owner-only title change; surrounding whitespace is removed before bounds apply.
+         */
+        ConversationRenameRequest: {
+            /** Title */
+            title: string;
         };
         /** ConversationResolvedResourceView */
         ConversationResolvedResourceView: {
@@ -4923,6 +4933,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                /** @description Case-insensitive title substring; surrounding whitespace is ignored. */
+                q?: string | null;
             };
             header?: never;
             path: {
@@ -5056,6 +5068,108 @@ export interface operations {
                 };
             };
             /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Only the creating actor may delete */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_rename: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSummary"];
+                };
+            };
+            /** @description Only the creating actor may rename */
             403: {
                 headers: {
                     [name: string]: unknown;

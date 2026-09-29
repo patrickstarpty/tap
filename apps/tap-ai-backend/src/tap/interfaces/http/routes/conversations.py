@@ -7,7 +7,7 @@ import hashlib
 from typing import cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
 from tap.contracts.chat_stream import ChatEventEnvelope
@@ -19,6 +19,7 @@ from tap.contracts.http import (
     ConversationEventItem,
     ConversationEventPage,
     ConversationPage,
+    ConversationRenameRequest,
     ConversationResolvedResourceView,
     ConversationSummary,
     ConversationTurnInputView,
@@ -31,7 +32,11 @@ from tap.interfaces.http.sse import encode_sse
 from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA, resolve_skill_selection
 from tap.modules.ai.domain.assets import AssetRevisionRejected
 from tap.modules.ai.domain.models import ModelGatewayRejected, schema_digest
-from tap.modules.chat.application.conversations import ConversationConflict, ConversationService
+from tap.modules.chat.application.conversations import (
+    ConversationConflict,
+    ConversationNotFound,
+    ConversationService,
+)
 from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
 from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
@@ -238,6 +243,15 @@ def _turn(value):
     )
 
 
+def _summary(value):
+    return ConversationSummary(
+        conversation_id=value.conversation_id,
+        title=value.title,
+        created_at=value.created_at.isoformat(),
+        updated_at=value.updated_at.isoformat(),
+    )
+
+
 def _detail(value):
     return ConversationDetail(
         conversation_id=value.conversation_id,
@@ -298,21 +312,15 @@ async def create(
 async def list_conversations(
     limit: int = Query(20, ge=1, le=50),
     cursor: str | None = None,
+    q: str | None = Query(
+        None,
+        max_length=120,
+        description="Case-insensitive title substring; surrounding whitespace is ignored.",
+    ),
     service: ConversationService = Depends(conversation_service),
 ):
-    values, next_cursor = await service.list(limit=limit, cursor=cursor)
-    return ConversationPage(
-        items=[
-            ConversationSummary(
-                conversation_id=v.conversation_id,
-                title=v.title,
-                created_at=v.created_at.isoformat(),
-                updated_at=v.updated_at.isoformat(),
-            )
-            for v in values
-        ],
-        next_cursor=next_cursor,
-    )
+    values, next_cursor = await service.list(limit=limit, cursor=cursor, query=q)
+    return ConversationPage(items=[_summary(v) for v in values], next_cursor=next_cursor)
 
 
 @router.get(
@@ -323,6 +331,48 @@ async def list_conversations(
 )
 async def get(conversation_id: str, service: ConversationService = Depends(conversation_service)):
     return _detail(await service.load(conversation_id))
+
+
+@router.patch(
+    "/{conversation_id}",
+    response_model=ConversationSummary,
+    operation_id="conversation_rename",
+    responses={
+        403: problem_response_metadata("Only the creating actor may rename"),
+        404: problem_response_metadata("Conversation not found"),
+        422: problem_response_metadata("Request validation failed"),
+    },
+)
+async def rename(
+    conversation_id: str,
+    body: ConversationRenameRequest,
+    request: Request,
+    service: ConversationService = Depends(conversation_service),
+):
+    return _summary(
+        await service.rename(
+            conversation_id, body.title, actor_id=request.state.project_scope.actor_id
+        )
+    )
+
+
+@router.delete(
+    "/{conversation_id}",
+    status_code=204,
+    response_class=Response,
+    operation_id="conversation_delete",
+    responses={
+        403: problem_response_metadata("Only the creating actor may delete"),
+        404: problem_response_metadata("Conversation not found"),
+    },
+)
+async def delete(
+    conversation_id: str,
+    request: Request,
+    service: ConversationService = Depends(conversation_service),
+) -> Response:
+    await service.delete(conversation_id, actor_id=request.state.project_scope.actor_id)
+    return Response(status_code=204)
 
 
 @router.post(
@@ -349,6 +399,8 @@ async def append(
         return ConversationAccepted(
             conversation_id=conversation_id, turn_id=replay.turn_id, state="queued"
         )
+    # Unknown or deleted Conversations fail before any input resolution work.
+    await service.load(conversation_id)
     turn = await service.append(
         conversation_id, uuid4().hex, idempotency_key, await _input(body, request)
     )
@@ -437,12 +489,17 @@ async def stream(
     service: ConversationService = Depends(conversation_service),
 ):
     resume = 0 if last_event_id is None else int(last_event_id)
+    await service.load(conversation_id)
 
     async def generate():
         nonlocal resume
         idle = 0
         while idle < 10:
-            value = await service.load(conversation_id)
+            try:
+                value = await service.load(conversation_id)
+            except ConversationNotFound:
+                # Deleted while streaming: close the stream instead of failing mid-body.
+                return
             fresh = [event for event in value.events if event.sequence > resume]
             if fresh:
                 idle = 0

@@ -13,6 +13,7 @@ from pydantic import (
     RootModel,
     StrictBool,
     StrictInt,
+    StringConstraints,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -1075,6 +1076,16 @@ class ConversationSummary(ContractModel):
     title: str
     created_at: TimestampValue
     updated_at: TimestampValue
+
+
+class ConversationRenameRequest(ContractModel):
+    """Owner-only title change; surrounding whitespace is removed before bounds apply."""
+
+    title: Annotated[
+        str,
+        Field(strict=True),
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
+    ]
 
 
 class ConversationPage(ContractModel):

@@ -58,6 +58,10 @@ import { SAMPLE_REPRESENTATIVE_SOURCES } from "./prototype/sampleKnowledge";
 import { SAMPLE_FILES } from "./prototype/sampleFiles";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import {
+  resolveComposerAttachments,
+  type ComposerAttachment,
+} from "./prototype/composerAttachments";
+import {
   appendTurn,
   createConversation,
   detectAutomationType,
@@ -415,6 +419,14 @@ const TAPPER_MODULE_FOCUS_TARGETS: Partial<Record<ProductModule, string>> = {
 
 type PendingFocusTarget = { kind: "selector"; selector: string };
 
+type TurnContextOverride = {
+  sourceIds: readonly string[];
+  catalogReferences: NonNullable<AssistantTurn["catalogReferences"]>;
+};
+
+/** Time for a submitted message to be accepted before the reply starts. */
+const TURN_ACCEPT_DELAY_MS = 350;
+
 function nextNumericId(
   ids: readonly string[],
   prefix: string,
@@ -526,6 +538,13 @@ export function TapProductPrototype() {
     ),
   );
   const nextCatalogId = useRef(1);
+  const pendingSendRef = useRef<string | null>(null);
+  const [pendingSendConversationId, setPendingSendConversationId] = useState<
+    string | null
+  >(null);
+  const [attachments, setAttachments] = useState<
+    readonly ComposerAttachment[]
+  >([]);
   const documentLanguageOnMount = useRef(document.documentElement.lang);
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
@@ -677,6 +696,42 @@ export function TapProductPrototype() {
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
     ) ?? conversations[0]!;
+  const resolvedAttachments = resolveComposerAttachments(
+    attachments,
+    sources,
+  );
+  const readyAttachmentKey = resolvedAttachments.ready
+    .map(({ conversationId, sourceId }) => `${conversationId}:${sourceId}`)
+    .join("|");
+  useEffect(() => {
+    if (resolvedAttachments.ready.length === 0) return;
+    const ready = resolvedAttachments.ready;
+    setConversations((current) =>
+      current.map((conversation) => {
+        const sourceIds = ready
+          .filter((item) => item.conversationId === conversation.id)
+          .map(({ sourceId }) => sourceId)
+          .filter((id) => !conversation.selectedSourceIds.includes(id));
+        return sourceIds.length === 0
+          ? conversation
+          : {
+              ...conversation,
+              selectedSourceIds: [...conversation.selectedSourceIds, ...sourceIds],
+            };
+      }),
+    );
+    setAttachments((current) =>
+      current.filter(
+        (item) =>
+          !ready.some(
+            (readyItem) =>
+              readyItem.conversationId === item.conversationId &&
+              readyItem.sourceId === item.sourceId,
+          ),
+      ),
+    );
+    // The key captures every newly published attachment.
+  }, [readyAttachmentKey]);
   const floatingContext = getFloatingAssistantContext({
     activeModule,
     selectedPlanId,
@@ -761,90 +816,115 @@ export function TapProductPrototype() {
       )
       .map(({ id, kind, name }) => ({ id, kind, name }));
 
-  const sendMessage = (
-    prompt: string,
-    retryReferences?: AssistantTurn["sourceReferences"],
-  ) => {
+  const acceptTurn = (conversationId: string, accept: () => void) => {
+    pendingSendRef.current = conversationId;
+    setPendingSendConversationId(conversationId);
+    const timerKey = `accept-${conversationId}`;
+    answerTimers.current.set(
+      timerKey,
+      setTimeout(() => {
+        answerTimers.current.delete(timerKey);
+        pendingSendRef.current = null;
+        setPendingSendConversationId(null);
+        accept();
+      }, TURN_ACCEPT_DELAY_MS),
+    );
+  };
+
+  const sendMessage = (prompt: string, override?: TurnContextOverride) => {
+    if (pendingSendRef.current !== null) return;
     if (activeConversation.turns.some((turn) => turn.answerState === "running"))
       return;
-    if (composerContext) {
-      sendFloatingMessage(
-        prompt,
-        composerContext,
-        activeConversationId,
-        locale,
-      );
+    const conversationId = activeConversation.id;
+    const turnLocale = locale;
+    if (composerContext && override === undefined) {
+      const context = composerContext;
       setComposerContext(null);
+      acceptTurn(conversationId, () =>
+        sendFloatingMessage(prompt, context, conversationId, turnLocale),
+      );
       return;
     }
     const intent = detectIntent(prompt);
+    const selectedSourceIds =
+      override?.sourceIds ?? activeConversation.selectedSourceIds;
     const sourceReferences = sources
       .filter(
         (source) =>
-          source.status === "ready" &&
-          (
-            retryReferences?.map((item) => item.id) ??
-            activeConversation.selectedSourceIds
-          ).includes(source.id),
+          source.status === "ready" && selectedSourceIds.includes(source.id),
       )
       .map(({ id, name, origin }) => ({ id, name, origin }));
+    const catalogReferences =
+      override?.catalogReferences ?? catalogReferencesFor(activeConversation);
+    const appendToConversation = (turn: AssistantTurn) =>
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === conversationId
+            ? appendTurn(conversation, {
+                ...turn,
+                modelId: conversation.modelId,
+              })
+            : conversation,
+        ),
+      );
     if (intent === "answer") {
       const evidence = sourceReferences.filter((source) =>
         /underwriting|健康|核保/i.test(source.name),
       );
       const turnId = `turn-${nextTurnId.current++}`;
-      const conversationId = activeConversation.id;
-      updateActiveConversation((conversation) =>
-        appendTurn(conversation, {
+      acceptTurn(conversationId, () => {
+        appendToConversation({
           id: turnId,
           intent,
-          locale,
-          modelId: conversation.modelId,
+          locale: turnLocale,
+          modelId: activeConversation.modelId,
           prompt,
           sourceReferences: evidence,
+          ...(catalogReferences.length > 0 ? { catalogReferences } : {}),
           answerState: "running",
-        }),
-      );
-      answerTimers.current.set(
-        turnId,
-        setTimeout(() => {
-          setConversations((current) =>
-            current.map((conversation) =>
-              conversation.id === conversationId
-                ? {
-                    ...conversation,
-                    turns: conversation.turns.map((turn) =>
-                      turn.id === turnId && turn.answerState === "running"
-                        ? {
-                            ...turn,
-                            answerState:
-                              evidence.length > 0 &&
-                              /health|disclosure|underwriting|健康|告知|核保/i.test(
-                                prompt,
-                              )
-                                ? "completed"
-                                : "insufficient",
-                          }
-                        : turn,
-                    ),
-                  }
-                : conversation,
-            ),
-          );
-          answerTimers.current.delete(turnId);
-        }, 1200),
-      );
+        });
+        answerTimers.current.set(
+          turnId,
+          setTimeout(() => {
+            setConversations((current) =>
+              current.map((conversation) =>
+                conversation.id === conversationId
+                  ? {
+                      ...conversation,
+                      turns: conversation.turns.map((turn) =>
+                        turn.id === turnId && turn.answerState === "running"
+                          ? {
+                              ...turn,
+                              answerState:
+                                evidence.length > 0 &&
+                                /health|disclosure|underwriting|健康|告知|核保/i.test(
+                                  prompt,
+                                )
+                                  ? "completed"
+                                  : "insufficient",
+                            }
+                          : turn,
+                      ),
+                    }
+                  : conversation,
+              ),
+            );
+            answerTimers.current.delete(turnId);
+          }, 1200),
+        );
+      });
       return;
     }
-    updateActiveConversation((conversation) =>
-      appendTurn(conversation, {
-        id: `turn-${nextTurnId.current++}`,
+    const turnId = `turn-${nextTurnId.current++}`;
+    acceptTurn(conversationId, () =>
+      appendToConversation({
+        id: turnId,
         intent,
-        locale,
-        modelId: conversation.modelId,
+        locale: turnLocale,
+        modelId: activeConversation.modelId,
         prompt,
         sourceReferences,
-        catalogReferences: catalogReferencesFor(conversation),
+        catalogReferences,
         automationWorkflow:
           intent === "automation"
             ? {
@@ -856,6 +936,110 @@ export function TapProductPrototype() {
             : undefined,
       }),
     );
+  };
+
+  const resendTurn = (turn: AssistantTurn) =>
+    sendMessage(turn.prompt, {
+      sourceIds: turn.sourceReferences.map(({ id }) => id),
+      catalogReferences: turn.catalogReferences ?? [],
+    });
+
+  const stopTurn = (turnId: string) => {
+    clearTimeout(answerTimers.current.get(turnId));
+    answerTimers.current.delete(turnId);
+    setConversations((current) =>
+      current.map((conversation) => ({
+        ...conversation,
+        turns: conversation.turns.map((item) =>
+          item.id === turnId && item.answerState === "running"
+            ? { ...item, answerState: "canceled" }
+            : item,
+        ),
+      })),
+    );
+  };
+
+  const editTurn = (turn: AssistantTurn) => {
+    setComposerContext(null);
+    setMessageDraft(turn.prompt);
+    const readySourceIds = new Set(
+      sources
+        .filter((source) => source.status === "ready")
+        .map(({ id }) => id),
+    );
+    const catalogIds = (kind: "agent" | "skill") =>
+      (turn.catalogReferences ?? [])
+        .filter(
+          (item) =>
+            item.kind === kind &&
+            (kind === "agent" ? agents : skills).some(
+              (catalogItem) => catalogItem.id === item.id,
+            ),
+        )
+        .map(({ id }) => id);
+    updateActiveConversation((conversation) => ({
+      ...conversation,
+      selectedSourceIds: turn.sourceReferences
+        .map(({ id }) => id)
+        .filter((id) => readySourceIds.has(id)),
+      selectedAgentIds: catalogIds("agent"),
+      selectedSkillIds: catalogIds("skill"),
+    }));
+  };
+
+  const renameConversation = (conversationId: string, title: string) =>
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId
+          ? { ...conversation, title }
+          : conversation,
+      ),
+    );
+
+  const deleteConversation = (conversationId: string) => {
+    const deleted = conversations.find(({ id }) => id === conversationId);
+    if (deleted === undefined) return;
+    for (const turn of deleted.turns) {
+      clearTimeout(answerTimers.current.get(turn.id));
+      answerTimers.current.delete(turn.id);
+    }
+    if (pendingSendRef.current === conversationId) {
+      clearTimeout(answerTimers.current.get(`accept-${conversationId}`));
+      answerTimers.current.delete(`accept-${conversationId}`);
+      pendingSendRef.current = null;
+      setPendingSendConversationId(null);
+    }
+    setAttachments((current) =>
+      current.filter((item) => item.conversationId !== conversationId),
+    );
+    if (conversationId !== activeConversationId) {
+      setConversations((current) =>
+        current.filter(({ id }) => id !== conversationId),
+      );
+      return;
+    }
+    const id = `chat-${nextConversationId.current++}`;
+    setMessageDraft("");
+    setComposerContext(null);
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: ".tap-composer textarea",
+    };
+    setConversations((current) => [
+      ...current.filter(({ id: itemId }) => itemId !== conversationId),
+      createConversation(id),
+    ]);
+    setActiveConversationId(id);
+    setActiveModule("tapper");
+  };
+
+  const uploadAttachment = (file: File) => {
+    // A chat attachment joins Library without interrupting the conversation.
+    const sourceId = review.upload(file.name, { inspect: false });
+    setAttachments((current) => [
+      ...current,
+      { conversationId: activeConversationId, sourceId },
+    ]);
   };
 
   const sendFloatingMessage = (
@@ -1178,6 +1362,8 @@ export function TapProductPrototype() {
         onLocaleChange={setLocale}
         onModuleChange={selectModule}
         onNewChat={createNewChat}
+        onDeleteConversation={deleteConversation}
+        onRenameConversation={renameConversation}
         onSelectConversation={selectConversation}
         onToggleCollapsed={
           sidebarCollapsed ? expandTapperSidebar : dismissTapperSidebar
@@ -1228,7 +1414,35 @@ export function TapProductPrototype() {
                   modelId,
                 }))
               }
-              onSend={sendMessage}
+              onSend={(prompt) => sendMessage(prompt)}
+              isSending={pendingSendConversationId === activeConversation.id}
+              onStop={() => {
+                const running = activeConversation.turns.find(
+                  (turn) => turn.answerState === "running",
+                );
+                if (running !== undefined) stopTurn(running.id);
+              }}
+              onRegenerate={resendTurn}
+              onEditTurn={editTurn}
+              attachments={resolvedAttachments.pending.filter(
+                (item) => item.conversationId === activeConversation.id,
+              )}
+              onUploadFile={uploadAttachment}
+              onRemoveAttachment={(sourceId) =>
+                setAttachments((current) =>
+                  current.filter(
+                    (item) =>
+                      !(
+                        item.sourceId === sourceId &&
+                        item.conversationId === activeConversation.id
+                      ),
+                  ),
+                )
+              }
+              onReviewAttachment={(sourceId, trigger) => {
+                setActiveModule("library");
+                review.inspect(sourceId, trigger);
+              }}
               onToggleAgent={(agentId) =>
                 updateActiveConversation((conversation) => ({
                   ...conversation,
@@ -1260,21 +1474,8 @@ export function TapProductPrototype() {
                 turn.answerState ? (
                   <KnowledgeAnswer
                     turn={turn}
-                    onRetry={() =>
-                      sendMessage(turn.prompt, turn.sourceReferences)
-                    }
-                    onStop={() => {
-                      clearTimeout(answerTimers.current.get(turn.id));
-                      answerTimers.current.delete(turn.id);
-                      updateActiveConversation((conversation) => ({
-                        ...conversation,
-                        turns: conversation.turns.map((item) =>
-                          item.id === turn.id
-                            ? { ...item, answerState: "canceled" }
-                            : item,
-                        ),
-                      }));
-                    }}
+                    onRetry={() => resendTurn(turn)}
+                    onStop={() => stopTurn(turn.id)}
                   />
                 ) : (
                   <AssistantResponse

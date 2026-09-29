@@ -166,7 +166,7 @@ describe("Tapper product prototype", () => {
     expect(
       within(
         screen.getByRole("navigation", { name: "Chat history" }),
-      ).getByRole("button", { name: /Older durable prompt/u }),
+      ).getByRole("button", { name: /^Older durable prompt/u }),
     ).toBeVisible();
     first.unmount();
     renderKnowledgeApp(<TapperPage />, { api: fakeKnowledgeClient() });
@@ -521,7 +521,7 @@ describe("Tapper product prototype", () => {
       within(screen.getByRole("navigation", { name: "对话历史" })).getByRole(
         "button",
         {
-          name: /What evidence is needed for life underwriting\?/,
+          name: /^What evidence is needed for life underwriting\?/,
         },
       ),
     );
