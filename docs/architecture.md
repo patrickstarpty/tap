@@ -68,7 +68,7 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 
 | V1 能力 | 现状缺口 |
 | --- | --- |
-| [可靠问答](superpowers/plans/2026-09-29-v1-roadmap.md#1-可靠问答) | 仓库内质量用例为空；SSE 为数据库轮询，无 token 级流式；租约回收不递增 `attempt`、瞬时失败直接永久失败、worker loop 无异常保护 |
+| [可靠问答](superpowers/plans/2026-09-29-v1-roadmap.md#1-可靠问答) | 仓库内质量用例为空；SSE 为数据库轮询，无 token 级流式；摄取任务租约回收不递增 `attempt`（Turn 回收递增但无上限）、摄取瞬时失败直接永久失败、worker loop 无异常保护 |
 | [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 每次查询把整个快照载入内存 |
 | [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 仅关键词取节点拼入上下文；无多跳扩展、路径推理、关系边引用与路径高亮 |
 | [Skills/Agents](superpowers/plans/2026-09-29-v1-roadmap.md#4-skillsagents) | 工具白名单硬编码为 `knowledge.search` / `knowledge.answer`；无导入能力 |
