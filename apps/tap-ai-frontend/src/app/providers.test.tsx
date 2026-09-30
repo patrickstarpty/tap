@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { fakeKnowledgeClient } from "../features/knowledge/testing/fakeKnowledgeClient";
 import type { RuntimeMode } from "../features/runtime/api/client";
-import { TapperPage } from "../pages/TapperPage";
+import { TapAiPage } from "../pages/TapAiPage";
 import { createTestQueryClient } from "../shared/testing/renderApp";
 import { AppProviders } from "./providers";
 
@@ -29,7 +29,7 @@ describe("runtime composition", () => {
         runtimeClient={{ getMode: () => pending }}
         knowledgeClient={api}
       >
-        <TapperPage />
+        <TapAiPage />
       </AppProviders>,
     );
     expect(screen.getByRole("status", { name: "运行环境" })).toHaveTextContent(
@@ -56,7 +56,7 @@ describe("runtime composition", () => {
         runtimeClient={{ getMode: () => Promise.reject(new Error("offline")) }}
         knowledgeClient={api}
       >
-        <TapperPage />
+        <TapAiPage />
       </AppProviders>,
     );
     expect(
