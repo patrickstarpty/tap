@@ -250,20 +250,6 @@ export function KnowledgeGraph({
     setPan({ x: 0, y: 0 });
   };
 
-  const domainConceptIds = [
-    "application",
-    "underwriting",
-    "health-disclosure",
-    "beneficiary",
-    "approval",
-    "test-cases",
-    "exploration",
-    "new-business",
-    "policy-servicing",
-    "claims",
-    "codebase",
-  ] as const;
-
   const edgeLabelBoxes: { x: number; y: number; width: number }[] = [];
   return (
     <div
@@ -515,17 +501,8 @@ export function KnowledgeGraph({
                     focusedNodeId === edge.source ||
                     focusedNodeId === edge.target;
                   const showLabel =
-                    (active &&
-                      (source.kind !== "document" ||
-                        focusedNodeId === source.id)) ||
-                    (!focusedNodeId &&
-                      [
-                        "application-health",
-                        "health-underwriting",
-                        "application-beneficiary",
-                        "test-allocation",
-                        "execution-defect",
-                      ].includes(edge.id));
+                    active &&
+                    (source.kind !== "document" || focusedNodeId === source.id);
                   let labelX = middleX;
                   let labelY = middleY + bend / 2;
                   const halfWidth = edge.label.length * 4 + 10;
@@ -627,13 +604,6 @@ export function KnowledgeGraph({
                   const showName =
                     !document ||
                     sources.length <= 5 ||
-                    (node.id.startsWith("source-sample-") &&
-                      [
-                        "new-business",
-                        "servicing",
-                        "claims",
-                        "codebase",
-                      ].includes(node.community)) ||
                     highlighted ||
                     node.id === focusedNodeId;
                   return (
@@ -750,9 +720,8 @@ export function KnowledgeGraph({
           </ul>
           <h3>{copy.library.concepts}</h3>
           <ul aria-label={copy.library.concepts}>
-            {domainConceptIds
-              .map((nodeId) => visibleNodes.find((node) => node.id === nodeId))
-              .filter((node): node is GraphNode => node !== undefined)
+            {visibleNodes
+              .filter((node) => node.kind !== "document")
               .map((node) => (
                 <li key={node.id}>{node.label}</li>
               ))}

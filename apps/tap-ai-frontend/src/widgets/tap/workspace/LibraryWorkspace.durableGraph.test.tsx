@@ -120,6 +120,11 @@ it("offers only the published source graph", async () => {
     screen.getByText(/nodes and relationships come from the service/i),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: /Age eligibility/ })).toBeVisible();
+  expect(
+    within(screen.getByRole("list", { name: "Concepts" })).getByText(
+      "Age eligibility",
+    ),
+  ).toBeVisible();
   expect(vi.mocked(useActiveGraph).mock.lastCall?.[1]).toEqual(["rev_src_a"]);
 
   await userEvent.selectOptions(
