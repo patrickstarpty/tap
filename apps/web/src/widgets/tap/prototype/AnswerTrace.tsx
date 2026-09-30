@@ -109,7 +109,7 @@ export function AnswerTrace({ trace }: { trace: SampleTrace }) {
               ))}
             </div>
           ) : null}
-          <ul className="tap-answer-trace-waterfall">
+          <ul className="tap-answer-trace-waterfall" role="list">
             {attemptSpans.map((span) => {
               const left = ((span.startOffsetMs - attemptStart) / attemptSpan) * 100;
               const width = Math.max(
@@ -119,6 +119,7 @@ export function AnswerTrace({ trace }: { trace: SampleTrace }) {
               return (
                 <li
                   key={span.spanId}
+                  role="listitem"
                   className={
                     span.status === "error"
                       ? "tap-trace-span tap-trace-span-error"
