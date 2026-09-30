@@ -75,12 +75,9 @@ export interface WorkspaceCopy {
     documents: string;
     failed: string;
     noResults: string;
-    manageKnowledge: string;
     provenanceHint: string;
     immutableRevision: string;
     knowledgeSource: string;
-    knowledgeBaseDocument: string;
-    pageLocalSource: string;
     collapse: string;
     close: string;
     expand: string;
@@ -103,7 +100,6 @@ export interface WorkspaceCopy {
     attachmentUploading: string;
     attachmentProcessing: string;
     attachmentNeedsReview: string;
-    attachmentReady: string;
     attachmentFailed: string;
     reviewInLibrary: string;
     removeAttachment: string;
@@ -125,7 +121,6 @@ export interface WorkspaceCopy {
     searchAgents: string;
     searchSkills: string;
     builtIn: string;
-    custom: string;
     useInChat: string;
     cancel: string;
     noResults: string;
@@ -138,8 +133,6 @@ export interface WorkspaceCopy {
     listView: string;
     cardView: string;
     preview: string;
-    filePreview: string;
-    closePreview: string;
     download: string;
     noPreview: string;
 
@@ -160,7 +153,6 @@ export interface WorkspaceCopy {
     visibleDocuments: string;
     concepts: string;
     labeledRelationships: string;
-    localSourceDescription: string;
     search: string;
     sourceFile: string;
     cancel: string;
@@ -288,13 +280,10 @@ export const WORKSPACE_COPY = {
       documents: "documents",
       failed: "failed",
       noResults: "No matching sources",
-      manageKnowledge: "Manage knowledge",
       provenanceHint:
         "Answers and generated assets record the source context selected for each turn.",
       immutableRevision: "immutable revision",
       knowledgeSource: "Knowledge source",
-      knowledgeBaseDocument: "Knowledge base document",
-      pageLocalSource: "Page-local Library source",
       collapse: "Collapse Knowledge sources",
       close: "Close Knowledge sources",
       expand: "Expand Knowledge sources",
@@ -317,7 +306,6 @@ export const WORKSPACE_COPY = {
       attachmentUploading: "Uploading",
       attachmentProcessing: "Processing",
       attachmentNeedsReview: "No searchable chunks yet",
-      attachmentReady: "Ready to use",
       attachmentFailed: "Upload failed",
       reviewInLibrary: "Open in Library",
       removeAttachment: "Remove attachment",
@@ -341,7 +329,6 @@ export const WORKSPACE_COPY = {
       searchAgents: "Search agents",
       searchSkills: "Search skills",
       builtIn: "Built-in",
-      custom: "Custom",
       useInChat: "Use in chat",
       cancel: "Cancel",
       noResults: "No matching items",
@@ -352,8 +339,6 @@ export const WORKSPACE_COPY = {
       listView: "List view",
       cardView: "Card view",
       preview: "Preview",
-      filePreview: "File preview",
-      closePreview: "Close preview",
       download: "Download file",
       noPreview: "No preview available for this source.",
       testingCommunity: "Testing",
@@ -375,7 +360,6 @@ export const WORKSPACE_COPY = {
       visibleDocuments: "Visible documents",
       concepts: "Concepts",
       labeledRelationships: "Labeled relationships",
-      localSourceDescription: "Local source · page-only",
       search: "Search library",
       sourceFile: "Source file",
       cancel: "Cancel",
@@ -499,12 +483,9 @@ export const WORKSPACE_COPY = {
       documents: "文档",
       failed: "失败",
       noResults: "没有匹配的来源",
-      manageKnowledge: "管理知识库",
       provenanceHint: "回答和生成的资产会记录每轮对话选择的来源上下文。",
       immutableRevision: "不可变版本",
       knowledgeSource: "知识来源",
-      knowledgeBaseDocument: "知识库文档",
-      pageLocalSource: "仅当前页面的知识库来源",
       collapse: "收起知识来源",
       close: "关闭知识来源",
       expand: "展开知识来源",
@@ -527,7 +508,6 @@ export const WORKSPACE_COPY = {
       attachmentUploading: "正在上传",
       attachmentProcessing: "正在处理",
       attachmentNeedsReview: "暂无可检索切片",
-      attachmentReady: "可以使用",
       attachmentFailed: "上传失败",
       reviewInLibrary: "在知识库中打开",
       removeAttachment: "移除附件",
@@ -549,7 +529,6 @@ export const WORKSPACE_COPY = {
       searchAgents: "搜索智能体",
       searchSkills: "搜索技能",
       builtIn: "内置",
-      custom: "自定义",
       useInChat: "在对话中使用",
       cancel: "取消",
       noResults: "没有匹配项",
@@ -560,8 +539,6 @@ export const WORKSPACE_COPY = {
       listView: "列表视图",
       cardView: "卡片视图",
       preview: "预览",
-      filePreview: "文件预览",
-      closePreview: "关闭预览",
       download: "下载文件",
       noPreview: "此来源暂无可用预览。",
       testingCommunity: "测试验证",
@@ -582,7 +559,6 @@ export const WORKSPACE_COPY = {
       visibleDocuments: "可见文档",
       concepts: "概念",
       labeledRelationships: "已标注关系",
-      localSourceDescription: "本地来源 · 仅当前页面",
       search: "搜索知识库",
       sourceFile: "来源文件",
       cancel: "取消",
