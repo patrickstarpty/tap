@@ -28,7 +28,7 @@ OpenTelemetry 埋点，属性遵循 OTel GenAI 语义约定；MySQL 为权威存
 - **重新执行**：Turn 被重新认领时沿用同一 trace，新的 `turn.execute` 带新的 `tap.attempt`；面板按 attempt 分组。
 - **后台任务**：摄取、图谱抽取、测试方案生成等每次任务执行开一个根 span，属性 `tap.job_id`、`tap.job_kind`。
 
-## 3. 数据模型（新迁移 `0025_observability`）
+## 3. 数据模型（新迁移 `0026_observability`）
 
 ### `trace_span`
 
@@ -148,4 +148,3 @@ worker 发出的 `context.assembled`、`stage.completed` 事件字段与严格�
 
 - LiteLLM 对 DashScope 模型可能算不出成本：`cost_usd` 为 NULL，面板显示"成本未知"；需要时在 `config.yaml` 的 `model_info` 配置 `input_cost_per_token` / `output_cost_per_token`。
 - 原文永久保留使 `model_call_content` 持续增长；本期不处理，后续需要时另行设计归档。
-- 与子项目 1 的依赖：本分支基于 `claude/v1-infra-convergence`，该 PR 合并后需变基到 `main`。
