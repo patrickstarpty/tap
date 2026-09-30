@@ -14,7 +14,7 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 
-import type { PrototypeCopy } from "./copy";
+import type { WorkspaceCopy } from "./copy";
 import type { LibrarySource } from "./model";
 
 import {
@@ -46,7 +46,7 @@ export function KnowledgeGraph({
   publishedData,
   publishedCaption,
 }: {
-  copy: PrototypeCopy;
+  copy: WorkspaceCopy;
   query: string;
   sources: readonly LibrarySource[];
   onViewSource: (source: LibrarySource) => void;

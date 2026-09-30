@@ -15,7 +15,7 @@ import {
 } from "react";
 
 import { AccessibleDialog } from "./AccessibleDialog";
-import type { PrototypeCopy } from "./copy";
+import type { WorkspaceCopy } from "./copy";
 import type { CatalogItem, CatalogKind } from "./model";
 import { CATALOG_NAME_PATTERN, catalogMarkdown } from "./catalogMarkdown";
 
@@ -26,7 +26,7 @@ export interface CatalogDraft {
 }
 
 interface CatalogWorkspaceProps {
-  copy: PrototypeCopy;
+  copy: WorkspaceCopy;
   items: readonly CatalogItem[];
   kind: CatalogKind;
   onUse: (itemId: string) => void;

@@ -8,7 +8,7 @@ import {
   ToolOutlined,
 } from "@ant-design/icons";
 
-import type { PrototypeCopy } from "./copy";
+import type { WorkspaceCopy } from "./copy";
 import type { Conversation, Locale, ProductModule } from "./model";
 import { PanelToggleIcon } from "./PanelToggleIcon";
 import {
@@ -25,12 +25,12 @@ const tapperWordmark = new URL(
   import.meta.url,
 ).href;
 
-interface PrototypeSidebarProps {
+interface WorkspaceSidebarProps {
   activeConversationId: string;
   activeModule: ProductModule;
   collapsed: boolean;
   conversations: readonly Conversation[];
-  copy: PrototypeCopy;
+  copy: WorkspaceCopy;
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
   onModuleChange: (module: ProductModule) => void;
@@ -48,7 +48,7 @@ interface PrototypeSidebarProps {
   };
 }
 
-export function PrototypeSidebar({
+export function WorkspaceSidebar({
   activeConversationId,
   activeModule,
   collapsed,
@@ -62,7 +62,7 @@ export function PrototypeSidebar({
   onToggleCollapsed,
   historyState,
   historyActions,
-}: PrototypeSidebarProps) {
+}: WorkspaceSidebarProps) {
   const tapperWorkspaceActive = [
     "tapper",
     "agents",

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { CatalogWorkspace } from "./CatalogWorkspace";
-import { PROTOTYPE_COPY } from "./copy";
+import { WORKSPACE_COPY } from "./copy";
 
 afterEach(() => localStorage.clear());
 
@@ -11,7 +11,7 @@ it("restores the Agent creation entry and saves an exportable Markdown draft", a
   const onUse = vi.fn();
   const props = {
     kind: "agent" as const,
-    copy: PROTOTYPE_COPY.en,
+    copy: WORKSPACE_COPY.en,
     items: [
       {
         id: "approved-agent",

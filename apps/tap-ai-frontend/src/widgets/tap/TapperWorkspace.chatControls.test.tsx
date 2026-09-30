@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { fakeKnowledgeClient } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
-import { TapProductPrototype } from "./TapProductPrototype";
+import { TapperWorkspace } from "./TapperWorkspace";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -184,7 +184,7 @@ function durableConversation({ state, appendResponse }: Scenario) {
     throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
   });
   const api = fakeKnowledgeClient().withPublishedSources(PUBLISHED);
-  const rendered = renderKnowledgeApp(<TapProductPrototype />, { api });
+  const rendered = renderKnowledgeApp(<TapperWorkspace />, { api });
   return { api, appended, canceled, renamed, deleted, searches, ...rendered };
 }
 

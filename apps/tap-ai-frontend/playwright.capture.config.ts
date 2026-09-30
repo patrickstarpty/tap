@@ -2,8 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  testMatch: "tap-ai-demo-capture.spec.ts",
-  outputDir: "./test-results/prototype-capture",
+  testMatch: "ui-capture.spec.ts",
+  outputDir: "./test-results/ui-capture",
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,

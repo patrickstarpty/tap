@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { fakeKnowledgeClient } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
-import { TapProductPrototype } from "./TapProductPrototype";
+import { TapperWorkspace } from "./TapperWorkspace";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -149,7 +149,7 @@ it("sends a report handoff with its query and receipts, then shows verified Insi
       },
     ],
   });
-  const { queryClient, unmount } = renderKnowledgeApp(<TapProductPrototype />, {
+  const { queryClient, unmount } = renderKnowledgeApp(<TapperWorkspace />, {
     api,
   });
   const user = userEvent.setup();
@@ -197,7 +197,7 @@ it("sends a report handoff with its query and receipts, then shows verified Insi
     screen.getByRole("region", { name: "Insights explanation" }),
   ).toHaveTextContent("Assertion failed");
   unmount();
-  const restored = renderKnowledgeApp(<TapProductPrototype />, { api });
+  const restored = renderKnowledgeApp(<TapperWorkspace />, { api });
   expect(await screen.findByText(/Request timeout may/)).toBeVisible();
   expect(screen.getByText(/Permission mismatch may/)).toBeVisible();
   expect(screen.getByText("Please provide HTTP 403 logs.")).toBeVisible();
@@ -205,7 +205,7 @@ it("sends a report handoff with its query and receipts, then shows verified Insi
   // Keep the successful query cached while reopening after authorization changes.
   restored.unmount();
   denied = true;
-  renderKnowledgeApp(<TapProductPrototype />, {
+  renderKnowledgeApp(<TapperWorkspace />, {
     api,
     queryClient: restored.queryClient,
   });
@@ -237,7 +237,7 @@ it("keeps the report question available when explanation authorization fails", a
       });
     throw new Error(`Unexpected API call: ${request.url}`);
   });
-  renderKnowledgeApp(<TapProductPrototype />, {
+  renderKnowledgeApp(<TapperWorkspace />, {
     api: fakeKnowledgeClient(),
   });
   const user = userEvent.setup();
@@ -295,7 +295,7 @@ it("reuses the durable send key after an uncertain POST response", async () => {
       });
     throw new Error(`Unexpected API call: ${request.url}`);
   });
-  renderKnowledgeApp(<TapProductPrototype />, {
+  renderKnowledgeApp(<TapperWorkspace />, {
     api: fakeKnowledgeClient(),
   });
   const user = userEvent.setup();

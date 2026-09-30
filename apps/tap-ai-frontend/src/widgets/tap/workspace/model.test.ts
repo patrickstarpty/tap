@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { appendTurn, createConversation, type AssistantTurn } from "./model";
 
-describe("Tapper prototype model", () => {
+describe("Tapper workspace model", () => {
   it("creates an empty conversation with independent context selections", () => {
     expect(createConversation("chat-2")).toMatchObject({
       id: "chat-2",

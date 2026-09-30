@@ -55,7 +55,7 @@ export interface AssistantTurn {
     summary: string;
     facts: readonly string[];
   };
-  prototypeReply?: {
+  contextualReply?: {
     text: string;
     suggestions: readonly string[];
   };

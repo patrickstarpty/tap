@@ -35,7 +35,7 @@ TAP AI 可在不启动 TAP 前后端的情况下运行。先执行 `make tap-ai-
 
 产品边界与验收见 [TAP AI 产品边界与本机独立部署](docs/archive/architecture/2026-09-15-tap-ai-product-boundary.md)。TAP AI 与 TAP 仍独立实现和部署；各独立应用入口不能替代上方完整设计基准。下方截图记录的是拆分前的页面，完整组合原型已恢复为持续演进的设计基准，这不表示相关后端能力均已实现。
 
-当前 AI 页面截图可运行 `corepack pnpm --dir apps/tap-ai-frontend run prototype:capture`：仅使用隔离的示例 API 响应，输出 6 张截图到应用的 `test-results/prototype-capture/`，不改写下方历史截图；追加 `--list` 可查看采集范围。
+当前 AI 页面截图可运行 `corepack pnpm --dir apps/tap-ai-frontend run ui:capture`：仅使用隔离的示例 API 响应，输出 6 张截图到应用的 `test-results/ui-capture/`，不改写下方历史截图；追加 `--list` 可查看采集范围。
 
 旧版浏览器中的 Automation 编辑和模拟 Run 需按[浏览器原型工作区升级](docs/archive/architecture/2026-09-15-tap-ai-product-boundary.md#浏览器原型工作区升级)迁移：同源可自动恢复；默认端口从 5173 变为 5174 时，使用 TAP 自有的 `Local workspace` 导出/导入功能转移。
 

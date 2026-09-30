@@ -1,6 +1,6 @@
 import type { Locale, ProductModule } from "./model";
 
-export interface PrototypeCopy {
+export interface WorkspaceCopy {
   language: {
     en: string;
     zh: string;
@@ -206,7 +206,7 @@ export interface PrototypeCopy {
   };
 }
 
-export const PROTOTYPE_COPY = {
+export const WORKSPACE_COPY = {
   en: {
     language: { en: "English", zh: "中文" },
     navigation: {
@@ -627,4 +627,4 @@ export const PROTOTYPE_COPY = {
       graphNavigationHint: "拖动以平移画布，使用控件缩放，并选择节点查看关系。",
     },
   },
-} as const satisfies Record<Locale, PrototypeCopy>;
+} as const satisfies Record<Locale, WorkspaceCopy>;

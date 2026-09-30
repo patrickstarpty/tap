@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { fakeKnowledgeClient } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
-import { TapProductPrototype } from "./TapProductPrototype";
+import { TapperWorkspace } from "./TapperWorkspace";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -40,7 +40,7 @@ it("keeps an explicit New chat when durable history arrives afterwards", async (
     }
     throw new Error(`Unexpected API call: ${request.url}`);
   });
-  renderKnowledgeApp(<TapProductPrototype />, {
+  renderKnowledgeApp(<TapperWorkspace />, {
     api: fakeKnowledgeClient(),
   });
   const user = userEvent.setup();

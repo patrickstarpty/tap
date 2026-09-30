@@ -45,7 +45,7 @@ make tap-ai-dev
 
 检查浏览器网络面板中的 `/api/v1/runtime-mode`，页面应使用其返回的 `projectId` 建立项目客户端。不要在 UI 中编造 Actor、Role 或授权范围。
 
-入口调用关系：`src/app/App.tsx` → `src/pages/TapAiPage.tsx` → `src/widgets/tap/TapProductPrototype.tsx`。当前 TAP AI 入口使用 `conversationSource="api"`；`widgets/tapper/TapperWorkspace.tsx` 是旧兼容入口。
+入口调用关系：`src/app/App.tsx` → `src/pages/TapAiPage.tsx` → `src/widgets/tap/TapperWorkspace.tsx`。TAP AI 入口始终使用真实 Conversation/Knowledge/Graph/Test Plan API；`widgets/tapper/TapperWorkspace.tsx`（不同目录，旧组件）是旧兼容入口。
 
 ### 3.2 TAP Insights 页面
 

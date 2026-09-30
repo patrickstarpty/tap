@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 
-import { AnswerActivity, AnswerProgress } from "./TapProductPrototype";
+import { AnswerActivity, AnswerProgress } from "./TapperWorkspace";
 
 it("shows a compact truthful activity summary before expanding the event details", async () => {
   render(

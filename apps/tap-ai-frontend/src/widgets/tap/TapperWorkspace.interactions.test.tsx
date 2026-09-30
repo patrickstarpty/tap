@@ -27,10 +27,10 @@ import {
   useActiveGraph,
   useGraphSearch,
 } from "../../features/graph/api/queries";
-import { TapProductPrototype } from "./TapProductPrototype";
+import { TapperWorkspace } from "./TapperWorkspace";
 
-const prototypeStyles = readFileSync(
-  resolve("src/widgets/tap/TapProductPrototype.css"),
+const workspaceStyles = readFileSync(
+  resolve("src/widgets/tap/TapperWorkspace.css"),
   "utf8",
 );
 
@@ -108,7 +108,7 @@ function defaultKnowledgeClient() {
 // Built-in Agents/Skills (Life Underwriting Analyst, Application
 // Completeness Reviewer, BDD Scenario Design, Underwriting Evidence Review)
 // only exist as local fixture state (BUILT_IN_AGENTS/BUILT_IN_SKILLS) when
-// TapProductPrototype is NOT durable; in api mode the initial catalog is
+// TapperWorkspace is NOT durable; in api mode the initial catalog is
 // empty until the approved AI catalog query returns data. Seed that query
 // with equivalent items (same display names, in the same order) so
 // interaction cases that search, select, or manage this catalog exercise the
@@ -159,7 +159,7 @@ function seedAgentSkillCatalog(
   );
 }
 
-function renderPrototype() {
+function renderWorkspace() {
   const api = defaultKnowledgeClient();
   const queryClient = createTestQueryClient();
   seedAgentSkillCatalog(queryClient, api.projectId);
@@ -172,7 +172,7 @@ function renderPrototype() {
   // the repo's "no unexpected console output" test guard.
   queryClient.setQueryData(["test-plans", api.projectId], []);
 
-  return renderKnowledgeApp(<TapProductPrototype />, {
+  return renderKnowledgeApp(<TapperWorkspace />, {
     api,
     queryClient,
   });
@@ -207,7 +207,7 @@ const NO_CONTEXT_ANSWER = {
  * one message into it (unlike a one-shot POST-only stub). Every accepted
  * turn is immediately reported as `completed` with a grounded, no-context
  * answer (via the events endpoint), so the "no knowledge context selected"
- * notice — which TapProductPrototype only renders once a Turn has a response
+ * notice — which TapperWorkspace only renders once a Turn has a response
  * — is available to any migrated case that needs it. Cases that only need
  * the optimistic `.tap-user-message` echo (most of them) are unaffected by
  * the turn reaching `completed` instead of staying `queued`.
@@ -245,7 +245,7 @@ function stubConversationApi() {
       payload: { answer: NO_CONTEXT_ANSWER },
     });
     eventsByConversation.set(conversationId, events);
-    // The optimistic Turn TapProductPrototype appends locally already shows
+    // The optimistic Turn TapperWorkspace appends locally already shows
     // the selected sources; once the durable detail fetch (GET
     // /conversations/:id) resolves, it overwrites that Turn from
     // `input.resolvedResources`. Echoing the requested sourceRevisionIds back
@@ -368,9 +368,9 @@ function stubConversationApi() {
  * Seeds the durable Conversation API with a single conversation that already
  * has `total` completed turns (`Question 1` .. `Question N`), without
  * clicking Send `total` times. Used by cases exercising the question
- * navigation minimap at scale, replacing the fixture-only
- * `writePrototypeSnapshot` localStorage seed (durable mode never reads that
- * snapshot).
+ * navigation minimap at scale, replacing the fixture-only localStorage
+ * snapshot seed (removed with the fixture demo mode; durable mode never
+ * reads that snapshot).
  */
 function stubConversationHistory(total: number) {
   const conversationId = "conversation-history";
@@ -462,7 +462,7 @@ it("shows approved Agent and Skill meaning instead of integrity digests", async 
       },
     ],
   );
-  renderKnowledgeApp(<TapProductPrototype />, {
+  renderKnowledgeApp(<TapperWorkspace />, {
     api,
     queryClient,
   });
@@ -480,7 +480,7 @@ it("shows approved Agent and Skill meaning instead of integrity digests", async 
 });
 
 it("preserves the draft and prevents sending when the governed model is unavailable", async () => {
-  const { queryClient } = renderKnowledgeApp(<TapProductPrototype />, {
+  const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, {
     api: fakeKnowledgeClient(),
   });
   const user = userEvent.setup();
@@ -531,7 +531,7 @@ it("uses canonical Source API identities in the existing source panel", async ()
       },
     ],
   });
-  const { queryClient } = renderKnowledgeApp(<TapProductPrototype />, { api });
+  const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, { api });
   const checkbox = await screen.findByRole("checkbox", {
     name: /Canonical policy/,
   });
@@ -567,7 +567,7 @@ it("does not offer an ingestion-ready source that has not been published", async
     ],
     nextCursor: null,
   });
-  const { queryClient } = renderKnowledgeApp(<TapProductPrototype />, { api });
+  const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, { api });
   await waitFor(() =>
     expect(
       queryClient.getQueryData(["knowledge", api.projectId, "sources"]),
@@ -593,7 +593,7 @@ it("offers a multi-document published Source only once", async () => {
       expiresAt: "2027-01-01T00:00:00Z",
     })),
   });
-  renderKnowledgeApp(<TapProductPrototype />, { api });
+  renderKnowledgeApp(<TapperWorkspace />, { api });
   expect(
     await screen.findAllByRole("checkbox", { name: /Grouped policy source/u }),
   ).toHaveLength(1);
@@ -640,7 +640,7 @@ it("opens flowchart review instead of chunk management for an image document", a
       nextCursor: null,
     },
   });
-  renderKnowledgeApp(<TapProductPrototype />, {
+  renderKnowledgeApp(<TapperWorkspace />, {
     api,
   });
   await userEvent.click(screen.getByRole("button", { name: "Library" }));
@@ -709,7 +709,7 @@ it("shows Source documents in Library and targets retry and confirmed deletion",
     },
   });
   api.deleteSource = vi.fn().mockResolvedValue(undefined);
-  renderKnowledgeApp(<TapProductPrototype />, {
+  renderKnowledgeApp(<TapperWorkspace />, {
     api,
   });
   await userEvent.click(screen.getByRole("button", { name: "Library" }));
@@ -753,26 +753,26 @@ it("shows Source documents in Library and targets retry and confirmed deletion",
 
 it("distinguishes Library loading from an empty Source collection", async () => {
   const api = fakeKnowledgeClient().deferList();
-  renderKnowledgeApp(<TapProductPrototype />, {
+  renderKnowledgeApp(<TapperWorkspace />, {
     api,
   });
   await userEvent.click(screen.getByRole("button", { name: "Library" }));
   expect(screen.getByRole("status", { name: "Loading sources" })).toBeVisible();
 });
 
-function installPrototypeStyles() {
+function installWorkspaceStyles() {
   const style = window.document.createElement("style");
-  style.textContent = prototypeStyles;
+  style.textContent = workspaceStyles;
   window.document.head.append(style);
   return style;
 }
 
-function renderPrototypeWithQuestions(total: number) {
+function renderWorkspaceWithQuestions(total: number) {
   stubConversationHistory(total);
-  return renderPrototype();
+  return renderWorkspace();
 }
 
-function renderPrototypeWithManyDocuments() {
+function renderWorkspaceWithManyDocuments() {
   const api = fakeKnowledgeClient()
     .withDocuments([
       document({
@@ -808,7 +808,7 @@ function renderPrototypeWithManyDocuments() {
     ])
     .withPublishedSources({ items: DEFAULT_SOURCES });
 
-  return renderKnowledgeApp(<TapProductPrototype />, {
+  return renderKnowledgeApp(<TapperWorkspace />, {
     api,
   });
 }
@@ -819,7 +819,7 @@ function renderPrototypeWithManyDocuments() {
 // mode only ever lists Sources the fake backend returns, so this seeds 4
 // documents and the migrated case asserts against "4/4"/"1/4" instead of
 // "32/32"/"1/32" — same filter/clear interaction, backend-sized data.
-function renderPrototypeWithLibraryStatuses() {
+function renderWorkspaceWithLibraryStatuses() {
   const api = fakeKnowledgeClient()
     .withDocuments([
       document({
@@ -849,7 +849,7 @@ function renderPrototypeWithLibraryStatuses() {
     ])
     .withPublishedSources({ items: DEFAULT_SOURCES });
 
-  return renderKnowledgeApp(<TapProductPrototype />, {
+  return renderKnowledgeApp(<TapperWorkspace />, {
     api,
   });
 }
@@ -871,7 +871,7 @@ function mockNarrowViewport(width = 390) {
     }));
 }
 
-describe("Tap product prototype interactions", () => {
+describe("Tap product workspace interactions", () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
@@ -894,7 +894,7 @@ describe("Tap product prototype interactions", () => {
   // SAMPLE_REPRESENTATIVE_SOURCES sample library content ("Beneficiary test
   // cases.xlsx", "beneficiary.ts" present, "settlement.ts" absent). In
   // durable/api mode the Library tab always renders ProjectLibraryWorkspace
-  // with a real graphProjectId (TapProductPrototype.tsx:2574-2578), so
+  // with a real graphProjectId (TapperWorkspace.tsx:2574-2578), so
   // "No project is selected." can never render, and there is no
   // backend-provided equivalent of a fixed illustrative sample-file set to
   // substitute — this is exactly the Library graph "domain overview" sample
@@ -903,7 +903,7 @@ describe("Tap product prototype interactions", () => {
 
   it("defaults to English and lets the user switch the interface language", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     expect(
       screen.getByRole("button", { name: "English", pressed: true }),
@@ -937,7 +937,7 @@ describe("Tap product prototype interactions", () => {
     const user = userEvent.setup();
     const originalLanguage = globalThis.document.documentElement.lang;
     globalThis.document.documentElement.lang = "fr";
-    const view = renderPrototype();
+    const view = renderWorkspace();
 
     expect(globalThis.document.documentElement.lang).toBe("en");
     await user.click(screen.getByRole("button", { name: "中文" }));
@@ -950,7 +950,7 @@ describe("Tap product prototype interactions", () => {
 
   it("separates the product rail from the collapsible Tapper sidebar", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const productRail = screen.getByRole("complementary", {
       name: "Product",
@@ -1025,7 +1025,7 @@ describe("Tap product prototype interactions", () => {
 
   it("marks New chat as current only while the chat destination is active", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const newChatButton = screen.getByRole("button", { name: "New chat" });
     expect(newChatButton).toHaveAttribute("aria-current", "page");
@@ -1039,7 +1039,7 @@ describe("Tap product prototype interactions", () => {
 
   it("shows Tapper tools only while the Tapper workspace is active", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const tapperButton = screen.getByRole("button", { name: "Tapper" });
     expect(tapperButton).toHaveAttribute("aria-expanded", "true");
@@ -1067,7 +1067,7 @@ describe("Tap product prototype interactions", () => {
 
   it("returns to the conversation when the workspace is reopened", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Skills" }));
     expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
@@ -1087,7 +1087,7 @@ describe("Tap product prototype interactions", () => {
     const matchMedia = mockNarrowViewport(1024);
     try {
       const user = userEvent.setup();
-      renderPrototype();
+      renderWorkspace();
       expect(
         screen.getByRole("complementary", { name: "Tapper tools" }),
       ).toBeVisible();
@@ -1122,7 +1122,7 @@ describe("Tap product prototype interactions", () => {
 
     try {
       const user = userEvent.setup();
-      renderPrototype();
+      renderWorkspace();
       const productRail = screen.getByRole("complementary", {
         name: "Product",
       });
@@ -1186,7 +1186,7 @@ describe("Tap product prototype interactions", () => {
 
     try {
       const user = userEvent.setup();
-      renderPrototype();
+      renderWorkspace();
       const tapperButton = screen.getByRole("button", { name: "Tapper" });
 
       await user.click(tapperButton);
@@ -1224,7 +1224,7 @@ describe("Tap product prototype interactions", () => {
 
     try {
       const user = userEvent.setup();
-      renderPrototype();
+      renderWorkspace();
 
       await user.click(
         screen.getByRole("button", { name: "Expand Knowledge sources" }),
@@ -1252,7 +1252,7 @@ describe("Tap product prototype interactions", () => {
   it("keeps each answer in its response language through locale changes and history navigation", async () => {
     stubConversationApi();
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
     const englishPrompt = "What evidence is needed for life underwriting?";
 
     await user.type(
@@ -1290,7 +1290,7 @@ describe("Tap product prototype interactions", () => {
     // modelAlias/sourceRevisionIds/agent+skill selections only — see
     // src/features/conversations/api/client.ts), so re-selecting a
     // conversation re-fetches its detail (useConversationDetail has no
-    // staleTime) and TapProductPrototype.tsx's turn-mapping effect
+    // staleTime) and TapperWorkspace.tsx's turn-mapping effect
     // (~line 1335) stamps every turn with the *current* UI locale, not the
     // locale it was originally sent in. Fixture mode never re-fetched, so it
     // never surfaced this: the notice reliably stayed in the turn's original
@@ -1310,7 +1310,7 @@ describe("Tap product prototype interactions", () => {
   it("marks every persisted turn with the language used when it was sent", async () => {
     stubConversationApi();
     const user = userEvent.setup();
-    const { container } = renderPrototype();
+    const { container } = renderWorkspace();
 
     await user.type(
       screen.getByRole("textbox", { name: "Message Tapper" }),
@@ -1330,7 +1330,7 @@ describe("Tap product prototype interactions", () => {
     // language through locale changes and history navigation" above — the
     // Conversation API's turn contract has no persisted per-turn locale
     // field, so appending a second message re-fetches the conversation
-    // detail and TapProductPrototype.tsx's turn-mapping effect stamps every
+    // detail and TapperWorkspace.tsx's turn-mapping effect stamps every
     // turn (including the already-sent English one) with the *current* UI
     // locale. Fixture mode never re-fetched, so each turn kept the locale it
     // was created with. Only the just-sent turn's locale is verifiable here;
@@ -1343,7 +1343,7 @@ describe("Tap product prototype interactions", () => {
   it("starts a new empty chat while preserving and restoring earlier life-underwriting chats", async () => {
     stubConversationApi();
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const message = "What evidence is needed for life insurance underwriting?";
     await user.type(
@@ -1375,7 +1375,7 @@ describe("Tap product prototype interactions", () => {
   it("recalls the latest sent prompt with ArrowUp only when the composer is empty", async () => {
     stubConversationApi();
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const composer = screen.getByRole("textbox", { name: "Message Tapper" });
     const latestPrompt = "Review the beneficiary evidence";
@@ -1401,7 +1401,7 @@ describe("Tap product prototype interactions", () => {
   // context-only (no turns sent) draft stayed in "Chat history" as
   // "New chat · 3 selected" and could be reselected later. Durable/api mode
   // always reuses the single id "draft" for the unsent conversation
-  // (TapProductPrototype.tsx: `const id = durable ? "draft" : ...`), and
+  // (TapperWorkspace.tsx: `const id = durable ? "draft" : ...`), and
   // starting another "New chat" replaces (filters out) whatever previously
   // held that same "draft" id — so a second, concurrently-listed unsent
   // draft with its own selected context cannot exist in durable mode. This
@@ -1410,7 +1410,7 @@ describe("Tap product prototype interactions", () => {
 
   it("removes selected Knowledge, Agent, and Skill context from the composer", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const addContext = async (
       menuItem: string,
@@ -1459,7 +1459,7 @@ describe("Tap product prototype interactions", () => {
 
   it("uses a Codex-style model-only selector in the Tapper composer", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const composer = screen.getByRole("form", { name: "Message composer" });
     const trigger = within(composer).getByRole("button", {
@@ -1496,7 +1496,7 @@ describe("Tap product prototype interactions", () => {
 
   it("closes the model menu without stealing focus from the composer", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
     const composer = screen.getByRole("textbox", { name: "Message Tapper" });
 
     await user.click(
@@ -1513,7 +1513,7 @@ describe("Tap product prototype interactions", () => {
   it("keeps the selected model with its Conversation", async () => {
     stubConversationApi();
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
     const prompt = "Review the underwriting evidence";
 
     await user.click(
@@ -1552,7 +1552,7 @@ describe("Tap product prototype interactions", () => {
   it("uses the owl avatar with the Tapper wordmark in the product shell", async () => {
     stubConversationApi();
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const productRail = screen.getByRole("complementary", { name: "Product" });
     const tapperButton = within(productRail).getByRole("button", {
@@ -1562,7 +1562,7 @@ describe("Tap product prototype interactions", () => {
       'img[src*="tapper-owl-avatar-color.svg"]',
     );
     expect(railMark).toBeVisible();
-    expect(prototypeStyles).toMatch(
+    expect(workspaceStyles).toMatch(
       /^\.tap-tapper-rail-mark\s*\{[^}]*width:\s*28px;[^}]*height:\s*28px;/m,
     );
     const tapperHeading = screen.getByRole("heading", { name: "Tapper" });
@@ -1587,7 +1587,7 @@ describe("Tap product prototype interactions", () => {
 
   it("collapses and restores Knowledge sources without losing its selection", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const sources = screen.getByRole("complementary", {
       name: "Knowledge sources",
@@ -1641,7 +1641,7 @@ describe("Tap product prototype interactions", () => {
       configurable: true,
       value: scrollIntoView,
     });
-    renderPrototype();
+    renderWorkspace();
 
     const composer = screen.getByRole("textbox", { name: "Message Tapper" });
     await user.type(composer, "First underwriting question");
@@ -1719,11 +1719,11 @@ describe("Tap product prototype interactions", () => {
 
   it("matches the centered, left-anchored Codex minimap geometry and fisheye", async () => {
     stubConversationApi();
-    const style = installPrototypeStyles();
+    const style = installWorkspaceStyles();
     const user = userEvent.setup();
 
     try {
-      renderPrototype();
+      renderWorkspace();
       const composer = screen.getByRole("textbox", { name: "Message Tapper" });
       for (let index = 1; index <= 7; index += 1) {
         await user.type(composer, `Question ${index}`);
@@ -1810,7 +1810,7 @@ describe("Tap product prototype interactions", () => {
     });
 
     try {
-      renderPrototypeWithQuestions(30);
+      renderWorkspaceWithQuestions(30);
 
       // The stubbed history now loads asynchronously (via the durable
       // Conversation API), unlike the fixture-only synchronous localStorage
@@ -1860,7 +1860,7 @@ describe("Tap product prototype interactions", () => {
   });
 
   it("clips the long minimap and fades its continuation without a scroll track", async () => {
-    const style = installPrototypeStyles();
+    const style = installWorkspaceStyles();
     const originalInnerHeight = Object.getOwnPropertyDescriptor(
       window,
       "innerHeight",
@@ -1871,7 +1871,7 @@ describe("Tap product prototype interactions", () => {
     });
 
     try {
-      renderPrototypeWithQuestions(30);
+      renderWorkspaceWithQuestions(30);
       const questionNavigation = await screen.findByRole("navigation", {
         name: "Questions in this conversation",
       });
@@ -1908,7 +1908,7 @@ describe("Tap product prototype interactions", () => {
 
     try {
       const user = userEvent.setup();
-      renderPrototypeWithQuestions(46);
+      renderWorkspaceWithQuestions(46);
       const questionNavigation = await screen.findByRole("navigation", {
         name: "Questions in this conversation",
       });
@@ -1982,7 +1982,7 @@ describe("Tap product prototype interactions", () => {
     });
 
     try {
-      renderPrototypeWithQuestions(30);
+      renderWorkspaceWithQuestions(30);
       const questionNavigation = await screen.findByRole("navigation", {
         name: "Questions in this conversation",
       });
@@ -2022,7 +2022,7 @@ describe("Tap product prototype interactions", () => {
     });
 
     try {
-      renderPrototypeWithQuestions(30);
+      renderWorkspaceWithQuestions(30);
       await screen.findByRole("navigation", {
         name: "Questions in this conversation",
       });
@@ -2068,7 +2068,7 @@ describe("Tap product prototype interactions", () => {
     });
 
     try {
-      renderPrototypeWithQuestions(30);
+      renderWorkspaceWithQuestions(30);
       await screen.findByRole("navigation", {
         name: "Questions in this conversation",
       });
@@ -2116,23 +2116,23 @@ describe("Tap product prototype interactions", () => {
   });
 
   it("uses one clip-only motion system for both collapsible panels", () => {
-    renderPrototype();
+    renderWorkspace();
 
-    expect(prototypeStyles).toMatch(/--tap-panel-motion-duration:\s*200ms;/m);
-    expect(prototypeStyles).toMatch(
+    expect(workspaceStyles).toMatch(/--tap-panel-motion-duration:\s*200ms;/m);
+    expect(workspaceStyles).toMatch(
       /--tap-panel-motion-easing:\s*cubic-bezier\(0\.16, 1, 0\.3, 1\);/m,
     );
-    expect(prototypeStyles).not.toMatch(
+    expect(workspaceStyles).not.toMatch(
       /\.tap-tapper-sidebar\s*\{[^}]*opacity:/m,
     );
-    expect(prototypeStyles).not.toMatch(
+    expect(workspaceStyles).not.toMatch(
       /\.tap-sources-shell\s*\{[^}]*opacity:/m,
     );
   });
 
   it("filters the Knowledge sources panel by source name", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const sources = screen.getByRole("complementary", {
       name: "Knowledge sources",
@@ -2158,7 +2158,7 @@ describe("Tap product prototype interactions", () => {
 
   it("shows a localized no-match state when source search filters out every ready source", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
     const sources = screen.getByRole("complementary", {
       name: "Knowledge sources",
     });
@@ -2179,7 +2179,7 @@ describe("Tap product prototype interactions", () => {
   it("records selected context separately for each persisted turn", async () => {
     stubConversationApi();
     const user = userEvent.setup();
-    const { container } = renderPrototype();
+    const { container } = renderWorkspace();
     const sources = screen.getByRole("complementary", {
       name: "Knowledge sources",
     });
@@ -2198,7 +2198,7 @@ describe("Tap product prototype interactions", () => {
 
     // Unlike fixture mode (which always cleared the selection after
     // sending), durable/api mode carries the last turn's sources forward as
-    // the default selection for the next message (TapProductPrototype.tsx's
+    // the default selection for the next message (TapperWorkspace.tsx's
     // turn-mapping effect re-seeds `selectedSourceIds` from
     // `resolvedResources` of the most recent turn once its detail loads), so
     // the checkbox stays checked and switching context for the next turn
@@ -2229,7 +2229,7 @@ describe("Tap product prototype interactions", () => {
     // Durable turns always carry a (possibly empty) `contextLabels` array,
     // so TurnContext renders the "Sources and settings used for this
     // answer" <details> disclosure with a plain, unlabeled source <ul>
-    // (TapProductPrototype.tsx's TurnContext, `turn.contextLabels !==
+    // (TapperWorkspace.tsx's TurnContext, `turn.contextLabels !==
     // undefined` branch) instead of fixture mode's aria-labeled
     // "Selected context" citation list, which only renders when
     // `contextLabels` is left undefined.
@@ -2308,7 +2308,7 @@ describe("Tap product prototype interactions", () => {
   it("renders an explicit no-context notice without fabricated provenance", async () => {
     stubConversationApi();
     const user = userEvent.setup();
-    const { container } = renderPrototype();
+    const { container } = renderWorkspace();
 
     await user.type(
       screen.getByRole("textbox", { name: "Message Tapper" }),
@@ -2328,7 +2328,7 @@ describe("Tap product prototype interactions", () => {
 
   it("adds a searchable Library reference to the composer from its plus menu", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Add to message" }));
     const menu = screen.getByRole("menu", { name: "Add to message" });
@@ -2365,7 +2365,7 @@ describe("Tap product prototype interactions", () => {
 
   it("adds a searchable Agent to the active conversation context", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Add to message" }));
     const menu = screen.getByRole("menu", { name: "Add to message" });
@@ -2393,7 +2393,7 @@ describe("Tap product prototype interactions", () => {
 
   it("adds a searchable Skill to the active conversation context", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Add to message" }));
     const menu = screen.getByRole("menu", { name: "Add to message" });
@@ -2419,7 +2419,7 @@ describe("Tap product prototype interactions", () => {
 
   it("supports keyboard navigation and Escape focus restoration in the add menu", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const trigger = screen.getByRole("button", { name: "Add to message" });
     trigger.focus();
@@ -2433,7 +2433,7 @@ describe("Tap product prototype interactions", () => {
       name: "Use Agents",
     });
     // Durable/api mode adds an "Upload file" menu item after Skills
-    // (TapProductPrototype only passes onUploadFile when durable), so it —
+    // (TapperWorkspace only passes onUploadFile when durable), so it —
     // not Skills — is now the last item End/Home cycle through.
     const uploadItem = within(menu).getByRole("menuitem", {
       name: "Upload file",
@@ -2454,7 +2454,7 @@ describe("Tap product prototype interactions", () => {
 
   it("contains dialog focus and restores it to the add trigger on Escape", async () => {
     const user = userEvent.setup();
-    const { container } = renderPrototype();
+    const { container } = renderWorkspace();
 
     const trigger = screen.getByRole("button", { name: "Add to message" });
     await user.click(trigger);
@@ -2498,7 +2498,7 @@ describe("Tap product prototype interactions", () => {
 
   it("reports selected composer context through option aria-selected", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     const trigger = screen.getByRole("button", { name: "Add to message" });
     await user.click(trigger);
@@ -2526,7 +2526,7 @@ describe("Tap product prototype interactions", () => {
   });
 
   // Durable/api mode's Agents and Skills catalogs (CatalogWorkspace with
-  // durableDrafts=true, TapProductPrototype.tsx:2555/2569) manage custom
+  // durableDrafts=true, TapperWorkspace.tsx:2555/2569) manage custom
   // items as downloadable local Markdown draft files instead of the fixture
   // mode's directly-usable in-memory "Custom" items: the create/edit dialog
   // requires a kebab-case Name plus a non-empty Description (not just
@@ -2537,7 +2537,7 @@ describe("Tap product prototype interactions", () => {
   // create/edit interaction shape but asserts the real api-mode outcome.
   it("searches, creates, and edits agents for the life-underwriting workflow", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Agents" }));
     expect(screen.getByRole("heading", { name: "Agents" })).toBeVisible();
@@ -2627,7 +2627,7 @@ describe("Tap product prototype interactions", () => {
 
   it("localizes catalog list labels instead of composing English aria text", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "中文" }));
     await user.click(screen.getByRole("button", { name: "智能体" }));
@@ -2639,7 +2639,7 @@ describe("Tap product prototype interactions", () => {
 
   it("contains create-dialog focus, hides the product background, and restores the Create trigger", async () => {
     const user = userEvent.setup();
-    const { container } = renderPrototype();
+    const { container } = renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Agents" }));
     // Durable/api mode's create trigger reads "Create agent draft" (local
@@ -2681,7 +2681,7 @@ describe("Tap product prototype interactions", () => {
   // "Life Underwriting Analyst" built-in.
   it("contains edit-dialog focus and restores the exact Edit trigger", async () => {
     const user = userEvent.setup();
-    const { container } = renderPrototype();
+    const { container } = renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Agents" }));
     await user.click(
@@ -2734,7 +2734,7 @@ describe("Tap product prototype interactions", () => {
   // to Skills.
   it("searches, creates, and edits reusable underwriting skills", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Skills" }));
     expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
@@ -2828,7 +2828,7 @@ describe("Tap product prototype interactions", () => {
 
   it("uploads a Library file without making processing documents selectable", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Documents" }));
@@ -2868,7 +2868,7 @@ describe("Tap product prototype interactions", () => {
   it("keeps uploads pending until the Project API receipt arrives", async () => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient().deferUpload();
-    renderKnowledgeApp(<TapProductPrototype />, {
+    renderKnowledgeApp(<TapperWorkspace />, {
       api,
     });
     await user.click(screen.getByRole("button", { name: "Library" }));
@@ -2897,7 +2897,7 @@ describe("Tap product prototype interactions", () => {
     const api = fakeKnowledgeClient().withUploadProblem(
       new Error("private provider details"),
     );
-    renderKnowledgeApp(<TapProductPrototype />, {
+    renderKnowledgeApp(<TapperWorkspace />, {
       api,
     });
     await user.click(screen.getByRole("button", { name: "Library" }));
@@ -2926,7 +2926,7 @@ describe("Tap product prototype interactions", () => {
       <RuntimeClientProvider
         client={{ getMode: () => new Promise(() => undefined) }}
       >
-        <TapProductPrototype />
+        <TapperWorkspace />
       </RuntimeClientProvider>,
     );
     await user.click(screen.getByRole("button", { name: "Library" }));
@@ -2935,7 +2935,7 @@ describe("Tap product prototype interactions", () => {
 
   it("contains add-source focus, hides the product background, and restores its trigger", async () => {
     const user = userEvent.setup();
-    const { container } = renderPrototype();
+    const { container } = renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     const trigger = screen.getByRole("button", { name: "Add source" });
@@ -2963,7 +2963,7 @@ describe("Tap product prototype interactions", () => {
 
   it("keeps an uploaded source description in the current interface language", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Documents" }));
@@ -3032,7 +3032,7 @@ describe("Tap product prototype interactions", () => {
           isError: false,
         }) as never,
     );
-    renderPrototype();
+    renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Documents" }));
@@ -3078,7 +3078,7 @@ describe("Tap product prototype interactions", () => {
 
   it("combines Library type and status filters and clears them together", async () => {
     const user = userEvent.setup();
-    renderPrototypeWithLibraryStatuses();
+    renderWorkspaceWithLibraryStatuses();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Documents" }));
@@ -3115,7 +3115,7 @@ describe("Tap product prototype interactions", () => {
 
   it("dismisses the add menu on outside clicks without stealing focus", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderWorkspace();
     const trigger = screen.getByRole("button", { name: "Add to message" });
     await user.click(trigger);
     expect(screen.getByRole("menu", { name: "Add to message" })).toBeVisible();
@@ -3135,7 +3135,7 @@ describe("Tap product prototype interactions", () => {
 
   it("fully hides collapsed tool navigation and restores the same Tapper draft", async () => {
     const user = userEvent.setup();
-    renderPrototypeWithManyDocuments();
+    renderWorkspaceWithManyDocuments();
     const input = screen.getByRole("textbox", { name: "Message Tapper" });
     await user.type(input, "Keep this draft");
     await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
@@ -3152,7 +3152,7 @@ describe("Tap product prototype interactions", () => {
 
   it("does not substitute the illustrative graph without a published revision", async () => {
     const user = userEvent.setup();
-    renderKnowledgeApp(<TapProductPrototype />, {
+    renderKnowledgeApp(<TapperWorkspace />, {
       api: fakeKnowledgeClient(),
     });
 
@@ -3167,7 +3167,7 @@ describe("Tap product prototype interactions", () => {
 
   it("omits illustrative graph summaries from the durable product path", async () => {
     const user = userEvent.setup();
-    renderKnowledgeApp(<TapProductPrototype />, {
+    renderKnowledgeApp(<TapperWorkspace />, {
       api: fakeKnowledgeClient(),
     });
 

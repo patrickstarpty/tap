@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 test("the public capture command lists only AI-owned journeys", () => {
   const result = spawnSync(
     "corepack",
-    ["pnpm", "run", "prototype:capture", "--list"],
+    ["pnpm", "run", "ui:capture", "--list"],
     {
       cwd: fileURLToPath(new URL("..", import.meta.url)),
       encoding: "utf8",

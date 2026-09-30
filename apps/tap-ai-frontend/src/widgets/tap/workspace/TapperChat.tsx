@@ -23,7 +23,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 
-import type { PrototypeCopy } from "./copy";
+import type { WorkspaceCopy } from "./copy";
 import type {
   AssistantTurn,
   CatalogItem,
@@ -51,7 +51,7 @@ interface TapperChatProps {
   projectId: string | null;
   agents: readonly CatalogItem[];
   conversation: Conversation;
-  copy: PrototypeCopy;
+  copy: WorkspaceCopy;
   isInert?: boolean;
   message: string;
   onMessageChange: (message: string) => void;

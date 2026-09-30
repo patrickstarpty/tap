@@ -1,5 +1,5 @@
-import { TapProductPrototype } from "../widgets/tap/TapProductPrototype";
+import { TapperWorkspace } from "../widgets/tap/TapperWorkspace";
 
 export function TapAiPage() {
-  return <TapProductPrototype />;
+  return <TapperWorkspace />;
 }

@@ -68,7 +68,7 @@ it("shows a neutral workspace identity in the sidebar", () => {
 });
 
 // Below: tests migrated from the deleted src/pages/TapperPage.tsx +
-// TapperPage.test.tsx. TapAiPage always renders TapProductPrototype in
+// TapperPage.test.tsx. TapAiPage always renders TapperWorkspace in
 // "api" (durable) mode now, so every case here exercises that mode; see
 // docs referenced in the task report for which assertions changed and why.
 
@@ -103,7 +103,7 @@ function withKnowledgeSources() {
   });
 }
 
-// TapProductPrototype's durable/api Test Management view renders the real
+// TapperWorkspace's durable/api Test Management view renders the real
 // TestPlanLibrary component (instead of the fixture-only placeholder text).
 // Its Ant Design Spin uses a deprecated `tip` prop that logs a console
 // warning while its test-plans query is pending; pre-seeding that query
@@ -242,7 +242,7 @@ const NO_CONTEXT_ANSWER = {
 /**
  * Like stubDraftConversation, but the newly created conversation is
  * immediately reported as completed with a grounded answer (no sources,
- * Agent, or Skill attached). TapProductPrototype only renders the
+ * Agent, or Skill attached). TapperWorkspace only renders the
  * "no knowledge context was selected" notice once a Turn has a response, so
  * cases asserting that notice need this fuller round trip instead of the
  * plain queued Turn stubDraftConversation leaves behind.
@@ -484,7 +484,7 @@ describe("TAP AI page (durable Conversation API)", () => {
     );
   });
 
-  it("never substitutes prototype copy when a completed API Turn has no answer evidence event", async () => {
+  it("never substitutes static fallback copy when a completed API Turn has no answer evidence event", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const request = input instanceof Request ? input : new Request(input);
       if (/\/ai\/(agents|skills)$/u.test(request.url))
@@ -833,7 +833,7 @@ describe("TAP AI page (durable Conversation API)", () => {
 
     // The original fixture-mode case asserted a "Test plans are available
     // when the TAP AI API is ready." status here; that placeholder text only
-    // renders when TapProductPrototype is NOT in durable/api mode. In api
+    // renders when TapperWorkspace is NOT in durable/api mode. In api
     // mode with a project, Test Management instead mounts the real (and
     // localized) TestPlanLibrary component, so assert its heading instead.
     // This still exercises the same behavior as the original: a locale

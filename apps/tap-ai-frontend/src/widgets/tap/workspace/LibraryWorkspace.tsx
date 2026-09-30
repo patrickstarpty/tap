@@ -25,7 +25,7 @@ import ReactMarkdown from "react-markdown";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { getFileTypeFamily } from "./fileTypes";
 import { AccessibleDialog } from "./AccessibleDialog";
-import type { PrototypeCopy } from "./copy";
+import type { WorkspaceCopy } from "./copy";
 import { KnowledgeGraph } from "./KnowledgeGraph";
 import {
   useActiveGraph,
@@ -39,7 +39,7 @@ type LibraryMode = "list" | "graph";
 type LibraryStatusFilter = "all" | LibrarySource["status"];
 
 interface LibraryWorkspaceProps {
-  copy: PrototypeCopy;
+  copy: WorkspaceCopy;
   onAddSource?: (file: File, settings?: ChunkSettings) => Promise<void> | void;
   onInspectSource?: (sourceId: string, opener: HTMLElement) => void;
   sources: readonly LibrarySource[];
@@ -60,7 +60,7 @@ function ProjectKnowledgeGraph({
   projectId: string;
   sources: readonly LibrarySource[];
   locale: "en" | "zh";
-  copy: PrototypeCopy;
+  copy: WorkspaceCopy;
   query: string;
   onViewSource: (source: LibrarySource) => void;
 }) {

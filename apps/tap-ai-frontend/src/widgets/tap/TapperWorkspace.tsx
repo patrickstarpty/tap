@@ -12,12 +12,12 @@ import {
 } from "../../features/knowledge/api/queries";
 import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
-import { TapperChat, type ChatAttachment } from "./prototype/TapperChat";
-import { CatalogWorkspace } from "./prototype/CatalogWorkspace";
-import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
-import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
-import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
-import { AccessibleDialog } from "./prototype/AccessibleDialog";
+import { TapperChat, type ChatAttachment } from "./workspace/TapperChat";
+import { CatalogWorkspace } from "./workspace/CatalogWorkspace";
+import { WORKSPACE_COPY, type WorkspaceCopy } from "./workspace/copy";
+import { KnowledgeSourcesPanel } from "./workspace/KnowledgeSourcesPanel";
+import { LibraryWorkspace } from "./workspace/LibraryWorkspace";
+import { AccessibleDialog } from "./workspace/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
 import {
@@ -64,13 +64,13 @@ import {
   type LibrarySource,
   type Locale,
   type ProductModule,
-} from "./prototype/model";
-import { PanelToggleIcon } from "./prototype/PanelToggleIcon";
-import { PrototypeSidebar } from "./prototype/PrototypeSidebar";
+} from "./workspace/model";
+import { PanelToggleIcon } from "./workspace/PanelToggleIcon";
+import { WorkspaceSidebar } from "./workspace/WorkspaceSidebar";
 import { createTestPlanClient } from "../../features/testManagement/api/client";
 import { TestPlanLibrary } from "../../features/testManagement/components/TestPlanLibrary";
 import { TestPlanReview } from "../../features/testManagement/components/TestPlanReview";
-import "./TapProductPrototype.css";
+import "./TapperWorkspace.css";
 
 function durableTestPlanPath(): { planId: string; revisionId: string } | null {
   if (typeof window === "undefined") return null;
@@ -89,7 +89,7 @@ function TurnContext({
   copy,
   turn,
 }: {
-  copy: PrototypeCopy;
+  copy: WorkspaceCopy;
   turn: AssistantTurn;
 }) {
   const labels =
@@ -476,7 +476,7 @@ function AssistantResponse({
   onGenerateTestPlan,
   activityEvents = [],
 }: {
-  contentCopy: PrototypeCopy;
+  contentCopy: WorkspaceCopy;
   turn: AssistantTurn;
   insightsClient?: ConversationClient | null;
   conversationId?: string;
@@ -646,7 +646,7 @@ function ProjectLibraryWorkspace({
   projectId: string;
   graphProjectId?: string;
   locale: "en" | "zh";
-  copy: PrototypeCopy;
+  copy: WorkspaceCopy;
   sources: readonly LibrarySource[];
   loadState: "loading" | "loaded" | "error";
   onReload: () => void;
@@ -855,7 +855,7 @@ function ProjectLibraryWorkspace({
   );
 }
 
-export function TapProductPrototype() {
+export function TapperWorkspace() {
   const runtime = useRuntimeModeQuery();
   const projectId = runtime.isSuccess ? runtime.data.projectId : null;
   const knowledgeClient = useOptionalKnowledgeClient();
@@ -1066,7 +1066,7 @@ export function TapProductPrototype() {
   const documentLanguageOnMount = useRef(document.documentElement.lang);
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
-  const copy = PROTOTYPE_COPY[locale];
+  const copy = WORKSPACE_COPY[locale];
 
   useEffect(() => {
     resetCancelTurn();
@@ -1980,7 +1980,7 @@ export function TapProductPrototype() {
               : "connecting"
         }
       />
-      <PrototypeSidebar
+      <WorkspaceSidebar
         activeConversationId={activeConversationId}
         activeModule={activeModule}
         collapsed={sidebarCollapsed}
@@ -2117,7 +2117,7 @@ export function TapProductPrototype() {
               }
               renderAssistantTurn={(turn) => (
                 <AssistantResponse
-                  contentCopy={PROTOTYPE_COPY[turn.locale]}
+                  contentCopy={WORKSPACE_COPY[turn.locale]}
                   turn={turn}
                   insightsClient={insightsClient}
                   conversationId={activeConversation.id}

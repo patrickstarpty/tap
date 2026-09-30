@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { LibraryWorkspace } from "./LibraryWorkspace";
-import { PROTOTYPE_COPY } from "./copy";
+import { WORKSPACE_COPY } from "./copy";
 import type { LibrarySource } from "./model";
 
 const FILE_TYPES = [
@@ -67,7 +67,7 @@ describe("Library file browsing", () => {
     const user = userEvent.setup();
     render(
       <LibraryWorkspace
-        copy={PROTOTYPE_COPY.en}
+        copy={WORKSPACE_COPY.en}
         sources={TEST_SOURCES}
         onAddSource={async () => undefined}
       />,
@@ -85,7 +85,7 @@ describe("Library file browsing", () => {
     const user = userEvent.setup();
     render(
       <LibraryWorkspace
-        copy={PROTOTYPE_COPY.en}
+        copy={WORKSPACE_COPY.en}
         sources={TEST_SOURCES}
         onAddSource={async () => undefined}
       />,
@@ -113,7 +113,7 @@ describe("Library file browsing", () => {
     const user = userEvent.setup();
     render(
       <LibraryWorkspace
-        copy={PROTOTYPE_COPY.en}
+        copy={WORKSPACE_COPY.en}
         sources={TEST_SOURCES}
         onAddSource={async () => undefined}
       />,
@@ -159,7 +159,7 @@ describe("Library file browsing", () => {
     const user = userEvent.setup();
     render(
       <LibraryWorkspace
-        copy={PROTOTYPE_COPY.en}
+        copy={WORKSPACE_COPY.en}
         onAddSource={async () => undefined}
         sources={[
           {

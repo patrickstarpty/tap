@@ -1,11 +1,11 @@
 import { KnowledgeSourcePicker } from "../../../features/knowledge/components/KnowledgeSourcePicker";
 
-import type { PrototypeCopy } from "./copy";
+import type { WorkspaceCopy } from "./copy";
 import type { LibrarySource } from "./model";
 import { PanelToggleIcon } from "./PanelToggleIcon";
 
 interface KnowledgeSourcesPanelProps {
-  copy: PrototypeCopy;
+  copy: WorkspaceCopy;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;

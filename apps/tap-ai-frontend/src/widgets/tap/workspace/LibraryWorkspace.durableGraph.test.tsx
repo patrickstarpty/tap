@@ -8,7 +8,7 @@ import {
   useActiveGraph,
   useGraphSearch,
 } from "../../../features/graph/api/queries";
-import { PROTOTYPE_COPY } from "./copy";
+import { WORKSPACE_COPY } from "./copy";
 import { LibraryWorkspace } from "./LibraryWorkspace";
 
 vi.mock("../../../features/knowledge/api/client", () => ({
@@ -78,7 +78,7 @@ it("offers only the published source graph", async () => {
       }
     >
       <LibraryWorkspace
-        copy={PROTOTYPE_COPY.en}
+        copy={WORKSPACE_COPY.en}
         locale="en"
         graphProjectId="tapper-demo"
         sources={[
@@ -134,7 +134,7 @@ it("offers only the published source graph", async () => {
   );
 });
 
-it("describes the published graph without prototype wording", async () => {
+it("describes the published graph without stale wording", async () => {
   const getSource = vi.fn(async (sourceId: string) => ({
     documents: { items: [{ status: "ready", revisionId: `rev_${sourceId}` }] },
   }));
@@ -165,7 +165,7 @@ it("describes the published graph without prototype wording", async () => {
       }
     >
       <LibraryWorkspace
-        copy={PROTOTYPE_COPY.en}
+        copy={WORKSPACE_COPY.en}
         locale="en"
         graphProjectId="tapper-demo"
         sources={[
@@ -250,7 +250,7 @@ it("searches the published graph, inspects a node, and jumps to its source in th
       }
     >
       <LibraryWorkspace
-        copy={PROTOTYPE_COPY.en}
+        copy={WORKSPACE_COPY.en}
         locale="en"
         graphProjectId="tapper-demo"
         sources={[
