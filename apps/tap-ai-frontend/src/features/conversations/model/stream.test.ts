@@ -90,6 +90,38 @@ describe("conversation stream reducer", () => {
     expect(canceled.turns["turn-1"]?.status).toBe("canceled");
   });
 
+  it("does not surface a response until the turn actually completes", () => {
+    const state = reduceStreamEvent(
+      createStreamState(),
+      envelope(1, "turn-1", "citation.resolved", {
+        citation: {
+          citationId: "citation-1",
+          evidenceLabel: "Rules",
+          chunkId: "chunk-1",
+          logicalChunkId: "logical-1",
+          source: {
+            sourceId: "source-1",
+            sourceType: "doc",
+            revisionKind: "blob_version",
+            revision: "revision-1",
+            sourceContentHash: "sha256:source",
+            anchor: { type: "document", page: 2 },
+          },
+          chunkContentHash: "sha256:chunk",
+          contentRole: "source",
+        },
+      }),
+    );
+
+    // A citation resolving early must never hand callers a `response` that is
+    // missing `claims`/`answer` — every consumer of `StreamTurnState.response`
+    // treats a non-null value as a complete `RetrievalAnswerResponse` (see
+    // TapProductPrototype.tsx's AssistantResponse, which crashed on
+    // `turn.response.claims.flatMap(...)` when this held a partial object).
+    expect(state.turns["turn-1"]?.response).toBeNull();
+    expect(state.turns["turn-1"]?.pendingCitations).toHaveLength(1);
+  });
+
   it("keeps resolved citation identity with the completed answer", () => {
     let state = createStreamState();
     state = reduceStreamEvent(

@@ -208,6 +208,101 @@ it("falls back to activity when traceId is null", async () => {
   expect(screen.getByText(/^Activity/u)).toBeInTheDocument();
 });
 
+it("does not crash when a citation resolves before a running turn completes", async () => {
+  vi.stubGlobal("fetch", async (request: Request) => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith("/conversations") && request.method === "GET")
+      return json({
+        items: [
+          {
+            conversationId: "conversation-a",
+            title: "What is the rule?",
+            createdAt: "2026-09-29T08:00:00Z",
+            updatedAt: "2026-09-29T08:00:00Z",
+          },
+        ],
+        nextCursor: null,
+      });
+    if (path.endsWith("/conversations/conversation-a"))
+      return json({
+        conversationId: "conversation-a",
+        title: "What is the rule?",
+        createdAt: "2026-09-29T08:00:00Z",
+        updatedAt: "2026-09-29T08:00:01Z",
+        turns: [
+          {
+            turnId: "turn-1",
+            state: "running",
+            attempt: 1,
+            traceId: null,
+            inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
+            answerEvidenceSnapshotDigest: null,
+            input: {
+              message: "What is the rule?",
+              modelAlias: "qwen-plus",
+              sourceRevisionIds: [],
+              documentRevisionIds: [],
+              resolvedResources: [],
+              agentRevisionId: null,
+              agentLabel: null,
+              skillRevisionIds: [],
+              skillLabels: [],
+              insightsQueryId: null,
+            },
+          },
+        ],
+      });
+    if (path.endsWith("/conversations/conversation-a/events"))
+      return json({
+        items: [
+          {
+            eventId: "event-1",
+            sequence: 1,
+            turnId: "turn-1",
+            occurredAt: "2026-09-29T08:00:00Z",
+            eventType: "citation.resolved",
+            payload: {
+              citation: {
+                citationId: "citation-1",
+                evidenceLabel: "Rules",
+                chunkId: "chunk-1",
+                logicalChunkId: "logical-1",
+                source: {
+                  sourceId: "source-1",
+                  sourceType: "doc",
+                  revisionKind: "blob_version",
+                  revision: "revision-1",
+                  sourceContentHash: "sha256:source",
+                  anchor: { type: "document", page: 2 },
+                },
+                chunkContentHash: "sha256:chunk",
+                contentRole: "source",
+              },
+            },
+          },
+        ],
+        nextCursor: null,
+      });
+    throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
+  });
+
+  // Reproduces the real journey's timing: the backend emits `citation.resolved`
+  // events before the turn's `turn.completed` event/state transition, so the
+  // widget must tolerate a running turn whose citations have started
+  // resolving but whose full answer (with `claims`) has not arrived yet.
+  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    api: fakeKnowledgeClient(),
+  });
+
+  expect(
+    await screen.findByText(/Waiting to start…|等待开始…/u),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/^Activity/u)).not.toBeInTheDocument();
+  expect(
+    screen.queryByText(/format could not be verified|回答格式无法核验/u),
+  ).not.toBeInTheDocument();
+});
+
 it("resolves a retrieval hit to its published document name", async () => {
   const api = fakeKnowledgeClient().withPublishedSources({
     items: [
