@@ -6,7 +6,7 @@ import { AppProviders } from "../../src/app/providers";
 import "../../src/app/styles.css";
 import { KnowledgeLibrary } from "../../src/features/knowledge/components/KnowledgeLibrary";
 import { COPY } from "../../src/features/knowledge/copy";
-import { TapperWorkspace } from "../../src/widgets/tapper/TapperWorkspace";
+import { LegacyTapperWorkspace } from "../../src/widgets/tapper/LegacyTapperWorkspace";
 
 function TapperKnowledgeHarness() {
   return createElement(
@@ -40,7 +40,7 @@ function TapperKnowledgeHarness() {
           {
             key: "ask",
             label: COPY.askTab,
-            children: createElement(TapperWorkspace),
+            children: createElement(LegacyTapperWorkspace),
           },
           {
             key: "library",

@@ -130,7 +130,7 @@ function TapApplication() {
               dispatch({ type: "association/set", automationId, testPlanId })
             }
             onOpenTestPlan={(testPlanId) =>
-              setNotice(`Test plan ${testPlanId} is managed in TAP AI.`)
+              setNotice(`Test plan ${testPlanId} is managed in Tapper.`)
             }
             onRun={(
               automation,

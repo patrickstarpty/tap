@@ -5,7 +5,7 @@
 ## 1. 应用边界
 
 - `apps/tap-ai-backend`：TAP AI 后端（Python 3.13 / FastAPI），Tapper 问答、知识文档、图谱、Agent/Skill 资产与测试方案生成。
-- `apps/tap-ai-frontend`：TAP AI 前端（React / TypeScript / Vite）。
+- `apps/tap-ai-frontend`：TAP AI 前端（React / TypeScript / Vite）；只呈现 API 驱动的产品界面，交互以 `apps/web` `/prototype` 为设计来源。
 - `apps/backend`：TAP 非 AI 后端，当前主要承载 Test Insights（`tap_platform/insights`，ClickHouse 适配器）。
 - `apps/web`：TAP 非 AI 前端；`/prototype` 路由是完整产品设计基准（见[产品原型基准规范](guides/2026-09-22-product-prototype-baseline.md)），不代表后端已实现。
 

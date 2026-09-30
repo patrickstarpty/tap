@@ -428,7 +428,7 @@ TAP AI 运行页已增加待核对/阻断/全部筛选、已加载位置搜索�
 
 2026-09-06 的 44 张截图仍是历史设计资料，包含旧模型名称及模拟交互，不再作为主线讲稿或当前实现证明。历史界面可从 [README 历史展示](../../README.md)查看；当前设计规则以[完整原型基准](2026-09-22-product-prototype-baseline.md)为准。
 
-本组截图采集于 2026-09-27，基于 `codex/pytest-allure-reports` 工作区（基线提交 `d75352a` 加未提交的 pytest/Allure 与审核工作台实现）。图 01–09、17–18 及流程一的 PDF/Excel 格式补充从干净浏览器打开当前原型并逐步操作；图 10–15 经 `make tap-insights-e2e` 的隔离环境采集；图 16 经 `apps/tap-ai-frontend` 的 `prototype:capture` 固定响应流程采集。报告样本来源见 [pytest/Allure fixture 说明](../../apps/backend/tests/fixtures/insights/pytest-allure/README.md)。本次截图没有调用真实模型，也未改变 M1–M4 真实业务 Gate 状态。
+本组截图采集于 2026-09-27，基于 `codex/pytest-allure-reports` 工作区（基线提交 `d75352a` 加未提交的 pytest/Allure 与审核工作台实现）。图 01–09、17–18 及流程一的 PDF/Excel 格式补充从干净浏览器打开当前原型并逐步操作；图 10–15 经 `make tap-insights-e2e` 的隔离环境采集；图 16 经 `apps/tap-ai-frontend` 的 `ui:capture` 固定响应流程采集。报告样本来源见 [pytest/Allure fixture 说明](../../apps/backend/tests/fixtures/insights/pytest-allure/README.md)。本次截图没有调用真实模型，也未改变 M1–M4 真实业务 Gate 状态。
 
 界面回归对照：[调整前报告页](../assets/pytest-allure/report-desktop.png)可见横向模块标签和拥挤的四列详情；图 12–15 为调整后的左侧导航、直接 Test Insights 入口与两列证据布局。流程一图 02–04 与 PDF/Excel 格式补充在相同 1280×720、2× 视口重采；图 03–04 已替换旧版双栏弹窗。移动端报告布局通过隔离浏览器流程检查，无横向页面溢出。
 

@@ -1,9 +1,5 @@
-import { TapProductPrototype } from "../widgets/tap/TapProductPrototype";
+import { TapperWorkspace } from "../widgets/tap/TapperWorkspace";
 
-export function TapAiPage({
-  conversationSource = "api",
-}: {
-  conversationSource?: "api" | "fixture";
-}) {
-  return <TapProductPrototype conversationSource={conversationSource} />;
+export function TapAiPage() {
+  return <TapperWorkspace />;
 }
