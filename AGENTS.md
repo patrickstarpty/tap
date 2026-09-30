@@ -14,7 +14,8 @@ TAP AI lives in `apps/tap-ai-backend/` (Python 3.13/FastAPI) and `apps/tap-ai-fr
 
 ## Documentation Governance
 
-- Produce specs and plans through the superpowers brainstorming and writing-plans flow and store them at the paths above; `docs/superpowers/plans/2026-09-29-v1-roadmap.md` is the single V1 roadmap.
+- Produce specs and plans through the superpowers brainstorming and writing-plans flow and store them at the paths above; `docs/superpowers/plans/2026-10-01-product-roadmap.md` is the single product roadmap and `docs/superpowers/plans/2026-09-29-v1-roadmap.md` is the single V1 roadmap.
+- Update the affected product roadmap row whenever a PR merges, a spec is finalized or scope changes.
 - Use ADRs only for cross-module decisions, with a single `status` field (`docs/decisions/adr-template.md`).
 - Do not maintain RFC or Plan lifecycle states; plan checkboxes record progress.
 

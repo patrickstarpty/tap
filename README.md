@@ -23,6 +23,7 @@ Tapper 品牌形象自 2026-09-28 起为猫头鹰，替换原 Listening/Aha 啄�
 ## 文档
 
 - [现状架构](docs/architecture.md)：代码中可验证的系统结构与已知差距。
+- [产品路线图](docs/superpowers/plans/2026-10-01-product-roadmap.md)：全局版本顺序、已完成与规划中的工作。
 - [V1 总纲](docs/superpowers/plans/2026-09-29-v1-roadmap.md)：V1 能力、验收标准与子项目顺序。
 - [文档索引](docs/index.md)：指南、设计 spec、实施计划与架构决策。
 - [历史文档归档](docs/archive/index.md)：2026-09-29 前的 RFC、计划、评审与参考，只读。
