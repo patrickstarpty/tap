@@ -10,7 +10,9 @@ export type PrototypeFault =
   | "upload-failed"
   | "graph-load-failed"
   | "citation-verification-failed"
-  | "source-version-changed";
+  | "source-version-changed"
+  | "suggestions-loading"
+  | "suggestions-load-failed";
 
 declare global {
   interface Window {
@@ -31,6 +33,8 @@ const KNOWN_FAULTS: readonly PrototypeFault[] = [
   "graph-load-failed",
   "citation-verification-failed",
   "source-version-changed",
+  "suggestions-loading",
+  "suggestions-load-failed",
 ];
 
 function isPrototypeFault(value: string): value is PrototypeFault {

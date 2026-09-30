@@ -43,6 +43,12 @@ export interface PrototypeCopy {
     sourceHint: string;
     suggestedPrompts: string;
     quickPrompts: readonly [string, string, string];
+    promptSuggestions: {
+      label: string;
+      refresh: string;
+      basedOnOne(name: string): string;
+      basedOnMany(name: string, total: number): string;
+    };
     answer: string;
     noContextNotice: string;
     selectedContextNotice: string;
@@ -408,6 +414,13 @@ export const PROTOTYPE_COPY = {
         "Create BDD test cases for life insurance underwriting",
         "Generate an automation script for a life insurance application",
       ],
+      promptSuggestions: {
+        label: "Suggested questions",
+        refresh: "Show others",
+        basedOnOne: (name: string) => `Based on ${name}`,
+        basedOnMany: (name: string, total: number) =>
+          `Based on ${name} and ${total - 1} more`,
+      },
       answer:
         "A life insurance application commonly includes identity details for the policyholder and insured person, health disclosures, beneficiary information, and payment details.",
       noContextNotice:
@@ -787,6 +800,13 @@ export const PROTOTYPE_COPY = {
         "为寿险新单核保创建 BDD 测试用例",
         "为寿险投保申请生成自动化脚本",
       ],
+      promptSuggestions: {
+        label: "推荐问题",
+        refresh: "换一批",
+        basedOnOne: (name: string) => `基于《${name}》`,
+        basedOnMany: (name: string, total: number) =>
+          `基于《${name}》等 ${total} 份资料`,
+      },
       answer:
         "寿险投保通常包含投保人和被保险人身份资料、健康告知、受益人信息以及缴费资料。",
       noContextNotice: "请选择相关知识来源，获取带有引用的回答。",

@@ -33,4 +33,14 @@ describe("prototypeFaults", () => {
     clearPrototypeFault("library-load-failed");
     expect(isPrototypeFaultActive("library-load-failed")).toBe(false);
   });
+
+  it("recognizes the prompt suggestion load faults", () => {
+    setPrototypeFaults(["suggestions-loading"]);
+    expect(isPrototypeFaultActive("suggestions-loading")).toBe(true);
+    expect(isPrototypeFaultActive("suggestions-load-failed")).toBe(false);
+
+    setPrototypeFaults(["suggestions-load-failed"]);
+    expect(isPrototypeFaultActive("suggestions-load-failed")).toBe(true);
+    expect(isPrototypeFaultActive("suggestions-loading")).toBe(false);
+  });
 });

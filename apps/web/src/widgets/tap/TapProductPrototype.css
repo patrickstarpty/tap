@@ -254,6 +254,8 @@
 .tap-chat-history button:focus-visible,
 .tap-language-switcher button:focus-visible,
 .tap-quick-prompts button:focus-visible,
+.tap-prompt-suggestion:focus-visible,
+.tap-prompt-suggestions-refresh:focus-visible,
 .tap-composer-add-button:focus-visible,
 .tap-model-trigger:focus-visible,
 .tap-model-menu button:focus-visible {
@@ -713,6 +715,77 @@
   border-color: var(--tap-accent-line);
   background: var(--tap-accent-soft);
   color: var(--tap-accent-dark);
+}
+
+.tap-prompt-suggestions-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 30px;
+}
+
+.tap-chat--idle > .tap-prompt-suggestions-wrap {
+  margin-top: 0;
+}
+
+.tap-prompt-suggestions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .tap-prompt-suggestions {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tap-prompt-suggestion {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 44px;
+  border: 1px solid var(--tap-line);
+  border-radius: 10px;
+  background: transparent;
+  padding: 10px 14px;
+  color: var(--tap-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  transition:
+    border-color 150ms ease-out,
+    background-color 150ms ease-out;
+  border-color: var(--tap-line);
+}
+
+.tap-prompt-suggestion:hover {
+  border-color: var(--tap-accent-line);
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent-dark);
+}
+
+.tap-prompt-suggestion-source {
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--tap-muted);
+}
+
+.tap-prompt-suggestions-refresh {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--tap-accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
 }
 
 .tap-composer {
