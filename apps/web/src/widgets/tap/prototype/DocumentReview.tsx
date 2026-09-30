@@ -4,6 +4,8 @@ import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 import type { AssistantTurn, LibrarySource, Locale } from "./model";
 import "./DocumentReview.css";
 import { ChunkManager } from "./ChunkManager";
+import { AnswerTrace } from "./AnswerTrace";
+import { createSampleTrace } from "./sampleTrace";
 
 type DocumentState =
   | "processing"
@@ -1035,6 +1037,7 @@ export function KnowledgeAnswer({
           </article>
         </AccessibleDialog>
       ) : null}
+      <AnswerTrace trace={createSampleTrace(turn.locale)} />
     </div>
   );
 }
