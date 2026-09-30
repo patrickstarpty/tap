@@ -246,21 +246,43 @@ class MysqlSuggestionStore:
             attempt_count=cast(int, row["attempt_count"]),
         )
 
+    async def _apply_due_update(
+        self,
+        session: AsyncSession,
+        *,
+        actor_id: str,
+        locale: str,
+        reason: RefreshReason,
+        due_at: datetime | None,
+        last_refreshed_at: datetime | None,
+        lease_expires_at: datetime | None,
+        now: datetime,
+    ) -> None:
+        """Recompute due_at for one existing row (via next_due_at, guarded by
+        _effective_current_due_at) and persist it. Shared by every call site
+        that updates an already-existing prompt_suggestion_refresh row."""
+        computed = next_due_at(
+            reason,
+            now=now,
+            last_refreshed_at=last_refreshed_at,
+            current_due_at=_effective_current_due_at(due_at, lease_expires_at, now=now),
+        )
+        await session.execute(
+            update(prompt_suggestion_refresh)
+            .where(
+                *scope_predicates(prompt_suggestion_refresh, self._scope),
+                prompt_suggestion_refresh.c.actor_id == actor_id,
+                prompt_suggestion_refresh.c.locale == locale,
+            )
+            .values(due_at=computed, last_reason=reason.value, updated_at=now)
+        )
+
     async def _request_refresh_locked(
         self, session: AsyncSession, key: SuggestionKey, reason: RefreshReason, *, now: datetime
     ) -> None:
         existing = await self._locked_row(session, key)
-        due_at = next_due_at(
-            reason,
-            now=now,
-            last_refreshed_at=None if existing is None else existing.last_refreshed_at,
-            current_due_at=(
-                None
-                if existing is None
-                else _effective_current_due_at(existing.due_at, existing.lease_expires_at, now=now)
-            ),
-        )
         if existing is None:
+            due_at = next_due_at(reason, now=now, last_refreshed_at=None, current_due_at=None)
             await session.execute(
                 insert(prompt_suggestion_refresh).values(
                     **{**scope_values(self._scope), "actor_id": key.actor_id},
@@ -279,14 +301,15 @@ class MysqlSuggestionStore:
                 )
             )
         else:
-            await session.execute(
-                update(prompt_suggestion_refresh)
-                .where(
-                    *scope_predicates(prompt_suggestion_refresh, self._scope),
-                    prompt_suggestion_refresh.c.actor_id == key.actor_id,
-                    prompt_suggestion_refresh.c.locale == key.locale,
-                )
-                .values(due_at=due_at, last_reason=reason.value, updated_at=now)
+            await self._apply_due_update(
+                session,
+                actor_id=key.actor_id,
+                locale=key.locale,
+                reason=reason,
+                due_at=existing.due_at,
+                last_refreshed_at=existing.last_refreshed_at,
+                lease_expires_at=existing.lease_expires_at,
+                now=now,
             )
 
     async def request_refresh_for_actor(
@@ -315,22 +338,15 @@ class MysqlSuggestionStore:
             )
             touched = 0
             for row in rows:
-                due_at = next_due_at(
-                    reason,
-                    now=now,
+                await self._apply_due_update(
+                    session,
+                    actor_id=actor_id,
+                    locale=row["locale"],
+                    reason=reason,
+                    due_at=row["due_at"],
                     last_refreshed_at=row["last_refreshed_at"],
-                    current_due_at=_effective_current_due_at(
-                        row["due_at"], row["lease_expires_at"], now=now
-                    ),
-                )
-                await session.execute(
-                    update(prompt_suggestion_refresh)
-                    .where(
-                        *scope_predicates(prompt_suggestion_refresh, self._scope),
-                        prompt_suggestion_refresh.c.actor_id == actor_id,
-                        prompt_suggestion_refresh.c.locale == row["locale"],
-                    )
-                    .values(due_at=due_at, last_reason=reason.value, updated_at=now)
+                    lease_expires_at=row["lease_expires_at"],
+                    now=now,
                 )
                 touched += 1
         return touched
@@ -360,22 +376,15 @@ class MysqlSuggestionStore:
         )
         touched = 0
         for row in rows:
-            due_at = next_due_at(
-                reason,
-                now=now,
+            await self._apply_due_update(
+                session,
+                actor_id=row["actor_id"],
+                locale=row["locale"],
+                reason=reason,
+                due_at=row["due_at"],
                 last_refreshed_at=row["last_refreshed_at"],
-                current_due_at=_effective_current_due_at(
-                    row["due_at"], row["lease_expires_at"], now=now
-                ),
-            )
-            await session.execute(
-                update(prompt_suggestion_refresh)
-                .where(
-                    *scope_predicates(prompt_suggestion_refresh, self._scope),
-                    prompt_suggestion_refresh.c.actor_id == row["actor_id"],
-                    prompt_suggestion_refresh.c.locale == row["locale"],
-                )
-                .values(due_at=due_at, last_reason=reason.value, updated_at=now)
+                lease_expires_at=row["lease_expires_at"],
+                now=now,
             )
             touched += 1
         return touched
