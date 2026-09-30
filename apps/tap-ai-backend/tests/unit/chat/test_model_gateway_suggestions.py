@@ -65,8 +65,8 @@ async def test_prompt_contains_inputs_and_locale():
     await _generator(gateway).generate(inputs(), "zh")
 
     request = gateway.requests[0]
-    assert "\n\nINPUT:\n" in request.prompt
-    payload = json.loads(request.prompt.split("\n\nINPUT:\n", 1)[1])
+    assert "INPUT" not in request.prompt
+    payload = json.loads(request.context)
     assert payload["locale"] == "zh"
     assert payload["popularSources"] == [{"id": "src_b", "count": 3}]
     assert payload["sources"] == [

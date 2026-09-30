@@ -436,12 +436,13 @@ async def test_deterministic_gateway_answers_prompt_suggestion_schema():
         },
         sort_keys=True,
     )
-    prompt = "Suggest prompt questions.\n\nINPUT:\n" + payload
+    prompt = "Suggest prompt questions."
     result = await gateway.generate_structured(
         replace(
             request(ModelOperation.STRUCTURED),
             prompt=prompt,
             prompt_digest=digest(prompt),
+            context=payload,
             schema=SUGGESTION_SCHEMA,
             schema_digest=digest(
                 json.dumps(SUGGESTION_SCHEMA, sort_keys=True, separators=(",", ":"))

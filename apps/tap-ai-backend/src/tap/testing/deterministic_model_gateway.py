@@ -74,8 +74,10 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 and request.schema.get("title") == "PromptSuggestions"
             ):
                 try:
-                    data = json.loads(request.prompt.split("INPUT:\n", 1)[1])
-                except (ValueError, IndexError):
+                    data = json.loads(request.context)
+                    if not isinstance(data, dict):
+                        data = {}
+                except ValueError:
                     data = {}
                 locale = data.get("locale")
                 suggestions = [
