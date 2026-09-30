@@ -1,5 +1,6 @@
 """Trace binding propagation, span error marking and traceparent round-trips."""
 
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
@@ -11,6 +12,7 @@ from tap.platform.telemetry import (
     span,
     trace_id_of,
 )
+from tap.platform.telemetry.tracing import _batch_span_processor
 
 
 def _scope() -> ProjectScopeContext:
@@ -58,7 +60,11 @@ def test_span_marks_error_and_reraises(span_recorder) -> None:
 
     spans = span_recorder.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].status.status_code == StatusCode.ERROR
+    recorded = spans[0]
+    assert recorded.status.status_code == StatusCode.ERROR
+    assert recorded.status.description == "ValueError"
+    exception_events = [event for event in recorded.events if event.name == "exception"]
+    assert len(exception_events) == 1
 
 
 def test_traceparent_round_trip(span_recorder) -> None:
@@ -89,3 +95,13 @@ def test_traceparent_round_trip(span_recorder) -> None:
 def test_invalid_traceparent_yields_none() -> None:
     assert extract_traceparent("garbage") is None
     assert extract_traceparent(None) is None
+
+
+def test_batch_span_processor_uses_fixed_batching_constants() -> None:
+    processor = _batch_span_processor(InMemorySpanExporter())
+    try:
+        batch_processor = processor._batch_processor
+        assert batch_processor._schedule_delay_millis == 5000
+        assert batch_processor._max_export_batch_size == 512
+    finally:
+        processor.shutdown()

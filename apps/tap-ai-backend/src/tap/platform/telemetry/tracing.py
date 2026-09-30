@@ -33,6 +33,21 @@ logger = logging.getLogger(__name__)
 _TRACER_NAME = "tap"
 _PROPAGATOR = TraceContextTextMapPropagator()
 
+# Fixed batching behavior for exported spans; passed explicitly so OTEL_BSP_* environment
+# variables (which BatchSpanProcessor otherwise reads as defaults) cannot silently override
+# this platform-wide constraint.
+_BATCH_SCHEDULE_DELAY_MILLIS = 5000
+_BATCH_MAX_EXPORT_BATCH_SIZE = 512
+
+
+def _batch_span_processor(exporter: SpanExporter) -> BatchSpanProcessor:
+    return BatchSpanProcessor(
+        exporter,
+        schedule_delay_millis=_BATCH_SCHEDULE_DELAY_MILLIS,
+        max_export_batch_size=_BATCH_MAX_EXPORT_BATCH_SIZE,
+    )
+
+
 # opentelemetry.util.types.AttributeValue is a recursive alias assigned without an
 # explicit `TypeAlias` annotation, which mypy --strict rejects as "not valid as a
 # type". Redeclare the equivalent shape here so span attribute signatures type-check.
@@ -139,7 +154,13 @@ def span(
 ) -> Iterator[Span]:
     """Start a span; on exception, mark it ERROR, record the exception, and reraise."""
     tracer = trace.get_tracer(_TRACER_NAME)
-    with tracer.start_as_current_span(name, context=context, attributes=attributes) as current_span:
+    with tracer.start_as_current_span(
+        name,
+        context=context,
+        attributes=attributes,
+        record_exception=False,
+        set_status_on_exception=False,
+    ) as current_span:
         try:
             yield current_span
         except Exception as exc:
@@ -183,7 +204,7 @@ def configure_tracing(service_name: str, exporters: Sequence[SpanExporter]) -> T
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
     provider.add_span_processor(TraceBindingProcessor())
     for exporter in exporters:
-        provider.add_span_processor(BatchSpanProcessor(exporter))
+        provider.add_span_processor(_batch_span_processor(exporter))
     trace.set_tracer_provider(provider)
     return provider
 
