@@ -487,13 +487,6 @@ function AssistantResponse({
   onGenerateTestPlan?: () => void;
   activityEvents?: readonly ActivityEvent[];
 }) {
-  if (turn.intent !== "answer") {
-    return (
-      <p role="status">
-        Use Test Management to generate an AI test plan from a conversation.
-      </p>
-    );
-  }
   if (turn.intent === "answer") {
     if (
       turn.insightsQueryId !== undefined &&

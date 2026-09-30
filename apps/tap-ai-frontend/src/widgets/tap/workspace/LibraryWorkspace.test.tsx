@@ -36,7 +36,7 @@ const TEST_SOURCES: readonly LibrarySource[] = FILE_TYPES.map((type) => {
       description:
         "Decision boundaries, review triggers and expected outcomes.",
       downloadUrl: "/library-files/underwriting-test-rules.pdf",
-      origin: "page-local",
+      origin: "knowledge-base",
       status: "ready",
     };
   }
@@ -47,7 +47,7 @@ const TEST_SOURCES: readonly LibrarySource[] = FILE_TYPES.map((type) => {
       type,
       description: "Permissions, boundary values and recovery scenarios.",
       downloadUrl: "/library-files/exploratory-testing-checklist.md",
-      origin: "page-local",
+      origin: "knowledge-base",
       status: "ready",
     };
   }
@@ -57,7 +57,7 @@ const TEST_SOURCES: readonly LibrarySource[] = FILE_TYPES.map((type) => {
     type,
     description: "Test library file.",
     downloadUrl: `/library-files/test-file.${type.toLowerCase()}`,
-    origin: "page-local",
+    origin: "knowledge-base",
     status: "ready",
   };
 });

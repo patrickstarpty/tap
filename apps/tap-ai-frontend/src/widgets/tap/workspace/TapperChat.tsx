@@ -55,8 +55,6 @@ interface TapperChatProps {
   isInert?: boolean;
   message: string;
   onMessageChange: (message: string) => void;
-  pageContext?: AssistantTurn["pageContext"];
-  onClearPageContext?: () => void;
   onModelChange: (modelId: ModelId) => void;
   onSend: (prompt: string) => boolean | Promise<boolean>;
   onCancel?: (turnId: string) => void;
@@ -130,8 +128,6 @@ export function TapperChat({
   isInert = false,
   message,
   onMessageChange: setMessage,
-  pageContext,
-  onClearPageContext,
   onModelChange,
   onSend,
   onCancel,
@@ -554,22 +550,6 @@ export function TapperChat({
       <label className="tapper-visually-hidden" htmlFor="tap-message">
         {copy.chat.messageTapper}
       </label>
-
-      {pageContext ? (
-        <div className="tap-context-chips">
-          <span className="tap-context-chip" title={pageContext.summary}>
-            <BookOutlined aria-hidden="true" />
-            <span>{pageContext.label}</span>
-            <button
-              type="button"
-              aria-label={`${copy.composer.remove} ${pageContext.label}`}
-              onClick={onClearPageContext}
-            >
-              <CloseOutlined aria-hidden="true" />
-            </button>
-          </span>
-        </div>
-      ) : null}
 
       {selectedSources.length + selectedAgents.length + selectedSkills.length >
       0 ? (

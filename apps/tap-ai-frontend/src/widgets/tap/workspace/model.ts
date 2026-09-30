@@ -16,13 +16,13 @@ export type ProductModule =
 
 export type TapperSurface = "chat" | "agents" | "skills" | "library";
 
-export type AssistantIntent = "answer" | "test-plan" | "automation";
+export type AssistantIntent = "answer";
 
 export type CatalogKind = "agent" | "skill";
 
 export type CatalogOrigin = "built-in" | "custom";
 
-export type LibrarySourceOrigin = "knowledge-base" | "page-local";
+export type LibrarySourceOrigin = "knowledge-base";
 
 export interface AssistantSourceReference {
   id: string;
@@ -50,15 +50,6 @@ export interface AssistantTurn {
   agentRevisionId?: string | null;
   skillRevisionIds?: readonly string[];
   catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
-  pageContext?: {
-    label: string;
-    summary: string;
-    facts: readonly string[];
-  };
-  contextualReply?: {
-    text: string;
-    suggestions: readonly string[];
-  };
 }
 
 export interface Conversation {
