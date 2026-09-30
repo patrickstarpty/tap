@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -24,6 +25,17 @@ SCRIPT = ROOT / "scripts" / "evaluate-quality-kb.py"
 TRUSTED_SCRIPT = ROOT / "scripts" / "evaluate-quality-kb-trusted.py"
 RUNNER = ROOT / "scripts" / "run-quality-kb-real.py"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "quality" / "kb"
+# Frozen "now" for every in-process runner/evaluator call in this file. The suite must
+# not depend on wall-clock date: approval expiry is real production behavior (tested
+# explicitly below), but these fixtures exercise unrelated retry/observation behavior
+# and must stay valid regardless of when the suite runs.
+FIXED_NOW = datetime(2026, 9, 9, tzinfo=UTC)
+
+
+def _fixed_clock() -> datetime:
+    return FIXED_NOW
+
+
 APPROVAL_CONTENT = {
     "schemaVersion": "quality-kb-model-approval-v2",
     "approvalId": "unit-v3",
@@ -764,7 +776,17 @@ def test_100_synthetic_self_described_cases_cannot_zero_io_pass_real_gate(
     dataset["cases"] = generated
     dataset_path = tmp_path / "synthetic-100.json"
     dataset_path.write_text(json.dumps(dataset))
-    approval_path = _approval_artifact(tmp_path)
+    # The runner subprocess has no clock injection hook and reads real wall-clock
+    # time, so a fixed calendar expiry would eventually go stale. Derive the
+    # expiry from the actual run time instead, well inside the 30-day validity
+    # window the runner enforces; the digest is recomputed from the artifact
+    # bytes, never hand-edited.
+    subprocess_approval_content = {
+        **APPROVAL_CONTENT,
+        "expiresAtUtc": (datetime.now(UTC) + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    approval_path = _approval_artifact(tmp_path, subprocess_approval_content)
+    subprocess_approval_digest = "sha256:" + hashlib.sha256(approval_path.read_bytes()).hexdigest()
     completed = subprocess.run(
         [
             sys.executable,
@@ -778,7 +800,7 @@ def test_100_synthetic_self_described_cases_cannot_zero_io_pass_real_gate(
         text=True,
         env={
             "TAP_RUN_QUALITY_KB_01": "1",
-            "TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST": APPROVAL_DIGEST,
+            "TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST": subprocess_approval_digest,
             "TAP_QUALITY_KB_MODEL_APPROVAL_ARTIFACT": str(approval_path),
         },
     )
@@ -1383,6 +1405,7 @@ async def test_failed_provider_io_receipt_drives_bounded_retry_then_success() ->
         max_retries_per_case=1,
         approved_mapping=APPROVED,
         production_routes=PRODUCTION_ROUTES,
+        clock=_fixed_clock,
     )
 
     attempts = observations["cases"][0]["execution"]["attempts"]
@@ -1513,6 +1536,7 @@ async def test_runner_retries_a_successful_provider_call_with_unusable_grounded_
         max_retries_per_case=1,
         approved_mapping=APPROVED,
         production_routes=PRODUCTION_ROUTES,
+        clock=_fixed_clock,
     )
 
     attempts = observations["cases"][0]["execution"]["attempts"]
@@ -1707,6 +1731,7 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
         max_retries_per_case=1,
         approved_mapping=APPROVED,
         production_routes=PRODUCTION_ROUTES,
+        clock=_fixed_clock,
     )
     attempts = observations["cases"][0]["execution"]["attempts"]
     receipts = [attempt["providerCalls"] for attempt in attempts]
@@ -1738,6 +1763,7 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
             max_retries_per_case=1,
             approved_mapping=APPROVED,
             production_routes=PRODUCTION_ROUTES,
+            clock=_fixed_clock,
         )
     assert len(budget_posts) == 1
 
