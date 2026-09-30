@@ -17,6 +17,7 @@ from tap.modules.chat.domain.conversations import TurnInputSnapshot
 from tap.modules.knowledge.api import AuthorizedAnswerExecution as _AuthorizedAnswerExecution
 from tap.modules.knowledge.api import AuthorizedAnswerQuery as _AuthorizedAnswerQuery
 from tap.modules.knowledge.api import get_template as _get_template
+from tap.platform.telemetry import span
 
 PlannerCall = Callable[[PlanningInput, float], Awaitable[dict[str, Any]]]
 _TEMPLATE = {
@@ -107,156 +108,172 @@ class AnswerPlanner:
     async def plan(
         self, value: PlanningInput, *, previous_plan_id: str | None = None
     ) -> AnswerPlan:
-        original = value.original_question
-        deadline = time.time() + value.remaining_seconds
-        standalone = original
-        route, intent = "retrieve", "factual_lookup"
-        missing: tuple[str, ...] = ()
-        reason = None
-        confidence = 1.0
-        # English "it" usually has an in-sentence antecedent; it is an unresolved
-        # referent only when the question also asks about versions or differences.
-        ambiguous = bool(re.search(r"它|上一版|\bprevious version\b", original, re.I)) or bool(
-            re.search(r"\bit\b", original, re.I)
-            and re.search(r"\b(?:version|v\d+|differ\w*|compare\w*|change\w*)\b", original, re.I)
-        )
-        complex_query = bool(re.search(r"比较|不同|对比|跨章节|compare|difference", original, re.I))
-        direct = bool(
-            re.fullmatch(r"\s*(?:你好|您好|hi|hello|谢谢|thanks)[！!。.\s]*", original, re.I)
-        )
-        transform = bool(
-            re.match(r"(?:改写|润色|翻译|rewrite|translate).*[：:]\s*\S", original, re.I | re.S)
-        )
-        if direct or transform:
-            route, intent = "direct", "transform_text" if transform else "general_chat"
-        elif re.search(r"失败率|成功率|\bfailure rate\b|\bsuccess rate\b", original, re.I):
-            route, reason = "insights", "capability-unavailable"
-        elif re.search(r"完整表格|全部表格|entire (?:table|file)|full spreadsheet", original, re.I):
-            route, reason = "file_analysis", "capability-unavailable"
-        elif ambiguous and len(value.authorized_referents) != 1:
-            route, intent, missing = "clarify", "clarification", ("object-or-version",)
-        elif not value.source_ids:
-            route, intent, missing = "clarify", "clarification", ("sources",)
-        else:
-            if ambiguous:
-                standalone = value.authorized_referents[0] + "：" + original
-            if complex_query:
-                intent = "comparison"
-            elif re.search(r"如何|步骤|how to", original, re.I):
-                intent = "procedural"
-            elif re.search(r"为什么|解释|why|explain", original, re.I):
-                intent = "explanation"
-
-        def build(queries=None):
-            template = _get_template(_TEMPLATE[intent], "2" if intent == "clarification" else "1")
-            return AnswerPlan(
-                plan_id=uuid4().hex,
-                project_id=value.project_id,
-                turn_id=value.turn_id,
-                input_digest=value.input_digest,
-                acl_digest=value.acl_digest,
-                policy_digest=value.policy_digest,
-                model_alias=value.model_alias,
-                original_question=original,
-                intent=intent,
-                route=route,
-                confidence=confidence,
-                standalone_query=standalone,
-                constraints=protected_constraints(original),
-                missing=tuple(missing),
-                queries=tuple(queries)
-                if queries is not None
-                else (
-                    (PlannedQuery("q1", standalone, (), standalone, value.source_ids),)
-                    if route == "retrieve"
-                    else ()
-                ),
-                source_ids=value.source_ids,
-                template_id=template.id,
-                template_version=template.version,
-                template_digest=template.digest,
-                deadline_at=deadline,
-                candidate_limit=value.candidate_limit,
-                evidence_limit=value.evidence_limit,
-                remaining_seconds=value.remaining_seconds,
-                output_requirements=value.output_requirements,
-                previous_plan_id=previous_plan_id,
-                degradation_reason=reason,
-                context_digests=value.context_digests,
+        with span("chat.plan") as current_span:
+            original = value.original_question
+            deadline = time.time() + value.remaining_seconds
+            standalone = original
+            route, intent = "retrieve", "factual_lookup"
+            missing: tuple[str, ...] = ()
+            reason = None
+            confidence = 1.0
+            # English "it" usually has an in-sentence antecedent; it is an unresolved
+            # referent only when the question also asks about versions or differences.
+            ambiguous = bool(re.search(r"它|上一版|\bprevious version\b", original, re.I)) or bool(
+                re.search(r"\bit\b", original, re.I)
+                and re.search(
+                    r"\b(?:version|v\d+|differ\w*|compare\w*|change\w*)\b", original, re.I
+                )
             )
+            complex_query = bool(
+                re.search(r"比较|不同|对比|跨章节|compare|difference", original, re.I)
+            )
+            direct = bool(
+                re.fullmatch(r"\s*(?:你好|您好|hi|hello|谢谢|thanks)[！!。.\s]*", original, re.I)
+            )
+            transform = bool(
+                re.match(r"(?:改写|润色|翻译|rewrite|translate).*[：:]\s*\S", original, re.I | re.S)
+            )
+            if direct or transform:
+                route, intent = "direct", "transform_text" if transform else "general_chat"
+            elif re.search(r"失败率|成功率|\bfailure rate\b|\bsuccess rate\b", original, re.I):
+                route, reason = "insights", "capability-unavailable"
+            elif re.search(
+                r"完整表格|全部表格|entire (?:table|file)|full spreadsheet", original, re.I
+            ):
+                route, reason = "file_analysis", "capability-unavailable"
+            elif ambiguous and len(value.authorized_referents) != 1:
+                route, intent, missing = "clarify", "clarification", ("object-or-version",)
+            elif not value.source_ids:
+                route, intent, missing = "clarify", "clarification", ("sources",)
+            else:
+                if ambiguous:
+                    standalone = value.authorized_referents[0] + "：" + original
+                if complex_query:
+                    intent = "comparison"
+                elif re.search(r"如何|步骤|how to", original, re.I):
+                    intent = "procedural"
+                elif re.search(r"为什么|解释|why|explain", original, re.I):
+                    intent = "explanation"
 
-        if route != "retrieve" or not complex_query or self._model is None or ambiguous:
-            return build()
-        timeout = min(3.0, value.remaining_seconds)
-        if timeout <= 0:
-            raise TimeoutError("answer budget exhausted")
-        try:
-            async with asyncio.timeout(timeout):
-                raw = await self._model(value, timeout)
-            if set(raw) != {
-                "intent",
-                "route",
-                "confidence",
-                "standalone_query",
-                "missing",
-                "queries",
-            }:
-                raise ValueError("invalid planning schema")
-            if raw["route"] not in {"retrieve", "clarify"}:
-                raise ValueError("model cannot authorize direct or capability routes")
-            if (
-                type(raw["confidence"]) not in {int, float}
-                or not isinstance(raw["missing"], list)
-                or not all(isinstance(item, str) for item in raw["missing"])
-                or not isinstance(raw["queries"], list)
-                or not isinstance(raw["standalone_query"], str)
-            ):
-                raise ValueError("invalid planning field types")
-            for query in raw["queries"]:
-                for field in ("depends_on", "source_ids"):
-                    if not isinstance(query[field], list) or not all(
-                        isinstance(item, str) for item in query[field]
-                    ):
-                        raise ValueError("invalid query field types")
-            if set(protected_constraints(raw["standalone_query"])) != set(
-                protected_constraints(original)
-            ):
-                raise ValueError("model changed exact constraints")
-            # Token presence cannot prove which object a negation/date/version modifies.
-            # Until there is a trusted proposition verifier, retain the entire original
-            # expression for constrained questions instead of admitting a semantic rewrite.
-            if protected_constraints(original) and (
-                raw["standalone_query"] != original
-                or any(
-                    query["text"] != original or query["evidence_goal"] != original
+            def build(queries=None):
+                template = _get_template(
+                    _TEMPLATE[intent], "2" if intent == "clarification" else "1"
+                )
+                current_span.set_attribute("tap.plan.kind", route)
+                return AnswerPlan(
+                    plan_id=uuid4().hex,
+                    project_id=value.project_id,
+                    turn_id=value.turn_id,
+                    input_digest=value.input_digest,
+                    acl_digest=value.acl_digest,
+                    policy_digest=value.policy_digest,
+                    model_alias=value.model_alias,
+                    original_question=original,
+                    intent=intent,
+                    route=route,
+                    confidence=confidence,
+                    standalone_query=standalone,
+                    constraints=protected_constraints(original),
+                    missing=tuple(missing),
+                    queries=tuple(queries)
+                    if queries is not None
+                    else (
+                        (PlannedQuery("q1", standalone, (), standalone, value.source_ids),)
+                        if route == "retrieve"
+                        else ()
+                    ),
+                    source_ids=value.source_ids,
+                    template_id=template.id,
+                    template_version=template.version,
+                    template_digest=template.digest,
+                    deadline_at=deadline,
+                    candidate_limit=value.candidate_limit,
+                    evidence_limit=value.evidence_limit,
+                    remaining_seconds=value.remaining_seconds,
+                    output_requirements=value.output_requirements,
+                    previous_plan_id=previous_plan_id,
+                    degradation_reason=reason,
+                    context_digests=value.context_digests,
+                )
+
+            if route != "retrieve" or not complex_query or self._model is None or ambiguous:
+                return build()
+            timeout = min(3.0, value.remaining_seconds)
+            if timeout <= 0:
+                raise TimeoutError("answer budget exhausted")
+            try:
+                async with asyncio.timeout(timeout):
+                    raw = await self._model(value, timeout)
+                if set(raw) != {
+                    "intent",
+                    "route",
+                    "confidence",
+                    "standalone_query",
+                    "missing",
+                    "queries",
+                }:
+                    raise ValueError("invalid planning schema")
+                if raw["route"] not in {"retrieve", "clarify"}:
+                    raise ValueError("model cannot authorize direct or capability routes")
+                if (
+                    type(raw["confidence"]) not in {int, float}
+                    or not isinstance(raw["missing"], list)
+                    or not all(isinstance(item, str) for item in raw["missing"])
+                    or not isinstance(raw["queries"], list)
+                    or not isinstance(raw["standalone_query"], str)
+                ):
+                    raise ValueError("invalid planning field types")
+                for query in raw["queries"]:
+                    for field in ("depends_on", "source_ids"):
+                        if not isinstance(query[field], list) or not all(
+                            isinstance(item, str) for item in query[field]
+                        ):
+                            raise ValueError("invalid query field types")
+                if set(protected_constraints(raw["standalone_query"])) != set(
+                    protected_constraints(original)
+                ):
+                    raise ValueError("model changed exact constraints")
+                # Token presence cannot prove which object a negation/date/version modifies.
+                # Until there is a trusted proposition verifier, retain the entire original
+                # expression for constrained questions instead of admitting a semantic rewrite.
+                if protected_constraints(original) and (
+                    raw["standalone_query"] != original
+                    or any(
+                        query["text"] != original or query["evidence_goal"] != original
+                        for query in raw["queries"]
+                    )
+                ):
+                    raise ValueError("model changed constraint associations")
+                if (
+                    set(protected_constraints(" ".join(query["text"] for query in raw["queries"])))
+                    != set(protected_constraints(original))
+                    and raw["route"] == "retrieve"
+                ):
+                    raise ValueError("model queries changed exact constraints")
+                queries = tuple(
+                    PlannedQuery(
+                        **{
+                            **query,
+                            "depends_on": tuple(query["depends_on"]),
+                            "source_ids": tuple(query["source_ids"]),
+                        }
+                    )
                     for query in raw["queries"]
                 )
-            ):
-                raise ValueError("model changed constraint associations")
-            if (
-                set(protected_constraints(" ".join(query["text"] for query in raw["queries"])))
-                != set(protected_constraints(original))
-                and raw["route"] == "retrieve"
-            ):
-                raise ValueError("model queries changed exact constraints")
-            queries = tuple(
-                PlannedQuery(
-                    **{
-                        **query,
-                        "depends_on": tuple(query["depends_on"]),
-                        "source_ids": tuple(query["source_ids"]),
-                    }
-                )
-                for query in raw["queries"]
+                intent, route, confidence = raw["intent"], raw["route"], raw["confidence"]
+                standalone, missing = raw["standalone_query"], tuple(raw["missing"])
+                return build(queries)
+            except TimeoutError:
+                reason = "planner-timeout"
+            except (ValueError, TypeError, KeyError):
+                reason = "invalid-plan"
+            except Exception:
+                reason = "planner-unavailable"
+            route, intent, standalone, confidence, missing = (
+                "retrieve",
+                "comparison",
+                original,
+                1.0,
+                (),
             )
-            intent, route, confidence = raw["intent"], raw["route"], raw["confidence"]
-            standalone, missing = raw["standalone_query"], tuple(raw["missing"])
-            return build(queries)
-        except TimeoutError:
-            reason = "planner-timeout"
-        except (ValueError, TypeError, KeyError):
-            reason = "invalid-plan"
-        except Exception:
-            reason = "planner-unavailable"
-        route, intent, standalone, confidence, missing = "retrieve", "comparison", original, 1.0, ()
-        return build()
+            return build()

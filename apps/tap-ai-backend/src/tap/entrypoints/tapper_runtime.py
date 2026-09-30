@@ -1672,6 +1672,7 @@ def _assemble_worker_runtime(
         index_version=settings.index_version,
         stage_hook=stage_hook,
         vision=vision,
+        scope=repository.scope,
     )
     wakeups = RedisWakeupConsumer(
         scope=repository.scope,

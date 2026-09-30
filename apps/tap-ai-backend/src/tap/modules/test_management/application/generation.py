@@ -32,6 +32,7 @@ from tap.modules.test_management.ports.generation import (
     TestDesignJobStore,
 )
 from tap.platform.db.project_scope import require_project_scope
+from tap.platform.telemetry import bind_trace, flush_traces, span
 
 logger = logging.getLogger(__name__)
 
@@ -220,120 +221,131 @@ class TestDesignWorker:
         )
         ready = failed = lease_lost = waiting = 0
         for claim in claims:
-            graph_ready = False
-            try:
-                checkpointer = self._jobs.graph_checkpointer(claim)
+            with (
+                bind_trace(
+                    scope=self._scope,
+                    job_id=claim.job.request.job_id,
+                    job_kind="test_design",
+                ),
+                span("job.test_design", {"tap.job_id": claim.job.request.job_id}),
+            ):
+                graph_ready = False
+                try:
+                    checkpointer = self._jobs.graph_checkpointer(claim)
 
-                async def authorized() -> bool:
-                    try:
+                    async def authorized() -> bool:
+                        try:
+                            await self._jobs.generation_context(self._scope, claim)
+                        except Exception:
+                            return False
+                        return True
+
+                    async def classify(_state):
+                        return {"reasoning_mode": "workflow"}
+
+                    async def admit(_state):
                         await self._jobs.generation_context(self._scope, claim)
-                    except Exception:
-                        return False
-                    return True
-
-                async def classify(_state):
-                    return {"reasoning_mode": "workflow"}
-
-                async def admit(_state):
-                    await self._jobs.generation_context(self._scope, claim)
-                    waiting_reason = await self._jobs.generation_waiting_reason(self._scope, claim)
-                    return {
-                        "admitted": waiting_reason is None,
-                        "waiting_reason": waiting_reason,
-                    }
-
-                async def execute(_state):
-                    context = await self._jobs.generation_context(self._scope, claim)
-                    generated = await self._generator.generate(context)
-                    return {"result": {"draft": _revision_checkpoint(generated)}}
-
-                graph = InteractionGraph(
-                    graph_version="test-design-generation-v1",
-                    state_schema_version=1,
-                    checkpointer=checkpointer,
-                    classify=classify,
-                    admit=admit,
-                    execute=execute,
-                    authorize=authorized,
-                )
-
-                async def run_graph():
-                    return (
-                        await graph.resume(run_id=claim.job.request.job_id)
-                        if await graph.has_checkpoint(run_id=claim.job.request.job_id)
-                        else await graph.start(
-                            run_id=claim.job.request.job_id,
-                            payload={
-                                "jobId": claim.job.request.job_id,
-                                "requestDigest": claim.job.request.request_digest,
-                            },
-                            execution_mode="durable",
+                        waiting_reason = await self._jobs.generation_waiting_reason(
+                            self._scope, claim
                         )
+                        return {
+                            "admitted": waiting_reason is None,
+                            "waiting_reason": waiting_reason,
+                        }
+
+                    async def execute(_state):
+                        context = await self._jobs.generation_context(self._scope, claim)
+                        generated = await self._generator.generate(context)
+                        return {"result": {"draft": _revision_checkpoint(generated)}}
+
+                    graph = InteractionGraph(
+                        graph_version="test-design-generation-v1",
+                        state_schema_version=1,
+                        checkpointer=checkpointer,
+                        classify=classify,
+                        admit=admit,
+                        execute=execute,
+                        authorize=authorized,
                     )
 
-                running = asyncio.create_task(run_graph())
-                try:
-                    while True:
-                        done, _ = await asyncio.wait(
-                            {running}, timeout=self._renew_interval_seconds
+                    async def run_graph():
+                        return (
+                            await graph.resume(run_id=claim.job.request.job_id)
+                            if await graph.has_checkpoint(run_id=claim.job.request.job_id)
+                            else await graph.start(
+                                run_id=claim.job.request.job_id,
+                                payload={
+                                    "jobId": claim.job.request.job_id,
+                                    "requestDigest": claim.job.request.request_digest,
+                                },
+                                execution_mode="durable",
+                            )
                         )
-                        if done:
-                            state = await running
-                            break
-                        await self._jobs.renew_generation_job(
+
+                    running = asyncio.create_task(run_graph())
+                    try:
+                        while True:
+                            done, _ = await asyncio.wait(
+                                {running}, timeout=self._renew_interval_seconds
+                            )
+                            if done:
+                                state = await running
+                                break
+                            await self._jobs.renew_generation_job(
+                                self._scope,
+                                claim,
+                                now=self._now(),
+                                lease_duration=self._lease_duration,
+                            )
+                    except BaseException:
+                        if not running.done():
+                            running.cancel()
+                            await asyncio.gather(running, return_exceptions=True)
+                        raise
+                    waiting_reason = state.get("waiting_reason")
+                    if waiting_reason:
+                        await self._jobs.wait_generation(
                             self._scope,
                             claim,
+                            reason=waiting_reason,
                             now=self._now(),
-                            lease_duration=self._lease_duration,
                         )
-                except BaseException:
-                    if not running.done():
-                        running.cancel()
-                        await asyncio.gather(running, return_exceptions=True)
-                    raise
-                waiting_reason = state.get("waiting_reason")
-                if waiting_reason:
-                    await self._jobs.wait_generation(
-                        self._scope,
-                        claim,
-                        reason=waiting_reason,
-                        now=self._now(),
-                    )
-                    waiting += 1
-                    continue
-                draft = _revision_from_checkpoint(state.get("result", {}).get("draft"))
-                graph_ready = True
-                await self._jobs.complete_generation(self._scope, claim, draft, now=self._now())
-                ready += 1
-            except GenerationResponseUnknown:
-                try:
-                    await self._jobs.wait_generation(
-                        self._scope,
-                        claim,
-                        reason="provider-response-unknown",
-                        now=self._now(),
-                    )
-                    waiting += 1
+                        waiting += 1
+                        continue
+                    draft = _revision_from_checkpoint(state.get("result", {}).get("draft"))
+                    graph_ready = True
+                    await self._jobs.complete_generation(self._scope, claim, draft, now=self._now())
+                    ready += 1
+                except GenerationResponseUnknown:
+                    try:
+                        await self._jobs.wait_generation(
+                            self._scope,
+                            claim,
+                            reason="provider-response-unknown",
+                            now=self._now(),
+                        )
+                        waiting += 1
+                    except Exception:
+                        lease_lost += 1
+                except GraphCheckpointUnavailable:
+                    lease_lost += 1
                 except Exception:
-                    lease_lost += 1
-            except GraphCheckpointUnavailable:
-                lease_lost += 1
-            except Exception:
-                if graph_ready:
-                    lease_lost += 1
-                    continue
-                logger.exception(
-                    "test-design generation failed",
-                    extra={"job_id": claim.job.request.job_id},
-                )
-                try:
-                    await self._jobs.fail_generation(
-                        self._scope,
-                        claim,
-                        failure_code="test-design-generation-failed",
-                        now=self._now(),
+                    if graph_ready:
+                        lease_lost += 1
+                        continue
+                    logger.exception(
+                        "test-design generation failed",
+                        extra={"job_id": claim.job.request.job_id},
                     )
-                    failed += 1
-                except Exception:
-                    lease_lost += 1
+                    try:
+                        await self._jobs.fail_generation(
+                            self._scope,
+                            claim,
+                            failure_code="test-design-generation-failed",
+                            now=self._now(),
+                        )
+                        failed += 1
+                    except Exception:
+                        lease_lost += 1
+        await flush_traces()
         return TestDesignWorkerRun(len(claims), ready, failed, lease_lost, waiting)

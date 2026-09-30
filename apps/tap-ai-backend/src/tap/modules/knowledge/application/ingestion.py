@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol, TypeVar
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     ChunkDraft,
     DocumentId,
@@ -48,6 +49,7 @@ from tap.modules.knowledge.ports.documents import (
     JobStageCommit,
     ManifestChunk,
 )
+from tap.platform.telemetry import bind_trace, flush_traces, span
 
 T = TypeVar("T")
 LEASE_DURATION = timedelta(seconds=60)
@@ -199,6 +201,7 @@ class IngestionWorker:
         clock: WorkerClock | None = None,
         stage_hook: IngestionStageHook | None = None,
         vision: FlowchartVisionPort | None = None,
+        scope: ProjectScopeContext | None = None,
     ) -> None:
         if not isinstance(worker_id, str) or not worker_id.strip():
             raise ValueError("worker_id must be nonblank")
@@ -221,6 +224,7 @@ class IngestionWorker:
         self._index_version = index_version
         self._stage_hook = stage_hook or _NoopIngestionStageHook()
         self._vision = vision
+        self._scope = scope
 
     async def run_once(self, limit: int) -> WorkerRun:
         if type(limit) is not int or not 1 <= limit <= MAX_WORKER_BATCH:
@@ -294,6 +298,7 @@ class IngestionWorker:
                 ready += 1
             else:
                 deleted += 1
+        await flush_traces()
         return WorkerRun(
             claimed=len(jobs),
             ready=ready,
@@ -303,42 +308,47 @@ class IngestionWorker:
         )
 
     async def _process_claimed(self, job: ClaimedIngestionJob) -> str:
-        stage = job.stage
-        while True:
-            try:
-                work = await self._repository.load_ingestion_work(
-                    job.job_id, job.lease_token, stage
-                )
-                if work.kind is not job.kind or work.stage is not stage:
-                    raise JobLeaseLost(job.job_id)
-                if job.kind is JobKind.DELETION:
-                    await self._run_deletion_stage(job, work)
-                else:
-                    if stage in _INJECTABLE_STAGES:
-                        try:
-                            await self._stage_hook.before_stage(stage)
-                        except asyncio.CancelledError:
-                            raise
-                        except (IngestionStageFailure, Exception):
-                            raise _SafeStageError(
-                                stage,
-                                _INJECTED_STAGE_CODES[stage],
-                                "injected-stage-failure",
-                                "injected-failure",
-                            ) from None
-                    await self._run_ingestion_stage(job, work)
-            except _SafeStageError as error:
-                error.bind(work)
-                raise
-            except JobLeaseLost as error:
-                raise _StageLeaseLost(job.job_id, stage) from error
-            except asyncio.CancelledError:
-                if job.kind is JobKind.INGESTION:
-                    await self._settle_cancelled_owner(job, stage)
-                raise
-            if stage is JobStage.READY:
-                return "deleted" if job.kind is JobKind.DELETION else "ready"
-            stage = NEXT_STAGE[stage]
+        span_name = "job.ingestion" if job.kind is JobKind.INGESTION else "job.deletion"
+        with (
+            bind_trace(scope=self._scope, job_id=job.job_id, job_kind=job.kind.value),
+            span(span_name, {"tap.job_id": job.job_id}),
+        ):
+            stage = job.stage
+            while True:
+                try:
+                    work = await self._repository.load_ingestion_work(
+                        job.job_id, job.lease_token, stage
+                    )
+                    if work.kind is not job.kind or work.stage is not stage:
+                        raise JobLeaseLost(job.job_id)
+                    if job.kind is JobKind.DELETION:
+                        await self._run_deletion_stage(job, work)
+                    else:
+                        if stage in _INJECTABLE_STAGES:
+                            try:
+                                await self._stage_hook.before_stage(stage)
+                            except asyncio.CancelledError:
+                                raise
+                            except (IngestionStageFailure, Exception):
+                                raise _SafeStageError(
+                                    stage,
+                                    _INJECTED_STAGE_CODES[stage],
+                                    "injected-stage-failure",
+                                    "injected-failure",
+                                ) from None
+                        await self._run_ingestion_stage(job, work)
+                except _SafeStageError as error:
+                    error.bind(work)
+                    raise
+                except JobLeaseLost as error:
+                    raise _StageLeaseLost(job.job_id, stage) from error
+                except asyncio.CancelledError:
+                    if job.kind is JobKind.INGESTION:
+                        await self._settle_cancelled_owner(job, stage)
+                    raise
+                if stage is JobStage.READY:
+                    return "deleted" if job.kind is JobKind.DELETION else "ready"
+                stage = NEXT_STAGE[stage]
 
     async def _run_ingestion_stage(self, job: ClaimedIngestionJob, work: IngestionWork) -> None:
         stage = work.stage
