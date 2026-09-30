@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 from dataclasses import dataclass
@@ -43,6 +44,8 @@ from tap.modules.chat.domain.conversations import (
     RetrievalSummary,
 )
 from tap.modules.chat.domain.suggestions import RefreshReason
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _evidence_checkpoint(evidence: AnswerEvidence) -> dict[str, object]:
@@ -508,8 +511,11 @@ class GenerationWorker:
                             await self.suggestion_refresh.request_refresh_for_actor(
                                 actor_id, RefreshReason.TURN_COMPLETED, now=datetime.now(UTC)
                             )
-                        except Exception:  # noqa: BLE001 - must never fail a completed turn
-                            pass
+                        except Exception as exc:  # noqa: BLE001 - must never fail a completed turn
+                            _LOGGER.warning(
+                                "prompt suggestion refresh request failed: %s",
+                                type(exc).__name__,
+                            )
             except InsightsAuthorizationChanged:
                 if insights_query_id is None:
                     raise

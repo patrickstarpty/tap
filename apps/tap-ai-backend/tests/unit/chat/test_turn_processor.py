@@ -281,17 +281,24 @@ async def test_abstained_turn_does_not_request_actor_refresh():
 
 
 @pytest.mark.asyncio
-async def test_refresh_request_failure_does_not_fail_the_turn():
+async def test_refresh_request_failure_does_not_fail_the_turn(caplog):
     conversations, knowledge = _completed_turn_fixtures(abstained=False)
     suggestions = _FakeSuggestionStore(fail=True)
 
-    processed = await GenerationWorker(
-        conversations, knowledge, suggestion_refresh=suggestions
-    ).run_once(limit=1)
+    with caplog.at_level("WARNING"):
+        processed = await GenerationWorker(
+            conversations, knowledge, suggestion_refresh=suggestions
+        ).run_once(limit=1)
 
     assert processed == 1
     assert conversations.completion is not None
     assert conversations.completion["lease_token"] == "lease-1"
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "prompt suggestion refresh request failed" in warnings[0].message
+    assert "RuntimeError" in warnings[0].message
+    assert "actor-1" not in warnings[0].message
+    assert "question" not in warnings[0].message
 
 
 @pytest.mark.asyncio

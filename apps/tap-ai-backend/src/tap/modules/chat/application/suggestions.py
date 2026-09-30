@@ -38,6 +38,16 @@ class SuggestionView:
     sources: tuple[CurrentSource, ...]
 
 
+class NoGroundedCandidates(Exception):
+    """Raised by PromptSuggestionService.refresh when the knowledge base was
+    non-empty and generation produced candidates, but none passed grounding.
+
+    This is distinct from the "no knowledge" case (refresh() returns () when
+    there are no topics) so SuggestionRefreshWorker can avoid overwriting a
+    previously good, non-empty cache with an empty one.
+    """
+
+
 class PromptSuggestionService:
     def __init__(
         self,
@@ -150,6 +160,9 @@ class PromptSuggestionService:
                 )
             )
 
+        if not suggestions and valid_candidates:
+            raise NoGroundedCandidates(key)
+
         return tuple(suggestions)
 
 
@@ -183,6 +196,16 @@ class SuggestionRefreshWorker:
         for claim in claims:
             try:
                 suggestions = await self._service.refresh(claim.key)
+            except NoGroundedCandidates:
+                previous = await self._store.load(claim.key)
+                if previous:
+                    await self._store.fail_refresh(
+                        claim, "no_grounded_candidates", now=self._clock()
+                    )
+                else:
+                    await self._store.complete_refresh(claim, (), now=self._clock())
+                processed += 1
+                continue
             except Exception as exc:  # noqa: BLE001 - recorded as a failure code, not logged
                 await self._store.fail_refresh(claim, type(exc).__name__, now=self._clock())
                 processed += 1

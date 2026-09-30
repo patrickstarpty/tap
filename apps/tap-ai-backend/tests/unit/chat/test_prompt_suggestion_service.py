@@ -391,6 +391,64 @@ async def test_failed_refresh_keeps_previous_suggestions():
 
 
 @pytest.mark.asyncio
+async def test_ungrounded_refresh_keeps_previous_suggestions():
+    store = InMemorySuggestionStore()
+    topics = (TopicSource(source_id="src-1", name="Doc 1", version="rev-1:1", headings=("A",)),)
+    knowledge = FakeKnowledge(topics_result=topics)
+    generator = FakeGenerator(candidates=(Candidate(question="Q1?", source_ids=("src-1",)),))
+    service = _service(store=store, knowledge=knowledge, generator=generator)
+    worker = SuggestionRefreshWorker(store=store, service=service, worker_id="w1", clock=_clock(T0))
+
+    await store.request_refresh(KEY, RefreshReason.MISSING, now=T0)
+    processed = await worker.run_once(limit=10)
+    assert processed == 1
+    first_load = await store.load(KEY)
+    assert [s.question for s in first_load] == ["Q1?"]
+
+    # A later refresh generates a candidate, but nothing grounds this time.
+    later = T0 + timedelta(minutes=30)
+    ungrounded_service = _service(
+        store=store,
+        knowledge=knowledge,
+        generator=generator,
+        grounding=FakeGrounding(default=False),
+        now=later,
+    )
+    worker_later = SuggestionRefreshWorker(
+        store=store, service=ungrounded_service, worker_id="w1", clock=_clock(later)
+    )
+    await store.request_refresh(KEY, RefreshReason.KNOWLEDGE_PUBLISHED, now=later)
+    processed_later = await worker_later.run_once(limit=10)
+
+    assert processed_later == 1
+    second_load = await store.load(KEY)
+    assert [s.question for s in second_load] == ["Q1?"]
+
+    # The failed refresh backs off instead of retrying immediately.
+    claims = await store.claim_due(
+        worker_id="w2", now=later, limit=10, lease_duration=timedelta(minutes=5)
+    )
+    assert claims == ()
+
+
+@pytest.mark.asyncio
+async def test_ungrounded_first_refresh_caches_empty():
+    store = InMemorySuggestionStore()
+    topics = (TopicSource(source_id="src-1", name="Doc 1", version="rev-1:1", headings=("A",)),)
+    knowledge = FakeKnowledge(topics_result=topics)
+    generator = FakeGenerator(candidates=(Candidate(question="Q1?", source_ids=("src-1",)),))
+    grounding = FakeGrounding(default=False)
+    service = _service(store=store, knowledge=knowledge, generator=generator, grounding=grounding)
+    worker = SuggestionRefreshWorker(store=store, service=service, worker_id="w1", clock=_clock(T0))
+
+    await store.request_refresh(KEY, RefreshReason.MISSING, now=T0)
+    processed = await worker.run_once(limit=10)
+
+    assert processed == 1
+    assert await store.load(KEY) == ()
+
+
+@pytest.mark.asyncio
 async def test_worker_marks_daily_refresh_before_claiming():
     store = InMemorySuggestionStore()
     topics = (TopicSource(source_id="src-1", name="Doc 1", version="rev-1:1", headings=("A",)),)
