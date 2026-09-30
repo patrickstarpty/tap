@@ -49,6 +49,22 @@ def test_nested_binding_inherits_outer_fields(span_recorder) -> None:
             assert current_binding().attempt == 3
 
 
+def test_usage_outside_binding_is_not_shared() -> None:
+    """Calls outside any `bind_trace` must never accumulate into one shared object."""
+    first = current_binding().usage
+    first.input_tokens += 5
+    first.output_tokens += 7
+
+    second = current_binding().usage
+    assert second.input_tokens == 0
+    assert second.output_tokens == 0
+    assert second is not first
+
+    with bind_trace():
+        assert current_binding().usage.input_tokens == 0
+        assert current_binding().usage.output_tokens == 0
+
+
 def test_span_marks_error_and_reraises(span_recorder) -> None:
     try:
         with span("boom"):

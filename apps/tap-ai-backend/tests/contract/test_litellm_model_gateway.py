@@ -1477,3 +1477,40 @@ async def test_health_reports_degraded_recorder_as_notice():
 
     assert "model-call-recording-degraded" in health.notices
     assert health.problems == ()
+
+
+def test_image_payload_shape_change_never_persists_bytes():
+    """If the payload's shape ever drifts, the raw (possibly base64) bytes must never persist."""
+    from tap.modules.ai.adapters.litellm import _request_json_for_record
+
+    image_bytes = b"\x89PNG\r\n\x1a\nexample"
+    image_digest = "sha256:" + hashlib.sha256(image_bytes).hexdigest()
+    req = replace(
+        request(ModelOperation.STRUCTURED),
+        alias="qwen3-vl-plus",
+        image_bytes=image_bytes,
+        image_media_type="image/png",
+    )
+    # Contrived payload whose `messages` shape doesn't have the expected image_url slot,
+    # e.g. after a refactor. The raw base64 bytes are embedded directly to prove they
+    # cannot leak through even when substitution is impossible.
+    malformed_payload = {
+        "model": req.alias,
+        "metadata": {"image_digest": image_digest},
+        "messages": [
+            {
+                "role": "user",
+                "content": "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii"),
+            }
+        ],
+    }
+
+    result = _request_json_for_record(malformed_payload, req, ModelOperation.STRUCTURED)
+
+    assert "base64," not in result
+    assert base64.b64encode(image_bytes).decode("ascii") not in result
+    assert json.loads(result) == {
+        "model": req.alias,
+        "operation": ModelOperation.STRUCTURED.value,
+        "image": image_digest,
+    }

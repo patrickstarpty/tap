@@ -79,13 +79,18 @@ class TraceBinding:
     usage: UsageTally = field(default_factory=UsageTally)
 
 
-_EMPTY_BINDING = TraceBinding()
-_current_binding: ContextVar[TraceBinding] = ContextVar("tap_trace_binding", default=_EMPTY_BINDING)
+_current_binding: ContextVar[TraceBinding | None] = ContextVar("tap_trace_binding", default=None)
 
 
 def current_binding() -> TraceBinding:
-    """Return the `TraceBinding` active in the current execution context."""
-    return _current_binding.get()
+    """Return the `TraceBinding` active in the current execution context.
+
+    Returns a fresh `TraceBinding` (with its own `UsageTally`) when no binding is
+    active, so usage accumulated outside `bind_trace` is never shared across calls
+    or requests.
+    """
+    binding = _current_binding.get()
+    return binding if binding is not None else TraceBinding()
 
 
 @contextmanager

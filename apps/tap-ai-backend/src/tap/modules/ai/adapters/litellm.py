@@ -77,12 +77,17 @@ def _request_json_for_record(
         return json.dumps({"model": request.alias, "operation": operation.value, "rejected": True})
     if request.image_bytes is None:
         return json.dumps(payload)
-    sanitized = json.loads(json.dumps(payload))
     image_digest = payload.get("metadata", {}).get("image_digest")
+    sanitized = json.loads(json.dumps(payload))
     try:
         sanitized["messages"][1]["content"][1]["image_url"]["url"] = image_digest
     except (KeyError, IndexError, TypeError):
-        pass
+        # The payload's shape didn't match what was substituted; never persist the
+        # raw (possibly base64-encoded) payload in that case, only a prompt-free marker.
+        logger.warning("model call payload shape prevented image substitution; storing marker")
+        return json.dumps(
+            {"model": request.alias, "operation": operation.value, "image": image_digest}
+        )
     return json.dumps(sanitized)
 
 
