@@ -1085,7 +1085,3 @@ export const SAMPLE_REPRESENTATIVE_SOURCES = SAMPLE_SOURCES.filter((source) =>
         : `${node.label.replace(" · demo run", "")}.${source.type.toLowerCase()}`,
   };
 });
-export const SAMPLE_REPRESENTATIVE_EDGES = edges.filter(
-  (edge) =>
-    representativeIds.has(edge.source) && representativeIds.has(edge.target),
-);

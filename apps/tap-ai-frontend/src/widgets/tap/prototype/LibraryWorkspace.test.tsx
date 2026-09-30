@@ -7,7 +7,7 @@ import { PROTOTYPE_COPY } from "./copy";
 import { SAMPLE_FILES } from "./sampleFiles";
 
 describe("Library file browsing", () => {
-  it("toggles all topics with a mixed-state checkbox", async () => {
+  it("shows no graph without a project", async () => {
     const user = userEvent.setup();
     render(
       <LibraryWorkspace
@@ -16,27 +16,14 @@ describe("Library file browsing", () => {
         onAddSource={async () => undefined}
       />,
     );
-    const all = screen.getByRole("checkbox", { name: "Select all" });
-    const topics = screen
-      .getAllByRole("checkbox")
-      .filter((topic) => topic !== all);
-    expect(all).toBeChecked();
-    await user.click(all);
-    for (const topic of topics) expect(topic).not.toBeChecked();
-    expect(all).not.toBePartiallyChecked();
-    await user.click(all);
-    for (const topic of topics) expect(topic).toBeChecked();
-    await user.click(topics[0]!);
-    expect(all).toBePartiallyChecked();
-    await user.click(all);
-    for (const topic of topics) expect(topic).toBeChecked();
-    expect(all).not.toBePartiallyChecked();
-    all.focus();
-    await user.keyboard(" ");
-    for (const topic of topics) expect(topic).not.toBeChecked();
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No project is selected.",
+    );
     expect(
-      screen.queryByRole("button", { name: "Invert selection" }),
+      screen.queryByRole("button", { name: "Underwriting" }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText("Underwriting")).not.toBeInTheDocument();
   });
   it("clears search, type and status together from the adjacent button", async () => {
     const user = userEvent.setup();

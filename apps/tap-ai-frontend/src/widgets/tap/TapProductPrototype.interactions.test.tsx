@@ -515,16 +515,12 @@ describe("Tap product prototype interactions", () => {
         name: /Sample full demo|Examples loaded|Load examples/,
       }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("group", { name: "Life insurance knowledge graph" }),
-    ).toBeVisible();
+    expect(screen.getByText("No project is selected.")).toBeVisible();
     first.unmount();
 
     renderPrototype();
     expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
-    expect(
-      screen.getByRole("group", { name: "Life insurance knowledge graph" }),
-    ).toBeVisible();
+    expect(screen.getByText("No project is selected.")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Examples loaded" }),
     ).not.toBeInTheDocument();
@@ -2524,50 +2520,6 @@ describe("Tap product prototype interactions", () => {
     expect(screen.queryByText("Local source · page-only")).toBeNull();
   });
 
-  it("opens Library on the graph and locates search results before viewing their source", async () => {
-    const user = userEvent.setup();
-    renderPrototype();
-    await user.click(screen.getByRole("button", { name: "Library" }));
-    expect(
-      screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
-    ).toBeVisible();
-    const search = screen.getByRole("textbox", { name: "Search library" });
-    await user.type(search, "disclosure");
-    const results = screen.getByRole("region", { name: "Search results" });
-    await user.click(
-      within(results).getByRole("button", { name: /Health disclosure/ }),
-    );
-    expect(
-      within(screen.getByRole("region", { name: "Node details" })).getByText(
-        "Health disclosure",
-      ),
-    ).toBeVisible();
-    await user.clear(search);
-    expect(screen.queryByRole("region", { name: "Search results" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Node details" })).toBeNull();
-    expect(
-      screen.getByRole("status", { name: "Zoom level" }),
-    ).toHaveTextContent("100%");
-    await user.type(search, "health-disclosure-guide");
-    await user.click(
-      within(screen.getByRole("region", { name: "Search results" })).getByRole(
-        "button",
-        { name: /health-disclosure-guide.pdf/ },
-      ),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "View source in document list" }),
-    );
-    expect(
-      screen.getByRole("tab", { name: "Documents", selected: true }),
-    ).toBeVisible();
-    expect(
-      within(screen.getByRole("list", { name: "Library sources" })).getByText(
-        "health-disclosure-guide.pdf",
-      ),
-    ).toBeVisible();
-  });
-
   it("switches the Library between All sources and an interactive Knowledge Graph", async () => {
     const user = userEvent.setup();
     renderPrototype("api");
@@ -2597,11 +2549,13 @@ describe("Tap product prototype interactions", () => {
       screen.getByRole("tabpanel", { name: "Knowledge Graph" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("group", {
-        name: "Life insurance knowledge graph",
-      }),
+      screen.getByRole("combobox", { name: "Graph source" }),
     ).toBeVisible();
-    expect(screen.getByText(/Illustrative view/i)).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByText("The graph source could not be loaded. Try again."),
+      ).toBeVisible(),
+    );
 
     await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Documents" }));

@@ -135,22 +135,6 @@ export interface PrototypeCopy {
   };
   library: {
     testingCommunity: string;
-    approval: string;
-    allocation: string;
-    testCasesNode: string;
-    exploration: string;
-    executionNode: string;
-    defect: string;
-    defines: string;
-    confirms: string;
-    validates: string;
-    extends: string;
-    drives: string;
-    reveals: string;
-    affects: string;
-    describes: string;
-    records: string;
-    configures: string;
 
     loadExamples: string;
     examplesLoaded: string;
@@ -188,7 +172,6 @@ export interface PrototypeCopy {
     processing: string;
     failed: string;
     noResults: string;
-    illustrative: string;
     communities: string;
     selectAllTopics: string;
     sourceCommunity: string;
@@ -224,23 +207,6 @@ export interface PrototypeCopy {
     extracted: string;
     inferred: string;
     graphNavigationHint: string;
-    application: string;
-    underwriting: string;
-    healthDisclosure: string;
-    beneficiary: string;
-    applicant: string;
-    policy: string;
-    coverage: string;
-    premium: string;
-    riskAssessment: string;
-    requires: string;
-    informs: string;
-    names: string;
-    supports: string;
-    submits: string;
-    creates: string;
-    evaluates: string;
-    determines: string;
   };
 }
 
@@ -400,22 +366,6 @@ export const PROTOTYPE_COPY = {
       download: "Download file",
       noPreview: "No preview available for this source.",
       testingCommunity: "Testing",
-      approval: "Approval",
-      allocation: "Allocation",
-      testCasesNode: "Test cases",
-      exploration: "Exploration",
-      executionNode: "Test execution",
-      defect: "Defect",
-      defines: "defines",
-      confirms: "confirms",
-      validates: "validates",
-      extends: "extends",
-      drives: "drives",
-      reveals: "reveals",
-      affects: "affects",
-      describes: "describes",
-      records: "records",
-      configures: "configures",
       heading: "Library",
       description:
         "Browse source material and explore its curated domain context.",
@@ -442,8 +392,6 @@ export const PROTOTYPE_COPY = {
       processing: "Processing",
       failed: "Failed",
       noResults: "No matching sources",
-      illustrative:
-        "Illustrative view — interactive relationships and topic groups are curated, not computed.",
       communities: "Topic groups",
       selectAllTopics: "Select all",
       sourceCommunity: "Sources",
@@ -481,23 +429,6 @@ export const PROTOTYPE_COPY = {
       inferred: "INFERRED",
       graphNavigationHint:
         "Drag to pan, use the controls to zoom, and select a node to inspect its relationships.",
-      application: "Life insurance application",
-      underwriting: "Underwriting",
-      healthDisclosure: "Health disclosure",
-      beneficiary: "Beneficiary",
-      applicant: "Applicant",
-      policy: "Policy",
-      coverage: "Coverage",
-      premium: "Premium",
-      riskAssessment: "Risk assessment",
-      requires: "requires",
-      informs: "informs",
-      names: "names",
-      supports: "supports",
-      submits: "submits",
-      creates: "creates",
-      evaluates: "evaluates",
-      determines: "determines",
     },
   },
   zh: {
@@ -648,22 +579,6 @@ export const PROTOTYPE_COPY = {
       download: "下载文件",
       noPreview: "此来源暂无可用预览。",
       testingCommunity: "测试验证",
-      approval: "变更审批",
-      allocation: "受益比例",
-      testCasesNode: "测试用例",
-      exploration: "探索测试",
-      executionNode: "测试执行",
-      defect: "缺陷",
-      defines: "定义",
-      confirms: "确认",
-      validates: "验证",
-      extends: "扩展",
-      drives: "驱动",
-      reveals: "发现",
-      affects: "影响",
-      describes: "描述",
-      records: "记录",
-      configures: "配置",
       heading: "知识库",
       description: "浏览知识来源，并探索经过编排的领域上下文。",
       addSource: "添加来源",
@@ -689,7 +604,6 @@ export const PROTOTYPE_COPY = {
       processing: "处理中",
       failed: "失败",
       noResults: "没有匹配的来源",
-      illustrative: "交互原型 — 关系和主题分组由本原型编排，并非计算所得。",
       communities: "主题分组",
       selectAllTopics: "全选",
       sourceCommunity: "来源",
@@ -725,23 +639,6 @@ export const PROTOTYPE_COPY = {
       extracted: "已抽取",
       inferred: "推断",
       graphNavigationHint: "拖动以平移画布，使用控件缩放，并选择节点查看关系。",
-      application: "寿险投保",
-      underwriting: "核保",
-      healthDisclosure: "健康告知",
-      beneficiary: "受益人",
-      applicant: "投保人",
-      policy: "保单",
-      coverage: "保额",
-      premium: "保费",
-      riskAssessment: "风险评估",
-      requires: "需要",
-      informs: "影响",
-      names: "指定",
-      supports: "支持",
-      submits: "提交",
-      creates: "生成",
-      evaluates: "评估",
-      determines: "决定",
     },
   },
 } as const satisfies Record<Locale, PrototypeCopy>;

@@ -6,7 +6,7 @@ import {
   type GraphCommunity,
   type GraphEdge,
   type GraphNode,
-} from "./knowledgeGraphData";
+} from "./graphLayout";
 
 function sourceCommunity(name: string): GraphCommunity {
   const title = name.toLocaleLowerCase();

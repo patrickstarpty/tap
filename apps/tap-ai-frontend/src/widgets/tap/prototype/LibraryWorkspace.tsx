@@ -65,9 +65,6 @@ function ProjectKnowledgeGraph({
   onViewSource: (source: LibrarySource) => void;
 }) {
   const readySources = sources.filter((source) => source.status === "ready");
-  const [graphView, setGraphView] = useState<"overview" | "published">(
-    "overview",
-  );
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const selectedId = readySources.some(
     (source) => source.id === selectedSourceId,
@@ -78,7 +75,7 @@ function ProjectKnowledgeGraph({
     queryKey: ["knowledge", projectId, "source", selectedId, "graph"],
     queryFn: ({ signal }) =>
       createKnowledgeClient({ projectId }).getSource(selectedId!, signal),
-    enabled: selectedId !== null && graphView === "published",
+    enabled: selectedId !== null,
     retry: false,
   });
   const revisionId = detail.data?.documents.items.find(
@@ -99,41 +96,19 @@ function ProjectKnowledgeGraph({
     <div className="tap-project-graph">
       {readySources.length > 0 ? (
         <div className="tap-project-graph-controls">
-          <div
-            className="tap-project-graph-view"
-            role="group"
-            aria-label={locale === "zh" ? "图谱视图" : "Graph view"}
-          >
-            <button
-              type="button"
-              aria-pressed={graphView === "overview"}
-              onClick={() => setGraphView("overview")}
+          <label className="tap-project-graph-source">
+            <span>{locale === "zh" ? "图谱来源" : "Graph source"}</span>
+            <select
+              value={selectedId ?? ""}
+              onChange={(event) => setSelectedSourceId(event.target.value)}
             >
-              {locale === "zh" ? "领域总览" : "Domain overview"}
-            </button>
-            <button
-              type="button"
-              aria-pressed={graphView === "published"}
-              onClick={() => setGraphView("published")}
-            >
-              {locale === "zh" ? "已发布来源图谱" : "Published source graph"}
-            </button>
-          </div>
-          {graphView === "published" ? (
-            <label className="tap-project-graph-source">
-              <span>{locale === "zh" ? "图谱来源" : "Graph source"}</span>
-              <select
-                value={selectedId ?? ""}
-                onChange={(event) => setSelectedSourceId(event.target.value)}
-              >
-                {readySources.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
+              {readySources.map((source) => (
+                <option key={source.id} value={source.id}>
+                  {source.name}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       ) : null}
       {selectedId === null ? (
@@ -142,13 +117,6 @@ function ProjectKnowledgeGraph({
             ? "请选择已就绪来源查看图谱。"
             : "Select a ready source to view its graph."}
         </p>
-      ) : graphView === "overview" ? (
-        <KnowledgeGraph
-          copy={copy}
-          query={query}
-          sources={readySources}
-          onViewSource={onViewSource}
-        />
       ) : detail.isError ? (
         <p role="alert">
           {locale === "zh"
@@ -539,16 +507,9 @@ export function LibraryWorkspace({
           aria-labelledby="tap-library-graph-tab"
         >
           {graphProjectId === undefined ? (
-            <KnowledgeGraph
-              copy={copy}
-              query={query}
-              sources={facetSources}
-              onViewSource={(source) => {
-                setQuery(source.name);
-                setMode("list");
-                listTabRef.current?.focus();
-              }}
-            />
+            <p role="status">
+              {locale === "zh" ? "未选择项目。" : "No project is selected."}
+            </p>
           ) : (
             <ProjectKnowledgeGraph
               projectId={graphProjectId}

@@ -19,7 +19,7 @@ vi.mock("../../../features/graph/api/queries", () => ({
   useGraphSearch: vi.fn(),
 }));
 
-it("renders a published source graph with the established prototype controls", async () => {
+it("offers only the published source graph", async () => {
   const getSource = vi.fn(async (sourceId: string) => ({
     documents: { items: [{ status: "ready", revisionId: `rev_${sourceId}` }] },
   }));
@@ -103,13 +103,13 @@ it("renders a published source graph with the established prototype controls", a
     </QueryClientProvider>,
   );
   await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-  expect(screen.getByText(/Illustrative view/i)).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Domain overview" }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await userEvent.click(
-    screen.getByRole("button", { name: "Published source graph" }),
-  );
+    screen.queryByRole("button", { name: "Domain overview" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Published source graph" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Graph source" })).toBeVisible();
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
   );
@@ -152,9 +152,7 @@ it("describes the published graph without prototype wording", async () => {
   vi.mocked(useGraphSearch).mockImplementation(
     (_projectId, snapshotId) =>
       ({
-        data: snapshotId
-          ? { snapshotId, nodes: [], edges: [] }
-          : undefined,
+        data: snapshotId ? { snapshotId, nodes: [], edges: [] } : undefined,
         isPending: snapshotId === null,
         isError: false,
       }) as never,
@@ -184,9 +182,6 @@ it("describes the published graph without prototype wording", async () => {
     </QueryClientProvider>,
   );
   await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-  await userEvent.click(
-    screen.getByRole("button", { name: "Published source graph" }),
-  );
   await waitFor(() =>
     expect(
       screen.getByText(

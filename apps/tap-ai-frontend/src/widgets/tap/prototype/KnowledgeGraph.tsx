@@ -7,7 +7,7 @@ import {
   MenuFoldOutlined,
   CloseOutlined,
 } from "@ant-design/icons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   CSSProperties,
   KeyboardEvent,
@@ -18,10 +18,8 @@ import type { PrototypeCopy } from "./copy";
 import type { LibrarySource } from "./model";
 
 import {
-  buildKnowledgeGraph,
   GRAPH_WIDTH,
   GRAPH_HEIGHT,
-  GRAPH_CLUSTERS,
   COMMUNITY_ORDER,
   COMMUNITY_COLORS,
   type GraphCommunity,
@@ -29,7 +27,7 @@ import {
   type GraphProvenance,
   type GraphNode,
   type GraphEdge,
-} from "./knowledgeGraphData";
+} from "./graphLayout";
 
 const GRAPH_HORIZONTAL_MARGIN = 24;
 const MIN_ZOOM = 0.75;
@@ -52,8 +50,8 @@ export function KnowledgeGraph({
   query: string;
   sources: readonly LibrarySource[];
   onViewSource: (source: LibrarySource) => void;
-  publishedData?: { nodes: GraphNode[]; edges: GraphEdge[] };
-  publishedCaption?: string;
+  publishedData: { nodes: GraphNode[]; edges: GraphEdge[] };
+  publishedCaption: string;
 }) {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [communitiesOpen, setCommunitiesOpen] = useState(
@@ -77,10 +75,7 @@ export function KnowledgeGraph({
       setFullscreenError(true);
     }
   };
-  const data = useMemo(
-    () => publishedData ?? buildKnowledgeGraph(copy, sources),
-    [copy, publishedData, sources],
-  );
+  const data = publishedData;
   const [activeCommunities, setActiveCommunities] = useState<
     ReadonlySet<GraphCommunity>
   >(() => new Set(COMMUNITY_ORDER));
@@ -118,22 +113,18 @@ export function KnowledgeGraph({
     extracted: copy.library.extracted,
     inferred: copy.library.inferred,
   };
-  const shownCommunities = publishedData
-    ? COMMUNITY_ORDER.filter((community) =>
-        data.nodes.some((node) => node.community === community),
-      )
-    : COMMUNITY_ORDER;
-  const shownClusters = publishedData
-    ? [
-        {
-          community:
-            data.nodes.find((node) => node.kind !== "document")?.community ??
-            "application",
-          x: GRAPH_WIDTH / 2,
-          y: GRAPH_HEIGHT / 2,
-        },
-      ]
-    : GRAPH_CLUSTERS;
+  const shownCommunities = COMMUNITY_ORDER.filter((community) =>
+    data.nodes.some((node) => node.community === community),
+  );
+  const shownClusters: { community: GraphCommunity; x: number; y: number }[] = [
+    {
+      community:
+        data.nodes.find((node) => node.kind !== "document")?.community ??
+        "application",
+      x: GRAPH_WIDTH / 2,
+      y: GRAPH_HEIGHT / 2,
+    },
+  ];
 
   const visibleNodes = data.nodes.filter((node) =>
     activeCommunities.has(node.community),
@@ -145,9 +136,7 @@ export function KnowledgeGraph({
   );
   const selectedNode =
     visibleNodes.find((node) => node.id === selectedNodeId) ?? null;
-  const selectedSource = publishedData
-    ? sources[0]
-    : sources.find((source) => `source-${source.id}` === selectedNodeId);
+  const selectedSource = sources[0];
   const matchesQuery = (node: GraphNode) => {
     const source = sources.find((item) => `source-${item.id}` === node.id);
     return [
@@ -502,14 +491,8 @@ export function KnowledgeGraph({
                       <ellipse
                         cx={cluster.x}
                         cy={cluster.y}
-                        rx={
-                          publishedData
-                            ? 500
-                            : cluster.community === "testing"
-                              ? 310
-                              : 240
-                        }
-                        ry={publishedData ? 375 : 168}
+                        rx={500}
+                        ry={375}
                       />
                       <text x={cluster.x - 210} y={cluster.y - 149}>
                         {communityLabels[cluster.community]}
@@ -793,7 +776,7 @@ export function KnowledgeGraph({
         </section>
 
         <figcaption id="tap-library-graph-caption">
-          {publishedCaption ?? copy.library.illustrative}
+          {publishedCaption}
         </figcaption>
       </figure>
 
