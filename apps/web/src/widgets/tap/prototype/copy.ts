@@ -41,8 +41,6 @@ export interface PrototypeCopy {
     heading: string;
     description: string;
     sourceHint: string;
-    suggestedPrompts: string;
-    quickPrompts: readonly [string, string, string];
     promptSuggestions: {
       label: string;
       refresh: string;
@@ -408,12 +406,6 @@ export const PROTOTYPE_COPY = {
       description:
         "Ask about life insurance, create BDD test cases, or build an automation.",
       sourceHint: "Each turn records the knowledge context you select.",
-      suggestedPrompts: "Suggested prompts",
-      quickPrompts: [
-        "Summarize the life insurance underwriting rules",
-        "Create BDD test cases for life insurance underwriting",
-        "Generate an automation script for a life insurance application",
-      ],
       promptSuggestions: {
         label: "Suggested questions",
         refresh: "Show others",
@@ -794,12 +786,6 @@ export const PROTOTYPE_COPY = {
       heading: "我能为您做什么？",
       description: "询问寿险业务、创建 BDD 测试用例，或构建自动化流程。",
       sourceHint: "每轮对话都会记录您选择的知识上下文。",
-      suggestedPrompts: "推荐提示词",
-      quickPrompts: [
-        "总结寿险新单核保规则",
-        "为寿险新单核保创建 BDD 测试用例",
-        "为寿险投保申请生成自动化脚本",
-      ],
       promptSuggestions: {
         label: "推荐问题",
         refresh: "换一批",

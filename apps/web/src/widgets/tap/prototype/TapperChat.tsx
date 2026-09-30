@@ -41,6 +41,8 @@ import {
   type ComposerAttachmentView,
 } from "./composerAttachments";
 import { isPrototypeFaultActive } from "./prototypeFaults";
+import { PromptSuggestions } from "./PromptSuggestions";
+import type { PromptSuggestion } from "./samplePromptSuggestions";
 import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 
 type PickerKind = "library" | "agents" | "skills";
@@ -59,6 +61,8 @@ interface TapperChatProps {
   onModelChange: (modelId: CodexModelId) => void;
   onSend: (prompt: string) => boolean;
   onStop?: () => void;
+  promptSuggestions: readonly PromptSuggestion[];
+  onPickSuggestion: (suggestion: PromptSuggestion) => void;
   sendError?: string | null;
   stopError?: string | null;
   onRegenerate?: (turn: AssistantTurn) => void;
@@ -134,6 +138,8 @@ export function TapperChat({
   onModelChange,
   onSend,
   onStop,
+  promptSuggestions,
+  onPickSuggestion,
   sendError = null,
   stopError = null,
   onRegenerate,
@@ -155,6 +161,7 @@ export function TapperChat({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<TextAreaRef>(null);
+  const caretToEndRef = useRef(false);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const addTriggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -201,6 +208,16 @@ export function TapperChat({
     );
     setQuestionPreview(null);
   }, [conversation.id, conversation.turns.length]);
+
+  useEffect(() => {
+    if (!caretToEndRef.current) return;
+    caretToEndRef.current = false;
+    composerRef.current?.focus();
+    const textarea = composerRef.current?.resizableTextArea?.textArea;
+    if (textarea === undefined) return;
+    const length = textarea.value.length;
+    textarea.setSelectionRange(length, length);
+  }, [message]);
 
   useEffect(() => {
     const updateCapacity = () => {
@@ -466,9 +483,9 @@ export function TapperChat({
     event.currentTarget.form?.requestSubmit();
   };
 
-  const fillPrompt = (prompt: string) => {
-    setMessage(prompt);
-    composerRef.current?.focus();
+  const pickSuggestion = (suggestion: PromptSuggestion) => {
+    caretToEndRef.current = true;
+    onPickSuggestion(suggestion);
   };
 
   const handleTranscriptScroll = () => {
@@ -1239,20 +1256,11 @@ export function TapperChat({
       {composer}
 
       {!hasTurns ? (
-        <div
-          className="tap-quick-prompts"
-          aria-label={copy.chat.suggestedPrompts}
-        >
-          {copy.chat.quickPrompts.map((prompt) => (
-            <button
-              key={prompt}
-              type="button"
-              onClick={() => fillPrompt(prompt)}
-            >
-              {prompt}
-            </button>
-          ))}
-        </div>
+        <PromptSuggestions
+          copy={copy}
+          suggestions={promptSuggestions}
+          onPick={pickSuggestion}
+        />
       ) : null}
 
       {pickerConfig === null ? null : (

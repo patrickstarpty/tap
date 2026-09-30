@@ -253,7 +253,6 @@
 .tap-panel-toggle:focus-visible,
 .tap-chat-history button:focus-visible,
 .tap-language-switcher button:focus-visible,
-.tap-quick-prompts button:focus-visible,
 .tap-prompt-suggestion:focus-visible,
 .tap-prompt-suggestions-refresh:focus-visible,
 .tap-composer-add-button:focus-visible,
@@ -681,40 +680,6 @@
   font-size: 14px;
   line-height: 1.6;
   max-width: 56ch;
-}
-
-.tap-quick-prompts {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 30px;
-}
-
-.tap-chat--idle > .tap-quick-prompts {
-  margin-top: 0;
-}
-
-.tap-quick-prompts button {
-  min-height: 44px;
-  border: 1px solid var(--tap-line);
-  border-radius: 10px;
-  background: transparent;
-  padding: 0 14px;
-  color: var(--tap-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  transition:
-    border-color 150ms ease-out,
-    background-color 150ms ease-out;
-  border-color: var(--tap-line);
-}
-
-.tap-quick-prompts button:hover {
-  border-color: var(--tap-accent-line);
-  background: var(--tap-accent-soft);
-  color: var(--tap-accent-dark);
 }
 
 .tap-prompt-suggestions-wrap {
@@ -4650,20 +4615,6 @@
     max-width: 56ch;
   }
 
-  .tap-quick-prompts {
-    display: grid;
-    width: 100%;
-  }
-
-  .tap-quick-prompts button {
-    height: auto;
-    padding: 10px 12px;
-    line-height: 1.45;
-    text-align: left;
-    background: transparent;
-    border-color: var(--tap-line);
-  }
-
   .tap-composer {
     width: calc(100% - 20px);
     margin-bottom: max(10px, env(safe-area-inset-bottom));
@@ -4999,7 +4950,7 @@
   .tap-tapper-layout,
   .tap-sources-shell,
   .tap-navigation-item,
-  .tap-quick-prompts button,
+  .tap-prompt-suggestion,
   .tap-question-marker {
     animation: none;
     transition: none;

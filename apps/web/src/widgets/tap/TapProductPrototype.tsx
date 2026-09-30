@@ -22,6 +22,10 @@ import {
 } from "react";
 
 import { TapperChat } from "./prototype/TapperChat";
+import {
+  availablePromptSuggestions,
+  type PromptSuggestion,
+} from "./prototype/samplePromptSuggestions";
 import { TapperFloatingAssistant } from "./prototype/TapperFloatingAssistant";
 import { ContextualAssistantResponse } from "./prototype/ContextualAssistantResponse";
 import {
@@ -824,6 +828,25 @@ export function TapProductPrototype() {
     );
   };
 
+  const readySources = useMemo(
+    () => sources.filter((source) => source.status === "ready"),
+    [sources],
+  );
+  const promptSuggestions = useMemo(
+    () => availablePromptSuggestions(locale, readySources),
+    [locale, readySources],
+  );
+  const pickSuggestion = (suggestion: PromptSuggestion) => {
+    setMessageDraft(suggestion.question);
+    const suggestionSourceIds = suggestion.sources.map((source) => source.id);
+    updateActiveConversation((conversation) => ({
+      ...conversation,
+      selectedSourceIds: Array.from(
+        new Set([...conversation.selectedSourceIds, ...suggestionSourceIds]),
+      ),
+    }));
+  };
+
   const createNewChat = () => {
     setMessageDraft("");
     setComposerContext(null);
@@ -1578,6 +1601,8 @@ export function TapProductPrototype() {
                 }))
               }
               onSend={(prompt) => sendMessage(prompt)}
+              promptSuggestions={promptSuggestions}
+              onPickSuggestion={pickSuggestion}
               sendError={sendError}
               stopError={stopError}
               isSending={pendingSendConversationId === activeConversation.id}
@@ -1668,7 +1693,7 @@ export function TapProductPrototype() {
                 )
               }
               skills={skills}
-              sources={sources.filter((source) => source.status === "ready")}
+              sources={readySources}
             />
             {compactSourcesDrawerOpen ? (
               <button
