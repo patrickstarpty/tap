@@ -67,10 +67,8 @@ it("shows a neutral workspace identity in the sidebar", () => {
   expect(screen.queryByText("PT")).not.toBeInTheDocument();
 });
 
-// Below: tests migrated from the deleted src/pages/TapperPage.tsx +
-// TapperPage.test.tsx. TapAiPage always renders TapperWorkspace in
-// "api" (durable) mode now, so every case here exercises that mode; see
-// docs referenced in the task report for which assertions changed and why.
+// Below: TapAiPage renders TapperWorkspace against the real knowledge API,
+// so every case here exercises that path.
 
 function withKnowledgeSources() {
   return fakeKnowledgeClient().withPublishedSources({

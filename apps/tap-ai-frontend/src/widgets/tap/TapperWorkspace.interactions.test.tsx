@@ -813,12 +813,9 @@ function renderWorkspaceWithManyDocuments() {
   });
 }
 
-// The original fixture-mode case combining Library type/status filters
-// counted 32 total sources because fixture mode also mixes in
-// SAMPLE_FILES/SAMPLE_REPRESENTATIVE_SOURCES local sample data; durable/api
-// mode only ever lists Sources the fake backend returns, so this seeds 4
-// documents and the migrated case asserts against "4/4"/"1/4" instead of
-// "32/32"/"1/32" — same filter/clear interaction, backend-sized data.
+// Library only ever lists the sources the backend returns; this seeds 4
+// documents and asserts the type/status filter and clear interaction
+// against "4/4"/"1/4" counts.
 function renderWorkspaceWithLibraryStatuses() {
   const api = fakeKnowledgeClient()
     .withDocuments([
@@ -887,19 +884,10 @@ describe("Tap product workspace interactions", () => {
     vi.unstubAllGlobals();
   });
 
-  // Deleted: "keeps representative knowledge in the default graph after a
-  // page remount". This case asserted the fixture-only illustrative Library
-  // graph state (the "No project is selected." copy that LibraryWorkspace
-  // renders only when NOT durable) and the local SAMPLE_FILES/
-  // SAMPLE_REPRESENTATIVE_SOURCES sample library content ("Beneficiary test
-  // cases.xlsx", "beneficiary.ts" present, "settlement.ts" absent). In
-  // durable/api mode the Library tab always renders ProjectLibraryWorkspace
-  // with a real graphProjectId (TapperWorkspace.tsx:2574-2578), so
-  // "No project is selected." can never render, and there is no
-  // backend-provided equivalent of a fixed illustrative sample-file set to
-  // substitute — this is exactly the Library graph "domain overview" sample
-  // content the cleanup plan removes, not a UI behavior with an api-mode
-  // counterpart.
+  // The Library tab always renders ProjectLibraryWorkspace with a real
+  // graphProjectId, so there is no illustrative sample-library state to
+  // assert here; coverage for the Knowledge Graph comes from the
+  // LibraryWorkspace suites instead.
 
   it("defaults to English and lets the user switch the interface language", async () => {
     const user = userEvent.setup();
@@ -1290,16 +1278,13 @@ describe("Tap product workspace interactions", () => {
     // modelAlias/sourceRevisionIds/agent+skill selections only — see
     // src/features/conversations/api/client.ts), so re-selecting a
     // conversation re-fetches its detail (useConversationDetail has no
-    // staleTime) and TapperWorkspace.tsx's turn-mapping effect
-    // (~line 1335) stamps every turn with the *current* UI locale, not the
-    // locale it was originally sent in. Fixture mode never re-fetched, so it
-    // never surfaced this: the notice reliably stayed in the turn's original
-    // language. In durable/api mode, reopening this English turn while the
-    // UI is set to Chinese re-renders it in Chinese — a real gap (no
-    // backend-persisted turn locale), not a fixture-only behavior. This
-    // assertion is loosened to accept either language rendering of the
-    // notice instead of asserting language-fidelity across this specific
-    // navigation path; see the task report for a NEEDS_CONTEXT note.
+    // staleTime) and TapperWorkspace.tsx's turn-mapping effect stamps every
+    // turn with the *current* UI locale, not the locale it was originally
+    // sent in. Reopening this English turn while the UI is set to Chinese
+    // re-renders it in Chinese — a real gap (no backend-persisted turn
+    // locale). This assertion is loosened to accept either language
+    // rendering of the notice instead of asserting language-fidelity across
+    // this specific navigation path.
     expect(
       screen.getByText(
         /No knowledge context was selected for this turn|此轮对话未选择知识上下文/,
@@ -1395,18 +1380,11 @@ describe("Tap product workspace interactions", () => {
     expect(composer).toHaveValue("Keep this draft");
   });
 
-  // Deleted: "restores source, Agent, and Skill context from a context-only
-  // session". This case relied on fixture mode's "New chat" minting a
-  // unique local id (`chat-${n}`) for every unsent draft, so a previous
-  // context-only (no turns sent) draft stayed in "Chat history" as
-  // "New chat · 3 selected" and could be reselected later. Durable/api mode
-  // always reuses the single id "draft" for the unsent conversation
-  // (TapperWorkspace.tsx: `const id = durable ? "draft" : ...`), and
-  // starting another "New chat" replaces (filters out) whatever previously
-  // held that same "draft" id — so a second, concurrently-listed unsent
-  // draft with its own selected context cannot exist in durable mode. This
-  // is a structural, not merely cosmetic, fixture-only capability with no
-  // api-mode equivalent to migrate to.
+  // "New chat" always reuses the single conversation id "draft" for the
+  // unsent conversation, and starting another "New chat" replaces whatever
+  // previously held that id. So a second, concurrently-listed unsent draft
+  // with its own selected context cannot exist, and there is no case to
+  // assert restoring context from a prior context-only draft session.
 
   it("removes selected Knowledge, Agent, and Skill context from the composer", async () => {
     const user = userEvent.setup();
@@ -2525,16 +2503,12 @@ describe("Tap product workspace interactions", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
-  // Durable/api mode's Agents and Skills catalogs (CatalogWorkspace with
-  // durableDrafts=true, TapperWorkspace.tsx:2555/2569) manage custom
-  // items as downloadable local Markdown draft files instead of the fixture
-  // mode's directly-usable in-memory "Custom" items: the create/edit dialog
-  // requires a kebab-case Name plus a non-empty Description (not just
-  // Instructions) before Save enables, custom items show a "Local draft"
-  // badge and a "Download Markdown" action instead of "Custom" and "Use in
-  // chat", and built-in (approved) items lose their Edit button entirely
-  // (CatalogWorkspace.tsx:282-283/296/301). This case keeps the same search/
-  // create/edit interaction shape but asserts the real api-mode outcome.
+  // The Agents and Skills catalogs manage custom items as downloadable
+  // local Markdown draft files: the create/edit dialog requires a
+  // kebab-case Name plus a non-empty Description (not just Instructions)
+  // before Save enables, custom items show a "Local draft" badge and a
+  // "Download Markdown" action instead of "Custom" and "Use in chat", and
+  // built-in (approved) items have no Edit button.
   it("searches, creates, and edits agents for the life-underwriting workflow", async () => {
     const user = userEvent.setup();
     renderWorkspace();
@@ -2674,11 +2648,9 @@ describe("Tap product workspace interactions", () => {
     );
   });
 
-  // Built-in (approved) catalog items have no Edit action at all in
-  // durable/api mode (CatalogWorkspace.tsx:282-283: `durableDrafts &&
-  // item.origin === "built-in"` hides it) — only a locally-created draft can
-  // be edited, so this case first creates one instead of editing the seeded
-  // "Life Underwriting Analyst" built-in.
+  // Built-in (approved) catalog items have no Edit action at all — only a
+  // locally-created draft can be edited, so this case first creates one
+  // instead of editing the seeded "Life Underwriting Analyst" built-in.
   it("contains edit-dialog focus and restores the exact Edit trigger", async () => {
     const user = userEvent.setup();
     const { container } = renderWorkspace();
