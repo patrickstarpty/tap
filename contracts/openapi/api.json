@@ -5909,6 +5909,78 @@
         "title": "ProblemDetails",
         "type": "object"
       },
+      "PromptSuggestionItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/PromptSuggestionSource"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "sources"
+        ],
+        "title": "PromptSuggestionItem",
+        "type": "object"
+      },
+      "PromptSuggestionPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PromptSuggestionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PromptSuggestionPage",
+        "type": "object"
+      },
+      "PromptSuggestionSource": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "sourceId": {
+            "pattern": "^src_[0-9a-f]{32}$",
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "name"
+        ],
+        "title": "PromptSuggestionSource",
+        "type": "object"
+      },
       "PublishedKnowledgeSource": {
         "additionalProperties": false,
         "properties": {
@@ -16433,6 +16505,73 @@
         "summary": "Retry Source",
         "tags": [
           "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/prompt-suggestions": {
+      "get": {
+        "operationId": "prompt_suggestion_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "locale",
+            "required": true,
+            "schema": {
+              "enum": [
+                "en",
+                "zh"
+              ],
+              "title": "Locale",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptSuggestionPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "List Prompt Suggestions",
+        "tags": [
+          "prompt-suggestions"
         ]
       }
     },
