@@ -24,8 +24,9 @@ from tap.contracts.http import (
     ConversationSummary,
     ConversationTurnInputView,
     ConversationTurnSummary,
+    TurnTrace,
 )
-from tap.interfaces.http.dependencies import conversation_service, knowledge_service
+from tap.interfaces.http.dependencies import conversation_service, knowledge_service, trace_service
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.sse import encode_sse
@@ -46,7 +47,7 @@ from tap.modules.chat.application.conversations import (
 from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
 from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
-from tap.platform.telemetry import bind_trace, span
+from tap.platform.telemetry import bind_trace, span, trace_id_of
 
 router = APIRouter(
     prefix="/conversations",
@@ -254,6 +255,7 @@ def _turn(value):
             skill_labels=list(frozen.skill_labels or frozen.skill_revision_ids),
             insights_query_id=frozen.insights_query_id,
         ),
+        trace_id=trace_id_of(value.traceparent),
     )
 
 
@@ -553,3 +555,18 @@ async def stream(
     return StreamingResponse(
         generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
     )
+
+
+@router.get(
+    "/{conversation_id}/turns/{turn_id}/trace",
+    response_model=TurnTrace,
+    operation_id="conversation_turn_trace",
+    responses={404: problem_response_metadata("Conversation, Turn, or trace not found")},
+)
+async def turn_trace(conversation_id: str, turn_id: str, request: Request) -> TurnTrace:
+    trace = await trace_service(request).turn_trace(
+        request.state.project_scope, conversation_id, turn_id
+    )
+    if trace is None:
+        raise ConversationNotFound
+    return trace

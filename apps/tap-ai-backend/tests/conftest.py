@@ -66,7 +66,7 @@ def owned_project_mysql(monkeypatch: pytest.MonkeyPatch) -> Iterator[IsolatedMys
         yield database
 
 
-def validation_http_services(knowledge=None, readiness=None):
+def validation_http_services(knowledge=None, readiness=None, traces=None):
     """Explicit in-memory trusted authority for HTTP tests; never install it globally."""
     from tap.interfaces.http.dependencies import HttpServices
     from tap.modules.access.adapters.validation import (
@@ -93,6 +93,7 @@ def validation_http_services(knowledge=None, readiness=None):
     return HttpServices(
         knowledge=knowledge,
         readiness=readiness,
+        traces=traces,
         scope=VALIDATION_SCOPE,
         scope_provider=ValidationScopeProvider(),
         authorization_policy=ValidationAuthorizationPolicy(Registry()),

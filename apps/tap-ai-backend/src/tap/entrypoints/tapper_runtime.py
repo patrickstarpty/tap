@@ -1526,6 +1526,7 @@ def _assemble_http_services(
         publication_authority=publication_authority,
     )
     conversations = None
+    traces = None
     if conversation_sessions is not None:
         from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
         from tap.modules.chat.application.conversations import ConversationService
@@ -1537,6 +1538,9 @@ def _assemble_http_services(
             ),
             scope=repository.scope,
         )
+        from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService
+
+        traces = MysqlTraceHttpService(conversation_sessions)  # type: ignore[arg-type]
     graph = None
     graph_enricher = None
     if graph_sessions is not None:
@@ -1613,6 +1617,7 @@ def _assemble_http_services(
         authorization_policy=authorization_policy,
         scope=repository.scope,
         conversations=conversations,
+        traces=traces,
         graph=graph,
         test_plans=test_plans,
         knowledge_reviews=knowledge_reviews,

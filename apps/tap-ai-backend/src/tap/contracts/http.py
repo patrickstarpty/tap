@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Literal, Self
 
@@ -10,6 +11,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     RootModel,
     StrictBool,
     StrictInt,
@@ -1070,6 +1072,7 @@ class ConversationTurnSummary(ContractModel):
     ) = None
     graph_snapshot_id: str | None = None
     input: ConversationTurnInputView
+    trace_id: str | None = None
 
 
 class ConversationSummary(ContractModel):
@@ -1102,6 +1105,58 @@ class ConversationAccepted(ContractModel):
     conversation_id: str
     turn_id: str
     state: Literal["queued"]
+
+
+class TurnTraceSummary(ContractModel):
+    total_duration_ms: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: Decimal | None = None
+    cost_incomplete: bool
+    requested_models: list[str]
+    upstream_models: list[str]
+    attempt_count: int
+
+
+class TraceSpanView(ContractModel):
+    span_id: str
+    parent_span_id: str | None = None
+    name: str
+    status: Literal["ok", "error"]
+    started_at: datetime
+    duration_ms: int
+    attributes: dict[str, JsonValue]
+    attempt: int | None = None
+
+
+class ModelCallView(ContractModel):
+    call_id: str
+    span_id: str | None = None
+    operation: str
+    model_name: str
+    upstream_model: str | None = None
+    provider: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: Decimal | None = None
+    latency_ms: int
+    attempts: int
+    status: Literal["ok", "error"]
+    error_code: str | None = None
+    created_at: datetime
+
+
+class ModelCallDetail(ModelCallView):
+    request: str
+    response: str | None = None
+    reasoning: str | None = None
+
+
+class TurnTrace(ContractModel):
+    trace_id: str
+    summary: TurnTraceSummary
+    spans: list[TraceSpanView]
+    model_calls: list[ModelCallView]
 
 
 class ConversationEventItem(ContractModel):
