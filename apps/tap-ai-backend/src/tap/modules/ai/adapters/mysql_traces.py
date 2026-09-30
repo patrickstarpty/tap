@@ -92,6 +92,26 @@ def _summary(spans: Sequence[TraceSpanView], calls: Sequence[ModelCallView]) -> 
     )
 
 
+def _chat_turn_conversation_join():
+    """The chat_turn/conversation join, scoped by enterprise, project and chat id.
+
+    Mirrors the identical join in `MysqlConversationRepository.claim_queued`
+    (`modules/chat/adapters/mysql_conversations.py`): `conversation`'s primary
+    key is `(project_id, conversation_id)` alone, so `project_id` and
+    `chat_id`/`conversation_id` already uniquely identify at most one
+    `conversation` row per the schema's own constraints; the `enterprise_id`
+    equality is still required so this join can never silently match a row
+    that does not belong to the caller's Enterprise if that invariant ever
+    changes.
+    """
+    return chat_turn.join(
+        conversation,
+        (chat_turn.c.enterprise_id == conversation.c.enterprise_id)
+        & (chat_turn.c.project_id == conversation.c.project_id)
+        & (chat_turn.c.chat_id == conversation.c.conversation_id),
+    )
+
+
 class MysqlTraceHttpService:
     """Reads persisted trace spans and model calls scoped to the caller's Project."""
 
@@ -105,13 +125,7 @@ class MysqlTraceHttpService:
             traceparent = (
                 await session.execute(
                     select(chat_turn.c.traceparent)
-                    .select_from(
-                        chat_turn.join(
-                            conversation,
-                            (chat_turn.c.project_id == conversation.c.project_id)
-                            & (chat_turn.c.chat_id == conversation.c.conversation_id),
-                        )
-                    )
+                    .select_from(_chat_turn_conversation_join())
                     .where(
                         *scope_predicates(chat_turn, scope),
                         chat_turn.c.turn_id == turn_id,

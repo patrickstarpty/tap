@@ -24,7 +24,7 @@ router = APIRouter(
     operation_id="model_call_detail",
     responses={404: problem_response_metadata("Model call not found")},
 )
-async def get(call_id: str, request: Request) -> ModelCallDetail:
+async def model_call_detail(call_id: str, request: Request) -> ModelCallDetail:
     detail = await trace_service(request).model_call(request.state.project_scope, call_id)
     if detail is None:
         raise ConversationNotFound

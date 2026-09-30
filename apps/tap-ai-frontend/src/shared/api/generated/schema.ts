@@ -1006,7 +1006,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get */
+        /** Model Call Detail */
         get: operations["model_call_detail"];
         put?: never;
         post?: never;

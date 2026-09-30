@@ -10,7 +10,7 @@ from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService
+from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService, _chat_turn_conversation_join
 from tap.modules.chat.adapters.mysql import chat_turn
 from tap.modules.chat.adapters.mysql_conversations import conversation
 from tap.platform.db.project_scope import scope_values
@@ -238,3 +238,25 @@ def test_soft_deleted_conversation_trace_rows_remain(owned_project_mysql):
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_same_ids_in_other_enterprise_do_not_leak():
+    """The chat_turn/conversation join must not match a row from another Enterprise.
+
+    A true cross-enterprise row-level exploit cannot be seeded against the real
+    schema: `conversation`'s primary key is `(project_id, conversation_id)`
+    alone (no `enterprise_id` column in the key -- see
+    `modules/chat/adapters/mysql_conversations.py`), so two Enterprises can
+    never hold two different rows for the same `(project_id, conversation_id)`
+    pair to exercise a live leak through `owned_project_mysql` -- the second
+    insert would fail on the existing primary key, not on a missing scope
+    check. This asserts the join predicate itself is scoped by
+    `enterprise_id` (matching the identical join in
+    `MysqlConversationRepository.claim_queued`), so a future schema change
+    that drops the `(project_id, conversation_id)` uniqueness invariant does
+    not silently reopen a leak here.
+    """
+    clause = str(_chat_turn_conversation_join().onclause)
+    assert "chat_turn.enterprise_id = conversation.enterprise_id" in clause
+    assert "chat_turn.project_id = conversation.project_id" in clause
+    assert "chat_turn.chat_id = conversation.conversation_id" in clause

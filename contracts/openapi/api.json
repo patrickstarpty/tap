@@ -17040,7 +17040,7 @@
             "description": "Request validation failed"
           }
         },
-        "summary": "Get",
+        "summary": "Model Call Detail",
         "tags": [
           "model-calls"
         ]
