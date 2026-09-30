@@ -7,7 +7,6 @@ from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.ai.adapters.litellm import ProviderModelMapping
 from tap.modules.ai.adapters.mysql import ai_agent_revision
 from tap.modules.ai.adapters.mysql_checkpointer import graph_run, graph_settlement
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
@@ -305,7 +304,7 @@ async def test_generation_context_rejects_revoked_agent_before_model_io(
 
 
 @pytest.mark.asyncio
-async def test_generation_context_rejects_changed_provider_model_mapping(
+async def test_generation_context_rejects_changed_design_model(
     owned_project_mysql,
 ) -> None:
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
@@ -329,11 +328,10 @@ async def test_generation_context_rejects_changed_provider_model_mapping(
         changed_repository = MysqlTestPlanRepository(
             sessions,
             scope=VALIDATION_SCOPE,
-            model_alias="tapper-chat",
-            model_mapping=ProviderModelMapping("fake", "deterministic-chat-v2"),
+            model_alias="qwen-max",
         )
 
-        with pytest.raises(ValueError, match="model route"):
+        with pytest.raises(ValueError, match="model alias"):
             await changed_repository.generation_context(VALIDATION_SCOPE, claim)
     finally:
         await engine.dispose()

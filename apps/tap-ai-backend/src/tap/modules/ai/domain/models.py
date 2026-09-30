@@ -128,6 +128,13 @@ class ModelGatewayUnavailable(Exception):
         super().__init__("model-unavailable")
 
 
+class ModelNotSelectable(ValueError):
+    """The requested alias is absent from the catalog or lacks a required capability."""
+
+    def __init__(self) -> None:
+        super().__init__("model-not-selectable")
+
+
 def text_digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 

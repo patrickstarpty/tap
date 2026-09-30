@@ -9,10 +9,10 @@ afterEach(() => vi.restoreAllMocks());
 
 it("loads only the Project catalog without provider or reasoning fields", async () => {
   const catalog = {
-    defaultAlias: "tapper-chat",
+    defaultAlias: "qwen-plus",
     items: [
       {
-        alias: "tapper-chat",
+        alias: "qwen-plus",
         displayName: "GPT-5.6 Sol",
         capabilities: ["chat"],
       },
@@ -29,13 +29,13 @@ it("loads only the Project catalog without provider or reasoning fields", async 
 
 it.each([
   { defaultAlias: "missing", items: [] },
-  { defaultAlias: "tapper-chat", items: [null] },
-  { defaultAlias: "tapper-chat", items: [], provider: "private-provider" },
+  { defaultAlias: "qwen-plus", items: [null] },
+  { defaultAlias: "qwen-plus", items: [], provider: "private-provider" },
   {
-    defaultAlias: "tapper-chat",
+    defaultAlias: "qwen-plus",
     items: [
       {
-        alias: "tapper-chat",
+        alias: "qwen-plus",
         displayName: "Sol",
         capabilities: ["chat"],
         reasoning: "private",
@@ -118,12 +118,12 @@ describe("ModelSelector", () => {
 
   it("opens an accessible keyboard menu of server-governed model aliases", async () => {
     function Harness() {
-      const [alias, setAlias] = useState("tapper-chat");
+      const [alias, setAlias] = useState("qwen-plus");
       return (
         <ModelSelector
           models={[
             {
-              alias: "tapper-chat",
+              alias: "qwen-plus",
               displayName: "GPT-5.6 Sol",
               capabilities: ["chat"],
             },

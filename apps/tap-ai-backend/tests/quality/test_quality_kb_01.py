@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -24,26 +25,37 @@ SCRIPT = ROOT / "scripts" / "evaluate-quality-kb.py"
 TRUSTED_SCRIPT = ROOT / "scripts" / "evaluate-quality-kb-trusted.py"
 RUNNER = ROOT / "scripts" / "run-quality-kb-real.py"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "quality" / "kb"
+# Frozen "now" for every in-process runner/evaluator call in this file. The suite must
+# not depend on wall-clock date: approval expiry is real production behavior (tested
+# explicitly below), but these fixtures exercise unrelated retry/observation behavior
+# and must stay valid regardless of when the suite runs.
+FIXED_NOW = datetime(2026, 9, 9, tzinfo=UTC)
+
+
+def _fixed_clock() -> datetime:
+    return FIXED_NOW
+
+
 APPROVAL_CONTENT = {
     "schemaVersion": "quality-kb-model-approval-v2",
     "approvalId": "unit-v3",
     "routes": [
         {
-            "logicalAlias": "tapper-embedding",
+            "logicalAlias": "text-embedding-v4",
             "actualProvider": "approved-provider",
             "actualModel": "approved-provider/approved-embedding",
             "operation": "embed",
             "scope": {"enterpriseId": "tenant", "projectId": "project-a"},
         },
         {
-            "logicalAlias": "tapper-chat",
+            "logicalAlias": "qwen-plus",
             "actualProvider": "approved-provider",
             "actualModel": "approved-provider/approved-model",
             "operation": "chat",
             "scope": {"enterpriseId": "tenant", "projectId": "project-a"},
         },
         {
-            "logicalAlias": "tapper-chat",
+            "logicalAlias": "qwen-plus",
             "actualProvider": "approved-provider",
             "actualModel": "approved-provider/approved-model",
             "operation": "structured",
@@ -149,7 +161,7 @@ def _dataset() -> dict[str, object]:
         "bindings": {
             "policyDigest": _sha("1"),
             "approvalDigest": APPROVAL_DIGEST,
-            "modelAlias": "tapper-chat",
+            "modelAlias": "qwen-plus",
             "promptDigest": _sha("2"),
             "agentRevisionDigest": _sha("3"),
             "skillRevisionDigests": [_sha("4")],
@@ -244,16 +256,14 @@ def _execution(
                 "providerCalls": [
                     {
                         "runnerCallId": f"runner-{call}",
-                        "requestedAlias": "tapper-chat",
+                        "requestedAlias": "qwen-plus",
                         "requestedOperation": "structured",
-                        "requestedProvider": "approved-provider",
-                        "requestedModel": "approved-provider/approved-model",
                         "startedAtUtc": "2026-09-09T00:00:00Z",
                         "endedAtUtc": "2026-09-09T00:00:00.002Z",
                         "status": "success",
                         "retryable": False,
                         "operation": "structured",
-                        "alias": "tapper-chat",
+                        "alias": "qwen-plus",
                         "actualProvider": "approved-provider",
                         "actualModel": "approved-provider/approved-model",
                         "promptDigest": _sha("2"),
@@ -603,7 +613,7 @@ async def test_runner_calls_gateway_on_cache_miss_and_identity_comes_from_audit(
             await self.gateway.generate_structured(
                 ModelRequest(
                     scope,
-                    "tapper-chat",
+                    "qwen-plus",
                     ModelOperation.STRUCTURED,
                     "prompt",
                     _sha("2"),
@@ -766,7 +776,17 @@ def test_100_synthetic_self_described_cases_cannot_zero_io_pass_real_gate(
     dataset["cases"] = generated
     dataset_path = tmp_path / "synthetic-100.json"
     dataset_path.write_text(json.dumps(dataset))
-    approval_path = _approval_artifact(tmp_path)
+    # The runner subprocess has no clock injection hook and reads real wall-clock
+    # time, so a fixed calendar expiry would eventually go stale. Derive the
+    # expiry from the actual run time instead, well inside the 30-day validity
+    # window the runner enforces; the digest is recomputed from the artifact
+    # bytes, never hand-edited.
+    subprocess_approval_content = {
+        **APPROVAL_CONTENT,
+        "expiresAtUtc": (datetime.now(UTC) + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    approval_path = _approval_artifact(tmp_path, subprocess_approval_content)
+    subprocess_approval_digest = "sha256:" + hashlib.sha256(approval_path.read_bytes()).hexdigest()
     completed = subprocess.run(
         [
             sys.executable,
@@ -780,7 +800,7 @@ def test_100_synthetic_self_described_cases_cannot_zero_io_pass_real_gate(
         text=True,
         env={
             "TAP_RUN_QUALITY_KB_01": "1",
-            "TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST": APPROVAL_DIGEST,
+            "TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST": subprocess_approval_digest,
             "TAP_QUALITY_KB_MODEL_APPROVAL_ARTIFACT": str(approval_path),
         },
     )
@@ -800,9 +820,8 @@ def test_every_answer_call_must_match_approval_and_dataset_governance() -> None:
     observations["cases"][0]["execution"]["attempts"][0]["providerCalls"][0]["promptDigest"] = _sha(
         "f"
     )
-    observations["cases"][1]["execution"]["attempts"][0]["providerCalls"][0][
-        "requestedProvider"
-    ] = "unapproved-provider"
+    unapproved_call = observations["cases"][1]["execution"]["attempts"][0]["providerCalls"][0]
+    unapproved_call["requestedAlias"] = unapproved_call["alias"] = "qwen-max"
 
     report = module.evaluate_run(
         dataset,
@@ -815,7 +834,51 @@ def test_every_answer_call_must_match_approval_and_dataset_governance() -> None:
     assert report["status"] == "fail"
     assert "unapproved answer identity" in " ".join(report["failures"])
     assert "prompt governance mismatch" in " ".join(report["failures"])
-    assert "unapproved requested provider route" in " ".join(report["failures"])
+    assert "unapproved requested model alias" in " ".join(report["failures"])
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "approved"),
+    [
+        ("dashscope", "dashscope/qwen-plus", True),
+        ("unknown", "qwen-plus", False),
+    ],
+)
+def test_served_identity_must_match_the_approved_dashscope_upstream(
+    provider: str, model: str, approved: bool
+) -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    approval = deepcopy(APPROVED)
+    approval["routes"] = deepcopy(APPROVED["routes"])
+    for route in approval["routes"]:
+        route["actualProvider"] = "dashscope"
+        route["actualModel"] = (
+            "dashscope/text-embedding-v4"
+            if route["operation"] == "embed"
+            else "dashscope/qwen-plus"
+        )
+    observations = _observations(dataset)
+    for case in observations["cases"]:
+        for attempt in case["execution"]["attempts"]:
+            for call in attempt["providerCalls"]:
+                if call["status"] == "success":
+                    call["actualProvider"] = provider
+                    call["actualModel"] = model
+
+    report = module.evaluate_run(
+        dataset,
+        observations,
+        min_cases=4,
+        require_real=True,
+        approved_mapping=approval,
+    )
+
+    identity_failures = [item for item in report["failures"] if "unapproved" in item]
+    if approved:
+        assert identity_failures == []
+    else:
+        assert any("unapproved answer identity" in item for item in identity_failures)
 
 
 @pytest.mark.parametrize(
@@ -1154,7 +1217,7 @@ async def test_runtime_policy_mismatch_precedes_every_model_operation() -> None:
             await captured.embed(
                 ModelRequest(
                     VALIDATION_SCOPE,
-                    "tapper-embedding",
+                    "text-embedding-v4",
                     ModelOperation.EMBED,
                     prompt,
                     text_digest(prompt),
@@ -1309,7 +1372,7 @@ async def test_failed_provider_io_receipt_drives_bounded_retry_then_success() ->
             await self.gateway.generate_structured(
                 ModelRequest(
                     scope,
-                    "tapper-chat",
+                    "qwen-plus",
                     ModelOperation.STRUCTURED,
                     "prompt",
                     _sha("2"),
@@ -1342,6 +1405,7 @@ async def test_failed_provider_io_receipt_drives_bounded_retry_then_success() ->
         max_retries_per_case=1,
         approved_mapping=APPROVED,
         production_routes=PRODUCTION_ROUTES,
+        clock=_fixed_clock,
     )
 
     attempts = observations["cases"][0]["execution"]["attempts"]
@@ -1438,7 +1502,7 @@ async def test_runner_retries_a_successful_provider_call_with_unusable_grounded_
             await self.gateway.generate_structured(
                 ModelRequest(
                     scope,
-                    "tapper-chat",
+                    "qwen-plus",
                     ModelOperation.STRUCTURED,
                     "prompt",
                     _sha("2"),
@@ -1472,6 +1536,7 @@ async def test_runner_retries_a_successful_provider_call_with_unusable_grounded_
         max_retries_per_case=1,
         approved_mapping=APPROVED,
         production_routes=PRODUCTION_ROUTES,
+        clock=_fixed_clock,
     )
 
     attempts = observations["cases"][0]["execution"]["attempts"]
@@ -1487,8 +1552,9 @@ def _production_litellm_gateway(handler, *, max_retries: int):
     from tap.modules.ai.adapters.litellm import (
         LiteLLMModelGateway,
         LiteLLMModelGatewayConfig,
-        ProviderModelMapping,
     )
+    from tap.modules.ai.adapters.litellm_catalog import ModelRoles
+    from tap.testing.deterministic_model_gateway import StaticLiteLLMCatalog
 
     async def redact(text: str) -> str:
         return text
@@ -1504,15 +1570,13 @@ def _production_litellm_gateway(handler, *, max_retries: int):
         LiteLLMModelGatewayConfig(
             base_url="https://litellm.example",
             api_key="not-a-real-key",
-            chat_alias="tapper-chat",
-            embedding_alias="tapper-embedding",
-            chat_model=ProviderModelMapping("approved-provider", "approved-model"),
-            embedding_model=ProviderModelMapping("approved-provider", "approved-embedding"),
+            roles=ModelRoles("qwen-plus", "text-embedding-v4", None),
             embedding_dimension=2,
             max_retries=max_retries,
         ),
         scope=scope,
         redact=redact,
+        catalog=StaticLiteLLMCatalog(),
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -1544,7 +1608,7 @@ def test_approval_routes_must_exactly_match_production_litellm_before_http() -> 
     production_routes = module._production_routes_from_gateway(gateway)
     mismatched = deepcopy(APPROVED)
     mismatched["routes"] = deepcopy(APPROVED["routes"])
-    mismatched["routes"][2]["actualModel"] = "configured-model-b"
+    mismatched["routes"][2]["logicalAlias"] = "qwen-max"
     with pytest.raises(ValueError, match="routes do not match"):
         module._require_approved_production_routes(mismatched, production_routes)
 
@@ -1630,7 +1694,7 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
             prompt = "quality transport probe"
             request = ModelRequest(
                 gateway.scope,
-                "tapper-embedding" if operation == "embed" else "tapper-chat",
+                "text-embedding-v4" if operation == "embed" else "qwen-plus",
                 model_operation,
                 prompt,
                 text_digest(prompt),
@@ -1667,6 +1731,7 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
         max_retries_per_case=1,
         approved_mapping=APPROVED,
         production_routes=PRODUCTION_ROUTES,
+        clock=_fixed_clock,
     )
     attempts = observations["cases"][0]["execution"]["attempts"]
     receipts = [attempt["providerCalls"] for attempt in attempts]
@@ -1676,8 +1741,9 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
     assert attempts[1]["retryReason"] == "ModelGatewayUnavailable"
     assert receipts[1][0]["status"] == "success"
     assert receipts[1][0]["requestedAlias"] == PRODUCTION_ROUTES[operation]["logicalAlias"]
-    assert receipts[1][0]["requestedProvider"] == PRODUCTION_ROUTES[operation]["actualProvider"]
-    assert receipts[1][0]["requestedModel"] == PRODUCTION_ROUTES[operation]["actualModel"]
+    # Requested-route attestation is dropped: only the served identity is recorded.
+    assert "requestedProvider" not in receipts[1][0]
+    assert "requestedModel" not in receipts[1][0]
 
     budget_posts: list[httpx.Request] = []
 
@@ -1697,6 +1763,7 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
             max_retries_per_case=1,
             approved_mapping=APPROVED,
             production_routes=PRODUCTION_ROUTES,
+            clock=_fixed_clock,
         )
     assert len(budget_posts) == 1
 
@@ -1751,7 +1818,7 @@ async def test_approval_expiry_stops_next_case_before_reserve_and_http() -> None
     prompt = "quality expiry probe"
     request = ModelRequest(
         gateway.scope,
-        "tapper-chat",
+        "qwen-plus",
         ModelOperation.STRUCTURED,
         prompt,
         text_digest(prompt),
@@ -1926,7 +1993,7 @@ async def test_provider_budget_stops_n_plus_one_before_delegate_io() -> None:
         async def run_case(self, case):
             request = ModelRequest(
                 scope,
-                "tapper-chat",
+                "qwen-plus",
                 ModelOperation.STRUCTURED,
                 "prompt",
                 _sha("2"),
@@ -2152,7 +2219,7 @@ def _trusted_profile() -> dict[str, object]:
         "profileId": "QUALITY-KB-TRUSTED-01",
         "dataset": {"version": "unit-v1", "reviewStatus": "pending"},
         "bindings": {
-            "modelAlias": "tapper-chat",
+            "modelAlias": "qwen-plus",
             "actualModel": "provider/model",
             "promptDigest": "sha256:" + "a" * 64,
             "schemaDigest": "sha256:" + "b" * 64,

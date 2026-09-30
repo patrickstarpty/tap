@@ -212,6 +212,14 @@ PROBLEM_REGISTRY = MappingProxyType(
                 None,
             ),
             ProblemDefinition(
+                "conversation-integrity",
+                "Conversation integrity fault",
+                500,
+                "The Conversation has inconsistent persisted facts and cannot be served.",
+                False,
+                None,
+            ),
+            ProblemDefinition(
                 "scope-mismatch",
                 "Scope mismatch",
                 403,
@@ -305,6 +313,14 @@ PROBLEM_REGISTRY = MappingProxyType(
                 "The graph service is currently unavailable.",
                 True,
                 "graph",
+            ),
+            ProblemDefinition(
+                "model-not-selectable",
+                "Model not selectable",
+                422,
+                "The requested model is not available for this request.",
+                False,
+                None,
             ),
             ProblemDefinition(
                 "model-unavailable",

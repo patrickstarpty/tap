@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import replace
+from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -25,7 +24,6 @@ from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import EmbeddingArtifact
 from tap.modules.knowledge.ports.errors import AnswerUnavailable, ModelUnavailable
 from tap.modules.knowledge.ports.models import AnswerGeneration, Embedding, EmbeddingUsage
-from tap.modules.knowledge.ports.search import AnswerGenerationPort
 
 _TAPPER_PLATFORM_INSTRUCTION = (
     "You are Tapper, the platform assistant for TAP. TAP is a test-centered intelligent "
@@ -138,7 +136,6 @@ class KnowledgeModelGateway:
         chat_aliases: frozenset[str] | None = None,
         embedding_dimension: int,
         timeout_seconds: float,
-        alternate_answers: Mapping[str, AnswerGenerationPort] | None = None,
     ) -> None:
         self.gateway = gateway
         self.scope = scope
@@ -146,13 +143,9 @@ class KnowledgeModelGateway:
         self.embedding_model_id = embedding_alias
         self.embedding_dimension = embedding_dimension
         self.chat_alias = chat_alias
-        self.alternate_answers = dict(alternate_answers or {})
-        if chat_alias in self.alternate_answers:
-            raise ValueError("alternate answer aliases must not replace the default route")
-        self.chat_aliases = (chat_aliases or frozenset({chat_alias})) | frozenset(
-            self.alternate_answers
-        )
-        if chat_alias not in self.chat_aliases:
+        # None: the gateway's LiteLLM catalog decides which chat models exist, per call.
+        self.chat_aliases = chat_aliases
+        if chat_aliases is not None and chat_alias not in chat_aliases:
             raise ValueError("default chat alias must be in the approved chat catalog")
         self.timeout_seconds = timeout_seconds
 
@@ -167,7 +160,7 @@ class KnowledgeModelGateway:
     ) -> AnswerGeneration:
         """Generate a model-only answer when the user selected no Knowledge corpus."""
 
-        if model_alias not in self.chat_aliases or model_alias in self.alternate_answers:
+        if self.chat_aliases is not None and model_alias not in self.chat_aliases:
             raise AnswerUnavailable("model-unavailable")
         context = await self._redact(query)
         direct_chat_prompt = (
@@ -320,14 +313,8 @@ class KnowledgeModelGateway:
         ):
             raise AnswerUnavailable("model-unavailable")
         alias = model_alias or self.chat_alias
-        if alias not in self.chat_aliases:
+        if self.chat_aliases is not None and alias not in self.chat_aliases:
             raise AnswerUnavailable("model-unavailable")
-        alternate = self.alternate_answers.get(alias)
-        if alternate is not None:
-            if governance is not None or answer_input is not None:
-                raise AnswerUnavailable("model-unavailable")
-            generation = await alternate.answer(query, evidence, profile_id)
-            return replace(generation, model_id=alias)
         # Redact copies only; canonical evidence, hashes and citation authority stay intact.
         context_value = {
             "query": await self._redact(query),
@@ -434,12 +421,6 @@ class KnowledgeModelGateway:
         return payload
 
     async def aclose(self) -> None:
-        try:
-            for answers in self.alternate_answers.values():
-                close_answers = getattr(answers, "aclose", None)
-                if close_answers is not None:
-                    await close_answers()
-        finally:
-            close = getattr(self.gateway, "aclose", None)
-            if close is not None:
-                await close()
+        close = getattr(self.gateway, "aclose", None)
+        if close is not None:
+            await close()

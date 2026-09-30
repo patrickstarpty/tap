@@ -10,6 +10,7 @@ from sqlalchemy import select, text, update
 from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.platform.db.session import create_engine_and_session_factory
+from tests.object_settings import S3_SETTINGS
 from tests.owned_mysql import owned_project_database_url
 
 
@@ -153,7 +154,9 @@ def test_operator_runtime_recovery_composes_existing_reservation_lifecycle(
                         reservation_expires_at=text("UTC_TIMESTAMP(6) - INTERVAL 1 SECOND")
                     )
                 )
-            settings = replace(tapper_runtime.TapperSettings.from_mapping({}), database_url=url)
+            settings = replace(
+                tapper_runtime.TapperSettings.from_mapping(S3_SETTINGS), database_url=url
+            )
             request = OperationRequest(
                 command="recover-uploads",
                 limit=1,

@@ -1,5 +1,5 @@
 import {
-  DEFAULT_MODEL_ID,
+  PENDING_MODEL_ID,
   isModelId,
   type Conversation,
   type LibrarySource,
@@ -64,7 +64,7 @@ export function readPrototypeSnapshot(
         throw new Error("Invalid fixture conversation");
       const modelId = isModelId(conversation.modelId)
         ? conversation.modelId
-        : DEFAULT_MODEL_ID;
+        : PENDING_MODEL_ID;
       const turns = conversation.turns.map((turn) => {
         if (
           !isRecord(turn) ||

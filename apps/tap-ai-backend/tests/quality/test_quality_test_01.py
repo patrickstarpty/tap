@@ -153,7 +153,7 @@ def _profile() -> dict:
             turn_id=f"quality_turn_{suffix}",
             input_snapshot_digest=text_digest(intent),
             answer_evidence_snapshot_digest=text_digest(source),
-            model_alias="tapper-chat",
+            model_alias="qwen-plus",
             agent_revision_id="validation-test-design-agent-v1",
             skill_revision_ids=("validation-test-design-skill-v1",),
             objective=intent,
@@ -214,7 +214,7 @@ def _profile() -> dict:
             "providerInvocationCount": 50,
         },
         "bindings": {
-            "modelAlias": "tapper-chat",
+            "modelAlias": "qwen-plus",
             "actualModel": "provider/model",
             "agentRevisionId": "validation-test-design-agent-v1",
             "skillRevisionIds": ["validation-test-design-skill-v1"],
@@ -578,7 +578,7 @@ def test_real_runner_reinvokes_and_invalidates_review_for_changed_requirements(
         turn_id="quality_turn_001",
         input_snapshot_digest=text_digest(item["intent"]),
         answer_evidence_snapshot_digest=text_digest(item["source"]),
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         agent_revision_id="validation-test-design-agent-v1",
         skill_revision_ids=("validation-test-design-skill-v1",),
         objective=item["intent"],
@@ -599,7 +599,7 @@ def test_real_runner_reinvokes_and_invalidates_review_for_changed_requirements(
     monkeypatch.setattr(
         module.TapperSettings,
         "from_mapping",
-        lambda _mapping: SimpleNamespace(model_timeout_seconds=60, chat_alias="tapper-chat"),
+        lambda _mapping: SimpleNamespace(model_timeout_seconds=60, default_chat_model="qwen-plus"),
     )
     monkeypatch.setattr(module, "_create_embeddings", lambda _settings, max_retries: Models())
     monkeypatch.setattr(module, "ModelGatewayTestDesign", Generator)
@@ -660,7 +660,7 @@ def test_real_runner_never_reuses_prefilled_review_for_identical_output(monkeypa
     monkeypatch.setattr(
         module.TapperSettings,
         "from_mapping",
-        lambda _mapping: SimpleNamespace(model_timeout_seconds=60, chat_alias="tapper-chat"),
+        lambda _mapping: SimpleNamespace(model_timeout_seconds=60, default_chat_model="qwen-plus"),
     )
     monkeypatch.setattr(module, "_create_embeddings", lambda _settings, max_retries: Models())
     monkeypatch.setattr(module, "ModelGatewayTestDesign", Generator)

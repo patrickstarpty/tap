@@ -112,7 +112,7 @@ it("sends a report handoff with its query and receipts, then shows verified Insi
               answerEvidenceSnapshotDigest: null,
               input: {
                 message: "Explain this failure",
-                modelAlias: "tapper-chat",
+                modelAlias: "qwen-plus",
                 sourceRevisionIds: ["rev_policy"],
                 documentRevisionIds: [],
                 resolvedResources: [],

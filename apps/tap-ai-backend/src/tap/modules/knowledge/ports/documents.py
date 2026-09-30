@@ -598,6 +598,19 @@ class StagingScavenger(Protocol):
 
 
 class ArtifactStore(Protocol):
+    """Durable Knowledge artifact storage; S3/MinIO (`KnowledgeArtifactStore`) is the only one.
+
+    Implementations must bind every locator to its revision and kind and verify content
+    digests on read. Classify references by prefix: a locator without the `art1.` prefix
+    or a staging key without the `stg1.` prefix is not served by this provider and raises
+    `ArtifactUnavailable`; an `art1.`/`stg1.` reference whose payload is malformed or whose
+    binding (revision, kind, digest) differs raises `ArtifactIntegrityFailure`. Provider
+    faults raise `ArtifactUnavailable`. Validate a whole deletion batch before any
+    mutation and keep staging scavenging bounded. A new provider must pass
+    `exercise_artifact_round_trip` in `tests/contract/artifact_store_conformance.py` (run by
+    `tests/contract/test_object_artifacts.py` and `tests/integration/test_minio_artifacts.py`).
+    """
+
     async def stage_original(self, upload: UploadStream, *, max_bytes: int) -> StagedOriginal: ...
 
     async def commit_original(
@@ -788,5 +801,15 @@ class DocumentIndexPort(Protocol):
     ) -> IndexReceipt: ...
 
     async def delete_revision(self, target: DeletionTarget) -> None: ...
+
+    async def purge_document(
+        self,
+        document_id: str,
+        *,
+        keep_revision_id: str | None,
+        fence_revision_ids: tuple[str, ...] = (),
+    ) -> None:
+        """Remove every non-fence row of a document except the kept revision."""
+        ...
 
     async def count_revision(self, target: DeletionTarget) -> int: ...

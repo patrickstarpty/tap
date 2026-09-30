@@ -210,7 +210,7 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                         revision_ids, selected_documents, strict=True
                     )
                 ),
-                model_alias=settings.chat_alias,
+                model_alias=settings.default_chat_model,
                 idempotency_key="quality-graph:" + case_id,
             )
             draft = await extractor.extract(request)

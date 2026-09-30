@@ -62,7 +62,6 @@ from tests.integration.test_knowledge_publication import (
     seed_authority,
 )
 from tests.integration.test_test_plan_repository import (
-    TEST_DESIGN_MODEL_MAPPING,
     _repository,
     _request,
     _seed_completed_turn,
@@ -204,7 +203,7 @@ async def _seed_governed_draft(sessions):  # type: ignore[no-untyped-def]
             .where(turn_input_snapshot.c.turn_id == "turn_checkout")
             .values(
                 snapshot={
-                    "model_alias": "tapper-chat",
+                    "model_alias": "qwen-plus",
                     "agent_revision_id": "validation-knowledge-agent-v2",
                     "skill_revision_ids": ["validation-citation-skill-v2"],
                     "resolved_resources": [{"revision_id": "rev_mysql_001"}],
@@ -646,8 +645,7 @@ async def test_mysql_publish_holds_authority_lock_against_concurrent_withdrawal(
         repository = PausingPublishRepository(
             sessions,
             scope=VALIDATION_SCOPE,
-            model_alias="tapper-chat",
-            model_mapping=TEST_DESIGN_MODEL_MAPPING,
+            model_alias="qwen-plus",
         )
         publish_task = asyncio.create_task(
             PublishTestPlan(repository, CitationAuthority()).execute(
@@ -692,8 +690,7 @@ async def test_mysql_publish_and_fork_share_revision_then_plan_lock_order(
         repository = PausingPublishRepository(
             sessions,
             scope=VALIDATION_SCOPE,
-            model_alias="tapper-chat",
-            model_mapping=TEST_DESIGN_MODEL_MAPPING,
+            model_alias="qwen-plus",
         )
         publish = asyncio.create_task(
             PublishTestPlan(repository, CitationAuthority()).execute(
@@ -762,8 +759,7 @@ async def test_mysql_child_publish_and_parent_fork_use_project_first_lock_order(
         repository = PausingProjectNamespaceRepository(
             sessions,
             scope=VALIDATION_SCOPE,
-            model_alias="tapper-chat",
-            model_mapping=TEST_DESIGN_MODEL_MAPPING,
+            model_alias="qwen-plus",
         )
         publish = asyncio.create_task(
             PublishTestPlan(repository, CitationAuthority()).execute(
@@ -809,8 +805,7 @@ async def test_mysql_generation_insertion_holds_authority_lock_against_withdrawa
         repository = PausingGenerationRepository(
             sessions,
             scope=VALIDATION_SCOPE,
-            model_alias="tapper-chat",
-            model_mapping=TEST_DESIGN_MODEL_MAPPING,
+            model_alias="qwen-plus",
         )
         request = _request(publication)
         generation_task = asyncio.create_task(

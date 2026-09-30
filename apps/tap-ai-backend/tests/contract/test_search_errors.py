@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from tap.modules.knowledge.adapters.azure_ai_search import (
-    SearchBoundsExceeded as AzureSearchBoundsExceeded,
-)
-from tap.modules.knowledge.adapters.azure_ai_search import (
-    SearchUnavailable as AzureSearchUnavailable,
-)
+from tap.modules.knowledge.adapters.milvus import filter as milvus_filter
+from tap.modules.knowledge.adapters.milvus import transport as milvus_transport
 from tap.modules.knowledge.ports.errors import SearchBoundsExceeded, SearchUnavailable
 
 
-def test_azure_uses_provider_neutral_search_errors() -> None:
+def test_milvus_uses_provider_neutral_search_errors() -> None:
     """A provider-private error class would prevent provider-neutral handling."""
-    assert AzureSearchUnavailable is SearchUnavailable
-    assert AzureSearchBoundsExceeded is SearchBoundsExceeded
+    assert milvus_transport.SearchUnavailable is SearchUnavailable
+    assert milvus_filter.SearchBoundsExceeded is SearchBoundsExceeded

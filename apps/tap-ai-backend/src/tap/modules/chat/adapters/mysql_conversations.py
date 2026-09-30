@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
+import logging
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -26,10 +26,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.events import ProjectEventEnvelope
+from tap.contracts.problems import build_problem
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
+    ConversationIntegrityError,
     ConversationNotFound,
     ConversationOwnership,
     InvalidConversationCursor,
@@ -158,6 +160,7 @@ turn_artifact_link = _scoped(
 
 
 _LIKE_ESCAPE = "!"
+_LOGGER = logging.getLogger(__name__)
 
 
 def _title_pattern(query: str) -> str:
@@ -190,7 +193,12 @@ def _input_json(value):
 
 
 class MysqlConversationRepository:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext):
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        scope: ProjectScopeContext,
+    ):
         self.sessions = sessions
         self.scope = require_project_scope(scope)
 
@@ -456,62 +464,47 @@ class MysqlConversationRepository:
             .one_or_none()
         )
         if snapshot is None:
-            value = TurnInput(
-                message=row["message"],
-                actor_id=row["actor_id"],
-                identity_mode=row["identity_mode"],
-                model_alias="tapper-chat",
-            )
-            input_value = TurnInputSnapshot.create(
-                snapshot_id="legacy-"
-                + hashlib.sha256(f"{self.scope.project_id}/{row['turn_id']}".encode()).hexdigest()[
-                    :32
-                ],
-                project_id=self.scope.project_id,
-                turn_id=row["turn_id"],
-                value=value,
-                now=row["created_at"].replace(tzinfo=timezone.utc),
-            )
-        else:
-            raw = snapshot["snapshot"]
-            value = TurnInput(
-                message=raw["message"],
-                actor_id=raw["actor_id"],
-                identity_mode=raw["identity_mode"],
-                model_alias=raw["model_alias"],
-                source_revision_ids=tuple(raw["source_revision_ids"]),
-                document_revision_ids=tuple(raw["document_revision_ids"]),
-                resolved_resources=tuple(
-                    FrozenResource(**item) for item in raw.get("resolved_resources", [])
-                ),
-                agent_revision_id=raw["agent_revision_id"],
-                agent_revision_digest=raw["agent_revision_digest"],
-                agent_label=raw.get("agent_label"),
-                skill_revision_ids=tuple(raw["skill_revision_ids"]),
-                skill_revision_digests=tuple(raw["skill_revision_digests"]),
-                skill_labels=tuple(raw.get("skill_labels", [])),
-                agent_system_instruction=raw.get("agent_system_instruction"),
-                agent_system_instruction_digest=raw.get("agent_system_instruction_digest"),
-                agent_tool_allowlist=tuple(raw.get("agent_tool_allowlist", [])),
-                agent_output_schema_json=raw.get("agent_output_schema_json"),
-                agent_output_schema_digest=raw.get("agent_output_schema_digest"),
-                skill_instruction_templates=tuple(raw.get("skill_instruction_templates", [])),
-                skill_instruction_template_digests=tuple(
-                    raw.get("skill_instruction_template_digests", [])
-                ),
-                acl_digest=raw.get("acl_digest", "sha256:" + "0" * 64),
-                retrieval_policy_digest=raw["retrieval_policy_digest"],
-                insights_query_id=raw.get("insights_query_id"),
-                insights_report_refs=tuple(raw.get("insights_report_refs", [])),
-            )
-            input_value = TurnInputSnapshot(
-                snapshot["snapshot_id"],
-                self.scope.project_id,
-                row["turn_id"],
-                value,
-                snapshot["snapshot_digest"],
-                snapshot["created_at"].replace(tzinfo=timezone.utc),
-            )
+            # Every persisted Turn is written with its input snapshot; never synthesize one.
+            raise ConversationIntegrityError("Turn input snapshot is missing for a persisted Turn")
+        raw = snapshot["snapshot"]
+        value = TurnInput(
+            message=raw["message"],
+            actor_id=raw["actor_id"],
+            identity_mode=raw["identity_mode"],
+            model_alias=raw["model_alias"],
+            source_revision_ids=tuple(raw["source_revision_ids"]),
+            document_revision_ids=tuple(raw["document_revision_ids"]),
+            resolved_resources=tuple(
+                FrozenResource(**item) for item in raw.get("resolved_resources", [])
+            ),
+            agent_revision_id=raw["agent_revision_id"],
+            agent_revision_digest=raw["agent_revision_digest"],
+            agent_label=raw.get("agent_label"),
+            skill_revision_ids=tuple(raw["skill_revision_ids"]),
+            skill_revision_digests=tuple(raw["skill_revision_digests"]),
+            skill_labels=tuple(raw.get("skill_labels", [])),
+            agent_system_instruction=raw.get("agent_system_instruction"),
+            agent_system_instruction_digest=raw.get("agent_system_instruction_digest"),
+            agent_tool_allowlist=tuple(raw.get("agent_tool_allowlist", [])),
+            agent_output_schema_json=raw.get("agent_output_schema_json"),
+            agent_output_schema_digest=raw.get("agent_output_schema_digest"),
+            skill_instruction_templates=tuple(raw.get("skill_instruction_templates", [])),
+            skill_instruction_template_digests=tuple(
+                raw.get("skill_instruction_template_digests", [])
+            ),
+            acl_digest=raw.get("acl_digest", "sha256:" + "0" * 64),
+            retrieval_policy_digest=raw["retrieval_policy_digest"],
+            insights_query_id=raw.get("insights_query_id"),
+            insights_report_refs=tuple(raw.get("insights_report_refs", [])),
+        )
+        input_value = TurnInputSnapshot(
+            snapshot["snapshot_id"],
+            self.scope.project_id,
+            row["turn_id"],
+            value,
+            snapshot["snapshot_digest"],
+            snapshot["created_at"].replace(tzinfo=timezone.utc),
+        )
         answer_row = (
             (
                 await session.execute(
@@ -1196,6 +1189,10 @@ class MysqlConversationRepository:
                         )
                         if not graph_lease_reclaimable:
                             continue
+                if not await self._has_input_snapshot(session, row["turn_id"]):
+                    # A permanent fault: settle the Turn instead of wedging every claim batch.
+                    await self._fail_integrity_turn(session, row, graph is not None, now)
+                    continue
                 lease_token = uuid4().hex
                 lease_until = _naive(now + timedelta(seconds=60))
                 event = await self._next_event(
@@ -1260,6 +1257,69 @@ class MysqlConversationRepository:
                 mutable["processing_lease_expires_at"] = lease_until
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
         return tuple(claimed)
+
+    async def _has_input_snapshot(self, session, turn_id: str) -> bool:
+        return (
+            await session.scalar(
+                select(turn_input_snapshot.c.turn_id).where(
+                    *scope_predicates(turn_input_snapshot, self.scope),
+                    turn_input_snapshot.c.turn_id == turn_id,
+                )
+            )
+        ) is not None
+
+    async def _fail_integrity_turn(self, session, row, has_graph: bool, now: datetime) -> None:
+        from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+
+        _LOGGER.warning(
+            "conversation turn failed integrity check",
+            extra={"turn_id": row["turn_id"], "reason": "input-snapshot-missing"},
+        )
+        event = await self._next_event(
+            session,
+            row["chat_id"],
+            ConversationEvent(
+                uuid4().hex,
+                1,
+                "turn.failed",
+                {
+                    "problem": build_problem(
+                        "conversation-integrity", correlation_id=row["turn_id"]
+                    ).model_dump(mode="json", by_alias=True)
+                },
+                now,
+            ),
+        )
+        await self._stream_event(session, event, row["turn_id"])
+        await session.execute(
+            update(chat_turn)
+            .where(
+                *scope_predicates(chat_turn, self.scope),
+                chat_turn.c.turn_id == row["turn_id"],
+            )
+            .values(
+                state="failed",
+                last_sequence=event.sequence,
+                processing_lease_token=None,
+                processing_lease_expires_at=None,
+            )
+        )
+        if has_graph:
+            await session.execute(
+                update(graph_run)
+                .where(
+                    *scope_predicates(graph_run, self.scope),
+                    graph_run.c.run_id == row["turn_id"],
+                )
+                .values(
+                    status="FAILED",
+                    waiting_reason=None,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=None,
+                    updated_at=_naive(now),
+                )
+            )
 
     async def renew_processing_lease(
         self,

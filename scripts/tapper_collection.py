@@ -18,7 +18,6 @@ from urllib.parse import urlsplit
 from tap.entrypoints.tapper_runtime import (
     OwnedResources,
     TapperSettings,
-    _artifacts_private,
     _build_document_index,
     _create_blob,
     _create_database,
@@ -167,8 +166,6 @@ def verify_owned_migration(settings, state: Path) -> None:
         "milvus", "19530/tcp"
     ):
         raise ValueError("Milvus endpoint is not owned")
-    if settings.object_store_provider != "minio" or settings.legacy_azure_enabled:
-        raise ValueError("migration requires only owned Knowledge MinIO artifacts")
     artifacts = urlsplit(settings.s3_endpoint)
     if artifacts.hostname != "127.0.0.1" or artifacts.port != bound_port(
         "tap-minio", "9000/tcp"
@@ -288,7 +285,7 @@ async def ensure(
         artifacts = _create_blob(settings)
         resources.push(artifacts)
         await artifacts.ensure_containers()
-        if not await _artifacts_private(artifacts):
+        if not await artifacts.is_private():
             raise RuntimeError("Tapper artifact storage is not private")
         tracker.set("milvus-client")
         index = await _create_document_index(settings, engine)

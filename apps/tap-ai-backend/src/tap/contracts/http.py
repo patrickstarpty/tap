@@ -565,6 +565,7 @@ class HealthComponent(ContractModel):
     name: HealthComponentName
     state: HealthComponentState
     remediation_code: HealthRemediationCode | None = None
+    detail: Annotated[str, Field(min_length=1, max_length=2048)] | None = None
 
     @model_validator(mode="after")
     def validate_remediation_code(self) -> Self:

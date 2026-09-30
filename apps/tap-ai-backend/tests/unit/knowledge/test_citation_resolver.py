@@ -110,7 +110,7 @@ def fixtures() -> tuple[
         parent_id="b_000000",
         anchor_json=anchor_json,
         chunk_content_hash=chunk_hash,
-        embedding_model_version="tapper-embedding",
+        embedding_model_version="text-embedding-v4",
         index_version="tapper-index-v1",
     )
     citation = CitationSnapshot(

@@ -1,4 +1,4 @@
-"""Same canonical Knowledge artifact journey for Azure and composed object storage."""
+"""Canonical Knowledge artifact journey every `ArtifactStore` provider must pass."""
 
 import pytest
 
@@ -98,7 +98,7 @@ async def exercise_artifact_round_trip(store):
         ),
     )
     vectors = EmbeddingArtifact(
-        "tapper-embedding", 3, ((0.1, 0.2, 0.3),), tuple(str(chunk.chunk_id) for chunk in chunks)
+        "text-embedding-v4", 3, ((0.1, 0.2, 0.3),), tuple(str(chunk.chunk_id) for chunk in chunks)
     )
     staged = await store.stage_original(Upload(), max_bytes=1024)
     original = await store.commit_original(staged, REVISION)

@@ -46,7 +46,7 @@ class PlansService:
             turn_id=turn_id,
             input_snapshot_digest="sha256:" + "1" * 64,
             answer_evidence_snapshot_digest="sha256:" + "2" * 64,
-            model_alias="tapper-chat",
+            model_alias="qwen-plus",
             agent_revision_id="validation-test-design-agent-v1",
             skill_revision_ids=("validation-test-design-skill-v1",),
             objective=objective,

@@ -18,17 +18,9 @@ from tap.entrypoints.tapper_runtime import (
     _create_blob,
     _create_database,
     _create_embeddings,
-    _create_models_probe_client,
     _create_redis,
     _discover_alembic_head,
-    _is_private_blob_container,
-    _artifacts_private,
     _push_if_owned,
-    _read_models_labels,
-)
-from tap.modules.knowledge.adapters.blob_artifacts import (
-    ARTIFACTS_CONTAINER,
-    ORIGINALS_CONTAINER,
 )
 from tap.modules.knowledge.adapters.milvus.config import (
     MilvusIndexTarget,
@@ -82,44 +74,22 @@ async def _check_redis(settings: TapperSettings, _values: Mapping[str, str]) -> 
 async def _blob_canary(settings: TapperSettings) -> bool:
     artifacts = _create_blob(settings)
     try:
-        from tap.modules.knowledge.adapters.object_artifacts import (
-            KnowledgeArtifactStore,
-        )
         from tap.platform.storage.objects import PutObjectRequest
 
-        if isinstance(artifacts, KnowledgeArtifactStore):
-            if not await _artifacts_private(artifacts):
-                return False
-            payload = secrets.token_bytes(32)
-
-            async def content():
-                yield payload
-
-            staged = await artifacts.objects.put_staged(
-                PutObjectRequest(content(), 32, "application/octet-stream")
-            )
-            try:
-                return (
-                    await artifacts.objects.open_verified(staged.ref)
-                ).data == payload
-            finally:
-                await artifacts.objects.delete(staged.ref)
-        for container in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
-            properties = await artifacts.container_properties(container)
-            if not _is_private_blob_container(properties):
-                return False
-        name = f"readiness/canary-{secrets.token_hex(16)}"
-        client = artifacts._service.get_blob_client(ARTIFACTS_CONTAINER, name)
+        if not await artifacts.is_private():
+            return False
         payload = secrets.token_bytes(32)
-        matched = False
+
+        async def content():
+            yield payload
+
+        staged = await artifacts.objects.put_staged(
+            PutObjectRequest(content(), 32, "application/octet-stream")
+        )
         try:
-            await artifacts._bounded(client.upload_blob(payload, overwrite=False))
-            download = await artifacts._bounded(client.download_blob())
-            body = await artifacts._bounded(download.readall())
-            matched = body == payload
+            return (await artifacts.objects.open_verified(staged.ref)).data == payload
         finally:
-            await artifacts._bounded(client.delete_blob())
-        return matched
+            await artifacts.objects.delete(staged.ref)
     finally:
         await artifacts.aclose()
 
@@ -138,7 +108,7 @@ def _milvus_reader(
         schema_version=settings.schema_version,
         schema_sha256=doc_schema_sha256(settings.schema_version),
         corpus_version=settings.corpus_version,
-        embedding_model_version=settings.embedding_alias,
+        embedding_model_version=settings.embedding_model,
         vector_dimension=settings.embedding_dimension,
     )
     config = MilvusSearchConfig(
@@ -177,7 +147,7 @@ async def _check_models(settings: TapperSettings, values: Mapping[str, str]) -> 
         embedding = await model.embed("Tapper deterministic readiness")
         vector = embedding.vector
         return (
-            embedding.model_id == settings.embedding_alias
+            embedding.model_id == settings.embedding_model
             and isinstance(vector, tuple)
             and len(vector) == settings.embedding_dimension
             and all(type(value) is float and math.isfinite(value) for value in vector)
@@ -193,14 +163,8 @@ async def _check_models(settings: TapperSettings, values: Mapping[str, str]) -> 
     try:
         embeddings = _create_embeddings(settings)
         _push_if_owned(resources, embeddings)
-        client = _create_models_probe_client(settings)
-        _push_if_owned(resources, client)
-        if client is None:
-            healthy = False
-        else:
-            labels = await _read_models_labels(client)
-            required_labels = {settings.embedding_alias, settings.chat_alias}
-            healthy = labels is not None and required_labels <= labels
+        health_problems = getattr(embeddings.gateway, "health_problems", None)
+        healthy = health_problems is not None and not await health_problems()
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("model check settlement unexpectedly returned")

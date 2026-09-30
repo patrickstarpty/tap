@@ -21,7 +21,7 @@ async def assert_catalog_conformance(gateway: object) -> None:
     catalog = await gateway.catalog(VALIDATION_SCOPE)  # type: ignore[attr-defined]
     assert catalog[0] == (
         ModelDescriptor(
-            alias="tapper-chat",
+            alias="qwen-plus",
             display_name="Qwen Plus",
             capabilities=frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
             enabled=True,
@@ -39,7 +39,7 @@ async def assert_gateway_conformance(gateway):
     }
     base = ModelRequest(
         VALIDATION_SCOPE,
-        "tapper-chat",
+        "qwen-plus",
         ModelOperation.CHAT,
         "Use supplied context.",
         text_digest("Use supplied context."),
@@ -50,7 +50,7 @@ async def assert_gateway_conformance(gateway):
     chat = await gateway.chat(base)
     assert chat.output == "Grounded"
     embedding = await gateway.embed(
-        replace(base, alias="tapper-embedding", operation=ModelOperation.EMBED)
+        replace(base, alias="text-embedding-v4", operation=ModelOperation.EMBED)
     )
     assert len(embedding.output) == 2
     structured = await gateway.generate_structured(
@@ -69,8 +69,6 @@ async def assert_gateway_conformance(gateway):
         assert result.audit.usage == result.usage
         assert result.actual_provider
         assert result.actual_model.startswith(result.actual_provider + "/")
-        assert result.actual_model.split("/", 1)[1] not in {"tapper-chat", "tapper-embedding"}
-        assert result.actual_provider not in {"tapper-chat", "tapper-embedding"}
         assert not hasattr(result, "reasoning_content")
     for invalid in (
         replace(base, alias="unknown"),

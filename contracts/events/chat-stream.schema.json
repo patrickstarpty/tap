@@ -847,6 +847,28 @@
         {
           "properties": {
             "detail": {
+              "const": "The Conversation has inconsistent persisted facts and cannot be served."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 500
+            },
+            "title": {
+              "const": "Conversation integrity fault"
+            },
+            "type": {
+              "const": "https://tap.example/problems/conversation-integrity"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The Conversation is unavailable in this Project."
             },
             "failureStage": {
@@ -1202,6 +1224,28 @@
             },
             "type": {
               "const": "https://tap.example/problems/knowledge-runtime-unavailable"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The requested model is not available for this request."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Model not selectable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/model-not-selectable"
             }
           }
         },
@@ -1599,6 +1643,7 @@
             "https://tap.example/problems/automation-mapping-required",
             "https://tap.example/problems/citation-stale",
             "https://tap.example/problems/citation-unavailable",
+            "https://tap.example/problems/conversation-integrity",
             "https://tap.example/problems/conversation-not-found",
             "https://tap.example/problems/document-limit-reached",
             "https://tap.example/problems/document-not-found",
@@ -1615,6 +1660,7 @@
             "https://tap.example/problems/knowledge-review-not-found",
             "https://tap.example/problems/knowledge-review-state-conflict",
             "https://tap.example/problems/knowledge-runtime-unavailable",
+            "https://tap.example/problems/model-not-selectable",
             "https://tap.example/problems/model-unavailable",
             "https://tap.example/problems/recorder-unavailable",
             "https://tap.example/problems/request-validation",
