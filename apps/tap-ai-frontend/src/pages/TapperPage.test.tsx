@@ -59,7 +59,7 @@ describe("Tapper product prototype", () => {
             id: "local-only",
             title: "Local-only prompt",
             turns: [],
-            modelId: "tapper-chat",
+            modelId: "qwen-plus",
             selectedSourceIds: [],
             selectedAgentIds: [],
             selectedSkillIds: [],
@@ -141,7 +141,7 @@ describe("Tapper product prototype", () => {
               answerEvidenceSnapshotDigest: `sha256:${"2".repeat(64)}`,
               input: {
                 message: "Durable prompt",
-                modelAlias: "tapper-chat",
+                modelAlias: "qwen-plus",
                 sourceRevisionIds: [],
                 documentRevisionIds: [],
                 agentRevisionId: null,
@@ -221,7 +221,7 @@ describe("Tapper product prototype", () => {
               answerEvidenceSnapshotDigest: `sha256:${"2".repeat(64)}`,
               input: {
                 message: "No evidence",
-                modelAlias: "tapper-chat",
+                modelAlias: "qwen-plus",
                 sourceRevisionIds: [],
                 documentRevisionIds: [],
                 resolvedResources: [],
@@ -303,7 +303,7 @@ describe("Tapper product prototype", () => {
               answerEvidenceSnapshotDigest: null,
               input: {
                 message: "Canceled prompt",
-                modelAlias: "tapper-chat",
+                modelAlias: "qwen-plus",
                 sourceRevisionIds: [],
                 documentRevisionIds: [],
                 resolvedResources: [],

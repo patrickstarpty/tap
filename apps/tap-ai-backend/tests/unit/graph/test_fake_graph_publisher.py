@@ -33,7 +33,7 @@ async def test_deterministic_demo_extractor_emits_grounded_bounded_snapshot():
                 "contentDigest": "sha256:" + "a" * 64,
             },
         ),
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         idempotency_key="graph:revision-1",
     )
     graph = await DeterministicGraphExtraction().extract(request)

@@ -38,7 +38,7 @@ async def test_v2_index_inventory_is_explicit_and_rejects_v1_or_extra_indexes():
             "doc-schema-v2",
             doc_schema_sha256("doc-schema-v2"),
             "tapper-demo-v2",
-            "tapper-embedding",
+            "text-embedding-v4",
             1536,
         )
     )
@@ -166,7 +166,7 @@ async def test_partial_index_creation_is_reconciled_after_adapter_reconstruction
             schema_version="doc-schema-v1",
             schema_sha256=doc_schema_sha256(),
             corpus_version="tapper-demo-v1",
-            embedding_model_version="tapper-embedding",
+            embedding_model_version="text-embedding-v4",
             vector_dimension=1536,
         )
     )
@@ -197,7 +197,7 @@ async def test_index_validation_rejects_extra_collection_scoped_index_inventory(
             schema_version="doc-schema-v1",
             schema_sha256=doc_schema_sha256(),
             corpus_version="tapper-demo-v1",
-            embedding_model_version="tapper-embedding",
+            embedding_model_version="text-embedding-v4",
             vector_dimension=1536,
         )
     )

@@ -1,6 +1,6 @@
 ---
 id: ADR-018
-status: accepted
+status: superseded
 date: 2026-09-01
 supersedes:
   - ADR-017
@@ -12,6 +12,8 @@ related-rfcs:
 > **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
 
 # ADR-018：Tapper 本地 Codex 回答固定为单智能体、无工具
+
+> 已取代（2026-09-29）：Codex 回答后端已移除，见[基础设施收敛设计](../superpowers/specs/2026-09-29-infra-convergence-design.md)。
 
 ## 背景
 

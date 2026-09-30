@@ -334,9 +334,11 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
 
   const history = page.getByRole("navigation", { name: "Chat history" });
   await expect(
-    history.getByRole("button", { name: new RegExp(prompt, "u") }),
+    history.getByRole("button", { name: new RegExp(`^${prompt}`, "u") }),
   ).toBeVisible();
-  await history.getByRole("button", { name: new RegExp(prompt, "u") }).click();
+  await history
+    .getByRole("button", { name: new RegExp(`^${prompt}`, "u") })
+    .click();
   await expect(
     page
       .getByRole("log", { name: "Conversation" })
@@ -344,7 +346,9 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   ).toBeVisible();
   await page.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
-  await history.getByRole("button", { name: new RegExp(prompt, "u") }).click();
+  await history
+    .getByRole("button", { name: new RegExp(`^${prompt}`, "u") })
+    .click();
   await expect(
     page
       .getByRole("log", { name: "Conversation" })

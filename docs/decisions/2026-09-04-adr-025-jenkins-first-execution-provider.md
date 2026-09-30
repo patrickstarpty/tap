@@ -1,6 +1,6 @@
 ---
 id: ADR-025
-status: accepted
+status: deferred
 date: 2026-09-04
 supersedes:
   - ADR-006
@@ -12,6 +12,8 @@ related-rfcs:
 > **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
 
 # ADR-025：Jenkins 作为首个 Execution Provider
+
+> 暂缓（2026-09-29）：不在 V1 范围，见 [V1 路线图“不在 V1”](../superpowers/plans/2026-09-29-v1-roadmap.md#不在-v1)。
 
 ## 背景
 

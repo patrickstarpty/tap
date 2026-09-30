@@ -47,7 +47,7 @@ async def test_worker_publishes_a_claimed_job_atomically(monkeypatch) -> None:
         revision_id="revision-1",
         chunks_locator="art1.chunks",
         extraction_profile_digest="sha256:" + "1" * 64,
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
     )
     job = await jobs.request(VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 9, 0, 0))
     chunks = await Artifacts().read_chunks("art1.chunks")

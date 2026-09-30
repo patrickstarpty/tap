@@ -10,7 +10,7 @@
     "bindings": {
       "policyDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "approvalDigest": "sha256:af2a4682299656a52f08dd172f1f325154277fac85d8cd96a1492421a8b3536b",
-      "modelAlias": "tapper-chat",
+      "modelAlias": "qwen-plus",
       "promptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "agentRevisionDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "skillRevisionDigests": ["sha256:4444444444444444444444444444444444444444444444444444444444444444"],
@@ -51,7 +51,7 @@
   },
   "observations": {
     "schemaVersion": "quality-kb-observations-v1",
-    "datasetDigest": "sha256:ae440b63c8e08aa2b2d9ebba9e1361269884c918c15f1ce467a7db4827c41043",
+    "datasetDigest": "sha256:e7583abb068297410d6adc0aa7f6c3aeae4723a8b28a210b53fbcee82fd729c6",
     "runId": "red-run-v2",
     "execution": {
       "startedAtUtc": "2026-09-09T00:00:00Z",
@@ -96,7 +96,7 @@
           "startedAtUtc": "2026-09-09T00:00:00Z",
           "finishedAtUtc": "2026-09-09T00:00:00.005Z",
           "durationMs": 5,
-          "cacheKey": "sha256:7c7213397e9fb23b507c1fe71cc8fe2c4819105e5ddc8f0f530f34f529a9011d",
+          "cacheKey": "sha256:99912fdc13bd492e6a6984e70950ca408c19ef8075f74170955a556201c2c21d",
           "cacheEvidenceDigest": "sha256:dc0c1656db399299e216c0c01df5318d2b8617f9f76c5f42e366ee7d48c5e381",
           "cacheHit": false,
           "maxRetriesPerCase": 2,
@@ -109,7 +109,7 @@
               "providerCalls": [
                 {
                   "runnerCallId": "runner-red-1",
-                  "requestedAlias": "tapper-chat",
+                  "requestedAlias": "qwen-plus",
                   "requestedOperation": "structured",
                   "requestedProvider": "approved-provider",
                   "requestedModel": "approved-model",
@@ -118,7 +118,7 @@
                   "status": "success",
                   "retryable": false,
                   "operation": "structured",
-                  "alias": "tapper-chat",
+                  "alias": "qwen-plus",
                   "actualProvider": "approved-provider",
                   "actualModel": "approved-model",
                   "promptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",

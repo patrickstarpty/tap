@@ -64,35 +64,47 @@ async def test_legacy_reference_never_silently_becomes_s3_key():
 
 
 @pytest.mark.asyncio
-async def test_explicit_legacy_keeps_persisted_reference_bytes():
-    received = []
-
-    class Legacy:
-        scope = VALIDATION_SCOPE
-
-        async def read_original(self, ref):
-            received.append(ref)
-            return b"legacy"
+async def test_legacy_locator_is_unavailable():
+    from tap.modules.knowledge.ports.documents import DeletionTarget
 
     client = MemoryS3()
-    store = KnowledgeArtifactStore(
-        S3ObjectStore(config(), scope=VALIDATION_SCOPE, client=client), legacy=Legacy()
-    )
-    ref = ArtifactLocator("tapper-originals/revisions/revision-1/original/source.txt")
-    assert await store.read_original(ref) == b"legacy"
-    assert received == [ref]
+    store = KnowledgeArtifactStore(S3ObjectStore(config(), scope=VALIDATION_SCOPE, client=client))
+    old = ArtifactLocator("documents/x/y")
+    for read in (store.read_original, store.read_normalized, store.read_chunks):
+        with pytest.raises(ArtifactUnavailable):
+            await read(old)
+    with pytest.raises(ArtifactUnavailable):
+        await store.read_embeddings(old)
+    with pytest.raises(ArtifactUnavailable):
+        await store.read_original_excerpt(
+            old,
+            revision_id="revision-1",
+            source_digest="0" * 64,
+            start_byte=0,
+            end_byte=1,
+            excerpt_digest="0" * 64,
+        )
+    with pytest.raises(ArtifactUnavailable):
+        await store.delete_revision_artifacts(DeletionTarget("doc", "revision-1", (), (old,)))
     assert client.calls == []
 
 
-def test_legacy_composition_rejects_different_project_before_provider_io():
-    from dataclasses import replace
-    from types import SimpleNamespace
-
+@pytest.mark.asyncio
+async def test_legacy_staging_key_is_unavailable():
     client = MemoryS3()
-    with pytest.raises(ValueError, match="scope"):
-        KnowledgeArtifactStore(
-            S3ObjectStore(config(), scope=VALIDATION_SCOPE, client=client),
-            legacy=SimpleNamespace(scope=replace(VALIDATION_SCOPE, project_id="foreign")),
+    store = KnowledgeArtifactStore(S3ObjectStore(config(), scope=VALIDATION_SCOPE, client=client))
+    with pytest.raises(ArtifactUnavailable):
+        await store.recover_original("legacy-key", "revision-1")
+    with pytest.raises(ArtifactUnavailable):
+        await store.discard_staging("staging/legacy-key")
+    assert client.calls == []
+
+
+def test_store_composes_only_the_object_store():
+    client = MemoryS3()
+    with pytest.raises(TypeError):
+        KnowledgeArtifactStore(  # type: ignore[call-arg]
+            S3ObjectStore(config(), scope=VALIDATION_SCOPE, client=client), legacy=object()
         )
     assert client.calls == []
 

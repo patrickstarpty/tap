@@ -34,7 +34,7 @@ async def test_real_milvus_rebuild_has_exact_parity_and_atomic_alias_switch(
         work=work(),
         chunks=(chunk(), chunk(2)),
         embeddings=EmbeddingArtifact(
-            "tapper-embedding",
+            "text-embedding-v4",
             1536,
             (vector(0.1), vector(0.3)),
             (str(chunk().chunk_id), str(chunk(2).chunk_id)),
@@ -69,7 +69,7 @@ async def test_real_milvus_failed_rebuild_retains_old_alias_and_cleanup_facts(
         work=work(),
         chunks=(chunk(),),
         embeddings=EmbeddingArtifact(
-            "tapper-embedding", 1536, (vector(0.1),), (str(chunk().chunk_id),)
+            "text-embedding-v4", 1536, (vector(0.1),), (str(chunk().chunk_id),)
         ),
         index_version="tapper-index-v1",
     )

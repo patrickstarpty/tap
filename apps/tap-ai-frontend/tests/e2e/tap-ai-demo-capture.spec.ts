@@ -19,10 +19,10 @@ test.beforeEach(async ({ page }) => {
       };
     } else if (path.endsWith("/ai/models")) {
       body = {
-        defaultAlias: "tapper-chat",
+        defaultAlias: "qwen-plus",
         items: [
           {
-            alias: "tapper-chat",
+            alias: "qwen-plus",
             displayName: "Capture model",
             capabilities: ["chat"],
           },
@@ -137,10 +137,10 @@ test("captures a restored Insights explanation before and after refresh", async 
       };
     } else if (path.endsWith("/ai/models")) {
       body = {
-        defaultAlias: "tapper-chat",
+        defaultAlias: "qwen-plus",
         items: [
           {
-            alias: "tapper-chat",
+            alias: "qwen-plus",
             displayName: "Capture model",
             capabilities: ["chat"],
           },
@@ -208,7 +208,7 @@ test("captures a restored Insights explanation before and after refresh", async 
             answerEvidenceSnapshotDigest: null,
             input: {
               message: "Why did this run fail?",
-              modelAlias: "tapper-chat",
+              modelAlias: "qwen-plus",
               sourceRevisionIds: [],
               documentRevisionIds: [],
               resolvedResources: [],

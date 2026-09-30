@@ -140,7 +140,7 @@ def execution(owner, version, vector):
         sanitized_query=query,
         sanitized_query_hash=digest,
         redaction_version="owned-redaction",
-        embedding_model_id="tapper-embedding",
+        embedding_model_id="text-embedding-v4",
         embedding_dimension=1536,
     )
     snapshot = ContextSnapshot(
@@ -286,7 +286,7 @@ async def test_real_owned_source_selection_cutover_and_explicit_rollback(reposit
                 source_id=source_id,
             )
             embeddings = EmbeddingArtifact(
-                "tapper-embedding", 1536, (vector,), (str(chunk.chunk_id),)
+                "text-embedding-v4", 1536, (vector,), (str(chunk.chunk_id),)
             )
             await old.upsert_revision(work, (chunk,), embeddings, index_version="tapper-index-v1")
 
@@ -317,7 +317,7 @@ async def test_real_owned_source_selection_cutover_and_explicit_rollback(reposit
                     schema_version=version,
                     schema_sha256=doc_schema_sha256(version),
                     corpus_version=profile.corpus_version,
-                    embedding_model_version="tapper-embedding",
+                    embedding_model_version="text-embedding-v4",
                     vector_dimension=1536,
                     exact_generation_names=True,
                 )
@@ -372,16 +372,12 @@ async def test_real_owned_source_selection_cutover_and_explicit_rollback(reposit
                 {
                     "TAP_TAPPER_COMPOSE_PROJECT": os.environ["TAP_TASK6A_OWNED_PROJECT"],
                     "TAPPER_SCHEMA_VERSION": "doc-schema-v2",
-                    "TAPPER_OBJECT_STORE_PROVIDER": "minio",
-                    "TAPPER_LEGACY_AZURE_ENABLED": "0",
                     "TAPPER_S3_ENDPOINT": "http://127.0.0.1:41000",
                     "TAPPER_S3_BUCKET": "task6a-owned-artifacts",
                     "TAPPER_S3_REGION": "us-east-1",
                     "TAPPER_S3_ACCESS_KEY": "task6a-object-user",
                     "TAPPER_S3_SECRET_KEY": "task6a-owned-object-password",
                     "TAPPER_S3_STORE_ID": "task6a-objects",
-                    "LITELLM_MODEL": "openai/unused-owned-test",
-                    "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
                 }
             )
             artifacts = _create_blob(TapperSettings.from_mapping(cli_env))
@@ -419,7 +415,7 @@ async def test_real_owned_source_selection_cutover_and_explicit_rollback(reposit
                         parent_id=None,
                         anchor_json=json.loads(anchor),
                         chunk_content_hash=digest,
-                        embedding_model_version="tapper-embedding",
+                        embedding_model_version="text-embedding-v4",
                         index_version="tapper-index-v1",
                         created_at=request.now,
                     )

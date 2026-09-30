@@ -39,7 +39,7 @@ def value(question="比较章节 A 和 B"):
         "sha256:" + "b" * 64,
         "sha256:" + "c" * 64,
         question,
-        "tapper-chat",
+        "qwen-plus",
         ("repo:checkout:payment.py",),
     )
 
@@ -372,7 +372,7 @@ async def test_worker_routes_in_graph_persists_plan_and_binds_completion(questio
         question,
         VALIDATION_SCOPE.actor_id,
         "validation",
-        "tapper-chat",
+        "qwen-plus",
         acl_digest=content_digest({"mode": "model-only", "resources": []}),
         retrieval_policy_digest=content_digest({"mode": "model-only", "retrieval": "not-selected"}),
     )
@@ -389,7 +389,7 @@ async def test_worker_routes_in_graph_persists_plan_and_binds_completion(questio
 
         async def chat(self, *args, **kwargs):
             self.count += 1
-            return AnswerGeneration("Hello", (), "tapper-chat", "direct-chat-v1", None)
+            return AnswerGeneration("Hello", (), "qwen-plus", "direct-chat-v1", None)
 
     class Repository:
         async def claim_queued(self, **kwargs):
@@ -454,7 +454,7 @@ async def test_worker_records_preplanning_publication_denial_as_failed_turn(leas
         "What does the selected document say?",
         VALIDATION_SCOPE.actor_id,
         "validation",
-        "tapper-chat",
+        "qwen-plus",
         resolved_resources=(
             FrozenResource("source-a", "document-a", "revision-a", "sha256:" + "a" * 64),
         ),
@@ -568,7 +568,7 @@ async def test_http_selected_plan_returns_citations_from_existing_answer_boundar
         "错误码 E104 如何处理？",
         VALIDATION_SCOPE.actor_id,
         "validation",
-        "tapper-chat",
+        "qwen-plus",
         resolved_resources=(
             FrozenResource(
                 revision.source_id,
@@ -740,7 +740,7 @@ async def test_direct_answer_respects_persisted_deadline_before_any_model_call()
         "你好",
         VALIDATION_SCOPE.actor_id,
         "validation",
-        "tapper-chat",
+        "qwen-plus",
         acl_digest=content_digest({"mode": "model-only", "resources": []}),
         retrieval_policy_digest=content_digest({"mode": "model-only", "retrieval": "not-selected"}),
     )
@@ -765,7 +765,7 @@ async def test_direct_answer_respects_persisted_deadline_before_any_model_call()
 
     class Models:
         async def chat(self, *args, **kwargs):
-            return AnswerGeneration("Hello", (), "tapper-chat", "direct-chat-v1", None)
+            return AnswerGeneration("Hello", (), "qwen-plus", "direct-chat-v1", None)
 
     service = KnowledgeHttpService(
         documents=Scoped(), answers=Scoped(), citations=Scoped(), models=Models()
@@ -785,7 +785,7 @@ async def model_only_plan(question):
         question,
         VALIDATION_SCOPE.actor_id,
         "validation",
-        "tapper-chat",
+        "qwen-plus",
         acl_digest=content_digest({"mode": "model-only", "resources": []}),
         retrieval_policy_digest=content_digest({"mode": "model-only", "retrieval": "not-selected"}),
     )
@@ -824,7 +824,7 @@ async def test_direct_plan_rejects_template_drift_before_generation(drift):
 
         async def chat(self, *args, **kwargs):
             self.calls += 1
-            return AnswerGeneration("Hello", (), "tapper-chat", "direct-chat-v1", None)
+            return AnswerGeneration("Hello", (), "qwen-plus", "direct-chat-v1", None)
 
     frozen, plan = await model_only_plan("你好")
     models = Models()
@@ -862,7 +862,7 @@ async def test_direct_plan_passes_pinned_assembly_to_generation():
     class Models:
         async def chat(self, *args, **kwargs):
             inputs.append(kwargs.get("answer_input"))
-            return AnswerGeneration("Hello", (), "tapper-chat", "direct-chat-v1", None)
+            return AnswerGeneration("Hello", (), "qwen-plus", "direct-chat-v1", None)
 
     frozen, plan = await model_only_plan("你好")
     await nonretrieval_service(Models()).answer_conversation(

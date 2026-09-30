@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -12,26 +11,46 @@ from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.adapters.litellm import (
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
-    ProviderModelMapping,
     Redact,
 )
+from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, LiteLLMModel, LiteLLMRoutes
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest
 from tap.testing.deterministic_model import _first_evidence_sentence, deterministic_vector
+
+BUILT_IN_ROUTES = LiteLLMRoutes(
+    {
+        "qwen-plus": LiteLLMModel("qwen-plus", "Qwen Plus", "chat", True, True, False),
+        "text-embedding-v4": LiteLLMModel(
+            "text-embedding-v4", "text-embedding-v4", "embedding", False, False, False
+        ),
+    }
+)
+
+
+class StaticLiteLLMCatalog(LiteLLMCatalog):
+    """Fixed routes for fake and test profiles; never calls `/v1/model/info`."""
+
+    def __init__(self, routes: LiteLLMRoutes = BUILT_IN_ROUTES) -> None:
+        self._static_routes = routes
+
+    async def routes(self) -> LiteLLMRoutes:
+        return self._static_routes
+
+    async def fresh_routes(self) -> LiteLLMRoutes:
+        return self._static_routes
+
+    def cached_routes(self) -> LiteLLMRoutes | None:
+        return self._static_routes
+
+    async def aclose(self) -> None:
+        return None
 
 
 class DeterministicModelGateway(LiteLLMModelGateway):
     def __init__(
         self, config: LiteLLMModelGatewayConfig, *, scope: ProjectScopeContext, redact: Redact
     ) -> None:
-        super().__init__(
-            replace(
-                config,
-                chat_model=ProviderModelMapping("fake", "deterministic-chat-v1"),
-                embedding_model=ProviderModelMapping("fake", "deterministic-embedding-v1"),
-            ),
-            scope=scope,
-            redact=redact,
-        )
+        super().__init__(config, scope=scope, redact=redact, catalog=StaticLiteLLMCatalog())
 
     async def _post(
         self, request: ModelRequest, payload: dict[str, Any]

@@ -122,7 +122,7 @@ class Answers:
             abstention_reason=AbstentionReason.INSUFFICIENT_EVIDENCE,
             claims=(),
             citations=(),
-            embedding_provenance=ModelCallProvenance("tapper-embedding", "embed-a"),
+            embedding_provenance=ModelCallProvenance("text-embedding-v4", "embed-a"),
             answer_provenance=None,
         )
 

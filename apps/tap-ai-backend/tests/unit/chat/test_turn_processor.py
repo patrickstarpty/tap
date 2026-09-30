@@ -136,7 +136,7 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
 async def test_generation_worker_fences_delta_with_the_claimed_lease():
     frozen = SimpleNamespace(
         message="question",
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         resolved_resources=(SimpleNamespace(source_id="src_" + "1" * 32),),
     )
 
@@ -826,9 +826,10 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
         content_digest,
     )
     from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+    from tests.object_settings import S3_SETTINGS
     from tests.unit.knowledge import test_answer_service as fixtures
 
-    settings = TapperSettings.from_mapping(settings_values)
+    settings = TapperSettings.from_mapping(S3_SETTINGS | settings_values)
     composed = _assemble_http_services(
         repository=SimpleNamespace(scope=VALIDATION_SCOPE),
         artifacts=object(),
@@ -872,7 +873,7 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
         message="What is the rule?",
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode="validation",
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         source_revision_ids=(frozen.revision_id,),
         resolved_resources=(
             FrozenResource(

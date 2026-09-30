@@ -326,7 +326,7 @@ async def test_v2_upsert_accepts_the_chunkers_unicode_canonical_anchor():
     receipt = await index.upsert_revision(
         current,
         (item,),
-        EmbeddingArtifact("tapper-embedding", 1536, ((0.0,) * 1536,), (str(item.chunk_id),)),
+        EmbeddingArtifact("text-embedding-v4", 1536, ((0.0,) * 1536,), (str(item.chunk_id),)),
         index_version="tapper-index-v1",
     )
 
@@ -770,6 +770,18 @@ class MemoryMilvus:
             rows = (row for row in rows if row.get("source_type") == "tapper_fence")
         elif filter_expression == 'source_type != "tapper_fence"':
             rows = (row for row in rows if row.get("source_type") != "tapper_fence")
+        elif filter_expression.startswith("source_id == "):
+            parts = filter_expression.split(" and ")
+            document = json.loads(parts[0].split(" == ", 1)[1])
+            assert parts[1] == 'source_type != "tapper_fence"', filter_expression
+            keep = json.loads(parts[2].split(" != ", 1)[1]) if len(parts) == 3 else None
+            rows = (
+                row
+                for row in rows
+                if row.get("source_id") == document
+                and row.get("source_type") != "tapper_fence"
+                and row.get("source_revision") != keep
+            )
         elif filter_expression.startswith("corpus_version == "):
             corpus = json.loads(filter_expression.split(" == ", 1)[1])
             rows = (row for row in rows if row.get("corpus_version") == corpus)
@@ -1030,6 +1042,76 @@ async def test_ensure_upsert_read_back_delete_and_negative_probe_are_exact() -> 
     await index.delete_revision(target_delete)
     assert await index.count_revision(target_delete) == 0
     assert memory.delete_batches[-1] == 65
+
+
+def _revision_embeddings(chunks: tuple[ChunkDraft, ...]) -> EmbeddingArtifact:
+    return EmbeddingArtifact(
+        TAPPER_EMBEDDING_MODEL,
+        1536,
+        tuple((float(i + 1),) + (0.0,) * 1535 for i in range(len(chunks))),
+        tuple(str(item.chunk_id) for item in chunks),
+    )
+
+
+def _document_revisions(memory: MemoryMilvus) -> dict[str, int]:
+    revisions: dict[str, int] = {}
+    for row in memory.collections[TAPPER_PHYSICAL_COLLECTION].values():
+        if row["source_id"] == "doc_a":
+            key = str(row["source_revision"])
+            revisions[key] = revisions.get(key, 0) + 1
+    return revisions
+
+
+@pytest.mark.asyncio
+async def test_superseded_revision_purge_keeps_current_rows_and_fences_old_revisions() -> None:
+    """A republished document must not keep superseded content live in the projection."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    old_chunks = tuple(chunk(i, "rev_a") for i in range(1, 4))
+    new_chunks = tuple(chunk(i, "rev_b") for i in range(1, 3))
+    await index.upsert_revision(
+        work("rev_a"), old_chunks, _revision_embeddings(old_chunks), index_version="tapper-index-v1"
+    )
+    await index.upsert_revision(
+        work("rev_b"), new_chunks, _revision_embeddings(new_chunks), index_version="tapper-index-v1"
+    )
+    old_revision, new_revision = work("rev_a").revision_id, work("rev_b").revision_id
+
+    await index.purge_document(
+        "doc_a", keep_revision_id=new_revision, fence_revision_ids=(old_revision,)
+    )
+
+    assert _document_revisions(memory) == {new_revision: 2}
+    with pytest.raises(IndexFenced):
+        await index.upsert_revision(
+            work("rev_a"),
+            old_chunks,
+            _revision_embeddings(old_chunks),
+            index_version="tapper-index-v1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_document_purge_removes_every_revision_and_keeps_only_deletion_fence() -> None:
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    old_chunks = tuple(chunk(i, "rev_a") for i in range(1, 4))
+    new_chunks = tuple(chunk(i, "rev_b") for i in range(1, 3))
+    for key, chunks in (("rev_a", old_chunks), ("rev_b", new_chunks)):
+        await index.upsert_revision(
+            work(key), chunks, _revision_embeddings(chunks), index_version="tapper-index-v1"
+        )
+    current = DeletionTarget(
+        "doc_a", work("rev_b").revision_id, tuple(str(c.chunk_id) for c in new_chunks), ()
+    )
+    await index.fence_revision(current)
+    await index.delete_revision(current)
+
+    await index.purge_document("doc_a", keep_revision_id=None)
+
+    assert _document_revisions(memory) == {f"fence:{current.revision_id}": 1}
 
 
 @pytest.mark.asyncio

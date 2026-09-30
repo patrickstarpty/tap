@@ -3,7 +3,6 @@ from copy import deepcopy
 import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.ai.adapters.litellm import ProviderModelMapping
 from tap.modules.ai.application.schema import check_schema
 from tap.modules.ai.domain.models import ModelCallAudit, ModelOperation, ModelResult, ModelUsage
 from tap.modules.test_management.adapters.model_gateway_generation import (
@@ -48,13 +47,9 @@ class Gateway:
         )
 
 
-def test_model_revision_binds_actual_provider_model_mapping() -> None:
-    first = design_model_revision_id(
-        "tapper-chat", ProviderModelMapping("dashscope", "qwen-plus-2026-09")
-    )
-    changed = design_model_revision_id(
-        "tapper-chat", ProviderModelMapping("dashscope", "qwen-plus-2026-10")
-    )
+def test_model_revision_binds_the_litellm_model_name() -> None:
+    first = design_model_revision_id("qwen-plus")
+    changed = design_model_revision_id("qwen-max")
 
     assert first.startswith("tmr_")
     assert first != changed
@@ -79,14 +74,14 @@ def _context() -> DesignContext:
         turn_id="turn_checkout",
         input_snapshot_digest="sha256:" + "1" * 64,
         answer_evidence_snapshot_digest="sha256:" + "2" * 64,
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         agent_revision_id="validation-test-design-agent-v1",
         skill_revision_ids=("validation-test-design-skill-v1",),
         objective="Design checkout tests",
         idempotency_key="test-design-checkout",
         requirement_scope=requirement_scope,
         approved_knowledge_revision_ids=("source_revision_checkout",),
-        model_revision_id="tapper-chat-2026-09",
+        model_revision_id="qwen-plus-2026-09",
     )
     return DesignContext(
         VALIDATION_SCOPE,

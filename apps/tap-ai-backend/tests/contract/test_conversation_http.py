@@ -9,6 +9,11 @@ from fastapi.testclient import TestClient
 from tap.interfaces.http.app import create_app
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
+from tap.modules.ai.domain.models import (
+    ModelCapability,
+    ModelDescriptor,
+    ModelGatewayUnavailable,
+)
 from tap.modules.chat.application.conversations import (
     ConversationService,
     InMemoryConversationRepository,
@@ -21,6 +26,115 @@ from tap.modules.chat.domain.conversations import (
     TurnInput,
 )
 from tests.conftest import validation_http_services
+
+STRUCTURED_CHAT_MODEL = ModelDescriptor(
+    "qwen-plus",
+    "Qwen Plus",
+    frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
+)
+CHAT_ONLY_MODEL = ModelDescriptor("qwen-flash", "Qwen Flash", frozenset({ModelCapability.CHAT}))
+
+
+def _model_selection_client(models):
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_conversation_selection(self, _revision_ids):
+            raise AssertionError("An unavailable model must fail before Knowledge selection")
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=models,
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+    return client, conversations
+
+
+class _SelectableModels:
+    scope = VALIDATION_SCOPE
+
+    async def list_models(self, _scope):
+        return [STRUCTURED_CHAT_MODEL, CHAT_ONLY_MODEL]
+
+
+@pytest.mark.parametrize("model_alias", ["missing-model", "qwen-flash"])
+def test_conversation_with_unknown_or_chat_only_model_is_non_retryable_client_error(model_alias):
+    client, conversations = _model_selection_client(_SelectableModels())
+
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={"message": "Hello", "modelAlias": model_alias},
+        headers={"Idempotency-Key": f"unavailable-{model_alias}"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.headers["content-type"].startswith("application/problem+json")
+    body = response.json()
+    assert body["type"].endswith("/model-not-selectable")
+    assert body["retryable"] is False
+    assert conversations.repository.values == {}
+
+
+def test_append_turn_with_unselectable_model_is_non_retryable_client_error():
+    client, conversations = _model_selection_client(_SelectableModels())
+    created = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={"message": "Hello", "modelAlias": "qwen-plus"},
+        headers={"Idempotency-Key": "append-model-create"},
+    )
+    assert created.status_code == 202, created.text
+    conversation_id = created.json()["conversationId"]
+
+    response = client.post(
+        f"/api/v1/projects/tapper-demo/conversations/{conversation_id}/turns",
+        json={"message": "Again", "modelAlias": "qwen-flash"},
+        headers={"Idempotency-Key": "append-model-turn"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["type"].endswith("/model-not-selectable")
+    assert response.json()["retryable"] is False
+
+
+def test_conversation_model_catalog_outage_stays_retryable_503():
+    class Outage:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            raise ModelGatewayUnavailable()
+
+    client, conversations = _model_selection_client(Outage())
+
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={"message": "Hello", "modelAlias": "qwen-plus"},
+        headers={"Idempotency-Key": "catalog-outage"},
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.json()["type"].endswith("/model-unavailable")
+    assert response.json()["retryable"] is True
+    assert conversations.repository.values == {}
+
+
+def test_conversation_turn_routes_document_422_and_503_problems():
+    paths = TestClient(create_app(validation_mode=True)).app.openapi()["paths"]
+    for path in (
+        "/api/v1/projects/{project_id}/conversations",
+        "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns",
+    ):
+        responses = paths[path]["post"]["responses"]
+        assert {"422", "503"} <= set(responses), path
 
 
 def test_conversation_routes_are_registered_and_blank_first_message_is_rejected():
@@ -68,7 +182,7 @@ def test_conversation_events_http_reads_persisted_test_plan_lifecycle(
                 message="Design tests",
                 actor_id=VALIDATION_SCOPE.actor_id,
                 identity_mode=VALIDATION_SCOPE.identity_mode.value,
-                model_alias="tapper-chat",
+                model_alias="qwen-plus",
             ),
         )
     )
@@ -96,7 +210,7 @@ def test_conversation_accepts_a_model_only_turn_without_knowledge_revisions():
         scope = VALIDATION_SCOPE
 
         async def list_models(self, _scope):
-            return [SimpleNamespace(alias="tapper-chat")]
+            return [STRUCTURED_CHAT_MODEL]
 
     class Knowledge:
         scope = VALIDATION_SCOPE
@@ -118,7 +232,7 @@ def test_conversation_accepts_a_model_only_turn_without_knowledge_revisions():
 
     response = client.post(
         "/api/v1/projects/tapper-demo/conversations",
-        json={"message": "Hello", "modelAlias": "tapper-chat"},
+        json={"message": "Hello", "modelAlias": "qwen-plus"},
         headers={"Idempotency-Key": "model-only-chat"},
     )
 
@@ -138,7 +252,7 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
         scope = VALIDATION_SCOPE
 
         async def list_models(self, _scope):
-            return [SimpleNamespace(alias="tapper-chat")]
+            return [STRUCTURED_CHAT_MODEL]
 
     class Assets:
         scope = VALIDATION_SCOPE
@@ -208,7 +322,7 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
     client = TestClient(app, headers={"Origin": origin})
     body = {
         "message": "question",
-        "modelAlias": "tapper-chat",
+        "modelAlias": "qwen-plus",
         "sourceRevisionIds": ["revision-1"],
         "agentRevisionId": "agent-1",
         "skillRevisionIds": ["skill-1"],
@@ -247,7 +361,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
         scope = VALIDATION_SCOPE
 
         async def list_models(self, _scope):
-            return [SimpleNamespace(alias="tapper-chat")]
+            return [STRUCTURED_CHAT_MODEL]
 
     class Knowledge:
         scope = VALIDATION_SCOPE
@@ -286,7 +400,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
     )
     body = {
         "message": "  retain the exact user message  ",
-        "modelAlias": "tapper-chat",
+        "modelAlias": "qwen-plus",
         "sourceRevisionIds": ["source-revision-1"],
         "documentRevisionIds": ["document-revision-1"],
     }
@@ -303,7 +417,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
     assert detail.status_code == 200
     assert detail.json()["turns"][0]["input"] == {
         "message": "  retain the exact user message  ",
-        "modelAlias": "tapper-chat",
+        "modelAlias": "qwen-plus",
         "sourceRevisionIds": ["source-revision-1"],
         "documentRevisionIds": ["document-revision-1"],
         "resolvedResources": [
@@ -376,7 +490,7 @@ def test_conversation_citation_requires_the_turn_immutable_evidence_link():
         message="question",
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode=VALIDATION_SCOPE.identity_mode.value,
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
     )
     import asyncio
 

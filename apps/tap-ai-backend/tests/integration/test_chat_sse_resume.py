@@ -69,7 +69,7 @@ def test_http_sse_reconnect_returns_complete_envelope_for_events_added_while_dis
         message="question",
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode="validation",
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
     )
     asyncio.run(service.create("chat-1", "turn-1", "request-1", value))
     services = replace(validation_http_services(), conversations=service)
@@ -112,7 +112,7 @@ def test_http_sse_reconnect_replays_generation_waiting_and_result_link() -> None
         message="design tests",
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode="validation",
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
     )
     asyncio.run(service.create("chat-plan", "turn-plan", "request-plan", value))
     asyncio.run(
@@ -162,7 +162,7 @@ def test_http_sse_replays_published_terminal_answer_and_closes() -> None:
                 message="Question kept out of public event payloads",
                 actor_id=VALIDATION_SCOPE.actor_id,
                 identity_mode="validation",
-                model_alias="tapper-chat",
+                model_alias="qwen-plus",
             ),
         )
     )

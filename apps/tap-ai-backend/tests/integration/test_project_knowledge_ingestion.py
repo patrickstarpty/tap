@@ -705,7 +705,7 @@ def test_ready_failure_rolls_back_state_receipts_event_and_audit(owned_project_m
         from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
 
         graph_projection = MysqlGraphReadyProjection(
-            MysqlGraphJobStore(sessions), model_alias="tapper-chat"
+            MysqlGraphJobStore(sessions), model_alias="qwen-plus"
         )
 
         class FailingGraphProjection:

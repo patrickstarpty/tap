@@ -14,7 +14,7 @@ from tap.contracts.http import (
     InsightsExplanationRequest,
     InsightsExplanationResult,
 )
-from tap.interfaces.http.dependencies import conversation_service
+from tap.interfaces.http.dependencies import conversation_service, model_catalog_service
 from tap.interfaces.http.routes.conversations import _input
 from tap.interfaces.http.scope import project_authorization
 from tap.modules.ai.ports.insights import InsightsAuthorizationChanged, InsightsQueryUnavailable
@@ -69,7 +69,7 @@ async def explain(
     ordinary = await _input(
         ConversationCreateRequest(
             message=body.question,
-            model_alias="tapper-chat",
+            model_alias=model_catalog_service(request).default_alias,
             source_revision_ids=body.source_revision_ids,
             document_revision_ids=body.document_revision_ids,
         ),

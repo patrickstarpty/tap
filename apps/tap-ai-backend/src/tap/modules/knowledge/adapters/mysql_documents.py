@@ -3296,54 +3296,55 @@ class MysqlDocumentRepository:
     async def _request_delete_in_session(
         self, session: AsyncSession, document_id: DocumentId
     ) -> IngestionJob:
-        candidate = (
-            (
-                await session.execute(
-                    select(knowledge_document).where(
-                        *scope_predicates(knowledge_document, self._scope),
-                        knowledge_document.c.document_id == document_id,
-                        knowledge_document.c.activated_at.is_not(None),
-                        knowledge_document.c.deleted_at.is_(None),
-                    )
-                )
+        # The first read is a consistent read, so it can return a revision that a
+        # concurrent managed-chunk publication has since replaced. A retry uses a
+        # locking read, which observes the latest committed current revision.
+        for locking_read in (False, True):
+            candidate_query = select(knowledge_document).where(
+                *scope_predicates(knowledge_document, self._scope),
+                knowledge_document.c.document_id == document_id,
+                knowledge_document.c.activated_at.is_not(None),
+                knowledge_document.c.deleted_at.is_(None),
             )
-            .mappings()
-            .one_or_none()
-        )
-        if candidate is None:
-            raise RetryNotAllowed(str(document_id))
-        revision_id = cast(str, candidate["current_revision_id"])
-        job_rows = list(
-            (
-                await session.execute(
-                    select(knowledge_ingestion_job)
-                    .where(
-                        *scope_predicates(knowledge_ingestion_job, self._scope),
-                        knowledge_ingestion_job.c.revision_id == revision_id,
+            if locking_read:
+                candidate_query = candidate_query.with_for_update()
+            candidate = (await session.execute(candidate_query)).mappings().one_or_none()
+            if candidate is None:
+                raise RetryNotAllowed(str(document_id))
+            revision_id = cast(str, candidate["current_revision_id"])
+            job_rows = list(
+                (
+                    await session.execute(
+                        select(knowledge_ingestion_job)
+                        .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
+                            knowledge_ingestion_job.c.revision_id == revision_id,
+                        )
+                        .order_by(knowledge_ingestion_job.c.kind)
+                        .with_for_update()
                     )
-                    .order_by(knowledge_ingestion_job.c.kind)
-                    .with_for_update()
-                )
-            ).mappings()
-        )
-        document_row = (
-            (
-                await session.execute(
-                    select(knowledge_document)
-                    .where(
-                        *scope_predicates(knowledge_document, self._scope),
-                        knowledge_document.c.document_id == document_id,
-                        knowledge_document.c.current_revision_id == revision_id,
-                        knowledge_document.c.activated_at.is_not(None),
-                        knowledge_document.c.deleted_at.is_(None),
-                    )
-                    .with_for_update()
-                )
+                ).mappings()
             )
-            .mappings()
-            .one_or_none()
-        )
-        if document_row is None:
+            document_row = (
+                (
+                    await session.execute(
+                        select(knowledge_document)
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            knowledge_document.c.document_id == document_id,
+                            knowledge_document.c.current_revision_id == revision_id,
+                            knowledge_document.c.activated_at.is_not(None),
+                            knowledge_document.c.deleted_at.is_(None),
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if document_row is not None:
+                break
+        else:
             raise RetryNotAllowed(str(document_id))
         database_now = await _database_now(session)
         ingestion = next((row for row in job_rows if row["kind"] == JobKind.INGESTION.value), None)

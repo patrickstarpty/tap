@@ -11,11 +11,11 @@
 - [ADR-029：LangGraph 统一编排 TAP AI 的 AI 交互与任务](2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md)（`accepted`，目标架构，当前 V1 未实现）：TAP AI Chat 与 AI Task 进入同一版本化图；Fast Chat、Durable Workflow、Bounded Agentic Task 经稳定领域端口访问模型、知识、指标与业务动作。
 - [ADR-027：TAP AI 采用独立前后端应用边界](2026-09-15-adr-027-tap-ai-product-app-boundary.md)（`accepted`）：AI 功能独立应用运行，TAP 保留非 AI 边界。
 - [ADR-020：采用 Validation-first 交付顺序](2026-09-04-adr-020-validation-first-delivery.md)（`accepted`）：先在固定可信 Scope 中完成 V0–VG，之后才实施 P0 身份/RBAC/多 Project和 P1 生产加固。
-- [ADR-021：当前交付主线采用 Knowledge-first Web Automation](2026-09-04-adr-021-knowledge-first-web-automation-delivery.md)（`accepted`）：替代 ADR-014/019 的当前交付授权；知识问答、Graph、测试设计、Web LCA/Recorder、Playwright/Jenkins 和结果闭环依次交付，隔离 Runtime 仅保留为 P1 后可重新决策的原则。
+- [ADR-021：当前交付主线采用 Knowledge-first Web Automation](2026-09-04-adr-021-knowledge-first-web-automation-delivery.md)（`deferred`，不在 V1，见 [V1 路线图](../superpowers/plans/2026-09-29-v1-roadmap.md#不在-v1)）：替代 ADR-014/019 的当前交付授权；知识问答、Graph、测试设计、Web LCA/Recorder、Playwright/Jenkins 和结果闭环依次交付，隔离 Runtime 仅保留为 P1 后可重新决策的原则。
 - [ADR-022：首个正式交付采用自托管 Docker Compose 基线](2026-09-04-adr-022-self-hosted-compose-delivery-baseline.md)（`accepted`）：Compose、MySQL、Redis、MinIO、Milvus、LiteLLM 与外置 Jenkins 组成当前交付拓扑。
 - [ADR-023：知识后端采用 Milvus 文档投影与 MySQL Knowledge Graph](2026-09-04-adr-023-milvus-mysql-knowledge-backend.md)（`accepted`）：TAP 管 parsing/chunking/provenance，Milvus 管可重建 `doc` 投影，MySQL 管 Graph 事实与证据。
 - [ADR-024：Automation Revision 由 TAP 管理](2026-09-04-adr-024-tap-managed-automation-revisions.md)（`accepted`）：替代 ADR-001/004/008；MySQL 管权威资产/Revision，MinIO 管 Bundle/Evidence，Git 是可选同步 Adapter；Test IR、统一 Evidence 与确定性门禁保留。
-- [ADR-025：Jenkins 作为首个 Execution Provider](2026-09-04-adr-025-jenkins-first-execution-provider.md)（`accepted`）：provider-neutral 核心之后先接 Jenkins/Playwright Web，Mobile、Azure DevOps 与 BrowserStack 后置。
+- [ADR-025：Jenkins 作为首个 Execution Provider](2026-09-04-adr-025-jenkins-first-execution-provider.md)（`deferred`，不在 V1，见 [V1 路线图](../superpowers/plans/2026-09-29-v1-roadmap.md#不在-v1)）：provider-neutral 核心之后先接 Jenkins/Playwright Web，Mobile、Azure DevOps 与 BrowserStack 后置。
 - [ADR-026：Tapper 是智能工作区的规范名称](2026-09-05-adr-026-tapper-canonical-product-name.md)（`accepted`）：TAP 保持平台品牌；智能工作区、活动运行命名空间和客户材料采用 Tapper clean cut，本地验证状态重新建立。
 
 ## 仍有效的早期方向
@@ -34,7 +34,7 @@
 ## 本地 Demo 决策
 
 - [ADR-017：Tapper 本地回答端口可选 Codex CLI](2026-08-31-adr-017-tapper-local-codex-answer-backend.md)（`superseded`）：保留曾接受 Ultra 内部委派的历史决策；由 ADR-018 替代。
-- [ADR-018：Tapper 本地 Codex 回答固定为单智能体、无工具](2026-09-01-adr-018-tapper-local-codex-tool-free-answer.md)（`accepted`）：精确固定 CLI/model/catalog 能力契约，任何漂移均无 fallback 地 fail closed。
+- [ADR-018：Tapper 本地 Codex 回答固定为单智能体、无工具](2026-09-01-adr-018-tapper-local-codex-tool-free-answer.md)（`superseded`，Codex 已移除，见[基础设施收敛设计](../superpowers/specs/2026-09-29-infra-convergence-design.md)）：精确固定 CLI/model/catalog 能力契约，任何漂移均无 fallback 地 fail closed。
 
 ## 被替代的历史基线
 

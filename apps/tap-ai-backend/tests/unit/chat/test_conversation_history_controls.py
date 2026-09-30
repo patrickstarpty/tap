@@ -26,7 +26,7 @@ def _input(message: str = "What changed?") -> TurnInput:
         message=message,
         actor_id=OWNER,
         identity_mode=VALIDATION_SCOPE.identity_mode.value,
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
     )
 
 

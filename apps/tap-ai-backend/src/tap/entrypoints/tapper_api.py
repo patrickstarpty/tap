@@ -37,8 +37,6 @@ def build_runtime_app(
 ) -> FastAPI:
     if not isinstance(settings, TapperSettings):
         raise TypeError("Tapper API requires validated settings")
-    if settings.answer_backend != "litellm":
-        raise ValueError("Tapper V1 requires the governed model gateway")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]

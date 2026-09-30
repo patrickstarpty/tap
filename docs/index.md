@@ -17,6 +17,8 @@
 - [文件类型图标与示例文件](guides/2026-09-06-file-type-icons.md)
 - [TAP 客户演示指南](guides/2026-09-04-customer-prototype-demo-guide.md)
 - [知识审核工作台](guides/2026-09-27-knowledge-review-workbench.md)
+- [Azure 接入扩展点](guides/2026-09-29-azure-integration.md)
+- [LiteLLM 模型目录指南](guides/2026-09-29-litellm-models.md)
 
 ## 约定
 

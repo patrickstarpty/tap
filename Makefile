@@ -6,7 +6,7 @@ TAP_INSIGHTS_COMPOSE_PROJECT ?= tap-insights-local
 export TAP_INSIGHTS_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev legacy-tapper-codex-dev demo-e2e demo-down demo-reset
+.PHONY: schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset
 .PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check
 
 bootstrap: ## install frozen Python and Node dependencies
@@ -18,11 +18,10 @@ check: ## lint, format-check, typecheck, architecture checks
 	uv run --project apps/tap-ai-backend ruff check scripts/check_backend_boundary.py
 	uv run --project apps/tap-ai-backend ruff format --check scripts/check_backend_boundary.py
 	uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/architecture/test_product_boundary.py -q
-	uv run --project apps/tap-ai-backend ruff check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
-	uv run --project apps/tap-ai-backend ruff format --check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/tap-ai-backend ruff check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/tap-ai-backend ruff format --check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/tap-ai-backend mypy apps/tap-ai-backend/src/tap scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
-	uv run --project apps/tap-ai-backend mypy --explicit-package-bases --follow-imports=silent scripts/tapper_v0_gate.py
-	bash -n scripts/run-tapper-v0-gate.sh scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/run-tap-insights-e2e.sh scripts/run-task14-acceptance.sh scripts/build-tapper-object-store.sh
+	bash -n scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/run-tap-insights-e2e.sh scripts/run-task14-acceptance.sh scripts/build-tapper-object-store.sh
 	uv run --project apps/tap-ai-backend python scripts/export_contracts.py --check
 	uv run --project apps/backend python scripts/export_tap_contracts.py --check
 	corepack pnpm --filter @tap/ai-frontend run contracts:check
@@ -276,15 +275,11 @@ demo-up: ## start durable Tapper middleware and initialize exact owned resources
 	unset OPENAI_API_KEY BAILIAN_API_KEY BAILIAN_API_BASE; \
 	unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE; \
 	export TAP_TAPPER_COMPOSE_PROJECT="$$tapper_demo_project"; \
-	if [ "$${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ]; then \
-		TAPPER_OBJECT_STORE_IMAGE="$$(bash "$(TAP_REPO_ROOT)/scripts/build-tapper-object-store.sh" verify)"; \
-		export TAPPER_OBJECT_STORE_IMAGE; \
-		docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile milvus --profile tapper-objects up -d --wait --wait-timeout 180; \
-		tapper_object_container="$$(docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile tapper-objects ps -q tap-minio)"; \
-		bash "$(TAP_REPO_ROOT)/scripts/build-tapper-object-store.sh" verify-container "$$tapper_object_container" >/dev/null; \
-	else \
-		docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile milvus up -d --wait --wait-timeout 180; \
-	fi; \
+	TAPPER_OBJECT_STORE_IMAGE="$$(bash "$(TAP_REPO_ROOT)/scripts/build-tapper-object-store.sh" verify)"; \
+	export TAPPER_OBJECT_STORE_IMAGE; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile milvus up -d --wait --wait-timeout 180; \
+	tapper_object_container="$$(docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" ps -q tap-minio)"; \
+	bash "$(TAP_REPO_ROOT)/scripts/build-tapper-object-store.sh" verify-container "$$tapper_object_container" >/dev/null; \
 	unset DASHSCOPE_API_KEY DASHSCOPE_API_BASE; \
 	uv run --project apps/tap-ai-backend alembic -c apps/tap-ai-backend/alembic.ini upgrade head; \
 	TAP_ALLOW_INITIAL_MILVUS_ROOT=1 uv run --project apps/tap-ai-backend python scripts/milvus_bootstrap.py; \
@@ -308,9 +303,6 @@ demo-dev: ## run API, relay, ingestion, graph, generation, and Web on loopback p
 	case "$$project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Tapper Compose project" >&2; exit 2;; esac; \
 	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
 	TAPPER_COMPOSE_OBJECT_STORE_VERIFY=1 bash scripts/run-tapper-dev.sh
-
-legacy-tapper-codex-dev: ## run only the retired loopback Codex answer composition
-	bash scripts/run-tapper-legacy-codex-dev.sh
 
 demo-e2e: ## run the isolated deterministic browser and persistence journey
 	@set -eu; \
@@ -358,6 +350,3 @@ parser-build: ## build the pinned local parser image for an explicit platform
 
 parser-security: ## run real security checks in owned isolated parser containers
 	TAP_RUN_PARSER_SECURITY=1 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/security/test_owned_parser.py -v
-
-gate-v0: ## require complete owned V0 native evidence with zero skips
-	bash scripts/run-tapper-v0-gate.sh

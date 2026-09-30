@@ -160,8 +160,9 @@ class CapturingModelGateway:
             "runnerCallId": str(uuid4()),
             "requestedAlias": request.alias,
             "requestedOperation": request.operation.value,
-            "requestedProvider": route["actualProvider"],
-            "requestedModel": route["actualModel"],
+            # No requestedProvider/requestedModel: the gateway routes by LiteLLM model name
+            # only, so the requested upstream is not attestable. The served upstream is
+            # recorded below as actualProvider/actualModel and verified against the approval.
             "startedAtUtc": _utc_text(call_started_at),
             "status": "started",
             "operation": request.operation.value,
@@ -900,58 +901,59 @@ def _require_single_http_attempt_gateway(gateway: ModelGateway) -> ModelGateway:
     return gateway
 
 
+_GATEWAY_ROUTE_KEYS = ("logicalAlias", "operation", "scope")
+
+
 def _production_routes_from_gateway(
     gateway: ModelGateway,
 ) -> dict[str, dict[str, Any]]:
+    """Return what the gateway governs: LiteLLM model names per operation and scope.
+
+    The upstream provider/model behind a model name lives in LiteLLM configuration and is
+    recorded per call; the evaluator enforces it against the approved route.
+    """
+
     from tap.modules.ai.adapters.litellm import LiteLLMModelGateway
 
     if type(gateway) is not LiteLLMModelGateway:
         raise ValueError("quality ModelGateway must be production LiteLLM")
-    config = gateway._config
+    roles = gateway._config.roles
     return {
-        "embed": {
-            "logicalAlias": config.embedding_alias,
-            "actualProvider": config.embedding_model.provider,
-            "actualModel": config.embedding_model.route,
-            "operation": "embed",
+        operation: {
+            "logicalAlias": model,
+            "operation": operation,
             "scope": {
                 "enterpriseId": gateway.scope.enterprise_id,
                 "projectId": gateway.scope.project_id,
             },
-        },
-        "chat": {
-            "logicalAlias": config.chat_alias,
-            "actualProvider": config.chat_model.provider,
-            "actualModel": config.chat_model.route,
-            "operation": "chat",
-            "scope": {
-                "enterpriseId": gateway.scope.enterprise_id,
-                "projectId": gateway.scope.project_id,
-            },
-        },
-        "structured": {
-            "logicalAlias": config.chat_alias,
-            "actualProvider": config.chat_model.provider,
-            "actualModel": config.chat_model.route,
-            "operation": "structured",
-            "scope": {
-                "enterpriseId": gateway.scope.enterprise_id,
-                "projectId": gateway.scope.project_id,
-            },
-        },
+        }
+        for operation, model in (
+            ("embed", roles.embedding_model),
+            ("chat", roles.default_chat_model),
+            ("structured", roles.default_chat_model),
+        )
     }
 
 
 def _require_approved_production_routes(
     approved: dict[str, Any], production_routes: dict[str, dict[str, Any]]
 ) -> None:
+    """Match the gateway-governed fields; approved upstreams are checked per served call."""
+
     routes = approved.get("routes")
     approved_routes = (
         {str(route.get("operation")): route for route in routes}
         if isinstance(routes, list) and all(isinstance(route, dict) for route in routes)
         else {}
     )
-    if approved_routes != production_routes:
+
+    def governed(items: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        return {
+            operation: {key: route.get(key) for key in _GATEWAY_ROUTE_KEYS}
+            for operation, route in items.items()
+        }
+
+    if not approved_routes or governed(approved_routes) != governed(production_routes):
         raise ValueError("approval routes do not match production ModelGateway routes")
 
 

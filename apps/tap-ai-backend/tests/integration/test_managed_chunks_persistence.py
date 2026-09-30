@@ -122,12 +122,20 @@ class Index:
         self.fail = False
         self.chunks = ()
         self.work = None
+        # Live projection rows per revision of the (single) test document.
+        self.revisions: dict[str, set[str]] = {}
+        self.fenced: set[str] = set()
+        self.purges: list[tuple[str, str | None]] = []
+        self.purge_failures_remaining = 0
 
     async def upsert_revision(self, work, chunks, embeddings, *, index_version):
         if self.fail:
             raise RuntimeError("injected index failure")
+        if work.revision_id in self.fenced:
+            raise RuntimeError("fenced revision")
         self.chunks = chunks
         self.work = work
+        self.revisions[work.revision_id] = {str(chunk.chunk_id) for chunk in chunks}
         return IndexReceipt(
             work.revision_id,
             index_version,
@@ -135,6 +143,18 @@ class Index:
             projection_digest(work.revision_id, "doc-schema-v2", index_version, work.manifest),
             "doc-schema-v2",
         )
+
+    async def purge_document(self, document_id, *, keep_revision_id, fence_revision_ids=()):
+        if self.purge_failures_remaining > 0:
+            self.purge_failures_remaining -= 1
+            raise RuntimeError("injected purge failure")
+        self.purges.append((document_id, keep_revision_id))
+        self.revisions = {
+            revision: rows
+            for revision, rows in self.revisions.items()
+            if revision == keep_revision_id
+        }
+        self.fenced.update(fence_revision_ids)
 
 
 @pytest.mark.parametrize("mode", ["general", "parent_child"])
@@ -619,6 +639,466 @@ def test_mutations_persist_reindex_and_fence_old_revisions(owned_project_mysql, 
                     )
                     == "deleting"
                 )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_source_delete_survives_a_managed_revision_published_after_its_snapshot(
+    owned_project_mysql,
+):
+    async def run():
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        artifacts, embeddings, index = Artifacts(), Embeddings(), Index()
+        try:
+            content = "Original alpha paragraph.\n\nSecond beta paragraph."
+            source_hash = canonical_sha256(content.encode())
+            artifacts.values["artifact:original"] = content.encode()
+            reserved = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="race.md",
+                    media_type="text/markdown",
+                    source_content_hash=source_hash,
+                    size=len(content),
+                    now=datetime.now(),
+                    staging_key="stage:race",
+                    chunk_settings=asdict(ChunkSettings()),
+                )
+            )
+            await repository.activate_upload(reserved, ArtifactLocator("artifact:original"))
+            document_id = reserved.document_id
+            async with sessions() as session:
+                document = (
+                    (
+                        await session.execute(
+                            select(knowledge_document).where(
+                                knowledge_document.c.document_id == document_id
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            original_revision = document["current_revision_id"]
+            normalized = NormalizedArtifact(
+                "race.md",
+                MediaType.MARKDOWN,
+                source_hash,
+                (NormalizedBlock("b1", "paragraph", content, (), None, 0, 0, len(content)),),
+                DocumentId(document_id),
+                RevisionId(original_revision),
+            )
+            normalized_locator = await artifacts.write_normalized(original_revision, normalized)
+            chunks_locator = await artifacts.write_chunks(
+                original_revision, StructuralChunker().chunk(normalized)
+            )
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_document_revision)
+                    .where(knowledge_document_revision.c.revision_id == original_revision)
+                    .values(
+                        normalized_blob_locator=normalized_locator,
+                        chunks_blob_locator=chunks_locator,
+                    )
+                )
+                await session.execute(
+                    update(knowledge_document)
+                    .where(knowledge_document.c.document_id == document_id)
+                    .values(status="ready", stage="ready", chunk_count=1)
+                )
+            manager = MysqlManagedChunks(
+                sessions=sessions,
+                repository=repository,
+                scope=VALIDATION_SCOPE,
+                artifacts=artifacts,
+                embeddings=embeddings,
+                index=index,
+                embedding_model_alias="test",
+                embedding_dimension=2,
+                index_version="test-v1",
+            )
+
+            # The delete's first consistent read fixes its snapshot before the
+            # managed worker publishes a new current revision.
+            snapshot_taken, publish_done = asyncio.Event(), asyncio.Event()
+            original_source_command = repository._source_command
+
+            async def gated_source_command(*args, **kwargs):
+                result = await original_source_command(*args, **kwargs)
+                snapshot_taken.set()
+                await publish_done.wait()
+                return result
+
+            repository._source_command = gated_source_command
+            deleting = asyncio.create_task(
+                repository.delete_source(
+                    document["source_id"],
+                    command=SourceCommand("delete-race", "source.delete", "correlation-race"),
+                )
+            )
+            await asyncio.wait_for(snapshot_taken.wait(), timeout=5)
+            await manager.run_pending()
+            async with sessions() as session:
+                published = await session.scalar(
+                    select(knowledge_document.c.current_revision_id).where(
+                        knowledge_document.c.document_id == document_id
+                    )
+                )
+            assert published != original_revision
+            publish_done.set()
+            await asyncio.wait_for(deleting, timeout=15)
+
+            assert await repository.get_document(document_id) is None
+            async with sessions() as session:
+                assert (
+                    await session.scalar(
+                        select(knowledge_document.c.status).where(
+                            knowledge_document.c.document_id == document_id
+                        )
+                    )
+                    == "deleting"
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_republish_purges_superseded_revision_rows_and_keeps_current(owned_project_mysql):
+    async def run():
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        artifacts, embeddings, index = Artifacts(), Embeddings(), Index()
+        try:
+            content = "Original alpha paragraph.\n\nSecond beta paragraph."
+            source_hash = canonical_sha256(content.encode())
+            artifacts.values["artifact:original"] = content.encode()
+            reserved = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="supersede.md",
+                    media_type="text/markdown",
+                    source_content_hash=source_hash,
+                    size=len(content),
+                    now=datetime.now(),
+                    staging_key="stage:supersede",
+                    chunk_settings=asdict(ChunkSettings()),
+                )
+            )
+            await repository.activate_upload(reserved, ArtifactLocator("artifact:original"))
+            document_id = reserved.document_id
+            async with sessions() as session:
+                uploaded = await session.scalar(
+                    select(knowledge_document.c.current_revision_id).where(
+                        knowledge_document.c.document_id == document_id
+                    )
+                )
+            normalized = NormalizedArtifact(
+                "supersede.md",
+                MediaType.MARKDOWN,
+                source_hash,
+                (NormalizedBlock("b1", "paragraph", content, (), None, 0, 0, len(content)),),
+                DocumentId(document_id),
+                RevisionId(uploaded),
+            )
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_document_revision)
+                    .where(knowledge_document_revision.c.revision_id == uploaded)
+                    .values(
+                        normalized_blob_locator=await artifacts.write_normalized(
+                            uploaded, normalized
+                        ),
+                        chunks_blob_locator=await artifacts.write_chunks(
+                            uploaded, StructuralChunker().chunk(normalized)
+                        ),
+                    )
+                )
+                await session.execute(
+                    update(knowledge_document)
+                    .where(knowledge_document.c.document_id == document_id)
+                    .values(status="ready", stage="ready", chunk_count=1)
+                )
+            # The original ingestion published the uploaded revision's rows.
+            index.revisions[uploaded] = {"uploaded-chunk"}
+            manager = MysqlManagedChunks(
+                sessions=sessions,
+                repository=repository,
+                scope=VALIDATION_SCOPE,
+                artifacts=artifacts,
+                embeddings=embeddings,
+                index=index,
+                embedding_model_alias="test",
+                embedding_dimension=2,
+                index_version="test-v1",
+            )
+
+            async def current_revision():
+                async with sessions() as session:
+                    return await session.scalar(
+                        select(knowledge_document.c.current_revision_id).where(
+                            knowledge_document.c.document_id == document_id
+                        )
+                    )
+
+            await manager.run_pending()
+            first = await current_revision()
+            assert first != uploaded
+            assert set(index.revisions) == {first}
+            assert index.fenced == {uploaded}
+
+            chunk = (await manager.list_chunks(document_id))["items"][0]
+            await manager.change(
+                document_id, chunk["chunkId"], chunk["version"], content="Edited alpha."
+            )
+            await manager.run_pending()
+            second = await current_revision()
+            assert second not in {uploaded, first}
+            assert set(index.revisions) == {second}
+            assert index.fenced == {uploaded, first}
+
+            # Completed cleanup is durable: another sweep has nothing to purge.
+            purges = len(index.purges)
+            await manager.run_pending()
+            assert len(index.purges) == purges
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_purge_failure_keeps_document_ready_and_run_pending_retries_the_obligation(
+    owned_project_mysql,
+):
+    async def run():
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        artifacts, embeddings, index = Artifacts(), Embeddings(), Index()
+        try:
+            content = "Original alpha paragraph.\n\nSecond beta paragraph."
+            source_hash = canonical_sha256(content.encode())
+            artifacts.values["artifact:original"] = content.encode()
+            reserved = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="purge-retry.md",
+                    media_type="text/markdown",
+                    source_content_hash=source_hash,
+                    size=len(content),
+                    now=datetime.now(),
+                    staging_key="stage:purge-retry",
+                    chunk_settings=asdict(ChunkSettings()),
+                )
+            )
+            await repository.activate_upload(reserved, ArtifactLocator("artifact:original"))
+            document_id = reserved.document_id
+            async with sessions() as session:
+                uploaded = await session.scalar(
+                    select(knowledge_document.c.current_revision_id).where(
+                        knowledge_document.c.document_id == document_id
+                    )
+                )
+            normalized = NormalizedArtifact(
+                "purge-retry.md",
+                MediaType.MARKDOWN,
+                source_hash,
+                (NormalizedBlock("b1", "paragraph", content, (), None, 0, 0, len(content)),),
+                DocumentId(document_id),
+                RevisionId(uploaded),
+            )
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_document_revision)
+                    .where(knowledge_document_revision.c.revision_id == uploaded)
+                    .values(
+                        normalized_blob_locator=await artifacts.write_normalized(
+                            uploaded, normalized
+                        ),
+                        chunks_blob_locator=await artifacts.write_chunks(
+                            uploaded, StructuralChunker().chunk(normalized)
+                        ),
+                    )
+                )
+                await session.execute(
+                    update(knowledge_document)
+                    .where(knowledge_document.c.document_id == document_id)
+                    .values(status="ready", stage="ready", chunk_count=1)
+                )
+            index.revisions[uploaded] = {"uploaded-chunk"}
+            manager = MysqlManagedChunks(
+                sessions=sessions,
+                repository=repository,
+                scope=VALIDATION_SCOPE,
+                artifacts=artifacts,
+                embeddings=embeddings,
+                index=index,
+                embedding_model_alias="test",
+                embedding_dimension=2,
+                index_version="test-v1",
+            )
+
+            async def current_revision():
+                async with sessions() as session:
+                    return await session.scalar(
+                        select(knowledge_document.c.current_revision_id).where(
+                            knowledge_document.c.document_id == document_id
+                        )
+                    )
+
+            async def purge_revision_id():
+                async with sessions() as session:
+                    return await session.scalar(
+                        select(managed_documents.c.purge_revision_id).where(
+                            managed_documents.c.document_id == document_id
+                        )
+                    )
+
+            # The very first publish supersedes the uploaded revision; inject a
+            # single purge failure so the obligation must survive the failure.
+            index.purge_failures_remaining = 1
+            await manager.run_pending()
+            first = await current_revision()
+            assert first != uploaded
+
+            # The publish is durable and the document stays ready/searchable even
+            # though its cleanup purge failed.
+            async with sessions() as session:
+                status = await session.scalar(
+                    select(knowledge_document.c.status).where(
+                        knowledge_document.c.document_id == document_id
+                    )
+                )
+            assert status == "ready"
+            assert (await manager.list_chunks(document_id))["items"]
+            assert index.purges == []
+            assert index.fenced == set()
+            assert await purge_revision_id() == uploaded
+
+            # The next sweep retries only the purge (no re-generation) and clears
+            # the obligation once it succeeds.
+            await manager.run_pending()
+            assert index.purges == [(document_id, first)]
+            assert index.fenced == {uploaded}
+            assert await purge_revision_id() is None
+            assert await current_revision() == first
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_run_pending_completes_a_purge_obligation_left_by_a_crash(owned_project_mysql):
+    async def run():
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        artifacts, embeddings, index = Artifacts(), Embeddings(), Index()
+        try:
+            content = "Original alpha paragraph.\n\nSecond beta paragraph."
+            source_hash = canonical_sha256(content.encode())
+            artifacts.values["artifact:original"] = content.encode()
+            reserved = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="crash-purge.md",
+                    media_type="text/markdown",
+                    source_content_hash=source_hash,
+                    size=len(content),
+                    now=datetime.now(),
+                    staging_key="stage:crash-purge",
+                    chunk_settings=asdict(ChunkSettings()),
+                )
+            )
+            await repository.activate_upload(reserved, ArtifactLocator("artifact:original"))
+            document_id = reserved.document_id
+            async with sessions() as session:
+                uploaded = await session.scalar(
+                    select(knowledge_document.c.current_revision_id).where(
+                        knowledge_document.c.document_id == document_id
+                    )
+                )
+            normalized = NormalizedArtifact(
+                "crash-purge.md",
+                MediaType.MARKDOWN,
+                source_hash,
+                (NormalizedBlock("b1", "paragraph", content, (), None, 0, 0, len(content)),),
+                DocumentId(document_id),
+                RevisionId(uploaded),
+            )
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_document_revision)
+                    .where(knowledge_document_revision.c.revision_id == uploaded)
+                    .values(
+                        normalized_blob_locator=await artifacts.write_normalized(
+                            uploaded, normalized
+                        ),
+                        chunks_blob_locator=await artifacts.write_chunks(
+                            uploaded, StructuralChunker().chunk(normalized)
+                        ),
+                    )
+                )
+                await session.execute(
+                    update(knowledge_document)
+                    .where(knowledge_document.c.document_id == document_id)
+                    .values(status="ready", stage="ready", chunk_count=1)
+                )
+            index.revisions[uploaded] = {"uploaded-chunk"}
+            manager = MysqlManagedChunks(
+                sessions=sessions,
+                repository=repository,
+                scope=VALIDATION_SCOPE,
+                artifacts=artifacts,
+                embeddings=embeddings,
+                index=index,
+                embedding_model_alias="test",
+                embedding_dimension=2,
+                index_version="test-v1",
+            )
+            await manager.run_pending()
+            async with sessions() as session:
+                current = await session.scalar(
+                    select(knowledge_document.c.current_revision_id).where(
+                        knowledge_document.c.document_id == document_id
+                    )
+                )
+            assert index.fenced == {uploaded}
+            assert index.purges == [(document_id, current)]
+
+            # Simulate a process that published and committed a new revision but
+            # died before ever attempting the purge: the obligation is written
+            # directly, bypassing process_document/_attempt_purge entirely.
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(managed_documents)
+                    .where(managed_documents.c.document_id == document_id)
+                    .values(purge_revision_id=uploaded)
+                )
+
+            await manager.run_pending()
+            assert index.purges == [(document_id, current), (document_id, current)]
+            assert index.fenced == {uploaded}
+            async with sessions() as session:
+                purge_revision_id = await session.scalar(
+                    select(managed_documents.c.purge_revision_id).where(
+                        managed_documents.c.document_id == document_id
+                    )
+                )
+            assert purge_revision_id is None
         finally:
             await engine.dispose()
 
