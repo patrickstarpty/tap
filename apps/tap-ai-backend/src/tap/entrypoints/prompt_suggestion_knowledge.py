@@ -211,9 +211,7 @@ class AnswerGroundingCheck:
     def __init__(self, answers: AnswerService) -> None:
         self._answers = answers
 
-    async def is_grounded(
-        self, actor_id: str, question: str, source_ids: tuple[str, ...]
-    ) -> bool:
+    async def is_grounded(self, actor_id: str, question: str, source_ids: tuple[str, ...]) -> bool:
         del actor_id  # actor identity is bound by the AnswerService's own scope
         request = AnswerRequest(
             query=question,

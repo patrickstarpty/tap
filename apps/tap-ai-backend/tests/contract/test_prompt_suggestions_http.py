@@ -72,9 +72,7 @@ def test_prompt_suggestions_are_listed_for_locale():
             }
         ]
     }
-    assert service.received_keys == [
-        SuggestionKey(actor_id=VALIDATION_SCOPE.actor_id, locale="zh")
-    ]
+    assert service.received_keys == [SuggestionKey(actor_id=VALIDATION_SCOPE.actor_id, locale="zh")]
 
 
 def test_prompt_suggestions_reject_unknown_locale():
@@ -98,8 +96,8 @@ def test_prompt_suggestions_return_empty_list():
 def test_prompt_suggestions_operation_is_published():
     client = _client(_FakePromptSuggestionService())
 
-    operation = client.app.openapi()["paths"][
-        "/api/v1/projects/{project_id}/prompt-suggestions"
-    ]["get"]
+    operation = client.app.openapi()["paths"]["/api/v1/projects/{project_id}/prompt-suggestions"][
+        "get"
+    ]
 
     assert operation["operationId"] == "prompt_suggestion_list"
