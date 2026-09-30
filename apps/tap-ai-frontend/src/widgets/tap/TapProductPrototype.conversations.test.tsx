@@ -59,3 +59,133 @@ it("keeps an explicit New chat when durable history arrives afterwards", async (
     "",
   );
 });
+
+const ANSWER = {
+  traceId: "trace-1",
+  queryPlanId: "plan-1",
+  contextSnapshotId: "context-1",
+  corpusVersion: "v1",
+  retrievalProfileId: "quick",
+  degradedMode: false,
+  answer: "Verified identity is required.",
+  abstained: false,
+  claims: [
+    {
+      claimId: "claim-1",
+      text: "Verified identity is required.",
+      citationIds: [],
+    },
+  ],
+  citations: [],
+};
+
+function completedConversation({ traceId }: { traceId: string | null }) {
+  vi.stubGlobal("fetch", async (request: Request) => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith("/conversations") && request.method === "GET")
+      return json({
+        items: [
+          {
+            conversationId: "conversation-a",
+            title: "What is the rule?",
+            createdAt: "2026-09-29T08:00:00Z",
+            updatedAt: "2026-09-29T08:00:00Z",
+          },
+        ],
+        nextCursor: null,
+      });
+    if (path.endsWith("/conversations/conversation-a"))
+      return json({
+        conversationId: "conversation-a",
+        title: "What is the rule?",
+        createdAt: "2026-09-29T08:00:00Z",
+        updatedAt: "2026-09-29T08:00:01Z",
+        turns: [
+          {
+            turnId: "turn-1",
+            state: "completed",
+            attempt: 1,
+            traceId,
+            inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
+            answerEvidenceSnapshotDigest: null,
+            input: {
+              message: "What is the rule?",
+              modelAlias: "qwen-plus",
+              sourceRevisionIds: [],
+              documentRevisionIds: [],
+              resolvedResources: [],
+              agentRevisionId: null,
+              agentLabel: null,
+              skillRevisionIds: [],
+              skillLabels: [],
+              insightsQueryId: null,
+            },
+          },
+        ],
+      });
+    if (path.endsWith("/conversations/conversation-a/events"))
+      return json({
+        items: [
+          {
+            eventId: "event-1",
+            sequence: 1,
+            turnId: "turn-1",
+            occurredAt: "2026-09-29T08:00:01Z",
+            eventType: "turn.completed",
+            payload: { answer: ANSWER },
+          },
+        ],
+        nextCursor: null,
+      });
+    if (path.endsWith("/conversations/conversation-a/turns/turn-1/trace"))
+      return json({
+        traceId: "trace-1",
+        summary: {
+          totalDurationMs: 900,
+          inputTokens: 10,
+          outputTokens: 20,
+          costUsd: "0.0010",
+          costIncomplete: false,
+          requestedModels: ["qwen-plus"],
+          upstreamModels: ["qwen-plus-2024"],
+          attemptCount: 1,
+        },
+        spans: [
+          {
+            spanId: "span-1",
+            parentSpanId: null,
+            name: "turn.execute",
+            status: "ok",
+            startedAt: "2026-09-29T08:00:00.000Z",
+            durationMs: 900,
+            attributes: {},
+            attempt: 1,
+          },
+        ],
+        modelCalls: [],
+      });
+    throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
+  });
+  const api = fakeKnowledgeClient();
+  return renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    api,
+  });
+}
+
+it("shows trace panel for terminal turn with traceId", async () => {
+  completedConversation({ traceId: "trace-1" });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    await screen.findByRole("button", { name: /^Trace:/u }),
+  ).toBeInTheDocument();
+});
+
+it("falls back to activity when traceId is null", async () => {
+  completedConversation({ traceId: null });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    screen.queryByRole("button", { name: /^Trace:/u }),
+  ).not.toBeInTheDocument();
+});

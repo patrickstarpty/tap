@@ -1453,6 +1453,141 @@
   margin-top: 4px;
 }
 
+.tap-trace-panel {
+  max-width: 76ch;
+  margin-bottom: 12px;
+}
+
+.tap-trace-summary.ant-btn {
+  height: auto;
+  padding: 0;
+  white-space: normal;
+  text-align: left;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-trace-body {
+  margin-top: 12px;
+}
+
+.tap-trace-attempts {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tap-trace-attempts button {
+  border: 1px solid var(--tap-line);
+  background: var(--tap-surface);
+  color: var(--tap-ink);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tap-trace-attempts button[aria-selected="true"] {
+  background: var(--tap-accent);
+  border-color: var(--tap-accent);
+  color: #fff;
+}
+
+.tap-trace-waterfall {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(120px, 1fr) 56px auto;
+  align-items: center;
+  row-gap: 10px;
+  column-gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.tap-trace-row {
+  display: contents;
+}
+
+.tap-trace-row-name {
+  overflow-wrap: anywhere;
+}
+
+.tap-trace-row-timeline {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--tap-surface);
+}
+
+.tap-trace-row-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 3px;
+  border-radius: 4px;
+  background: var(--tap-accent);
+}
+
+.tap-trace-row-error .tap-trace-row-bar {
+  background: #d4380d;
+}
+
+.tap-trace-row-error .tap-trace-row-name {
+  color: #d4380d;
+  font-weight: 600;
+}
+
+.tap-trace-row-duration {
+  text-align: right;
+  color: var(--tap-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-trace-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tap-trace-hit-chunks {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.tap-model-call-drawer-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 16px 0;
+  border-bottom: 1px solid var(--tap-line);
+}
+
+.tap-model-call-drawer-tabs button {
+  border: 0;
+  background: transparent;
+  color: var(--tap-ink);
+  font: inherit;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.tap-model-call-drawer-tabs button[aria-selected="true"] {
+  border-bottom: 2px solid var(--tap-accent);
+  color: var(--tap-accent);
+  font-weight: 600;
+}
+
+.tap-trace-document-panel {
+  padding: 16px;
+  overflow: auto;
+}
+
 .tap-answer-progress {
   width: fit-content;
   margin: 0;

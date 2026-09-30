@@ -48,7 +48,10 @@ import {
   useConversationStream,
   useCreateConversation,
   useConversationClient,
+  useTurnTrace,
 } from "../../features/conversations/api/queries";
+import { TracePanel } from "../../features/conversations/trace/TracePanel";
+import { ModelCallDrawer } from "../../features/conversations/trace/ModelCallDrawer";
 import {
   parseInsightsHandoff,
   type InsightsHandoff,
@@ -475,12 +478,56 @@ interface ResendContext {
   skillIds: readonly string[];
 }
 
+const TERMINAL_TURN_STATUSES = [
+  "completed",
+  "abstained",
+  "canceled",
+  "failed",
+] as const;
+
+function DurableTracePanel({
+  projectId,
+  conversationId,
+  turn,
+  onOpenDocument,
+}: {
+  projectId: string | null;
+  conversationId: string;
+  turn: AssistantTurn;
+  onOpenDocument: (documentId: string) => void;
+}) {
+  const [openCallId, setOpenCallId] = useState<string | null>(null);
+  const traceQuery = useTurnTrace(projectId, conversationId, turn.id, {
+    enabled: turn.traceId != null,
+    latestAttempt: turn.attempt ?? 1,
+  });
+  if (traceQuery.data === undefined) return null;
+  return (
+    <>
+      <TracePanel
+        trace={traceQuery.data}
+        locale={turn.locale}
+        onOpenModelCall={setOpenCallId}
+        onOpenDocument={onOpenDocument}
+      />
+      <ModelCallDrawer
+        projectId={projectId}
+        callId={openCallId}
+        locale={turn.locale}
+        onClose={() => setOpenCallId(null)}
+      />
+    </>
+  );
+}
+
 function AssistantResponse({
   contentCopy,
   turn,
   insightsClient,
   conversationId,
+  projectId = null,
   onOpenCitation,
+  onOpenDocument,
   onRetryConversation,
   onResend,
   onGenerateTestPlan,
@@ -490,7 +537,9 @@ function AssistantResponse({
   turn: AssistantTurn;
   insightsClient?: ConversationClient | null;
   conversationId?: string;
+  projectId?: string | null;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
+  onOpenDocument?: (documentId: string) => void;
   onRetryConversation: () => void;
   /** Sends the same question and context again as a new turn. */
   onResend?: () => void;
@@ -552,16 +601,28 @@ function AssistantResponse({
     if (turn.response !== undefined && turn.response !== null) {
       return (
         <>
-          <AnswerActivity
-            events={activityEvents}
-            locale={turn.locale}
-            sourceCount={turn.sourceReferences.length}
-            shownCitationCount={
-              new Set(
-                turn.response.claims.flatMap((claim) => claim.citationIds),
-              ).size
-            }
-          />
+          {turn.status !== undefined &&
+          (TERMINAL_TURN_STATUSES as readonly string[]).includes(turn.status) &&
+          turn.traceId != null &&
+          conversationId !== undefined ? (
+            <DurableTracePanel
+              projectId={projectId}
+              conversationId={conversationId}
+              turn={turn}
+              onOpenDocument={onOpenDocument ?? (() => undefined)}
+            />
+          ) : (
+            <AnswerActivity
+              events={activityEvents}
+              locale={turn.locale}
+              sourceCount={turn.sourceReferences.length}
+              shownCitationCount={
+                new Set(
+                  turn.response.claims.flatMap((claim) => claim.citationIds),
+                ).size
+              }
+            />
+          )}
           <GroundedAnswer
             response={turn.response}
             locale={turn.locale}
@@ -1164,6 +1225,7 @@ export function TapProductPrototype({
     activeCitation?.id ?? null,
     activeCitation?.generation ?? 0,
   );
+  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [messageDraft, setMessageDraft] = useState("");
   const [insightsHandoff, setInsightsHandoff] =
     useState<InsightsHandoff | null>(null);
@@ -1357,6 +1419,8 @@ export function TapProductPrototype({
           origin: "knowledge-base" as const,
         })),
         response: streamed?.response ?? null,
+        traceId: turn.traceId ?? null,
+        attempt: turn.attempt,
         status: ["completed", "abstained", "canceled", "failed"].includes(
           turn.state,
         )
@@ -2457,6 +2521,12 @@ export function TapProductPrototype({
                   turn={turn}
                   insightsClient={insightsClient}
                   conversationId={durable ? activeConversation.id : undefined}
+                  projectId={durable ? projectId : null}
+                  onOpenDocument={(documentId) => {
+                    setSourcesCollapsed(false);
+                    setActiveCitation(null);
+                    setActiveDocumentId(documentId);
+                  }}
                   activityEvents={
                     durable
                       ? (conversationEvents.data?.items ?? []).filter(
@@ -2471,6 +2541,7 @@ export function TapProductPrototype({
                     if (citation !== undefined) {
                       citationTrigger.current = trigger;
                       setSourcesCollapsed(false);
+                      setActiveDocumentId(null);
                       setActiveCitation((current) => ({
                         citation,
                         conversationId: durable ? activeConversation.id : null,
@@ -2533,6 +2604,27 @@ export function TapProductPrototype({
                   returnFocusTo={citationTrigger.current}
                   onClose={() => setActiveCitation(null)}
                 />
+              ) : activeDocumentId !== null && projectId !== null ? (
+                <section
+                  className="tapper-panel tap-trace-document-panel"
+                  aria-labelledby="tap-trace-document-heading"
+                >
+                  <header className="tapper-panel-header">
+                    <h2 id="tap-trace-document-heading">
+                      {locale === "zh" ? "原文与切片" : "Source document"}
+                    </h2>
+                    <Button
+                      onClick={() => setActiveDocumentId(null)}
+                      aria-label={locale === "zh" ? "关闭" : "Close"}
+                    >
+                      {locale === "zh" ? "关闭" : "Close"}
+                    </Button>
+                  </header>
+                  <DocumentChunks
+                    projectId={projectId}
+                    documentId={activeDocumentId}
+                  />
+                </section>
               ) : (
                 <KnowledgeSourcesPanel
                   copy={copy}

@@ -164,6 +164,52 @@ export function useConversationCitation(
   });
 }
 
+export function useTurnTrace(
+  projectId: string | null,
+  conversationId: string | null,
+  turnId: string,
+  options: { enabled: boolean; latestAttempt: number },
+) {
+  const client = useConversationClient(projectId);
+  return useQuery({
+    queryKey: [
+      ...conversationKeys.detail(projectId, conversationId),
+      turnId,
+      "trace",
+    ] as const,
+    enabled: client !== null && conversationId !== null && options.enabled,
+    queryFn: ({ signal }) => client!.turnTrace(conversationId!, turnId, signal),
+    staleTime: Infinity,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const hasLatestAttemptExecuteSpan =
+        data?.spans.some(
+          (span) =>
+            span.name === "turn.execute" &&
+            span.attempt === options.latestAttempt,
+        ) ?? false;
+      return !hasLatestAttemptExecuteSpan && query.state.dataUpdateCount < 4
+        ? 2000
+        : false;
+    },
+    retry: retryConversationRequest,
+  });
+}
+
+export function useModelCallDetail(
+  projectId: string | null,
+  callId: string | null,
+) {
+  const client = useConversationClient(projectId);
+  return useQuery({
+    queryKey: ["model-calls", projectId, callId] as const,
+    enabled: client !== null && callId !== null,
+    queryFn: ({ signal }) => client!.modelCall(callId!, signal),
+    staleTime: Infinity,
+    retry: retryConversationRequest,
+  });
+}
+
 export function useCreateConversation(projectId: string | null) {
   const client = useConversationClient(projectId);
   const cache = useQueryClient();
