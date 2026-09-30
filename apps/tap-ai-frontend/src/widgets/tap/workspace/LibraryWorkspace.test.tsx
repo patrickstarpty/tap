@@ -1,0 +1,185 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+
+import { LibraryWorkspace } from "./LibraryWorkspace";
+import { WORKSPACE_COPY } from "./copy";
+import type { LibrarySource } from "./model";
+
+const FILE_TYPES = [
+  "XLSX",
+  "PDF",
+  "DOCX",
+  "MD",
+  "TXT",
+  "PPTX",
+  "CSV",
+  "JSON",
+  "YAML",
+  "XML",
+  "HTML",
+  "RTF",
+  "ODT",
+  "DOC",
+  "ODS",
+  "XLS",
+  "ODP",
+  "PPT",
+] as const;
+
+const TEST_SOURCES: readonly LibrarySource[] = FILE_TYPES.map((type) => {
+  if (type === "PDF") {
+    return {
+      id: "test-underwriting",
+      name: "Underwriting test rules.pdf",
+      type,
+      description:
+        "Decision boundaries, review triggers and expected outcomes.",
+      downloadUrl: "/library-files/underwriting-test-rules.pdf",
+      origin: "knowledge-base",
+      status: "ready",
+    };
+  }
+  if (type === "MD") {
+    return {
+      id: "test-exploratory",
+      name: "Exploratory testing checklist.md",
+      type,
+      description: "Permissions, boundary values and recovery scenarios.",
+      downloadUrl: "/library-files/exploratory-testing-checklist.md",
+      origin: "knowledge-base",
+      status: "ready",
+    };
+  }
+  return {
+    id: `test-${type.toLowerCase()}`,
+    name: `Test file.${type.toLowerCase()}`,
+    type,
+    description: "Test library file.",
+    downloadUrl: `/library-files/test-file.${type.toLowerCase()}`,
+    origin: "knowledge-base",
+    status: "ready",
+  };
+});
+
+describe("Library file browsing", () => {
+  it("shows no graph without a project", async () => {
+    const user = userEvent.setup();
+    render(
+      <LibraryWorkspace
+        copy={WORKSPACE_COPY.en}
+        sources={TEST_SOURCES}
+        onAddSource={async () => undefined}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No project is selected.",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Underwriting" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Underwriting")).not.toBeInTheDocument();
+  });
+  it("clears search, type and status together from the adjacent button", async () => {
+    const user = userEvent.setup();
+    render(
+      <LibraryWorkspace
+        copy={WORKSPACE_COPY.en}
+        sources={TEST_SOURCES}
+        onAddSource={async () => undefined}
+      />,
+    );
+    const search = screen.getByRole("textbox", { name: "Search library" });
+    const clear = screen.getByRole("button", { name: "Clear filters" });
+    expect(clear).toBeDisabled();
+    expect(search.parentElement).toContainElement(clear);
+    await user.type(search, "underwriting");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Type" }),
+      "PDF",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Status" }),
+      "ready",
+    );
+    await user.click(clear);
+    expect(search).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("all");
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveValue("all");
+    expect(clear).toBeDisabled();
+  });
+  it("keeps file clicks in place and offers direct downloads across views", async () => {
+    const user = userEvent.setup();
+    render(
+      <LibraryWorkspace
+        copy={WORKSPACE_COPY.en}
+        sources={TEST_SOURCES}
+        onAddSource={async () => undefined}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Documents" }));
+    const sources = screen.getByRole("list", { name: "Library sources" });
+    expect(within(sources).getAllByRole("listitem")).toHaveLength(18);
+    await user.click(
+      within(sources).getByText("Exploratory testing checklist.md"),
+    );
+    expect(
+      screen.queryByRole("complementary", { name: "File preview" }),
+    ).not.toBeInTheDocument();
+    const download = screen.getByRole("link", {
+      name: "Download file Exploratory testing checklist.md",
+    });
+    expect(download).toHaveAttribute(
+      "href",
+      "/library-files/exploratory-testing-checklist.md",
+    );
+    expect(download).toHaveAttribute("download");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Type" }),
+      "PDF",
+    );
+    await user.click(screen.getByRole("button", { name: "Card view" }));
+    expect(within(sources).getAllByRole("listitem")).toHaveLength(1);
+    await user.click(within(sources).getByText("Underwriting test rules.pdf"));
+    expect(
+      screen.queryByRole("complementary", { name: "File preview" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", {
+        name: "Download file Underwriting test rules.pdf",
+      }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Examples loaded" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not offer a download when the source has no file URL", async () => {
+    const user = userEvent.setup();
+    render(
+      <LibraryWorkspace
+        copy={WORKSPACE_COPY.en}
+        onAddSource={async () => undefined}
+        sources={[
+          {
+            id: "real",
+            name: "Uploaded.pdf",
+            type: "PDF",
+            status: "ready",
+            origin: "knowledge-base",
+            description: "Knowledge source",
+          },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Documents" }));
+    await user.click(screen.getByText("Uploaded.pdf"));
+    expect(
+      screen.queryByRole("complementary", { name: "File preview" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Download file/ }),
+    ).not.toBeInTheDocument();
+  });
+});

@@ -116,7 +116,7 @@ describe("conversation stream reducer", () => {
     // A citation resolving early must never hand callers a `response` that is
     // missing `claims`/`answer` — every consumer of `StreamTurnState.response`
     // treats a non-null value as a complete `RetrievalAnswerResponse` (see
-    // TapProductPrototype.tsx's AssistantResponse, which crashed on
+    // TapperWorkspace.tsx's AssistantResponse, which crashed on
     // `turn.response.claims.flatMap(...)` when this held a partial object).
     expect(state.turns["turn-1"]?.response).toBeNull();
     expect(state.turns["turn-1"]?.pendingCitations).toHaveLength(1);

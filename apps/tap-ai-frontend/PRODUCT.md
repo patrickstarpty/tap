@@ -72,7 +72,7 @@ Tapper 不是通用聊天机器人，也不只是测试用例生成器或测试�
 - 软件生命周期与阶段路线图：[`../../docs/plans/2026-08-20-roadmap.md`](../../docs/archive/plans/2026-08-20-roadmap.md)
 - Knowledge Chat 目标交互：[`../../docs/architecture/2026-08-21-knowledge-chat-ui.md`](../../docs/archive/architecture/2026-08-21-knowledge-chat-ui.md)
 - 总体平台边界：[`../../docs/architecture/2026-08-20-overview.md`](../../docs/archive/architecture/2026-08-20-overview.md)
-- 当前 Tapper Web 实现与测试：[`src/pages/TapperPage.tsx`](src/pages/TapperPage.tsx)、[`src/widgets/tapper/TapperWorkspace.tsx`](src/widgets/tapper/TapperWorkspace.tsx)、[`tests/e2e/tapper.spec.ts`](tests/e2e/tapper.spec.ts)
+- 当前 Tapper Web 实现与测试：[`src/pages/TapAiPage.tsx`](src/pages/TapAiPage.tsx) → [`src/widgets/tap/TapperWorkspace.tsx`](src/widgets/tap/TapperWorkspace.tsx)、[`tests/e2e/tapper.spec.ts`](tests/e2e/tapper.spec.ts)
 - 本轮 A/B/C 概念原型保存在仓库忽略的 `.superpowers/brainstorm/` 目录，仅作为设计探索证据。
 - 当前已有 Tapper ink mark/wordmark SVG 品牌资产；没有用户研究样本、客户背书或可公开产品指标，后续设计不得虚构这些内容。
 

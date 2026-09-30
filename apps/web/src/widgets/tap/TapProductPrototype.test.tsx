@@ -1,6 +1,13 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TapProductPrototype } from "./TapProductPrototype";
+import { setPrototypeFaults } from "./prototype/prototypeFaults";
 beforeEach(() => {
   localStorage.clear();
   vi.stubGlobal(
@@ -13,6 +20,9 @@ beforeEach(() => {
     })),
   );
   HTMLElement.prototype.scrollIntoView = vi.fn();
+});
+afterEach(() => {
+  setPrototypeFaults([]);
 });
 it("retains all baseline modules in one product shell", () => {
   render(<TapProductPrototype />);
@@ -58,15 +68,20 @@ it("uses one review workbench for long text, PDF and Excel sources", () => {
     fireEvent.click(
       screen.getByRole("button", { name: `Manage chunks ${name}` }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Original document" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Original document" }),
+    );
     expect(
-      screen.getByRole("navigation", { name: "Document outline" }),
+      within(dialog).getByRole("navigation", { name: "Document outline" }),
     ).toBeVisible();
-    expect(screen.getByRole("heading", { name: location })).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Mark selected text" }),
+      within(dialog).getByRole("heading", { name: location }),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(
+      within(dialog).getByRole("button", { name: "Mark selected text" }),
+    ).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
   }
 });
 
@@ -126,7 +141,7 @@ it("processes a replacement document into manageable chunks", async () => {
   await waitFor(
     () =>
       expect(screen.getByRole("button", { name: "Add chunk" })).toBeVisible(),
-    { timeout: 2_000 },
+    { timeout: 3_000 },
   );
   view.unmount();
   render(<TapProductPrototype />);
@@ -135,4 +150,312 @@ it("processes a replacement document into manageable chunks", async () => {
   expect(
     screen.getByRole("button", { name: "Manage chunks replacement.md" }),
   ).toBeVisible();
+});
+
+it("retries a failed document from the library source detail dialog", async () => {
+  render(<TapProductPrototype />);
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "View Underwriting rules — scanned.pdf",
+    }),
+  );
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByText("Failed")).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+  expect(within(dialog).getByText("Processing")).toBeVisible();
+  await waitFor(
+    () => expect(within(dialog).getByText("Ready")).toBeVisible(),
+    { timeout: 3_000 },
+  );
+});
+
+it("deletes a source after confirmation", () => {
+  render(<TapProductPrototype />);
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "View Life underwriting guide · v1.2.md",
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete source" }));
+  expect(
+    screen.getByText(
+      "Delete this source? It will be removed from Library and knowledge sources.",
+    ),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  expect(
+    screen.queryByRole("button", {
+      name: "Manage chunks Life underwriting guide · v1.2.md",
+    }),
+  ).not.toBeInTheDocument();
+});
+
+it("removes a deleted source from the active selection", () => {
+  render(<TapProductPrototype />);
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /Underwriting test rules\.pdf/ }),
+  );
+  expect(screen.getByText("1 selected")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Underwriting test rules.pdf" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete source" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  fireEvent.click(screen.getByRole("button", { name: "Tapper" }));
+  expect(
+    screen.queryByRole("checkbox", { name: /Underwriting test rules\.pdf/ }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("0 selected")).toBeVisible();
+});
+
+function selectUnderwritingSources() {
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /Life underwriting guide · v1\.2\.md/,
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /Underwriting test rules\.pdf/ }),
+  );
+}
+
+function askHealthDisclosureQuestion() {
+  fireEvent.change(screen.getByLabelText("Message Tapper"), {
+    target: { value: "What does the health disclosure rule require?" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+}
+
+it("opens citations in the sources panel instead of a dialog", async () => {
+  render(<TapProductPrototype />);
+  selectUnderwritingSources();
+  askHealthDisclosureQuestion();
+  await waitFor(
+    () =>
+      expect(
+        screen.getByRole("button", {
+          name: "[2] Underwriting test rules.pdf",
+        }),
+      ).toBeVisible(),
+    { timeout: 3_000 },
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "[2] Underwriting test rules.pdf" }),
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Citation [2]" })).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "This source has been updated",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Back to sources" }));
+  expect(
+    screen.getByRole("heading", { name: "Knowledge sources" }),
+  ).toBeVisible();
+});
+
+it("returns to sources when the conversation changes", async () => {
+  render(<TapProductPrototype />);
+  selectUnderwritingSources();
+  askHealthDisclosureQuestion();
+  await waitFor(
+    () =>
+      expect(
+        screen.getByRole("button", {
+          name: "[1] Life underwriting guide · v1.2.md",
+        }),
+      ).toBeVisible(),
+    { timeout: 3_000 },
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "[1] Life underwriting guide · v1.2.md",
+    }),
+  );
+  expect(screen.getByRole("heading", { name: "Citation [1]" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+  expect(
+    screen.queryByRole("heading", { name: "Citation [1]" }),
+  ).not.toBeInTheDocument();
+});
+
+it("shows a verification failure alert when the citation fault is injected", async () => {
+  setPrototypeFaults(["citation-verification-failed"]);
+  render(<TapProductPrototype />);
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /Life underwriting guide · v1\.2\.md/,
+    }),
+  );
+  askHealthDisclosureQuestion();
+  await waitFor(
+    () =>
+      expect(
+        screen.getByRole("button", {
+          name: "[1] Life underwriting guide · v1.2.md",
+        }),
+      ).toBeVisible(),
+    { timeout: 3_000 },
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "[1] Life underwriting guide · v1.2.md",
+    }),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "The citation could not be verified.",
+  );
+});
+
+it("re-seeds the citation panel when a different citation is opened without closing", async () => {
+  setPrototypeFaults(["citation-verification-failed"]);
+  render(<TapProductPrototype />);
+  selectUnderwritingSources();
+  askHealthDisclosureQuestion();
+  await waitFor(
+    () =>
+      expect(
+        screen.getByRole("button", {
+          name: "[1] Life underwriting guide · v1.2.md",
+        }),
+      ).toBeVisible(),
+    { timeout: 3_000 },
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "[1] Life underwriting guide · v1.2.md",
+    }),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "The citation could not be verified.",
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "[2] Underwriting test rules.pdf" }),
+  );
+  expect(screen.getByRole("heading", { name: "Citation [2]" })).toBeVisible();
+  expect(
+    screen.queryByText("The citation could not be verified."),
+  ).not.toBeInTheDocument();
+});
+
+it("opens the original review document from a knowledge-base citation", async () => {
+  render(<TapProductPrototype />);
+  selectUnderwritingSources();
+  askHealthDisclosureQuestion();
+  await waitFor(
+    () =>
+      expect(
+        screen.getByRole("button", {
+          name: "[1] Life underwriting guide · v1.2.md",
+        }),
+      ).toBeVisible(),
+    { timeout: 3_000 },
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "[1] Life underwriting guide · v1.2.md",
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Open original" }));
+  const dialog = screen.getByRole("dialog");
+  expect(
+    within(dialog).getByRole("heading", {
+      name: "Life underwriting guide · v1.2.md",
+    }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Library", hidden: true }),
+  ).toBeInTheDocument();
+});
+
+it("opens the Library without a review dialog from a sample-file citation", async () => {
+  render(<TapProductPrototype />);
+  selectUnderwritingSources();
+  askHealthDisclosureQuestion();
+  await waitFor(
+    () =>
+      expect(
+        screen.getByRole("button", {
+          name: "[2] Underwriting test rules.pdf",
+        }),
+      ).toBeVisible(),
+    { timeout: 3_000 },
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "[2] Underwriting test rules.pdf" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Open original" }));
+  expect(
+    screen.getByRole("heading", { name: "Library" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("does not open a document review for a citation whose source was deleted", async () => {
+  render(<TapProductPrototype />);
+  selectUnderwritingSources();
+  askHealthDisclosureQuestion();
+  await waitFor(
+    () =>
+      expect(
+        screen.getByRole("button", {
+          name: "[1] Life underwriting guide · v1.2.md",
+        }),
+      ).toBeVisible(),
+    { timeout: 3_000 },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "View Life underwriting guide · v1.2.md",
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete source" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  fireEvent.click(screen.getByRole("button", { name: "Tapper" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "[1] Life underwriting guide · v1.2.md",
+    }),
+  );
+  expect(
+    screen.getByText("This source is no longer available."),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Open original" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+}, 10_000);
+
+it("expands the collapsed sources panel when a citation is opened", async () => {
+  render(<TapProductPrototype />);
+  selectUnderwritingSources();
+  askHealthDisclosureQuestion();
+  await waitFor(
+    () =>
+      expect(
+        screen.getByRole("button", {
+          name: "[1] Life underwriting guide · v1.2.md",
+        }),
+      ).toBeVisible(),
+    { timeout: 3_000 },
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Collapse Knowledge sources" }),
+  );
+  expect(
+    screen.queryByRole("heading", { name: "Knowledge sources" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "[1] Life underwriting guide · v1.2.md",
+    }),
+  );
+  expect(screen.getByRole("heading", { name: "Citation [1]" })).toBeVisible();
 });

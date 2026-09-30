@@ -33,13 +33,14 @@ import type {
   Conversation,
   LibrarySource,
 } from "./model";
-import { CODEX_MODELS } from "./model";
+import { CODEX_MODELS, isGenerating } from "./model";
 import { FileTypeIcon } from "./FileTypeIcon";
 import {
   ATTACHMENT_ACCEPT,
   validateAttachmentFile,
   type ComposerAttachmentView,
 } from "./composerAttachments";
+import { isPrototypeFaultActive } from "./prototypeFaults";
 import { AccessibleDialog } from "../../../legacy/AccessibleDialog";
 
 type PickerKind = "library" | "agents" | "skills";
@@ -56,8 +57,10 @@ interface TapperChatProps {
   pageContext?: AssistantTurn["pageContext"];
   onClearPageContext: () => void;
   onModelChange: (modelId: CodexModelId) => void;
-  onSend: (prompt: string) => void;
+  onSend: (prompt: string) => boolean;
   onStop?: () => void;
+  sendError?: string | null;
+  stopError?: string | null;
   onRegenerate?: (turn: AssistantTurn) => void;
   onEditTurn?: (turn: AssistantTurn) => void;
   onUploadFile?: (file: File) => void;
@@ -131,6 +134,8 @@ export function TapperChat({
   onModelChange,
   onSend,
   onStop,
+  sendError = null,
+  stopError = null,
   onRegenerate,
   onEditTurn,
   onUploadFile,
@@ -178,8 +183,8 @@ export function TapperChat({
     turnId: string | null;
   } | null>(null);
   const hasTurns = conversation.turns.length > 0;
-  const isGenerating = conversation.turns.some(
-    (turn) => turn.answerState === "running",
+  const conversationIsGenerating = conversation.turns.some((turn) =>
+    isGenerating(turn),
   );
 
   useEffect(() => {
@@ -316,9 +321,12 @@ export function TapperChat({
       document.removeEventListener("pointerdown", closeOnOutsidePointer);
   }, [modelMenuOpen]);
 
+  const noModelsAvailable = isPrototypeFaultActive("no-models");
+
   const selectedModel =
     CODEX_MODELS.find((model) => model.id === conversation.modelId) ??
     CODEX_MODELS[0]!;
+  const sendBlockedByModel = noModelsAvailable || !selectedModel.available;
 
   const selectedSources = sources.filter((source) =>
     conversation.selectedSourceIds.includes(source.id),
@@ -419,9 +427,15 @@ export function TapperChat({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = message.trim();
-    if (prompt.length === 0 || isSending || isGenerating) return;
-    onSend(prompt);
-    setMessage("");
+    if (
+      prompt.length === 0 ||
+      isSending ||
+      conversationIsGenerating ||
+      sendBlockedByModel
+    )
+      return;
+    const sent = onSend(prompt);
+    if (sent) setMessage("");
     composerRef.current?.focus();
   };
 
@@ -846,6 +860,9 @@ export function TapperChat({
             }}
           />
         </div>
+        <span className="tap-composer-context-note">
+          {copy.composer.contextNote}
+        </span>
         <div className="tap-composer-model-control">
           <button
             ref={modelTriggerRef}
@@ -859,7 +876,9 @@ export function TapperChat({
               setModelMenuOpen((current) => !current);
             }}
           >
-            <span>{selectedModel.label}</span>
+            <span>
+              {noModelsAvailable ? copy.composer.noModels : selectedModel.label}
+            </span>
             <DownOutlined aria-hidden="true" />
           </button>
           {modelMenuOpen ? (
@@ -872,18 +891,26 @@ export function TapperChat({
             >
               {CODEX_MODELS.map((model) => {
                 const selected = model.id === selectedModel.id;
+                const available = model.available && !noModelsAvailable;
                 return (
                   <button
                     key={model.id}
                     type="button"
                     role="menuitemradio"
                     aria-checked={selected}
+                    aria-disabled={available ? undefined : "true"}
                     onClick={() => {
+                      if (!available) return;
                       onModelChange(model.id);
                       setModelMenuOpen(false);
                     }}
                   >
                     <span>{model.label}</span>
+                    {available ? null : (
+                      <span className="tap-model-unavailable">
+                        {copy.composer.modelUnavailable}
+                      </span>
+                    )}
                     {selected ? <CheckOutlined aria-hidden="true" /> : null}
                   </button>
                 );
@@ -891,7 +918,7 @@ export function TapperChat({
             </div>
           ) : null}
         </div>
-        {isGenerating && !isSending ? (
+        {conversationIsGenerating && !isSending ? (
           <button
             key="stop"
             className="tap-composer-send-button"
@@ -913,7 +940,9 @@ export function TapperChat({
             data-state={isSending ? "sending" : undefined}
             aria-label={isSending ? copy.chat.sending : copy.chat.send}
             aria-busy={isSending || undefined}
-            disabled={isSending || message.trim().length === 0}
+            disabled={
+              isSending || message.trim().length === 0 || sendBlockedByModel
+            }
           >
             <span className="tap-composer-send-face">
               {isSending ? (
@@ -981,8 +1010,9 @@ export function TapperChat({
                   )}
                   <div className="tap-user-message">{turn.prompt}</div>
                 </div>
-                {(turn.sourceReferences.length > 0 ||
-                  (turn.catalogReferences?.length ?? 0) > 0) && (
+                {turn.answerState !== "completed" &&
+                (turn.sourceReferences.length > 0 ||
+                  (turn.catalogReferences?.length ?? 0) > 0) ? (
                   <details className="tap-message-context">
                     <summary>
                       {turn.locale === "zh" ? "本轮上下文" : "Message context"}{" "}
@@ -1002,7 +1032,7 @@ export function TapperChat({
                       ))}
                     </ul>
                   </details>
-                )}
+                ) : null}
                 <div className="tap-assistant-message">
                   {renderAssistantTurn(turn)}
                 </div>
@@ -1013,7 +1043,7 @@ export function TapperChat({
                     <button
                       type="button"
                       className="tap-turn-action"
-                      disabled={isGenerating || isSending}
+                      disabled={conversationIsGenerating || isSending}
                       onClick={() => onRegenerate(turn)}
                     >
                       <ReloadOutlined aria-hidden="true" />
@@ -1193,6 +1223,17 @@ export function TapperChat({
         >
           {questionPreview.content}
         </span>
+      ) : null}
+
+      {sendError !== null ? (
+        <p className="tap-composer-error" role="alert">
+          {sendError}
+        </p>
+      ) : null}
+      {stopError !== null ? (
+        <p className="tap-composer-error" role="alert">
+          {stopError}
+        </p>
       ) : null}
 
       {composer}

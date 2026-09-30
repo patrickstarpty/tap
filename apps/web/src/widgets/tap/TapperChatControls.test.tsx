@@ -3,6 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TapProductPrototype } from "./TapProductPrototype";
 import { resolveComposerAttachments } from "./prototype/composerAttachments";
 import type { LibrarySource } from "./prototype/model";
+import { setPrototypeFaults } from "./prototype/prototypeFaults";
+import {
+  PROTOTYPE_SNAPSHOT_VERSION,
+  PROTOTYPE_STORAGE_KEY,
+} from "./prototype/artifacts/persistence";
+import { createInitialArtifactState } from "../../legacy/artifacts/fixtures";
 
 const HEALTH_QUESTION = "What does the health disclosure rule require?";
 const BDD_REQUEST = "Create BDD test cases for life insurance underwriting";
@@ -24,6 +30,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  setPrototypeFaults([]);
 });
 
 const advance = (ms: number) =>
@@ -63,7 +70,7 @@ function history() {
 function createTwoConversations() {
   selectUnderwritingSource();
   send(HEALTH_QUESTION);
-  advance(1300);
+  advance(1800);
   fireEvent.click(screen.getByRole("button", { name: "New chat" }));
   send(BDD_REQUEST);
 }
@@ -178,7 +185,12 @@ describe("chat history controls", () => {
       screen.getByRole("heading", { name: "What can I do for you?" }),
     ).toBeVisible();
     expect(userMessages()).toEqual([]);
-    expect(screen.queryByRole("navigation", { name: "Chat history" })).toBeNull();
+    expect(
+      within(history()).queryByRole("button", { name: BDD_REQUEST }),
+    ).toBeNull();
+    expect(
+      within(history()).queryByRole("button", { name: HEALTH_QUESTION }),
+    ).toBeNull();
   });
 
   it("filters chat history by title without case sensitivity", () => {
@@ -196,7 +208,7 @@ describe("chat history controls", () => {
       within(history()).queryByRole("button", { name: HEALTH_QUESTION }),
     ).toBeNull();
 
-    fireEvent.change(search, { target: { value: "claims" } });
+    fireEvent.change(search, { target: { value: "zzznomatch" } });
     expect(within(history()).getByText("No matching chats")).toBeVisible();
   });
 });
@@ -244,10 +256,15 @@ describe("composer and turn controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop generating" }));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     advance(400);
-    advance(1300);
+    advance(1800);
     expect(userMessages()).toEqual([HEALTH_QUESTION, HEALTH_QUESTION]);
     expect(screen.getByText("Generation stopped.")).toBeVisible();
-    expect(screen.getAllByText("Message context · 1")).toHaveLength(2);
+    // The stopped turn keeps the numbered disclosure; the completed retry
+    // shows the trace-based "Sources and configuration used" panel instead.
+    expect(screen.getByText("Message context · 1")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Sources and configuration used" }),
+    ).toBeVisible();
     expect(
       screen.getByText(/Block submission when health disclosure is missing/),
     ).toBeVisible();
@@ -273,7 +290,7 @@ describe("composer and turn controls", () => {
     render(<TapProductPrototype />);
     selectUnderwritingSource();
     send(HEALTH_QUESTION);
-    advance(1300);
+    advance(1800);
     expect(
       screen.queryByRole("button", { name: "Stop generating" }),
     ).toBeNull();
@@ -281,19 +298,24 @@ describe("composer and turn controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     advance(400);
     expect(screen.getByRole("button", { name: "Regenerate" })).toBeDisabled();
-    advance(1300);
+    advance(1800);
     expect(userMessages()).toEqual([HEALTH_QUESTION, HEALTH_QUESTION]);
     expect(
       screen.getAllByText(/Block submission when health disclosure is missing/),
     ).toHaveLength(2);
-    expect(screen.getAllByText("Message context · 1")).toHaveLength(2);
+    expect(screen.queryByText(/Message context/)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", {
+        name: "Sources and configuration used",
+      }),
+    ).toHaveLength(2);
     expect(screen.getAllByRole("button", { name: "Regenerate" })).toHaveLength(2);
   });
 
   it("offers regenerate for an abstained answer", () => {
     render(<TapProductPrototype />);
     send("What is the claims turnaround?");
-    advance(1300);
+    advance(1800);
     fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     advance(400);
     expect(userMessages()).toHaveLength(2);
@@ -303,7 +325,7 @@ describe("composer and turn controls", () => {
     render(<TapProductPrototype />);
     selectUnderwritingSource();
     send(HEALTH_QUESTION);
-    advance(1300);
+    advance(1800);
     expect(
       screen.queryByRole("button", { name: "Remove Underwriting test rules.pdf" }),
     ).toBeNull();
@@ -322,7 +344,12 @@ describe("composer and turn controls", () => {
       HEALTH_QUESTION,
       "What does the health disclosure rule require for minors?",
     ]);
-    expect(screen.getAllByText("Message context · 1")).toHaveLength(2);
+    // The first turn completed and shows the trace-based panel; the second
+    // is still queued, so it keeps the numbered disclosure.
+    expect(
+      screen.getByRole("button", { name: "Sources and configuration used" }),
+    ).toBeVisible();
+    expect(screen.getByText("Message context · 1")).toBeVisible();
   });
 
   it("uploads a file to Library and adds it to the message once searchable", () => {
@@ -402,6 +429,112 @@ describe("composer and turn controls", () => {
     expect(
       resolveComposerAttachments([attachment], [source("published")]),
     ).toEqual({ pending: [], ready: [attachment] });
+  });
+
+  it("keeps the draft when sending fails", () => {
+    setPrototypeFaults(["send-failed"]);
+    render(<TapProductPrototype />);
+    type(HEALTH_QUESTION);
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Message was not sent.",
+    );
+    expect(composer()).toHaveValue(HEALTH_QUESTION);
+    expect(userMessages()).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    advance(400);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(composer()).toHaveValue("");
+    expect(userMessages()).toEqual([HEALTH_QUESTION]);
+  });
+
+  it("reports a failed stop", () => {
+    render(<TapProductPrototype />);
+    setPrototypeFaults(["stop-failed"]);
+    send(HEALTH_QUESTION);
+    fireEvent.click(screen.getByRole("button", { name: "Stop generating" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The response may still be running.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Stop generating" }),
+    ).toBeVisible();
+    advance(3000);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("disables unavailable models", () => {
+    render(<TapProductPrototype />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Select model/ }),
+    );
+    const option = screen.getByRole("menuitemradio", { name: /GPT-5.4/ });
+    expect(option).toHaveAttribute("aria-disabled", "true");
+    expect(option).toHaveTextContent("Unavailable");
+    fireEvent.click(option);
+    expect(
+      screen.getByRole("button", { name: /Select model/ }),
+    ).toHaveTextContent("GPT-5.6 Sol");
+  });
+
+  it("blocks sending when no model is available", () => {
+    setPrototypeFaults(["no-models"]);
+    render(<TapProductPrototype />);
+    expect(
+      screen.getByRole("button", { name: /Select model/ }),
+    ).toHaveTextContent("No models available");
+    type(HEALTH_QUESTION);
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    fireEvent.keyDown(composer(), { key: "Enter" });
+    advance(400);
+    expect(userMessages()).toEqual([]);
+  });
+
+  it("blocks sending when the conversation's model is unavailable", () => {
+    localStorage.setItem(
+      PROTOTYPE_STORAGE_KEY,
+      JSON.stringify({
+        version: PROTOTYPE_SNAPSHOT_VERSION,
+        activeConversationId: "chat-old-snapshot",
+        conversations: [
+          {
+            id: "chat-old-snapshot",
+            title: "Old snapshot chat",
+            turns: [],
+            modelId: "gpt-5.4",
+            selectedSourceIds: [],
+            selectedAgentIds: [],
+            selectedSkillIds: [],
+          },
+        ],
+        artifacts: createInitialArtifactState(),
+      }),
+    );
+    render(<TapProductPrototype />);
+    type(HEALTH_QUESTION);
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    fireEvent.keyDown(composer(), { key: "Enter" });
+    advance(400);
+    expect(userMessages()).toEqual([]);
+  });
+
+  it("keeps the message context disclosure for turns without an answer trace", () => {
+    render(<TapProductPrototype />);
+    selectUnderwritingSource();
+    send(BDD_REQUEST);
+    expect(screen.getByText("Message context · 1")).toBeVisible();
+  });
+
+  it("explains that each turn records context", () => {
+    render(<TapProductPrototype />);
+    expect(
+      screen.getByText(
+        "Each turn records the knowledge context you select.",
+      ),
+    ).toBeVisible();
   });
 });
 

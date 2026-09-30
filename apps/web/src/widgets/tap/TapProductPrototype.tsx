@@ -1,8 +1,15 @@
 import {
   DocumentReview,
-  KnowledgeAnswer,
   useDocumentReview,
 } from "./prototype/DocumentReview";
+import type { ChunkSettings } from "./prototype/ChunkManager";
+import { KnowledgeAnswer } from "./prototype/answer/KnowledgeAnswer";
+import {
+  CitationPanel,
+  type OpenCitation,
+} from "./prototype/answer/CitationPanel";
+import { decideAnswerOutcome } from "./prototype/answer/answerOutcome";
+import { takePrototypeFault } from "./prototype/prototypeFaults";
 import { CodeOutlined, FileTextOutlined } from "@ant-design/icons";
 import { Button } from "antd";
 import {
@@ -56,6 +63,10 @@ import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
 import { SAMPLE_REPRESENTATIVE_SOURCES } from "./prototype/sampleKnowledge";
 import { SAMPLE_FILES } from "./prototype/sampleFiles";
+import {
+  insertConversation,
+  SAMPLE_CONVERSATIONS,
+} from "./prototype/sampleConversations";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import {
   resolveComposerAttachments,
@@ -66,6 +77,7 @@ import {
   createConversation,
   detectAutomationType,
   detectIntent,
+  isGenerating,
   type AssistantTurn,
   type CatalogItem,
   type CodexModelId,
@@ -477,11 +489,17 @@ export function TapProductPrototype() {
     () => window.matchMedia("(max-width: 1100px)").matches,
   );
   const [conversations, setConversations] = useState<readonly Conversation[]>(
-    () => initialSnapshot?.conversations ?? [createConversation("chat-1")],
+    () =>
+      initialSnapshot?.conversations ?? [
+        createConversation("chat-1"),
+        ...SAMPLE_CONVERSATIONS,
+      ],
   );
   const [activeConversationId, setActiveConversationId] = useState(
     () => initialSnapshot?.activeConversationId ?? "chat-1",
   );
+  const [openCitation, setOpenCitation] = useState<OpenCitation | null>(null);
+  const citationOpenSeq = useRef(0);
   const [artifactState, dispatchArtifact] = useReducer(
     artifactReducer,
     initialSnapshot?.artifacts ?? createInitialArtifactState(),
@@ -491,6 +509,8 @@ export function TapProductPrototype() {
   );
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [messageDraft, setMessageDraft] = useState("");
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [stopError, setStopError] = useState<string | null>(null);
   const [composerContext, setComposerContext] =
     useState<FloatingAssistantContext | null>(null);
   const [agents, setAgents] = useState<readonly CatalogItem[]>(BUILT_IN_AGENTS);
@@ -498,9 +518,17 @@ export function TapProductPrototype() {
   const [localSources] = useState<
     readonly Pick<LibrarySource, "id" | "name" | "type">[]
   >(() => initialSnapshot?.library?.localSources ?? []);
+  const [removedSourceIds, setRemovedSourceIds] = useState<readonly string[]>(
+    () => initialSnapshot?.library?.removedSourceIds ?? [],
+  );
   const nextConversationId = useRef(
     nextNumericId(
-      (initialSnapshot?.conversations ?? [createConversation("chat-1")]).map(
+      (
+        initialSnapshot?.conversations ?? [
+          createConversation("chat-1"),
+          ...SAMPLE_CONVERSATIONS,
+        ]
+      ).map(
         ({ id }) => id,
       ),
       "chat",
@@ -591,6 +619,10 @@ export function TapProductPrototype() {
   }, [isCompactViewport]);
 
   useEffect(() => {
+    setOpenCitation(null);
+  }, [activeConversationId]);
+
+  useEffect(() => {
     document.documentElement.lang = locale === "en" ? "en" : "zh-CN";
   }, [locale]);
 
@@ -606,6 +638,7 @@ export function TapProductPrototype() {
         examplesLoaded: true,
         sampleLoaded: true,
         localSources,
+        removedSourceIds,
       },
     });
   }, [
@@ -614,6 +647,7 @@ export function TapProductPrototype() {
     conversations,
     activeModule,
     localSources,
+    removedSourceIds,
   ]);
 
   useEffect(
@@ -679,18 +713,56 @@ export function TapProductPrototype() {
   ]);
 
   const sources = useMemo<readonly LibrarySource[]>(
-    () => [
-      ...review.sources,
-      ...SAMPLE_FILES,
-      ...SAMPLE_REPRESENTATIVE_SOURCES,
-      ...localSources.map((source) => ({
-        ...source,
-        origin: "page-local" as const,
-        status: "ready" as const,
-        description: copy.library.localSourceDescription,
-      })),
+    () =>
+      [
+        ...review.sources,
+        ...SAMPLE_FILES,
+        ...SAMPLE_REPRESENTATIVE_SOURCES,
+        ...localSources.map((source) => ({
+          ...source,
+          origin: "page-local" as const,
+          status: "ready" as const,
+          description: copy.library.localSourceDescription,
+        })),
+      ].filter((source) => !removedSourceIds.includes(source.id)),
+    [
+      copy.library.localSourceDescription,
+      localSources,
+      review.sources,
+      removedSourceIds,
     ],
-    [copy.library.localSourceDescription, localSources, review.sources],
+  );
+  const openCitationPanel = useCallback(
+    (citation: OpenCitation) => {
+      citationOpenSeq.current += 1;
+      const fullSource = sources.find(
+        (source) => source.id === citation.source.id,
+      );
+      setOpenCitation({
+        ...citation,
+        source: {
+          ...citation.source,
+          hasNewerRevision: fullSource?.hasNewerRevision,
+          description: fullSource?.description,
+        },
+        verificationFailed: takePrototypeFault(
+          "citation-verification-failed",
+        ),
+        sourceRemoved: fullSource === undefined,
+      });
+      if (sourcesCollapsed) expandKnowledgeSources();
+    },
+    [expandKnowledgeSources, sources, sourcesCollapsed],
+  );
+  const openCitationOriginal = useCallback(
+    (sourceId: string) => {
+      if (!sources.some((source) => source.id === sourceId)) return;
+      setActiveModule("library");
+      if (review.sources.some((source) => source.id === sourceId)) {
+        review.inspect(sourceId);
+      }
+    },
+    [review, sources],
   );
   const activeConversation =
     conversations.find(
@@ -760,7 +832,9 @@ export function TapProductPrototype() {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
-    setConversations((current) => [...current, createConversation(id)]);
+    setConversations((current) =>
+      insertConversation(current, createConversation(id)),
+    );
     setActiveConversationId(id);
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
@@ -831,10 +905,18 @@ export function TapProductPrototype() {
     );
   };
 
-  const sendMessage = (prompt: string, override?: TurnContextOverride) => {
-    if (pendingSendRef.current !== null) return;
-    if (activeConversation.turns.some((turn) => turn.answerState === "running"))
-      return;
+  const sendMessage = (
+    prompt: string,
+    override?: TurnContextOverride,
+  ): boolean => {
+    if (pendingSendRef.current !== null) return false;
+    if (activeConversation.turns.some((turn) => isGenerating(turn)))
+      return false;
+    if (takePrototypeFault("send-failed")) {
+      setSendError(copy.composer.sendFailed);
+      return false;
+    }
+    setSendError(null);
     const conversationId = activeConversation.id;
     const turnLocale = locale;
     if (composerContext && override === undefined) {
@@ -843,7 +925,7 @@ export function TapProductPrototype() {
       acceptTurn(conversationId, () =>
         sendFloatingMessage(prompt, context, conversationId, turnLocale),
       );
-      return;
+      return true;
     }
     const intent = detectIntent(prompt);
     const selectedSourceIds =
@@ -868,9 +950,16 @@ export function TapProductPrototype() {
         ),
       );
     if (intent === "answer") {
-      const evidence = sourceReferences.filter((source) =>
-        /underwriting|健康|核保/i.test(source.name),
+      const selectedSources = sources.filter(
+        (source) =>
+          source.status === "ready" && selectedSourceIds.includes(source.id),
       );
+      const decision = decideAnswerOutcome(prompt, selectedSources);
+      const evidence = decision.evidence.map(({ id, name, origin }) => ({
+        id,
+        name,
+        origin,
+      }));
       const turnId = `turn-${nextTurnId.current++}`;
       acceptTurn(conversationId, () => {
         appendToConversation({
@@ -881,7 +970,13 @@ export function TapProductPrototype() {
           prompt,
           sourceReferences: evidence,
           ...(catalogReferences.length > 0 ? { catalogReferences } : {}),
-          answerState: "running",
+          trace: {
+            searchedSources: selectedSources.length,
+            matchedPassages: evidence.length * 2 + 1,
+            citations: evidence.length,
+          },
+          retrievalLimited: decision.retrievalLimited,
+          answerState: "queued",
         });
         answerTimers.current.set(
           turnId,
@@ -892,28 +987,49 @@ export function TapProductPrototype() {
                   ? {
                       ...conversation,
                       turns: conversation.turns.map((turn) =>
-                        turn.id === turnId && turn.answerState === "running"
-                          ? {
-                              ...turn,
-                              answerState:
-                                evidence.length > 0 &&
-                                /health|disclosure|underwriting|健康|告知|核保/i.test(
-                                  prompt,
-                                )
-                                  ? "completed"
-                                  : "insufficient",
-                            }
+                        turn.id === turnId && turn.answerState === "queued"
+                          ? { ...turn, answerState: "running" }
                           : turn,
                       ),
                     }
                   : conversation,
               ),
             );
-            answerTimers.current.delete(turnId);
-          }, 1200),
+            answerTimers.current.set(
+              turnId,
+              setTimeout(() => {
+                const interrupted = takePrototypeFault("stream-interrupted");
+                const sourceChanged =
+                  !interrupted &&
+                  takePrototypeFault("source-version-changed");
+                const finalState: NonNullable<AssistantTurn["answerState"]> =
+                  interrupted
+                    ? "interrupted"
+                    : sourceChanged
+                      ? "source-changed"
+                      : decision.outcome;
+                setConversations((current) =>
+                  current.map((conversation) =>
+                    conversation.id === conversationId
+                      ? {
+                          ...conversation,
+                          turns: conversation.turns.map((turn) =>
+                            turn.id === turnId &&
+                            turn.answerState === "running"
+                              ? { ...turn, answerState: finalState }
+                              : turn,
+                          ),
+                        }
+                      : conversation,
+                  ),
+                );
+                answerTimers.current.delete(turnId);
+              }, 1200),
+            );
+          }, 500),
         );
       });
-      return;
+      return true;
     }
     const turnId = `turn-${nextTurnId.current++}`;
     acceptTurn(conversationId, () =>
@@ -936,6 +1052,7 @@ export function TapProductPrototype() {
             : undefined,
       }),
     );
+    return true;
   };
 
   const resendTurn = (turn: AssistantTurn) =>
@@ -945,13 +1062,25 @@ export function TapProductPrototype() {
     });
 
   const stopTurn = (turnId: string) => {
+    if (takePrototypeFault("stop-failed")) {
+      setStopError(copy.composer.stopFailed);
+      clearTimeout(answerTimers.current.get("stop-error"));
+      answerTimers.current.set(
+        "stop-error",
+        setTimeout(() => {
+          answerTimers.current.delete("stop-error");
+          setStopError(null);
+        }, 3000),
+      );
+      return;
+    }
     clearTimeout(answerTimers.current.get(turnId));
     answerTimers.current.delete(turnId);
     setConversations((current) =>
       current.map((conversation) => ({
         ...conversation,
         turns: conversation.turns.map((item) =>
-          item.id === turnId && item.answerState === "running"
+          item.id === turnId && isGenerating(item)
             ? { ...item, answerState: "canceled" }
             : item,
         ),
@@ -996,9 +1125,10 @@ export function TapProductPrototype() {
       ),
     );
 
-  const deleteConversation = (conversationId: string) => {
+  const deleteConversation = (conversationId: string): boolean => {
     const deleted = conversations.find(({ id }) => id === conversationId);
-    if (deleted === undefined) return;
+    if (deleted === undefined) return true;
+    if (takePrototypeFault("conversation-delete-failed")) return false;
     for (const turn of deleted.turns) {
       clearTimeout(answerTimers.current.get(turn.id));
       answerTimers.current.delete(turn.id);
@@ -1016,7 +1146,7 @@ export function TapProductPrototype() {
       setConversations((current) =>
         current.filter(({ id }) => id !== conversationId),
       );
-      return;
+      return true;
     }
     const id = `chat-${nextConversationId.current++}`;
     setMessageDraft("");
@@ -1025,12 +1155,15 @@ export function TapProductPrototype() {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
-    setConversations((current) => [
-      ...current.filter(({ id: itemId }) => itemId !== conversationId),
-      createConversation(id),
-    ]);
+    setConversations((current) =>
+      insertConversation(
+        current.filter(({ id: itemId }) => itemId !== conversationId),
+        createConversation(id),
+      ),
+    );
     setActiveConversationId(id);
     setActiveModule("tapper");
+    return true;
   };
 
   const uploadAttachment = (file: File) => {
@@ -1332,8 +1465,35 @@ export function TapProductPrototype() {
     setSidebarCollapsed(isNarrowViewport);
   };
 
-  const addLocalSource = (source: Pick<LibrarySource, "name" | "type">) => {
-    review.upload(source.name);
+  const addLocalSource = (
+    source: Pick<LibrarySource, "name" | "type">,
+    chunkSettings: ChunkSettings,
+  ) => {
+    review.upload(source.name, { chunkSettings });
+  };
+
+  const deleteSource = (sourceId: string) => {
+    setRemovedSourceIds((current) =>
+      current.includes(sourceId) ? current : [...current, sourceId],
+    );
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.selectedSourceIds.includes(sourceId)
+          ? {
+              ...conversation,
+              selectedSourceIds: conversation.selectedSourceIds.filter(
+                (id) => id !== sourceId,
+              ),
+            }
+          : conversation,
+      ),
+    );
+    setAttachments((current) =>
+      current.filter((attachment) => attachment.sourceId !== sourceId),
+    );
+    setOpenCitation((current) =>
+      current && current.source.id === sourceId ? null : current,
+    );
   };
 
   return (
@@ -1405,7 +1565,10 @@ export function TapProductPrototype() {
               copy={copy}
               isInert={compactSourcesDrawerOpen}
               message={messageDraft}
-              onMessageChange={setMessageDraft}
+              onMessageChange={(value) => {
+                setMessageDraft(value);
+                setSendError(null);
+              }}
               pageContext={composerContext ?? undefined}
               onClearPageContext={() => setComposerContext(null)}
               onModelChange={(modelId: CodexModelId) =>
@@ -1415,10 +1578,12 @@ export function TapProductPrototype() {
                 }))
               }
               onSend={(prompt) => sendMessage(prompt)}
+              sendError={sendError}
+              stopError={stopError}
               isSending={pendingSendConversationId === activeConversation.id}
               onStop={() => {
-                const running = activeConversation.turns.find(
-                  (turn) => turn.answerState === "running",
+                const running = activeConversation.turns.find((turn) =>
+                  isGenerating(turn),
                 );
                 if (running !== undefined) stopTurn(running.id);
               }}
@@ -1476,6 +1641,7 @@ export function TapProductPrototype() {
                     turn={turn}
                     onRetry={() => resendTurn(turn)}
                     onStop={() => stopTurn(turn.id)}
+                    onOpenCitation={openCitationPanel}
                   />
                 ) : (
                   <AssistantResponse
@@ -1519,22 +1685,32 @@ export function TapProductPrototype() {
               data-collapsed={sourcesCollapsed}
               inert={sourcesCollapsed ? true : undefined}
             >
-              <KnowledgeSourcesPanel
-                copy={copy}
-                isLoading={false}
-                onCollapse={dismissKnowledgeSources}
-                onToggleSource={(sourceId) =>
-                  updateActiveConversation((conversation) => ({
-                    ...conversation,
-                    selectedSourceIds: toggleSelection(
-                      conversation.selectedSourceIds,
-                      sourceId,
-                    ),
-                  }))
-                }
-                selectedSourceIds={activeConversation.selectedSourceIds}
-                sources={sources}
-              />
+              {openCitation !== null ? (
+                <CitationPanel
+                  key={`${openCitation.turnId}:${openCitation.index}:${citationOpenSeq.current}`}
+                  citation={openCitation}
+                  locale={locale}
+                  onClose={() => setOpenCitation(null)}
+                  onOpenOriginal={openCitationOriginal}
+                />
+              ) : (
+                <KnowledgeSourcesPanel
+                  copy={copy}
+                  isLoading={false}
+                  onCollapse={dismissKnowledgeSources}
+                  onToggleSource={(sourceId) =>
+                    updateActiveConversation((conversation) => ({
+                      ...conversation,
+                      selectedSourceIds: toggleSelection(
+                        conversation.selectedSourceIds,
+                        sourceId,
+                      ),
+                    }))
+                  }
+                  selectedSourceIds={activeConversation.selectedSourceIds}
+                  sources={sources}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -1568,6 +1744,8 @@ export function TapProductPrototype() {
             sources={sources}
             onAddSource={addLocalSource}
             onInspectSource={review.inspect}
+            onRetrySource={review.retry}
+            onDeleteSource={deleteSource}
           />
         ) : null}
         {activeModule === "test-insights" ? (

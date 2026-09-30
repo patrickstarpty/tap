@@ -6,12 +6,13 @@ export type CodexModelId =
 export const CODEX_MODELS: readonly {
   id: CodexModelId;
   label: string;
+  available: boolean;
 }[] = [
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-  { id: "gpt-5.5", label: "GPT-5.5" },
-  { id: "gpt-5.4", label: "GPT-5.4" },
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", available: true },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", available: true },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", available: true },
+  { id: "gpt-5.5", label: "GPT-5.5", available: true },
+  { id: "gpt-5.4", label: "GPT-5.4", available: false },
 ] as const;
 
 export const DEFAULT_CODEX_MODEL_ID: CodexModelId = "gpt-5.6-sol";
@@ -57,9 +58,24 @@ export interface AutomationStepSnapshot {
   value: string;
 }
 
+export interface AnswerTrace {
+  searchedSources: number;
+  matchedPassages: number;
+  citations: number;
+}
+
 export interface AssistantTurn {
   answerState?:
-    "running" | "completed" | "insufficient" | "canceled" | "failed";
+    | "queued"
+    | "running"
+    | "completed"
+    | "insufficient"
+    | "conflict"
+    | "source-changed"
+    | "interrupted"
+    | "canceled"
+    | "failed";
+  retrievalLimited?: boolean;
   id: string;
   intent: AssistantIntent;
   locale: Locale;
@@ -67,6 +83,7 @@ export interface AssistantTurn {
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
   catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
+  trace?: AnswerTrace;
   pageContext?: {
     label: string;
     summary: string;
@@ -119,6 +136,9 @@ export interface LibrarySource {
     | "published"
     | "withdrawn";
   isExample?: boolean;
+  hasNewerRevision?: boolean;
+  hasPublishedGraph?: boolean;
+  partiallyIndexed?: boolean;
   downloadUrl?: string;
   preview?: { imageUrl?: string; text?: string };
   id: string;
@@ -332,6 +352,12 @@ export function createConversation(
     selectedAgentIds: [...(options.selectedAgentIds ?? [])],
     selectedSkillIds: [...(options.selectedSkillIds ?? [])],
   };
+}
+
+export function isGenerating(
+  turn: Pick<AssistantTurn, "answerState">,
+): boolean {
+  return turn.answerState === "queued" || turn.answerState === "running";
 }
 
 export function appendTurn(

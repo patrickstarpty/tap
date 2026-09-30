@@ -18,6 +18,10 @@ export interface PrototypeCopy {
     localWorkspace: string;
     searchChats: string;
     noMatchingChats: string;
+    historyLoadFailed: string;
+    retry: string;
+    loadMore: string;
+    deleteFailed: string;
     moreOptionsFor: string;
     renameChat: string;
     deleteChat: string;
@@ -64,6 +68,8 @@ export interface PrototypeCopy {
     loading: string;
     noReadySources: string;
     noResults: string;
+    loadFailed: string;
+    allProcessing: string;
     manageKnowledge: string;
     provenanceHint: string;
     immutableRevision: string;
@@ -96,6 +102,11 @@ export interface PrototypeCopy {
     reviewInLibrary: string;
     unsupportedFile: string;
     fileTooLarge: string;
+    sendFailed: string;
+    stopFailed: string;
+    modelUnavailable: string;
+    noModels: string;
+    contextNote: string;
   };
   catalog: {
     agents: string;
@@ -120,6 +131,8 @@ export interface PrototypeCopy {
     noResults: string;
     agentCatalog: string;
     skillCatalog: string;
+    nameRule: string;
+    previewHeading: string;
   };
   library: {
     testingCommunity: string;
@@ -156,6 +169,11 @@ export interface PrototypeCopy {
     addSource: string;
     all: string;
     knowledgeGraph: string;
+    graphDomain: string;
+    graphPublished: string;
+    graphSource: string;
+    graphEmpty: string;
+    graphLoadFailed: string;
     sources: string;
     sourceCount: string;
     typeFilter: string;
@@ -176,6 +194,8 @@ export interface PrototypeCopy {
     processing: string;
     failed: string;
     noResults: string;
+    loadFailed: string;
+    emptyHeading: string;
     illustrative: string;
     communities: string;
     selectAllTopics: string;
@@ -192,6 +212,13 @@ export interface PrototypeCopy {
     searchResults: string;
     noMatchingNodes: string;
     viewSource: string;
+    viewSourceButton: string;
+    close: string;
+    sourceDocuments: string;
+    retryDocument: string;
+    deleteSource: string;
+    deleteSourceConfirm: string;
+    confirmDelete: string;
     selectNode: string;
     community: string;
     relationships: string;
@@ -229,6 +256,22 @@ export interface PrototypeCopy {
     creates: string;
     evaluates: string;
     determines: string;
+    stepFile: string;
+    stepChunks: string;
+    next: string;
+    back: string;
+    recommended: string;
+    previewChunks: string;
+    childChunks: string;
+    uploading: string;
+    uploadFailed: string;
+    supportedFormats: string;
+    chunkMode: string;
+    chunkModeGeneral: string;
+    chunkModeParentChild: string;
+    chunkMax: string;
+    chunkOverlap: string;
+    chunkChildMax: string;
   };
   artifacts: {
     bddPlanReady: string;
@@ -334,6 +377,10 @@ export const PROTOTYPE_COPY = {
       localWorkspace: "Local workspace",
       searchChats: "Search chats",
       noMatchingChats: "No matching chats",
+      historyLoadFailed: "Chat history could not be loaded.",
+      retry: "Retry",
+      loadMore: "Load more",
+      deleteFailed: "The chat could not be deleted. Please try again.",
       moreOptionsFor: "More options for {title}",
       renameChat: "Rename",
       deleteChat: "Delete",
@@ -389,6 +436,8 @@ export const PROTOTYPE_COPY = {
       loading: "Loading sources",
       noReadySources: "No ready sources",
       noResults: "No matching sources",
+      loadFailed: "Knowledge sources could not be loaded.",
+      allProcessing: "Sources are processing. They can be selected when ready.",
       manageKnowledge: "Manage knowledge",
       provenanceHint:
         "Answers and generated assets record the source context selected for each turn.",
@@ -423,6 +472,13 @@ export const PROTOTYPE_COPY = {
       unsupportedFile:
         "This file type isn’t supported. Upload a PDF, DOCX, MD or TXT file.",
       fileTooLarge: "Files must be 25 MB or smaller.",
+      sendFailed:
+        "Message was not sent. Your draft is still here. Please try again.",
+      stopFailed:
+        "The response may still be running. Please try again shortly.",
+      modelUnavailable: "Unavailable",
+      noModels: "No models available",
+      contextNote: "Each turn records the knowledge context you select.",
     },
     catalog: {
       agents: "Agents",
@@ -449,6 +505,9 @@ export const PROTOTYPE_COPY = {
       noResults: "No matching items",
       agentCatalog: "Agent catalog",
       skillCatalog: "Skill catalog",
+      nameRule:
+        "Use lowercase letters, numbers and hyphens, e.g. health-disclosure-check.",
+      previewHeading: "SKILL.md preview",
     },
     library: {
       loadExamples: "Load examples",
@@ -484,6 +543,11 @@ export const PROTOTYPE_COPY = {
       addSource: "Add source",
       all: "Documents",
       knowledgeGraph: "Knowledge Graph",
+      graphDomain: "Domain overview",
+      graphPublished: "Published source graph",
+      graphSource: "Source",
+      graphEmpty: "This source has no published graph yet.",
+      graphLoadFailed: "The knowledge graph could not be loaded.",
       sources: "Library sources",
       sourceCount: "sources",
       typeFilter: "Type",
@@ -504,6 +568,8 @@ export const PROTOTYPE_COPY = {
       processing: "Processing",
       failed: "Failed",
       noResults: "No matching sources",
+      loadFailed: "Library could not be loaded.",
+      emptyHeading: "No knowledge sources yet",
       illustrative:
         "Select a topic or relationship to explore its connected sources.",
       communities: "Topic groups",
@@ -522,6 +588,14 @@ export const PROTOTYPE_COPY = {
       noMatchingNodes:
         "No matching documents, concepts or entities. Try another keyword or clear the filters.",
       viewSource: "View source in document list",
+      viewSourceButton: "View",
+      close: "Close",
+      sourceDocuments: "Documents",
+      retryDocument: "Retry",
+      deleteSource: "Delete source",
+      deleteSourceConfirm:
+        "Delete this source? It will be removed from Library and knowledge sources.",
+      confirmDelete: "Delete",
       selectNode: "Select a node to inspect its relationships.",
       community: "Topic group",
       relationships: "Relationships",
@@ -560,6 +634,23 @@ export const PROTOTYPE_COPY = {
       creates: "creates",
       evaluates: "evaluates",
       determines: "determines",
+      stepFile: "Choose file",
+      stepChunks: "Chunk settings",
+      next: "Next",
+      back: "Back",
+      recommended:
+        "Recommended settings are applied. You can submit directly.",
+      previewChunks: "Preview chunks",
+      childChunks: "{n} child chunks",
+      uploading: "Uploading…",
+      uploadFailed: "Upload failed. Please try again.",
+      supportedFormats: "PDF, DOCX, Markdown, TXT, XLSX, PNG or JPG",
+      chunkMode: "Chunk mode",
+      chunkModeGeneral: "General",
+      chunkModeParentChild: "Parent-child",
+      chunkMax: "Maximum length",
+      chunkOverlap: "Overlap",
+      chunkChildMax: "Child maximum length",
     },
     artifacts: {
       bddPlanReady: "BDD test plan ready",
@@ -667,6 +758,10 @@ export const PROTOTYPE_COPY = {
       localWorkspace: "本地工作区",
       searchChats: "搜索对话",
       noMatchingChats: "没有匹配的对话",
+      historyLoadFailed: "历史加载失败。",
+      retry: "重试",
+      loadMore: "加载更多",
+      deleteFailed: "删除失败，请重试。",
       moreOptionsFor: "更多操作：{title}",
       renameChat: "重命名",
       deleteChat: "删除",
@@ -719,6 +814,8 @@ export const PROTOTYPE_COPY = {
       loading: "正在加载来源",
       noReadySources: "没有可用来源",
       noResults: "没有匹配的来源",
+      loadFailed: "知识来源加载失败。",
+      allProcessing: "来源正在处理，完成后可选用。",
       manageKnowledge: "管理知识库",
       provenanceHint: "回答和生成的资产会记录每轮对话选择的来源上下文。",
       immutableRevision: "已发布版本",
@@ -751,6 +848,11 @@ export const PROTOTYPE_COPY = {
       reviewInLibrary: "在知识库中打开",
       unsupportedFile: "不支持此文件类型。请上传 PDF、DOCX、MD 或 TXT 文件。",
       fileTooLarge: "文件大小不能超过 25 MB。",
+      sendFailed: "消息未发送，草稿已保留，请重试。",
+      stopFailed: "回答可能仍在生成，请稍后再试。",
+      modelUnavailable: "不可用",
+      noModels: "暂无可用模型",
+      contextNote: "每轮对话会记录你选择的知识来源。",
     },
     catalog: {
       agents: "智能体",
@@ -775,6 +877,8 @@ export const PROTOTYPE_COPY = {
       noResults: "没有匹配项",
       agentCatalog: "智能体目录",
       skillCatalog: "技能目录",
+      nameRule: "只能使用小写字母、数字和连字符，例如 health-disclosure-check。",
+      previewHeading: "SKILL.md 预览",
     },
     library: {
       loadExamples: "加载示例文件",
@@ -809,6 +913,11 @@ export const PROTOTYPE_COPY = {
       addSource: "添加来源",
       all: "文档列表",
       knowledgeGraph: "知识图谱",
+      graphDomain: "领域总览",
+      graphPublished: "已发布来源图谱",
+      graphSource: "来源",
+      graphEmpty: "该来源尚无已发布图谱。",
+      graphLoadFailed: "知识图谱加载失败。",
       sources: "知识库来源",
       sourceCount: "个来源",
       typeFilter: "类型",
@@ -829,6 +938,8 @@ export const PROTOTYPE_COPY = {
       processing: "处理中",
       failed: "失败",
       noResults: "没有匹配的来源",
+      loadFailed: "知识库加载失败。",
+      emptyHeading: "还没有知识来源",
       illustrative: "选择主题或关系，查看关联知识与原文来源。",
       communities: "主题分组",
       selectAllTopics: "全选",
@@ -845,6 +956,13 @@ export const PROTOTYPE_COPY = {
       searchResults: "搜索结果",
       noMatchingNodes: "没有匹配的文档、概念或实体，请更换关键词或清除筛选。",
       viewSource: "在文档列表中查看来源",
+      viewSourceButton: "查看",
+      close: "关闭",
+      sourceDocuments: "文档",
+      retryDocument: "重试",
+      deleteSource: "删除来源",
+      deleteSourceConfirm: "删除该来源？它将从知识库和知识来源中移除。",
+      confirmDelete: "删除",
       selectNode: "选择节点以查看其关系。",
       community: "主题分组",
       relationships: "关系",
@@ -882,6 +1000,22 @@ export const PROTOTYPE_COPY = {
       creates: "生成",
       evaluates: "评估",
       determines: "决定",
+      stepFile: "选择文件",
+      stepChunks: "切片设置",
+      next: "下一步",
+      back: "上一步",
+      recommended: "已应用推荐设置，可直接提交。",
+      previewChunks: "预览切片",
+      childChunks: "{n} 个子块",
+      uploading: "正在上传…",
+      uploadFailed: "上传失败，请重试。",
+      supportedFormats: "支持 PDF、DOCX、Markdown、TXT、XLSX、PNG、JPG",
+      chunkMode: "切片模式",
+      chunkModeGeneral: "通用",
+      chunkModeParentChild: "父子",
+      chunkMax: "最大长度",
+      chunkOverlap: "重叠长度",
+      chunkChildMax: "子块最大长度",
     },
     artifacts: {
       bddPlanReady: "BDD 测试计划已就绪",

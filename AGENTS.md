@@ -48,7 +48,7 @@ git diff -- README.md docs/ AGENTS.md
 
 ## Coding Style & Naming Conventions
 
-Follow existing conventions. Markdown uses UTF-8, ATX headings, relative links and tagged fences; preserve table and Mermaid styles. Retain canonical terms: `TAP AI` (always all caps), `Tapper`, `Test IR`, `Knowledge Chat`, `Azure AI Search`. Python follows Ruff and type-safe async boundaries; Web follows repository ESLint/TypeScript/Vitest and generated API types. Use lower snake_case domain IDs where specified. Architecture changes must update `docs/architecture.md` and, when scope changes, the V1 roadmap.
+Follow existing conventions. Markdown uses UTF-8, ATX headings, relative links and tagged fences; preserve table and Mermaid styles. Retain canonical terms: `TAP AI` (always all caps), `Tapper`, `Test IR`, `Knowledge Chat`, `Azure AI Search`. Use `Tapper` for the product module in UI, the prototype and user-facing docs; use `TAP AI` only for the engineering boundary (`apps/tap-ai-*` code, deployment, architecture). Python follows Ruff and type-safe async boundaries; Web follows repository ESLint/TypeScript/Vitest and generated API types. Use lower snake_case domain IDs where specified. Architecture changes must update `docs/architecture.md` and, when scope changes, the V1 roadmap.
 
 ## Testing Guidelines
 
