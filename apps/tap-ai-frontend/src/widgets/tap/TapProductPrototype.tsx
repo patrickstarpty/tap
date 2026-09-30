@@ -198,10 +198,7 @@ export function AnswerActivity({
   const citations = events.filter(
     (event) => event.eventType === "citation.resolved",
   ).length;
-  const assembledCount =
-    context && typeof context.payload.sourceCount === "number"
-      ? context.payload.sourceCount
-      : sourceCount;
+  const assembledCount = sourceCount;
   const answerRecorded = events.some(
     (event) => event.eventType === "answer.delta",
   );

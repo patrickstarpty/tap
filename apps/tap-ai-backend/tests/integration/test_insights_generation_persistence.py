@@ -1,5 +1,6 @@
 """Insights uses the real Turn worker, durable graph and atomic terminal settlement."""
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -54,7 +55,11 @@ class _Explanation:
     [(False, False), (True, False), (True, True)],
 )
 async def test_insights_turn_reload_and_checkpoint_reclaim_preserve_result_and_actual_ids(
-    owned_project_mysql, monkeypatch, interrupt_after_checkpoint, withdraw_before_reclaim
+    owned_project_mysql,
+    monkeypatch,
+    span_recorder,
+    interrupt_after_checkpoint,
+    withdraw_before_reclaim,
 ):
     interrupted = False
     original = MysqlGraphCheckpointer.aput_writes
@@ -157,19 +162,26 @@ async def test_insights_turn_reload_and_checkpoint_reclaim_preserve_result_and_a
             event for event in loaded.events if event.event_type == "turn.completed"
         ]
         assert len(completed_events) == 1
-        audit = completed_events[0].payload["insightsAudit"]
-        assert audit == {
-            "conversationId": conversation_id,
-            "turnId": turn_id,
-            "graphRunId": turn_id,
-            "tool": "insights.query",
-            "queryId": query_id,
-            "metricVersion": "metrics-v1",
-            "resourceRefs": ["report-1"],
-            "knowledgeSearchPerformed": False,
-            "knowledgeSources": [],
-            "knowledgeCitations": [],
-        }
+        assert completed_events[0].payload == {"state": "completed"}
+        audit_spans = [
+            recorded_span
+            for recorded_span in span_recorder.get_finished_spans()
+            if recorded_span.name == "turn.execute"
+            and "tap.insights.tool" in recorded_span.attributes
+        ]
+        assert len(audit_spans) == 1
+        audit_attributes = audit_spans[0].attributes
+        assert audit_attributes["tap.insights.conversation_id"] == conversation_id
+        assert audit_attributes["tap.insights.turn_id"] == turn_id
+        assert audit_attributes["tap.insights.graph_run_id"] == turn_id
+        assert audit_attributes["tap.insights.tool"] == "insights.query"
+        assert audit_attributes["tap.insights.query_id"] == query_id
+        assert audit_attributes["tap.insights.metric_version"] == "metrics-v1"
+        assert list(audit_attributes["tap.insights.resource_refs"]) == ["report-1"]
+        assert audit_attributes["tap.insights.knowledge_search_performed"] is False
+        assert json.loads(audit_attributes["tap.insights.knowledge_sources"]) == []
+        assert json.loads(audit_attributes["tap.insights.knowledge_citations"]) == []
+        assert "tap.retrieval.source_ids" not in audit_attributes
         async with sessions() as session:
             run = (
                 (await session.execute(select(graph_run).where(graph_run.c.run_id == turn_id)))

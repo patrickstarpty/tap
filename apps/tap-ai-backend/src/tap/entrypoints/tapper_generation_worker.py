@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
-from opentelemetry.trace import Span
+from opentelemetry.trace import Span, get_current_span
 
 from tap.contracts.http import (
     InsightsExplanationResult,
@@ -43,7 +45,13 @@ from tap.modules.chat.domain.conversations import (
     GraphContextStatus,
     RetrievalSummary,
 )
-from tap.platform.telemetry import bind_trace, extract_traceparent, flush_traces, span
+from tap.platform.telemetry import (
+    bind_trace,
+    current_binding,
+    extract_traceparent,
+    flush_traces,
+    span,
+)
 
 
 def _evidence_checkpoint(evidence: AnswerEvidence) -> dict[str, object]:
@@ -195,25 +203,32 @@ class GenerationWorker:
                 answer_plan_id=None if active_plan is None else active_plan.plan_id,
             )
 
-        def stream_events(evidence) -> list[dict[str, object]]:
+        def stream_events(evidence, duration_ms: int) -> list[dict[str, object]]:
             if evidence.outcome == "failed":
                 return []
             events: list[dict[str, object]] = [
                 {
                     "type": "context.assembled",
-                    "payload": {"sourceCount": len(turn.input_snapshot.value.resolved_resources)},
+                    "payload": {
+                        "contextSnapshotId": turn.input_snapshot.snapshot_id,
+                        "tokenCount": current_binding().usage.input_tokens,
+                    },
                 },
                 {
                     "type": "stage.completed",
-                    "payload": {"stage": "knowledge.answer", "outcome": evidence.outcome},
-                },
-                {
-                    "type": "retrieval.hits_ready",
-                    "payload": {
-                        "authorizedHitCount": evidence.retrieval_summary.authorized_hit_count
-                    },
+                    "payload": {"stage": "knowledge.answer", "durationMs": duration_ms},
                 },
             ]
+            if evidence.retrieval_summary.trace_id is not None:
+                events.append(
+                    {
+                        "type": "retrieval.hits_ready",
+                        "payload": {
+                            "traceId": evidence.retrieval_summary.trace_id,
+                            "authorizedHitCount": evidence.retrieval_summary.authorized_hit_count,
+                        },
+                    }
+                )
             if evidence.answer:
                 events.append({"type": "answer.delta", "payload": {"text": evidence.answer}})
             if answer_response is not None:
@@ -275,6 +290,7 @@ class GenerationWorker:
                 if insights_query_id is not None:
                     if self.insights_explanation is None:
                         raise RuntimeError("Insights explanation runtime is unavailable")
+                    explanation_started = time.monotonic()
                     result = await self.insights_explanation.explain(
                         self.conversations.scope,
                         insights_query_id,
@@ -284,6 +300,7 @@ class GenerationWorker:
                         turn_id=turn.turn_id,
                         selected_knowledge=turn.input_snapshot.value.resolved_resources,
                     )
+                    explanation_duration_ms = int((time.monotonic() - explanation_started) * 1000)
                     if result.get("queryId") != insights_query_id:
                         raise InsightsQueryUnavailable(
                             "Insights result changed the historical query ID"
@@ -301,60 +318,81 @@ class GenerationWorker:
                         GraphContextStatus.NOT_REQUESTED,
                         insights_explanation=dict(result),
                     )
-                    audit = {
-                        "conversationId": conversation_id,
-                        "turnId": turn.turn_id,
-                        "graphRunId": turn.turn_id,
-                        "tool": "insights.query",
-                        "queryId": insights_query_id,
-                        "metricVersion": result.get("metricVersion"),
-                        "resourceRefs": list(turn.input_snapshot.value.insights_report_refs),
-                        "knowledgeSearchPerformed": result.get("knowledgeSearchPerformed", False)
-                        is True,
-                        "knowledgeSources": [
-                            {
-                                "sourceId": item.source_id,
-                                "revisionId": item.revision_id,
-                                "sourceContentHash": item.source_content_hash,
-                            }
-                            for item in turn.input_snapshot.value.resolved_resources
-                        ],
-                        "knowledgeCitations": [
-                            {
-                                "citationId": item.get("citationId"),
-                                "sourceId": item.get("sourceId"),
-                                "revisionId": item.get("revisionId"),
-                                "chunkId": item.get("chunkId"),
-                                "publicationId": item.get("publicationId"),
-                                "approvalDigest": item.get("approvalDigest"),
-                            }
-                            for item in result.get("evidenceExcerpts", [])
-                            if isinstance(item, dict) and item.get("sourceId")
-                        ],
-                    }
+                    knowledge_search_performed = (
+                        result.get("knowledgeSearchPerformed", False) is True
+                    )
+                    knowledge_sources = [
+                        {
+                            "sourceId": item.source_id,
+                            "revisionId": item.revision_id,
+                            "sourceContentHash": item.source_content_hash,
+                        }
+                        for item in turn.input_snapshot.value.resolved_resources
+                    ]
+                    knowledge_citations = [
+                        {
+                            "citationId": item.get("citationId"),
+                            "sourceId": item.get("sourceId"),
+                            "revisionId": item.get("revisionId"),
+                            "chunkId": item.get("chunkId"),
+                            "publicationId": item.get("publicationId"),
+                            "approvalDigest": item.get("approvalDigest"),
+                        }
+                        for item in result.get("evidenceExcerpts", [])
+                        if isinstance(item, dict) and item.get("sourceId")
+                    ]
+                    audit_span = get_current_span()
+                    audit_span.set_attribute("tap.insights.conversation_id", conversation_id)
+                    audit_span.set_attribute("tap.insights.turn_id", turn.turn_id)
+                    audit_span.set_attribute("tap.insights.graph_run_id", turn.turn_id)
+                    audit_span.set_attribute("tap.insights.tool", "insights.query")
+                    audit_span.set_attribute("tap.insights.query_id", insights_query_id)
+                    metric_version = result.get("metricVersion")
+                    if metric_version is not None:
+                        audit_span.set_attribute("tap.insights.metric_version", metric_version)
+                    audit_span.set_attribute(
+                        "tap.insights.resource_refs",
+                        list(turn.input_snapshot.value.insights_report_refs),
+                    )
+                    audit_span.set_attribute(
+                        "tap.insights.knowledge_search_performed", knowledge_search_performed
+                    )
+                    audit_span.set_attribute(
+                        "tap.insights.knowledge_sources", json.dumps(knowledge_sources)
+                    )
+                    audit_span.set_attribute(
+                        "tap.insights.knowledge_citations", json.dumps(knowledge_citations)
+                    )
                     audit_events = [
                         {
                             "type": "context.assembled",
                             "payload": {
-                                "sourceCount": len(turn.input_snapshot.value.resolved_resources)
+                                "contextSnapshotId": turn.input_snapshot.snapshot_id,
+                                "tokenCount": current_binding().usage.input_tokens,
                             },
                         },
-                        {"type": "stage.completed", "payload": audit},
+                        {
+                            "type": "stage.completed",
+                            "payload": {
+                                "stage": "insights.explanation",
+                                "durationMs": explanation_duration_ms,
+                            },
+                        },
                     ]
-                    if audit["knowledgeSearchPerformed"]:
+                    if knowledge_search_performed:
+                        audit_span.set_attribute(
+                            "tap.retrieval.source_ids",
+                            [
+                                item.source_id
+                                for item in turn.input_snapshot.value.resolved_resources
+                            ],
+                        )
                         audit_events.append(
                             {
                                 "type": "stage.completed",
                                 "payload": {
                                     "stage": "knowledge.search",
-                                    "conversationId": conversation_id,
-                                    "turnId": turn.turn_id,
-                                    "graphRunId": turn.turn_id,
-                                    "queryId": insights_query_id,
-                                    "sourceIds": [
-                                        item.source_id
-                                        for item in turn.input_snapshot.value.resolved_resources
-                                    ],
+                                    "durationMs": explanation_duration_ms,
                                 },
                             }
                         )
@@ -363,7 +401,7 @@ class GenerationWorker:
                             "evidence": _evidence_checkpoint(evidence),
                             "terminalEvent": {
                                 "type": "turn.completed",
-                                "payload": {"insightsAudit": audit},
+                                "payload": {"state": "completed"},
                             },
                             "streamEvents": audit_events,
                         }
@@ -371,9 +409,11 @@ class GenerationWorker:
                 if planner is not None:
                     active_plan = AnswerPlan.from_dict(_state["answer_plan"])
                     active_plan.validate_binding(planning_input(turn.input_snapshot))
+                answer_started = time.monotonic()
                 evidence = await TurnProcessor(
                     provider=provider, complete=lambda _evidence: None
                 ).process(turn.input_snapshot)
+                answer_duration_ms = int((time.monotonic() - answer_started) * 1000)
                 terminal_event: dict[str, object] | None
                 if evidence.outcome == "failed":
                     terminal_event = {
@@ -399,7 +439,7 @@ class GenerationWorker:
                     "result": {
                         "evidence": _evidence_checkpoint(evidence),
                         "terminalEvent": terminal_event,
-                        "streamEvents": stream_events(evidence),
+                        "streamEvents": stream_events(evidence, answer_duration_ms),
                     }
                 }
 

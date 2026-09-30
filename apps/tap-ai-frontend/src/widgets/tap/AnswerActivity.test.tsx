@@ -11,7 +11,10 @@ it("shows a compact truthful activity summary before expanding the event details
       sourceCount={2}
       shownCitationCount={2}
       events={[
-        { eventType: "context.assembled", payload: { sourceCount: 2 } },
+        {
+          eventType: "context.assembled",
+          payload: { contextSnapshotId: "snapshot-1", tokenCount: 64 },
+        },
         {
           eventType: "stage.completed",
           payload: { stage: "knowledge.answer" },
@@ -61,6 +64,27 @@ it("distinguishes resolved citation records from references used in visible clai
   expect(
     screen.getByText("8 citation records resolved; 4 used by displayed claims"),
   ).toBeVisible();
+});
+
+it("shows source count from prop when context event has no sourceCount", () => {
+  render(
+    <AnswerActivity
+      locale="en"
+      sourceCount={3}
+      shownCitationCount={0}
+      events={[
+        {
+          eventType: "context.assembled",
+          payload: {
+            contextSnapshotId: "snapshot-1",
+            tokenCount: 128,
+            sourceCount: 99,
+          },
+        },
+      ]}
+    />,
+  );
+  expect(screen.getByText(/Activity · 3 sources/u)).toBeVisible();
 });
 
 it("describes a running answer using only its selected source snapshot", () => {

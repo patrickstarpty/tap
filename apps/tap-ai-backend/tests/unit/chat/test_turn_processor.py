@@ -52,7 +52,10 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
                     SimpleNamespace(
                         turn_id="turn-1",
                         lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(value=SimpleNamespace(message="question")),
+                        input_snapshot=SimpleNamespace(
+                            snapshot_id="snapshot-1",
+                            value=SimpleNamespace(message="question"),
+                        ),
                     ),
                 ),
             )
@@ -118,17 +121,32 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
     assert checkpoint.checkpoint["channel_values"]["graph_version"] == "fast-chat-v1"
     assert knowledge.requests[0].resource_refs[0].source_id == "src_" + "1" * 32
     assert knowledge.requests[0].resource_refs[0].mode.value == "scope"
-    assert conversations.events == [
-        ("conversation-1", "turn-1", "context.assembled", {"sourceCount": 1}),
-        (
-            "conversation-1",
-            "turn-1",
-            "stage.completed",
-            {"stage": "knowledge.answer", "outcome": "completed"},
-        ),
-        ("conversation-1", "turn-1", "retrieval.hits_ready", {"authorizedHitCount": 0}),
-        ("conversation-1", "turn-1", "answer.delta", {"text": "grounded"}),
-    ]
+    assert conversations.events[0] == (
+        "conversation-1",
+        "turn-1",
+        "context.assembled",
+        {"contextSnapshotId": "snapshot-1", "tokenCount": 0},
+    )
+    stage_conversation_id, stage_turn_id, stage_type, stage_payload = conversations.events[1]
+    assert (stage_conversation_id, stage_turn_id, stage_type) == (
+        "conversation-1",
+        "turn-1",
+        "stage.completed",
+    )
+    assert stage_payload["stage"] == "knowledge.answer"
+    assert isinstance(stage_payload["durationMs"], int) and stage_payload["durationMs"] >= 0
+    assert conversations.events[2] == (
+        "conversation-1",
+        "turn-1",
+        "retrieval.hits_ready",
+        {"traceId": "trace-1", "authorizedHitCount": 0},
+    )
+    assert conversations.events[3] == (
+        "conversation-1",
+        "turn-1",
+        "answer.delta",
+        {"text": "grounded"},
+    )
     assert conversations.completed[0][2].outcome == "completed"
 
 
@@ -148,7 +166,7 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
                     SimpleNamespace(
                         turn_id="turn-1",
                         lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(value=frozen),
+                        input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
                     ),
                 ),
             )
@@ -205,7 +223,7 @@ async def test_generation_worker_emits_public_failure_and_closes_evidence():
                     SimpleNamespace(
                         turn_id="turn-1",
                         lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(value=frozen),
+                        input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
                     ),
                 ),
             )
@@ -255,7 +273,8 @@ async def test_generation_worker_continues_after_cancel_wins_completion_race():
                 attempt=1,
                 lease_token=f"lease-{number}",
                 input_snapshot=SimpleNamespace(
-                    value=SimpleNamespace(message="question", resolved_resources=())
+                    snapshot_id="snapshot-1",
+                    value=SimpleNamespace(message="question", resolved_resources=()),
                 ),
             ),
         )
@@ -302,7 +321,7 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
                     SimpleNamespace(
                         turn_id="turn-1",
                         lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(value=frozen),
+                        input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
                     ),
                 ),
             )
@@ -355,7 +374,8 @@ async def test_generation_worker_renews_turn_lease_while_provider_is_running():
                         turn_id="turn-1",
                         lease_token="lease-1",
                         input_snapshot=SimpleNamespace(
-                            value=SimpleNamespace(message="question", resolved_resources=())
+                            snapshot_id="snapshot-1",
+                            value=SimpleNamespace(message="question", resolved_resources=()),
                         ),
                     ),
                 ),
@@ -419,7 +439,8 @@ async def test_generation_worker_uses_turn_scoped_persistent_checkpointer_factor
                         turn_id="turn-1",
                         lease_token="lease-1",
                         input_snapshot=SimpleNamespace(
-                            value=SimpleNamespace(message="question", resolved_resources=())
+                            snapshot_id="snapshot-1",
+                            value=SimpleNamespace(message="question", resolved_resources=()),
                         ),
                     ),
                 ),
@@ -480,7 +501,8 @@ async def test_generation_worker_recovers_after_one_transient_checkpoint_failure
                         attempt=self.claims,
                         lease_token=f"lease-{self.claims}",
                         input_snapshot=SimpleNamespace(
-                            value=SimpleNamespace(message="question", resolved_resources=())
+                            snapshot_id="snapshot-1",
+                            value=SimpleNamespace(message="question", resolved_resources=()),
                         ),
                     ),
                 ),
@@ -548,7 +570,8 @@ async def test_generation_worker_terminalizes_permanent_checkpoint_error_and_con
                 attempt=1,
                 lease_token=f"lease-{number}",
                 input_snapshot=SimpleNamespace(
-                    value=SimpleNamespace(message="question", resolved_resources=())
+                    snapshot_id="snapshot-1",
+                    value=SimpleNamespace(message="question", resolved_resources=()),
                 ),
             ),
         )
@@ -607,7 +630,8 @@ async def test_generation_worker_terminalizes_transient_checkpoint_failure_at_re
         attempt=3,
         lease_token="lease-3",
         input_snapshot=SimpleNamespace(
-            value=SimpleNamespace(message="question", resolved_resources=())
+            snapshot_id="snapshot-1",
+            value=SimpleNamespace(message="question", resolved_resources=()),
         ),
     )
 
@@ -655,7 +679,8 @@ async def test_retryable_exit_marks_execute_span_deferred(span_recorder):
         attempt=1,
         lease_token="lease-1",
         input_snapshot=SimpleNamespace(
-            value=SimpleNamespace(message="question", resolved_resources=())
+            snapshot_id="snapshot-1",
+            value=SimpleNamespace(message="question", resolved_resources=()),
         ),
     )
 
@@ -699,7 +724,8 @@ async def test_generation_worker_respects_lease_loss_during_checkpoint_failure_s
         attempt=1,
         lease_token="expired-lease",
         input_snapshot=SimpleNamespace(
-            value=SimpleNamespace(message="question", resolved_resources=())
+            snapshot_id="snapshot-1",
+            value=SimpleNamespace(message="question", resolved_resources=()),
         ),
     )
 
@@ -735,7 +761,8 @@ async def test_generation_worker_bounds_checkpoint_settlement_conflict_at_attemp
         attempt=3,
         lease_token="lease-3",
         input_snapshot=SimpleNamespace(
-            value=SimpleNamespace(message="question", resolved_resources=())
+            snapshot_id="snapshot-1",
+            value=SimpleNamespace(message="question", resolved_resources=()),
         ),
     )
 
@@ -775,7 +802,8 @@ async def test_generation_worker_cannot_fail_a_checkpoint_conflict_after_losing_
         attempt=3,
         lease_token="stale-lease",
         input_snapshot=SimpleNamespace(
-            value=SimpleNamespace(message="question", resolved_resources=())
+            snapshot_id="snapshot-1",
+            value=SimpleNamespace(message="question", resolved_resources=()),
         ),
     )
 
@@ -819,7 +847,8 @@ async def test_generation_worker_rechecks_turn_lease_before_provider_call():
                         turn_id="turn-1",
                         lease_token="lease-1",
                         input_snapshot=SimpleNamespace(
-                            value=SimpleNamespace(message="question", resolved_resources=())
+                            snapshot_id="snapshot-1",
+                            value=SimpleNamespace(message="question", resolved_resources=()),
                         ),
                     ),
                 ),
@@ -1004,13 +1033,14 @@ async def test_generation_worker_skips_a_turn_whose_conversation_was_deleted():
         turn_id="turn-1",
         lease_token="lease-1",
         input_snapshot=SimpleNamespace(
+            snapshot_id="snapshot-1",
             value=SimpleNamespace(
                 message="question",
                 source_revision_ids=("revision-1",),
                 resolved_resources=(
                     SimpleNamespace(source_id="src_" + "1" * 32, revision_id="revision-1"),
                 ),
-            )
+            ),
         ),
     )
 
