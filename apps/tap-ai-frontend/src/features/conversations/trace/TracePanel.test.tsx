@@ -102,8 +102,29 @@ describe("TracePanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /Trace/u }));
     await userEvent.click(screen.getByRole("tab", { name: "Attempt 1" }));
 
-    await userEvent.click(screen.getByRole("link", { name: /chunk-1/u }));
+    await userEvent.click(screen.getByRole("link", { name: "Unknown source" }));
     expect(onOpenDocument).toHaveBeenCalledWith("document-1");
+  });
+
+  it("retrieval hit shows document name", async () => {
+    render(
+      <TracePanel
+        trace={trace}
+        locale="en"
+        onOpenModelCall={() => undefined}
+        onOpenDocument={() => undefined}
+        documentName={(documentId) =>
+          documentId === "document-1" ? "Policy.md" : undefined
+        }
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Trace/u }));
+    await userEvent.click(screen.getByRole("tab", { name: "Attempt 1" }));
+
+    expect(screen.getByRole("link", { name: "Policy.md" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Unknown source" }),
+    ).not.toBeInTheDocument();
   });
 
   it("model call row opens drawer", async () => {

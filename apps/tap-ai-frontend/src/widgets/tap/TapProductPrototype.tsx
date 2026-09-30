@@ -490,18 +490,26 @@ function DurableTracePanel({
   conversationId,
   turn,
   onOpenDocument,
+  documentName,
 }: {
   projectId: string | null;
   conversationId: string;
   turn: AssistantTurn;
   onOpenDocument: (documentId: string) => void;
+  documentName?: (documentId: string) => string | undefined;
 }) {
   const [openCallId, setOpenCallId] = useState<string | null>(null);
   const traceQuery = useTurnTrace(projectId, conversationId, turn.id, {
     enabled: turn.traceId != null,
     latestAttempt: turn.attempt ?? 1,
   });
-  if (traceQuery.data === undefined) return null;
+  if (traceQuery.data === undefined) {
+    return (
+      <p className="tap-trace-panel tap-trace-panel-loading" role="status">
+        {turn.locale === "zh" ? "调用链 · 加载中…" : "Trace · loading…"}
+      </p>
+    );
+  }
   return (
     <>
       <TracePanel
@@ -509,6 +517,7 @@ function DurableTracePanel({
         locale={turn.locale}
         onOpenModelCall={setOpenCallId}
         onOpenDocument={onOpenDocument}
+        documentName={documentName}
       />
       <ModelCallDrawer
         projectId={projectId}
@@ -528,6 +537,7 @@ function AssistantResponse({
   projectId = null,
   onOpenCitation,
   onOpenDocument,
+  documentName,
   onRetryConversation,
   onResend,
   onGenerateTestPlan,
@@ -540,6 +550,7 @@ function AssistantResponse({
   projectId?: string | null;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
   onOpenDocument?: (documentId: string) => void;
+  documentName?: (documentId: string) => string | undefined;
   onRetryConversation: () => void;
   /** Sends the same question and context again as a new turn. */
   onResend?: () => void;
@@ -610,6 +621,7 @@ function AssistantResponse({
               conversationId={conversationId}
               turn={turn}
               onOpenDocument={onOpenDocument ?? (() => undefined)}
+              documentName={documentName}
             />
           ) : (
             <AnswerActivity
@@ -1671,6 +1683,13 @@ export function TapProductPrototype({
       sourcesQuery.data?.items,
     ],
   );
+  const publishedDocumentNames = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const source of publishedSourcesQuery.data?.items ?? []) {
+      map.set(source.documentId, source.filename);
+    }
+    return map;
+  }, [publishedSourcesQuery.data?.items]);
   const publishedItems = useMemo<readonly LibrarySource[]>(() => {
     const grouped = new Map<string, LibrarySource>();
     for (const source of publishedSourcesQuery.data?.items ?? []) {
@@ -2527,6 +2546,9 @@ export function TapProductPrototype({
                     setActiveCitation(null);
                     setActiveDocumentId(documentId);
                   }}
+                  documentName={(documentId) =>
+                    publishedDocumentNames.get(documentId)
+                  }
                   activityEvents={
                     durable
                       ? (conversationEvents.data?.items ?? []).filter(

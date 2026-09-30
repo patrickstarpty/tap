@@ -1458,6 +1458,12 @@
   margin-bottom: 12px;
 }
 
+.tap-trace-panel-loading {
+  margin: 0 0 12px;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
 .tap-trace-summary.ant-btn {
   height: auto;
   padding: 0;

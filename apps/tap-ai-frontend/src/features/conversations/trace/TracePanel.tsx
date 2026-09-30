@@ -41,11 +41,13 @@ export function TracePanel({
   locale,
   onOpenModelCall,
   onOpenDocument,
+  documentName,
 }: {
   trace: TurnTrace;
   locale: "en" | "zh";
   onOpenModelCall: (callId: string) => void;
   onOpenDocument: (documentId: string) => void;
+  documentName?: (documentId: string) => string | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const attempts = useMemo(() => {
@@ -120,6 +122,7 @@ export function TracePanel({
                 totalMs={totalMs}
                 onOpenModelCall={onOpenModelCall}
                 onOpenDocument={onOpenDocument}
+                documentName={documentName}
               />
             ))}
           </ul>
@@ -137,6 +140,7 @@ function TraceRow({
   totalMs,
   onOpenModelCall,
   onOpenDocument,
+  documentName,
 }: {
   span: TraceSpanView;
   depth: number;
@@ -145,6 +149,7 @@ function TraceRow({
   totalMs: number;
   onOpenModelCall: (callId: string) => void;
   onOpenDocument: (documentId: string) => void;
+  documentName?: (documentId: string) => string | undefined;
 }) {
   const left = ((Date.parse(span.startedAt) - traceStart) / totalMs) * 100;
   const width = Math.max(2, (span.durationMs / totalMs) * 100);
@@ -153,6 +158,14 @@ function TraceRow({
   const documentIds = asStringArray(
     span.attributes["tap.retrieval.document_ids"],
   );
+  const hitDocumentIds: string[] = [];
+  const seenDocumentIds = new Set<string>();
+  chunkIds.forEach((chunkId, index) => {
+    const documentId = documentIds[index] ?? chunkId;
+    if (seenDocumentIds.has(documentId)) return;
+    seenDocumentIds.add(documentId);
+    hitDocumentIds.push(documentId);
+  });
 
   return (
     <li
@@ -180,21 +193,23 @@ function TraceRow({
           </Button>
         ) : null}
       </span>
-      {chunkIds.length > 0 ? (
+      {hitDocumentIds.length > 0 ? (
         <ul className="tap-trace-hit-chunks">
-          {chunkIds.map((chunkId, index) => {
-            const documentId = documentIds[index] ?? chunkId;
+          {hitDocumentIds.map((documentId) => {
+            const name =
+              documentName?.(documentId) ??
+              (locale === "zh" ? "未知来源" : "Unknown source");
             return (
-              <li key={chunkId}>
+              <li key={documentId}>
                 <a
                   role="link"
-                  href={`#chunk-${encodeURIComponent(chunkId)}`}
+                  href={`#document-${encodeURIComponent(documentId)}`}
                   onClick={(event) => {
                     event.preventDefault();
                     onOpenDocument(documentId);
                   }}
                 >
-                  {chunkId}
+                  {name}
                 </a>
               </li>
             );

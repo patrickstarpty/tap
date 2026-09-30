@@ -79,7 +79,15 @@ const ANSWER = {
   citations: [],
 };
 
-function completedConversation({ traceId }: { traceId: string | null }) {
+function completedConversation({
+  traceId,
+  extraSpans = [],
+  api = fakeKnowledgeClient(),
+}: {
+  traceId: string | null;
+  extraSpans?: readonly Record<string, unknown>[];
+  api?: ReturnType<typeof fakeKnowledgeClient>;
+}) {
   vi.stubGlobal("fetch", async (request: Request) => {
     const path = new URL(request.url).pathname;
     if (path.endsWith("/conversations") && request.method === "GET")
@@ -130,6 +138,14 @@ function completedConversation({ traceId }: { traceId: string | null }) {
             eventId: "event-1",
             sequence: 1,
             turnId: "turn-1",
+            occurredAt: "2026-09-29T08:00:00Z",
+            eventType: "stage.completed",
+            payload: { stage: "knowledge.answer" },
+          },
+          {
+            eventId: "event-2",
+            sequence: 2,
+            turnId: "turn-1",
             occurredAt: "2026-09-29T08:00:01Z",
             eventType: "turn.completed",
             payload: { answer: ANSWER },
@@ -161,12 +177,12 @@ function completedConversation({ traceId }: { traceId: string | null }) {
             attributes: {},
             attempt: 1,
           },
+          ...extraSpans,
         ],
         modelCalls: [],
       });
     throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
   });
-  const api = fakeKnowledgeClient();
   return renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
     api,
   });
@@ -179,6 +195,7 @@ it("shows trace panel for terminal turn with traceId", async () => {
   expect(
     await screen.findByRole("button", { name: /^Trace:/u }),
   ).toBeInTheDocument();
+  expect(screen.queryByText(/^Activity/u)).not.toBeInTheDocument();
 });
 
 it("falls back to activity when traceId is null", async () => {
@@ -188,4 +205,54 @@ it("falls back to activity when traceId is null", async () => {
   expect(
     screen.queryByRole("button", { name: /^Trace:/u }),
   ).not.toBeInTheDocument();
+  expect(screen.getByText(/^Activity/u)).toBeInTheDocument();
+});
+
+it("resolves a retrieval hit to its published document name", async () => {
+  const api = fakeKnowledgeClient().withPublishedSources({
+    items: [
+      {
+        sourceId: "src_policy",
+        sourceName: "Policy source",
+        documentId: "doc_policy",
+        filename: "policy.md",
+        revisionId: "rev_policy",
+        publicationId: "pub_policy",
+        approvedItemCount: 1,
+        inventoryItemCount: 1,
+        partial: false,
+        expiresAt: "2027-01-01T00:00:00Z",
+      },
+    ],
+  });
+  completedConversation({
+    traceId: "trace-1",
+    api,
+    extraSpans: [
+      {
+        spanId: "span-retrieval",
+        parentSpanId: "span-1",
+        name: "retrieval.search",
+        status: "ok",
+        startedAt: "2026-09-29T08:00:00.100Z",
+        durationMs: 100,
+        attempt: 1,
+        attributes: {
+          "tap.retrieval.chunk_ids": ["chunk-1"],
+          "tap.retrieval.document_ids": ["doc_policy"],
+          "tap.retrieval.scores": [0.9],
+          "tap.retrieval.hit_count": 1,
+        },
+      },
+    ],
+  });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  await userEvent.click(
+    await screen.findByRole("button", { name: /^Trace:/u }),
+  );
+
+  expect(
+    await screen.findByRole("link", { name: "policy.md" }),
+  ).toBeInTheDocument();
 });
