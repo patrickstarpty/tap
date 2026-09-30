@@ -210,6 +210,57 @@ async def test_insights_events_validate_against_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_insights_knowledge_search_events_validate_against_contract(span_recorder) -> None:
+    resolved_resources = (
+        SimpleNamespace(
+            source_id="src_" + "1" * 32,
+            revision_id="revision-1",
+            source_content_hash="sha256:" + "a" * 64,
+        ),
+    )
+    conversations = _InsightsConversations(resolved_resources=resolved_resources)
+    worker = GenerationWorker(
+        conversations,
+        _NoOrdinaryAnswer(),
+        checkpointer=InMemorySaver(),
+        insights_explanation=_Explanation(knowledge_search_performed=True),
+    )
+    assert await worker.run_once(limit=1) == 1
+
+    assert conversations.events, "insights knowledge-search path must emit stream events"
+    for index, (event_type, payload) in enumerate(conversations.events, start=1):
+        ChatEventEnvelope.model_validate(
+            _envelope(sequence=index, event_type=event_type, payload=payload)
+        )
+    for event_type, payload in conversations.terminal_events:
+        ChatEventEnvelope.model_validate(
+            _envelope(
+                sequence=len(conversations.events) + 1, event_type=event_type, payload=payload
+            )
+        )
+
+    stage_events = [
+        payload for event_type, payload in conversations.events if event_type == "stage.completed"
+    ]
+    assert [item["stage"] for item in stage_events] == ["insights.explanation", "knowledge.search"]
+    knowledge_search_payload = stage_events[1]
+    assert set(knowledge_search_payload) == {"stage", "durationMs"}
+    assert isinstance(knowledge_search_payload["durationMs"], int)
+    assert knowledge_search_payload["durationMs"] >= 0
+
+    audit_spans = [
+        recorded_span
+        for recorded_span in span_recorder.get_finished_spans()
+        if recorded_span.name == "turn.execute"
+        and "tap.retrieval.source_ids" in recorded_span.attributes
+    ]
+    assert len(audit_spans) == 1
+    assert list(audit_spans[0].attributes["tap.retrieval.source_ids"]) == [
+        item.source_id for item in resolved_resources
+    ]
+
+
+@pytest.mark.asyncio
 async def test_hits_ready_omitted_without_trace_id() -> None:
     class Knowledge:
         async def answer(self, request):
