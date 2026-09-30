@@ -6,7 +6,7 @@ import asyncio
 import os
 import signal
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -42,6 +42,7 @@ from tap.modules.chat.domain.conversations import (
     GraphContextStatus,
     RetrievalSummary,
 )
+from tap.modules.chat.domain.suggestions import RefreshReason
 
 
 def _evidence_checkpoint(evidence: AnswerEvidence) -> dict[str, object]:
@@ -102,6 +103,7 @@ class GenerationWorker:
     knowledge: Any
     checkpointer: BaseCheckpointSaver | None = None
     insights_explanation: Any | None = None
+    suggestion_refresh: Any | None = None
     lease_duration: timedelta = timedelta(seconds=60)
     renew_interval_seconds: float = 20.0
     max_checkpoint_attempts: int = 3
@@ -499,6 +501,15 @@ class GenerationWorker:
                     terminal_event=terminal_event,
                     stream_events=persisted_stream_events,
                 )
+                if self.suggestion_refresh is not None and evidence.outcome == "completed":
+                    actor_id = getattr(turn.input_snapshot.value, "actor_id", None)
+                    if actor_id:
+                        try:
+                            await self.suggestion_refresh.request_refresh_for_actor(
+                                actor_id, RefreshReason.TURN_COMPLETED, now=datetime.now(UTC)
+                            )
+                        except Exception:  # noqa: BLE001 - must never fail a completed turn
+                            pass
             except InsightsAuthorizationChanged:
                 if insights_query_id is None:
                     raise
@@ -566,7 +577,10 @@ async def main() -> None:
         await runtime.aclose()
         raise RuntimeError("generation worker composition is unavailable")
     worker = GenerationWorker(
-        conversations, knowledge, insights_explanation=runtime.http_services.insights_explanation
+        conversations,
+        knowledge,
+        insights_explanation=runtime.http_services.insights_explanation,
+        suggestion_refresh=runtime.http_services.prompt_suggestion_store,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

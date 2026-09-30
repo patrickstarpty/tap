@@ -44,6 +44,7 @@ from tap.modules.access.domain.policy import RetrievalPolicyContext
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
+from tap.modules.chat.application.suggestion_ports import SuggestionStore
 from tap.modules.chat.application.suggestions import PromptSuggestionService
 from tap.modules.graph.ports.store import GraphStorePort
 from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
@@ -225,6 +226,7 @@ class HttpServices:
     asset_catalog: AssetCatalogHttpService | None = None
     conversations: ConversationService | None = None
     prompt_suggestions: PromptSuggestionService | None = None
+    prompt_suggestion_store: SuggestionStore | None = None
     graph: GraphStorePort | None = None
     test_plans: TestPlanApplication | None = None
     knowledge_reviews: KnowledgeReviewHttpService | None = None
