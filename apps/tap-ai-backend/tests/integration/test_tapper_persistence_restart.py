@@ -10,14 +10,13 @@ import stat
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from azure.core.exceptions import ResourceNotFoundError
 from pymilvus.decorators import _log_rpc_error  # type: ignore[import-untyped]
 from sqlalchemy import select
 from sqlalchemy.engine import RowMapping, make_url
@@ -38,11 +37,6 @@ from tap.entrypoints.tapper_runtime import (
 )
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.knowledge.adapters.blob_artifacts import (
-    ARTIFACTS_CONTAINER,
-    ORIGINALS_CONTAINER,
-    AzureBlobArtifactStore,
-)
 from tap.modules.knowledge.adapters.milvus.targets import bind_target
 from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusQueryRequest,
@@ -55,6 +49,7 @@ from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document_revision,
     knowledge_ingestion_job,
 )
+from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents
 from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore, _parse
 from tap.modules.knowledge.domain.documents import (
     CHUNKER_VERSION,
@@ -292,24 +287,6 @@ async def _one(connection: AsyncConnection, statement: Any, code: str) -> RowMap
     return rows[0]
 
 
-def _expected_locators(
-    document: DocumentState, settings: TapperSettings
-) -> tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator]:
-    revision = document.revision_id
-    return (
-        ArtifactLocator(
-            f"{ORIGINALS_CONTAINER}/revisions/{revision}/"
-            f"{document.source_content_hash.removeprefix('sha256:')}"
-        ),
-        ArtifactLocator(f"{ARTIFACTS_CONTAINER}/revisions/{revision}/normalized-v1.json"),
-        ArtifactLocator(f"{ARTIFACTS_CONTAINER}/revisions/{revision}/chunks-v1.jsonl.gz"),
-        ArtifactLocator(
-            f"{ARTIFACTS_CONTAINER}/revisions/{revision}/embeddings/"
-            f"{settings.embedding_alias}/{settings.embedding_dimension}-v1.jsonl.gz"
-        ),
-    )
-
-
 def _persisted_locators(
     revision: Mapping[Any, Any],
     document: DocumentState,
@@ -317,10 +294,6 @@ def _persisted_locators(
     original: DocumentState | None = None,
 ) -> tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator]:
     original = document if original is None else original
-    if settings.object_store_provider == "azure":
-        current = _expected_locators(document, settings)
-        return (_expected_locators(original, settings)[0], *current[1:])
-    _require(settings.object_store_provider == "minio", "object-provider")
     locators = []
     for kind in ("original", "normalized", "chunks", "embeddings"):
         value = revision[f"{kind}_blob_locator"]
@@ -358,7 +331,7 @@ async def _verify_object_binding(
         value = await artifacts.objects.open_verified(ref)
         identity = f"{revision}/{kind}"
         if kind == "embeddings":
-            identity += f"/{settings.embedding_alias}/{settings.embedding_dimension}"
+            identity += f"/{settings.embedding_model}/{settings.embedding_dimension}"
         _require(
             value.identity == identity
             and value.attributes == tuple(sorted({"kind": kind, "revision": revision}.items()))
@@ -445,12 +418,52 @@ async def _verify_database(
                 ),
                 "mysql-revision",
             )
-            locators = _persisted_locators(revision, document, settings)
+            # A ready upload is republished as a managed-chunk revision that keeps
+            # the original object owned by the uploaded (parsed) revision.
+            managed = revision["pipeline_version"] == "managed-chunks-v1"
+            original = document
+            if managed:
+                managed_row = await _one(
+                    connection,
+                    select(managed_documents).where(
+                        *scope_predicates(managed_documents, VALIDATION_SCOPE),
+                        managed_documents.c.document_id == document.document_id,
+                    ),
+                    "mysql-managed-document",
+                )
+                uploaded = await _one(
+                    connection,
+                    select(knowledge_document_revision).where(
+                        *scope_predicates(knowledge_document_revision, VALIDATION_SCOPE),
+                        knowledge_document_revision.c.revision_id
+                        == managed_row["original_revision_id"],
+                    ),
+                    "mysql-original-revision",
+                )
+                _require(
+                    uploaded["document_id"] == document.document_id
+                    and uploaded["revision_id"] != document.revision_id
+                    and uploaded["original_blob_locator"] == revision["original_blob_locator"],
+                    "mysql-original-revision-binding",
+                )
+                original = replace(
+                    document,
+                    revision_id=cast(str, uploaded["revision_id"]),
+                    source_content_hash=cast(str, uploaded["source_content_hash"]),
+                )
+                _require_revision_binding(
+                    uploaded,
+                    original,
+                    _persisted_locators(uploaded, original, settings),
+                    settings.pipeline_version,
+                )
+            locators = _persisted_locators(revision, document, settings, original)
             _require_revision_binding(
                 revision,
                 document,
                 locators,
                 settings.pipeline_version,
+                managed=managed,
             )
 
             ingestion_job = await _one(
@@ -462,7 +475,7 @@ async def _verify_database(
                 "mysql-ingestion-job",
             )
             _require(
-                ingestion_job["revision_id"] == document.revision_id
+                ingestion_job["revision_id"] == original.revision_id
                 and ingestion_job["kind"] == "ingestion"
                 and ingestion_job["status"] == "completed",
                 "mysql-ingestion-job-binding",
@@ -480,7 +493,7 @@ async def _verify_database(
                 .all()
             )
             _require(
-                revision_ids == [document.revision_id],
+                sorted(revision_ids) == sorted({document.revision_id, original.revision_id}),
                 "mysql-document-revision-inventory",
             )
             revision_jobs = (
@@ -503,7 +516,11 @@ async def _verify_database(
             deletion_inventory = [job for job in revision_jobs if job["kind"] == "deletion"]
             _require(
                 len(ingestion_jobs) == 1
-                and ingestion_jobs[0]["job_id"] == document.job_id
+                and (
+                    ingestion_jobs[0]["job_id"].startswith("managed_")
+                    if managed
+                    else ingestion_jobs[0]["job_id"] == document.job_id
+                )
                 and ingestion_jobs[0]["status"] == "completed",
                 "mysql-ingestion-job-inventory",
             )
@@ -546,7 +563,7 @@ async def _verify_database(
                 _require(
                     manifest["ordinal"] == ordinal
                     and manifest["root_id"] == document.document_id
-                    and manifest["embedding_model_version"] == settings.embedding_alias
+                    and manifest["embedding_model_version"] == settings.embedding_model
                     and manifest["index_version"] == settings.index_version
                     and isinstance(manifest["chunk_id"], str)
                     and isinstance(manifest["chunk_content_hash"], str)
@@ -575,6 +592,8 @@ async def _verify_database(
                 )
             _require(len(manifest_by_id) == len(manifests), "mysql-manifest-identity")
             evidence[document.document_id] = RevisionEvidence(
+                state=document,
+                original=original,
                 locators=locators,
                 manifest=manifest_by_id,
             )
@@ -607,45 +626,33 @@ async def _verify_database(
     return evidence
 
 
-async def _blob_missing(
-    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore, locator: ArtifactLocator
-) -> bool:
-    if isinstance(artifacts, KnowledgeArtifactStore):
-        _revision, _kind, ref = _parse(locator)
-        try:
-            await artifacts.objects.open_verified(ref)
-        except ObjectMissingError:
-            return True
-        return False
-    container, blob_name = str(locator).split("/", 1)
-    client = artifacts._service.get_blob_client(container, blob_name)  # noqa: SLF001
+async def _blob_missing(artifacts: KnowledgeArtifactStore, locator: ArtifactLocator) -> bool:
+    _revision, _kind, ref = _parse(locator)
     try:
-        await asyncio.wait_for(
-            client.get_blob_properties(),
-            timeout=artifacts._config.operation_timeout_seconds,  # noqa: SLF001
-        )
-    except ResourceNotFoundError:
+        await artifacts.objects.open_verified(ref)
+    except ObjectMissingError:
         return True
     return False
 
 
 async def _verify_blobs(
-    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
+    artifacts: KnowledgeArtifactStore,
     settings: TapperSettings,
     state: JourneyState,
     evidence: Mapping[str, RevisionEvidence],
 ) -> None:
     for document in state.survivors:
         revision = evidence[document.document_id]
-        if isinstance(artifacts, KnowledgeArtifactStore):
-            await _verify_object_binding(artifacts, revision.locators, document, settings)
+        await _verify_object_binding(
+            artifacts, revision.locators, document, settings, revision.original
+        )
         original = await artifacts.read_original(revision.locators[0])
         normalized = await artifacts.read_normalized(revision.locators[1])
         chunks = await artifacts.read_chunks(revision.locators[2])
         embeddings = await artifacts.read_embeddings(revision.locators[3])
         chunk_ids = tuple(str(chunk.chunk_id) for chunk in chunks)
         _require(
-            canonical_sha256(original) == document.source_content_hash
+            canonical_sha256(original) == revision.original.source_content_hash
             and normalized.source_hash == document.source_content_hash
             and str(normalized.document_id) == document.document_id
             and str(normalized.revision_id) == document.revision_id
@@ -662,12 +669,15 @@ async def _verify_blobs(
                 for ordinal, chunk in enumerate(chunks)
                 for item in (revision.manifest[str(chunk.chunk_id)],)
             )
-            and embeddings.model_alias == settings.embedding_alias
+            and embeddings.model_alias == settings.embedding_model
             and embeddings.dimension == settings.embedding_dimension
             and embeddings.chunk_ids == chunk_ids,
             "blob-survivor-binding",
         )
-    for locator in evidence[state.deleted.document_id].locators:
+    deleted = evidence[state.deleted.document_id]
+    # A managed revision's deletion keeps the original owned by the uploaded revision.
+    owned = deleted.locators if deleted.original is deleted.state else deleted.locators[1:]
+    for locator in owned:
         _require(await _blob_missing(artifacts, locator), "blob-deleted-artifact")
 
 
@@ -727,7 +737,7 @@ def _require_milvus_survivor_row(
         and row.get("index_family") == "doc"
         and row.get("schema_version") == settings.schema_version
         and row.get("corpus_version") == settings.corpus_version
-        and row.get("embedding_model_version") == settings.embedding_alias
+        and row.get("embedding_model_version") == settings.embedding_model
         and row.get("chunk_content_hash") == item.chunk_content_hash
         and row.get("anchor_json") == item.anchor_json,
         "milvus-survivor-binding",
@@ -835,7 +845,7 @@ async def _verify_milvus(
         and fence.get("anchor_json") == "{}"
         and fence.get("schema_version") == settings.schema_version
         and fence.get("corpus_version") == settings.corpus_version
-        and fence.get("embedding_model_version") == settings.embedding_alias,
+        and fence.get("embedding_model_version") == settings.embedding_model,
         "milvus-deletion-fence-binding",
     )
 
@@ -1058,24 +1068,15 @@ def _verify_owned_environment(settings: TapperSettings) -> None:
         and settings.milvus_uri == "http://127.0.0.1:29530",
         "settings-isolation",
     )
-    if settings.object_store_provider == "minio":
-        _require(
-            settings.s3_endpoint == "http://127.0.0.1:29000"
-            and settings.s3_bucket == "tapper-e2e-objects"
-            and settings.s3_store_id == "tapper-e2e"
-            and settings.s3_region == "us-east-1"
-            and bool(settings.s3_access_key)
-            and bool(settings.s3_secret_key)
-            and not settings.legacy_azure_enabled,
-            "settings-isolation",
-        )
-    else:
-        _require(
-            settings.object_store_provider == "azure"
-            and "BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1"
-            in settings.blob_connection_string,
-            "settings-isolation",
-        )
+    _require(
+        settings.s3_endpoint == "http://127.0.0.1:29000"
+        and settings.s3_bucket == "tapper-e2e-objects"
+        and settings.s3_store_id == "tapper-e2e"
+        and settings.s3_region == "us-east-1"
+        and bool(settings.s3_access_key)
+        and bool(settings.s3_secret_key),
+        "settings-isolation",
+    )
 
 
 def _exact_e2e_settings() -> TapperSettings:
@@ -1396,9 +1397,8 @@ def _minio_verifier_fixture() -> tuple[DocumentState, TapperSettings, dict[str, 
     settings = cast(
         TapperSettings,
         SimpleNamespace(
-            object_store_provider="minio",
             s3_store_id="tapper-e2e",
-            embedding_alias="embed",
+            embedding_model="embed",
             embedding_dimension=3,
         ),
     )
@@ -1513,15 +1513,12 @@ def test_minio_verifier_enforces_owned_environment(drift: str | None) -> None:
         database_url="mysql+asyncmy://tap:tap-e2e@127.0.0.1:13306/tap?charset=utf8mb4",
         redis_url="redis://127.0.0.1:16379/0",
         milvus_uri="http://127.0.0.1:29530",
-        object_store_provider="minio",
         s3_endpoint="http://127.0.0.1:29000",
         s3_bucket="tapper-e2e-objects",
         s3_store_id="tapper-e2e",
         s3_region="us-east-1",
         s3_access_key="tap-e2e-objects",
         s3_secret_key="tap-e2e-objects-password",
-        legacy_azure_enabled=False,
-        blob_connection_string="",
     )
     names = {
         "endpoint": "s3_endpoint",

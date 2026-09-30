@@ -33,7 +33,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tap.contracts.events import ProjectEventEnvelope
 from tap.modules.access.adapters.mysql import project
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
-from tap.modules.ai.adapters.litellm import ProviderModelMapping
 from tap.modules.ai.adapters.mysql import ai_agent_revision, skill_revision
 from tap.modules.ai.domain.assets import AssetRevisionStatus
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
@@ -612,17 +611,13 @@ class MysqlTestPlanRepository:
         *,
         scope: ProjectScopeContext,
         model_alias: str,
-        model_mapping: ProviderModelMapping,
         knowledge_requires_publication: bool = True,
     ) -> None:
         self._sessions = sessions
         self.scope = require_project_scope(scope)
-        if not isinstance(model_mapping, ProviderModelMapping):
-            raise TypeError("test design model mapping is required")
         if not isinstance(model_alias, str) or not model_alias.strip():
             raise ValueError("test design model alias is required")
         self._model_alias = model_alias
-        self._model_mapping = model_mapping
         self._knowledge_requires_publication = knowledge_requires_publication
 
     def _assert_model_alias(self, model_alias: str) -> None:
@@ -631,7 +626,7 @@ class MysqlTestPlanRepository:
 
     def _assert_model_route(self, model_alias: str, model_revision_id: str | None) -> None:
         self._assert_model_alias(model_alias)
-        if model_revision_id != design_model_revision_id(model_alias, self._model_mapping):
+        if model_revision_id != design_model_revision_id(model_alias):
             raise ValueError("test design model route revision is no longer current")
 
     async def _lock_write_namespace(
@@ -1944,7 +1939,7 @@ class MysqlTestPlanRepository:
                 or not all(isinstance(item, str) for item in skill_revision_ids)
             ):
                 raise ValueError("frozen Turn execution versions are incomplete")
-            model_revision_id = design_model_revision_id(model_alias, self._model_mapping)
+            model_revision_id = design_model_revision_id(model_alias)
         request = TestPlanGenerationRequest.create(
             project_id=scope.project_id,
             conversation_id=conversation_id,

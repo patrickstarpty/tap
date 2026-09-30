@@ -38,7 +38,7 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 | `milvus`（含 `milvus-etcd`、`milvus-minio`） | 可重建的文档检索投影，BM25 + dense 混合检索 |
 | `litellm` | 所有模型调用的统一网关 |
 | `tap-parser` | 隔离的文档解析 |
-| `azurite` / `tap-minio` | 原件与中间产物对象存储，由 `TAPPER_OBJECT_STORE_PROVIDER` 选择（代码默认 `azure`，`.env.example` 与 E2E 使用 `minio`） |
+| `tap-minio` | 唯一对象存储：原件与中间产物（S3 API） |
 | `clickhouse` | Test Insights 指标（`apps/backend`，不在 V1 交付路径） |
 
 ## 4. 主要数据流
@@ -54,7 +54,7 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 
 1. 用户在 Conversation 中提交问题，生成不可变 Turn。
 2. worker 在授权范围内经 Milvus 混合检索（RRF 融合）取回切片；`GraphAnswerEnricher` 按问题关键词附加最多 20 个图谱节点作为上下文。
-3. 经 LiteLLM 生成回答并校验引用，结果写回 MySQL。
+3. 经 LiteLLM 生成回答并校验引用，结果写回 MySQL；可选模型目录由 LiteLLM `GET /v1/model/info` 动态提供（60 秒缓存），新增模型只改 `deploy/local/litellm/config.yaml` 并重启 LiteLLM，后端无需改代码或重启。
 4. 前端经 SSE 获取 Turn 事件（服务端轮询数据库，支持 `Last-Event-ID` 续传）。
 
 **图谱**

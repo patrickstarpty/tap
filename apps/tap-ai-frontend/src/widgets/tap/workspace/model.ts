@@ -5,10 +5,17 @@ export type Locale = "en" | "zh";
 
 export type ModelId = string;
 
-export const DEFAULT_MODEL_ID: ModelId = "tapper-chat";
+// Pre-catalog placeholder: the chat composer replaces it with the catalog's
+// `defaultAlias` (TAPPER_DEFAULT_CHAT_MODEL) once the catalog loads.
+export const PENDING_MODEL_ID: ModelId = "";
 
+// Mirrors the backend catalog name rule.
 export function isModelId(value: unknown): value is ModelId {
-  return typeof value === "string" && /^[a-z][a-z0-9._-]{0,127}$/.test(value);
+  return (
+    typeof value === "string" &&
+    value.length <= 128 &&
+    /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(value)
+  );
 }
 
 export type ProductModule =
@@ -98,7 +105,7 @@ export function createConversation(
     id,
     title: options.title ?? "New chat",
     turns: [],
-    modelId: options.modelId ?? DEFAULT_MODEL_ID,
+    modelId: options.modelId ?? PENDING_MODEL_ID,
     selectedSourceIds: [...(options.selectedSourceIds ?? [])],
     selectedAgentIds: [...(options.selectedAgentIds ?? [])],
     selectedSkillIds: [...(options.selectedSkillIds ?? [])],

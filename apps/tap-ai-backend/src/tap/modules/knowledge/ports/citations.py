@@ -55,6 +55,13 @@ class CitationRepository(Protocol):
 
 
 class CitationArtifactStore(Protocol):
+    """Read-only subset of `ArtifactStore` used to resolve citations.
+
+    Implementations return verified, revision-bound normalized and chunk artifacts or
+    raise the neutral artifact errors; conformance is covered by
+    `tests/contract/artifact_store_conformance.py`.
+    """
+
     async def read_normalized(self, locator: ArtifactLocator) -> NormalizedArtifact: ...
 
     async def read_chunks(self, locator: ArtifactLocator) -> tuple[ChunkDraft, ...]: ...

@@ -167,7 +167,7 @@ async def test_runtime_cites_frozen_published_knowledge_and_rejects_withdrawal()
     runtime = ConfiguredInsightsExplanation(
         insights=Insights(),
         gateway=Gateway(),
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         project_id="tapper-demo",
         delegated_user_token="delegated-user-token-0001",
         authorization_version="authz-1",

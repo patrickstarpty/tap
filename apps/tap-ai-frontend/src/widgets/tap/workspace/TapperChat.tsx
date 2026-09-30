@@ -147,13 +147,28 @@ export function TapperChat({
   sources,
 }: TapperChatProps) {
   const catalog = useModelCatalog(projectId);
+  const catalogPage = catalog.isError ? undefined : catalog.data;
+  // Grounded and Agent answers use structured output, so only those models are selectable.
   const allowedModels =
-    (catalog.isError ? undefined : catalog.data)?.items.filter((model) =>
-      model.capabilities.includes("chat"),
+    catalogPage?.items.filter(
+      (model) =>
+        model.capabilities.includes("chat") &&
+        model.capabilities.includes("structured"),
     ) ?? [];
   const modelAvailable = allowedModels.some(
     (model) => model.alias === conversation.modelId,
   );
+  const catalogDefault = allowedModels.some(
+    (model) => model.alias === catalogPage?.defaultAlias,
+  )
+    ? catalogPage?.defaultAlias
+    : undefined;
+
+  useEffect(() => {
+    // New chats and Conversations whose model left the catalog use the server default.
+    if (!modelAvailable && catalogDefault !== undefined)
+      onModelChange(catalogDefault);
+  }, [catalogDefault, conversation.id, modelAvailable, onModelChange]);
   const [submitError, setSubmitError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);

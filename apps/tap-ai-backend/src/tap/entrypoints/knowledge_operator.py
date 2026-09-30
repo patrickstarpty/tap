@@ -30,7 +30,6 @@ from tap.modules.knowledge.domain.operations import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-    from tap.modules.knowledge.adapters.blob_artifacts import AzureBlobArtifactStore
     from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
     from tap.modules.knowledge.ports.documents import ArtifactStore
 
@@ -73,13 +72,13 @@ class RuntimeOperationEffects:
         self._sessions = sessions
         self._resources = resources
         self._repository = repository
-        self._artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore | None = None
+        self._artifacts: KnowledgeArtifactStore | None = None
 
     @property
     def scope(self) -> ProjectScopeContext:
         return self._scope
 
-    def _blob(self) -> AzureBlobArtifactStore | KnowledgeArtifactStore:
+    def _blob(self) -> KnowledgeArtifactStore:
         if self._artifacts is None:
             self._artifacts = tapper_runtime._create_blob(self._settings)
             self._resources.push(self._artifacts)
@@ -89,7 +88,11 @@ class RuntimeOperationEffects:
 
     async def execute(self, command: str, *, limit: int) -> dict[str, int]:
         if command == "recover-uploads":
-            documents = tapper_runtime._build_document_repository(self._sessions, scope=self._scope)
+            documents = tapper_runtime._build_document_repository(
+                self._sessions,
+                scope=self._scope,
+                default_chat_model=self._settings.default_chat_model,
+            )
             service = DocumentService(
                 repository=documents, artifacts=cast("ArtifactStore", self._blob())
             )

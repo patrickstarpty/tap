@@ -166,7 +166,7 @@ async def test_mysql_graph_job_recovers_expired_lease_and_completes_all_facts_at
         revision_id="source-revision-1",
         chunks_locator="art1.chunks",
         extraction_profile_digest="sha256:" + "1" * 64,
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
     )
     try:
         queued = await jobs.request(VALIDATION_SCOPE, request, now=now)

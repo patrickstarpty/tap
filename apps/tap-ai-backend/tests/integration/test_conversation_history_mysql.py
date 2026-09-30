@@ -18,7 +18,7 @@ def _input(message: str) -> TurnInput:
         message=message,
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode="validation",
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
     )
 
 

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.object_settings import S3_SETTINGS
+
 ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -192,7 +194,7 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
 ):
     import asyncio
 
-    from scripts.migration_support import seed_baseline
+    from scripts.migration_support import LEGACY_TIME, seed_baseline
     from sqlalchemy import create_engine, inspect, text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -201,6 +203,7 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
     from tap.modules.ai.application.assets import resolve_skill_selection, validation_asset_seed
     from tap.modules.ai.domain.assets import AssetRevisionRejected
     from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
+    from tap.modules.chat.application.conversations import ConversationIntegrityError
 
     owned_project_mysql.rebuild("0005_projection_lineage")
     sync_engine = create_engine(owned_project_mysql.url)
@@ -307,6 +310,8 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
             )
     finally:
         sync_engine.dispose()
+    # The current repositories read the head schema (e.g. 0024 conversation soft delete).
+    owned_project_mysql.upgrade("head")
 
     async def scenario() -> None:
         engine = create_async_engine(
@@ -316,12 +321,26 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
             catalog = MysqlAssetCatalog(
                 async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
             )
-            conversation = await MysqlConversationRepository(
-                async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
-            ).load("legacy-chat")
-            assert [(event.sequence, event.event_id) for event in conversation.events] == [
-                (1, "legacy-event")
-            ]
+            with pytest.raises(ConversationIntegrityError, match="input snapshot is missing"):
+                await MysqlConversationRepository(
+                    async_sessionmaker(engine, expire_on_commit=False),
+                    scope=VALIDATION_SCOPE,
+                ).load("legacy-chat")
+            # The legacy facts survive the upgrade unchanged even though they are not served.
+            async with engine.connect() as connection:
+                legacy_event = (
+                    await connection.execute(
+                        text(
+                            "SELECT sequence,stream_sequence FROM chat_event "
+                            "WHERE event_id='legacy-event'"
+                        )
+                    )
+                ).one()
+                legacy_created_at = await connection.scalar(
+                    text("SELECT created_at FROM conversation WHERE conversation_id='legacy-chat'")
+                )
+            assert tuple(legacy_event) == (1, 1)
+            assert legacy_created_at == LEGACY_TIME
             with pytest.raises(AssetRevisionRejected):
                 await catalog.resolve_agent(
                     VALIDATION_SCOPE,
@@ -597,6 +616,8 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
                 )
     finally:
         sync_engine.dispose()
+    # The current runtime reads the head schema (e.g. 0024 conversation soft delete).
+    owned_project_mysql.upgrade("head")
 
     async def scenario() -> None:
         class Resource:
@@ -611,15 +632,17 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
                 owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
             )
             return engine, tapper_runtime._build_document_repository(
-                async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+                async_sessionmaker(engine, expire_on_commit=False),
+                scope=VALIDATION_SCOPE,
+                default_chat_model="qwen-plus",
             )
 
         model = KnowledgeModelGateway(
             object(),
             scope=VALIDATION_SCOPE,
             redact=tapper_runtime._redact_model_context,
-            embedding_alias="tapper-embedding",
-            chat_alias="tapper-chat",
+            embedding_alias="text-embedding-v4",
+            chat_alias="qwen-plus",
             embedding_dimension=1536,
             timeout_seconds=15,
         )
@@ -630,13 +653,18 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
             tapper_runtime, "_create_embeddings", lambda _settings, **_kwargs: model
         )
         monkeypatch.setattr(tapper_runtime, "_create_search", create_search)
-        monkeypatch.setattr(tapper_runtime, "_create_models_probe_client", lambda _settings: None)
+
+        async def create_document_index(_settings, _engine):
+            # The managed-chunk Milvus index is outside the 0012 shape under test.
+            return Resource()
+
+        monkeypatch.setattr(tapper_runtime, "_create_document_index", create_document_index)
         monkeypatch.setattr(tapper_runtime, "_create_readiness", lambda **_kwargs: object())
-        settings = tapper_runtime.TapperSettings.from_mapping({})
+        settings = tapper_runtime.TapperSettings.from_mapping(S3_SETTINGS)
         runtime = await tapper_runtime.create_api_runtime(settings)
         try:
-            loaded = await runtime.http_services.conversations.load("legacy-chat")
-            assert loaded.turns[0].turn_id == "legacy-turn"
+            with pytest.raises(ValueError, match="input snapshot is missing"):
+                await runtime.http_services.conversations.load("legacy-chat")
             catalog = runtime.http_services.asset_catalog
             current = validation_asset_seed(VALIDATION_SCOPE)
             assert await catalog.resolve_agent(
@@ -685,20 +713,20 @@ def test_0012_preserves_legacy_chat_as_conversation(monkeypatch):
     assert result["conversation_downgrade_replay"] == "passed"
 
 
-def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_project_mysql):
+def test_0012a_legacy_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
     import asyncio
-    from dataclasses import replace
 
-    import httpx
     from scripts.migration_support import LEGACY_TIME, seed_baseline
     from sqlalchemy import create_engine, text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from tap.entrypoints.tapper_runtime import create_project_audit
-    from tap.interfaces.http.app import create_app
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
-    from tap.modules.chat.application.conversations import ConversationService
+    from tap.modules.chat.application.conversations import (
+        ConversationIntegrityError,
+        ConversationService,
+    )
     from tap.modules.chat.domain.conversations import (
         AnswerEvidence,
         FrozenResource,
@@ -708,7 +736,6 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
     )
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
     from tap.modules.knowledge.ports.answers import DocumentStateChanged
-    from tests.conftest import validation_http_services
 
     owned_project_mysql.rebuild("0005_projection_lineage")
     sync_engine = create_engine(owned_project_mysql.url)
@@ -744,19 +771,33 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
         )
         try:
             repository = MysqlConversationRepository(
-                async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+                async_sessionmaker(engine, expire_on_commit=False),
+                scope=VALIDATION_SCOPE,
             )
-            loaded = await repository.load("legacy-chat")
-            assert loaded.created_at.replace(tzinfo=None) == LEGACY_TIME
-            assert [(turn.turn_id, turn.input_snapshot.value.message) for turn in loaded.turns] == [
-                ("legacy-turn", "Legacy knowledge question"),
-                ("legacy-turn-2", "Second legacy question"),
-            ]
-            assert [(event.sequence, event.event_id) for event in loaded.events] == [
-                (1, "legacy-event"),
-                (2, "legacy-event-2"),
-            ]
+            # Pre-snapshot legacy Turns are not synthesized; they surface as integrity errors.
+            with pytest.raises(ConversationIntegrityError, match="input snapshot is missing"):
+                await repository.load("legacy-chat")
             async with engine.connect() as connection:
+                legacy_created_at = await connection.scalar(
+                    text("SELECT created_at FROM conversation WHERE conversation_id='legacy-chat'")
+                )
+                legacy_turns = (
+                    await connection.execute(
+                        text(
+                            "SELECT turn_id FROM chat_turn WHERE chat_id='legacy-chat' "
+                            "ORDER BY created_at,turn_id"
+                        )
+                    )
+                ).all()
+                legacy_stream = (
+                    await connection.execute(
+                        text(
+                            "SELECT event_id,stream_sequence FROM chat_event "
+                            "WHERE event_id IN ('legacy-event','legacy-event-2') "
+                            "ORDER BY stream_sequence"
+                        )
+                    )
+                ).all()
                 preserved = (
                     (
                         await connection.execute(
@@ -771,26 +812,12 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
                 )
             assert [row["sequence"] for row in preserved] == [1, 1]
             assert preserved[1]["payload"] == preserved[0]["payload"]
-            app = create_app(
-                replace(
-                    validation_http_services(),
-                    conversations=ConversationService(repository, scope=VALIDATION_SCOPE),
-                )
-            )
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-            ) as client:
-                first_stream = await client.get(
-                    "/api/v1/projects/tapper-demo/conversations/legacy-chat/stream"
-                )
-                assert first_stream.text.count("id: 1\n") == 1
-                assert first_stream.text.count("id: 2\n") == 1
-                resumed_stream = await client.get(
-                    "/api/v1/projects/tapper-demo/conversations/legacy-chat/stream",
-                    headers={"Last-Event-ID": "1"},
-                )
-                assert "id: 1\n" not in resumed_stream.text
-                assert resumed_stream.text.count("id: 2\n") == 1
+            assert legacy_created_at == LEGACY_TIME
+            assert [row[0] for row in legacy_turns] == ["legacy-turn", "legacy-turn-2"]
+            assert [tuple(row) for row in legacy_stream] == [
+                ("legacy-event", 1),
+                ("legacy-event-2", 2),
+            ]
             documents = MysqlDocumentRepository(
                 async_sessionmaker(engine, expire_on_commit=False),
                 scope=VALIDATION_SCOPE,
@@ -809,7 +836,7 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
                     message="bind legacy evidence",
                     actor_id=VALIDATION_SCOPE.actor_id,
                     identity_mode="validation",
-                    model_alias="tapper-chat",
+                    model_alias="qwen-plus",
                 ),
             )
             citations = await repository.resolve_citations("legacy-trace", ("legacy-citation",))
@@ -830,7 +857,7 @@ def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_proj
                     message="bind legacy evidence",
                     actor_id=VALIDATION_SCOPE.actor_id,
                     identity_mode="validation",
-                    model_alias="tapper-chat",
+                    model_alias="qwen-plus",
                     resolved_resources=(
                         FrozenResource(
                             selected[0].source_id,

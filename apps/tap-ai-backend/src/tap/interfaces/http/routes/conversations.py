@@ -31,7 +31,13 @@ from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.sse import encode_sse
 from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA, resolve_skill_selection
 from tap.modules.ai.domain.assets import AssetRevisionRejected
-from tap.modules.ai.domain.models import ModelGatewayRejected, schema_digest
+from tap.modules.ai.domain.models import (
+    ModelCapability,
+    ModelGatewayRejected,
+    ModelGatewayUnavailable,
+    ModelNotSelectable,
+    schema_digest,
+)
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
@@ -71,6 +77,8 @@ async def _validate_replay(turn, body: ConversationCreateRequest, request: Reque
         DocumentStateChanged,
         KnowledgeRuntimeUnavailable,
         ModelGatewayRejected,
+        ModelGatewayUnavailable,
+        ModelNotSelectable,
     ):
         return
     if current != turn.input_snapshot.value:
@@ -81,9 +89,14 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
     scope = request.state.project_scope
     services = request.app.state.http_services
     if services.model_catalog is not None:
-        aliases = {item.alias for item in await services.model_catalog.list_models(scope)}
-        if body.model_alias not in aliases:
-            raise ModelGatewayRejected
+        # Grounded and Agent answers use structured output, so only those models are selectable.
+        selectable = {
+            item.alias
+            for item in await services.model_catalog.list_models(scope)
+            if ModelCapability.STRUCTURED in item.capabilities
+        }
+        if body.model_alias not in selectable:
+            raise ModelNotSelectable
     elif body.model_alias:
         raise KnowledgeRuntimeUnavailable
     agent_digest = None
@@ -270,8 +283,8 @@ def _detail(value):
     responses={
         404: problem_response_metadata("Approved revision unavailable"),
         409: problem_response_metadata("Idempotency conflict"),
-        422: problem_response_metadata("Request validation failed"),
-        503: problem_response_metadata("Runtime unavailable"),
+        422: problem_response_metadata("Request validation failed or model not selectable"),
+        503: problem_response_metadata("Runtime or model catalog unavailable"),
     },
 )
 async def create(
@@ -383,7 +396,8 @@ async def delete(
     responses={
         404: problem_response_metadata("Conversation or approved revision not found"),
         409: problem_response_metadata("Idempotency conflict"),
-        422: problem_response_metadata("Request validation failed"),
+        422: problem_response_metadata("Request validation failed or model not selectable"),
+        503: problem_response_metadata("Runtime or model catalog unavailable"),
     },
 )
 async def append(

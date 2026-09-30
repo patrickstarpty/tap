@@ -7,7 +7,6 @@ import json
 import logging
 import math
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -43,20 +42,164 @@ from tap.modules.knowledge.domain.models import (
     SourceFamily,
     SourceRevisionRef,
 )
+from tests.object_settings import S3_SETTINGS
 
 
 def test_tapper_settings_use_the_new_namespace() -> None:
-    settings = TapperSettings.from_mapping({})
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
 
     assert settings.collection == "kb_doc_v2_tapper_demo"
     assert settings.alias == "kb_doc_tapper_demo_active"
     assert settings.corpus_version == "tapper-demo-v2"
-    assert settings.chat_alias == "tapper-chat"
-    assert settings.embedding_alias == "tapper-embedding"
+    assert settings.default_chat_model == "qwen-plus"
+    assert settings.embedding_model == "text-embedding-v4"
+
+
+def test_settings_read_model_roles() -> None:
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {"TAPPER_DEFAULT_CHAT_MODEL": "qwen-max", "TAPPER_EMBEDDING_MODEL": "text-embedding-v4"}
+    )
+
+    assert settings.default_chat_model == "qwen-max"
+    assert settings.embedding_model == "text-embedding-v4"
+    assert settings.vision_model is None
+
+
+def test_settings_defaults() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_VISION_MODEL": ""})
+
+    assert settings.default_chat_model == "qwen-plus"
+    assert settings.embedding_model == "text-embedding-v4"
+    assert settings.vision_model is None
+    assert (
+        TapperSettings.from_mapping(
+            S3_SETTINGS | {"TAPPER_VISION_MODEL": "qwen3-vl-plus"}
+        ).vision_model
+        == "qwen3-vl-plus"
+    )
+
+
+@pytest.mark.parametrize(
+    "name", ["TAPPER_DEFAULT_CHAT_MODEL", "TAPPER_EMBEDDING_MODEL", "TAPPER_VISION_MODEL"]
+)
+@pytest.mark.parametrize("value", ["Qwen Plus", "dashscope/qwen-plus", "qwen--plus", "-qwen"])
+def test_settings_reject_invalid_model_name(name: str, value: str) -> None:
+    with pytest.raises(ValueError, match=name):
+        TapperSettings.from_mapping(S3_SETTINGS | {name: value})
+
+
+def test_legacy_model_variables_are_ignored() -> None:
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "TAPPER_CHAT_ALIAS": "x",
+            "TAPPER_EMBEDDING_ALIAS": "y",
+            "LITELLM_MODEL": "openai/gpt-4o-mini",
+            "LITELLM_TAPPER_VISION_MODEL": "dashscope/qwen3-vl-plus",
+        }
+    )
+
+    assert settings.default_chat_model == "qwen-plus"
+    assert settings.embedding_model == "text-embedding-v4"
+    assert settings.vision_model is None
+
+
+@pytest.mark.asyncio
+async def test_vision_role_without_supports_vision_reports_unhealthy() -> None:
+    import httpx
+
+    from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog
+
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_VISION_MODEL": "qwen-plus"}
+    )
+
+    def model_info(incoming: httpx.Request) -> httpx.Response:
+        assert incoming.url.path == "/v1/model/info"
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "model_name": "qwen-plus",
+                        "model_info": {"mode": "chat", "supports_response_schema": True},
+                    },
+                    {"model_name": "text-embedding-v4", "model_info": {"mode": "embedding"}},
+                ]
+            },
+        )
+
+    catalog = LiteLLMCatalog(
+        base_url=settings.litellm_base_url,
+        api_key=settings.litellm_api_key,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(model_info)),
+    )
+    models = module._create_embeddings(settings, catalog=catalog)
+    readiness = module._create_readiness(
+        settings=settings,
+        engine=object(),
+        redis=object(),
+        artifacts=object(),
+        embeddings=models,
+        milvus_reader=object(),
+        milvus_target=object(),
+    )
+
+    problems = await models.gateway.health_problems()
+    assert any("TAPPER_VISION_MODEL" in item for item in problems)
+    health = await readiness.check()
+    models_component = health.components[-1]
+    assert health.status == "unready"
+    assert models_component.name == HealthComponentName.MODELS
+    assert models_component.state == HealthComponentState.FAILED
+    assert models_component.detail == "; ".join(problems)
+    assert "TAPPER_VISION_MODEL" in models_component.detail
+    assert all(item.detail is None for item in health.components[:-1])
+
+    from dataclasses import replace
+
+    from tap.modules.ai.domain.models import (
+        ModelGatewayUnavailable,
+        ModelOperation,
+        ModelRequest,
+        schema_digest,
+        text_digest,
+    )
+
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    vision_request = ModelRequest(
+        VALIDATION_SCOPE,
+        "qwen-plus",
+        ModelOperation.STRUCTURED,
+        "Read the flowchart.",
+        text_digest("Read the flowchart."),
+        "flowchart image",
+        1,
+        "vision-role-1",
+        schema,
+        schema_digest(schema),
+    )
+    # A misconfigured vision role is an outage (503), not a caller error.
+    with pytest.raises(ModelGatewayUnavailable):
+        await models.gateway.generate_structured(
+            replace(
+                vision_request,
+                image_bytes=b"\x89PNG\r\n\x1a\nvalid",
+                image_media_type="image/png",
+            )
+        )
+    await models.aclose()
 
 
 def test_source_projection_runtime_profile_requires_matching_explicit_rollback():
-    settings = TapperSettings.from_mapping({"TAPPER_SCHEMA_VERSION": "doc-schema-v1"})
+    settings = TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_SCHEMA_VERSION": "doc-schema-v1"})
     assert (settings.schema_version, settings.collection, settings.corpus_version) == (
         "doc-schema-v1",
         "kb_doc_v1_tapper_demo",
@@ -68,29 +211,23 @@ def test_source_projection_runtime_profile_requires_matching_explicit_rollback()
         {"TAPPER_SCHEMA_VERSION": "doc-schema-v1", "TAPPER_CORPUS_VERSION": "tapper-demo-v2"},
     ):
         with pytest.raises(ValueError):
-            TapperSettings.from_mapping(overrides)
+            TapperSettings.from_mapping(S3_SETTINGS | overrides)
 
 
 def test_minio_settings_require_closed_explicit_credentials_and_compose_shared_port() -> None:
     from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
 
-    values = {
-        "TAPPER_OBJECT_STORE_PROVIDER": "minio",
-        "TAPPER_S3_ENDPOINT": "http://127.0.0.1:29000",
-        "TAPPER_S3_BUCKET": "tapper-test-objects",
-        "TAPPER_S3_REGION": "us-east-1",
-        "TAPPER_S3_ACCESS_KEY": "owned-key",
-        "TAPPER_S3_SECRET_KEY": "owned-secret",
-        "TAPPER_S3_STORE_ID": "owned-store",
-    }
+    values = dict(S3_SETTINGS)
     settings = TapperSettings.from_mapping(values)
     store = _runtime()._create_blob(settings)
     assert isinstance(store, KnowledgeArtifactStore)
-    assert store.legacy is None
+    assert not hasattr(store, "legacy")
+    assert not hasattr(settings, "object_store_provider")
+    assert not hasattr(settings, "blob_connection_string")
     for key in tuple(values):
-        if key.startswith("TAPPER_S3_"):
-            with pytest.raises(ValueError):
-                TapperSettings.from_mapping({k: v for k, v in values.items() if k != key})
+        reduced = {k: v for k, v in values.items() if k != key}
+        with pytest.raises(ValueError, match=key):
+            TapperSettings.from_mapping(reduced)
     assert "owned-secret" not in repr(settings)
 
 
@@ -138,8 +275,8 @@ def valid_settings() -> dict[str, str]:
         "TAPPER_COLLECTION": "kb_doc_v1_tapper_demo",
         "TAPPER_ALIAS": "kb_doc_tapper_demo_active",
         "TAPPER_CORPUS_VERSION": "tapper-demo-v1",
-        "TAPPER_CHAT_ALIAS": "tapper-chat",
-        "TAPPER_EMBEDDING_ALIAS": "tapper-embedding",
+        "TAPPER_DEFAULT_CHAT_MODEL": "qwen-plus",
+        "TAPPER_EMBEDDING_MODEL": "text-embedding-v4",
         "TAPPER_RETRIEVAL_PROFILE": "quick-hybrid-v1",
         "TAPPER_INDEX_VERSION": "tapper-index-v1",
         "TAPPER_PIPELINE_VERSION": "tapper-ingestion-v1",
@@ -157,15 +294,10 @@ def valid_settings() -> dict[str, str]:
         ),
         "TAP_REDIS_URL": "redis://:redis-secret@127.0.0.1:16379/0",
         "TAP_REDIS_COMMAND_STREAM": "tap-tapper-e2e:commands",
-        "AZURE_STORAGE_CONNECTION_STRING": (
-            "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;"
-            "AccountKey=blob-secret;"
-            "BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1;"
-        ),
+        **S3_SETTINGS,
+        "TAPPER_S3_SECRET_KEY": "blob-secret",
         "LITELLM_BASE_URL": "http://127.0.0.1:14000",
         "LITELLM_MASTER_KEY": "model-secret",
-        "LITELLM_MODEL": "openai/gpt-4o-mini",
-        "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         "LITELLM_EMBEDDING_MODEL": "openai/text-embedding-3-small",
         "MILVUS_URI": "http://127.0.0.1:29530",
         "MILVUS_DATABASE": "default",
@@ -176,18 +308,6 @@ def valid_settings() -> dict[str, str]:
         "MILVUS_PROVISIONER_USERNAME": "tap_provisioner",
         "MILVUS_PROVISIONER_PASSWORD": "provisioner-secret",
     }
-
-
-def test_answer_backend_defaults_to_litellm_without_codex_discovery(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(
-        shutil,
-        "which",
-        lambda _name: (_ for _ in ()).throw(AssertionError("unexpected discovery")),
-    )
-
-    settings = _runtime().TapperSettings.from_mapping(valid_settings())
-
-    assert settings.answer_backend == "litellm"
 
 
 def test_settings_close_the_exact_runtime_defaults_and_aliases() -> None:
@@ -206,8 +326,8 @@ def test_settings_close_the_exact_runtime_defaults_and_aliases() -> None:
     assert settings.collection == "kb_doc_v1_tapper_demo"
     assert settings.alias == "kb_doc_tapper_demo_active"
     assert settings.corpus_version == "tapper-demo-v1"
-    assert settings.chat_alias == "tapper-chat"
-    assert settings.embedding_alias == "tapper-embedding"
+    assert settings.default_chat_model == "qwen-plus"
+    assert settings.embedding_model == "text-embedding-v4"
     assert settings.retrieval_profile == "quick-hybrid-v1"
 
 
@@ -232,8 +352,6 @@ def test_settings_close_the_exact_runtime_defaults_and_aliases() -> None:
         ("TAPPER_COLLECTION", "unsafe collection"),
         ("TAPPER_ALIAS", "../alias"),
         ("TAP_TAPPER_COMPOSE_PROJECT", "Bad Project"),
-        ("TAPPER_CHAT_ALIAS", "other-chat"),
-        ("TAPPER_EMBEDDING_ALIAS", "other-embedding"),
         ("TAPPER_CORPUS_VERSION", "other-corpus"),
         ("TAPPER_RETRIEVAL_PROFILE", "deep-hybrid-v1"),
         ("TAPPER_INDEX_VERSION", "other-index"),
@@ -256,27 +374,10 @@ def test_settings_close_the_exact_runtime_defaults_and_aliases() -> None:
         ("TAP_REDIS_URL", "redis://127.0.0.1:16379/1"),
         ("TAP_REDIS_URL", "redis://127.0.0.1:16379/0?secret=value"),
         ("TAP_REDIS_URL", "redis://127.0.0.1:16379/0#secret"),
-        (
-            "AZURE_STORAGE_CONNECTION_STRING",
-            "DefaultEndpointsProtocol=http;AccountName=other;AccountKey=secret;"
-            "BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1;",
-        ),
-        (
-            "AZURE_STORAGE_CONNECTION_STRING",
-            "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=secret;"
-            "BlobEndpoint=http://secret@127.0.0.1:11000/devstoreaccount1;",
-        ),
-        (
-            "AZURE_STORAGE_CONNECTION_STRING",
-            "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=secret;"
-            "BlobEndpoint=http://127.0.0.1:11000/other;",
-        ),
-        (
-            "AZURE_STORAGE_CONNECTION_STRING",
-            "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=secret;"
-            "BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1;"
-            "QueueEndpoint=http://127.0.0.1:11001/devstoreaccount1;",
-        ),
+        ("TAPPER_S3_ENDPOINT", "http://example.com:29000"),
+        ("TAPPER_S3_ENDPOINT", "https://127.0.0.1:29000"),
+        ("TAPPER_S3_ENDPOINT", "http://secret@127.0.0.1:29000"),
+        ("TAPPER_S3_ENDPOINT", "http://127.0.0.1:29000/bucket"),
     ],
 )
 def test_settings_reject_unsafe_or_widened_values(name: str, value: str) -> None:
@@ -337,89 +438,8 @@ def test_exact_e2e_flags_enable_only_the_deterministic_backend() -> None:
 
     assert settings.e2e_mode is True
     assert settings.model_backend == "fake"
-    assert settings.allowed_answer_model_labels == frozenset({"tapper-chat"})
-    assert settings.allowed_embedding_model_labels == frozenset({"tapper-embedding"})
-
-
-def test_real_model_response_labels_are_derived_from_two_exact_routes() -> None:
-    """Runtime accepts only the alias, configured provider route, and stripped raw label."""
-
-    settings = _runtime().TapperSettings.from_mapping(valid_settings())
-
-    assert settings.allowed_answer_model_labels == frozenset(
-        {"tapper-chat", "openai/gpt-4o-mini", "gpt-4o-mini"}
-    )
-    assert settings.allowed_embedding_model_labels == frozenset(
-        {
-            "tapper-embedding",
-            "dashscope/text-embedding-v4",
-            "text-embedding-v4",
-        }
-    )
-    assert "openai/gpt-4o-mini" not in repr(settings)
-    assert "dashscope/text-embedding-v4" not in repr(settings)
-
-
-@pytest.mark.parametrize("answer_backend", ["litellm"])
-def test_tapper_embedding_route_ignores_every_direct_research_setting(
-    answer_backend: str,
-) -> None:
-    values = valid_settings() | {
-        "TAPPER_ANSWER_BACKEND": answer_backend,
-        "LITELLM_EMBEDDING_MODEL": "direct-research-poison",
-        "LITELLM_EMBEDDING_API_KEY": "direct-research-key-poison",
-        "LITELLM_EMBEDDING_API_BASE": "https://direct-research-poison.invalid/v1",
-    }
-
-    settings = _runtime().TapperSettings.from_mapping(values)
-
-    assert settings.litellm_embedding_model == "dashscope/text-embedding-v4"
-    assert settings.allowed_embedding_model_labels == frozenset(
-        {
-            "tapper-embedding",
-            "dashscope/text-embedding-v4",
-            "text-embedding-v4",
-        }
-    )
-    rendered = repr(settings)
-    assert "direct-research" not in rendered
-
-
-def test_tapper_embedding_route_does_not_require_direct_research_settings() -> None:
-    values = valid_settings()
-    for name in (
-        "LITELLM_EMBEDDING_MODEL",
-        "LITELLM_EMBEDDING_API_KEY",
-        "LITELLM_EMBEDDING_API_BASE",
-    ):
-        values.pop(name, None)
-
-    settings = _runtime().TapperSettings.from_mapping(values)
-
-    assert settings.litellm_embedding_model == "dashscope/text-embedding-v4"
-
-
-def test_tapper_embedding_gateway_route_rejects_drift() -> None:
-    with pytest.raises(ValueError, match="LITELLM_TAPPER_EMBEDDING_MODEL"):
-        _runtime().TapperSettings.from_mapping(
-            valid_settings() | {"LITELLM_TAPPER_EMBEDDING_MODEL": "openai/text-embedding-3-small"}
-        )
-
-
-@pytest.mark.parametrize(
-    ("name", "value"),
-    [
-        ("LITELLM_MODEL", ""),
-        ("LITELLM_MODEL", "openai/*"),
-        ("LITELLM_MODEL", "openai/gpt-4o-mini,other"),
-        ("LITELLM_TAPPER_EMBEDDING_MODEL", "openai/gpt 4o"),
-        ("LITELLM_TAPPER_EMBEDDING_MODEL", "openai/gpt-4o-mini"),
-        ("LITELLM_TAPPER_EMBEDDING_MODEL", "openai/*"),
-    ],
-)
-def test_real_model_routes_reject_widening_and_cross_route_overlap(name: str, value: str) -> None:
-    with pytest.raises(ValueError, match=name):
-        _runtime().TapperSettings.from_mapping(valid_settings() | {name: value})
+    assert settings.default_chat_model == "qwen-plus"
+    assert settings.embedding_model == "text-embedding-v4"
 
 
 def test_default_model_backend_is_real_litellm_and_does_not_import_testing() -> None:
@@ -1004,6 +1024,35 @@ def test_http_readiness_uses_injected_service_and_keeps_http_200_for_unready() -
     assert readiness.calls == 1
 
 
+def test_http_readiness_reports_model_role_problems_as_component_detail() -> None:
+    module = _runtime()
+    problem = "TAPPER_VISION_MODEL=qwen-plus does not support vision"
+
+    async def healthy() -> bool:
+        return True
+
+    async def models() -> bool:
+        raise module.ReadinessProblem(problem)
+
+    service = module.ReadinessService(
+        mysql=healthy,
+        redis=healthy,
+        blob=healthy,
+        milvus=healthy,
+        models=models,
+        timeout_seconds=2,
+    )
+    client = TestClient(create_app(HttpServices(readiness=service)))
+
+    body = client.get("/health/ready").json()
+
+    assert body["status"] == "unready"
+    components = {item["name"]: item for item in body["components"]}
+    assert components["models"]["state"] == "failed"
+    assert components["models"]["detail"] == problem
+    assert components["mysql"].get("detail") is None
+
+
 @pytest.mark.parametrize("keep_review_history", [False, True])
 def test_api_graph_reuses_one_repository_and_blob_across_existing_services(
     keep_review_history,
@@ -1091,17 +1140,15 @@ def test_runtime_has_no_legacy_combined_model_factory() -> None:
     assert not hasattr(_runtime(), "_create_model")
 
 
-def test_configured_flowchart_vision_uses_a_separate_image_only_route() -> None:
+def test_configured_flowchart_vision_uses_the_vision_role() -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(
-        valid_settings() | {"LITELLM_TAPPER_VISION_MODEL": "dashscope/qwen3-vl-plus"}
+        valid_settings() | {"TAPPER_VISION_MODEL": "qwen3-vl-plus"}
     )
     models = module._create_embeddings(settings)
-    route = models.gateway._chat_route("tapper-vision")
 
-    assert settings.vision_model == "dashscope/qwen3-vl-plus"
-    assert route.image_input is True
-    assert route.target.route == "dashscope/qwen3-vl-plus"
+    assert settings.vision_model == "qwen3-vl-plus"
+    assert models.gateway._config.roles.vision_model == "qwen3-vl-plus"
     assert settings.vision_timeout_seconds == 60
     assert models.gateway._config.timeout_seconds == 60
     assert models.timeout_seconds == 15
@@ -1136,13 +1183,12 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
         object(),
         scope=VALIDATION_SCOPE,
         redact=module._redact_model_context,
-        embedding_alias=settings.embedding_alias,
-        chat_alias=settings.chat_alias,
+        embedding_alias=settings.embedding_model,
+        chat_alias=settings.default_chat_model,
         embedding_dimension=1536,
         timeout_seconds=15,
     )
     search = Resource("search")
-    models_probe = Resource("models-probe")
     chunk_index = Resource("chunk-index")
     readiness = object()
 
@@ -1162,7 +1208,6 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
         return chunk_index
 
     monkeypatch.setattr(module, "_create_document_index", create_index)
-    monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: models_probe)
     monkeypatch.setattr(
         module,
         "_create_readiness",
@@ -1186,7 +1231,7 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     search_adapter = runtime.http_services.knowledge._answers._knowledge._retrieval._search
     assert search_adapter.search_port is search
     assert search_adapter.authority is runtime.http_services.chunk_manager
-    assert events == ["chunk-index", "models-probe", "search", "model", "redis", "blob", "engine"]
+    assert events == ["chunk-index", "search", "model", "redis", "blob", "engine"]
 
 
 @pytest.mark.asyncio
@@ -1232,7 +1277,6 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
         return chunk_index
 
     monkeypatch.setattr(module, "_create_document_index", create_index)
-    monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: None)
     monkeypatch.setattr(module, "_create_readiness", lambda **_kwargs: object())
 
     async def create_asset_catalog(*_args):  # type: ignore[no-untyped-def]
@@ -1338,23 +1382,20 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
     search, reader, target = await module._create_search(
         settings, audit_sink=_UnusedSearchAudit(), owners=repository
     )
-    models_probe = module._create_models_probe_client(settings)
     try:
         assert repository._sessions.kw["bind"] is engine
-        assert blob._config.operation_timeout_seconds == settings.blob_timeout_seconds
-        assert model.embedding_model_id == "tapper-embedding"
-        assert model.chat_alias == "tapper-chat"
-        assert model.gateway._config.embedding_model.route == settings.litellm_embedding_model
-        assert model.gateway._config.chat_model.route == settings.litellm_model
+        assert blob.objects._config.timeout_seconds == settings.blob_timeout_seconds
+        assert model.embedding_model_id == "text-embedding-v4"
+        assert model.chat_alias == "qwen-plus"
+        assert model.gateway._config.roles.embedding_model == settings.embedding_model
+        assert model.gateway._config.roles.default_chat_model == settings.default_chat_model
         assert search._reader is reader
         assert search._owners is repository
         assert search._config.targets[target.family] is target
         assert target.alias == settings.alias
         assert target.vector_dimension == 1536
         assert target.exact_generation_names is True
-        assert models_probe is not None
     finally:
-        await models_probe.aclose()
         await search.close()
         await model.aclose()
         await redis.aclose()
@@ -1378,7 +1419,7 @@ async def test_database_helper_disposes_engine_if_repository_construction_fails(
     engine = Engine()
     monkeypatch.setattr(module, "_open_database", lambda _settings: (engine, object()))
 
-    def fail_repository(_sessions, *, scope):  # type: ignore[no-untyped-def]
+    def fail_repository(_sessions, *, scope, default_chat_model):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_build_document_repository", fail_repository)
@@ -1416,7 +1457,8 @@ async def test_search_helper_closes_reader_if_adapter_construction_fails(monkeyp
     assert events == ["reader"]
 
 
-def test_fake_adapter_is_lazy_exact_gate_and_needs_no_models_probe() -> None:
+@pytest.mark.asyncio
+async def test_fake_adapter_is_lazy_exact_gate_and_needs_no_model_catalog() -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(
         valid_settings() | {"TAP_DEMO_MODE": "e2e", "TAPPER_MODEL_BACKEND": "fake"}
@@ -1425,138 +1467,7 @@ def test_fake_adapter_is_lazy_exact_gate_and_needs_no_models_probe() -> None:
     model = module._create_embeddings(settings)
 
     assert type(model.gateway).__module__ == "tap.testing.deterministic_model_gateway"
-    assert module._create_models_probe_client(settings) is None
-
-
-@pytest.mark.asyncio
-async def test_runtime_litellm_binds_body_labels_and_gateway_group_separately() -> None:
-    import httpx
-
-    from tap.modules.ai.adapters.litellm import LiteLLMModelGateway
-    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
-    from tap.modules.knowledge.ports.errors import ModelUnavailable
-
-    module = _runtime()
-    settings = module.TapperSettings.from_mapping(valid_settings())
-    configured = module._create_embeddings(settings)
-    config = configured.gateway._config
-    await configured.aclose()
-
-    async def exercise(body_label: str, model_group: str) -> bool:
-        async def handler(_request: httpx.Request) -> httpx.Response:
-            return httpx.Response(
-                200,
-                headers={
-                    "x-litellm-model-id": "opaque-deployment-17",
-                    "x-litellm-model-group": model_group,
-                },
-                json={
-                    "id": "embedding-runtime-label",
-                    "object": "list",
-                    "model": body_label,
-                    "data": [
-                        {
-                            "object": "embedding",
-                            "embedding": [0.0] * 1536,
-                            "index": 0,
-                        }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 1,
-                        "completion_tokens": 0,
-                        "total_tokens": 1,
-                        "prompt_tokens_details": None,
-                        "completion_tokens_details": None,
-                    },
-                },
-            )
-
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            gateway = LiteLLMModelGateway(
-                config, client=client, scope=VALIDATION_SCOPE, redact=module._redact_model_context
-            )
-            models = KnowledgeModelGateway(
-                gateway,
-                scope=VALIDATION_SCOPE,
-                redact=module._redact_model_context,
-                embedding_alias=settings.embedding_alias,
-                chat_alias=settings.chat_alias,
-                embedding_dimension=1536,
-                timeout_seconds=15,
-            )
-            await models.embed("runtime label contract")
-        return True
-
-    with pytest.raises(ModelUnavailable):
-        await exercise(settings.embedding_alias, settings.embedding_alias)
-    for label in settings.allowed_embedding_model_labels - {settings.embedding_alias}:
-        assert await exercise(label, settings.embedding_alias)
-    with pytest.raises(ModelUnavailable):
-        await exercise("gpt-4o-min", settings.embedding_alias)
-    with pytest.raises(ModelUnavailable):
-        await exercise(settings.embedding_alias, "text-embedding-3-smal")
-
-
-@pytest.mark.asyncio
-async def test_models_probe_streams_real_shape_and_rejects_before_buffer_overflow() -> None:
-    module = _runtime()
-    payload = json.dumps(
-        {
-            "object": "list",
-            "data": [
-                {
-                    "id": "tapper-chat",
-                    "object": "model",
-                    "created": 1,
-                    "owned_by": "litellm",
-                },
-                {
-                    "id": "tapper-embedding",
-                    "object": "model",
-                    "created": 1,
-                    "owned_by": "litellm",
-                },
-            ],
-        }
-    ).encode()
-
-    class Response:
-        status_code = 200
-
-        def __init__(self, chunks: tuple[bytes, ...]) -> None:
-            self._chunks = chunks
-
-        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
-            for chunk in self._chunks:
-                yield chunk
-
-    class Context:
-        def __init__(self, response: Response) -> None:
-            self.response = response
-
-        async def __aenter__(self) -> Response:
-            return self.response
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    class Client:
-        def __init__(self, chunks: tuple[bytes, ...]) -> None:
-            self.chunks = chunks
-            self.calls: list[tuple[str, str]] = []
-
-        def stream(self, method: str, path: str) -> Context:
-            self.calls.append((method, path))
-            return Context(Response(self.chunks))
-
-    client = Client((payload[:23], payload[23:]))
-    assert await module._read_models_labels(client) == frozenset(
-        {"tapper-chat", "tapper-embedding"}
-    )
-    assert client.calls == [("GET", "v1/models")]
-
-    oversized = Client((b"x" * 1_048_577,))
-    assert await module._read_models_labels(oversized) is None
+    assert await model.gateway.health_problems() == ()
 
 
 @pytest.mark.asyncio
@@ -1697,7 +1608,7 @@ def test_worker_graph_reuses_one_repo_blob_model_and_outer_resource_owner() -> N
 def test_worker_graph_wires_configured_vision_into_image_ingestion() -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(
-        valid_settings() | {"LITELLM_TAPPER_VISION_MODEL": "dashscope/qwen3-vl-plus"}
+        valid_settings() | {"TAPPER_VISION_MODEL": "qwen3-vl-plus"}
     )
     gateway = object()
     runtime = module._assemble_worker_runtime(
@@ -1712,6 +1623,7 @@ def test_worker_graph_wires_configured_vision_into_image_ingestion() -> None:
     )
 
     assert runtime.worker._vision._gateway is gateway
+    assert runtime.worker._vision._alias == "qwen3-vl-plus"
     assert runtime.worker._vision._timeout_seconds == 60
 
 
@@ -2278,10 +2190,32 @@ async def test_milvus_document_role_factory_owns_client_created_during_cancellat
     assert closed == ["tap_provisioner"]
 
 
+@pytest.mark.parametrize(
+    ("chat_info", "extra_rows", "blob_private", "unready_component", "expected_detail"),
+    [
+        ({}, [], True, None, None),
+        (
+            {},
+            [{"model_name": "Bad_Name", "model_info": {"mode": "chat"}}],
+            True,
+            None,
+            "LiteLLM model skipped: Bad_Name (",
+        ),
+        (
+            {"tapper_display_name": "x" * 129},
+            [],
+            True,
+            "models",
+            "TAPPER_DEFAULT_CHAT_MODEL=qwen-plus was skipped",
+        ),
+        ({}, [], False, "blob", None),
+    ],
+    ids=["clean", "skipped-non-role-is-notice", "skipped-role-fails", "public-blob-fails"],
+)
 @pytest.mark.asyncio
-async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and_models_get() -> (
-    None
-):
+async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and_models_get(
+    chat_info, extra_rows, blob_private, unready_component, expected_detail
+) -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
     expected_head = module._discover_alembic_head()
@@ -2317,9 +2251,9 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
             return True
 
     class Blob:
-        async def container_properties(self, name: str) -> dict[str, object]:
-            calls.append(f"blob:{name}")
-            return {"public_access": None}
+        async def is_private(self) -> bool:
+            calls.append("blob:private")
+            return blob_private
 
     _, reader, target = await module._create_search(settings, audit_sink=_UnusedSearchAudit())
 
@@ -2349,66 +2283,66 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
             calls.append(f"milvus-query:{request.limit}")
             return ()
 
-    class Response:
-        status_code = 200
-        content = json.dumps(
-            {
-                "object": "list",
+    import httpx
+
+    from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog
+
+    def model_info(request: httpx.Request) -> httpx.Response:
+        calls.append(f"models:{request.url.path}")
+        return httpx.Response(
+            200,
+            json={
                 "data": [
                     {
-                        "id": "tapper-chat",
-                        "object": "model",
-                        "created": 1,
-                        "owned_by": "litellm",
+                        "model_name": "qwen-plus",
+                        "model_info": {
+                            "mode": "chat",
+                            "supports_response_schema": True,
+                            **chat_info,
+                        },
                     },
-                    {
-                        "id": "tapper-embedding",
-                        "object": "model",
-                        "created": 1,
-                        "owned_by": "litellm",
-                    },
-                ],
-            }
-        ).encode()
+                    {"model_name": "text-embedding-v4", "model_info": {"mode": "embedding"}},
+                    *extra_rows,
+                ]
+            },
+        )
 
-        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
-            midpoint = len(self.content) // 2
-            yield self.content[:midpoint]
-            yield self.content[midpoint:]
-
-    class ResponseContext:
-        async def __aenter__(self) -> Response:
-            return Response()
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    class ModelsClient:
-        def stream(self, method: str, path: str) -> ResponseContext:
-            assert method == "GET"
-            calls.append(f"models:{path}")
-            return ResponseContext()
-
+    models = module._create_embeddings(
+        settings,
+        catalog=LiteLLMCatalog(
+            base_url=settings.litellm_base_url,
+            api_key=settings.litellm_api_key,
+            client=httpx.AsyncClient(transport=httpx.MockTransport(model_info)),
+        ),
+    )
     service = module._create_readiness(
         settings=settings,
         engine=Engine(),
         redis=Redis(),
         artifacts=Blob(),
-        embeddings=object(),
+        embeddings=models,
         milvus_reader=Milvus(),
         milvus_target=target,
-        models_probe_client=ModelsClient(),
     )
 
     result = await service.check()
 
-    assert result.status == "ready"
+    assert result.status == ("ready" if unready_component is None else "unready")
+    components = {item.name.value: item for item in result.components}
+    models_component = components["models"]
+    if expected_detail is None:
+        assert models_component.detail is None
+    else:
+        assert models_component.detail is not None
+        assert expected_detail in models_component.detail
+    assert {name for name, item in components.items() if item.state.value != "ok"} == (
+        set() if unready_component is None else {unready_component}
+    )
     assert "redis-ping" in calls
-    assert calls.count("blob:tapper-originals") == 1
-    assert calls.count("blob:tapper-artifacts") == 1
+    assert calls.count("blob:private") == 1
     assert calls.count("milvus-query:1") == 1
-    assert calls.count("models:v1/models") == 1
-    assert all("embedding" not in item or item == "models:v1/models" for item in calls)
+    assert calls.count("models:/v1/model/info") == 1
+    await models.aclose()
     await reader.close()
 
 
@@ -2486,15 +2420,15 @@ async def test_deterministic_model_implements_query_and_document_embedding() -> 
     query = await model.embed("退款规则")
     documents = await model.embed_documents(
         ("退款需要两人审批。", "采购需要三人审批。"),
-        model_alias="tapper-embedding",
+        model_alias="text-embedding-v4",
         chunk_ids=("h_a", "h_b"),
     )
 
-    assert model.embedding_model_id == "tapper-embedding"
+    assert model.embedding_model_id == "text-embedding-v4"
     assert model.embedding_dimension == 1536
-    assert query.model_id == "tapper-embedding"
+    assert query.model_id == "text-embedding-v4"
     assert len(query.vector) == 1536
-    assert documents.model_alias == "tapper-embedding"
+    assert documents.model_alias == "text-embedding-v4"
     assert documents.dimension == 1536
     assert documents.chunk_ids == ("h_a", "h_b")
     assert documents.vectors[0] != documents.vectors[1]
@@ -2530,7 +2464,7 @@ async def test_deterministic_answer_copies_evidence_and_ignores_document_instruc
             schema_version="doc-schema-v1",
             corpus_version="tapper-demo-v1",
         ),
-        embedding_model_version="tapper-embedding",
+        embedding_model_version="text-embedding-v4",
         acl_decision_id="decision-a",
         score=1.0,
     )
@@ -2605,22 +2539,6 @@ def test_api_runtime_app_uses_one_settings_snapshot_for_lifespan() -> None:
     assert runtime.closed is True
 
 
-@pytest.mark.parametrize(
-    ("properties", "expected"),
-    [
-        ({"public_access": None}, True),
-        ({}, False),
-        ({"public_access": "container"}, False),
-        (None, False),
-    ],
-)
-def test_blob_private_properties_require_the_explicit_public_access_field(
-    properties: object,
-    expected: bool,
-) -> None:
-    assert _runtime()._is_private_blob_container(properties) is expected
-
-
 class _UnusedSearchAudit:
     async def emit(self, event):
         raise AssertionError("construction-only test must not search")
@@ -2631,9 +2549,7 @@ def test_vision_timeout_override_keeps_text_requests_and_unconfigured_gateway_bo
     base = valid_settings() | {"TAPPER_VISION_TIMEOUT_SECONDS": "45"}
     no_vision = module._create_embeddings(module.TapperSettings.from_mapping(base))
     assert no_vision.gateway._config.timeout_seconds == 15
-    settings = module.TapperSettings.from_mapping(
-        base | {"LITELLM_TAPPER_VISION_MODEL": "dashscope/qwen3-vl-plus"}
-    )
+    settings = module.TapperSettings.from_mapping(base | {"TAPPER_VISION_MODEL": "qwen3-vl-plus"})
     models = module._create_embeddings(settings)
     assert settings.vision_timeout_seconds == 45
     assert models.gateway._config.timeout_seconds == 45

@@ -574,6 +574,14 @@ class IngestionWorker:
                 count = await self._provider_call(
                     job, stage, lambda: self._index.count_revision(target)
                 )
+                if count == 0:
+                    # Managed-chunk republishing leaves older revisions of the same
+                    # document; deleting the document removes every revision's rows.
+                    await self._provider_call(
+                        job,
+                        stage,
+                        lambda: self._index.purge_document(work.document_id, keep_revision_id=None),
+                    )
             except JobLeaseLost:
                 raise
             except asyncio.CancelledError:

@@ -77,7 +77,7 @@ class ModelGatewayFlowchartVision:
         gateway: ModelGateway,
         scope: ProjectScopeContext,
         *,
-        alias: str = "tapper-vision",
+        alias: str,
         timeout_seconds: float = 15.0,
     ) -> None:
         self._gateway = gateway

@@ -21,7 +21,7 @@ def context(message, **changes):
         acl_digest="sha256:" + "b" * 64,
         policy_digest="sha256:" + "c" * 64,
         original_question=message,
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
         source_ids=("source-a",),
         **changes,
     )
@@ -433,7 +433,7 @@ async def test_recent_user_context_requires_matching_authorized_source_lineage()
 
     def snapshot(identity, message, selected=resource):
         value = TurnInput(
-            message, "actor-a", "validation", "tapper-chat", resolved_resources=(selected,)
+            message, "actor-a", "validation", "qwen-plus", resolved_resources=(selected,)
         )
         return TurnInputSnapshot.create(
             snapshot_id=identity,

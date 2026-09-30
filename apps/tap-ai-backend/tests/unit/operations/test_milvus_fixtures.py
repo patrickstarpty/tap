@@ -297,7 +297,7 @@ def test_canonical_v2_schema_has_explicit_ownership_without_reinterpreting_v1():
     canonical = doc_schema_sha256("doc-schema-v2")
     assert canonical != legacy
     metadata = DocCollectionMetadata(
-        "doc-schema-v2", canonical, "tapper-demo-v2", "tapper-embedding", 1536
+        "doc-schema-v2", canonical, "tapper-demo-v2", "text-embedding-v4", 1536
     )
     schema = build_doc_collection_schema(metadata)
     names = {field["name"] for field in schema["fields"]}

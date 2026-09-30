@@ -11,9 +11,15 @@ import httpx
 import pytest
 from PIL import Image
 
-from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.adapters.litellm import (
+    LiteLLMModelGateway,
+    LiteLLMModelGatewayConfig,
+)
+from tap.modules.ai.adapters.litellm_catalog import ModelRoles
 from tap.modules.knowledge.adapters.document_chunker import StructuralChunker
 from tap.modules.knowledge.adapters.document_parsers import ParserRegistry
+from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.modules.knowledge.domain.documents import (
     BlockKind,
@@ -57,6 +63,7 @@ from tap.modules.knowledge.ports.documents import (
     ManifestChunk,
     initial_stage_results,
 )
+from tap.testing.deterministic_model_gateway import StaticLiteLLMCatalog
 
 NOW = datetime(2026, 8, 28, 9, 0, 0)
 DOCUMENT_ID = "doc_" + "1" * 32
@@ -484,6 +491,8 @@ class Index:
         self.fail_next_delete = False
         self.upsert_calls = 0
         self.events: list[str] = []
+        # Rows of the document's other (superseded) revisions, keyed by chunk id.
+        self.lineage_rows: dict[str, str] = {}
 
     async def fence_revision(self, target: DeletionTarget) -> None:
         del target
@@ -531,6 +540,20 @@ class Index:
         self.events.append("negative-probe")
         return sum(chunk_id in self.rows for chunk_id in target.chunk_ids)
 
+    async def purge_document(
+        self,
+        document_id: str,
+        *,
+        keep_revision_id: str | None,
+        fence_revision_ids: tuple[str, ...] = (),
+    ) -> None:
+        self.events.append(f"purge-document:{document_id}:{keep_revision_id}")
+        self.lineage_rows = {
+            chunk_id: revision
+            for chunk_id, revision in self.lineage_rows.items()
+            if revision == keep_revision_id
+        }
+
 
 def worker_parts(
     *, kind: JobKind = JobKind.INGESTION, embedding_dimension: int = 3
@@ -565,7 +588,7 @@ def build_worker(
         "index": index,
         "clock": clock,
         "worker_id": "worker-a",
-        "embedding_model_alias": "tapper-embedding",
+        "embedding_model_alias": "text-embedding-v4",
         "embedding_dimension": 3,
         "index_version": "tapper-index-v1",
     }
@@ -843,7 +866,7 @@ async def test_stage_hook_fails_before_stage_io_once_and_retry_resumes_checkpoin
 
 @pytest.mark.asyncio
 async def test_worker_composes_directly_with_litellm_document_embedding_port() -> None:
-    """A real Task 5 adapter must cross Task 4's embedding stage without a wrapper."""
+    """The governed knowledge gateway must cross the embedding stage without a wrapper."""
     requests: list[httpx.Request] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -852,7 +875,7 @@ async def test_worker_composes_directly_with_litellm_document_embedding_port() -
             200,
             json={
                 "id": "embedding-worker-1",
-                "model": "tapper-embedding",
+                "model": "dashscope/text-embedding-v4",
                 "object": "list",
                 "data": [
                     {
@@ -875,21 +898,36 @@ async def test_worker_composes_directly_with_litellm_document_embedding_port() -
     artifacts = StatefulArtifacts()
     index = Index()
     clock = FakeClock()
-    config = LiteLLMConfig(
+    config = LiteLLMModelGatewayConfig(
         base_url="https://litellm.example",
         api_key="not-a-real-key",
-        embedding_model_id="tapper-embedding",
-        answer_model_id="tap-answer-fixed-v1",
-        answer_profile_id="grounded-answer-v2",
+        roles=ModelRoles("qwen-plus", "text-embedding-v4", None),
         embedding_dimension=3,
-        allowed_embedding_model_labels=frozenset({"tapper-embedding", "provider-embed-v1"}),
-        allowed_answer_model_labels=frozenset({"tap-answer-fixed-v1"}),
-        allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
-        deadline_seconds=1,
+        timeout_seconds=1,
         max_retries=0,
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        adapter = LiteLLMAdapter(config, client=client)
+
+    async def redact(text: str) -> str:
+        return text
+
+    async with httpx.AsyncClient(
+        base_url="https://litellm.example", transport=httpx.MockTransport(handler)
+    ) as client:
+        adapter = KnowledgeModelGateway(
+            LiteLLMModelGateway(
+                config,
+                scope=VALIDATION_SCOPE,
+                redact=redact,
+                catalog=StaticLiteLLMCatalog(),
+                client=client,
+            ),
+            scope=VALIDATION_SCOPE,
+            redact=redact,
+            embedding_alias="text-embedding-v4",
+            chat_alias="qwen-plus",
+            embedding_dimension=3,
+            timeout_seconds=1,
+        )
         worker = build_worker(repository, artifacts, adapter, index, clock)
         result = await worker.run_once(limit=1)
 
@@ -984,7 +1022,9 @@ async def test_durable_manifest_version_drift_stops_before_provider_write(
             parent_id=None,
             anchor_json=chunks[0].anchor_json,
             chunk_content_hash=chunks[0].chunk_content_hash,
-            embedding_model_version=("old-model-alias" if drift == "model" else "tapper-embedding"),
+            embedding_model_version=(
+                "old-model-alias" if drift == "model" else "text-embedding-v4"
+            ),
             index_version="old-index-version" if drift == "index" else "tapper-index-v1",
         ),
     )
@@ -1001,7 +1041,7 @@ async def test_durable_manifest_version_drift_stops_before_provider_write(
             embeddings_locator=await artifacts.write_embeddings(
                 REVISION_ID,
                 EmbeddingArtifact(
-                    "tapper-embedding",
+                    "text-embedding-v4",
                     3,
                     ((0.0, 1.0, 2.0),),
                     (manifest[0].chunk_id,),
@@ -1061,7 +1101,7 @@ async def test_worker_rejects_full_chunk_manifest_rebinding_before_embedding(
             parent_id=chunks[0].parent_id,
             anchor_json=chunks[0].anchor_json,
             chunk_content_hash=chunks[0].chunk_content_hash,
-            embedding_model_version="tapper-embedding",
+            embedding_model_version="text-embedding-v4",
             index_version="tapper-index-v1",
         ),
     )
@@ -1346,7 +1386,7 @@ async def test_delete_failure_stays_deleting_and_automatically_retries_in_order(
                 parent_id=None,
                 anchor_json='{"blockId":"block-1"}',
                 chunk_content_hash="sha256:" + "4" * 64,
-                embedding_model_version="tapper-embedding",
+                embedding_model_version="text-embedding-v4",
                 index_version="tapper-index-v1",
             ),
         ),
@@ -1421,6 +1461,24 @@ async def test_deletion_preserves_artifacts_linked_to_immutable_turn_evidence() 
     assert result.deleted == 1
     assert index.events[:3] == ["fence-index", "delete-index", "negative-probe"]
     assert artifacts.deleted == set()
+
+
+@pytest.mark.asyncio
+async def test_deletion_purges_rows_of_every_document_revision_after_the_fence() -> None:
+    """Superseded revisions must not keep deleted user content in the projection."""
+    worker, repository, _, _, index, _ = worker_parts(kind=JobKind.DELETION)
+    index.lineage_rows = {"uploaded-chunk": "rev_uploaded", "older-chunk": "rev_older"}
+
+    result = await worker.run_once(limit=1)
+
+    assert result.deleted == 1
+    assert index.events[:4] == [
+        "fence-index",
+        "delete-index",
+        "negative-probe",
+        f"purge-document:{DOCUMENT_ID}:None",
+    ]
+    assert index.lineage_rows == {}
 
 
 @pytest.mark.parametrize("limit", [0, -1, 51, True, 1.5])

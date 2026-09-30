@@ -218,7 +218,9 @@ test("Tapper durable state survives the selected restart boundary", async ({
   expect(selectedModel).toBeDefined();
   const history = page.getByRole("navigation", { name: "Chat history" });
   await history
-    .getByRole("button", { name: new RegExp(conversationState.prompt, "u") })
+    .getByRole("button", {
+      name: new RegExp(`^${conversationState.prompt}`, "u"),
+    })
     .click();
   const transcript = page.getByRole("log", { name: "Conversation" });
   await expect(
@@ -331,9 +333,10 @@ test("Tapper durable state survives the selected restart boundary", async ({
         .filter({ hasText: listed!.filename }),
     ).toBeVisible();
   }
+  // The reviewed document has every chunk disabled, so its Source is not ready.
   await expect(
     page.locator(".tap-library-status[data-status=ready]"),
-  ).toHaveCount(8);
+  ).toHaveCount(survivors.length);
   // The current Library proves browser-visible persisted documents. Answers
   // and citations are deliberately verified through the canonical Project API.
   const answerHttp = await page.request.post(`${knowledgePath}/answers`, {

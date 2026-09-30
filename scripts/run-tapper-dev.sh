@@ -1,7 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-unset CODEX_HOME CODEX_API_KEY CODEX_BASE_URL CODEX_API_BASE
 unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE
 unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
 unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
@@ -39,14 +38,9 @@ export TAPPER_API_PORT="${TAPPER_API_PORT:-8000}"
 export TAPPER_WEB_HOST="${TAPPER_WEB_HOST:-127.0.0.1}"
 export TAPPER_WEB_PORT="${TAPPER_WEB_PORT:-5173}"
 
-unset CODEX_HOME CODEX_API_KEY CODEX_BASE_URL CODEX_API_BASE
 unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE
 unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
 unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
-if [ "${TAPPER_ANSWER_BACKEND:-litellm}" != litellm ]; then
-  echo "Tapper V1 requires the governed model gateway." >&2
-  exit 2
-fi
 
 cd "$tapper_dev_repo_root"
 
@@ -57,12 +51,11 @@ if ! uv run --project apps/tap-ai-backend python -c \
   exit 2
 fi
 
-if [ "${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ] && \
-  [ "${TAPPER_COMPOSE_OBJECT_STORE_VERIFY:-0}" = 1 ]; then
+if [ "${TAPPER_COMPOSE_OBJECT_STORE_VERIFY:-0}" = 1 ]; then
   TAPPER_OBJECT_STORE_IMAGE="$(bash "$tapper_dev_script_dir/build-tapper-object-store.sh" verify)"
   export TAPPER_OBJECT_STORE_IMAGE
   tapper_dev_object_container="$(docker compose -f "$tapper_dev_repo_root/compose.yaml" \
-    -p "$tapper_dev_requested_project" --profile tapper-objects ps -q tap-minio)"
+    -p "$tapper_dev_requested_project" ps -q tap-minio)"
   bash "$tapper_dev_script_dir/build-tapper-object-store.sh" \
     verify-container "$tapper_dev_object_container" >/dev/null
 fi

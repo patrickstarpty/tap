@@ -489,7 +489,7 @@ it("preserves the draft and prevents sending when the governed model is unavaila
   await act(async () => {
     queryClient.setQueriesData(
       { queryKey: ["model-catalog"] },
-      { defaultAlias: "tapper-chat", items: [] },
+      { defaultAlias: "qwen-plus", items: [] },
     );
   });
   expect(await screen.findByText("Model unavailable")).toBeVisible();
@@ -1435,7 +1435,7 @@ describe("Tap product workspace interactions", () => {
     ).toBeNull();
   });
 
-  it("uses a Codex-style model-only selector in the Tapper composer", async () => {
+  it("uses a model-only selector in the Tapper composer", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
@@ -1455,18 +1455,18 @@ describe("Tap product workspace interactions", () => {
       within(menu)
         .getAllByRole("menuitemradio")
         .map((option) => option.textContent?.trim()),
-    ).toEqual(["Qwen Plus", "GPT-5.6 Sol · Codex"]);
+    ).toEqual(["Qwen Plus", "Qwen Max"]);
     expect(within(menu).queryByText(/Fast|Ultra/)).toBeNull();
 
     await user.click(
       within(menu).getByRole("menuitemradio", {
-        name: "GPT-5.6 Sol · Codex",
+        name: "Qwen Max",
       }),
     );
 
     expect(
       within(composer).getByRole("button", {
-        name: "Select model, current model GPT-5.6 Sol · Codex",
+        name: "Select model, current model Qwen Max",
       }),
     ).toBeVisible();
     expect(screen.queryByRole("menu", { name: "Models" })).toBeNull();
@@ -1499,9 +1499,7 @@ describe("Tap product workspace interactions", () => {
         name: "Select model, current model Qwen Plus",
       }),
     );
-    await user.click(
-      screen.getByRole("menuitemradio", { name: "GPT-5.6 Sol · Codex" }),
-    );
+    await user.click(screen.getByRole("menuitemradio", { name: "Qwen Max" }));
     await user.type(
       screen.getByRole("textbox", { name: "Message Tapper" }),
       prompt,
@@ -1522,7 +1520,7 @@ describe("Tap product workspace interactions", () => {
     );
     expect(
       screen.getByRole("button", {
-        name: "Select model, current model GPT-5.6 Sol · Codex",
+        name: "Select model, current model Qwen Max",
       }),
     ).toBeVisible();
   });
@@ -3153,4 +3151,85 @@ describe("Tap product workspace interactions", () => {
       screen.queryByRole("region", { name: "Knowledge graph summary" }),
     ).not.toBeInTheDocument();
   });
+});
+
+describe("governed model catalog selection", () => {
+  it("offers only models that support structured answers", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, {
+      api: fakeKnowledgeClient(),
+    });
+    await act(async () => {
+      queryClient.setQueriesData(
+        { queryKey: ["model-catalog"] },
+        {
+          defaultAlias: "qwen-plus",
+          items: [
+            {
+              alias: "qwen-plus",
+              displayName: "Qwen Plus",
+              capabilities: ["chat", "structured"],
+            },
+            {
+              alias: "qwen-flash",
+              displayName: "Qwen Flash",
+              capabilities: ["chat"],
+            },
+          ],
+        },
+      );
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Select model, current model Qwen Plus",
+      }),
+    );
+
+    expect(
+      within(screen.getByRole("menu", { name: "Models" }))
+        .getAllByRole("menuitemradio")
+        .map((option) => option.textContent?.trim()),
+    ).toEqual(["Qwen Plus"]);
+  });
+
+  it("starts a new chat from the catalog default model", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, {
+      api: fakeKnowledgeClient(),
+    });
+    await act(async () => {
+      queryClient.setQueriesData(
+        { queryKey: ["model-catalog"] },
+        {
+          defaultAlias: "qwen-max",
+          items: [
+            {
+              alias: "qwen-plus",
+              displayName: "Qwen Plus",
+              capabilities: ["chat", "structured"],
+            },
+            {
+              alias: "qwen-max",
+              displayName: "Qwen Max",
+              capabilities: ["chat", "structured"],
+            },
+          ],
+        },
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: "New chat" }));
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Select model, current model Qwen Max",
+      }),
+    ).toBeVisible();
+  });
+
+  // Durable-conversation coverage of a retired last-turn model falling back
+  // to the catalog default lives in TapperWorkspace.chatControls.test.tsx
+  // ("keeps the catalog default when the last turn's model left the
+  // catalog"); there is no client-side snapshot to restore in API mode.
 });

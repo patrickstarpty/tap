@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import replace
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -22,6 +23,7 @@ from tests.conftest import validation_http_services
 
 def test_insights_explanation_accepts_and_restores_stored_turn(monkeypatch) -> None:
     calls = []
+    frozen_aliases = []
     revoked = False
 
     class Explanation:
@@ -31,6 +33,7 @@ def test_insights_explanation_accepts_and_restores_stored_turn(monkeypatch) -> N
             calls.append((scope, query_id, refs, selection, result))
 
     async def frozen_input(body, _request):
+        frozen_aliases.append(body.model_alias)
         return TurnInput(
             message=body.message,
             actor_id=VALIDATION_SCOPE.actor_id,
@@ -44,6 +47,7 @@ def test_insights_explanation_accepts_and_restores_stored_turn(monkeypatch) -> N
         validation_http_services(),
         conversations=service,
         insights_explanation=Explanation(),
+        model_catalog=SimpleNamespace(default_alias="qwen-max", scope=VALIDATION_SCOPE),
     )
     origin = "http://127.0.0.1:15175"
     client = TestClient(
@@ -58,6 +62,7 @@ def test_insights_explanation_accepts_and_restores_stored_turn(monkeypatch) -> N
     }
     posted = client.post(path, json=body, headers={"Idempotency-Key": "request-a"})
     assert posted.status_code == 202, posted.text
+    assert frozen_aliases == ["qwen-max"]
     accepted = posted.json()
     assert accepted["state"] == "queued"
     assert client.post(path, json=body, headers={"Idempotency-Key": "request-a"}).json() == accepted

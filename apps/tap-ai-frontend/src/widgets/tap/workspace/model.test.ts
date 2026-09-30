@@ -1,12 +1,30 @@
 import { describe, expect, it } from "vitest";
 
-import { appendTurn, createConversation, type AssistantTurn } from "./model";
+import {
+  appendTurn,
+  createConversation,
+  isModelId,
+  PENDING_MODEL_ID,
+  type AssistantTurn,
+} from "./model";
 
 describe("Tapper workspace model", () => {
+  it("accepts the same model names as the backend catalog rule", () => {
+    expect(isModelId("4o-mini")).toBe(true);
+    expect(isModelId("qwen3-vl-plus")).toBe(true);
+    expect(isModelId("gpt-5.6-sol")).toBe(true);
+    expect(isModelId("Qwen-Plus")).toBe(false);
+    expect(isModelId("qwen_plus")).toBe(false);
+    expect(isModelId("qwen--plus")).toBe(false);
+    expect(isModelId("-qwen")).toBe(false);
+    expect(isModelId("")).toBe(false);
+    expect(isModelId("a".repeat(129))).toBe(false);
+  });
+
   it("creates an empty conversation with independent context selections", () => {
     expect(createConversation("chat-2")).toMatchObject({
       id: "chat-2",
-      modelId: "tapper-chat",
+      modelId: PENDING_MODEL_ID,
       turns: [],
       selectedAgentIds: [],
       selectedSkillIds: [],

@@ -150,7 +150,7 @@ def build(evaluator: Path) -> dict[str, object]:
             ),
         },
         "bindings": {
-            "modelAlias": "tapper-chat",
+            "modelAlias": "qwen-plus",
             "actualModel": "pending/real-model-run",
             "promptDigest": text_digest(GRAPH_EXTRACTION_PROMPT),
             "schemaDigest": schema_digest(GRAPH_EXTRACTION_SCHEMA),

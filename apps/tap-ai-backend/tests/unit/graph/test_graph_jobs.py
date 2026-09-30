@@ -25,7 +25,7 @@ def _request() -> GraphJobRequest:
         revision_id="revision-1",
         chunks_locator="art1.chunks",
         extraction_profile_digest="sha256:" + "1" * 64,
-        model_alias="tapper-chat",
+        model_alias="qwen-plus",
     )
 
 

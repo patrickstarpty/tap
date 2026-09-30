@@ -17,8 +17,8 @@ from tap.modules.knowledge.ports.models import (
 )
 
 _DIMENSION = 1536
-_EMBEDDING_ALIAS = "tapper-embedding"
-_ANSWER_ALIAS = "tapper-chat"
+_EMBEDDING_ALIAS = "text-embedding-v4"
+_ANSWER_ALIAS = "qwen-plus"
 _PROFILE = "quick-hybrid-v1"
 _ANSWER_DELAY_SECONDS = 5.0
 _CANCELLATION_QUERY_SUFFIX = " [e2e-cancel]"

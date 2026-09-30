@@ -1332,7 +1332,7 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
 
     assert environment["LITELLM_BASE_URL"] == "http://127.0.0.1:24000"
     assert environment["LITELLM_IMAGE"] == "ghcr.io/berriai/litellm:v1.87.0"
-    assert environment["LITELLM_TAPPER_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
+    assert environment["TAPPER_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert environment["LITELLM_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert environment["DASHSCOPE_API_KEY"] == ""
     assert environment["DASHSCOPE_API_HOST"] == (
@@ -1360,40 +1360,19 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
             "${DASHSCOPE_API_BASE:-https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}"
         ),
         "DASHSCOPE_API_KEY": "${DASHSCOPE_API_KEY:-}",
-        "LITELLM_TAPPER_EMBEDDING_MODEL": (
-            "${LITELLM_TAPPER_EMBEDDING_MODEL:-dashscope/text-embedding-v4}"
-        ),
         "LITELLM_MASTER_KEY": "${LITELLM_MASTER_KEY:-tap-local-master-key}",
-        "LITELLM_MODEL": "${LITELLM_MODEL:-dashscope/qwen-plus}",
-        "LITELLM_FLASH_MODEL": "${LITELLM_FLASH_MODEL:-dashscope/qwen-flash}",
-        "LITELLM_MAX_MODEL": "${LITELLM_MAX_MODEL:-dashscope/qwen-max}",
-        "LITELLM_TAPPER_VISION_MODEL": ("${LITELLM_TAPPER_VISION_MODEL:-dashscope/qwen3-vl-plus}"),
     }
     assert not any(key.startswith("LITELLM_EMBEDDING_") for key in compose_environment)
-    chat_route = next(item for item in gateway["model_list"] if item["model_name"] == "tapper-chat")
-    assert chat_route["litellm_params"] == {
-        "model": "os.environ/LITELLM_MODEL",
-        "api_key": "os.environ/DASHSCOPE_API_KEY",
-        "api_base": "os.environ/DASHSCOPE_API_BASE",
-    }
-    for alias, environment_name in (
-        ("tapper-chat-flash", "LITELLM_FLASH_MODEL"),
-        ("tapper-chat-max", "LITELLM_MAX_MODEL"),
-    ):
-        route = next(item for item in gateway["model_list"] if item["model_name"] == alias)
+    assert not any(
+        key.startswith("LITELLM_") and key.endswith("_MODEL") for key in compose_environment
+    )
+    for name in ("qwen-plus", "qwen-flash", "qwen-max", "qwen3-vl-plus", "text-embedding-v4"):
+        route = next(item for item in gateway["model_list"] if item["model_name"] == name)
         assert route["litellm_params"] == {
-            "model": f"os.environ/{environment_name}",
+            "model": f"dashscope/{name}",
             "api_key": "os.environ/DASHSCOPE_API_KEY",
             "api_base": "os.environ/DASHSCOPE_API_BASE",
         }
-    embedding_route = next(
-        item for item in gateway["model_list"] if item["model_name"] == "tapper-embedding"
-    )
-    assert embedding_route["litellm_params"] == {
-        "model": "os.environ/LITELLM_TAPPER_EMBEDDING_MODEL",
-        "api_key": "os.environ/DASHSCOPE_API_KEY",
-        "api_base": "os.environ/DASHSCOPE_API_BASE",
-    }
     assert "research-embedding-v1" not in str(gateway)
 
 

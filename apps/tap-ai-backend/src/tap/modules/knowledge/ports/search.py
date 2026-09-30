@@ -16,6 +16,17 @@ from tap.modules.knowledge.ports.models import (
 
 
 class SearchPort(Protocol):
+    """Provider-neutral Knowledge retrieval; Milvus is the only implementation today.
+
+    Implementations must apply the mandatory tenant, project, group, classification,
+    environment, corpus and resource-scope prefilter on every channel, return only
+    `SearchHit` values mapped from rows that passed it, and raise only the neutral
+    `SearchUnavailable`/`SearchBoundsExceeded` errors. A new provider must pass
+    `tests/contract/search_provider_conformance.py` (run by
+    `tests/contract/test_search_provider_conformance.py`) and be selected only in
+    `entrypoints/knowledge_bootstrap.py`.
+    """
+
     async def search(self, execution: SearchExecution) -> tuple[SearchHit, ...]: ...
 
 

@@ -23,13 +23,13 @@ class _Authority:
 
 class _Catalog:
     scope = VALIDATION_SCOPE
-    default_alias = "tapper-chat"
+    default_alias = "qwen-plus"
 
     async def list_models(self, scope):
         assert scope == VALIDATION_SCOPE
         return (
             ModelDescriptor(
-                alias="tapper-chat",
+                alias="qwen-plus",
                 display_name="GPT-5.6 Sol",
                 capabilities=frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
                 enabled=True,
@@ -52,10 +52,10 @@ def test_model_catalog_is_project_scoped_and_omits_provider_details() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "defaultAlias": "tapper-chat",
+        "defaultAlias": "qwen-plus",
         "items": [
             {
-                "alias": "tapper-chat",
+                "alias": "qwen-plus",
                 "displayName": "GPT-5.6 Sol",
                 "capabilities": ["chat", "structured"],
             }

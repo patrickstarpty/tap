@@ -83,6 +83,7 @@ managed_documents = Table(
     Column("chunks_json", JSON, nullable=False),
     Column("index_status", String(24), nullable=False),
     Column("index_error", String(240)),
+    Column("purge_revision_id", String(128)),
 )
 managed_history = Table(
     "knowledge_managed_generation",
@@ -852,6 +853,23 @@ class MysqlManagedChunks:
                 .scalars()
                 .all()
             )
+            # Purge obligations are independent of index_status: the publish that
+            # recorded them already left the document ready and searchable, so
+            # this only retries the post-commit Milvus cleanup, never generation.
+            purge_ids = (
+                (
+                    await session.execute(
+                        select(managed_documents.c.document_id)
+                        .where(
+                            *scope_predicates(managed_documents, self.scope),
+                            managed_documents.c.purge_revision_id.isnot(None),
+                        )
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
         for document_id in ids:
             try:
                 state = await self._ensure(document_id)
@@ -895,11 +913,39 @@ class MysqlManagedChunks:
                             error_summary="Chunk processing failed. Check settings and retry.",
                         )
                     )
+        for document_id in purge_ids:
+            async with self.sessions() as session:
+                row = (
+                    (
+                        await session.execute(
+                            select(
+                                managed_documents.c.purge_revision_id,
+                                documents.c.current_revision_id,
+                            )
+                            .select_from(
+                                managed_documents.join(
+                                    documents,
+                                    (managed_documents.c.document_id == documents.c.document_id)
+                                    & (managed_documents.c.project_id == documents.c.project_id),
+                                )
+                            )
+                            .where(*self._where(managed_documents, document_id))
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+            if row is None or row["purge_revision_id"] is None:
+                continue
+            await self._attempt_purge(
+                document_id, (row["purge_revision_id"], row["current_revision_id"])
+            )
         return len(ids)
 
     async def process_document(self, document_id: str) -> None:
         # The durable pending record is the queue. Locking serializes processes and the
         # generation check prevents an older projection from becoming current.
+        pending_purge: tuple[str, str] | None = None
         async with self.sessions() as session, session.begin():
             document = await self._document(session, document_id, lock=True)
             state = dict(
@@ -917,7 +963,7 @@ class MysqlManagedChunks:
                 return
             try:
                 async with session.begin_nested():
-                    await self._index_generation(session, document, state)
+                    pending_purge = await self._index_generation(session, document, state)
             except Exception as error:
                 # Safe public failure; pending immutable artifacts can be retried.
                 cause: BaseException = error
@@ -949,10 +995,50 @@ class MysqlManagedChunks:
                         error_summary="Index update failed. Retry processing.",
                     )
                 )
+                return
+        if pending_purge is None:
+            return
+        # The publish already committed and released its row locks; the purge's
+        # Milvus round trips run here, outside any lock, so they cannot block
+        # concurrent chunk edits/deletes on this document. The new revision is
+        # already published and correct: a failure here only means cleanup is
+        # still owed, not that the document failed. The obligation was recorded
+        # durably (purge_revision_id) in the same transaction as the publish, so
+        # a crash or exception here leaves it for run_pending to retry.
+        await self._attempt_purge(document_id, pending_purge)
+
+    async def _attempt_purge(self, document_id: str, pending_purge: tuple[str, str]) -> None:
+        superseded_revision_id, current_revision_id = pending_purge
+        try:
+            await self.index.purge_document(
+                document_id,
+                keep_revision_id=current_revision_id,
+                fence_revision_ids=(superseded_revision_id,),
+            )
+        except Exception as error:
+            logging.getLogger(__name__).error(
+                "knowledge.managed_index_purge_failed exception=%s",
+                type(error).__name__,
+                extra={"document_id": document_id, "exception_type": type(error).__name__},
+            )
+            return
+        async with self.sessions() as session, session.begin():
+            # Compare-and-clear: only drop the obligation if it still matches the
+            # revision we just purged. A newer supersede may have already
+            # overwritten it with a fresher obligation that still needs a purge.
+            await session.execute(
+                update(managed_documents)
+                .where(
+                    *self._where(managed_documents, document_id),
+                    managed_documents.c.purge_revision_id == superseded_revision_id,
+                )
+                .values(purge_revision_id=None)
+            )
 
     async def _index_generation(
         self, session: AsyncSession, document: dict[str, Any], state: dict[str, Any]
-    ) -> None:
+    ) -> tuple[str, str] | None:
+        """Publish the managed revision; return (superseded, current) if a purge is owed."""
         from tap.modules.knowledge.ports.documents import (
             StageResult,
             StageState,
@@ -1000,7 +1086,7 @@ class MysqlManagedChunks:
                     error_summary=None,
                 )
             )
-            return
+            return None
         identity = json.dumps(
             {
                 "anchorProfile": "managed-content-v2",
@@ -1245,11 +1331,36 @@ class MysqlManagedChunks:
                 updated_at=now,
             )
         )
+        # The index is a rebuildable projection: once the new revision's rows are
+        # live, the superseded revision must not keep the document's deleted
+        # content searchable. Record the purge obligation atomically with the
+        # publish so a crash or a purge failure after this transaction commits
+        # never loses track of the superseded revision's Milvus rows; run_pending
+        # retries the purge from this durable marker until it clears. A prior
+        # unresolved obligation is superseded by this one rather than lost: the
+        # purge always keeps only the current revision, so it removes every
+        # earlier revision's rows regardless of which one is recorded here.
+        previous_revision_id = document["current_revision_id"]
+        purge_owed = (
+            previous_revision_id
+            if previous_revision_id and previous_revision_id != str(revision_id)
+            else None
+        )
+        managed_values: dict[str, Any] = dict(index_status="ready", index_error=None)
+        if purge_owed is not None:
+            managed_values["purge_revision_id"] = purge_owed
         await session.execute(
             update(managed_documents)
             .where(*self._where(managed_documents, document_id))
-            .values(index_status="ready", index_error=None)
+            .values(**managed_values)
         )
+        # The purge itself runs after this transaction commits (see
+        # process_document) so the Milvus round trips it needs do not hold the
+        # document/managed-chunk row locks other requests (chunk edits, deletes)
+        # need to proceed.
         await self.repository.record_revision_ready(
             session, str(revision_id), now=now, job_id=work.job_id
         )
+        if purge_owed is not None:
+            return purge_owed, str(revision_id)
+        return None
