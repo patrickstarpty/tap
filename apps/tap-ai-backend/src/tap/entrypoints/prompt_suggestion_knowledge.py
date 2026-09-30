@@ -57,8 +57,17 @@ class KnowledgeSuggestionSources:
         self._ready_sources = MysqlReadySources(sessions, self._scope)
 
     async def _ready_items(self) -> Sequence[PublishedKnowledgeSource]:
+        """All currently-ready sources, uncapped (bounded only by
+        MysqlReadySources.list_sources()'s own limit of 100). current_sources()
+        and main_entities() must see every ready source — the read-time filter
+        in PromptSuggestionService.list() drops a cached suggestion whenever
+        one of its source ids is missing from current_sources(), so an
+        arbitrary cap there would incorrectly discard otherwise-valid cached
+        suggestions once a project has more than that many ready sources.
+        Only topics() (the model-input side, bounded by prompt size) caps to
+        _MAX_TOPIC_SOURCES."""
         page = await self._ready_sources.list_sources()
-        return page.items[:_MAX_TOPIC_SOURCES]
+        return page.items
 
     async def _managed_versions(self, document_ids: Sequence[str]) -> Mapping[str, int]:
         if not document_ids:
@@ -134,7 +143,7 @@ class KnowledgeSuggestionSources:
 
     async def topics(self, actor_id: str) -> tuple[TopicSource, ...]:
         del actor_id
-        items = await self._ready_items()
+        items = (await self._ready_items())[:_MAX_TOPIC_SOURCES]
         versions = await self._managed_versions([item.document_id for item in items])
         headings = await self._headings([item.revision_id for item in items])
         return tuple(

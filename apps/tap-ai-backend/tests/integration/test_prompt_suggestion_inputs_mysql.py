@@ -255,6 +255,29 @@ def test_current_sources_exclude_deleted_and_unready_documents(owned_project_mys
     _run(owned_project_mysql, scenario)
 
 
+def test_current_sources_uncapped_but_topics_capped_at_30(owned_project_mysql):
+    async def scenario(sessions, engine):
+        total = 31
+        async with sessions() as session, session.begin():
+            for index in range(total):
+                await _seed_document(
+                    session,
+                    source_id=_src(f"bulk-{index}"),
+                    document_id=f"doc-bulk-{index}",
+                    revision_id=f"rev-bulk-{index}",
+                    name=f"Bulk Guide {index}",
+                )
+
+        knowledge = KnowledgeSuggestionSources(sessions, scope=VALIDATION_SCOPE)
+        current = await knowledge.current_sources(VALIDATION_SCOPE.actor_id)
+        topics = await knowledge.topics(VALIDATION_SCOPE.actor_id)
+
+        assert len(current) == total
+        assert len(topics) == 30
+
+    _run(owned_project_mysql, scenario)
+
+
 def test_source_version_changes_with_new_revision_and_chunk_edit(owned_project_mysql):
     async def scenario(sessions, engine):
         async with sessions() as session, session.begin():
