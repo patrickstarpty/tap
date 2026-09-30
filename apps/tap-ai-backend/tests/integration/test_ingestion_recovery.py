@@ -274,6 +274,9 @@ class RecordingIndex:
             "schema-v1",
         )
 
+    async def purge_document(self, document_id, *, keep_revision_id, fence_revision_ids=()):  # type: ignore[no-untyped-def]
+        del document_id, keep_revision_id, fence_revision_ids
+
 
 class BlockingIndex(RecordingIndex):
     def __init__(self) -> None:

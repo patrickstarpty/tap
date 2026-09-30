@@ -491,6 +491,8 @@ class Index:
         self.fail_next_delete = False
         self.upsert_calls = 0
         self.events: list[str] = []
+        # Rows of the document's other (superseded) revisions, keyed by chunk id.
+        self.lineage_rows: dict[str, str] = {}
 
     async def fence_revision(self, target: DeletionTarget) -> None:
         del target
@@ -537,6 +539,20 @@ class Index:
     async def count_revision(self, target: DeletionTarget) -> int:
         self.events.append("negative-probe")
         return sum(chunk_id in self.rows for chunk_id in target.chunk_ids)
+
+    async def purge_document(
+        self,
+        document_id: str,
+        *,
+        keep_revision_id: str | None,
+        fence_revision_ids: tuple[str, ...] = (),
+    ) -> None:
+        self.events.append(f"purge-document:{document_id}:{keep_revision_id}")
+        self.lineage_rows = {
+            chunk_id: revision
+            for chunk_id, revision in self.lineage_rows.items()
+            if revision == keep_revision_id
+        }
 
 
 def worker_parts(
@@ -1445,6 +1461,24 @@ async def test_deletion_preserves_artifacts_linked_to_immutable_turn_evidence() 
     assert result.deleted == 1
     assert index.events[:3] == ["fence-index", "delete-index", "negative-probe"]
     assert artifacts.deleted == set()
+
+
+@pytest.mark.asyncio
+async def test_deletion_purges_rows_of_every_document_revision_after_the_fence() -> None:
+    """Superseded revisions must not keep deleted user content in the projection."""
+    worker, repository, _, _, index, _ = worker_parts(kind=JobKind.DELETION)
+    index.lineage_rows = {"uploaded-chunk": "rev_uploaded", "older-chunk": "rev_older"}
+
+    result = await worker.run_once(limit=1)
+
+    assert result.deleted == 1
+    assert index.events[:4] == [
+        "fence-index",
+        "delete-index",
+        "negative-probe",
+        f"purge-document:{DOCUMENT_ID}:None",
+    ]
+    assert index.lineage_rows == {}
 
 
 @pytest.mark.parametrize("limit", [0, -1, 51, True, 1.5])

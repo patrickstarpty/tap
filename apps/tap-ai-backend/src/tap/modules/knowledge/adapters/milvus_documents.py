@@ -76,6 +76,7 @@ TAPPER_CLASSIFICATION_RANK = 1
 _UPSERT_BATCH = 64
 _DELETE_BATCH = 256
 _QUERY_LIMIT = MAX_CHUNKS_PER_DOCUMENT + 1
+_PURGE_ROUNDS = 64
 _HASH_ID = re.compile(r"h_[0-9a-f]{64}\Z")
 _LOGICAL_ID = re.compile(r"(?:h_|lc_)[0-9a-f]{64}\Z")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -346,6 +347,49 @@ class MilvusDocumentIndex:
             raise
         except Exception as error:
             raise IndexUnavailable("Tapper Milvus delete failed") from error
+
+    async def purge_document(
+        self,
+        document_id: str,
+        *,
+        keep_revision_id: str | None,
+        fence_revision_ids: tuple[str, ...] = (),
+    ) -> None:
+        """Remove every content row of a document except the kept revision.
+
+        Deletion fence rows stay. Superseded revisions are fenced only after the
+        negative probe proves their rows are gone, so the fence doubles as the
+        durable completion marker for superseded-revision cleanup.
+        """
+        if not isinstance(document_id, str) or not document_id:
+            raise ValueError("Tapper purge requires a document identity")
+        if keep_revision_id in fence_revision_ids:
+            raise ValueError("Tapper purge cannot fence the kept revision")
+        expression = f'{_eq("source_id", document_id)} and source_type != "tapper_fence"'
+        if keep_revision_id is not None:
+            expression += f" and source_revision != {json.dumps(keep_revision_id)}"
+        try:
+            async with self._coordinator.mutation(self._config.alias) as authority:
+                physical = await self._current_target_locked(authority)
+                for _ in range(_PURGE_ROUNDS):
+                    rows = await self._reader.query_persisted_rows(
+                        physical, expression, ("chunk_id",), _QUERY_LIMIT
+                    )
+                    if not rows:
+                        break
+                    await self._delete_ids(
+                        physical, tuple(dict.fromkeys(str(row["chunk_id"]) for row in rows))
+                    )
+                if await self._reader.query_persisted_rows(physical, expression, ("chunk_id",), 1):
+                    raise IndexReconciliationFailed("Tapper document purge negative probe failed")
+                for revision_id in fence_revision_ids:
+                    await authority.record_fence(revision_id, document_id)
+        except asyncio.CancelledError:
+            raise
+        except IndexReconciliationFailed:
+            raise
+        except Exception as error:
+            raise IndexUnavailable("Tapper Milvus document purge failed") from error
 
     async def count_revision(self, target: DeletionTarget) -> int:
         try:

@@ -802,4 +802,14 @@ class DocumentIndexPort(Protocol):
 
     async def delete_revision(self, target: DeletionTarget) -> None: ...
 
+    async def purge_document(
+        self,
+        document_id: str,
+        *,
+        keep_revision_id: str | None,
+        fence_revision_ids: tuple[str, ...] = (),
+    ) -> None:
+        """Remove every non-fence row of a document except the kept revision."""
+        ...
+
     async def count_revision(self, target: DeletionTarget) -> int: ...
