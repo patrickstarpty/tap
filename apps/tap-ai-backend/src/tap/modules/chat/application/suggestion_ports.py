@@ -1,15 +1,25 @@
-"""Prompt suggestion store port. Other ports (topics, source versions, evidence
-validation) are added in Task 3 by their owning adapters."""
+"""Prompt suggestion store port, plus the knowledge/usage/generation/grounding
+ports PromptSuggestionService depends on. Adapters for the knowledge-backed
+ports live in entrypoints; the usage port is implemented by a chat adapter."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tap.modules.chat.domain.suggestions import PromptSuggestion, RefreshReason, SuggestionKey
+from tap.modules.chat.domain.suggestions import (
+    Candidate,
+    PromptSuggestion,
+    RefreshReason,
+    SuggestionInputs,
+    SuggestionKey,
+    SuggestionLocale,
+    TopicSource,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,4 +69,47 @@ class SuggestionStore(Protocol):
 
     async def fail_refresh(
         self, claim: ClaimedRefresh, failure_code: str, *, now: datetime
+    ) -> bool: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentSource:
+    source_id: str
+    name: str
+    version: str
+
+
+class SuggestionKnowledge(Protocol):
+    async def current_sources(self, actor_id: str) -> Mapping[str, CurrentSource]:
+        """Published sources this actor can currently access."""
+        ...
+
+    async def topics(self, actor_id: str) -> tuple[TopicSource, ...]:
+        """At most 30 sources, each with at most 8 section headings."""
+        ...
+
+    async def main_entities(self, actor_id: str, *, limit: int) -> tuple[str, ...]: ...
+
+
+class SuggestionUsage(Protocol):
+    async def personal(
+        self, actor_id: str, *, limit: int
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """(question texts, source ids)."""
+        ...
+
+    async def popular_sources(
+        self, *, excluding_actor_id: str, limit: int
+    ) -> tuple[tuple[str, int], ...]: ...
+
+
+class SuggestionGenerator(Protocol):
+    async def generate(
+        self, inputs: SuggestionInputs, locale: SuggestionLocale
+    ) -> tuple[Candidate, ...]: ...
+
+
+class GroundingCheck(Protocol):
+    async def is_grounded(
+        self, actor_id: str, question: str, source_ids: tuple[str, ...]
     ) -> bool: ...
