@@ -63,6 +63,8 @@ EXPECTED_TABLES = {
     "turn_input_snapshot",
     "turn_answer_evidence_snapshot",
     "turn_artifact_link",
+    "prompt_suggestion_refresh",
+    "prompt_suggestion",
     "knowledge_document",
     "knowledge_document_revision",
     "knowledge_ingestion_job",
