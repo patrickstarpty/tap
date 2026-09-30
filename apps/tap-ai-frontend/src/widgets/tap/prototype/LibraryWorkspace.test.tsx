@@ -4,7 +4,63 @@ import { describe, expect, it } from "vitest";
 
 import { LibraryWorkspace } from "./LibraryWorkspace";
 import { PROTOTYPE_COPY } from "./copy";
-import { SAMPLE_FILES } from "./sampleFiles";
+import type { LibrarySource } from "./model";
+
+const FILE_TYPES = [
+  "XLSX",
+  "PDF",
+  "DOCX",
+  "MD",
+  "TXT",
+  "PPTX",
+  "CSV",
+  "JSON",
+  "YAML",
+  "XML",
+  "HTML",
+  "RTF",
+  "ODT",
+  "DOC",
+  "ODS",
+  "XLS",
+  "ODP",
+  "PPT",
+] as const;
+
+const TEST_SOURCES: readonly LibrarySource[] = FILE_TYPES.map((type) => {
+  if (type === "PDF") {
+    return {
+      id: "test-underwriting",
+      name: "Underwriting test rules.pdf",
+      type,
+      description:
+        "Decision boundaries, review triggers and expected outcomes.",
+      downloadUrl: "/library-files/underwriting-test-rules.pdf",
+      origin: "page-local",
+      status: "ready",
+    };
+  }
+  if (type === "MD") {
+    return {
+      id: "test-exploratory",
+      name: "Exploratory testing checklist.md",
+      type,
+      description: "Permissions, boundary values and recovery scenarios.",
+      downloadUrl: "/library-files/exploratory-testing-checklist.md",
+      origin: "page-local",
+      status: "ready",
+    };
+  }
+  return {
+    id: `test-${type.toLowerCase()}`,
+    name: `Test file.${type.toLowerCase()}`,
+    type,
+    description: "Test library file.",
+    downloadUrl: `/library-files/test-file.${type.toLowerCase()}`,
+    origin: "page-local",
+    status: "ready",
+  };
+});
 
 describe("Library file browsing", () => {
   it("shows no graph without a project", async () => {
@@ -12,7 +68,7 @@ describe("Library file browsing", () => {
     render(
       <LibraryWorkspace
         copy={PROTOTYPE_COPY.en}
-        sources={SAMPLE_FILES}
+        sources={TEST_SOURCES}
         onAddSource={async () => undefined}
       />,
     );
@@ -30,7 +86,7 @@ describe("Library file browsing", () => {
     render(
       <LibraryWorkspace
         copy={PROTOTYPE_COPY.en}
-        sources={SAMPLE_FILES}
+        sources={TEST_SOURCES}
         onAddSource={async () => undefined}
       />,
     );
@@ -58,7 +114,7 @@ describe("Library file browsing", () => {
     render(
       <LibraryWorkspace
         copy={PROTOTYPE_COPY.en}
-        sources={SAMPLE_FILES}
+        sources={TEST_SOURCES}
         onAddSource={async () => undefined}
       />,
     );
@@ -76,7 +132,7 @@ describe("Library file browsing", () => {
     });
     expect(download).toHaveAttribute(
       "href",
-      "/prototype-files/exploratory-testing-checklist.md",
+      "/library-files/exploratory-testing-checklist.md",
     );
     expect(download).toHaveAttribute("download");
     await user.selectOptions(

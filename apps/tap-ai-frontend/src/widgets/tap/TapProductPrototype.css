@@ -270,7 +270,6 @@
 .tap-panel-toggle:focus-visible,
 .tap-chat-history button:focus-visible,
 .tap-language-switcher button:focus-visible,
-.tap-quick-prompts button:focus-visible,
 .tap-composer-add-button:focus-visible,
 .tap-model-trigger:focus-visible,
 .tap-model-menu button:focus-visible {
@@ -583,40 +582,6 @@
   font-size: 14px;
   line-height: 1.6;
   max-width: 56ch;
-}
-
-.tap-quick-prompts {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 30px;
-}
-
-.tap-chat--idle > .tap-quick-prompts {
-  margin-top: 0;
-}
-
-.tap-quick-prompts button {
-  min-height: 44px;
-  border: 1px solid var(--tap-line);
-  border-radius: 10px;
-  background: transparent;
-  padding: 0 14px;
-  color: var(--tap-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  transition:
-    border-color 150ms ease-out,
-    background-color 150ms ease-out;
-  border-color: var(--tap-line);
-}
-
-.tap-quick-prompts button:hover {
-  border-color: var(--tap-accent-line);
-  background: var(--tap-accent-soft);
-  color: var(--tap-accent-dark);
 }
 
 .tap-composer {
@@ -1389,15 +1354,6 @@
   min-width: 0;
 }
 
-.tap-answer-copy {
-  color: var(--tap-ink);
-  line-height: 1.7;
-}
-
-.tap-answer-copy p {
-  margin: 4px 0 8px;
-}
-
 .tap-context-notice {
   color: var(--tap-muted);
   font-size: 11px;
@@ -1508,37 +1464,6 @@
   flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 12px;
-}
-
-.tap-project-graph-view {
-  display: inline-flex;
-  gap: 4px;
-  padding: 3px;
-  border: 1px solid var(--tap-workbench-line);
-  border-radius: 10px;
-  background: var(--tap-surface);
-}
-
-.tap-project-graph-view button {
-  min-height: 30px;
-  padding: 5px 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--tap-muted);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.tap-project-graph-view button[aria-pressed="true"] {
-  background: var(--tap-soft);
-  color: var(--tap-ink);
-  font-weight: 700;
-}
-
-.tap-project-graph-view button:focus-visible {
-  outline: 2px solid var(--tap-focus);
-  outline-offset: 2px;
 }
 
 .tap-project-graph {
@@ -2828,20 +2753,6 @@
     max-width: 56ch;
   }
 
-  .tap-quick-prompts {
-    display: grid;
-    width: 100%;
-  }
-
-  .tap-quick-prompts button {
-    height: auto;
-    padding: 10px 12px;
-    line-height: 1.45;
-    text-align: left;
-    background: transparent;
-    border-color: var(--tap-line);
-  }
-
   .tap-composer {
     width: calc(100% - 20px);
     margin-bottom: max(10px, env(safe-area-inset-bottom));
@@ -2990,7 +2901,6 @@
   .tap-tapper-layout,
   .tap-sources-shell,
   .tap-navigation-item,
-  .tap-quick-prompts button,
   .tap-question-marker {
     animation: none;
     transition: none;

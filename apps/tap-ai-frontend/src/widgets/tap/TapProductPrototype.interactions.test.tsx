@@ -117,40 +117,46 @@ function seedAgentSkillCatalog(
   queryClient: ReturnType<typeof createTestQueryClient>,
   projectId: string,
 ) {
-  queryClient.setQueryData(["ai-agent-catalog", projectId], [
-    {
-      revisionId: "life-underwriting-analyst",
-      assetId: "life-underwriting-analyst",
-      displayName: "Life Underwriting Analyst",
-      contentDigest: `sha256:${"1".repeat(64)}`,
-      toolAllowlist: ["knowledge.search", "knowledge.answer"],
-      outputSchemaDigest: `sha256:${"2".repeat(64)}`,
-    },
-    {
-      revisionId: "application-completeness-reviewer",
-      assetId: "application-completeness-reviewer",
-      displayName: "Application Completeness Reviewer",
-      contentDigest: `sha256:${"3".repeat(64)}`,
-      toolAllowlist: ["knowledge.search", "knowledge.answer"],
-      outputSchemaDigest: `sha256:${"4".repeat(64)}`,
-    },
-  ]);
-  queryClient.setQueryData(["skill-catalog", projectId], [
-    {
-      revisionId: "bdd-scenario-design",
-      assetId: "bdd-scenario-design",
-      displayName: "BDD Scenario Design",
-      contentDigest: `sha256:${"5".repeat(64)}`,
-      applicableTasks: ["knowledge.answer"],
-    },
-    {
-      revisionId: "underwriting-evidence-review",
-      assetId: "underwriting-evidence-review",
-      displayName: "Underwriting Evidence Review",
-      contentDigest: `sha256:${"6".repeat(64)}`,
-      applicableTasks: ["knowledge.answer"],
-    },
-  ]);
+  queryClient.setQueryData(
+    ["ai-agent-catalog", projectId],
+    [
+      {
+        revisionId: "life-underwriting-analyst",
+        assetId: "life-underwriting-analyst",
+        displayName: "Life Underwriting Analyst",
+        contentDigest: `sha256:${"1".repeat(64)}`,
+        toolAllowlist: ["knowledge.search", "knowledge.answer"],
+        outputSchemaDigest: `sha256:${"2".repeat(64)}`,
+      },
+      {
+        revisionId: "application-completeness-reviewer",
+        assetId: "application-completeness-reviewer",
+        displayName: "Application Completeness Reviewer",
+        contentDigest: `sha256:${"3".repeat(64)}`,
+        toolAllowlist: ["knowledge.search", "knowledge.answer"],
+        outputSchemaDigest: `sha256:${"4".repeat(64)}`,
+      },
+    ],
+  );
+  queryClient.setQueryData(
+    ["skill-catalog", projectId],
+    [
+      {
+        revisionId: "bdd-scenario-design",
+        assetId: "bdd-scenario-design",
+        displayName: "BDD Scenario Design",
+        contentDigest: `sha256:${"5".repeat(64)}`,
+        applicableTasks: ["knowledge.answer"],
+      },
+      {
+        revisionId: "underwriting-evidence-review",
+        assetId: "underwriting-evidence-review",
+        displayName: "Underwriting Evidence Review",
+        contentDigest: `sha256:${"6".repeat(64)}`,
+        applicableTasks: ["knowledge.answer"],
+      },
+    ],
+  );
 }
 
 function renderPrototype() {
@@ -166,7 +172,7 @@ function renderPrototype() {
   // the repo's "no unexpected console output" test guard.
   queryClient.setQueryData(["test-plans", api.projectId], []);
 
-  return renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  return renderKnowledgeApp(<TapProductPrototype />, {
     api,
     queryClient,
   });
@@ -299,7 +305,11 @@ function stubConversationApi() {
       const turn = buildTurn(conversationId, 1, body);
       turnsByConversation.set(conversationId, [turn]);
       return Response.json(
-        { conversationId, turnId: (turn as { turnId: string }).turnId, state: "queued" },
+        {
+          conversationId,
+          turnId: (turn as { turnId: string }).turnId,
+          state: "queued",
+        },
         { status: 202 },
       );
     }
@@ -315,7 +325,11 @@ function stubConversationApi() {
       );
       if (summary !== undefined) summary.updatedAt = CONVERSATION_NOW;
       return Response.json(
-        { conversationId, turnId: (turn as { turnId: string }).turnId, state: "queued" },
+        {
+          conversationId,
+          turnId: (turn as { turnId: string }).turnId,
+          state: "queued",
+        },
         { status: 202 },
       );
     }
@@ -448,7 +462,7 @@ it("shows approved Agent and Skill meaning instead of integrity digests", async 
       },
     ],
   );
-  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  renderKnowledgeApp(<TapProductPrototype />, {
     api,
     queryClient,
   });
@@ -466,10 +480,9 @@ it("shows approved Agent and Skill meaning instead of integrity digests", async 
 });
 
 it("preserves the draft and prevents sending when the governed model is unavailable", async () => {
-  const { queryClient } = renderKnowledgeApp(
-    <TapProductPrototype conversationSource="api" />,
-    { api: fakeKnowledgeClient() },
-  );
+  const { queryClient } = renderKnowledgeApp(<TapProductPrototype />, {
+    api: fakeKnowledgeClient(),
+  });
   const user = userEvent.setup();
   const composer = screen.getByRole("textbox", { name: "Message Tapper" });
   await user.type(composer, "Keep this draft");
@@ -518,10 +531,7 @@ it("uses canonical Source API identities in the existing source panel", async ()
       },
     ],
   });
-  const { queryClient } = renderKnowledgeApp(
-    <TapProductPrototype conversationSource="api" />,
-    { api },
-  );
+  const { queryClient } = renderKnowledgeApp(<TapProductPrototype />, { api });
   const checkbox = await screen.findByRole("checkbox", {
     name: /Canonical policy/,
   });
@@ -557,10 +567,7 @@ it("does not offer an ingestion-ready source that has not been published", async
     ],
     nextCursor: null,
   });
-  const { queryClient } = renderKnowledgeApp(
-    <TapProductPrototype conversationSource="api" />,
-    { api },
-  );
+  const { queryClient } = renderKnowledgeApp(<TapProductPrototype />, { api });
   await waitFor(() =>
     expect(
       queryClient.getQueryData(["knowledge", api.projectId, "sources"]),
@@ -586,7 +593,7 @@ it("offers a multi-document published Source only once", async () => {
       expiresAt: "2027-01-01T00:00:00Z",
     })),
   });
-  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, { api });
+  renderKnowledgeApp(<TapProductPrototype />, { api });
   expect(
     await screen.findAllByRole("checkbox", { name: /Grouped policy source/u }),
   ).toHaveLength(1);
@@ -633,7 +640,7 @@ it("opens flowchart review instead of chunk management for an image document", a
       nextCursor: null,
     },
   });
-  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  renderKnowledgeApp(<TapProductPrototype />, {
     api,
   });
   await userEvent.click(screen.getByRole("button", { name: "Library" }));
@@ -702,7 +709,7 @@ it("shows Source documents in Library and targets retry and confirmed deletion",
     },
   });
   api.deleteSource = vi.fn().mockResolvedValue(undefined);
-  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  renderKnowledgeApp(<TapProductPrototype />, {
     api,
   });
   await userEvent.click(screen.getByRole("button", { name: "Library" }));
@@ -746,7 +753,7 @@ it("shows Source documents in Library and targets retry and confirmed deletion",
 
 it("distinguishes Library loading from an empty Source collection", async () => {
   const api = fakeKnowledgeClient().deferList();
-  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  renderKnowledgeApp(<TapProductPrototype />, {
     api,
   });
   await userEvent.click(screen.getByRole("button", { name: "Library" }));
@@ -801,7 +808,7 @@ function renderPrototypeWithManyDocuments() {
     ])
     .withPublishedSources({ items: DEFAULT_SOURCES });
 
-  return renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  return renderKnowledgeApp(<TapProductPrototype />, {
     api,
   });
 }
@@ -842,7 +849,7 @@ function renderPrototypeWithLibraryStatuses() {
     ])
     .withPublishedSources({ items: DEFAULT_SOURCES });
 
-  return renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  return renderKnowledgeApp(<TapProductPrototype />, {
     api,
   });
 }
@@ -2266,7 +2273,9 @@ describe("Tap product prototype interactions", () => {
       within(
         screen.getByRole("navigation", { name: "Chat history" }),
       ).getByRole("button", {
-        name: new RegExp(`^${firstPrompt.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`),
+        name: new RegExp(
+          `^${firstPrompt.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`,
+        ),
       }),
     );
     const restoredTurns = container.querySelectorAll(".tap-turn");
@@ -2536,7 +2545,9 @@ describe("Tap product prototype interactions", () => {
       screen.getByRole("textbox", { name: "Search agents" }),
       "underwriting",
     );
-    await user.click(screen.getByRole("button", { name: "Create agent draft" }));
+    await user.click(
+      screen.getByRole("button", { name: "Create agent draft" }),
+    );
 
     const createDialog = screen.getByRole("dialog", { name: "Create agent" });
     expect(
@@ -2673,7 +2684,9 @@ describe("Tap product prototype interactions", () => {
     const { container } = renderPrototype();
 
     await user.click(screen.getByRole("button", { name: "Agents" }));
-    await user.click(screen.getByRole("button", { name: "Create agent draft" }));
+    await user.click(
+      screen.getByRole("button", { name: "Create agent draft" }),
+    );
     const createDialog = screen.getByRole("dialog", { name: "Create agent" });
     await user.type(
       within(createDialog).getByRole("textbox", { name: "Name (kebab-case)" }),
@@ -2729,7 +2742,9 @@ describe("Tap product prototype interactions", () => {
       screen.getByRole("textbox", { name: "Search skills" }),
       "underwriting",
     );
-    await user.click(screen.getByRole("button", { name: "Create skill draft" }));
+    await user.click(
+      screen.getByRole("button", { name: "Create skill draft" }),
+    );
 
     const createDialog = screen.getByRole("dialog", { name: "Create skill" });
     expect(
@@ -2853,7 +2868,7 @@ describe("Tap product prototype interactions", () => {
   it("keeps uploads pending until the Project API receipt arrives", async () => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient().deferUpload();
-    renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    renderKnowledgeApp(<TapProductPrototype />, {
       api,
     });
     await user.click(screen.getByRole("button", { name: "Library" }));
@@ -2882,7 +2897,7 @@ describe("Tap product prototype interactions", () => {
     const api = fakeKnowledgeClient().withUploadProblem(
       new Error("private provider details"),
     );
-    renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    renderKnowledgeApp(<TapProductPrototype />, {
       api,
     });
     await user.click(screen.getByRole("button", { name: "Library" }));
@@ -2911,7 +2926,7 @@ describe("Tap product prototype interactions", () => {
       <RuntimeClientProvider
         client={{ getMode: () => new Promise(() => undefined) }}
       >
-        <TapProductPrototype conversationSource="api" />
+        <TapProductPrototype />
       </RuntimeClientProvider>,
     );
     await user.click(screen.getByRole("button", { name: "Library" }));
@@ -3137,7 +3152,7 @@ describe("Tap product prototype interactions", () => {
 
   it("does not substitute the illustrative graph without a published revision", async () => {
     const user = userEvent.setup();
-    renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    renderKnowledgeApp(<TapProductPrototype />, {
       api: fakeKnowledgeClient(),
     });
 
@@ -3152,7 +3167,7 @@ describe("Tap product prototype interactions", () => {
 
   it("omits illustrative graph summaries from the durable product path", async () => {
     const user = userEvent.setup();
-    renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    renderKnowledgeApp(<TapProductPrototype />, {
       api: fakeKnowledgeClient(),
     });
 

@@ -149,12 +149,9 @@ it("sends a report handoff with its query and receipts, then shows verified Insi
       },
     ],
   });
-  const { queryClient, unmount } = renderKnowledgeApp(
-    <TapProductPrototype conversationSource="api" />,
-    {
-      api,
-    },
-  );
+  const { queryClient, unmount } = renderKnowledgeApp(<TapProductPrototype />, {
+    api,
+  });
   const user = userEvent.setup();
   await user.click(
     await within(
@@ -200,10 +197,7 @@ it("sends a report handoff with its query and receipts, then shows verified Insi
     screen.getByRole("region", { name: "Insights explanation" }),
   ).toHaveTextContent("Assertion failed");
   unmount();
-  const restored = renderKnowledgeApp(
-    <TapProductPrototype conversationSource="api" />,
-    { api },
-  );
+  const restored = renderKnowledgeApp(<TapProductPrototype />, { api });
   expect(await screen.findByText(/Request timeout may/)).toBeVisible();
   expect(screen.getByText(/Permission mismatch may/)).toBeVisible();
   expect(screen.getByText("Please provide HTTP 403 logs.")).toBeVisible();
@@ -211,7 +205,7 @@ it("sends a report handoff with its query and receipts, then shows verified Insi
   // Keep the successful query cached while reopening after authorization changes.
   restored.unmount();
   denied = true;
-  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  renderKnowledgeApp(<TapProductPrototype />, {
     api,
     queryClient: restored.queryClient,
   });
@@ -243,7 +237,7 @@ it("keeps the report question available when explanation authorization fails", a
       });
     throw new Error(`Unexpected API call: ${request.url}`);
   });
-  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  renderKnowledgeApp(<TapProductPrototype />, {
     api: fakeKnowledgeClient(),
   });
   const user = userEvent.setup();
@@ -301,7 +295,7 @@ it("reuses the durable send key after an uncertain POST response", async () => {
       });
     throw new Error(`Unexpected API call: ${request.url}`);
   });
-  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  renderKnowledgeApp(<TapProductPrototype />, {
     api: fakeKnowledgeClient(),
   });
   const user = userEvent.setup();

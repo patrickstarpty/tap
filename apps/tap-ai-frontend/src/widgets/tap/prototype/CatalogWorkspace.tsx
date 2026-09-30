@@ -33,7 +33,6 @@ interface CatalogWorkspaceProps {
   onUpdate: (itemId: string, draft: CatalogDraft) => void;
   onUse: (itemId: string) => void;
   readOnly?: boolean;
-  durableDrafts?: boolean;
   projectId?: string;
 }
 
@@ -73,11 +72,8 @@ export function CatalogWorkspace({
   copy,
   items,
   kind,
-  onCreate,
-  onUpdate,
   onUse,
   readOnly = false,
-  durableDrafts = false,
   projectId,
 }: CatalogWorkspaceProps) {
   const [query, setQuery] = useState("");
@@ -85,7 +81,7 @@ export function CatalogWorkspace({
   const [dialogMode, setDialogMode] = useState<"create" | "edit" | null>(null);
   const [draft, setDraft] = useState<CatalogDraft>(EMPTY_DRAFT);
   const [localDrafts, setLocalDrafts] = useState<CatalogItem[]>(() =>
-    durableDrafts ? storedDrafts(projectId, kind) : [],
+    storedDrafts(projectId, kind),
   );
   const [validationError, setValidationError] = useState<string | null>(null);
   const dialogTriggerRef = useRef<HTMLElement | null>(null);
@@ -103,20 +99,15 @@ export function CatalogWorkspace({
     ? copy.catalog.agentCatalog
     : copy.catalog.skillCatalog;
   const isChinese = copy.catalog.createAgent !== "Create agent";
-  const allItems = durableDrafts ? [...items, ...localDrafts] : items;
+  const allItems = [...items, ...localDrafts];
 
   useEffect(() => {
-    if (
-      !durableDrafts ||
-      projectId === undefined ||
-      typeof localStorage === "undefined"
-    )
-      return;
+    if (projectId === undefined || typeof localStorage === "undefined") return;
     localStorage.setItem(
       `tap-md-drafts-v1:${projectId}:${kind}`,
       JSON.stringify(localDrafts),
     );
-  }, [durableDrafts, kind, localDrafts, projectId]);
+  }, [kind, localDrafts, projectId]);
 
   const visibleItems = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -160,42 +151,31 @@ export function CatalogWorkspace({
     event.preventDefault();
     const normalizedDraft = { ...draft, name: draft.name.trim() };
     if (normalizedDraft.name.length === 0) return;
-    if (durableDrafts) {
-      try {
-        catalogMarkdown(kind, normalizedDraft);
-      } catch {
-        setValidationError(
-          isChinese
-            ? "请填写小写连字符名称、用途描述和 Markdown 指令。"
-            : "Enter a lowercase kebab-case name, description, and Markdown instructions.",
-        );
-        return;
-      }
-      setLocalDrafts((current) =>
-        dialogMode === "edit" && editingItemId !== null
-          ? current.map((item) =>
-              item.id === editingItemId
-                ? { ...item, ...normalizedDraft }
-                : item,
-            )
-          : [
-              ...current,
-              {
-                id: `local-${kind}-${crypto.randomUUID()}`,
-                kind,
-                origin: "custom",
-                ...normalizedDraft,
-              },
-            ],
+    try {
+      catalogMarkdown(kind, normalizedDraft);
+    } catch {
+      setValidationError(
+        isChinese
+          ? "请填写小写连字符名称、用途描述和 Markdown 指令。"
+          : "Enter a lowercase kebab-case name, description, and Markdown instructions.",
       );
-      closeDialog();
       return;
     }
-    if (dialogMode === "edit" && editingItemId !== null) {
-      onUpdate(editingItemId, normalizedDraft);
-    } else {
-      onCreate(normalizedDraft);
-    }
+    setLocalDrafts((current) =>
+      dialogMode === "edit" && editingItemId !== null
+        ? current.map((item) =>
+            item.id === editingItemId ? { ...item, ...normalizedDraft } : item,
+          )
+        : [
+            ...current,
+            {
+              id: `local-${kind}-${crypto.randomUUID()}`,
+              kind,
+              origin: "custom",
+              ...normalizedDraft,
+            },
+          ],
+    );
     closeDialog();
   };
 
@@ -231,9 +211,7 @@ export function CatalogWorkspace({
             icon={<PlusOutlined aria-hidden="true" />}
             onClick={openCreateDialog}
           >
-            {durableDrafts
-              ? `${createLabel}${isChinese ? "草稿" : " draft"}`
-              : createLabel}
+            {`${createLabel}${isChinese ? "草稿" : " draft"}`}
           </Button>
         )}
       </header>
@@ -263,11 +241,9 @@ export function CatalogWorkspace({
                   <span data-origin={item.origin}>
                     {item.origin === "built-in"
                       ? copy.catalog.builtIn
-                      : durableDrafts
-                        ? isChinese
-                          ? "本地草稿"
-                          : "Local draft"
-                        : copy.catalog.custom}
+                      : isChinese
+                        ? "本地草稿"
+                        : "Local draft"}
                   </span>
                 </div>
                 {item.description.length > 0 ? <p>{item.description}</p> : null}
@@ -279,8 +255,7 @@ export function CatalogWorkspace({
                 ) : null}
               </article>
               <div className="tap-catalog-actions">
-                {readOnly ||
-                (durableDrafts && item.origin === "built-in") ? null : (
+                {readOnly || item.origin === "built-in" ? null : (
                   <Button
                     icon={<EditOutlined aria-hidden="true" />}
                     aria-label={
@@ -293,12 +268,12 @@ export function CatalogWorkspace({
                     {editLabel}
                   </Button>
                 )}
-                {durableDrafts && item.origin === "custom" ? (
+                {item.origin === "custom" ? (
                   <Button onClick={() => downloadDraft(item)}>
                     {isChinese ? "下载 Markdown" : "Download Markdown"}
                   </Button>
                 ) : null}
-                {durableDrafts && item.origin === "custom" ? null : (
+                {item.origin === "custom" ? null : (
                   <Button
                     type="primary"
                     ghost
@@ -328,39 +303,27 @@ export function CatalogWorkspace({
           <header>
             <h2>
               {dialogMode === "create"
-                ? durableDrafts
-                  ? `${createLabel}${isChinese ? "草稿" : " draft"}`
-                  : createLabel
+                ? `${createLabel}${isChinese ? "草稿" : " draft"}`
                 : editLabel}
             </h2>
-            {durableDrafts ? (
-              <p>
-                {isAgent
-                  ? isChinese
-                    ? "生成带 YAML 元数据的 Agent .md 文件。"
-                    : "Create an Agent .md file with YAML frontmatter."
-                  : isChinese
-                    ? "生成符合 Agent Skills 规范的 SKILL.md。"
-                    : "Create an Agent Skills SKILL.md file."}
-              </p>
-            ) : null}
+            <p>
+              {isAgent
+                ? isChinese
+                  ? "生成带 YAML 元数据的 Agent .md 文件。"
+                  : "Create an Agent .md file with YAML frontmatter."
+                : isChinese
+                  ? "生成符合 Agent Skills 规范的 SKILL.md。"
+                  : "Create an Agent Skills SKILL.md file."}
+            </p>
           </header>
           <form onSubmit={saveItem}>
             <label>
               <span>
-                {durableDrafts
-                  ? isChinese
-                    ? "名称（小写连字符）"
-                    : "Name (kebab-case)"
-                  : copy.catalog.name}
+                {isChinese ? "名称（小写连字符）" : "Name (kebab-case)"}
               </span>
               <Input
                 aria-label={
-                  durableDrafts
-                    ? isChinese
-                      ? "名称（小写连字符）"
-                      : "Name (kebab-case)"
-                    : copy.catalog.name
+                  isChinese ? "名称（小写连字符）" : "Name (kebab-case)"
                 }
                 value={draft.name}
                 onChange={(event) =>
@@ -389,7 +352,7 @@ export function CatalogWorkspace({
               <span>{copy.catalog.instructions}</span>
               <Input.TextArea
                 aria-label={copy.catalog.instructions}
-                rows={durableDrafts ? 8 : 4}
+                rows={8}
                 value={draft.instructions}
                 onChange={(event) =>
                   setDraft((current) => ({
@@ -399,14 +362,12 @@ export function CatalogWorkspace({
                 }
               />
             </label>
-            {durableDrafts ? (
-              <div className="tap-catalog-markdown-preview">
-                <strong>
-                  {isChinese ? "Markdown 文件结构" : "Markdown file structure"}
-                </strong>
-                <pre>{`---\nname: ${draft.name.trim() || "agent-name"}\ndescription: ${JSON.stringify(draft.description.trim() || "When to use this agent or skill")}\n---\n\n${draft.instructions.trim() || "# Instructions"}`}</pre>
-              </div>
-            ) : null}
+            <div className="tap-catalog-markdown-preview">
+              <strong>
+                {isChinese ? "Markdown 文件结构" : "Markdown file structure"}
+              </strong>
+              <pre>{`---\nname: ${draft.name.trim() || "agent-name"}\ndescription: ${JSON.stringify(draft.description.trim() || "When to use this agent or skill")}\n---\n\n${draft.instructions.trim() || "# Instructions"}`}</pre>
+            </div>
             {validationError ? <p role="alert">{validationError}</p> : null}
             <div className="tap-dialog-actions">
               <Button onClick={closeDialog}>{copy.catalog.cancel}</Button>
@@ -414,12 +375,10 @@ export function CatalogWorkspace({
                 type="primary"
                 htmlType="submit"
                 disabled={
-                  durableDrafts
-                    ? !CATALOG_NAME_PATTERN.test(draft.name.trim()) ||
-                      draft.name.trim().length > 64 ||
-                      draft.description.trim().length === 0 ||
-                      draft.instructions.trim().length === 0
-                    : draft.name.trim().length === 0
+                  !CATALOG_NAME_PATTERN.test(draft.name.trim()) ||
+                  draft.name.trim().length > 64 ||
+                  draft.description.trim().length === 0 ||
+                  draft.instructions.trim().length === 0
                 }
               >
                 {saveLabel}

@@ -37,7 +37,6 @@ export interface PrototypeCopy {
     heading: string;
     description: string;
     sourceHint: string;
-    answer: string;
     noContextNotice: string;
     selectedContextNotice: string;
     selectedContext: string;
@@ -136,9 +135,6 @@ export interface PrototypeCopy {
   library: {
     testingCommunity: string;
 
-    loadExamples: string;
-    examplesLoaded: string;
-    example: string;
     listView: string;
     cardView: string;
     preview: string;
@@ -251,8 +247,6 @@ export const PROTOTYPE_COPY = {
       description:
         "Ask about life insurance, create BDD test cases, or build an automation.",
       sourceHint: "Each turn records the knowledge context you select.",
-      answer:
-        "This prototype response says that a life insurance application commonly includes identity details for the policyholder and insured person, health disclosures, beneficiary information, and payment details.",
       noContextNotice: "No knowledge context was selected for this turn.",
       selectedContextNotice:
         "Citations identify the sources that supported this answer.",
@@ -355,9 +349,6 @@ export const PROTOTYPE_COPY = {
       skillCatalog: "Skill catalog",
     },
     library: {
-      loadExamples: "Load examples",
-      examplesLoaded: "Examples loaded",
-      example: "Example file",
       listView: "List view",
       cardView: "Card view",
       preview: "Preview",
@@ -470,8 +461,6 @@ export const PROTOTYPE_COPY = {
       heading: "我能为您做什么？",
       description: "询问寿险业务、创建 BDD 测试用例，或构建自动化流程。",
       sourceHint: "每轮对话都会记录您选择的知识上下文。",
-      answer:
-        "此原型回答显示：寿险投保通常包含投保人和被保险人身份资料、健康告知、受益人信息以及缴费资料。",
       noContextNotice: "此轮对话未选择知识上下文。回答仅基于当前可用信息。",
       selectedContextNotice: "引用会标明支持本次回答的知识来源。",
       selectedContext: "已选上下文",
@@ -568,9 +557,6 @@ export const PROTOTYPE_COPY = {
       skillCatalog: "技能目录",
     },
     library: {
-      loadExamples: "加载示例文件",
-      examplesLoaded: "示例已加载",
-      example: "示例文件",
       listView: "列表视图",
       cardView: "卡片视图",
       preview: "预览",

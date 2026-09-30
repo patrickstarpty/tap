@@ -184,10 +184,7 @@ function durableConversation({ state, appendResponse }: Scenario) {
     throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
   });
   const api = fakeKnowledgeClient().withPublishedSources(PUBLISHED);
-  const rendered = renderKnowledgeApp(
-    <TapProductPrototype conversationSource="api" />,
-    { api },
-  );
+  const rendered = renderKnowledgeApp(<TapProductPrototype />, { api });
   return { api, appended, canceled, renamed, deleted, searches, ...rendered };
 }
 

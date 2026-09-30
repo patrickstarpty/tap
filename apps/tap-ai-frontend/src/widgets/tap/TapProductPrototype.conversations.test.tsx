@@ -40,7 +40,7 @@ it("keeps an explicit New chat when durable history arrives afterwards", async (
     }
     throw new Error(`Unexpected API call: ${request.url}`);
   });
-  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+  renderKnowledgeApp(<TapProductPrototype />, {
     api: fakeKnowledgeClient(),
   });
   const user = userEvent.setup();

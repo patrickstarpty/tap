@@ -22,7 +22,6 @@ it("restores the Agent creation entry and saves an exportable Markdown draft", a
         instructions: "Server-approved revision",
       },
     ],
-    durableDrafts: true,
     projectId: "tapper-demo",
     onCreate: vi.fn(),
     onUpdate: vi.fn(),

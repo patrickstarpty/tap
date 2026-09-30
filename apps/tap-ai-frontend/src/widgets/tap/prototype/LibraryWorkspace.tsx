@@ -444,12 +444,7 @@ export function LibraryWorkspace({
                         <FileTypeIcon type={source.type} />
                         <span className="tap-library-source-copy">
                           <strong>{source.name}</strong>
-                          <span>
-                            {source.isExample
-                              ? `${copy.library.example} · `
-                              : ""}
-                            {source.description}
-                          </span>
+                          <span>{source.description}</span>
                         </span>
                         {view === "cards" ? (
                           <div

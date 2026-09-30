@@ -198,9 +198,12 @@ function stubDraftConversation() {
           },
         ],
       });
-      return Response.json({ conversationId, turnId, state: "queued" }, {
-        status: 202,
-      });
+      return Response.json(
+        { conversationId, turnId, state: "queued" },
+        {
+          status: 202,
+        },
+      );
     }
     const detailMatch = /\/conversations\/([^/]+)$/u.exec(path);
     if (detailMatch && request.method === "GET") {
@@ -316,9 +319,12 @@ function stubImmediatelyAnsweredConversation() {
           },
         ],
       });
-      return Response.json({ conversationId, turnId, state: "queued" }, {
-        status: 202,
-      });
+      return Response.json(
+        { conversationId, turnId, state: "queued" },
+        {
+          status: 202,
+        },
+      );
     }
     const detailMatch = /\/conversations\/([^/]+)$/u.exec(path);
     if (detailMatch && request.method === "GET") {
@@ -834,7 +840,9 @@ describe("TAP AI page (durable Conversation API)", () => {
     // switch plus a round trip through a real-mounting Test Management must
     // not lose the saved Conversation.
     await user.click(screen.getByRole("button", { name: "测试管理" }));
-    expect(await screen.findByRole("heading", { name: "测试管理" })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "测试管理" }),
+    ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Tapper" }));
     await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
