@@ -372,3 +372,153 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     turnId: accepted.turnId,
   });
 });
+
+test("a published source's suggested question grounds a Tapper answer", async ({
+  page,
+}) => {
+  const runtimeResponse = await page.request.get("/api/v1/runtime-mode");
+  expect(runtimeResponse.status()).toBe(200);
+  const runtime = (await runtimeResponse.json()) as { projectId: string };
+  const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
+
+  const sourceFilename = `suggestion-evidence-${Date.now()}.md`;
+  const upload = await page.request.post(`${root}/knowledge/sources`, {
+    headers: {
+      Origin: ORIGIN,
+      "Idempotency-Key": `suggestion-source-${Date.now()}`,
+    },
+    multipart: {
+      upload: {
+        name: sourceFilename,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(
+          `# Suggested question evidence ${Date.now()}\n\nA policy application requires verified identity evidence.`,
+        ),
+      },
+    },
+  });
+  expect(upload.status()).toBe(202);
+  const uploaded = (await upload.json()) as {
+    accepted: { document: { documentId: string } };
+    source: { sourceId: string };
+  };
+  const createdSourceId = uploaded.source.sourceId;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+        );
+        const detail = (await response.json()) as { readyCount: number };
+        return detail.readyCount;
+      },
+      { timeout: 45_000 },
+    )
+    .toBeGreaterThan(0);
+  const detailResponse = await page.request.get(
+    `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+  );
+  expect(detailResponse.status()).toBe(200);
+  const sourceDetail = (await detailResponse.json()) as {
+    documents: { items: Array<{ revisionId: string; status: string }> };
+  };
+  const revision = sourceDetail.documents.items.find(
+    (item) => item.status === "ready",
+  );
+  expect(revision).toBeDefined();
+  preparePublishedFixture([revision!.revisionId]);
+
+  // The suggestion worker generates candidates asynchronously from published
+  // sources; the first read after publish returns an empty page and enqueues
+  // a refresh, so poll by reloading until the worker has produced items.
+  const suggestionsGroup = page.getByRole("group", {
+    name: "Suggested questions",
+  });
+  async function suggestionsReady(): Promise<boolean> {
+    await page.reload();
+    try {
+      await suggestionsGroup.waitFor({ state: "visible", timeout: 3_000 });
+    } catch {
+      return false;
+    }
+    return (await suggestionsGroup.getByRole("button").count()) > 0;
+  }
+  await page.goto("/");
+  await expect
+    .poll(() => suggestionsReady(), { timeout: 60_000, intervals: [2_000] })
+    .toBe(true);
+
+  const firstSuggestion = suggestionsGroup.getByRole("button").first();
+  await firstSuggestion.click();
+  const composer = page.getByRole("textbox", { name: "Message Tapper" });
+  await expect(composer).not.toHaveValue("");
+
+  const acceptedResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `${root}/conversations`,
+  );
+  await page.getByRole("button", { name: "Send" }).click();
+  const acceptedResponse = await acceptedResponsePromise;
+  expect(acceptedResponse.status()).toBe(202);
+  const accepted = (await acceptedResponse.json()) as {
+    conversationId: string;
+    turnId: string;
+  };
+
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/conversations/${accepted.conversationId}`,
+        );
+        const body = (await response.json()) as {
+          turns: Array<{ state: string }>;
+        };
+        return body.turns[0]?.state;
+      },
+      { timeout: 45_000 },
+    )
+    .toBe("completed");
+
+  const eventsResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}/events`,
+  );
+  expect(eventsResponse.status()).toBe(200);
+  const eventPage = (await eventsResponse.json()) as {
+    items: Array<{
+      eventType: string;
+      payload: {
+        answer?: {
+          abstained?: boolean;
+          citations?: Array<{ citationId: string }>;
+        };
+      };
+    }>;
+  };
+  const completedEvent = eventPage.items.find(
+    (item) => item.eventType === "turn.completed",
+  );
+  expect(completedEvent?.payload.answer?.abstained).toBe(false);
+  expect(
+    completedEvent?.payload.answer?.citations?.length ?? 0,
+  ).toBeGreaterThan(0);
+  await expect(
+    page
+      .getByRole("button", {
+        name: /Open source citation 1|打开来源引用 1/u,
+      })
+      .first(),
+  ).toBeVisible({ timeout: 5_000 });
+
+  const deleted = await page.request.delete(
+    `${root}/knowledge/sources/${createdSourceId}`,
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `suggestion-cleanup-${createdSourceId}`,
+      },
+    },
+  );
+  expect(deleted.status()).toBe(204);
+});
