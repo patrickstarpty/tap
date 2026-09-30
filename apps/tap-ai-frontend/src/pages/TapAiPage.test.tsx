@@ -698,9 +698,7 @@ describe("TAP AI page (durable Conversation API)", () => {
     const user = userEvent.setup();
     const message = "Create a browser automation for policy submission";
 
-    const queryClient = createTestQueryClient();
-    queryClient.setQueryData(["test-plans", api.projectId], []);
-    const firstRender = renderKnowledgeApp(<TapAiPage />, { api, queryClient });
+    const firstRender = renderTapAiWithTestPlans(api);
     await sendMessage(user, message);
 
     const history = screen.getByRole("navigation", { name: "Chat history" });
@@ -798,15 +796,6 @@ describe("TAP AI page (durable Conversation API)", () => {
   });
 
   it("localizes product workspaces without losing saved conversation data", async () => {
-    // The original fixture-mode case also checked a "Test plans are
-    // available when the TAP AI API is ready." status after switching to
-    // Test Management. That placeholder text only renders when
-    // TapProductPrototype is NOT in durable/api mode; in api mode with a
-    // project, Test Management renders the real TestPlanLibrary component
-    // instead. That specific assertion has no api-mode equivalent and is
-    // dropped here (see task-3-report.md); everything else about this case
-    // (locale switching without losing the saved Conversation, and the
-    // Library ready-count) is preserved.
     stubDraftConversation();
     const user = userEvent.setup();
     const api = fakeKnowledgeClient().withDocuments([
@@ -823,7 +812,7 @@ describe("TAP AI page (durable Conversation API)", () => {
         stage: "ready",
       }),
     ]);
-    renderKnowledgeApp(<TapAiPage />, { api });
+    renderTapAiWithTestPlans(api);
     const prompt = "What evidence is needed for life underwriting?";
 
     await sendMessage(user, prompt);
@@ -836,10 +825,19 @@ describe("TAP AI page (durable Conversation API)", () => {
     await user.click(screen.getByRole("tab", { name: "文档列表" }));
     expect(screen.getAllByText("知识来源 · 已就绪")).toHaveLength(2);
 
-    // Unlike the removed Test Management step, switching to Library does not
-    // collapse the Tapper sidebar, so it is still open here and there is no
-    // "Expand sidebar" button to click.
+    // The original fixture-mode case asserted a "Test plans are available
+    // when the TAP AI API is ready." status here; that placeholder text only
+    // renders when TapProductPrototype is NOT in durable/api mode. In api
+    // mode with a project, Test Management instead mounts the real (and
+    // localized) TestPlanLibrary component, so assert its heading instead.
+    // This still exercises the same behavior as the original: a locale
+    // switch plus a round trip through a real-mounting Test Management must
+    // not lose the saved Conversation.
+    await user.click(screen.getByRole("button", { name: "测试管理" }));
+    expect(await screen.findByRole("heading", { name: "测试管理" })).toBeVisible();
+
     await user.click(screen.getByRole("button", { name: "Tapper" }));
+    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
     await user.click(
       within(screen.getByRole("navigation", { name: "对话历史" })).getByRole(
         "button",
