@@ -55,7 +55,15 @@ export function AnswerTrace({ trace }: { trace: SampleTrace }) {
   const opener = useRef<HTMLElement | null>(null);
 
   const attemptSpans = trace.spans.filter((span) => span.attempt === attempt);
-  const maxDuration = Math.max(...attemptSpans.map((span) => span.durationMs), 1);
+  const attemptStart = Math.min(
+    ...attemptSpans.map((span) => span.startOffsetMs),
+    0,
+  );
+  const attemptEnd = Math.max(
+    ...attemptSpans.map((span) => span.startOffsetMs + span.durationMs),
+    1,
+  );
+  const attemptSpan = Math.max(1, attemptEnd - attemptStart);
 
   const depthOf = (span: TraceSpan): number => {
     let depth = 0;
@@ -102,59 +110,70 @@ export function AnswerTrace({ trace }: { trace: SampleTrace }) {
             </div>
           ) : null}
           <ul className="tap-answer-trace-waterfall">
-            {attemptSpans.map((span) => (
-              <li
-                key={span.spanId}
-                className={
-                  span.status === "error"
-                    ? "tap-trace-span tap-trace-span-error"
-                    : "tap-trace-span"
-                }
-                style={{ paddingLeft: depthOf(span) * 16 }}
-              >
-                <span className="tap-trace-span-name">
-                  {spanLabel(span.name, locale)}
-                </span>
-                <span
-                  className="tap-trace-span-bar"
-                  style={{
-                    width: `${Math.max(4, (span.durationMs / maxDuration) * 100)}%`,
-                  }}
-                />
-                <span className="tap-trace-span-duration">
-                  {span.durationMs}ms
-                </span>
-                {span.modelCall ? (
-                  <Button
-                    type="link"
-                    onClick={(event) => {
-                      opener.current = event.currentTarget;
-                      setCallSpan(span);
-                      setDrawerTab("request");
-                    }}
+            {attemptSpans.map((span) => {
+              const left = ((span.startOffsetMs - attemptStart) / attemptSpan) * 100;
+              const width = Math.max(
+                2,
+                (span.durationMs / attemptSpan) * 100,
+              );
+              return (
+                <li
+                  key={span.spanId}
+                  className={
+                    span.status === "error"
+                      ? "tap-trace-span tap-trace-span-error"
+                      : "tap-trace-span"
+                  }
+                >
+                  <span
+                    className="tap-trace-span-name"
+                    style={{ paddingLeft: depthOf(span) * 16 }}
                   >
-                    {t("View call", "查看调用")}
-                  </Button>
-                ) : null}
-                {span.hitChunks && span.hitChunks.length > 0 ? (
-                  <ul className="tap-trace-hit-chunks">
-                    {span.hitChunks.map((hit) => (
-                      <li key={hit.id}>
-                        <Button
-                          type="link"
-                          onClick={(event) => {
-                            opener.current = event.currentTarget;
-                            setChunk(hit);
-                          }}
-                        >
-                          {hit.sourceName}
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </li>
-            ))}
+                    {spanLabel(span.name, locale)}
+                  </span>
+                  <span className="tap-trace-span-timeline">
+                    <span
+                      className="tap-trace-span-bar"
+                      style={{ left: `${left}%`, width: `${width}%` }}
+                    />
+                  </span>
+                  <span className="tap-trace-span-duration">
+                    {span.durationMs}ms
+                  </span>
+                  <span className="tap-trace-span-actions">
+                    {span.modelCall ? (
+                      <Button
+                        type="link"
+                        onClick={(event) => {
+                          opener.current = event.currentTarget;
+                          setCallSpan(span);
+                          setDrawerTab("request");
+                        }}
+                      >
+                        {t("View call", "查看调用")}
+                      </Button>
+                    ) : null}
+                  </span>
+                  {span.hitChunks && span.hitChunks.length > 0 ? (
+                    <ul className="tap-trace-hit-chunks">
+                      {span.hitChunks.map((hit) => (
+                        <li key={hit.id}>
+                          <Button
+                            type="link"
+                            onClick={(event) => {
+                              opener.current = event.currentTarget;
+                              setChunk(hit);
+                            }}
+                          >
+                            {hit.sourceName}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}

@@ -27,6 +27,7 @@ export interface TraceSpan {
   attempt: number;
   name: string;
   status: TraceSpanStatus;
+  startOffsetMs: number;
   durationMs: number;
   modelCall?: TraceModelCall;
   hitChunks?: readonly TraceHitChunk[];
@@ -57,59 +58,16 @@ export function createSampleTrace(locale: Locale): SampleTrace {
     requestedModel: "qwen-plus",
     upstreamModel: "dashscope/qwen-plus",
     spans: [
+      // Attempt 1: gateway call failed after an embedding lookup with
+      // unknown cost; the retry (attempt 2) carries the full pipeline.
       {
         spanId: "turn-1",
         parentSpanId: null,
         attempt: 1,
         name: "turn.execute",
         status: "error",
+        startOffsetMs: 0,
         durationMs: 1860,
-      },
-      {
-        spanId: "plan-1",
-        parentSpanId: "turn-1",
-        attempt: 1,
-        name: "chat.plan",
-        status: "ok",
-        durationMs: 210,
-      },
-      {
-        spanId: "retrieval-1a",
-        parentSpanId: "turn-1",
-        attempt: 1,
-        name: "retrieval.search",
-        status: "ok",
-        durationMs: 340,
-        hitChunks: [
-          {
-            id: "chunk-1",
-            sourceName: "Life underwriting guide · v1.2.md",
-            snippet: "Block submission when health disclosure is missing.",
-          },
-        ],
-      },
-      {
-        spanId: "retrieval-1b",
-        parentSpanId: "turn-1",
-        attempt: 1,
-        name: "retrieval.search",
-        status: "ok",
-        durationMs: 265,
-        hitChunks: [
-          {
-            id: "chunk-2",
-            sourceName: "Underwriting evidence.pdf",
-            snippet: "Return HTTP 422 with HEALTH_DISCLOSURE_REQUIRED.",
-          },
-        ],
-      },
-      {
-        spanId: "graph-1",
-        parentSpanId: "turn-1",
-        attempt: 1,
-        name: "graph.enrich",
-        status: "ok",
-        durationMs: 180,
       },
       {
         spanId: "embed-1",
@@ -117,6 +75,7 @@ export function createSampleTrace(locale: Locale): SampleTrace {
         attempt: 1,
         name: "embeddings text-embedding-v3",
         status: "ok",
+        startOffsetMs: 40,
         durationMs: 95,
         modelCall: {
           operation: "embeddings",
@@ -141,6 +100,7 @@ export function createSampleTrace(locale: Locale): SampleTrace {
         attempt: 1,
         name: "chat qwen-plus",
         status: "error",
+        startOffsetMs: 160,
         durationMs: 770,
         modelCall: {
           operation: "chat",
@@ -171,21 +131,65 @@ export function createSampleTrace(locale: Locale): SampleTrace {
           reasoning: null,
         },
       },
+      // Attempt 2: full successful pipeline, shown by default.
       {
         spanId: "turn-2",
         parentSpanId: null,
         attempt: 2,
         name: "turn.execute",
         status: "ok",
+        startOffsetMs: 0,
         durationMs: 1320,
       },
       {
-        spanId: "citations-2",
+        spanId: "plan-2",
         parentSpanId: "turn-2",
         attempt: 2,
-        name: "citations.resolve",
+        name: "chat.plan",
         status: "ok",
-        durationMs: 40,
+        startOffsetMs: 20,
+        durationMs: 140,
+      },
+      {
+        spanId: "retrieval-2a",
+        parentSpanId: "turn-2",
+        attempt: 2,
+        name: "retrieval.search",
+        status: "ok",
+        startOffsetMs: 180,
+        durationMs: 220,
+        hitChunks: [
+          {
+            id: "chunk-1",
+            sourceName: "Life underwriting guide · v1.2.md",
+            snippet: "Block submission when health disclosure is missing.",
+          },
+        ],
+      },
+      {
+        spanId: "retrieval-2b",
+        parentSpanId: "turn-2",
+        attempt: 2,
+        name: "retrieval.search",
+        status: "ok",
+        startOffsetMs: 410,
+        durationMs: 200,
+        hitChunks: [
+          {
+            id: "chunk-2",
+            sourceName: "Underwriting evidence.pdf",
+            snippet: "Return HTTP 422 with HEALTH_DISCLOSURE_REQUIRED.",
+          },
+        ],
+      },
+      {
+        spanId: "graph-2",
+        parentSpanId: "turn-2",
+        attempt: 2,
+        name: "graph.enrich",
+        status: "ok",
+        startOffsetMs: 620,
+        durationMs: 120,
       },
       {
         spanId: "chat-2",
@@ -193,7 +197,8 @@ export function createSampleTrace(locale: Locale): SampleTrace {
         attempt: 2,
         name: "chat qwen-plus",
         status: "ok",
-        durationMs: 980,
+        startOffsetMs: 750,
+        durationMs: 520,
         modelCall: {
           operation: "chat",
           requestedModel: "qwen-plus",
@@ -227,6 +232,15 @@ export function createSampleTrace(locale: Locale): SampleTrace {
           reasoning:
             "Checked underwriting guide section 4 and evidence PDF before composing the rule.",
         },
+      },
+      {
+        spanId: "citations-2",
+        parentSpanId: "turn-2",
+        attempt: 2,
+        name: "citations.resolve",
+        status: "ok",
+        startOffsetMs: 1280,
+        durationMs: 30,
       },
     ],
   };
