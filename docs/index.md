@@ -3,6 +3,7 @@
 当前有效文档只有下列几类；历史文档已冻结在 [archive](archive/index.md)。
 
 - [现状架构](architecture.md)：代码中可验证的系统结构与已知差距。
+- [产品路线图](superpowers/plans/2026-10-01-product-roadmap.md)：全局版本顺序、已完成与规划中的工作。
 - [V1 总纲](superpowers/plans/2026-09-29-v1-roadmap.md)：V1 能力、验收标准与子项目顺序。
 - [设计 spec](superpowers/specs/)与[实施计划](superpowers/plans/)：按 superpowers brainstorming / writing-plans 流程产出。
 - [架构决策](decisions/index.md)：跨模块决策记录。
