@@ -62,6 +62,7 @@ chat_turn = Table(
     Column("processing_lease_expires_at", DATETIME(fsp=6)),
     Column("last_sequence", BigInteger, nullable=False, server_default="0"),
     Column("created_at", DATETIME(fsp=6), nullable=False),
+    Column("traceparent", String(55), nullable=True),
     UniqueConstraint("chat_id", "client_request_id", name="uq_chat_turn_client_request"),
 )
 
