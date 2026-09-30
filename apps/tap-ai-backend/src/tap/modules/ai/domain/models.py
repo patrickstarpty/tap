@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
+from decimal import Decimal
 from enum import StrEnum
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -99,6 +100,8 @@ class ModelResult:
     audit: ModelCallAudit
     provider_request_id: str | None = None
     gateway_call_id: str | None = None
+    call_id: str | None = None
+    cost_usd: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)

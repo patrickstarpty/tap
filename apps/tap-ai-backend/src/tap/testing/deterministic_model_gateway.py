@@ -9,6 +9,7 @@ import httpx
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.adapters.litellm import (
+    GatewayAttempts,
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
     Redact,
@@ -53,8 +54,9 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         super().__init__(config, scope=scope, redact=redact, catalog=StaticLiteLLMCatalog())
 
     async def _post(
-        self, request: ModelRequest, payload: dict[str, Any]
+        self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
     ) -> tuple[dict[str, Any], httpx.Headers]:
+        attempts.count = 1
         if request.operation is ModelOperation.EMBED:
             vector = (
                 deterministic_vector(request.context)
