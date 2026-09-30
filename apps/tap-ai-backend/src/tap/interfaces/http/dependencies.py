@@ -38,6 +38,7 @@ from tap.contracts.http import (
     SourcePage,
     SourceRetryRequest,
 )
+from tap.interfaces.http.trace_service import TraceHttpService
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import RetrievalPolicyContext
@@ -223,6 +224,7 @@ class HttpServices:
     model_catalog: ModelCatalogHttpService | None = None
     asset_catalog: AssetCatalogHttpService | None = None
     conversations: ConversationService | None = None
+    traces: TraceHttpService | None = None
     graph: GraphStorePort | None = None
     test_plans: TestPlanApplication | None = None
     knowledge_reviews: KnowledgeReviewHttpService | None = None
@@ -293,6 +295,14 @@ def asset_catalog_service(request: Request) -> AssetCatalogHttpService:
 def conversation_service(request: Request) -> ConversationService:
     services = getattr(request.app.state, "http_services", None)
     service = services.conversations if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def trace_service(request: Request) -> TraceHttpService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.traces if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service

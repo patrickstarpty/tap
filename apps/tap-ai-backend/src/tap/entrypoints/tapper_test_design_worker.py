@@ -15,9 +15,11 @@ def main(environment: Mapping[str, str] | None = None) -> None:
         TapperSettings,
         create_test_design_worker_runtime,
     )
+    from tap.entrypoints.tracing_setup import start_tracing
 
     values = dict(os.environ) if environment is None else dict(environment)
     settings = TapperSettings.from_mapping(values)
+    start_tracing("tap-ai-worker-test-design", settings)
     asyncio.run(run(runtime_factory=create_test_design_worker_runtime, settings=settings))
 
 

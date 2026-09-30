@@ -9,12 +9,14 @@ import httpx
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.adapters.litellm import (
+    GatewayAttempts,
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
     Redact,
 )
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, LiteLLMModel, LiteLLMRoutes
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest
+from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.testing.deterministic_model import _first_evidence_sentence, deterministic_vector
 
 BUILT_IN_ROUTES = LiteLLMRoutes(
@@ -48,13 +50,25 @@ class StaticLiteLLMCatalog(LiteLLMCatalog):
 
 class DeterministicModelGateway(LiteLLMModelGateway):
     def __init__(
-        self, config: LiteLLMModelGatewayConfig, *, scope: ProjectScopeContext, redact: Redact
+        self,
+        config: LiteLLMModelGatewayConfig,
+        *,
+        scope: ProjectScopeContext,
+        redact: Redact,
+        recorder: ModelCallRecorder | None = None,
     ) -> None:
-        super().__init__(config, scope=scope, redact=redact, catalog=StaticLiteLLMCatalog())
+        super().__init__(
+            config,
+            scope=scope,
+            redact=redact,
+            catalog=StaticLiteLLMCatalog(),
+            recorder=recorder,
+        )
 
     async def _post(
-        self, request: ModelRequest, payload: dict[str, Any]
+        self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
     ) -> tuple[dict[str, Any], httpx.Headers]:
+        attempts.count = 1
         if request.operation is ModelOperation.EMBED:
             vector = (
                 deterministic_vector(request.context)

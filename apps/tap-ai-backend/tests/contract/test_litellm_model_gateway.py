@@ -4,10 +4,12 @@ import base64
 import hashlib
 import json
 from dataclasses import replace
+from decimal import Decimal
 
 import httpx
 import pytest
 from model_gateway_conformance import assert_gateway_conformance
+from opentelemetry.trace import StatusCode
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.litellm import (
@@ -99,7 +101,24 @@ def catalog_for(models=DEFAULT_MODELS, *, available: bool = True) -> LiteLLMCata
     )
 
 
-def configured_gateway(handler, *, models=DEFAULT_MODELS, catalog=None, **changes):
+class FakeRecorder:
+    """In-memory `ModelCallRecorder` double that collects every recorded call."""
+
+    def __init__(self, *, fail: bool = False, degraded: bool = False) -> None:
+        self.records: list[object] = []
+        self._fail = fail
+        self._degraded = degraded
+
+    async def record(self, call: object) -> None:
+        if self._fail:
+            raise RuntimeError("recorder backend unavailable")
+        self.records.append(call)
+
+    def degraded(self) -> bool:
+        return self._degraded
+
+
+def configured_gateway(handler, *, models=DEFAULT_MODELS, catalog=None, recorder=None, **changes):
     config = LiteLLMModelGatewayConfig(
         base_url="https://litellm.example",
         api_key="private-provider-key",
@@ -114,6 +133,7 @@ def configured_gateway(handler, *, models=DEFAULT_MODELS, catalog=None, **change
         client=httpx.AsyncClient(
             base_url="https://litellm.example", transport=httpx.MockTransport(handler)
         ),
+        recorder=recorder,
     )
 
 
@@ -1252,3 +1272,245 @@ async def test_upstream_lookup_after_a_paid_call_never_touches_the_catalog():
     result = await configured_gateway(respond, catalog=catalog).chat(request())
 
     assert result.actual_model == "dashscope/qwen-plus"
+
+
+@pytest.mark.asyncio
+async def test_successful_chat_records_call_and_span(span_recorder):
+    def respond(incoming):
+        return httpx.Response(
+            200,
+            json=success(incoming).json(),
+            headers={
+                "x-litellm-response-cost": "0.00012345",
+                "x-litellm-call-id": "gw-call-1",
+                "x-request-id": "req-call-1",
+            },
+        )
+
+    recorder = FakeRecorder()
+    result = await configured_gateway(respond, recorder=recorder).chat(request())
+
+    assert len(recorder.records) == 1
+    record = recorder.records[0]
+    assert record.status == "ok"
+    assert record.cost_usd == Decimal("0.00012345")
+    assert record.gateway_call_id == "gw-call-1"
+    assert record.provider_request_id == "req-call-1"
+    assert result.call_id == record.call_id
+    assert result.cost_usd == Decimal("0.00012345")
+
+    spans = span_recorder.get_finished_spans()
+    assert len(spans) == 1
+    chat_span = spans[0]
+    assert chat_span.name == "chat qwen-plus"
+    assert chat_span.attributes["gen_ai.operation.name"] == "chat"
+    assert chat_span.attributes["gen_ai.request.model"] == "qwen-plus"
+    assert chat_span.attributes["tap.model_call_id"] == record.call_id
+    assert chat_span.attributes["gen_ai.response.model"] == result.actual_model
+    assert chat_span.attributes["gen_ai.provider.name"] == result.actual_provider
+    assert chat_span.attributes["gen_ai.usage.input_tokens"] == result.usage.input_tokens
+    assert chat_span.attributes["gen_ai.usage.output_tokens"] == result.usage.output_tokens
+    assert format(chat_span.context.span_id, "016x") == record.span_id
+    assert format(chat_span.context.trace_id, "032x") == record.trace_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header_value", [None, "abc", "-1", "NaN"])
+async def test_missing_or_invalid_cost_header_is_null(header_value):
+    def respond(incoming):
+        headers = {} if header_value is None else {"x-litellm-response-cost": header_value}
+        return httpx.Response(200, json=success(incoming).json(), headers=headers)
+
+    recorder = FakeRecorder()
+    result = await configured_gateway(respond, recorder=recorder).chat(request())
+
+    assert result.cost_usd is None
+    assert recorder.records[0].cost_usd is None
+
+
+@pytest.mark.asyncio
+async def test_request_json_matches_sent_payload():
+    sent = []
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return success(incoming)
+
+    recorder = FakeRecorder()
+    await configured_gateway(respond, recorder=recorder).chat(request())
+
+    assert json.loads(recorder.records[0].request_json) == sent[0]
+
+
+@pytest.mark.asyncio
+async def test_image_bytes_replaced_by_digest():
+    image_bytes = b"\x89PNG\r\n\x1a\nexample"
+
+    def respond(incoming):
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen3-vl-plus",
+                "choices": [{"message": {"content": '{"answer":"A to B"}'}}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4},
+            },
+        )
+
+    recorder = FakeRecorder()
+    req = replace(
+        request(ModelOperation.STRUCTURED),
+        alias="qwen3-vl-plus",
+        image_bytes=image_bytes,
+        image_media_type="image/png",
+    )
+    await configured_gateway(respond, recorder=recorder).generate_structured(req)
+
+    record = recorder.records[0]
+    assert "base64," not in record.request_json
+    expected_digest = "sha256:" + hashlib.sha256(image_bytes).hexdigest()
+    assert expected_digest in record.request_json
+
+
+@pytest.mark.asyncio
+async def test_embedding_records_dimension_and_count_only():
+    recorder = FakeRecorder()
+    await configured_gateway(success, recorder=recorder).embed(request(ModelOperation.EMBED))
+
+    record = recorder.records[0]
+    assert json.loads(record.response_text) == {"dimension": 2, "count": 1}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_content_is_recorded():
+    recorder = FakeRecorder()
+    await configured_gateway(success, recorder=recorder).chat(request())
+    assert recorder.records[0].reasoning_text == "must stay private"
+
+    def no_reasoning(incoming):
+        response = success(incoming).json()
+        del response["choices"][0]["message"]["reasoning_content"]
+        return httpx.Response(200, json=response)
+
+    recorder_without = FakeRecorder()
+    await configured_gateway(no_reasoning, recorder=recorder_without).chat(request())
+    assert recorder_without.records[0].reasoning_text is None
+
+
+@pytest.mark.asyncio
+async def test_retries_are_counted():
+    sent = []
+
+    def handler(incoming):
+        sent.append(incoming)
+        return httpx.Response(503) if len(sent) == 1 else success(incoming)
+
+    recorder = FakeRecorder()
+    await configured_gateway(handler, recorder=recorder).chat(request())
+
+    assert recorder.records[0].attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_unavailable_call_records_error(span_recorder):
+    recorder = FakeRecorder()
+    gateway = configured_gateway(lambda incoming: httpx.Response(503), recorder=recorder)
+
+    with pytest.raises(ModelGatewayUnavailable):
+        await gateway.chat(request())
+
+    record = recorder.records[0]
+    assert record.status == "error"
+    assert record.error_code == "model-unavailable"
+    assert record.input_tokens is None
+
+    spans = span_recorder.get_finished_spans()
+    assert spans[-1].status.status_code == StatusCode.ERROR
+
+
+@pytest.mark.asyncio
+async def test_rejected_request_records_error_without_prompt():
+    recorder = FakeRecorder()
+    gateway = configured_gateway(success, recorder=recorder)
+
+    async def rewriting_redact(text):
+        return text + " redacted"
+
+    gateway._redact = rewriting_redact
+    with pytest.raises(ModelGatewayRejected):
+        await gateway.chat(request())
+
+    record = recorder.records[0]
+    assert record.status == "error"
+    assert record.error_code == "model-request-rejected"
+    assert "Use supplied context." not in record.request_json
+    assert "Safe evidence" not in record.request_json
+
+
+@pytest.mark.asyncio
+async def test_recorder_failure_does_not_break_call():
+    recorder = FakeRecorder(fail=True)
+    result = await configured_gateway(success, recorder=recorder).chat(request())
+
+    assert result.output == "Grounded"
+
+
+@pytest.mark.asyncio
+async def test_usage_accumulates_into_binding():
+    from tap.platform.telemetry import bind_trace, current_binding
+
+    gateway = configured_gateway(success)
+    with bind_trace(fresh_usage=True):
+        await gateway.chat(request())
+        await gateway.chat(request())
+        usage = current_binding().usage
+
+    assert usage.input_tokens == 8
+    assert usage.output_tokens == 4
+
+
+@pytest.mark.asyncio
+async def test_health_reports_degraded_recorder_as_notice():
+    recorder = FakeRecorder(degraded=True)
+    gateway = configured_gateway(success, recorder=recorder)
+
+    health = await gateway.health()
+
+    assert "model-call-recording-degraded" in health.notices
+    assert health.problems == ()
+
+
+def test_image_payload_shape_change_never_persists_bytes():
+    """If the payload's shape ever drifts, the raw (possibly base64) bytes must never persist."""
+    from tap.modules.ai.adapters.litellm import _request_json_for_record
+
+    image_bytes = b"\x89PNG\r\n\x1a\nexample"
+    image_digest = "sha256:" + hashlib.sha256(image_bytes).hexdigest()
+    req = replace(
+        request(ModelOperation.STRUCTURED),
+        alias="qwen3-vl-plus",
+        image_bytes=image_bytes,
+        image_media_type="image/png",
+    )
+    # Contrived payload whose `messages` shape doesn't have the expected image_url slot,
+    # e.g. after a refactor. The raw base64 bytes are embedded directly to prove they
+    # cannot leak through even when substitution is impossible.
+    malformed_payload = {
+        "model": req.alias,
+        "metadata": {"image_digest": image_digest},
+        "messages": [
+            {
+                "role": "user",
+                "content": "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii"),
+            }
+        ],
+    }
+
+    result = _request_json_for_record(malformed_payload, req, ModelOperation.STRUCTURED)
+
+    assert "base64," not in result
+    assert base64.b64encode(image_bytes).decode("ascii") not in result
+    assert json.loads(result) == {
+        "model": req.alias,
+        "operation": ModelOperation.STRUCTURED.value,
+        "image": image_digest,
+    }

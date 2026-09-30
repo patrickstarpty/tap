@@ -6,11 +6,16 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import math
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
+from uuid import uuid4
 
 import httpx
 
@@ -22,6 +27,7 @@ from tap.modules.ai.adapters.litellm_catalog import (
     validate_litellm_base_url,
 )
 from tap.modules.ai.application.schema import check_schema, validate_output
+from tap.modules.ai.domain.model_calls import ModelCallRecord
 from tap.modules.ai.domain.models import (
     ModelCallAudit,
     ModelCapability,
@@ -35,11 +41,54 @@ from tap.modules.ai.domain.models import (
     schema_digest,
     text_digest,
 )
+from tap.modules.ai.ports.model_calls import ModelCallRecorder
+from tap.platform.telemetry import current_binding, span
 
 Redact = Callable[[str], Awaitable[str]]
 
+logger = logging.getLogger(__name__)
+
 # Audited upstream model identifiers: printable ASCII only, bounded to 256 characters.
 ACTUAL_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}")
+
+
+def _parse_cost_header(value: str | None) -> Decimal | None:
+    """Parse the LiteLLM cost header; non-finite or negative values are never recorded."""
+    if value is None:
+        return None
+    try:
+        cost = Decimal(value)
+    except InvalidOperation:
+        return None
+    if not cost.is_finite() or cost < 0:
+        return None
+    return cost
+
+
+def _request_json_for_record(
+    payload: dict[str, Any] | None, request: ModelRequest, operation: ModelOperation
+) -> str:
+    """Serialize the sent payload for durable storage, never persisting raw image bytes.
+
+    When the call never reached payload construction (validation or redaction rejected it
+    first), only a minimal, prompt-free marker is stored.
+    """
+    if payload is None:
+        return json.dumps({"model": request.alias, "operation": operation.value, "rejected": True})
+    if request.image_bytes is None:
+        return json.dumps(payload)
+    image_digest = payload.get("metadata", {}).get("image_digest")
+    sanitized = json.loads(json.dumps(payload))
+    try:
+        sanitized["messages"][1]["content"][1]["image_url"]["url"] = image_digest
+    except (KeyError, IndexError, TypeError):
+        # The payload's shape didn't match what was substituted; never persist the
+        # raw (possibly base64-encoded) payload in that case, only a prompt-free marker.
+        logger.warning("model call payload shape prevented image substitution; storing marker")
+        return json.dumps(
+            {"model": request.alias, "operation": operation.value, "image": image_digest}
+        )
+    return json.dumps(sanitized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +124,11 @@ class ModelHealth:
     notices: tuple[str, ...] = ()
 
 
+@dataclass(slots=True)
+class GatewayAttempts:
+    count: int = 0
+
+
 class LiteLLMModelGateway:
     def __init__(
         self,
@@ -84,6 +138,7 @@ class LiteLLMModelGateway:
         redact: Redact,
         catalog: LiteLLMCatalog,
         client: httpx.AsyncClient | None = None,
+        recorder: ModelCallRecorder | None = None,
     ) -> None:
         if type(scope) is not ProjectScopeContext:
             raise ModelGatewayRejected()
@@ -94,6 +149,7 @@ class LiteLLMModelGateway:
         self._owns_client = client is None
         self._client = client
         self._slots = asyncio.Semaphore(4)
+        self._recorder = recorder
 
     async def catalog(self, scope: ProjectScopeContext) -> tuple[ModelDescriptor, ...]:
         self._check_scope(scope)
@@ -133,6 +189,8 @@ class LiteLLMModelGateway:
             for name, reason in routes.skipped.items()
             if name not in roles.names()
         )
+        if self._recorder is not None and self._recorder.degraded():
+            notices = (*notices, "model-call-recording-degraded")
         return ModelHealth(roles.problems(routes), notices)
 
     async def health_problems(self) -> tuple[str, ...]:
@@ -256,109 +314,210 @@ class LiteLLMModelGateway:
         return model
 
     async def _execute(self, request: ModelRequest, operation: ModelOperation) -> ModelResult:
-        try:
-            # Includes redaction, queue time, transport, retry, and parsing in one deadline.
-            if (
-                type(request.timeout_seconds) not in {int, float}
-                or not math.isfinite(request.timeout_seconds)
-                or not 0 < request.timeout_seconds <= self._config.timeout_seconds
+        call_id = str(uuid4())
+        span_kind = "embeddings" if operation is ModelOperation.EMBED else "chat"
+        attempts = GatewayAttempts()
+        started = time.monotonic()
+        payload: dict[str, Any] | None = None
+        response_text: str | None = None
+        reasoning_text: str | None = None
+        cost_usd: Decimal | None = None
+        gateway_call_id: str | None = None
+        provider_request_id: str | None = None
+        upstream_model: str | None = None
+        provider: str | None = None
+        input_tokens: int | None = None
+        output_tokens: int | None = None
+        status: str = "error"
+        error_code: str | None = None
+
+        with span(
+            f"{span_kind} {request.alias}",
+            {
+                "gen_ai.operation.name": span_kind,
+                "gen_ai.request.model": request.alias,
+                "tap.model_call_id": call_id,
+            },
+        ) as current_span:
+            try:
+                # Includes redaction, queue time, transport, retry, and parsing in one deadline.
+                if (
+                    type(request.timeout_seconds) not in {int, float}
+                    or not math.isfinite(request.timeout_seconds)
+                    or not 0 < request.timeout_seconds <= self._config.timeout_seconds
+                ):
+                    raise ModelGatewayRejected()
+                async with asyncio.timeout(request.timeout_seconds):
+                    # Callers cannot mutate the schema after its digest is checked.
+                    if request.schema is not None:
+                        snapshot = json.dumps(request.schema, allow_nan=False)
+                        if len(snapshot.encode()) > 262144:
+                            raise ModelGatewayRejected()
+                        request = replace(request, schema=json.loads(snapshot))
+                    await self._validate(request, operation)
+                    payload = {
+                        "model": request.alias,
+                        "metadata": {
+                            "enterprise_id": request.scope.enterprise_id,
+                            "project_id": request.scope.project_id,
+                            "operation": operation.value,
+                            "prompt_digest": request.prompt_digest,
+                            "context_digest": text_digest(request.context),
+                            "schema_digest": request.schema_digest,
+                            "idempotency_key": request.idempotency_key,
+                            "tool_allowlist": sorted(request.tool_allowlist),
+                            "governance_digests": list(request.governance_digests),
+                            "image_digest": (
+                                None
+                                if request.image_bytes is None
+                                else "sha256:" + hashlib.sha256(request.image_bytes).hexdigest()
+                            ),
+                        },
+                    }
+                    if operation is ModelOperation.EMBED:
+                        payload.update(
+                            input=request.context,
+                            dimensions=self._config.embedding_dimension,
+                            encoding_format="float",
+                        )
+                    else:
+                        user_content: str | list[dict[str, Any]] = request.context
+                        if request.image_bytes is not None:
+                            user_content = [
+                                {"type": "text", "text": request.context},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:"
+                                        + str(request.image_media_type)
+                                        + ";base64,"
+                                        + base64.b64encode(request.image_bytes).decode("ascii")
+                                    },
+                                },
+                            ]
+                        system_prompt = request.prompt
+                        if request.image_bytes is not None:
+                            # JSON-object mode guarantees JSON, not the caller's schema.
+                            # Send the validated snapshot explicitly for vision providers.
+                            system_prompt += (
+                                "\nReturn one JSON object conforming exactly to this JSON schema; "
+                                "include all required fields and no additional fields:\n"
+                                + json.dumps(request.schema, sort_keys=True, separators=(",", ":"))
+                            )
+                        payload.update(
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_content},
+                            ],
+                            max_tokens=8192 if request.image_bytes is not None else 2048,
+                        )
+                        if operation is ModelOperation.STRUCTURED:
+                            payload["temperature"] = 0
+                            payload["response_format"] = (
+                                {"type": "json_object"}
+                                if request.image_bytes is not None
+                                else {
+                                    "type": "json_schema",
+                                    "json_schema": {
+                                        "name": "governed_output",
+                                        "schema": request.schema,
+                                        "strict": True,
+                                    },
+                                }
+                            )
+                    body, headers = await self._post(request, payload, attempts)
+                    result = self._normalize(request, body, headers, self._upstream_model(headers))
+                    gateway_call_id = result.gateway_call_id
+                    provider_request_id = result.provider_request_id
+                    upstream_model = result.actual_model
+                    provider = result.actual_provider
+                    input_tokens = result.usage.input_tokens
+                    output_tokens = result.usage.output_tokens
+                    cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
+                    if operation is ModelOperation.EMBED:
+                        rows = body.get("data")
+                        if isinstance(rows, list):
+                            vector = rows[0].get("embedding") if isinstance(rows[0], dict) else None
+                            if isinstance(vector, list):
+                                response_text = json.dumps(
+                                    {"dimension": len(vector), "count": len(rows)}
+                                )
+                    else:
+                        message = body["choices"][0]["message"]
+                        content = message.get("content")
+                        if isinstance(content, str):
+                            response_text = content
+                        reasoning = message.get("reasoning_content")
+                        if isinstance(reasoning, str):
+                            reasoning_text = reasoning
+                    current_span.set_attribute("gen_ai.response.model", result.actual_model)
+                    current_span.set_attribute("gen_ai.provider.name", result.actual_provider)
+                    if input_tokens is not None:
+                        current_span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
+                    if output_tokens is not None:
+                        current_span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
+                    binding = current_binding()
+                    binding.usage.input_tokens += input_tokens or 0
+                    binding.usage.output_tokens += output_tokens or 0
+                    status = "ok"
+                    return replace(result, call_id=call_id, cost_usd=cost_usd)
+            except ModelGatewayRejected as exc:
+                error_code = str(exc)
+                raise
+            except ModelGatewayUnavailable as exc:
+                error_code = str(exc)
+                raise
+            except (
+                TimeoutError,
+                httpx.HTTPError,
+                ValueError,
+                TypeError,
+                KeyError,
+                IndexError,
+                OverflowError,
             ):
-                raise ModelGatewayRejected()
-            async with asyncio.timeout(request.timeout_seconds):
-                # Callers cannot mutate the schema after its digest is checked.
-                if request.schema is not None:
-                    snapshot = json.dumps(request.schema, allow_nan=False)
-                    if len(snapshot.encode()) > 262144:
-                        raise ModelGatewayRejected()
-                    request = replace(request, schema=json.loads(snapshot))
-                await self._validate(request, operation)
-                payload: dict[str, Any] = {
-                    "model": request.alias,
-                    "metadata": {
-                        "enterprise_id": request.scope.enterprise_id,
-                        "project_id": request.scope.project_id,
-                        "operation": operation.value,
-                        "prompt_digest": request.prompt_digest,
-                        "context_digest": text_digest(request.context),
-                        "schema_digest": request.schema_digest,
-                        "idempotency_key": request.idempotency_key,
-                        "tool_allowlist": sorted(request.tool_allowlist),
-                        "governance_digests": list(request.governance_digests),
-                        "image_digest": (
-                            None
-                            if request.image_bytes is None
-                            else "sha256:" + hashlib.sha256(request.image_bytes).hexdigest()
-                        ),
-                    },
-                }
-                if operation is ModelOperation.EMBED:
-                    payload.update(
-                        input=request.context,
-                        dimensions=self._config.embedding_dimension,
-                        encoding_format="float",
-                    )
-                else:
-                    user_content: str | list[dict[str, Any]] = request.context
-                    if request.image_bytes is not None:
-                        user_content = [
-                            {"type": "text", "text": request.context},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": "data:"
-                                    + str(request.image_media_type)
-                                    + ";base64,"
-                                    + base64.b64encode(request.image_bytes).decode("ascii")
-                                },
-                            },
-                        ]
-                    system_prompt = request.prompt
-                    if request.image_bytes is not None:
-                        # JSON-object mode guarantees JSON, not the caller's schema.
-                        # Send the validated snapshot explicitly for vision providers.
-                        system_prompt += (
-                            "\nReturn one JSON object conforming exactly to this JSON schema; "
-                            "include all required fields and no additional fields:\n"
-                            + json.dumps(request.schema, sort_keys=True, separators=(",", ":"))
-                        )
-                    payload.update(
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_content},
-                        ],
-                        max_tokens=8192 if request.image_bytes is not None else 2048,
-                    )
-                    if operation is ModelOperation.STRUCTURED:
-                        payload["temperature"] = 0
-                        payload["response_format"] = (
-                            {"type": "json_object"}
-                            if request.image_bytes is not None
-                            else {
-                                "type": "json_schema",
-                                "json_schema": {
-                                    "name": "governed_output",
-                                    "schema": request.schema,
-                                    "strict": True,
-                                },
-                            }
-                        )
-                body, headers = await self._post(request, payload)
-                return self._normalize(request, body, headers, self._upstream_model(headers))
-        except ModelGatewayRejected:
-            raise
-        except (
-            TimeoutError,
-            httpx.HTTPError,
-            ValueError,
-            TypeError,
-            KeyError,
-            IndexError,
-            OverflowError,
-        ):
-            raise ModelGatewayUnavailable() from None
+                error_code = "model-unavailable"
+                raise ModelGatewayUnavailable() from None
+            finally:
+                span_context = current_span.get_span_context()
+                binding = current_binding()
+                record = ModelCallRecord(
+                    call_id=call_id,
+                    scope=request.scope,
+                    trace_id=(
+                        format(span_context.trace_id, "032x") if span_context.is_valid else None
+                    ),
+                    span_id=(
+                        format(span_context.span_id, "016x") if span_context.is_valid else None
+                    ),
+                    turn_id=binding.turn_id,
+                    job_id=binding.job_id,
+                    operation=operation,
+                    model_name=request.alias,
+                    upstream_model=upstream_model,
+                    provider=provider,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost_usd=cost_usd,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                    attempts=attempts.count,
+                    status=status,  # type: ignore[arg-type]
+                    error_code=error_code,
+                    gateway_call_id=gateway_call_id,
+                    provider_request_id=provider_request_id,
+                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    request_json=_request_json_for_record(payload, request, operation),
+                    response_text=response_text,
+                    reasoning_text=reasoning_text,
+                )
+                if self._recorder is not None:
+                    try:
+                        await self._recorder.record(record)
+                    except Exception:
+                        logger.warning("failed to record model call", exc_info=True)
 
     async def _post(
-        self, request: ModelRequest, payload: dict[str, Any]
+        self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
     ) -> tuple[dict[str, Any], httpx.Headers]:
         if self._client is None:
             self._client = httpx.AsyncClient(
@@ -376,6 +535,7 @@ class LiteLLMModelGateway:
         )
         max_retries = self._config.max_retries if request.allow_retries else 0
         for attempt in range(max_retries + 1):
+            attempts.count += 1
             try:
                 async with (
                     self._slots,

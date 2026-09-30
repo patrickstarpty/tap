@@ -98,10 +98,12 @@ app = create_app()
 def main(environment: Mapping[str, str] | None = None) -> None:
     import uvicorn
 
+    from tap.entrypoints.tracing_setup import start_tracing
     from tap.operations.milvus.client import suppress_pymilvus_rpc_logging
 
     values = os.environ if environment is None else environment
     settings = TapperSettings.from_mapping(values)
+    start_tracing("tap-ai-api", settings)
     with suppress_pymilvus_rpc_logging():
         runtime_app = build_runtime_app(settings)
         uvicorn.run(

@@ -12,6 +12,7 @@ from tap.modules.graph.domain.extraction import GraphExtractionRequest
 from tap.modules.graph.ports.extraction import GraphExtractionPort
 from tap.modules.knowledge.ports.documents import ArtifactLocator, ArtifactStore
 from tap.platform.db.project_scope import require_project_scope
+from tap.platform.telemetry import bind_trace, flush_traces, span
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,37 +55,45 @@ class GraphWorker:
         )
         ready = failed = lease_lost = 0
         for claim in claims:
-            try:
-                chunks = await self._artifacts.read_chunks(ArtifactLocator(claim.chunks_locator))
-                request = GraphExtractionRequest(
-                    scope=self._scope,
-                    snapshot=claim.snapshot,
-                    chunks=tuple(
-                        {
-                            "sourceRevisionId": claim.revision_id,
-                            "documentRevisionId": claim.revision_id,
-                            "chunkId": str(chunk.chunk_id),
-                            "content": chunk.content,
-                            "anchor": json.loads(chunk.anchor_json),
-                            "contentDigest": chunk.chunk_content_hash,
-                        }
-                        for chunk in chunks[:500]
-                    ),
-                    model_alias=claim.model_alias,
-                    idempotency_key=claim.request_digest,
-                )
-                draft = await self._extractor.extract(request)
-                await self._jobs.complete(self._scope, claim, draft, now=self._now())
-                ready += 1
-            except Exception:
+            with (
+                bind_trace(scope=self._scope, job_id=claim.job_id, job_kind="graph_extraction"),
+                span("job.graph_extraction", {"tap.job_id": claim.job_id}),
+            ):
                 try:
-                    await self._jobs.fail(
-                        self._scope,
-                        claim,
-                        failure_code="graph-extraction-failed",
-                        now=self._now(),
+                    chunks = await self._artifacts.read_chunks(
+                        ArtifactLocator(claim.chunks_locator)
                     )
-                    failed += 1
+                    request = GraphExtractionRequest(
+                        scope=self._scope,
+                        snapshot=claim.snapshot,
+                        chunks=tuple(
+                            {
+                                "sourceRevisionId": claim.revision_id,
+                                "documentRevisionId": claim.revision_id,
+                                "chunkId": str(chunk.chunk_id),
+                                "content": chunk.content,
+                                "anchor": json.loads(chunk.anchor_json),
+                                "contentDigest": chunk.chunk_content_hash,
+                            }
+                            for chunk in chunks[:500]
+                        ),
+                        model_alias=claim.model_alias,
+                        idempotency_key=claim.request_digest,
+                    )
+                    draft = await self._extractor.extract(request)
+                    await self._jobs.complete(self._scope, claim, draft, now=self._now())
+                    ready += 1
                 except Exception:
-                    lease_lost += 1
+                    try:
+                        await self._jobs.fail(
+                            self._scope,
+                            claim,
+                            failure_code="graph-extraction-failed",
+                            now=self._now(),
+                        )
+                        failed += 1
+                    except Exception:
+                        lease_lost += 1
+        if claims:
+            await flush_traces()
         return GraphWorkerRun(len(claims), ready, failed, lease_lost)

@@ -74,6 +74,7 @@ from tap.modules.knowledge.ports.search import (
     QueryEmbeddingPort,
     SearchPort,
 )
+from tap.platform.telemetry import span
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,6 +564,39 @@ class AuthorizedRetrieval:
         ), evidence_map
 
     async def _retrieve(
+        self,
+        request: SearchRequest,
+        policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool = False,
+        answer_plan_id: str | None = None,
+        authorize=None,
+        exact_flowchart: bool = False,
+    ) -> _RetrievalRun:
+        with span("retrieval.search") as current_span:
+            run = await self._retrieve_impl(
+                request,
+                policy,
+                frozen_policy=frozen_policy,
+                answer_plan_id=answer_plan_id,
+                authorize=authorize,
+                exact_flowchart=exact_flowchart,
+            )
+            evidence = run.response.evidence
+            current_span.set_attribute("tap.retrieval.hit_count", len(evidence))
+            current_span.set_attribute(
+                "tap.retrieval.chunk_ids", [item.chunk_id for item in evidence[:32]]
+            )
+            current_span.set_attribute(
+                "tap.retrieval.document_ids", [item.source.source_id for item in evidence[:32]]
+            )
+            current_span.set_attribute(
+                "tap.retrieval.scores", [item.score for item in evidence[:32]]
+            )
+            current_span.set_attribute("tap.retrieval.exact_flowchart", exact_flowchart)
+            return run
+
+    async def _retrieve_impl(
         self,
         request: SearchRequest,
         policy: RetrievalPolicyContext,

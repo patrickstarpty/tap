@@ -7,6 +7,14 @@ export interface StreamTurnState {
   answer: string;
   error: string | null;
   lastSequence: number;
+  /**
+   * Citations resolved incrementally via `citation.resolved` events, before
+   * the turn's full answer (with `claims`) is known. Never surfaced as
+   * `response` on its own — `response` must stay `null` until a complete
+   * `RetrievalAnswerResponse` arrives (`turn.completed`/`turn.abstained`),
+   * so consumers can rely on a non-null `response` always having `claims`.
+   */
+  pendingCitations: RetrievalAnswerResponse["citations"][number][];
   response: RetrievalAnswerResponse | null;
   status:
     "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
@@ -21,6 +29,7 @@ const emptyTurn = (): StreamTurnState => ({
   answer: "",
   error: null,
   lastSequence: 0,
+  pendingCitations: [],
   response: null,
   status: "queued",
 });
@@ -117,18 +126,12 @@ export function reduceStreamEvent(
   } else if (event.type === "citation.resolved") {
     const citation = payload.citation;
     if (typeof citation === "object" && citation !== null) {
-      const response =
-        current.response ??
-        ({ citations: [] } as unknown as RetrievalAnswerResponse);
       next = {
         ...current,
-        response: {
-          ...response,
-          citations: [
-            ...response.citations,
-            citation as RetrievalAnswerResponse["citations"][number],
-          ],
-        },
+        pendingCitations: [
+          ...current.pendingCitations,
+          citation as RetrievalAnswerResponse["citations"][number],
+        ],
       };
     }
   } else if (
@@ -141,12 +144,13 @@ export function reduceStreamEvent(
       next = {
         ...current,
         answer: response.answer,
+        pendingCitations: [],
         response: {
           ...response,
           citations:
             response.citations.length > 0
               ? response.citations
-              : (current.response?.citations ?? []),
+              : current.pendingCitations,
         },
         status: event.type === "turn.abstained" ? "abstained" : "completed",
       };

@@ -36,6 +36,43 @@ def test_default_api_has_no_deprecated_knowledge_or_catalog_aliases() -> None:
         )
 
 
+def test_runtime_gateway_has_model_call_recorder() -> None:
+    from tap.entrypoints.tapper_runtime import _create_embeddings
+
+    class _StubRecorder:
+        async def record(self, call: object) -> None:
+            return None
+
+    recorder = _StubRecorder()
+    e2e_settings = TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAP_DEMO_MODE": "e2e", "TAPPER_MODEL_BACKEND": "fake"}
+    )
+
+    models = _create_embeddings(e2e_settings, recorder=recorder)  # type: ignore[arg-type]
+
+    assert models.gateway._recorder is recorder  # type: ignore[attr-defined]
+
+
+def test_runtime_factories_pass_mysql_model_call_recorder() -> None:
+    """Every session-owning runtime factory must wire a `MysqlModelCallRecorder`
+    into the model gateway it builds, so model calls are recorded regardless of
+    which process constructs the gateway.
+    """
+    import inspect
+
+    from tap.entrypoints import tapper_runtime
+
+    factories = (
+        tapper_runtime.create_api_runtime,
+        tapper_runtime.create_worker_runtime,
+        tapper_runtime.create_graph_worker_runtime,
+        tapper_runtime.create_test_design_worker_runtime,
+    )
+    for factory in factories:
+        source = inspect.getsource(factory)
+        assert "MysqlModelCallRecorder(" in source, factory.__name__
+
+
 def test_v1_modules_cannot_import_provider_clients() -> None:
     import ast
 

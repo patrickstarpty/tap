@@ -40,6 +40,7 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 | `tap-parser` | 隔离的文档解析 |
 | `tap-minio` | 唯一对象存储：原件与中间产物（S3 API） |
 | `clickhouse` | Test Insights 指标（`apps/backend`，不在 V1 交付路径） |
+| `phoenix`（可选，profile `observability`） | OTLP 追踪查看器，仅在设置 `OTEL_EXPORTER_OTLP_ENDPOINT` 时接收导出的 span |
 
 ## 4. 主要数据流
 
@@ -64,6 +65,12 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 
 LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为固定的 `classify → admit → execute` 三步。
 
+**可观测性**
+
+1. API 处理请求时开启 `turn.request` span 并生成 traceparent，写入 `chat_turn.traceparent` 随 Outbox/Redis Stream 传给 worker。
+2. worker 用同一 traceparent 开启 `turn.execute` span，检索、图谱扩展、模型调用、工具调用各自开子 span；span 结束经 `MysqlSpanExporter` 写入 `trace_span`，每次模型调用同时由 `MysqlModelCallRecorder` 写入 `model_call` 与 `model_call_content`。
+3. 若配置了 `OTEL_EXPORTER_OTLP_ENDPOINT`，`BatchSpanProcessor` 同时把 span 导出到该 OTLP 端点（本地为 Phoenix）；未配置时仅写 MySQL。
+
 ## 5. 与 V1 目标的已知差距
 
 | V1 能力 | 现状缺口 |
@@ -72,4 +79,4 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 | [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 每次查询把整个快照载入内存 |
 | [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 仅关键词取节点拼入上下文；无多跳扩展、路径推理、关系边引用与路径高亮 |
 | [Skills/Agents](superpowers/plans/2026-09-29-v1-roadmap.md#4-skillsagents) | 工具白名单硬编码为 `knowledge.search` / `knowledge.answer`；无导入能力 |
-| [可观测性](superpowers/plans/2026-09-29-v1-roadmap.md#5-可观测性) | LiteLLM `usage` 未持久化；无追踪系统 |
+| [可观测性](superpowers/plans/2026-09-29-v1-roadmap.md#5-可观测性) | 追踪数据无保留期与清理任务，`model_call_content` 原文永久保留会持续增长；DashScope 部分模型算不出成本，需要手动在 `deploy/local/litellm/config.yaml` 配置 `input_cost_per_token`/`output_cost_per_token` |

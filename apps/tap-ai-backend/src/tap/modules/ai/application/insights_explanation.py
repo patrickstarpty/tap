@@ -21,6 +21,7 @@ from tap.modules.ai.ports.insights import (
     MetricQuery,
     ReportCoverage,
 )
+from tap.platform.telemetry import span
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,17 +227,35 @@ class InsightsExplanationService:
             query_id = request.query_id
             metric_query = request.metric_query
             if query_id is not None:
-                metrics = await self._bounded(
-                    started,
-                    budget,
-                    lambda: self._insights.get_insights(scope, query_id),
-                )
+                with span("tool.insights.query") as current_span:
+                    metrics = await self._bounded(
+                        started,
+                        budget,
+                        lambda: self._insights.get_insights(scope, query_id),
+                    )
+                    current_span.set_attribute("tap.insights.query_id", metrics.query_id)
+                    current_span.set_attribute(
+                        "tap.insights.metric_version", metrics.metric_version
+                    )
+                    current_span.set_attribute(
+                        "tap.insights.resource_refs", list(request.resource_refs)
+                    )
+                    current_span.set_attribute("tap.insights.row_count", len(metrics.metrics))
             elif metric_query is not None:
-                metrics = await self._bounded(
-                    started,
-                    budget,
-                    lambda: self._insights.query_insights(scope, metric_query),
-                )
+                with span("tool.insights.query") as current_span:
+                    metrics = await self._bounded(
+                        started,
+                        budget,
+                        lambda: self._insights.query_insights(scope, metric_query),
+                    )
+                    current_span.set_attribute("tap.insights.query_id", metrics.query_id)
+                    current_span.set_attribute(
+                        "tap.insights.metric_version", metrics.metric_version
+                    )
+                    current_span.set_attribute(
+                        "tap.insights.resource_refs", list(request.resource_refs)
+                    )
+                    current_span.set_attribute("tap.insights.row_count", len(metrics.metrics))
             else:  # guarded by ExplanationRequest; retain a fail-closed type boundary.
                 raise InsightsQueryUnavailable("Insights query binding is missing")
         except InsightsBudgetExceeded:

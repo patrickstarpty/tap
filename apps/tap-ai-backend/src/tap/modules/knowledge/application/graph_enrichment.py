@@ -12,6 +12,7 @@ from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.graph.domain.models import GraphSearchQuery
 from tap.modules.graph.ports.store import GraphFactNotFound, GraphStorePort
 from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+from tap.platform.telemetry import span
 
 
 class GraphContextStatus(StrEnum):
@@ -60,90 +61,94 @@ class GraphAnswerEnricher:
         source_revision_ids: tuple[str, ...],
         query: str,
     ) -> GraphAnswerContext:
-        if not source_revision_ids:
-            return GraphAnswerContext(GraphContextStatus.NOT_SELECTED)
-        try:
-            publication = (
-                None
-                if self._publication_authority is None
-                else await self._publication_authority.authorize_selection(
-                    scope.project_id, source_revision_ids
-                )
-            )
-            snapshot = await self._store.active_snapshot(scope, source_revision_ids)
-            if snapshot is None:
-                return GraphAnswerContext(GraphContextStatus.NOT_READY)
-            graph = await self._store.search(
-                scope,
-                GraphSearchQuery(snapshot.snapshot_id, query, self._node_limit),
-            )
-        except GraphFactNotFound:
-            return GraphAnswerContext(GraphContextStatus.FAILED)
-        except AuthorizationDenied:
-            return GraphAnswerContext(GraphContextStatus.FAILED)
-        except Exception:
-            return GraphAnswerContext(GraphContextStatus.UNAVAILABLE)
-        allowed_sources = set(source_revision_ids)
-        if any(
-            item.source_revision_id not in allowed_sources
-            or item.document_revision_id not in snapshot.document_revision_ids
-            for item in graph.evidence
-        ):
-            return GraphAnswerContext(GraphContextStatus.FAILED)
-        if self._publication_authority is not None and publication is not None:
+        with span("graph.enrich") as current_span:
+            if not source_revision_ids:
+                return GraphAnswerContext(GraphContextStatus.NOT_SELECTED)
             try:
-                for item in graph.evidence:
-                    approved_item_id = item.anchor.get("inventoryItemId")
-                    await self._publication_authority.authorize_evidence(
-                        scope.project_id,
-                        source_revision_id=item.source_revision_id,
-                        document_revision_id=item.document_revision_id,
-                        approved_item_id=(
-                            approved_item_id if isinstance(approved_item_id, str) else None
-                        ),
+                publication = (
+                    None
+                    if self._publication_authority is None
+                    else await self._publication_authority.authorize_selection(
+                        scope.project_id, source_revision_ids
                     )
-                await self._publication_authority.revalidate(publication)
-            except Exception:
+                )
+                snapshot = await self._store.active_snapshot(scope, source_revision_ids)
+                if snapshot is None:
+                    return GraphAnswerContext(GraphContextStatus.NOT_READY)
+                graph = await self._store.search(
+                    scope,
+                    GraphSearchQuery(snapshot.snapshot_id, query, self._node_limit),
+                )
+            except GraphFactNotFound:
                 return GraphAnswerContext(GraphContextStatus.FAILED)
-        if not graph.nodes:
-            return GraphAnswerContext(GraphContextStatus.NOT_READY)
-        evidence = {item.evidence_id: item for item in graph.evidence}
-        facts: list[Mapping[str, object]] = []
-        for node in graph.nodes:
-            facts.append(
-                {
-                    "kind": "node",
-                    "id": node.node_id,
-                    "label": node.label,
-                    "type": node.node_type,
-                    "evidence": [
-                        _evidence_locator(evidence[item])
-                        for item in node.evidence_ids
-                        if item in evidence
-                    ],
-                }
+            except AuthorizationDenied:
+                return GraphAnswerContext(GraphContextStatus.FAILED)
+            except Exception:
+                return GraphAnswerContext(GraphContextStatus.UNAVAILABLE)
+            allowed_sources = set(source_revision_ids)
+            if any(
+                item.source_revision_id not in allowed_sources
+                or item.document_revision_id not in snapshot.document_revision_ids
+                for item in graph.evidence
+            ):
+                return GraphAnswerContext(GraphContextStatus.FAILED)
+            if self._publication_authority is not None and publication is not None:
+                try:
+                    for item in graph.evidence:
+                        approved_item_id = item.anchor.get("inventoryItemId")
+                        await self._publication_authority.authorize_evidence(
+                            scope.project_id,
+                            source_revision_id=item.source_revision_id,
+                            document_revision_id=item.document_revision_id,
+                            approved_item_id=(
+                                approved_item_id if isinstance(approved_item_id, str) else None
+                            ),
+                        )
+                    await self._publication_authority.revalidate(publication)
+                except Exception:
+                    return GraphAnswerContext(GraphContextStatus.FAILED)
+            if not graph.nodes:
+                return GraphAnswerContext(GraphContextStatus.NOT_READY)
+            evidence = {item.evidence_id: item for item in graph.evidence}
+            facts: list[Mapping[str, object]] = []
+            for node in graph.nodes:
+                facts.append(
+                    {
+                        "kind": "node",
+                        "id": node.node_id,
+                        "label": node.label,
+                        "type": node.node_type,
+                        "evidence": [
+                            _evidence_locator(evidence[item])
+                            for item in node.evidence_ids
+                            if item in evidence
+                        ],
+                    }
+                )
+            for edge in graph.edges:
+                facts.append(
+                    {
+                        "kind": "edge",
+                        "id": edge.edge_id,
+                        "sourceNodeId": edge.source_node_id,
+                        "targetNodeId": edge.target_node_id,
+                        "relationType": edge.relation_type,
+                        "origin": edge.origin.value,
+                        "evidence": [
+                            _evidence_locator(evidence[item])
+                            for item in edge.evidence_ids
+                            if item in evidence
+                        ],
+                    }
+                )
+            current_span.set_attribute("tap.graph.snapshot_id", snapshot.snapshot_id)
+            current_span.set_attribute("tap.graph.node_count", len(graph.nodes))
+            current_span.set_attribute("tap.graph.edge_count", len(graph.edges))
+            return GraphAnswerContext(
+                GraphContextStatus.APPLIED,
+                snapshot.snapshot_id,
+                tuple(facts),
             )
-        for edge in graph.edges:
-            facts.append(
-                {
-                    "kind": "edge",
-                    "id": edge.edge_id,
-                    "sourceNodeId": edge.source_node_id,
-                    "targetNodeId": edge.target_node_id,
-                    "relationType": edge.relation_type,
-                    "origin": edge.origin.value,
-                    "evidence": [
-                        _evidence_locator(evidence[item])
-                        for item in edge.evidence_ids
-                        if item in evidence
-                    ],
-                }
-            )
-        return GraphAnswerContext(
-            GraphContextStatus.APPLIED,
-            snapshot.snapshot_id,
-            tuple(facts),
-        )
 
 
 def _evidence_locator(item) -> dict[str, object]:

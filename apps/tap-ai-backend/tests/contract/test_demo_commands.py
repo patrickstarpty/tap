@@ -2253,6 +2253,7 @@ def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> N
         "milvus-minio-data",
         "mysql-data",
         "redis-data",
+        "phoenix-data",
     }
     assert all(value is None for value in config["volumes"].values())
 
