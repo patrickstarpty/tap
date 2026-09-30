@@ -557,8 +557,10 @@ class GenerationWorker:
 
 async def main() -> None:
     from tap.entrypoints.tapper_runtime import TapperSettings, create_api_runtime
+    from tap.entrypoints.tracing_setup import start_tracing
 
     settings = TapperSettings.from_mapping(dict(os.environ))
+    start_tracing("tap-ai-worker-generation", settings)
     runtime = await create_api_runtime(settings)
     conversations = runtime.http_services.conversations
     knowledge = runtime.http_services.knowledge

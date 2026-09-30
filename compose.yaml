@@ -213,6 +213,17 @@ services:
       retries: 12
       start_period: 30s
 
+  phoenix:
+    profiles: [observability]
+    image: ${PHOENIX_IMAGE:-arizephoenix/phoenix:version-20.16.0}
+    restart: unless-stopped
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+    ports:
+      - "127.0.0.1:${PHOENIX_PORT:-26006}:6006"
+    volumes:
+      - phoenix-data:/mnt/data
+
 volumes:
   mysql-data:
   redis-data:
@@ -222,3 +233,4 @@ volumes:
   milvus-data:
   clickhouse-insights-data:
   clickhouse-insights-backups:
+  phoenix-data:

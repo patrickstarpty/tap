@@ -31,7 +31,9 @@ from tap.modules.ai.adapters.litellm import (
     LiteLLMModelGatewayConfig,
 )
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, ModelRoles
+from tap.modules.ai.adapters.mysql_model_calls import MysqlModelCallRecorder
 from tap.modules.ai.application.catalog import ModelCatalog
+from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.milvus.audit import (
     SearchAuditSink,
@@ -151,6 +153,7 @@ class TapperSettings:
     insights_authorization_version: str = ""
     insights_expires_at: str = ""
     insights_max_micros_per_token: int = 0
+    otel_exporter_otlp_endpoint: str | None = None
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, str]) -> TapperSettings:
@@ -335,6 +338,22 @@ class TapperSettings:
             provisioner_username=milvus_provisioner_username,
         )
 
+        otel_endpoint_raw = values.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+        if not isinstance(otel_endpoint_raw, str):
+            raise ValueError("OTEL_EXPORTER_OTLP_ENDPOINT must be a string")
+        otel_exporter_otlp_endpoint = (
+            _loopback_url(
+                values,
+                "OTEL_EXPORTER_OTLP_ENDPOINT",
+                otel_endpoint_raw,
+                schemes=frozenset({"http"}),
+                allow_userinfo=False,
+                root_only=True,
+            )
+            if otel_endpoint_raw
+            else None
+        )
+
         return cls(
             api_host=api_host,
             parser_socket=_value(
@@ -415,6 +434,7 @@ class TapperSettings:
             insights_authorization_version=values.get("TAP_INSIGHTS_AUTHORIZATION_VERSION", ""),
             insights_expires_at=values.get("TAP_INSIGHTS_DELEGATED_EXPIRES_AT", ""),
             insights_max_micros_per_token=price,
+            otel_exporter_otlp_endpoint=otel_exporter_otlp_endpoint,
         )
 
 
@@ -672,6 +692,7 @@ async def create_api_runtime(
         embeddings = _create_embeddings(
             settings,
             max_retries=model_gateway_max_retries,
+            recorder=MysqlModelCallRecorder(async_sessionmaker(engine, expire_on_commit=False)),
         )
         _push_if_owned(resources, embeddings)
         search, reader, target = await _create_search(
@@ -784,13 +805,18 @@ async def create_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
         raise TypeError("Tapper worker runtime requires validated settings")
     resources = OwnedResources()
     try:
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
         engine, repository = await _create_database(settings)
         resources.push(engine)
         artifacts = _create_blob(settings)
         resources.push(artifacts)
         redis = _create_redis(settings)
         resources.push(redis)
-        embeddings = _create_embeddings(settings)
+        embeddings = _create_embeddings(
+            settings,
+            recorder=MysqlModelCallRecorder(async_sessionmaker(engine, expire_on_commit=False)),
+        )
         _push_if_owned(resources, embeddings)
         index = await _create_document_index(settings, engine)
         # MilvusDocumentIndex transitively owns all three role clients and the
@@ -932,7 +958,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
         from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
 
         if settings.graph_extraction_mode == "model":
-            embeddings = _create_embeddings(settings)
+            embeddings = _create_embeddings(settings, recorder=MysqlModelCallRecorder(sessions))
             _push_if_owned(resources, embeddings)
             extractor: GraphExtractionPort = ModelGatewayGraphExtraction(
                 embeddings.gateway, timeout_seconds=settings.model_timeout_seconds
@@ -972,7 +998,7 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
         scope = await ValidationScopeProvider().current(RequestFacts())
         redis = _create_redis(settings)
         resources.push(redis)
-        models = _create_embeddings(settings)
+        models = _create_embeddings(settings, recorder=MysqlModelCallRecorder(sessions))
         _push_if_owned(resources, models)
 
         from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
@@ -1098,6 +1124,7 @@ def _create_embeddings(
     *,
     max_retries: int = 1,
     catalog: LiteLLMCatalog | None = None,
+    recorder: ModelCallRecorder | None = None,
 ) -> KnowledgeModelGateway:
     config = LiteLLMModelGatewayConfig(
         base_url=settings.litellm_base_url,
@@ -1118,7 +1145,7 @@ def _create_embeddings(
         from tap.testing.deterministic_model_gateway import DeterministicModelGateway
 
         gateway = DeterministicModelGateway(
-            config, scope=VALIDATION_SCOPE, redact=_redact_model_context
+            config, scope=VALIDATION_SCOPE, redact=_redact_model_context, recorder=recorder
         )
     else:
         gateway = LiteLLMModelGateway(
@@ -1126,6 +1153,7 @@ def _create_embeddings(
             scope=VALIDATION_SCOPE,
             redact=_redact_model_context,
             catalog=catalog or _create_model_catalog(settings),
+            recorder=recorder,
         )
     return KnowledgeModelGateway(
         gateway,
