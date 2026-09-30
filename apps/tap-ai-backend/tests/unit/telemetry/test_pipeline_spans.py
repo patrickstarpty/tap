@@ -384,3 +384,124 @@ async def test_graph_and_test_design_jobs_emit_root_spans(span_recorder) -> None
     assert len(design_spans) == 1
     assert design_spans[0].parent is None
     assert design_spans[0].attributes["tap.job_id"] == design_jobs.claim.job.request.job_id
+
+
+@pytest.mark.asyncio
+async def test_ingestion_idle_run_once_does_not_flush_traces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty batch must skip the synchronous MySQL flush on the hot loop."""
+    import tap.modules.knowledge.application.ingestion as ingestion_module
+
+    calls = 0
+
+    async def fake_flush_traces() -> None:
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(ingestion_module, "flush_traces", fake_flush_traces)
+
+    repository = StatefulRepository(kind=JobKind.INGESTION)
+    repository.pending = False
+    worker = IngestionWorker(
+        repository=repository,
+        artifacts=StatefulArtifacts(),
+        parser=Parser(),
+        chunker=Chunker(),
+        embeddings=IngestionEmbeddings(dimension=3),
+        index=IngestionIndex(),
+        worker_id="worker-a",
+        embedding_model_alias="text-embedding-v4",
+        embedding_dimension=3,
+        index_version="tapper-index-v1",
+        clock=FakeClock(),
+        scope=VALIDATION_SCOPE,
+    )
+
+    idle_run = await worker.run_once(limit=1)
+    assert idle_run.claimed == 0
+    assert calls == 0
+
+    repository.pending = True
+    processed_run = await worker.run_once(limit=1)
+    assert processed_run.ready == 1
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_graph_idle_run_once_does_not_flush_traces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty batch must skip the synchronous MySQL flush on the hot loop."""
+    import tap.modules.graph.application.worker as graph_worker_module
+    from tap.modules.graph.adapters.fake_extraction import deterministic_draft
+
+    calls = 0
+
+    async def fake_flush_traces() -> None:
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(graph_worker_module, "flush_traces", fake_flush_traces)
+
+    jobs = InMemoryGraphJobStore()
+    request = GraphJobRequest.create(
+        scope=VALIDATION_SCOPE,
+        revision_id="revision-1",
+        chunks_locator="art1.chunks",
+        extraction_profile_digest="sha256:" + "1" * 64,
+        model_alias="qwen-plus",
+    )
+    chunks = await GraphArtifacts().read_chunks("art1.chunks")
+    draft = deterministic_draft(request.snapshot, chunks, filename="revision-1")
+    graph_worker = GraphWorker(
+        jobs=jobs,
+        artifacts=GraphArtifacts(),
+        extractor=GraphExtractor(draft),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+    )
+
+    idle_run = await graph_worker.run_once(limit=1)
+    assert idle_run.claimed == 0
+    assert calls == 0
+
+    await jobs.request(VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 9, 0, 0))
+    processed_run = await graph_worker.run_once(limit=1)
+    assert processed_run.ready == 1
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_test_design_idle_run_once_does_not_flush_traces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty batch must skip the synchronous MySQL flush on the hot loop."""
+    import tap.modules.test_management.application.generation as generation_module
+
+    calls = 0
+
+    async def fake_flush_traces() -> None:
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(generation_module, "flush_traces", fake_flush_traces)
+
+    design_jobs = RestartableJobs()
+    design_jobs.completed = ["placeholder"]
+    generator = ImmediateGenerator()
+    design_worker = DesignWorker(
+        jobs=design_jobs,
+        generator=generator,
+        scope=VALIDATION_SCOPE,
+        worker_id="worker",
+    )
+
+    idle_run = await design_worker.run_once(limit=1)
+    assert idle_run.claimed == 0
+    assert calls == 0
+
+    design_jobs.completed = []
+    processed_run = await design_worker.run_once(limit=1)
+    assert processed_run.ready == 1
+    assert calls == 1

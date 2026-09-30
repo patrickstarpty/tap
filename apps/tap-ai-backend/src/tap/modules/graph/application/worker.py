@@ -94,5 +94,6 @@ class GraphWorker:
                         failed += 1
                     except Exception:
                         lease_lost += 1
-        await flush_traces()
+        if claims:
+            await flush_traces()
         return GraphWorkerRun(len(claims), ready, failed, lease_lost)

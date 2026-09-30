@@ -298,7 +298,8 @@ class IngestionWorker:
                 ready += 1
             else:
                 deleted += 1
-        await flush_traces()
+        if jobs:
+            await flush_traces()
         return WorkerRun(
             claimed=len(jobs),
             ready=ready,

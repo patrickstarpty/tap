@@ -347,5 +347,6 @@ class TestDesignWorker:
                         failed += 1
                     except Exception:
                         lease_lost += 1
-        await flush_traces()
+        if claims:
+            await flush_traces()
         return TestDesignWorkerRun(len(claims), ready, failed, lease_lost, waiting)
