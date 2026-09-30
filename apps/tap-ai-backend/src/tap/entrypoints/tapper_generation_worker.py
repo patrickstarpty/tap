@@ -247,7 +247,7 @@ class GenerationWorker:
                 ),
             )
 
-        outcome = "failed"
+        outcome = "deferred"
         try:
 
             async def classify(_state):
@@ -511,6 +511,7 @@ class GenerationWorker:
         except InsightsAuthorizationChanged:
             if insights_query_id is None:
                 raise
+            outcome = "failed"
             try:
                 await fail_turn()
             except (ConversationConflict, PermissionError):
@@ -524,6 +525,7 @@ class GenerationWorker:
         except ConversationConflict:
             if turn.attempt < self.max_checkpoint_attempts:
                 return
+            outcome = "failed"
             try:
                 await fail_turn()
             except (ConversationConflict, PermissionError):
@@ -532,16 +534,19 @@ class GenerationWorker:
         except GraphCheckpointRetryable:
             if turn.attempt < self.max_checkpoint_attempts:
                 return
+            outcome = "failed"
             try:
                 await fail_turn()
             except (ConversationConflict, PermissionError):
                 return
         except GraphCheckpointUnavailable:
+            outcome = "failed"
             try:
                 await fail_turn()
             except (ConversationConflict, PermissionError):
                 return
         except AuthorizationDenied:
+            outcome = "failed"
             try:
                 await fail_turn()
             except (ConversationConflict, PermissionError):
@@ -557,6 +562,7 @@ class GenerationWorker:
         ):
             if insights_query_id is None:
                 raise
+            outcome = "failed"
             try:
                 await fail_turn()
             except (ConversationConflict, PermissionError):

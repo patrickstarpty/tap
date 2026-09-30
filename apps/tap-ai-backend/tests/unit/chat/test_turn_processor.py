@@ -594,7 +594,9 @@ async def test_generation_worker_terminalizes_permanent_checkpoint_error_and_con
 
 
 @pytest.mark.asyncio
-async def test_generation_worker_terminalizes_transient_checkpoint_failure_at_retry_budget():
+async def test_generation_worker_terminalizes_transient_checkpoint_failure_at_retry_budget(
+    span_recorder,
+):
     class RetryableFailureCheckpointer(InMemorySaver):
         async def aget_tuple(self, config):
             del config
@@ -633,6 +635,56 @@ async def test_generation_worker_terminalizes_transient_checkpoint_failure_at_re
 
     assert await worker.run_once(limit=1) == 1
     assert conversations.completed == [("turn-3", "failed", "turn.failed")]
+    finished = {s.name: s for s in span_recorder.get_finished_spans()}
+    assert finished["turn.execute"].attributes["tap.outcome"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_retryable_exit_marks_execute_span_deferred(span_recorder):
+    """A retryable checkpoint failure within the attempt budget must not report 'failed':
+    the Turn stays queued for another worker attempt, so the span records 'deferred'.
+    """
+
+    class RetryableFailureCheckpointer(InMemorySaver):
+        async def aget_tuple(self, config):
+            del config
+            raise graph_runs.GraphCheckpointRetryable("checkpoint database unavailable")
+
+    turn = SimpleNamespace(
+        turn_id="turn-retry",
+        attempt=1,
+        lease_token="lease-1",
+        input_snapshot=SimpleNamespace(
+            value=SimpleNamespace(message="question", resolved_resources=())
+        ),
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            assert limit == 1
+            return (("conversation-1", turn),)
+
+        def graph_checkpointer(self, _turn):
+            return RetryableFailureCheckpointer()
+
+    class Conversations:
+        repository = Repository()
+        completed = []
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            self.completed.append(_args)
+
+    class Knowledge:
+        async def answer(self, _request):
+            raise AssertionError("provider must not run after checkpoint preflight failure")
+
+    conversations = Conversations()
+    worker = GenerationWorker(conversations, Knowledge(), max_checkpoint_attempts=3)
+
+    assert await worker.run_once(limit=1) == 1
+    assert conversations.completed == []
+    finished = {s.name: s for s in span_recorder.get_finished_spans()}
+    assert finished["turn.execute"].attributes["tap.outcome"] == "deferred"
 
 
 @pytest.mark.asyncio
