@@ -8,6 +8,7 @@ enterprise/actor foreign keys, matching the pattern used by `chat_turn` et al.
 from __future__ import annotations
 
 from sqlalchemy import (
+    CHAR,
     DECIMAL,
     Column,
     ForeignKeyConstraint,
@@ -24,9 +25,9 @@ from tap.platform.db.schema import augment_project_table, metadata
 trace_span = Table(
     "trace_span",
     metadata,
-    Column("trace_id", String(32), primary_key=True),
-    Column("span_id", String(16), primary_key=True),
-    Column("parent_span_id", String(16)),
+    Column("trace_id", CHAR(32), primary_key=True),
+    Column("span_id", CHAR(16), primary_key=True),
+    Column("parent_span_id", CHAR(16)),
     Column("turn_id", String(64)),
     Column("job_id", String(64)),
     Column("service_name", String(64), nullable=False),
@@ -44,9 +45,9 @@ augment_project_table(trace_span)
 model_call = Table(
     "model_call",
     metadata,
-    Column("call_id", String(36), primary_key=True),
-    Column("trace_id", String(32)),
-    Column("span_id", String(16)),
+    Column("call_id", CHAR(36), primary_key=True),
+    Column("trace_id", CHAR(32)),
+    Column("span_id", CHAR(16)),
     Column("turn_id", String(64)),
     Column("job_id", String(64)),
     Column("operation", String(16), nullable=False),
@@ -71,7 +72,7 @@ Index("ix_model_call_trace", model_call.c.trace_id)
 model_call_content = Table(
     "model_call_content",
     metadata,
-    Column("call_id", String(36), primary_key=True),
+    Column("call_id", CHAR(36), primary_key=True),
     Column("request_json", LONGTEXT, nullable=False),
     Column("response_text", LONGTEXT),
     Column("reasoning_text", LONGTEXT),

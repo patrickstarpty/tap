@@ -44,9 +44,9 @@ def upgrade() -> None:
 
     op.create_table(
         "trace_span",
-        sa.Column("trace_id", sa.String(32), primary_key=True),
-        sa.Column("span_id", sa.String(16), primary_key=True),
-        sa.Column("parent_span_id", sa.String(16)),
+        sa.Column("trace_id", sa.CHAR(32), primary_key=True),
+        sa.Column("span_id", sa.CHAR(16), primary_key=True),
+        sa.Column("parent_span_id", sa.CHAR(16)),
         sa.Column("turn_id", sa.String(64)),
         sa.Column("job_id", sa.String(64)),
         sa.Column("service_name", sa.String(64), nullable=False),
@@ -64,9 +64,9 @@ def upgrade() -> None:
 
     op.create_table(
         "model_call",
-        sa.Column("call_id", sa.String(36), primary_key=True),
-        sa.Column("trace_id", sa.String(32)),
-        sa.Column("span_id", sa.String(16)),
+        sa.Column("call_id", sa.CHAR(36), primary_key=True),
+        sa.Column("trace_id", sa.CHAR(32)),
+        sa.Column("span_id", sa.CHAR(16)),
         sa.Column("turn_id", sa.String(64)),
         sa.Column("job_id", sa.String(64)),
         sa.Column("operation", sa.String(16), nullable=False),
@@ -91,7 +91,7 @@ def upgrade() -> None:
 
     op.create_table(
         "model_call_content",
-        sa.Column("call_id", sa.String(36), primary_key=True),
+        sa.Column("call_id", sa.CHAR(36), primary_key=True),
         sa.Column("request_json", LONGTEXT, nullable=False),
         sa.Column("response_text", LONGTEXT),
         sa.Column("reasoning_text", LONGTEXT),

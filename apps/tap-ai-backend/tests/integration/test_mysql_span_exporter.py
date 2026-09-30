@@ -87,7 +87,8 @@ def test_scoped_span_is_written_with_binding_columns(
         assert by_name["outer"]["turn_id"] == "t1"
         assert by_name["outer"]["service_name"] == SERVICE_NAME
         assert by_name["outer"]["status"] == "ok"
-        assert "tap.scope.project_id" not in (by_name["outer"]["attributes"] or {})
+        outer_attributes = by_name["outer"]["attributes"] or {}
+        assert not any(key.startswith("tap.scope.") for key in outer_attributes)
     finally:
         engine.dispose()
 
