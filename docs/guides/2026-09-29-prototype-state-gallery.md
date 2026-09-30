@@ -60,3 +60,15 @@
 | --- | --- | --- | --- |
 | d | 内置 Agent 只读（"内置"标记，无编辑入口） | 自然 | [d-builtin-readonly.png](../assets/prototype-states/states/d-builtin-readonly.png) |
 | d | 创建技能时的 `SKILL.md` 实时预览 | 自然 | [d-skill-preview.png](../assets/prototype-states/states/d-skill-preview.png) |
+
+## E：推荐问题
+
+| 编号 | 交互 | 触发方式 | 截图 |
+| --- | --- | --- | --- |
+| e01 | 新对话页默认展示的推荐问题卡片 | 自然 | [e01-suggestions-default.png](../assets/prototype-states/states/e01-suggestions-default.png) |
+| e02 | 点击"换一批"后的下一组推荐 | 自然 | [e02-suggestions-next-batch.png](../assets/prototype-states/states/e02-suggestions-next-batch.png) |
+| e03 | 切换中文后的推荐问题文案 | 自然 | [e03-suggestions-zh.png](../assets/prototype-states/states/e03-suggestions-zh.png) |
+| e04 | 全部知识来源被删除后推荐区消失 | 自然（`localStorage` 预置终态，见上） | [e04-suggestions-empty.png](../assets/prototype-states/states/e04-suggestions-empty.png) |
+| e05 | 推荐问题加载中的骨架屏 | 注入 · `suggestions-loading` | [e05-suggestions-loading.png](../assets/prototype-states/states/e05-suggestions-loading.png) |
+| e06 | 推荐问题加载失败（区域静默消失） | 注入 · `suggestions-load-failed` | [e06-suggestions-load-failed.png](../assets/prototype-states/states/e06-suggestions-load-failed.png) |
+| e07 | 点击多来源推荐后，问题填入输入框且来源已追加为 chip | 自然 | [e07-suggestion-picked.png](../assets/prototype-states/states/e07-suggestion-picked.png) |
