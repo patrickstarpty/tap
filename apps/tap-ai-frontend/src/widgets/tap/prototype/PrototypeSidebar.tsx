@@ -1,5 +1,6 @@
 import {
   BookOutlined,
+  DesktopOutlined,
   FileTextOutlined,
   FormOutlined,
   MessageOutlined,
@@ -202,14 +203,13 @@ export function PrototypeSidebar({
           </div>
           <span
             className="tap-avatar"
-            aria-label={copy.navigation.prototypeTeam}
-            title={`${copy.navigation.prototypeTeam} · ${copy.navigation.localWorkspace}`}
+            aria-label={copy.navigation.localWorkspace}
+            title={copy.navigation.localWorkspace}
           >
-            PT
+            <DesktopOutlined aria-hidden="true" />
           </span>
           <span className="tap-sidebar-copy">
-            <strong>{copy.navigation.prototypeTeam}</strong>
-            <small>{copy.navigation.localWorkspace}</small>
+            <strong>{copy.navigation.localWorkspace}</strong>
           </span>
         </div>
       </aside>

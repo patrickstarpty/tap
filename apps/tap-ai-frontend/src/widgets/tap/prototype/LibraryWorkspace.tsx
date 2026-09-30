@@ -180,8 +180,8 @@ function ProjectKnowledgeGraph({
           publishedData={published}
           publishedCaption={
             locale === "zh"
-              ? "已发布的来源图谱 · 节点与关系来自服务，布局沿用已确认的原型。"
-              : "Published source graph · nodes and relationships come from the service, arranged in the established prototype layout."
+              ? "已发布的来源图谱 · 节点与关系来自服务。"
+              : "Published source graph · nodes and relationships come from the service."
           }
         />
       ) : (

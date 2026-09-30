@@ -427,11 +427,6 @@ export function TapperChat({
     event.currentTarget.form?.requestSubmit();
   };
 
-  const fillPrompt = (prompt: string) => {
-    setMessage(prompt);
-    composerRef.current?.focus();
-  };
-
   const handleTranscriptScroll = () => {
     const transcript = transcriptRef.current;
     if (transcript === null) return;
@@ -1096,23 +1091,6 @@ export function TapperChat({
       ) : null}
 
       {composer}
-
-      {!hasTurns ? (
-        <div
-          className="tap-quick-prompts"
-          aria-label={copy.chat.suggestedPrompts}
-        >
-          {copy.chat.quickPrompts.map((prompt) => (
-            <button
-              key={prompt}
-              type="button"
-              onClick={() => fillPrompt(prompt)}
-            >
-              {prompt}
-            </button>
-          ))}
-        </div>
-      ) : null}
 
       {pickerConfig === null ? null : (
         <AccessibleDialog

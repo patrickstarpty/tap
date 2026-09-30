@@ -25,7 +25,6 @@ export interface PrototypeCopy {
     product: string;
     tapperTools: string;
     language: string;
-    prototypeTeam: string;
     localWorkspace: string;
   };
   chat: {
@@ -38,8 +37,6 @@ export interface PrototypeCopy {
     heading: string;
     description: string;
     sourceHint: string;
-    suggestedPrompts: string;
-    quickPrompts: readonly [string, string, string];
     answer: string;
     noContextNotice: string;
     selectedContextNotice: string;
@@ -275,7 +272,6 @@ export const PROTOTYPE_COPY = {
       product: "Product",
       tapperTools: "Tapper tools",
       language: "Language",
-      prototypeTeam: "Prototype team",
       localWorkspace: "Local workspace",
     },
     chat: {
@@ -289,12 +285,6 @@ export const PROTOTYPE_COPY = {
       description:
         "Ask about life insurance, create BDD test cases, or build an automation.",
       sourceHint: "Each turn records the knowledge context you select.",
-      suggestedPrompts: "Suggested prompts",
-      quickPrompts: [
-        "Summarize the life insurance underwriting rules",
-        "Create BDD test cases for life insurance underwriting",
-        "Generate an automation script for a life insurance application",
-      ],
       answer:
         "This prototype response says that a life insurance application commonly includes identity details for the policyholder and insured person, health disclosures, beneficiary information, and payment details.",
       noContextNotice: "No knowledge context was selected for this turn.",
@@ -537,7 +527,6 @@ export const PROTOTYPE_COPY = {
       product: "产品",
       tapperTools: "Tapper 工具",
       language: "语言",
-      prototypeTeam: "原型团队",
       localWorkspace: "本地工作区",
     },
     chat: {
@@ -550,12 +539,6 @@ export const PROTOTYPE_COPY = {
       heading: "我能为您做什么？",
       description: "询问寿险业务、创建 BDD 测试用例，或构建自动化流程。",
       sourceHint: "每轮对话都会记录您选择的知识上下文。",
-      suggestedPrompts: "推荐提示词",
-      quickPrompts: [
-        "总结寿险新单核保规则",
-        "为寿险新单核保创建 BDD 测试用例",
-        "为寿险投保申请生成自动化脚本",
-      ],
       answer:
         "此原型回答显示：寿险投保通常包含投保人和被保险人身份资料、健康告知、受益人信息以及缴费资料。",
       noContextNotice: "此轮对话未选择知识上下文。回答仅基于当前可用信息。",

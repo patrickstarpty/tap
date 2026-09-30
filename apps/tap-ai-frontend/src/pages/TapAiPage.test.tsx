@@ -46,3 +46,20 @@ it("does not offer the legacy automation workflow in TAP AI chat", async () => {
     screen.queryByRole("button", { name: "Create Test Plan first" }),
   ).not.toBeInTheDocument();
 });
+
+it("does not show hard-coded quick prompts on a new chat", () => {
+  renderKnowledgeApp(<TapAiPage />, { api: fakeKnowledgeClient() });
+  expect(
+    screen.queryByText("Summarize the life insurance underwriting rules"),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("group", { name: "Suggested prompts" }),
+  ).not.toBeInTheDocument();
+});
+
+it("shows a neutral workspace identity in the sidebar", () => {
+  renderKnowledgeApp(<TapAiPage />, { api: fakeKnowledgeClient() });
+  expect(screen.getByText("Local workspace")).toBeVisible();
+  expect(screen.queryByText("Prototype team")).not.toBeInTheDocument();
+  expect(screen.queryByText("PT")).not.toBeInTheDocument();
+});

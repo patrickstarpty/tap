@@ -133,3 +133,65 @@ it("renders a published source graph with the established prototype controls", a
     expect(vi.mocked(useActiveGraph).mock.lastCall?.[1]).toEqual(["rev_src_b"]),
   );
 });
+
+it("describes the published graph without prototype wording", async () => {
+  const getSource = vi.fn(async (sourceId: string) => ({
+    documents: { items: [{ status: "ready", revisionId: `rev_${sourceId}` }] },
+  }));
+  vi.mocked(createKnowledgeClient).mockReturnValue({ getSource } as never);
+  vi.mocked(useActiveGraph).mockImplementation(
+    (_projectId, revisionIds) =>
+      ({
+        data: revisionIds.length
+          ? { items: [{ snapshotId: `snap_${revisionIds[0]}` }] }
+          : undefined,
+        isPending: revisionIds.length === 0,
+        isError: false,
+      }) as never,
+  );
+  vi.mocked(useGraphSearch).mockImplementation(
+    (_projectId, snapshotId) =>
+      ({
+        data: snapshotId
+          ? { snapshotId, nodes: [], edges: [] }
+          : undefined,
+        isPending: snapshotId === null,
+        isError: false,
+      }) as never,
+  );
+
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <LibraryWorkspace
+        copy={PROTOTYPE_COPY.en}
+        locale="en"
+        graphProjectId="tapper-demo"
+        sources={[
+          {
+            id: "src_a",
+            name: "Underwriting rules",
+            type: "Markdown",
+            status: "ready",
+            origin: "knowledge-base",
+            description: "Published source",
+          },
+        ]}
+      />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Published source graph" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByText(
+        "Published source graph · nodes and relationships come from the service.",
+      ),
+    ).toBeVisible(),
+  );
+});

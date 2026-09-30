@@ -582,19 +582,6 @@ describe("Tap product prototype interactions", () => {
     globalThis.document.documentElement.lang = originalLanguage;
   });
 
-  it("fills and focuses the composer when a suggested underwriting prompt is chosen", async () => {
-    const user = userEvent.setup();
-    renderPrototype();
-
-    const composer = screen.getByRole("textbox", { name: "Message Tapper" });
-    const prompt = "Summarize the life insurance underwriting rules";
-    await user.click(screen.getByRole("button", { name: prompt }));
-
-    expect(composer).toHaveValue(prompt);
-    expect(composer).toHaveFocus();
-    expect(screen.queryByRole("log", { name: "Conversation" })).toBeNull();
-  });
-
   it("separates the product rail from the collapsible Tapper sidebar", async () => {
     const user = userEvent.setup();
     renderPrototype();

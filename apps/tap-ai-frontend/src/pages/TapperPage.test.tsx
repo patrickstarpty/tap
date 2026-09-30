@@ -387,11 +387,6 @@ describe("Tapper product prototype", () => {
     expect(
       screen.queryByRole("button", { name: "Manage knowledge" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Create BDD test cases for life insurance underwriting",
-      }),
-    ).toBeVisible();
     expect(screen.queryByText("Intelligence Lab")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "问答" }),
