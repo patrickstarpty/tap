@@ -213,14 +213,23 @@ export function TapperChat({
   const hasTurns = conversation.turns.length > 0;
   const caretToEndRef = useRef(false);
   const promptSuggestionsQuery = usePromptSuggestionsQuery(projectId, locale);
+  const promptSuggestionItems = promptSuggestionsQuery.data?.items;
+  // Order matters: `isLoading` (isPending && isFetching) must be checked
+  // before falling back on "no items yet", otherwise a genuinely in-flight
+  // fetch (data still undefined) would short-circuit straight to hidden and
+  // the skeleton would never show. Using `isLoading` rather than `isPending`
+  // also means a *disabled* query (no matching knowledge client) resolves to
+  // hidden instead of an indefinite skeleton, since disabled queries report
+  // isPending: true but isFetching: false.
   const promptSuggestionsState: PromptSuggestionsState =
-    projectId === null ||
-    promptSuggestionsQuery.isError ||
-    (promptSuggestionsQuery.data?.items.length ?? 0) === 0
+    projectId === null || promptSuggestionsQuery.isError
       ? { kind: "hidden" }
-      : promptSuggestionsQuery.isPending
+      : promptSuggestionsQuery.isLoading
         ? { kind: "loading" }
-        : { kind: "ready", items: promptSuggestionsQuery.data.items };
+        : promptSuggestionItems === undefined ||
+            promptSuggestionItems.length === 0
+          ? { kind: "hidden" }
+          : { kind: "ready", items: promptSuggestionItems };
 
   const pickSuggestion = (item: PromptSuggestionItem) => {
     caretToEndRef.current = true;

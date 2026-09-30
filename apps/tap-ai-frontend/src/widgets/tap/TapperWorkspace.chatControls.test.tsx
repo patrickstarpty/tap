@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -694,4 +694,60 @@ it("keeps working when a suggestion source is not listed yet", async () => {
   expect(screen.getByRole("textbox", { name: "Message Tapper" })).toHaveValue(
     "Unresolved source question",
   );
+});
+
+it("shows the loading skeleton before suggestions resolve, then the cards", async () => {
+  const api = fakeKnowledgeClient().deferPromptSuggestions();
+  renderKnowledgeApp(<TapperWorkspace />, { api });
+
+  await waitFor(() => {
+    const skeleton = document.querySelector(
+      '.tap-prompt-suggestions[aria-busy="true"]',
+    );
+    expect(skeleton).not.toBeNull();
+    expect(skeleton).toHaveAttribute("aria-label", "Suggested questions");
+    expect(skeleton?.querySelectorAll(".ant-skeleton-button")).toHaveLength(4);
+  });
+  expect(
+    screen.queryByRole("group", { name: "Suggested questions" }),
+  ).not.toBeInTheDocument();
+
+  api.withPromptSuggestions("en", {
+    items: [{ id: "sug-1", question: "New question", sources: [] }],
+  });
+  api.finishPromptSuggestions();
+
+  const group = await screen.findByRole("group", {
+    name: "Suggested questions",
+  });
+  expect(
+    within(group).getByRole("button", { name: /New question/u }),
+  ).toBeVisible();
+  expect(
+    document.querySelector('.tap-prompt-suggestions[aria-busy="true"]'),
+  ).toBeNull();
+});
+
+it("does not render suggestions or a skeleton when the knowledge client does not match the active project", async () => {
+  const api = fakeKnowledgeClient().withPromptSuggestions("en", {
+    items: [{ id: "sug-1", question: "Never shown", sources: [] }],
+  });
+  const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, { api });
+  await screen.findByRole("textbox", { name: "Message Tapper" });
+
+  await act(async () =>
+    queryClient.setQueryData(["runtime-mode"], {
+      mode: "validation",
+      identityMode: "validation",
+      projectId: "other-project",
+      actorId: "actor-test",
+    }),
+  );
+
+  expect(
+    document.querySelector('.tap-prompt-suggestions[aria-busy="true"]'),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("group", { name: "Suggested questions" }),
+  ).not.toBeInTheDocument();
 });
