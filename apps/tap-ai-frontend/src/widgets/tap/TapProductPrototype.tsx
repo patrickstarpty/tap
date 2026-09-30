@@ -13,10 +13,7 @@ import {
 import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
 import { TapperChat, type ChatAttachment } from "./prototype/TapperChat";
-import {
-  CatalogWorkspace,
-  type CatalogDraft,
-} from "./prototype/CatalogWorkspace";
+import { CatalogWorkspace } from "./prototype/CatalogWorkspace";
 import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
@@ -1066,7 +1063,6 @@ export function TapProductPrototype() {
     setInsightsHandoff(handoff);
     setMessageDraft(handoff.draft);
   }, [messageDraft.length, projectId]);
-  const nextCatalogId = useRef(1);
   const documentLanguageOnMount = useRef(document.documentElement.lang);
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
@@ -1954,28 +1950,6 @@ export function TapProductPrototype() {
     }
   };
 
-  const createCatalogItem = (kind: "agent" | "skill", draft: CatalogDraft) => {
-    const item: CatalogItem = {
-      id: `custom-${kind}-${nextCatalogId.current++}`,
-      kind,
-      origin: "custom",
-      ...draft,
-    };
-    (kind === "agent" ? setAgents : setSkills)((current) => [...current, item]);
-  };
-
-  const updateCatalogItem = (
-    kind: "agent" | "skill",
-    itemId: string,
-    draft: CatalogDraft,
-  ) => {
-    (kind === "agent" ? setAgents : setSkills)((current) =>
-      current.map((item) =>
-        item.id === itemId ? { ...item, ...draft } : item,
-      ),
-    );
-  };
-
   const useCatalogItem = (kind: "agent" | "skill", itemId: string) => {
     pendingFocusTarget.current = {
       kind: "selector",
@@ -2246,10 +2220,6 @@ export function TapProductPrototype() {
             kind="agent"
             copy={copy}
             items={agents}
-            onCreate={(draft) => createCatalogItem("agent", draft)}
-            onUpdate={(itemId, draft) =>
-              updateCatalogItem("agent", itemId, draft)
-            }
             onUse={(itemId) => useCatalogItem("agent", itemId)}
             projectId={projectId ?? undefined}
           />
@@ -2259,10 +2229,6 @@ export function TapProductPrototype() {
             kind="skill"
             copy={copy}
             items={skills}
-            onCreate={(draft) => createCatalogItem("skill", draft)}
-            onUpdate={(itemId, draft) =>
-              updateCatalogItem("skill", itemId, draft)
-            }
             onUse={(itemId) => useCatalogItem("skill", itemId)}
             projectId={projectId ?? undefined}
           />

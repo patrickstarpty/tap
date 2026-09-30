@@ -23,8 +23,6 @@ it("restores the Agent creation entry and saves an exportable Markdown draft", a
       },
     ],
     projectId: "tapper-demo",
-    onCreate: vi.fn(),
-    onUpdate: vi.fn(),
     onUse,
   };
   const view = render(<CatalogWorkspace {...props} />);
@@ -57,7 +55,6 @@ it("restores the Agent creation entry and saves an exportable Markdown draft", a
   expect(
     screen.queryByRole("button", { name: "Use claims-reviewer in chat" }),
   ).not.toBeInTheDocument();
-  expect(props.onCreate).not.toHaveBeenCalled();
   expect(onUse).not.toHaveBeenCalled();
 
   view.unmount();

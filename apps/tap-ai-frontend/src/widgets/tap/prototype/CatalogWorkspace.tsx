@@ -29,8 +29,6 @@ interface CatalogWorkspaceProps {
   copy: PrototypeCopy;
   items: readonly CatalogItem[];
   kind: CatalogKind;
-  onCreate: (draft: CatalogDraft) => void;
-  onUpdate: (itemId: string, draft: CatalogDraft) => void;
   onUse: (itemId: string) => void;
   readOnly?: boolean;
   projectId?: string;
