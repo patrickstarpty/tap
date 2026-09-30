@@ -71,7 +71,7 @@ apps/tap-ai-frontend/src/app/App.tsx
   → apps/tap-ai-frontend/src/widgets/tap/TapperWorkspace.tsx
 ```
 
-TAP AI 产品入口始终使用真实 Conversation、Knowledge、Graph 和 Test Plan API。`apps/tap-ai-frontend/src/widgets/tapper/TapperWorkspace.tsx`（不同目录的旧组件）是旧兼容入口，不应作为新页面或视觉基线。
+TAP AI 产品入口始终使用真实 Conversation、Knowledge、Graph 和 Test Plan API。`apps/tap-ai-frontend/src/widgets/tapper/LegacyTapperWorkspace.tsx` 是旧兼容入口，不应作为新页面或视觉基线。
 
 ## 5. 代码入口
 

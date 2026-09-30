@@ -56,7 +56,7 @@ function isAnswerResponseObject(
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function TapperWorkspace({
+export function LegacyTapperWorkspace({
   pollIntervalMs,
 }: { pollIntervalMs?: number } = {}) {
   const queryClient = useQueryClient();
