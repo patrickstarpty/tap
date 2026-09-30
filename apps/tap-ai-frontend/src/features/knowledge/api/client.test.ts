@@ -704,6 +704,29 @@ describe("failure stream boundaries", () => {
       });
     },
   );
+
+  it("requests prompt suggestions with the locale", async () => {
+    const requests: Request[] = [];
+    const fetch = async (request: Request): Promise<Response> => {
+      requests.push(request);
+      return Response.json({ items: [] });
+    };
+    const client = createKnowledgeClient({
+      projectId: "project-test",
+      fetch,
+    });
+
+    await expect(client.listPromptSuggestions("zh")).resolves.toEqual({
+      items: [],
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.method).toBe("GET");
+    const url = new URL(requests[0]!.url);
+    expect(url.pathname).toBe(
+      "/api/v1/projects/project-test/prompt-suggestions",
+    );
+    expect(url.searchParams.get("locale")).toBe("zh");
+  });
 });
 
 it("fetches review originals as blobs from the project-scoped route", async () => {

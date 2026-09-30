@@ -20,6 +20,7 @@ import type {
   SourceAccepted,
   SourcePage,
   SourceRetryRequest,
+  SuggestionLocale,
 } from "./types";
 
 const DOCUMENT_LIMIT = 50;
@@ -94,6 +95,8 @@ export const knowledgeKeys = {
     ["knowledge", projectId, "sources"] as const,
   publishedSources: (projectId: string | null) =>
     ["knowledge", projectId, "published-sources"] as const,
+  promptSuggestions: (projectId: string | null, locale: SuggestionLocale) =>
+    ["knowledge", projectId, "prompt-suggestions", locale] as const,
   source: (projectId: string, sourceId: string) =>
     ["knowledge", projectId, "source", sourceId] as const,
   documents: (projectId: string | null) =>
@@ -123,6 +126,29 @@ export function usePublishedSourcesQuery(projectId: string | null) {
     },
     staleTime: 0,
     refetchInterval: 5_000,
+  });
+}
+
+export function usePromptSuggestionsQuery(
+  projectId: string | null,
+  locale: SuggestionLocale,
+) {
+  const client = useContext(KnowledgeClientContext);
+  return useQuery({
+    queryKey: knowledgeKeys.promptSuggestions(projectId, locale),
+    enabled:
+      projectId !== null && client !== null && client.projectId === projectId,
+    queryFn: ({ signal }) => {
+      if (
+        projectId === null ||
+        client === null ||
+        client.projectId !== projectId
+      )
+        throw new Error("A matching project client is required.");
+      return client.listPromptSuggestions(locale, signal);
+    },
+    retry: false,
+    staleTime: 60_000,
   });
 }
 

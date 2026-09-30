@@ -430,6 +430,16 @@ export function createKnowledgeClient(
       );
       return result.data!;
     },
+    async listPromptSuggestions(locale, signal) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/prompt-suggestions",
+        {
+          params: { path: { project_id: projectId }, query: { locale } },
+          signal,
+        },
+      );
+      return result.data!;
+    },
     async listSources({ cursor, limit, signal }) {
       const result = await http.GET(SOURCE_PATH, {
         params: { path: { project_id: projectId }, query: { cursor, limit } },

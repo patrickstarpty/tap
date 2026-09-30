@@ -20,6 +20,7 @@ import {
   useDocumentListQuery,
   useDocumentDetailQuery,
   useDeleteDocumentMutation,
+  usePromptSuggestionsQuery,
   useRetryDocumentMutation,
   useUploadDocumentMutation,
   useSourceListQuery,
@@ -1117,5 +1118,60 @@ describe("project boundaries", () => {
       expect(result.current.citation.data?.filename).toBe("project-b.md"),
     );
     expect(result.current.detail.data?.filename).toBe("project-b.md");
+  });
+});
+
+describe("usePromptSuggestionsQuery", () => {
+  it("keys suggestions by locale", async () => {
+    const queryClient = createTestQueryClient();
+    const zhPage = {
+      items: [{ id: "q-1", question: "退款流程是什么？", sources: [] }],
+    };
+    const api = fakeKnowledgeClient().withPromptSuggestions("zh", zhPage);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <KnowledgeClientProvider client={api}>
+          {children}
+        </KnowledgeClientProvider>
+      </QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(
+      ({ locale }: { locale: "en" | "zh" }) =>
+        usePromptSuggestionsQuery("project-test", locale),
+      {
+        initialProps: { locale: "en" as "en" | "zh" },
+        wrapper,
+      },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual({ items: [] });
+
+    rerender({ locale: "zh" });
+    await waitFor(() => expect(result.current.data).toEqual(zhPage));
+
+    expect(api.promptSuggestionCalls).toEqual(["en", "zh"]);
+  });
+
+  it("keys suggestions by project", () => {
+    expect(knowledgeKeys.promptSuggestions("a", "en")).not.toEqual(
+      knowledgeKeys.promptSuggestions("b", "en"),
+    );
+  });
+
+  it("does not query without a project", async () => {
+    const queryClient = createTestQueryClient();
+    const api = fakeKnowledgeClient();
+    const { result } = renderHook(() => usePromptSuggestionsQuery(null, "en"), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          <KnowledgeClientProvider client={api}>
+            {children}
+          </KnowledgeClientProvider>
+        </QueryClientProvider>
+      ),
+    });
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(result.current.isSuccess).toBe(false);
+    expect(api.promptSuggestionCalls).toEqual([]);
   });
 });

@@ -1,3 +1,4 @@
+import { KnowledgeClientError } from "../api/client";
 import type {
   CitationPreview,
   DocumentAccepted,
@@ -9,10 +10,12 @@ import type {
   KnowledgeReviewDetail,
   KnowledgeReviewItemComparison,
   KnowledgePublicationDetail,
+  PromptSuggestionPage,
   PublishedKnowledgeSourcePage,
   RetrievalAnswerRequest,
   RetrievalAnswerResponse,
   SourceSummary,
+  SuggestionLocale,
 } from "../api/types";
 
 const NOW = "2026-08-28T07:30:00Z";
@@ -208,6 +211,12 @@ export interface FakeKnowledgeClient extends KnowledgeClient {
   withPublicationHistory(
     items: KnowledgePublicationDetail[],
   ): FakeKnowledgeClient;
+  withPromptSuggestions(
+    locale: SuggestionLocale,
+    page: PromptSuggestionPage,
+  ): FakeKnowledgeClient;
+  withPromptSuggestionsProblem(): FakeKnowledgeClient;
+  readonly promptSuggestionCalls: readonly SuggestionLocale[];
   reviewCommands: Array<{ action: string; version: number; itemId?: string }>;
   openReviewCalls: Array<{
     documentId: string;
@@ -264,6 +273,12 @@ export function fakeKnowledgeClient(
   let openReviewResult: KnowledgeReviewDetail | null = null;
   let publishedSources: PublishedKnowledgeSourcePage = { items: [] };
   let publicationHistory: KnowledgePublicationDetail[] = [];
+  const promptSuggestionsByLocale = new Map<
+    SuggestionLocale,
+    PromptSuggestionPage
+  >();
+  let promptSuggestionsProblem = false;
+  const promptSuggestionCalls: SuggestionLocale[] = [];
   const comparisons = new Map<string, KnowledgeReviewItemComparison>();
   const detailById = new Map<string, DocumentDetail>();
   const listQueue: DocumentSummary[][] = [];
@@ -313,6 +328,14 @@ export function fakeKnowledgeClient(
     },
     withPublicationHistory(items) {
       publicationHistory = items;
+      return api;
+    },
+    withPromptSuggestions(locale, page) {
+      promptSuggestionsByLocale.set(locale, page);
+      return api;
+    },
+    withPromptSuggestionsProblem() {
+      promptSuggestionsProblem = true;
       return api;
     },
     async listReviews({ sourceRevisionId }) {
@@ -476,6 +499,22 @@ export function fakeKnowledgeClient(
     },
     async listPublishedSources() {
       return publishedSources;
+    },
+    promptSuggestionCalls,
+    async listPromptSuggestions(locale) {
+      promptSuggestionCalls.push(locale);
+      if (promptSuggestionsProblem) {
+        throw new KnowledgeClientError({
+          type: "https://tap.example/problems/search-unavailable",
+          title: "Search unavailable",
+          status: 503,
+          detail: "The search provider is currently unavailable.",
+          correlationId: "request-test",
+          retryable: true,
+          failureStage: "search",
+        });
+      }
+      return promptSuggestionsByLocale.get(locale) ?? { items: [] };
     },
     async listSources(input) {
       const page = await api.listDocuments(input);
