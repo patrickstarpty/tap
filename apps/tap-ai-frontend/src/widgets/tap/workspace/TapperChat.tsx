@@ -30,11 +30,18 @@ import type {
   ModelId,
   Conversation,
   LibrarySource,
+  Locale,
 } from "./model";
 import { useModelCatalog } from "../../../features/knowledge/api/modelCatalog";
+import { usePromptSuggestionsQuery } from "../../../features/knowledge/api/queries";
+import type { PromptSuggestionItem } from "../../../features/knowledge/api/types";
 import { ModelSelector } from "../../../features/knowledge/components/ModelSelector";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { AccessibleDialog } from "./AccessibleDialog";
+import {
+  PromptSuggestions,
+  type PromptSuggestionsState,
+} from "./PromptSuggestions";
 
 type PickerKind = "library" | "agents" | "skills";
 
@@ -53,9 +60,11 @@ interface TapperChatProps {
   conversation: Conversation;
   copy: WorkspaceCopy;
   isInert?: boolean;
+  locale: Locale;
   message: string;
   onMessageChange: (message: string) => void;
   onModelChange: (modelId: ModelId) => void;
+  onPickSuggestion: (item: PromptSuggestionItem) => void;
   onSend: (prompt: string) => boolean | Promise<boolean>;
   onCancel?: (turnId: string) => void;
   onEditTurn?: (turn: AssistantTurn) => void;
@@ -126,9 +135,11 @@ export function TapperChat({
   conversation,
   copy,
   isInert = false,
+  locale,
   message,
   onMessageChange: setMessage,
   onModelChange,
+  onPickSuggestion,
   onSend,
   onCancel,
   onEditTurn,
@@ -200,12 +211,37 @@ export function TapperChat({
     turnId: string | null;
   } | null>(null);
   const hasTurns = conversation.turns.length > 0;
+  const caretToEndRef = useRef(false);
+  const promptSuggestionsQuery = usePromptSuggestionsQuery(projectId, locale);
+  const promptSuggestionsState: PromptSuggestionsState =
+    projectId === null ||
+    promptSuggestionsQuery.isError ||
+    (promptSuggestionsQuery.data?.items.length ?? 0) === 0
+      ? { kind: "hidden" }
+      : promptSuggestionsQuery.isPending
+        ? { kind: "loading" }
+        : { kind: "ready", items: promptSuggestionsQuery.data.items };
+
+  const pickSuggestion = (item: PromptSuggestionItem) => {
+    caretToEndRef.current = true;
+    onPickSuggestion(item);
+  };
 
   useEffect(() => {
     setMenuOpen(false);
     setPicker(null);
     setPickerQuery("");
   }, [conversation.id]);
+
+  useEffect(() => {
+    if (!caretToEndRef.current) return;
+    caretToEndRef.current = false;
+    composerRef.current?.focus();
+    const textarea = composerRef.current?.resizableTextArea?.textArea;
+    if (textarea === undefined) return;
+    const length = textarea.value.length;
+    textarea.setSelectionRange(length, length);
+  }, [message]);
 
   useEffect(() => {
     setActiveQuestionId(
@@ -1086,6 +1122,14 @@ export function TapperChat({
       ) : null}
 
       {composer}
+
+      {hasTurns ? null : (
+        <PromptSuggestions
+          copy={copy}
+          state={promptSuggestionsState}
+          onPick={pickSuggestion}
+        />
+      )}
 
       {pickerConfig === null ? null : (
         <AccessibleDialog

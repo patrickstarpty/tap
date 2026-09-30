@@ -60,6 +60,22 @@ it("does not show hard-coded quick prompts on a new chat", () => {
   ).not.toBeInTheDocument();
 });
 
+it("names the recommendation group Suggested questions when suggestions are available", async () => {
+  const api = fakeKnowledgeClient().withPromptSuggestions("en", {
+    items: [
+      {
+        id: "sug-1",
+        question: "What is the maximum coverage amount?",
+        sources: [],
+      },
+    ],
+  });
+  renderKnowledgeApp(<TapAiPage />, { api });
+  expect(
+    await screen.findByRole("group", { name: "Suggested questions" }),
+  ).toBeVisible();
+});
+
 it("shows a neutral workspace identity in the sidebar", () => {
   renderKnowledgeApp(<TapAiPage />, { api: fakeKnowledgeClient() });
   expect(screen.getByText("Local workspace")).toBeVisible();

@@ -217,6 +217,8 @@ export interface FakeKnowledgeClient extends KnowledgeClient {
   ): FakeKnowledgeClient;
   withPromptSuggestionsProblem(): FakeKnowledgeClient;
   readonly promptSuggestionCalls: readonly SuggestionLocale[];
+  deferPromptSuggestions(): FakeKnowledgeClient;
+  finishPromptSuggestions(): void;
   reviewCommands: Array<{ action: string; version: number; itemId?: string }>;
   openReviewCalls: Array<{
     documentId: string;
@@ -279,6 +281,7 @@ export function fakeKnowledgeClient(
   >();
   let promptSuggestionsProblem = false;
   const promptSuggestionCalls: SuggestionLocale[] = [];
+  let pendingPromptSuggestions: PendingOperation | undefined;
   const comparisons = new Map<string, KnowledgeReviewItemComparison>();
   const detailById = new Map<string, DocumentDetail>();
   const listQueue: DocumentSummary[][] = [];
@@ -337,6 +340,13 @@ export function fakeKnowledgeClient(
     withPromptSuggestionsProblem() {
       promptSuggestionsProblem = true;
       return api;
+    },
+    deferPromptSuggestions() {
+      pendingPromptSuggestions = pendingOperation();
+      return api;
+    },
+    finishPromptSuggestions() {
+      pendingPromptSuggestions?.resolve(undefined);
     },
     async listReviews({ sourceRevisionId }) {
       return {
@@ -503,6 +513,7 @@ export function fakeKnowledgeClient(
     promptSuggestionCalls,
     async listPromptSuggestions(locale) {
       promptSuggestionCalls.push(locale);
+      await pendingPromptSuggestions?.promise;
       if (promptSuggestionsProblem) {
         throw new KnowledgeClientError({
           type: "https://tap.example/problems/search-unavailable",
