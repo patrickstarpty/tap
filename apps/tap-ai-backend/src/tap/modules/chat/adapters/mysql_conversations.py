@@ -60,6 +60,7 @@ from tap.modules.governance.domain.audit import (
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
+from tap.platform.telemetry import inject_traceparent
 
 
 def _scoped(name, *columns, uniques=(), parents=()):
@@ -347,6 +348,7 @@ class MysqlConversationRepository:
                 processing_attempt=turn.attempt,
                 last_sequence=event.sequence,
                 created_at=now,
+                traceparent=inject_traceparent(),
             )
         )
         await session.execute(
@@ -549,6 +551,7 @@ class MysqlConversationRepository:
             input_value,
             answer,
             row.get("processing_lease_token"),
+            row.get("traceparent"),
         )
 
     async def load(self, conversation_id):

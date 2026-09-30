@@ -46,6 +46,7 @@ from tap.modules.chat.application.conversations import (
 from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
 from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
+from tap.platform.telemetry import bind_trace, span
 
 router = APIRouter(
     prefix="/conversations",
@@ -308,9 +309,14 @@ async def create(
         return ConversationAccepted(
             conversation_id=conversation_id, turn_id=replay.turn_id, state="queued"
         )
-    turn = await service.create(
-        conversation_id, turn_id, idempotency_key, await _input(body, request)
-    )
+    with bind_trace(scope=request.state.project_scope, turn_id=turn_id):
+        with span(
+            "turn.request",
+            {"tap.conversation_id": conversation_id, "tap.turn_id": turn_id},
+        ):
+            turn = await service.create(
+                conversation_id, turn_id, idempotency_key, await _input(body, request)
+            )
     return ConversationAccepted(
         conversation_id=conversation_id, turn_id=turn.turn_id, state="queued"
     )
@@ -415,9 +421,15 @@ async def append(
         )
     # Unknown or deleted Conversations fail before any input resolution work.
     await service.load(conversation_id)
-    turn = await service.append(
-        conversation_id, uuid4().hex, idempotency_key, await _input(body, request)
-    )
+    turn_id = uuid4().hex
+    with bind_trace(scope=request.state.project_scope, turn_id=turn_id):
+        with span(
+            "turn.request",
+            {"tap.conversation_id": conversation_id, "tap.turn_id": turn_id},
+        ):
+            turn = await service.append(
+                conversation_id, turn_id, idempotency_key, await _input(body, request)
+            )
     return ConversationAccepted(
         conversation_id=conversation_id, turn_id=turn.turn_id, state="queued"
     )
