@@ -906,7 +906,7 @@ export function TapperWorkspace() {
     projectId,
     activeConversationId !== "draft" ? activeConversationId : null,
   );
-  const modelCatalog = useModelCatalog(durable ? projectId : null);
+  const modelCatalog = useModelCatalog(projectId);
   // Mirrors the composer's picker: only chat models with structured output are selectable.
   const selectableModelAliases = useMemo(
     () =>
