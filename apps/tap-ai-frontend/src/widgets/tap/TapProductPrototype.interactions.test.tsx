@@ -9,7 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   document,
@@ -22,6 +22,11 @@ import {
   renderApp,
 } from "../../shared/testing/renderApp";
 import { RuntimeClientProvider } from "../../features/runtime/api/queries";
+import { createKnowledgeClient } from "../../features/knowledge/api/client";
+import {
+  useActiveGraph,
+  useGraphSearch,
+} from "../../features/graph/api/queries";
 import { TapProductPrototype } from "./TapProductPrototype";
 import {
   PROTOTYPE_SNAPSHOT_VERSION,
@@ -33,6 +38,26 @@ const prototypeStyles = readFileSync(
   resolve("src/widgets/tap/TapProductPrototype.css"),
   "utf8",
 );
+
+// This module's LibraryWorkspace/ProjectKnowledgeGraph calls the real
+// createKnowledgeClient() directly (not the injected fakeKnowledgeClient
+// context) to fetch a source's graph detail, and calls the real graph query
+// hooks unconditionally on every render. Mock both so tests that switch to
+// the Knowledge Graph tab in durable/api mode exercise a deterministic
+// published graph instead of an unmocked network call. Tests that never
+// reach a ready source (selectedId stays null) are unaffected by these
+// defaults since that branch short-circuits before either is consulted.
+function defaultGraphQueryResult() {
+  return { data: undefined, isPending: false, isError: false } as never;
+}
+
+vi.mock("../../features/knowledge/api/client", () => ({
+  createKnowledgeClient: vi.fn(),
+}));
+vi.mock("../../features/graph/api/queries", () => ({
+  useActiveGraph: vi.fn(() => defaultGraphQueryResult()),
+  useGraphSearch: vi.fn(() => defaultGraphQueryResult()),
+}));
 
 function renderPrototype(conversationSource: "api" | "fixture" = "fixture") {
   const api = fakeKnowledgeClient().withDocuments([
@@ -504,6 +529,16 @@ function mockNarrowViewport(width = 390) {
 describe("Tap product prototype interactions", () => {
   beforeEach(() => {
     window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.mocked(createKnowledgeClient).mockReset();
+    vi.mocked(useActiveGraph)
+      .mockReset()
+      .mockImplementation(() => defaultGraphQueryResult());
+    vi.mocked(useGraphSearch)
+      .mockReset()
+      .mockImplementation(() => defaultGraphQueryResult());
   });
 
   it("keeps representative knowledge in the default graph after a page remount", async () => {
@@ -2522,6 +2557,49 @@ describe("Tap product prototype interactions", () => {
 
   it("switches the Library between All sources and an interactive Knowledge Graph", async () => {
     const user = userEvent.setup();
+    const getSource = vi.fn(async (sourceId: string) => ({
+      documents: {
+        items: [{ status: "ready", revisionId: `rev_${sourceId}` }],
+      },
+    }));
+    vi.mocked(createKnowledgeClient).mockReturnValue({ getSource } as never);
+    vi.mocked(useActiveGraph).mockImplementation(
+      (_projectId, revisionIds) =>
+        ({
+          data: revisionIds.length
+            ? { items: [{ snapshotId: `snap_${revisionIds[0]}` }] }
+            : undefined,
+          isPending: revisionIds.length === 0,
+          isError: false,
+        }) as never,
+    );
+    vi.mocked(useGraphSearch).mockImplementation(
+      (_projectId, snapshotId) =>
+        ({
+          data: snapshotId
+            ? {
+                snapshotId,
+                nodes: [
+                  {
+                    nodeId: "doc",
+                    nodeType: "DOCUMENT",
+                    label: "rev_source",
+                    canonicalKey: "doc",
+                  },
+                  {
+                    nodeId: "age",
+                    nodeType: "CONCEPT",
+                    label: "Age eligibility",
+                    canonicalKey: "age",
+                  },
+                ],
+                edges: [],
+              }
+            : undefined,
+          isPending: snapshotId === null,
+          isError: false,
+        }) as never,
+    );
     renderPrototype("api");
 
     await user.click(screen.getByRole("button", { name: "Library" }));
@@ -2552,10 +2630,14 @@ describe("Tap product prototype interactions", () => {
       screen.getByRole("combobox", { name: "Graph source" }),
     ).toBeVisible();
     await waitFor(() =>
-      expect(
-        screen.getByText("The graph source could not be loaded. Try again."),
-      ).toBeVisible(),
+      expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
     );
+    expect(
+      screen.getByText(/nodes and relationships come from the service/i),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Age eligibility/ }),
+    ).toBeVisible();
 
     await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Documents" }));

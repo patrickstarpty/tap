@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 
@@ -189,4 +189,110 @@ it("describes the published graph without prototype wording", async () => {
       ),
     ).toBeVisible(),
   );
+});
+
+it("searches the published graph, inspects a node, and jumps to its source in the document list", async () => {
+  const getSource = vi.fn(async (sourceId: string) => ({
+    documents: { items: [{ status: "ready", revisionId: `rev_${sourceId}` }] },
+  }));
+  vi.mocked(createKnowledgeClient).mockReturnValue({ getSource } as never);
+  vi.mocked(useActiveGraph).mockImplementation(
+    (_projectId, revisionIds) =>
+      ({
+        data: revisionIds.length
+          ? { items: [{ snapshotId: `snap_${revisionIds[0]}` }] }
+          : undefined,
+        isPending: revisionIds.length === 0,
+        isError: false,
+      }) as never,
+  );
+  vi.mocked(useGraphSearch).mockImplementation(
+    (_projectId, snapshotId) =>
+      ({
+        data: snapshotId
+          ? {
+              snapshotId,
+              nodes: [
+                {
+                  nodeId: "doc",
+                  nodeType: "DOCUMENT",
+                  label: "rev_source",
+                  canonicalKey: "doc",
+                },
+                {
+                  nodeId: "age",
+                  nodeType: "CONCEPT",
+                  label: "Age eligibility",
+                  canonicalKey: "age",
+                },
+              ],
+              edges: [
+                {
+                  edgeId: "edge",
+                  sourceNodeId: "doc",
+                  targetNodeId: "age",
+                  relationType: "CONTAINS",
+                  origin: "EXTRACTED",
+                  confidence: 1,
+                },
+              ],
+            }
+          : undefined,
+        isPending: snapshotId === null,
+        isError: false,
+      }) as never,
+  );
+
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <LibraryWorkspace
+        copy={PROTOTYPE_COPY.en}
+        locale="en"
+        graphProjectId="tapper-demo"
+        sources={[
+          {
+            id: "src_a",
+            name: "Underwriting rules",
+            type: "Markdown",
+            status: "ready",
+            origin: "knowledge-base",
+            description: "Published source about Age eligibility",
+          },
+        ]}
+      />
+    </QueryClientProvider>,
+  );
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
+  );
+
+  const search = screen.getByRole("textbox", { name: "Search library" });
+  await userEvent.type(search, "Age");
+  const results = screen.getByRole("region", { name: "Search results" });
+  await userEvent.click(
+    within(results).getByRole("button", { name: /Age eligibility/ }),
+  );
+  expect(
+    within(screen.getByRole("region", { name: "Node details" })).getByText(
+      "Age eligibility",
+    ),
+  ).toBeVisible();
+
+  await userEvent.click(
+    screen.getByRole("button", { name: "View source in document list" }),
+  );
+  expect(
+    screen.getByRole("tab", { name: "Documents", selected: true }),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole("list", { name: "Library sources" })).getByText(
+      "Underwriting rules",
+    ),
+  ).toBeVisible();
 });
