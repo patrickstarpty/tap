@@ -24,7 +24,7 @@ test.beforeEach(async ({ page }) => {
           {
             alias: "qwen-plus",
             displayName: "Capture model",
-            capabilities: ["chat"],
+            capabilities: ["chat", "structured"],
           },
         ],
       };
@@ -142,7 +142,7 @@ test("captures a restored Insights explanation before and after refresh", async 
           {
             alias: "qwen-plus",
             displayName: "Capture model",
-            capabilities: ["chat"],
+            capabilities: ["chat", "structured"],
           },
         ],
       };
