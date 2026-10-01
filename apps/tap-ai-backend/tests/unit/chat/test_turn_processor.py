@@ -13,6 +13,7 @@ from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
 from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.conversations import CitationEvidence, GraphContextStatus
+from tap.modules.chat.domain.suggestions import RefreshReason
 
 
 def test_graph_snapshot_is_legal_only_when_graph_context_was_applied():
@@ -209,6 +210,113 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
         "answer.delta",
         {"text": "delta"},
     )
+
+
+class _FakeSuggestionStore:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[str, RefreshReason]] = []
+        self._fail = fail
+
+    async def request_refresh_for_actor(self, actor_id, reason, *, now):
+        if self._fail:
+            raise RuntimeError("suggestion store unavailable")
+        self.calls.append((actor_id, reason))
+        return 1
+
+
+def _completed_turn_fixtures(*, abstained: bool):  # type: ignore[no-untyped-def]
+    frozen = SimpleNamespace(message="question", actor_id="actor-1", resolved_resources=())
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return (
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
+                    ),
+                ),
+            )
+
+        async def resolve_citations(self, *_args):
+            return ()
+
+    class Conversations:
+        repository = Repository()
+        completion = None
+
+        async def complete_evidence(self, *_args, **kwargs):
+            self.completion = kwargs
+
+    class Knowledge:
+        async def answer(self, _request):
+            return SimpleNamespace(
+                answer="",
+                citations=(),
+                abstained=abstained,
+                trace_id="t",
+                model_dump=lambda **_: {
+                    "traceId": "t",
+                    "queryPlanId": "p",
+                    "contextSnapshotId": "c",
+                    "corpusVersion": "v1",
+                    "retrievalProfileId": "quick",
+                    "degradedMode": False,
+                    "answer": "",
+                    "abstained": abstained,
+                    "claims": [],
+                    "citations": [],
+                },
+            )
+
+    return Conversations(), Knowledge()
+
+
+@pytest.mark.asyncio
+async def test_completed_turn_requests_actor_refresh():
+    conversations, knowledge = _completed_turn_fixtures(abstained=False)
+    suggestions = _FakeSuggestionStore()
+
+    await GenerationWorker(conversations, knowledge, suggestion_refresh=suggestions).run_once(
+        limit=1
+    )
+
+    assert suggestions.calls == [("actor-1", RefreshReason.TURN_COMPLETED)]
+
+
+@pytest.mark.asyncio
+async def test_abstained_turn_does_not_request_actor_refresh():
+    conversations, knowledge = _completed_turn_fixtures(abstained=True)
+    suggestions = _FakeSuggestionStore()
+
+    await GenerationWorker(conversations, knowledge, suggestion_refresh=suggestions).run_once(
+        limit=1
+    )
+
+    assert suggestions.calls == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_request_failure_does_not_fail_the_turn(caplog):
+    conversations, knowledge = _completed_turn_fixtures(abstained=False)
+    suggestions = _FakeSuggestionStore(fail=True)
+
+    with caplog.at_level("WARNING"):
+        processed = await GenerationWorker(
+            conversations, knowledge, suggestion_refresh=suggestions
+        ).run_once(limit=1)
+
+    assert processed == 1
+    assert conversations.completion is not None
+    assert conversations.completion["lease_token"] == "lease-1"
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "prompt suggestion refresh request failed" in warnings[0].message
+    assert "RuntimeError" in warnings[0].message
+    assert "actor-1" not in warnings[0].message
+    assert "question" not in warnings[0].message
 
 
 @pytest.mark.asyncio

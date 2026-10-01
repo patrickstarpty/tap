@@ -1508,3 +1508,18 @@ class KnowledgeChunkFailure(ContractModel):
 class KnowledgeChunkBatchResult(ContractModel):
     succeeded: list[str]
     failed: list[KnowledgeChunkFailure]
+
+
+class PromptSuggestionSource(ContractModel):
+    source_id: Annotated[str, Field(strict=True, pattern=r"^src_[0-9a-f]{32}$")]
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
+
+
+class PromptSuggestionItem(ContractModel):
+    id: ShortIdentifier
+    question: Annotated[str, Field(strict=True, min_length=1, max_length=500)]
+    sources: Annotated[list[PromptSuggestionSource], Field(min_length=1, max_length=3)]
+
+
+class PromptSuggestionPage(ContractModel):
+    items: list[PromptSuggestionItem]

@@ -435,6 +435,51 @@ async def test_fake_and_litellm_share_all_four_operations_and_governance(kind):
 
 
 @pytest.mark.asyncio
+async def test_deterministic_gateway_answers_prompt_suggestion_schema():
+    from tap.modules.chat.adapters.model_gateway_suggestions import SUGGESTION_SCHEMA
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    gateway = DeterministicModelGateway(
+        configured_gateway(success)._config, scope=VALIDATION_SCOPE, redact=redact
+    )
+    payload = json.dumps(
+        {
+            "locale": "zh",
+            "sources": [
+                {"id": "src_a", "name": "Onboarding", "headings": ["Setup"]},
+                {"id": "src_b", "name": "Billing", "headings": ["Invoices"]},
+            ],
+            "entities": [],
+            "recentQuestions": [],
+            "recentSourceIds": [],
+            "popularSources": [],
+        },
+        sort_keys=True,
+    )
+    prompt = "Suggest prompt questions."
+    result = await gateway.generate_structured(
+        replace(
+            request(ModelOperation.STRUCTURED),
+            prompt=prompt,
+            prompt_digest=digest(prompt),
+            context=payload,
+            schema=SUGGESTION_SCHEMA,
+            schema_digest=digest(
+                json.dumps(SUGGESTION_SCHEMA, sort_keys=True, separators=(",", ":"))
+            ),
+            allow_retries=False,
+        )
+    )
+
+    assert result.output == {
+        "suggestions": [
+            {"question": "《Onboarding》主要包含哪些内容？", "sourceIds": ["src_a"]},
+            {"question": "《Billing》主要包含哪些内容？", "sourceIds": ["src_b"]},
+        ]
+    }
+
+
+@pytest.mark.asyncio
 async def test_structured_output_cannot_escape_the_locked_schema():
     from tap.modules.ai.domain.models import ModelGatewayUnavailable
 

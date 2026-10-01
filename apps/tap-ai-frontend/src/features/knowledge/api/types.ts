@@ -39,6 +39,20 @@ export type RetrievalAnswerRequest =
   components["schemas"]["RetrievalAnswerRequest"];
 export type RetrievalAnswerResponse =
   components["schemas"]["RetrievalAnswerResponse"];
+export type PromptSuggestionPage =
+  components["schemas"]["PromptSuggestionPage"];
+export type PromptSuggestionItem =
+  components["schemas"]["PromptSuggestionItem"];
+export type PromptSuggestionSource =
+  components["schemas"]["PromptSuggestionSource"];
+
+/**
+ * Mirrors `src/widgets/tap/workspace/model.ts`'s `Locale` ("en" | "zh").
+ * Defined here (rather than imported) because the architecture rules forbid
+ * `features/` importing from `widgets/`; the two types are structurally
+ * identical so callers in `widgets/` can pass their `Locale` value directly.
+ */
+export type SuggestionLocale = "en" | "zh";
 
 export type ProblemDetails =
   paths["/api/v1/projects/{project_id}/knowledge/documents"]["get"]["responses"][422]["content"]["application/problem+json"];
@@ -125,6 +139,10 @@ export interface KnowledgeClient {
   listPublishedSources(
     signal?: AbortSignal,
   ): Promise<PublishedKnowledgeSourcePage>;
+  listPromptSuggestions(
+    locale: SuggestionLocale,
+    signal?: AbortSignal,
+  ): Promise<PromptSuggestionPage>;
   listSources(input: ListDocumentsInput): Promise<SourcePage>;
   getSource(sourceId: string, signal?: AbortSignal): Promise<SourceDetail>;
   uploadSource(

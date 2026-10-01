@@ -82,7 +82,31 @@ class DeterministicModelGateway(LiteLLMModelGateway):
             }
         else:
             content = "Grounded"
-            if request.operation is ModelOperation.STRUCTURED:
+            if (
+                request.operation is ModelOperation.STRUCTURED
+                and isinstance(request.schema, dict)
+                and request.schema.get("title") == "PromptSuggestions"
+            ):
+                try:
+                    data = json.loads(request.context)
+                    if not isinstance(data, dict):
+                        data = {}
+                except ValueError:
+                    data = {}
+                locale = data.get("locale")
+                suggestions = [
+                    {
+                        "question": (
+                            f"《{source['name']}》主要包含哪些内容？"
+                            if locale == "zh"
+                            else f"What does {source['name']} cover?"
+                        ),
+                        "sourceIds": [source["id"]],
+                    }
+                    for source in data.get("sources", [])[:8]
+                ]
+                content = json.dumps({"suggestions": suggestions})
+            elif request.operation is ModelOperation.STRUCTURED:
                 try:
                     evidence = json.loads(request.context).get("evidence", [])
                 except (ValueError, AttributeError):

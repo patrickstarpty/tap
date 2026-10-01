@@ -629,6 +629,99 @@ test.describe("prototype states: A-D interaction states", () => {
     ).toBeVisible();
     await capture(page, "d-skill-preview");
   });
+
+  // E: prompt suggestions
+
+  test("e01-suggestions-default", async ({ page }) => {
+    await openFresh(page, "/prototype");
+    await expect(
+      page.getByRole("group", { name: "Suggested questions" }),
+    ).toBeVisible();
+    await capture(page, "e01-suggestions-default");
+  });
+
+  test("e02-suggestions-next-batch", async ({ page }) => {
+    await openFresh(page, "/prototype");
+    await expect(
+      page.getByRole("group", { name: "Suggested questions" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Show others" }).click();
+    await expect(
+      page.getByRole("button", {
+        name: /Which steps of the beneficiary change workflow/,
+      }),
+    ).toBeVisible();
+    await capture(page, "e02-suggestions-next-batch");
+  });
+
+  test("e03-suggestions-zh", async ({ page }) => {
+    await openFresh(page, "/prototype");
+    await page.getByRole("button", { name: "中文" }).click();
+    await expect(
+      page.getByRole("group", { name: "推荐问题" }),
+    ).toBeVisible();
+    await capture(page, "e03-suggestions-zh");
+  });
+
+  test("e04-suggestions-empty", async ({ page }) => {
+    await openWithSnapshot(
+      page,
+      "/prototype",
+      baseSnapshot([...NON_REVIEW_SOURCE_IDS, ...REVIEW_SOURCE_IDS]),
+    );
+    await expect(
+      page.getByRole("group", { name: "Suggested questions" }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "Add to message" }).click();
+    await page.getByRole("menuitem", { name: "Add from Library" }).click();
+    await expect(page.getByRole("listbox")).toContainText(
+      "No matching items",
+    );
+    await expect(page.getByRole("option")).toHaveCount(0);
+    await capture(page, "e04-suggestions-empty");
+  });
+
+  test("e05-suggestions-loading", async ({ page }) => {
+    await openWithFaults(page, "/prototype", ["suggestions-loading"]);
+    await expect(
+      page.locator('[aria-busy="true"][aria-label="Suggested questions"]'),
+    ).toBeVisible();
+    await capture(page, "e05-suggestions-loading");
+  });
+
+  test("e06-suggestions-load-failed", async ({ page }) => {
+    await openWithFaults(page, "/prototype", ["suggestions-load-failed"]);
+    await expect(
+      page.getByRole("button", { name: "New chat" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("group", { name: "Suggested questions" }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await capture(page, "e06-suggestions-load-failed");
+  });
+
+  test("e07-suggestion-picked", async ({ page }) => {
+    await openFresh(page, "/prototype");
+    const suggestion = page.getByRole("button", {
+      name: /Do the underwriting test rules cover every decision boundary/,
+    });
+    await expect(suggestion).toBeVisible();
+    await suggestion.click();
+    await expect(
+      page.getByPlaceholder("Ask about life insurance or testing..."),
+    ).toHaveValue(
+      "Do the underwriting test rules cover every decision boundary in the life underwriting guide?",
+    );
+    const context = page.getByRole("group", { name: "Message context" });
+    await expect(
+      context.getByText("Underwriting test rules.pdf"),
+    ).toBeVisible();
+    await expect(
+      context.getByText("Life underwriting guide · v1.2.md"),
+    ).toBeVisible();
+    await capture(page, "e07-suggestion-picked");
+  });
 });
 
 test.describe("prototype states: cross-module journeys", () => {

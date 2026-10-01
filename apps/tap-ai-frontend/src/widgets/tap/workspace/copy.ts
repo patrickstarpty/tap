@@ -37,6 +37,12 @@ export interface WorkspaceCopy {
     heading: string;
     description: string;
     sourceHint: string;
+    promptSuggestions: {
+      label: string;
+      refresh: string;
+      basedOnOne(name: string): string;
+      basedOnMany(name: string, total: number): string;
+    };
     noContextNotice: string;
     selectedContextNotice: string;
     selectedContext: string;
@@ -239,6 +245,13 @@ export const WORKSPACE_COPY = {
       description:
         "Ask about life insurance, create BDD test cases, or build an automation.",
       sourceHint: "Each turn records the knowledge context you select.",
+      promptSuggestions: {
+        label: "Suggested questions",
+        refresh: "Show others",
+        basedOnOne: (name: string) => `Based on ${name}`,
+        basedOnMany: (name: string, total: number) =>
+          `Based on ${name} and ${total - 1} more`,
+      },
       noContextNotice: "No knowledge context was selected for this turn.",
       selectedContextNotice:
         "Citations identify the sources that supported this answer.",
@@ -445,6 +458,13 @@ export const WORKSPACE_COPY = {
       heading: "我能为您做什么？",
       description: "询问寿险业务、创建 BDD 测试用例，或构建自动化流程。",
       sourceHint: "每轮对话都会记录您选择的知识上下文。",
+      promptSuggestions: {
+        label: "推荐问题",
+        refresh: "换一批",
+        basedOnOne: (name: string) => `基于《${name}》`,
+        basedOnMany: (name: string, total: number) =>
+          `基于《${name}》等 ${total} 份资料`,
+      },
       noContextNotice: "此轮对话未选择知识上下文。回答仅基于当前可用信息。",
       selectedContextNotice: "引用会标明支持本次回答的知识来源。",
       selectedContext: "已选上下文",

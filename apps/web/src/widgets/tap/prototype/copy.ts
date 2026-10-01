@@ -41,8 +41,12 @@ export interface PrototypeCopy {
     heading: string;
     description: string;
     sourceHint: string;
-    suggestedPrompts: string;
-    quickPrompts: readonly [string, string, string];
+    promptSuggestions: {
+      label: string;
+      refresh: string;
+      basedOnOne(name: string): string;
+      basedOnMany(name: string, total: number): string;
+    };
     answer: string;
     noContextNotice: string;
     selectedContextNotice: string;
@@ -402,12 +406,13 @@ export const PROTOTYPE_COPY = {
       description:
         "Ask about life insurance, create BDD test cases, or build an automation.",
       sourceHint: "Each turn records the knowledge context you select.",
-      suggestedPrompts: "Suggested prompts",
-      quickPrompts: [
-        "Summarize the life insurance underwriting rules",
-        "Create BDD test cases for life insurance underwriting",
-        "Generate an automation script for a life insurance application",
-      ],
+      promptSuggestions: {
+        label: "Suggested questions",
+        refresh: "Show others",
+        basedOnOne: (name: string) => `Based on ${name}`,
+        basedOnMany: (name: string, total: number) =>
+          `Based on ${name} and ${total - 1} more`,
+      },
       answer:
         "A life insurance application commonly includes identity details for the policyholder and insured person, health disclosures, beneficiary information, and payment details.",
       noContextNotice:
@@ -781,12 +786,13 @@ export const PROTOTYPE_COPY = {
       heading: "我能为您做什么？",
       description: "询问寿险业务、创建 BDD 测试用例，或构建自动化流程。",
       sourceHint: "每轮对话都会记录您选择的知识上下文。",
-      suggestedPrompts: "推荐提示词",
-      quickPrompts: [
-        "总结寿险新单核保规则",
-        "为寿险新单核保创建 BDD 测试用例",
-        "为寿险投保申请生成自动化脚本",
-      ],
+      promptSuggestions: {
+        label: "推荐问题",
+        refresh: "换一批",
+        basedOnOne: (name: string) => `基于《${name}》`,
+        basedOnMany: (name: string, total: number) =>
+          `基于《${name}》等 ${total} 份资料`,
+      },
       answer:
         "寿险投保通常包含投保人和被保险人身份资料、健康告知、受益人信息以及缴费资料。",
       noContextNotice: "请选择相关知识来源，获取带有引用的回答。",

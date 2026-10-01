@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import signal
 import time
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -45,6 +46,7 @@ from tap.modules.chat.domain.conversations import (
     GraphContextStatus,
     RetrievalSummary,
 )
+from tap.modules.chat.domain.suggestions import RefreshReason
 from tap.platform.telemetry import (
     bind_trace,
     current_binding,
@@ -52,6 +54,8 @@ from tap.platform.telemetry import (
     flush_traces,
     span,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _evidence_checkpoint(evidence: AnswerEvidence) -> dict[str, object]:
@@ -112,6 +116,7 @@ class GenerationWorker:
     knowledge: Any
     checkpointer: BaseCheckpointSaver | None = None
     insights_explanation: Any | None = None
+    suggestion_refresh: Any | None = None
     lease_duration: timedelta = timedelta(seconds=60)
     renew_interval_seconds: float = 20.0
     max_checkpoint_attempts: int = 3
@@ -547,6 +552,18 @@ class GenerationWorker:
                 terminal_event=terminal_event,
                 stream_events=persisted_stream_events,
             )
+            if self.suggestion_refresh is not None and evidence.outcome == "completed":
+                actor_id = getattr(turn.input_snapshot.value, "actor_id", None)
+                if actor_id:
+                    try:
+                        await self.suggestion_refresh.request_refresh_for_actor(
+                            actor_id, RefreshReason.TURN_COMPLETED, now=datetime.now(UTC)
+                        )
+                    except Exception as exc:  # noqa: BLE001 - must never fail a completed turn
+                        _LOGGER.warning(
+                            "prompt suggestion refresh request failed: %s",
+                            type(exc).__name__,
+                        )
             outcome = evidence.outcome
         except InsightsAuthorizationChanged:
             if insights_query_id is None:
@@ -624,7 +641,10 @@ async def main() -> None:
         await runtime.aclose()
         raise RuntimeError("generation worker composition is unavailable")
     worker = GenerationWorker(
-        conversations, knowledge, insights_explanation=runtime.http_services.insights_explanation
+        conversations,
+        knowledge,
+        insights_explanation=runtime.http_services.insights_explanation,
+        suggestion_refresh=runtime.http_services.prompt_suggestion_store,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

@@ -90,8 +90,8 @@ flowchart LR
 ## 实施顺序
 
 1. 清理 TAP AI 前端中写死的原型内容，包括去掉硬编码快捷提问（推荐功能上线前该区域不显示），并去掉使用虚构数据的“领域总览”图谱视图（真实领域总览归 V1 能力 2）。计划见 [TAP AI 前端清理原型内容](../plans/2026-09-30-tap-ai-frontend-demo-cleanup.md)。
-2. 在 `/prototype` 设计推荐交互。
-3. 后端实现推荐生成、缓存、过滤与接口。
-4. TAP AI 前端按原型实现。
+2. 在 `/prototype` 设计推荐交互。计划见 [原型推荐问题交互](../plans/2026-09-30-prototype-prompt-suggestions.md)。
+3. 后端实现推荐生成、缓存、过滤与接口。计划见 [推荐问题后端](../plans/2026-09-30-prompt-suggestions-backend.md)。
+4. TAP AI 前端按原型实现。计划见 [TAP AI 前端推荐问题](../plans/2026-09-30-tap-ai-frontend-prompt-suggestions.md)。
 
 `docs/architecture.md` 在第 3 步补充推荐问题的数据流。

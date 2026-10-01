@@ -20,6 +20,7 @@ import { LibraryWorkspace } from "./workspace/LibraryWorkspace";
 import { AccessibleDialog } from "./workspace/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
+import type { PromptSuggestionItem } from "../../features/knowledge/api/types";
 import {
   aiAssetPresentation,
   useAiAssetCatalog,
@@ -1710,6 +1711,17 @@ export function TapperWorkspace() {
     );
   };
 
+  const pickSuggestion = (item: PromptSuggestionItem) => {
+    setMessageDraft(item.question);
+    const suggestionSourceIds = item.sources.map((source) => source.sourceId);
+    updateActiveConversation((conversation) => ({
+      ...conversation,
+      selectedSourceIds: Array.from(
+        new Set([...conversation.selectedSourceIds, ...suggestionSourceIds]),
+      ),
+    }));
+  };
+
   const [historySearch, setHistorySearch] = useState("");
   const [historyError, setHistoryError] = useState<string | undefined>();
   const conversationSearch = useConversationSearch(projectId, historySearch);
@@ -2149,6 +2161,7 @@ export function TapperWorkspace() {
               conversation={displayedConversation}
               copy={copy}
               isInert={compactSourcesDrawerOpen}
+              locale={locale}
               message={messageDraft}
               onMessageChange={(value) => {
                 setMessageDraft(value);
@@ -2160,6 +2173,7 @@ export function TapperWorkspace() {
                   modelId,
                 }))
               }
+              onPickSuggestion={pickSuggestion}
               onSend={(prompt) => sendMessage(prompt)}
               onEditTurn={(turn) => {
                 const context = resendContextOf(turn);

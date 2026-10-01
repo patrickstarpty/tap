@@ -920,15 +920,28 @@ def _build_document_repository(
     scope: ProjectScopeContext,
     default_chat_model: str,
 ) -> MysqlDocumentRepository:
+    from tap.entrypoints.prompt_suggestion_knowledge import (
+        CompositeReadyProjection,
+        SuggestionReadyProjection,
+    )
+    from tap.modules.chat.adapters.mysql_suggestions import MysqlSuggestionStore
     from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore, MysqlGraphReadyProjection
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 
     graph_jobs = MysqlGraphJobStore(sessions)
+    # SuggestionReadyProjection.after_ready() ignores its own scope argument and
+    # always refreshes the scope this store was bound to; the runtime is
+    # single-scope (ValidationScopeProvider), so exactly one MysqlSuggestionStore
+    # must exist per runtime and this is the one shared instance.
+    suggestion_store = MysqlSuggestionStore(sessions, scope=scope)
     return MysqlDocumentRepository(
         sessions,
         scope=scope,
         audit_factory=create_project_audit,
-        ready_projection=MysqlGraphReadyProjection(graph_jobs, model_alias=default_chat_model),
+        ready_projection=CompositeReadyProjection(
+            MysqlGraphReadyProjection(graph_jobs, model_alias=default_chat_model),
+            SuggestionReadyProjection(suggestion_store),
+        ),
     )
 
 
@@ -1051,6 +1064,41 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("test design worker resource settlement unexpectedly returned")
+
+
+async def create_suggestion_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
+    """Construct the independently restartable prompt suggestion refresh worker.
+
+    Grounding a candidate question answers it through the same AnswerService
+    the interactive API uses (real Milvus search, policy authority, etc.), so
+    this composes the whole API graph rather than a narrower worker-only one —
+    exactly what the generation worker's own composition already does for the
+    same reason."""
+
+    if not isinstance(settings, TapperSettings):
+        raise TypeError("Tapper suggestion worker runtime requires validated settings")
+    from tap.entrypoints.tapper_ingestion_worker import BoundedWorker, WorkerRuntime
+    from tap.entrypoints.tapper_suggestion_worker import IdleWakeups
+    from tap.modules.chat.application.suggestions import SuggestionRefreshWorker
+
+    api_runtime = await create_api_runtime(settings)
+    service = api_runtime.http_services.prompt_suggestions
+    store = api_runtime.http_services.prompt_suggestion_store
+    if service is None or store is None:
+        await api_runtime.aclose()
+        raise ValueError("prompt suggestion composition is unavailable")
+    worker = SuggestionRefreshWorker(
+        store=store,
+        service=service,
+        worker_id=settings.worker_id + "-suggestions",
+        clock=lambda: datetime.now(UTC),
+    )
+    # SuggestionRefreshWorker.run_once takes limit as keyword-only, which the
+    # BoundedWorker Protocol's positional-or-keyword signature doesn't admit
+    # structurally even though run_worker_loop always calls it by keyword.
+    return WorkerRuntime(
+        worker=cast(BoundedWorker, worker), wakeups=IdleWakeups(), resources=(api_runtime,)
+    )
 
 
 def _create_blob(settings: TapperSettings) -> KnowledgeArtifactStore:
@@ -1541,6 +1589,46 @@ def _assemble_http_services(
         from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService
 
         traces = MysqlTraceHttpService(conversation_sessions)  # type: ignore[arg-type]
+    prompt_suggestions = None
+    prompt_suggestion_store = None
+    if conversation_sessions is not None:
+        from uuid import uuid4
+
+        from tap.entrypoints.prompt_suggestion_knowledge import (
+            AnswerGroundingCheck,
+            KnowledgeSuggestionSources,
+        )
+        from tap.modules.chat.adapters.model_gateway_suggestions import (
+            ModelGatewaySuggestionGenerator,
+        )
+        from tap.modules.chat.adapters.mysql_suggestion_usage import MysqlSuggestionUsage
+        from tap.modules.chat.adapters.mysql_suggestions import MysqlSuggestionStore
+        from tap.modules.chat.application.suggestions import PromptSuggestionService
+
+        prompt_suggestion_store = MysqlSuggestionStore(
+            conversation_sessions,  # type: ignore[arg-type]
+            scope=repository.scope,
+        )
+        prompt_suggestions = PromptSuggestionService(
+            store=prompt_suggestion_store,
+            knowledge=KnowledgeSuggestionSources(
+                conversation_sessions,  # type: ignore[arg-type]
+                scope=repository.scope,
+            ),
+            usage=MysqlSuggestionUsage(
+                conversation_sessions,  # type: ignore[arg-type]
+                scope=repository.scope,
+            ),
+            generator=ModelGatewaySuggestionGenerator(
+                embeddings.gateway,
+                scope=embeddings.scope,
+                alias=embeddings.chat_alias,
+                timeout_seconds=embeddings.timeout_seconds,
+            ),
+            grounding=AnswerGroundingCheck(answer_service),
+            id_factory=lambda: uuid4().hex,
+            clock=lambda: datetime.now(UTC),
+        )
     graph = None
     graph_enricher = None
     if graph_sessions is not None:
@@ -1617,6 +1705,8 @@ def _assemble_http_services(
         authorization_policy=authorization_policy,
         scope=repository.scope,
         conversations=conversations,
+        prompt_suggestions=prompt_suggestions,
+        prompt_suggestion_store=prompt_suggestion_store,
         traces=traces,
         graph=graph,
         test_plans=test_plans,

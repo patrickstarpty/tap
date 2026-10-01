@@ -1,8 +1,11 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { fakeKnowledgeClient } from "../../features/knowledge/testing/fakeKnowledgeClient";
+import {
+  document as fixtureDocument,
+  fakeKnowledgeClient,
+} from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
 import { TapperWorkspace } from "./TapperWorkspace";
 
@@ -524,4 +527,227 @@ it("searches chat history by title on the server", async () => {
     "nothing",
   );
   expect(await within(nav).findByText("No matching chats")).toBeVisible();
+});
+
+function withDocumentSources() {
+  return fakeKnowledgeClient().withDocuments([
+    fixtureDocument({
+      documentId: "doc-a",
+      sourceId: "src-a",
+      filename: "a.md",
+      status: "ready",
+    }),
+    fixtureDocument({
+      documentId: "doc-b",
+      sourceId: "src-b",
+      filename: "b.md",
+      status: "ready",
+    }),
+  ]);
+}
+
+async function selectSourceA(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Add to message" }));
+  await user.click(
+    within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+      "menuitem",
+      { name: "Add from Library" },
+    ),
+  );
+  await user.click(
+    within(screen.getByRole("dialog", { name: "Add from Library" })).getByRole(
+      "option",
+      { name: "a.md" },
+    ),
+  );
+}
+
+it("fills the composer and appends sources when a suggestion is picked", async () => {
+  const api = withDocumentSources().withPromptSuggestions("en", {
+    items: [
+      {
+        id: "sug-1",
+        question: "What is covered?",
+        sources: [
+          { sourceId: "src-a", name: "a.md" },
+          { sourceId: "src-b", name: "b.md" },
+        ],
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  renderKnowledgeApp(<TapperWorkspace />, { api });
+
+  await selectSourceA(user);
+
+  const group = await screen.findByRole("group", {
+    name: "Suggested questions",
+  });
+  await user.click(
+    within(group).getByRole("button", { name: /What is covered\?/u }),
+  );
+
+  const composer = screen.getByRole("form", { name: "Message composer" });
+  const context = within(composer).getByRole("group", {
+    name: "Message context",
+  });
+  expect(within(context).getAllByRole("button")).toHaveLength(2);
+  expect(within(context).getByText("a.md")).toBeVisible();
+  expect(within(context).getByText("b.md")).toBeVisible();
+
+  const textbox = screen.getByRole("textbox", {
+    name: "Message Tapper",
+  }) as HTMLTextAreaElement;
+  expect(textbox).toHaveValue("What is covered?");
+  expect(textbox.selectionStart).toBe("What is covered?".length);
+  expect(textbox.selectionEnd).toBe("What is covered?".length);
+
+  // Not sent: the composer keeps the picked question instead of clearing it.
+  expect(textbox).toHaveValue("What is covered?");
+});
+
+it("hides suggestions once the conversation starts", async () => {
+  const { api } = durableConversation({ state: "completed" });
+  api.withPromptSuggestions("en", {
+    items: [
+      {
+        id: "sug-1",
+        question: "Suggested after start",
+        sources: [{ sourceId: "src_policy", name: "Policy source" }],
+      },
+    ],
+  });
+
+  // durableConversation loads conversation-a, which already has a turn.
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    screen.queryByRole("group", { name: "Suggested questions" }),
+  ).not.toBeInTheDocument();
+});
+
+it("requests suggestions in the interface language", async () => {
+  const api = fakeKnowledgeClient()
+    .withPromptSuggestions("en", {
+      items: [{ id: "en-1", question: "English question", sources: [] }],
+    })
+    .withPromptSuggestions("zh", {
+      items: [{ id: "zh-1", question: "中文问题", sources: [] }],
+    });
+  const user = userEvent.setup();
+  renderKnowledgeApp(<TapperWorkspace />, { api });
+
+  await screen.findByRole("group", { name: "Suggested questions" });
+  await user.click(screen.getByRole("button", { name: "中文" }));
+
+  const group = await screen.findByRole("group", { name: "推荐问题" });
+  expect(within(group).getByText("中文问题")).toBeVisible();
+});
+
+it("hides suggestions silently when loading fails", async () => {
+  const api = fakeKnowledgeClient().withPromptSuggestionsProblem();
+  renderKnowledgeApp(<TapperWorkspace />, { api });
+
+  await waitFor(() => expect(api.promptSuggestionCalls).toContain("en"));
+  expect(
+    screen.queryByRole("group", { name: "Suggested questions" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("does not touch the draft when suggestions arrive", async () => {
+  const api = fakeKnowledgeClient().deferPromptSuggestions();
+  const user = userEvent.setup();
+  renderKnowledgeApp(<TapperWorkspace />, { api });
+
+  const composer = screen.getByRole("textbox", { name: "Message Tapper" });
+  await user.type(composer, "draft");
+
+  api.withPromptSuggestions("en", {
+    items: [{ id: "sug-1", question: "New question", sources: [] }],
+  });
+  api.finishPromptSuggestions();
+
+  await screen.findByRole("group", { name: "Suggested questions" });
+  expect(composer).toHaveValue("draft");
+});
+
+it("keeps working when a suggestion source is not listed yet", async () => {
+  const api = fakeKnowledgeClient().withPromptSuggestions("en", {
+    items: [
+      {
+        id: "sug-1",
+        question: "Unresolved source question",
+        sources: [{ sourceId: "src-unknown", name: "Unknown" }],
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  renderKnowledgeApp(<TapperWorkspace />, { api });
+
+  const group = await screen.findByRole("group", {
+    name: "Suggested questions",
+  });
+  await user.click(
+    within(group).getByRole("button", { name: /Unresolved source question/u }),
+  );
+
+  expect(screen.getByRole("textbox", { name: "Message Tapper" })).toHaveValue(
+    "Unresolved source question",
+  );
+});
+
+it("shows the loading skeleton before suggestions resolve, then the cards", async () => {
+  const api = fakeKnowledgeClient().deferPromptSuggestions();
+  renderKnowledgeApp(<TapperWorkspace />, { api });
+
+  await waitFor(() => {
+    const skeleton = document.querySelector(
+      '.tap-prompt-suggestions[aria-busy="true"]',
+    );
+    expect(skeleton).not.toBeNull();
+    expect(skeleton).toHaveAttribute("aria-label", "Suggested questions");
+    expect(skeleton?.querySelectorAll(".ant-skeleton-button")).toHaveLength(4);
+  });
+  expect(
+    screen.queryByRole("group", { name: "Suggested questions" }),
+  ).not.toBeInTheDocument();
+
+  api.withPromptSuggestions("en", {
+    items: [{ id: "sug-1", question: "New question", sources: [] }],
+  });
+  api.finishPromptSuggestions();
+
+  const group = await screen.findByRole("group", {
+    name: "Suggested questions",
+  });
+  expect(
+    within(group).getByRole("button", { name: /New question/u }),
+  ).toBeVisible();
+  expect(
+    document.querySelector('.tap-prompt-suggestions[aria-busy="true"]'),
+  ).toBeNull();
+});
+
+it("does not render suggestions or a skeleton when the knowledge client does not match the active project", async () => {
+  const api = fakeKnowledgeClient().withPromptSuggestions("en", {
+    items: [{ id: "sug-1", question: "Never shown", sources: [] }],
+  });
+  const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, { api });
+  await screen.findByRole("textbox", { name: "Message Tapper" });
+
+  await act(async () =>
+    queryClient.setQueryData(["runtime-mode"], {
+      mode: "validation",
+      identityMode: "validation",
+      projectId: "other-project",
+      actorId: "actor-test",
+    }),
+  );
+
+  expect(
+    document.querySelector('.tap-prompt-suggestions[aria-busy="true"]'),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("group", { name: "Suggested questions" }),
+  ).not.toBeInTheDocument();
 });

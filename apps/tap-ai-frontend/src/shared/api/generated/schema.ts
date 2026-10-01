@@ -1016,6 +1016,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/prompt-suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Prompt Suggestions */
+        get: operations["prompt_suggestion_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/test-plans": {
         parameters: {
             query?: never;
@@ -3455,6 +3472,27 @@ export interface components {
             /** @constant */
             type?: "https://tap.example/problems/unsupported-document";
         });
+        /** PromptSuggestionItem */
+        PromptSuggestionItem: {
+            /** Id */
+            id: string;
+            /** Question */
+            question: string;
+            /** Sources */
+            sources: components["schemas"]["PromptSuggestionSource"][];
+        };
+        /** PromptSuggestionPage */
+        PromptSuggestionPage: {
+            /** Items */
+            items: components["schemas"]["PromptSuggestionItem"][];
+        };
+        /** PromptSuggestionSource */
+        PromptSuggestionSource: {
+            /** Name */
+            name: string;
+            /** Sourceid */
+            sourceId: string;
+        };
         /** PublishedKnowledgeSource */
         PublishedKnowledgeSource: {
             /** Approveditemcount */
@@ -9117,6 +9155,48 @@ export interface operations {
             };
             /** @description Model call not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    prompt_suggestion_list: {
+        parameters: {
+            query: {
+                locale: "en" | "zh";
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptSuggestionPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

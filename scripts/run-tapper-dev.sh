@@ -77,6 +77,7 @@ tapper_dev_api_pid=""
 tapper_dev_relay_pid=""
 tapper_dev_worker_pid=""
 tapper_dev_graph_pid=""
+tapper_dev_suggestion_pid=""
 tapper_dev_test_design_pid=""
 tapper_dev_generation_pid=""
 tapper_dev_web_pid=""
@@ -107,7 +108,7 @@ cleanup() {
     tapper_dev_ready_file=""
   fi
 
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" \
     "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     terminate_pid "$child_pid" || cleanup_failed=1
@@ -116,7 +117,7 @@ cleanup() {
   deadline=$(( SECONDS + tapper_dev_shutdown_grace_seconds ))
   while :; do
     live=0
-    for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+    for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" \
       "$tapper_dev_worker_pid" \
       "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
       if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
@@ -128,14 +129,14 @@ cleanup() {
     sleep 0.1 || cleanup_failed=1
   done
 
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" \
     "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
       kill -KILL "$child_pid" 2>/dev/null || cleanup_failed=1
     fi
   done
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" \
     "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     if [ -n "$child_pid" ]; then
@@ -207,6 +208,8 @@ tapper_dev_relay_pid=$!
 tapper_dev_worker_pid=$!
 (exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_graph_worker) &
 tapper_dev_graph_pid=$!
+(exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_suggestion_worker) &
+tapper_dev_suggestion_pid=$!
 (exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_test_design_worker) &
 tapper_dev_test_design_pid=$!
 (exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_generation_worker) &
@@ -246,6 +249,13 @@ child_exit_status() {
     ! kill -0 "$tapper_dev_graph_pid" 2>/dev/null; then
     if wait "$tapper_dev_graph_pid"; then status=1; else status=$?; fi
     tapper_dev_graph_pid=""
+    [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
+    return "$status"
+  fi
+  if [ -n "$tapper_dev_suggestion_pid" ] && \
+    ! kill -0 "$tapper_dev_suggestion_pid" 2>/dev/null; then
+    if wait "$tapper_dev_suggestion_pid"; then status=1; else status=$?; fi
+    tapper_dev_suggestion_pid=""
     [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
     return "$status"
   fi

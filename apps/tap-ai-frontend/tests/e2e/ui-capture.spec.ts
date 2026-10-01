@@ -6,6 +6,45 @@ import { expect, test, type Page } from "@playwright/test";
 // No live backend or provider is contacted; these are deterministic UI captures.
 test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 });
 
+// Five items (> the four-card batch size) so the "Show others" control renders,
+// matching the prototype's e01-suggestions-default reference state.
+const CAPTURE_PROMPT_SUGGESTIONS = [
+  {
+    id: "suggestion-capture-1",
+    question: "What evidence is required for applicants over 60?",
+    sources: [
+      { sourceId: "source-capture-guide", name: "Underwriting guide.md" },
+    ],
+  },
+  {
+    id: "suggestion-capture-2",
+    question: "Which fields are mandatory on the approved disclosure policy?",
+    sources: [
+      { sourceId: "source-capture-policy", name: "Disclosure policy.pdf" },
+    ],
+  },
+  {
+    id: "suggestion-capture-3",
+    question: "How do I look up the premium rate for a 45-year-old non-smoker?",
+    sources: [{ sourceId: "source-capture-rates", name: "Premium rates.xlsx" }],
+  },
+  {
+    id: "suggestion-capture-4",
+    question: "Do the test rules cover every decision boundary in the guide?",
+    sources: [
+      { sourceId: "source-capture-rules", name: "Underwriting test rules.pdf" },
+      { sourceId: "source-capture-guide", name: "Underwriting guide.md" },
+    ],
+  },
+  {
+    id: "suggestion-capture-5",
+    question: "What is the surrender value calculation basis?",
+    sources: [
+      { sourceId: "source-capture-surrender", name: "Surrender terms.md" },
+    ],
+  },
+];
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -28,6 +67,8 @@ test.beforeEach(async ({ page }) => {
           },
         ],
       };
+    } else if (path.endsWith("/prompt-suggestions")) {
+      body = { items: CAPTURE_PROMPT_SUGGESTIONS };
     } else if (
       /\/(ai\/(agents|skills)|conversations|knowledge\/(sources|published-sources))$/u.test(
         path,
@@ -223,6 +264,8 @@ test("captures a restored Insights explanation before and after refresh", async 
       };
     } else if (path.endsWith("/conversations/conversation-capture/events")) {
       body = { items: [], nextCursor: null };
+    } else if (path.endsWith("/prompt-suggestions")) {
+      body = { items: CAPTURE_PROMPT_SUGGESTIONS };
     } else if (
       /\/(ai\/(agents|skills)|knowledge\/(sources|publications))$/u.test(path)
     ) {

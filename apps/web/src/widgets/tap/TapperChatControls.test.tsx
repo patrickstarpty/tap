@@ -13,6 +13,52 @@ import { createInitialArtifactState } from "../../legacy/artifacts/fixtures";
 const HEALTH_QUESTION = "What does the health disclosure rule require?";
 const BDD_REQUEST = "Create BDD test cases for life insurance underwriting";
 
+const FIRST_SUGGESTION_QUESTION =
+  "What evidence is required for applicants over 60 in the life underwriting guide?";
+const TWO_SOURCE_SUGGESTION_QUESTION =
+  "Do the underwriting test rules cover every decision boundary in the life underwriting guide?";
+
+// Mirrors tests/e2e/prototype-states.spec.ts's NON_REVIEW_SOURCE_IDS /
+// REVIEW_SOURCE_IDS: removing every id empties the merged source list.
+const NON_REVIEW_SOURCE_IDS = [
+  "sample-test-cases",
+  "sample-underwriting",
+  "sample-beneficiary",
+  "sample-exploratory",
+  "sample-log",
+  "sample-slides",
+  "sample-csv",
+  "sample-json",
+  "sample-yaml",
+  "sample-xml",
+  "sample-html",
+  "sample-rtf",
+  "sample-odt",
+  "sample-doc",
+  "sample-ods",
+  "sample-xls",
+  "sample-odp",
+  "sample-ppt",
+  "sample-product-savings-01",
+  "sample-nb-issue",
+  "sample-ps-beneficiary",
+  "sample-cl-medical",
+  "sample-system-policy",
+  "sample-code-beneficiary",
+  "sample-test-beneficiary-retry",
+  "sample-automation-beneficiary",
+  "sample-run-servicing",
+  "sample-defect-duplicate",
+];
+const REVIEW_SOURCE_IDS = [
+  "underwriting-v12",
+  "underwriting-scan",
+  "underwriting-evidence-pdf",
+  "premium-rates-xlsx",
+  "approval-flow-complex",
+  "health-disclosure-approved",
+];
+
 beforeEach(() => {
   localStorage.clear();
   vi.useFakeTimers();
@@ -535,6 +581,114 @@ describe("composer and turn controls", () => {
         "Each turn records the knowledge context you select.",
       ),
     ).toBeVisible();
+  });
+});
+
+describe("prompt suggestions on the new chat page", () => {
+  function suggestionButton(question: string) {
+    return screen.getByRole("button", {
+      name: (accessibleName) => accessibleName.startsWith(question),
+    });
+  }
+
+  it("replaces the draft and keeps focus at the end", () => {
+    render(<TapProductPrototype />);
+    type("draft");
+
+    fireEvent.click(suggestionButton(FIRST_SUGGESTION_QUESTION));
+
+    const field = composer();
+    expect(field.value).toBe(FIRST_SUGGESTION_QUESTION);
+    expect(document.activeElement).toBe(field);
+    expect(field.selectionStart).toBe(FIRST_SUGGESTION_QUESTION.length);
+    expect(field.selectionEnd).toBe(FIRST_SUGGESTION_QUESTION.length);
+    expect(userMessages()).toEqual([]);
+  });
+
+  it("selects the suggestion sources when none are selected", () => {
+    render(<TapProductPrototype />);
+
+    fireEvent.click(suggestionButton(TWO_SOURCE_SUGGESTION_QUESTION));
+
+    expect(screen.getByText("2 selected")).toBeVisible();
+    const context = screen.getByRole("group", { name: "Message context" });
+    expect(
+      within(context).getByText("Underwriting test rules.pdf"),
+    ).toBeVisible();
+    expect(
+      within(context).getByText("Life underwriting guide · v1.2.md"),
+    ).toBeVisible();
+  });
+
+  it("appends suggestion sources without duplicates", () => {
+    render(<TapProductPrototype />);
+    selectUnderwritingSource();
+
+    fireEvent.click(suggestionButton(TWO_SOURCE_SUGGESTION_QUESTION));
+
+    expect(screen.getByText("2 selected")).toBeVisible();
+    const context = screen.getByRole("group", { name: "Message context" });
+    expect(
+      within(context).getAllByText("Underwriting test rules.pdf"),
+    ).toHaveLength(1);
+  });
+
+  it("hides suggestions once the conversation starts", () => {
+    render(<TapProductPrototype />);
+    send(HEALTH_QUESTION);
+
+    expect(
+      screen.queryByRole("group", { name: "Suggested questions" }),
+    ).toBeNull();
+  });
+
+  it("shows suggestions in the interface language", () => {
+    render(<TapProductPrototype />);
+
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+
+    const group = screen.getByRole("group", { name: "推荐问题" });
+    expect(
+      within(group).getByText(
+        "核保指引中，60 岁以上投保人需要提供哪些证明材料？",
+        { exact: false },
+      ),
+    ).toBeVisible();
+  });
+
+  it("hides suggestions after every source is deleted", () => {
+    localStorage.setItem(
+      PROTOTYPE_STORAGE_KEY,
+      JSON.stringify({
+        version: PROTOTYPE_SNAPSHOT_VERSION,
+        activeConversationId: "chat-1",
+        conversations: [
+          {
+            id: "chat-1",
+            title: "New chat",
+            turns: [],
+            modelId: "gpt-5.6-sol",
+            selectedSourceIds: [],
+            selectedAgentIds: [],
+            selectedSkillIds: [],
+          },
+        ],
+        artifacts: createInitialArtifactState(),
+        library: {
+          open: false,
+          examplesLoaded: true,
+          sampleLoaded: true,
+          localSources: [],
+          removedSourceIds: [...NON_REVIEW_SOURCE_IDS, ...REVIEW_SOURCE_IDS],
+        },
+      }),
+    );
+
+    render(<TapProductPrototype />);
+
+    expect(
+      screen.queryByRole("group", { name: "Suggested questions" }),
+    ).toBeNull();
   });
 });
 
