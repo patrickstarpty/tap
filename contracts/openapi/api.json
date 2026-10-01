@@ -1558,6 +1558,17 @@
             "title": "State",
             "type": "string"
           },
+          "traceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Traceid"
+          },
           "turnId": {
             "title": "Turnid",
             "type": "string"
@@ -3092,6 +3103,7 @@
         "title": "InsightsExplanationResult",
         "type": "object"
       },
+      "JsonValue": {},
       "KnowledgeChunk": {
         "additionalProperties": false,
         "properties": {
@@ -4728,6 +4740,285 @@
           "status"
         ],
         "title": "LiveHealth",
+        "type": "object"
+      },
+      "ModelCallDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "callId": {
+            "title": "Callid",
+            "type": "string"
+          },
+          "costUsd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Costusd"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "errorCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errorcode"
+          },
+          "inputTokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputtokens"
+          },
+          "latencyMs": {
+            "title": "Latencyms",
+            "type": "integer"
+          },
+          "modelName": {
+            "title": "Modelname",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "outputTokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputtokens"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "request": {
+            "title": "Request",
+            "type": "string"
+          },
+          "response": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response"
+          },
+          "spanId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spanid"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "upstreamModel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstreammodel"
+          }
+        },
+        "required": [
+          "callId",
+          "operation",
+          "modelName",
+          "latencyMs",
+          "attempts",
+          "status",
+          "createdAt",
+          "request"
+        ],
+        "title": "ModelCallDetail",
+        "type": "object"
+      },
+      "ModelCallView": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "callId": {
+            "title": "Callid",
+            "type": "string"
+          },
+          "costUsd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Costusd"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "errorCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errorcode"
+          },
+          "inputTokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputtokens"
+          },
+          "latencyMs": {
+            "title": "Latencyms",
+            "type": "integer"
+          },
+          "modelName": {
+            "title": "Modelname",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "outputTokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputtokens"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "spanId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spanid"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "upstreamModel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstreammodel"
+          }
+        },
+        "required": [
+          "callId",
+          "operation",
+          "modelName",
+          "latencyMs",
+          "attempts",
+          "status",
+          "createdAt"
+        ],
+        "title": "ModelCallView",
         "type": "object"
       },
       "ModelCatalogItem": {
@@ -8962,6 +9253,75 @@
         "title": "TestPlanTextFactView",
         "type": "object"
       },
+      "TraceSpanView": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "attributes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Attributes",
+            "type": "object"
+          },
+          "durationMs": {
+            "title": "Durationms",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parentSpanId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentspanid"
+          },
+          "spanId": {
+            "title": "Spanid",
+            "type": "string"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "title": "Startedat",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "spanId",
+          "name",
+          "status",
+          "startedAt",
+          "durationMs",
+          "attributes"
+        ],
+        "title": "TraceSpanView",
+        "type": "object"
+      },
       "TurnAbstainedEvent": {
         "additionalProperties": false,
         "properties": {
@@ -9181,6 +9541,101 @@
           "state"
         ],
         "title": "TurnStartedPayload",
+        "type": "object"
+      },
+      "TurnTrace": {
+        "additionalProperties": false,
+        "properties": {
+          "modelCalls": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCallView"
+            },
+            "title": "Modelcalls",
+            "type": "array"
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/TraceSpanView"
+            },
+            "title": "Spans",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/TurnTraceSummary"
+          },
+          "traceId": {
+            "title": "Traceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceId",
+          "summary",
+          "spans",
+          "modelCalls"
+        ],
+        "title": "TurnTrace",
+        "type": "object"
+      },
+      "TurnTraceSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptCount": {
+            "title": "Attemptcount",
+            "type": "integer"
+          },
+          "costIncomplete": {
+            "title": "Costincomplete",
+            "type": "boolean"
+          },
+          "costUsd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Costusd"
+          },
+          "inputTokens": {
+            "title": "Inputtokens",
+            "type": "integer"
+          },
+          "outputTokens": {
+            "title": "Outputtokens",
+            "type": "integer"
+          },
+          "requestedModels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requestedmodels",
+            "type": "array"
+          },
+          "totalDurationMs": {
+            "title": "Totaldurationms",
+            "type": "integer"
+          },
+          "upstreamModels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Upstreammodels",
+            "type": "array"
+          }
+        },
+        "required": [
+          "totalDurationMs",
+          "inputTokens",
+          "outputTokens",
+          "costIncomplete",
+          "requestedModels",
+          "upstreamModels",
+          "attemptCount"
+        ],
+        "title": "TurnTraceSummary",
         "type": "object"
       },
       "ValidationError": {
@@ -11336,6 +11791,88 @@
           }
         },
         "summary": "Citation",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/trace": {
+      "get": {
+        "operationId": "conversation_turn_trace",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnTrace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conversation, Turn, or trace not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Turn Trace",
         "tags": [
           "conversations"
         ]
@@ -16505,6 +17042,79 @@
         "summary": "Retry Source",
         "tags": [
           "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/model-calls/{call_id}": {
+      "get": {
+        "operationId": "model_call_detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCallDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Model call not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Model Call Detail",
+        "tags": [
+          "model-calls"
         ]
       }
     },

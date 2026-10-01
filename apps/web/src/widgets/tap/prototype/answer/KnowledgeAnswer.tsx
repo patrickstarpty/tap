@@ -2,6 +2,8 @@ import { Button } from "antd";
 import type { AssistantTurn } from "../model";
 import { AnswerEvidence } from "./AnswerEvidence";
 import type { OpenCitation } from "./CitationPanel";
+import { AnswerTrace } from "../AnswerTrace";
+import { createSampleTrace } from "../sampleTrace";
 
 function CitationButtons({
   turn,
@@ -143,6 +145,7 @@ export function KnowledgeAnswer({
         )}
       </p>
       <CitationButtons turn={turn} onOpenCitation={onOpenCitation} />
+      <AnswerTrace trace={createSampleTrace(turn.locale)} />
     </div>
   );
 }

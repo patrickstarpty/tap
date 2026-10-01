@@ -407,6 +407,7 @@ class ConversationTurn:
     input_snapshot: TurnInputSnapshot
     answer_snapshot: AnswerEvidenceSnapshot | None = None
     lease_token: str | None = None
+    traceparent: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

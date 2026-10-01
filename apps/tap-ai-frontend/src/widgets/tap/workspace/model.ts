@@ -45,6 +45,8 @@ export interface AssistantTurn {
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
   response?: RetrievalAnswerResponse | null;
+  traceId?: string | null;
+  attempt?: number;
   insightsExplanation?: InsightsExplanationResult;
   insightsQueryId?: string;
   status?:

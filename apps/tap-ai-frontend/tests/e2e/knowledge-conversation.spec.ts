@@ -138,6 +138,57 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     )
     .toMatch(/completed|abstained/u);
 
+  const traceResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}/turns/${accepted.turnId}/trace`,
+  );
+  expect(traceResponse.status()).toBe(200);
+  const trace = (await traceResponse.json()) as {
+    summary: {
+      inputTokens: number;
+      outputTokens: number;
+    };
+  };
+  expect(trace.summary.inputTokens).toBeGreaterThan(0);
+  expect(trace.summary.outputTokens).toBeGreaterThan(0);
+
+  const tracePanelButton = page.getByRole("button", {
+    name: /^(Trace|调用链):/u,
+  });
+  await expect(tracePanelButton).toBeVisible({ timeout: 15_000 });
+  await expect(tracePanelButton).toHaveText(
+    new RegExp(
+      `${trace.summary.inputTokens}/${trace.summary.outputTokens} tokens`,
+      "u",
+    ),
+  );
+  await expect(tracePanelButton).toHaveText(/成本未知|cost unknown/u);
+  await tracePanelButton.click();
+  await expect(
+    page
+      .locator(".tap-trace-row-name")
+      .filter({ hasText: /^(Turn execution|回合执行)$/u }),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".tap-trace-row-name")
+      .filter({ hasText: /^(Retrieval search|检索)$/u }),
+  ).toBeVisible();
+  const modelCallRow = page.locator(".tap-trace-row").filter({
+    has: page.locator(".tap-trace-row-name", { hasText: /^chat /u }),
+  });
+  await expect(modelCallRow.first()).toBeVisible();
+  await modelCallRow
+    .first()
+    .getByRole("button", { name: /View call|查看调用/u })
+    .click();
+  const requestTab = page.getByRole("tab", { name: /^(Request|请求)$/u });
+  await expect(requestTab).toBeVisible();
+  await expect(requestTab).toHaveAttribute("aria-selected", "true");
+  const requestContent = page.locator("pre");
+  await expect(requestContent).toBeVisible();
+  await expect(requestContent).not.toHaveText("");
+  await page.getByRole("button", { name: /^(Close|关闭)$/u }).click();
+
   const eventsResponse = await page.request.get(
     `${root}/conversations/${accepted.conversationId}/events`,
   );

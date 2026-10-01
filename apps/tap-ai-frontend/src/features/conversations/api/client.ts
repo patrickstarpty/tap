@@ -14,6 +14,11 @@ export type ConversationTurnSummary =
   components["schemas"]["ConversationTurnSummary"];
 export type ConversationCitationPreview =
   components["schemas"]["CitationPreview"];
+export type TurnTrace = components["schemas"]["TurnTrace"];
+export type TurnTraceSummary = components["schemas"]["TurnTraceSummary"];
+export type TraceSpanView = components["schemas"]["TraceSpanView"];
+export type ModelCallView = components["schemas"]["ModelCallView"];
+export type ModelCallDetail = components["schemas"]["ModelCallDetail"];
 export type InsightsExplanationRequest =
   components["schemas"]["InsightsExplanationRequest"] & {
     conversationId?: string;
@@ -133,6 +138,12 @@ export interface ConversationClient {
     citationId: string,
     signal?: AbortSignal,
   ): Promise<ConversationCitationPreview>;
+  turnTrace(
+    conversationId: string,
+    turnId: string,
+    signal?: AbortSignal,
+  ): Promise<TurnTrace>;
+  modelCall(callId: string, signal?: AbortSignal): Promise<ModelCallDetail>;
   stream(
     conversationId: string,
     lastSequence: number,
@@ -299,6 +310,20 @@ export function createConversationClient({
       request<ConversationCitationPreview>(
         `/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}/citations/${encodeURIComponent(citationId)}`,
         { signal },
+      ),
+    turnTrace: (id, turnId, signal) =>
+      request<TurnTrace>(
+        `/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}/trace`,
+        { signal },
+      ),
+    modelCall: async (callId, signal) =>
+      checkedJson<ModelCallDetail>(
+        await fetcher(
+          new Request(
+            `${projectRoot}/model-calls/${encodeURIComponent(callId)}`,
+            { signal },
+          ),
+        ),
       ),
     async *stream(id, lastSequence, signal) {
       const response = await fetcher(

@@ -60,6 +60,7 @@ from tap.modules.governance.domain.audit import (
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
+from tap.platform.telemetry import inject_traceparent, span
 
 
 def _scoped(name, *columns, uniques=(), parents=()):
@@ -205,57 +206,60 @@ class MysqlConversationRepository:
     async def resolve_citations(
         self, trace_id: str, citation_ids: tuple[str, ...]
     ) -> tuple[CitationEvidence, ...]:
-        if not citation_ids or len(set(citation_ids)) != len(citation_ids):
-            raise ValueError("citation identities must be nonempty and unique")
-        async with self.sessions() as session:
-            placeholders = ",".join(f":citation_{index}" for index in range(len(citation_ids)))
-            rows = (
-                (
-                    await session.execute(
-                        text(
-                            "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
-                            "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
-                            "claim_text,origin "
-                            "FROM knowledge_citation_snapshot WHERE enterprise_id=:enterprise_id "
-                            "AND project_id=:project_id AND trace_id=:trace_id "
-                            f"AND citation_id IN ({placeholders})"
-                        ),
-                        {
-                            "enterprise_id": self.scope.enterprise_id,
-                            "project_id": self.scope.project_id,
-                            "trace_id": trace_id,
-                            **{
-                                f"citation_{index}": identity
-                                for index, identity in enumerate(citation_ids)
+        with span("citations.resolve") as current_span:
+            if not citation_ids or len(set(citation_ids)) != len(citation_ids):
+                raise ValueError("citation identities must be nonempty and unique")
+            async with self.sessions() as session:
+                placeholders = ",".join(f":citation_{index}" for index in range(len(citation_ids)))
+                rows = (
+                    (
+                        await session.execute(
+                            text(
+                                "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
+                                "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
+                                "claim_text,origin "
+                                "FROM knowledge_citation_snapshot WHERE "
+                                "enterprise_id=:enterprise_id "
+                                "AND project_id=:project_id AND trace_id=:trace_id "
+                                f"AND citation_id IN ({placeholders})"
+                            ),
+                            {
+                                "enterprise_id": self.scope.enterprise_id,
+                                "project_id": self.scope.project_id,
+                                "trace_id": trace_id,
+                                **{
+                                    f"citation_{index}": identity
+                                    for index, identity in enumerate(citation_ids)
+                                },
                             },
-                        },
+                        )
                     )
+                    .mappings()
+                    .all()
                 )
-                .mappings()
-                .all()
-            )
-        if {row["citation_id"] for row in rows} != set(citation_ids):
-            raise ValueError("citation snapshot is not a trusted persisted fact")
-        by_id = {
-            row["citation_id"]: CitationEvidence(
-                row["citation_id"],
-                citation_evidence_digest(
-                    citation_id=row["citation_id"],
-                    trace_id=row["trace_id"],
-                    source_id=row["source_id"],
-                    document_id=row["document_id"],
-                    revision_id=row["revision_id"],
-                    chunk_id=row["chunk_id"],
-                    source_content_hash=row["source_content_hash"],
-                    chunk_content_hash=row["chunk_content_hash"],
-                    anchor=row["anchor_json"],
-                    claim_text=row["claim_text"],
-                    origin=row["origin"],
-                ),
-            )
-            for row in rows
-        }
-        return tuple(by_id[identity] for identity in citation_ids)
+            if {row["citation_id"] for row in rows} != set(citation_ids):
+                raise ValueError("citation snapshot is not a trusted persisted fact")
+            by_id = {
+                row["citation_id"]: CitationEvidence(
+                    row["citation_id"],
+                    citation_evidence_digest(
+                        citation_id=row["citation_id"],
+                        trace_id=row["trace_id"],
+                        source_id=row["source_id"],
+                        document_id=row["document_id"],
+                        revision_id=row["revision_id"],
+                        chunk_id=row["chunk_id"],
+                        source_content_hash=row["source_content_hash"],
+                        chunk_content_hash=row["chunk_content_hash"],
+                        anchor=row["anchor_json"],
+                        claim_text=row["claim_text"],
+                        origin=row["origin"],
+                    ),
+                )
+                for row in rows
+            }
+            current_span.set_attribute("tap.citations.count", len(citation_ids))
+            return tuple(by_id[identity] for identity in citation_ids)
 
     async def _event(self, session, event, conversation_id, turn_id):
         await session.execute(
@@ -347,6 +351,7 @@ class MysqlConversationRepository:
                 processing_attempt=turn.attempt,
                 last_sequence=event.sequence,
                 created_at=now,
+                traceparent=inject_traceparent(),
             )
         )
         await session.execute(
@@ -549,6 +554,7 @@ class MysqlConversationRepository:
             input_value,
             answer,
             row.get("processing_lease_token"),
+            row.get("traceparent"),
         )
 
     async def load(self, conversation_id):

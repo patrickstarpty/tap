@@ -8,8 +8,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.mysql import DATETIME, JSON
 
-revision: str = "0026_prompt_suggestions"
-down_revision: str | None = "0025_managed_purge_obligation"
+revision: str = "0027_prompt_suggestions"
+down_revision: str | None = "0026_observability"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

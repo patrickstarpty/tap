@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+from tap.platform.telemetry import TraceBindingProcessor
 
 if TYPE_CHECKING:
     from scripts.migration_support import IsolatedMysql
@@ -15,6 +21,32 @@ if TYPE_CHECKING:
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
+
+
+@pytest.fixture(scope="session")
+def _span_exporter() -> InMemorySpanExporter:
+    """Register the trace binding processor and an in-memory exporter once per process.
+
+    OpenTelemetry allows exactly one global TracerProvider per process, so this
+    fixture reuses whichever provider is already installed (a real SDK provider
+    from an earlier `configure_tracing` call) instead of replacing it.
+    """
+    exporter = InMemorySpanExporter()
+    provider = trace.get_tracer_provider()
+    if not isinstance(provider, TracerProvider):
+        provider = TracerProvider()
+        trace.set_tracer_provider(provider)
+    provider.add_span_processor(TraceBindingProcessor())
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return exporter
+
+
+@pytest.fixture
+def span_recorder(_span_exporter: InMemorySpanExporter) -> Iterator[InMemorySpanExporter]:
+    """Yield an in-memory span exporter cleared before and after each test."""
+    _span_exporter.clear()
+    yield _span_exporter
+    _span_exporter.clear()
 
 
 # New Project scenarios own a fresh database even inside the broad wrapper.
@@ -34,7 +66,7 @@ def owned_project_mysql(monkeypatch: pytest.MonkeyPatch) -> Iterator[IsolatedMys
         yield database
 
 
-def validation_http_services(knowledge=None, readiness=None):
+def validation_http_services(knowledge=None, readiness=None, traces=None):
     """Explicit in-memory trusted authority for HTTP tests; never install it globally."""
     from tap.interfaces.http.dependencies import HttpServices
     from tap.modules.access.adapters.validation import (
@@ -61,6 +93,7 @@ def validation_http_services(knowledge=None, readiness=None):
     return HttpServices(
         knowledge=knowledge,
         readiness=readiness,
+        traces=traces,
         scope=VALIDATION_SCOPE,
         scope_provider=ValidationScopeProvider(),
         authorization_policy=ValidationAuthorizationPolicy(Registry()),

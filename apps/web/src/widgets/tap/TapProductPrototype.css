@@ -4989,8 +4989,13 @@
 }
 .tap-library--graph > [role="tabpanel"]:not([hidden]) {
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 440px;
+}
+.tap-library--graph > [role="tabpanel"] > .tap-graph-workspace,
+.tap-library--graph > [role="tabpanel"] > .tap-catalog-empty {
+  flex: 1;
 }
 .tap-graph-workspace {
   --graph-communities-width: 216px;

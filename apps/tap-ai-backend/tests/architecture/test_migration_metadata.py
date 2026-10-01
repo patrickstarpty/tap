@@ -83,6 +83,9 @@ EXPECTED_TABLES = {
     "knowledge_projection_fence",
     "knowledge_projection_cleanup",
     "knowledge_projection_lineage",
+    "trace_span",
+    "model_call",
+    "model_call_content",
 }
 
 

@@ -301,4 +301,71 @@ describe("ConversationClient", () => {
       retryConversationRequest(0, new ConversationClientError(503, true)),
     ).toBe(true);
   });
+
+  it("calls trace url", async () => {
+    const fetcher = vi.fn(async (request: Request) => {
+      void request;
+      return new Response(
+        JSON.stringify({
+          traceId: "trace-1",
+          summary: {
+            totalDurationMs: 1200,
+            inputTokens: 10,
+            outputTokens: 20,
+            costUsd: "0.0100",
+            costIncomplete: false,
+            requestedModels: ["gpt-4o"],
+            upstreamModels: ["gpt-4o-2024"],
+            attemptCount: 1,
+          },
+          spans: [],
+          modelCalls: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const client = createConversationClient({
+      projectId: "project-1",
+      fetch: fetcher,
+    });
+
+    const trace = await client.turnTrace("conversation-1", "turn-1");
+
+    expect(trace.traceId).toBe("trace-1");
+    const request = fetcher.mock.calls[0]?.[0] as Request;
+    expect(request.url).toContain(
+      "/projects/project-1/conversations/conversation-1/turns/turn-1/trace",
+    );
+  });
+
+  it("calls project model-calls url", async () => {
+    const fetcher = vi.fn(async (request: Request) => {
+      void request;
+      return new Response(
+        JSON.stringify({
+          callId: "call-1",
+          attempts: 1,
+          createdAt: "2026-09-30T00:00:00Z",
+          latencyMs: 320,
+          modelName: "gpt-4o",
+          operation: "chat",
+          request: "{}",
+          status: "ok",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const client = createConversationClient({
+      projectId: "project-1",
+      fetch: fetcher,
+    });
+
+    const detail = await client.modelCall("call-1");
+
+    expect(detail.callId).toBe("call-1");
+    const request = fetcher.mock.calls[0]?.[0] as Request;
+    expect(request.url).toContain(
+      "/api/v1/projects/project-1/model-calls/call-1",
+    );
+  });
 });

@@ -55,6 +55,27 @@ def test_tapper_settings_use_the_new_namespace() -> None:
     assert settings.embedding_model == "text-embedding-v4"
 
 
+def test_otlp_endpoint_defaults_to_none() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert settings.otel_exporter_otlp_endpoint is None
+
+
+def test_otlp_endpoint_must_be_loopback() -> None:
+    with pytest.raises(ValueError, match="OTEL_EXPORTER_OTLP_ENDPOINT"):
+        TapperSettings.from_mapping(
+            S3_SETTINGS | {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://10.0.0.5:6006"}
+        )
+
+
+def test_otlp_endpoint_accepts_loopback() -> None:
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS | {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:26006"}
+    )
+
+    assert settings.otel_exporter_otlp_endpoint == "http://127.0.0.1:26006"
+
+
 def test_settings_read_model_roles() -> None:
     settings = TapperSettings.from_mapping(
         S3_SETTINGS
@@ -1691,7 +1712,7 @@ async def test_create_worker_runtime_registers_only_index_and_closes_outer_graph
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
     monkeypatch.setattr(module, "_create_document_index", document_index)
     monkeypatch.setattr(module, "_create_stage_controller", lambda *_args: None)
 
@@ -1751,7 +1772,7 @@ async def test_worker_outer_owner_closes_real_document_index_roles_transitively(
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
     monkeypatch.setattr(module, "_create_document_index", document_index)
     monkeypatch.setattr(module, "_create_stage_controller", lambda *_args: None)
 
@@ -1800,7 +1821,7 @@ async def test_create_worker_runtime_partial_index_failure_closes_prior_owners(
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
     monkeypatch.setattr(module, "_create_document_index", fail_index)
 
     with pytest.raises(RuntimeError) as captured:
@@ -1934,7 +1955,7 @@ async def test_worker_assembly_failure_closes_complete_index_before_prior_owners
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
     monkeypatch.setattr(module, "_create_document_index", document_index)
     monkeypatch.setattr(
         module,

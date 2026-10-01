@@ -38,7 +38,10 @@ import {
   useConversationStream,
   useCreateConversation,
   useConversationClient,
+  useTurnTrace,
 } from "../../features/conversations/api/queries";
+import { TracePanel } from "../../features/conversations/trace/TracePanel";
+import { ModelCallDrawer } from "../../features/conversations/trace/ModelCallDrawer";
 import {
   parseInsightsHandoff,
   type InsightsHandoff,
@@ -187,10 +190,7 @@ export function AnswerActivity({
   const citations = events.filter(
     (event) => event.eventType === "citation.resolved",
   ).length;
-  const assembledCount =
-    context && typeof context.payload.sourceCount === "number"
-      ? context.payload.sourceCount
-      : sourceCount;
+  const assembledCount = sourceCount;
   const answerRecorded = events.some(
     (event) => event.eventType === "answer.delta",
   );
@@ -467,12 +467,66 @@ interface ResendContext {
   skillIds: readonly string[];
 }
 
+const TERMINAL_TURN_STATUSES = [
+  "completed",
+  "abstained",
+  "canceled",
+  "failed",
+] as const;
+
+function DurableTracePanel({
+  projectId,
+  conversationId,
+  turn,
+  onOpenDocument,
+  documentName,
+}: {
+  projectId: string | null;
+  conversationId: string;
+  turn: AssistantTurn;
+  onOpenDocument: (documentId: string) => void;
+  documentName?: (documentId: string) => string | undefined;
+}) {
+  const [openCallId, setOpenCallId] = useState<string | null>(null);
+  const traceQuery = useTurnTrace(projectId, conversationId, turn.id, {
+    enabled: turn.traceId != null,
+    latestAttempt: turn.attempt ?? 1,
+  });
+  if (traceQuery.data === undefined) {
+    return (
+      <p className="tap-trace-panel tap-trace-panel-loading" role="status">
+        {turn.locale === "zh" ? "调用链 · 加载中…" : "Trace · loading…"}
+      </p>
+    );
+  }
+  return (
+    <>
+      <TracePanel
+        trace={traceQuery.data}
+        locale={turn.locale}
+        onOpenModelCall={setOpenCallId}
+        onOpenDocument={onOpenDocument}
+        documentName={documentName}
+      />
+      <ModelCallDrawer
+        projectId={projectId}
+        callId={openCallId}
+        locale={turn.locale}
+        onClose={() => setOpenCallId(null)}
+      />
+    </>
+  );
+}
+
 function AssistantResponse({
   contentCopy,
   turn,
   insightsClient,
   conversationId,
+  projectId = null,
   onOpenCitation,
+  onOpenDocument,
+  documentName,
   onRetryConversation,
   onResend,
   onGenerateTestPlan,
@@ -482,7 +536,10 @@ function AssistantResponse({
   turn: AssistantTurn;
   insightsClient?: ConversationClient | null;
   conversationId?: string;
+  projectId?: string | null;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
+  onOpenDocument?: (documentId: string) => void;
+  documentName?: (documentId: string) => string | undefined;
   onRetryConversation: () => void;
   /** Sends the same question and context again as a new turn. */
   onResend?: () => void;
@@ -537,16 +594,29 @@ function AssistantResponse({
     if (turn.response !== undefined && turn.response !== null) {
       return (
         <>
-          <AnswerActivity
-            events={activityEvents}
-            locale={turn.locale}
-            sourceCount={turn.sourceReferences.length}
-            shownCitationCount={
-              new Set(
-                turn.response.claims.flatMap((claim) => claim.citationIds),
-              ).size
-            }
-          />
+          {turn.status !== undefined &&
+          (TERMINAL_TURN_STATUSES as readonly string[]).includes(turn.status) &&
+          turn.traceId != null &&
+          conversationId !== undefined ? (
+            <DurableTracePanel
+              projectId={projectId}
+              conversationId={conversationId}
+              turn={turn}
+              onOpenDocument={onOpenDocument ?? (() => undefined)}
+              documentName={documentName}
+            />
+          ) : (
+            <AnswerActivity
+              events={activityEvents}
+              locale={turn.locale}
+              sourceCount={turn.sourceReferences.length}
+              shownCitationCount={
+                new Set(
+                  turn.response.claims.flatMap((claim) => claim.citationIds),
+                ).size
+              }
+            />
+          )}
           <GroundedAnswer
             response={turn.response}
             locale={turn.locale}
@@ -1050,6 +1120,7 @@ export function TapperWorkspace() {
     activeCitation?.id ?? null,
     activeCitation?.generation ?? 0,
   );
+  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [messageDraft, setMessageDraft] = useState("");
   const [insightsHandoff, setInsightsHandoff] =
     useState<InsightsHandoff | null>(null);
@@ -1211,6 +1282,8 @@ export function TapperWorkspace() {
           origin: "knowledge-base" as const,
         })),
         response: streamed?.response ?? null,
+        traceId: turn.traceId ?? null,
+        attempt: turn.attempt,
         status: ["completed", "abstained", "canceled", "failed"].includes(
           turn.state,
         )
@@ -1439,6 +1512,13 @@ export function TapperWorkspace() {
       sourcesQuery.data?.items,
     ],
   );
+  const publishedDocumentNames = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const source of publishedSourcesQuery.data?.items ?? []) {
+      map.set(source.documentId, source.filename);
+    }
+    return map;
+  }, [publishedSourcesQuery.data?.items]);
   const publishedItems = useMemo<readonly LibrarySource[]>(() => {
     const grouped = new Map<string, LibrarySource>();
     for (const source of publishedSourcesQuery.data?.items ?? []) {
@@ -2157,6 +2237,15 @@ export function TapperWorkspace() {
                   turn={turn}
                   insightsClient={insightsClient}
                   conversationId={activeConversation.id}
+                  projectId={projectId}
+                  onOpenDocument={(documentId) => {
+                    setSourcesCollapsed(false);
+                    setActiveCitation(null);
+                    setActiveDocumentId(documentId);
+                  }}
+                  documentName={(documentId) =>
+                    publishedDocumentNames.get(documentId)
+                  }
                   activityEvents={(conversationEvents.data?.items ?? []).filter(
                     (event) => event.turnId === turn.id,
                   )}
@@ -2167,6 +2256,7 @@ export function TapperWorkspace() {
                     if (citation !== undefined) {
                       citationTrigger.current = trigger;
                       setSourcesCollapsed(false);
+                      setActiveDocumentId(null);
                       setActiveCitation((current) => ({
                         citation,
                         conversationId: activeConversation.id,
@@ -2226,6 +2316,27 @@ export function TapperWorkspace() {
                   returnFocusTo={citationTrigger.current}
                   onClose={() => setActiveCitation(null)}
                 />
+              ) : activeDocumentId !== null && projectId !== null ? (
+                <section
+                  className="tapper-panel tap-trace-document-panel"
+                  aria-labelledby="tap-trace-document-heading"
+                >
+                  <header className="tapper-panel-header">
+                    <h2 id="tap-trace-document-heading">
+                      {locale === "zh" ? "原文与切片" : "Source document"}
+                    </h2>
+                    <Button
+                      onClick={() => setActiveDocumentId(null)}
+                      aria-label={locale === "zh" ? "关闭" : "Close"}
+                    >
+                      {locale === "zh" ? "关闭" : "Close"}
+                    </Button>
+                  </header>
+                  <DocumentChunks
+                    projectId={projectId}
+                    documentId={activeDocumentId}
+                  />
+                </section>
               ) : (
                 <KnowledgeSourcesPanel
                   copy={copy}

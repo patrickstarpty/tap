@@ -40,6 +40,7 @@ from tap.modules.knowledge.adapters.mysql_projection import (
 from tap.modules.knowledge.adapters.mysql_review import KNOWLEDGE_REVIEW_TABLES
 from tap.modules.test_management.adapters.mysql import TEST_MANAGEMENT_TABLES
 from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
+from tap.platform.telemetry.schema import model_call, model_call_content, trace_span
 
 # Explicit Project business inventory, separate from identity-registry ownership.
 # Adapter-local declarations carry the scope contract before they are copied.
@@ -84,6 +85,9 @@ BUSINESS_TABLES = (
     *AI_GRAPH_TABLES,
     *GRAPH_TABLES,
     *TEST_MANAGEMENT_TABLES,
+    trace_span,
+    model_call,
+    model_call_content,
 )
 
 

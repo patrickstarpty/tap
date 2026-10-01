@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
+from opentelemetry.trace import Span, get_current_span
 
 from tap.contracts.http import (
     InsightsExplanationResult,
@@ -44,6 +47,13 @@ from tap.modules.chat.domain.conversations import (
     RetrievalSummary,
 )
 from tap.modules.chat.domain.suggestions import RefreshReason
+from tap.platform.telemetry import (
+    bind_trace,
+    current_binding,
+    extract_traceparent,
+    flush_traces,
+    span,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -123,459 +133,507 @@ class GenerationWorker:
     async def run_once(self, *, limit: int) -> int:
         claimed = await self.conversations.repository.claim_queued(limit=limit)
         for conversation_id, turn in claimed:
-            answer_response = None
-            active_plan = None
-            insights_query_id = getattr(turn.input_snapshot.value, "insights_query_id", None)
-            planner = getattr(self.knowledge, "answer_planner", None)
-            renew = getattr(self.conversations.repository, "renew_processing_lease", None)
+            try:
+                with bind_trace(
+                    scope=getattr(self.conversations, "scope", None),
+                    turn_id=turn.turn_id,
+                    attempt=getattr(turn, "attempt", None),
+                    fresh_usage=True,
+                ):
+                    with span(
+                        "turn.execute",
+                        context=extract_traceparent(getattr(turn, "traceparent", None)),
+                    ) as turn_span:
+                        await self._process_claimed_turn(conversation_id, turn, turn_span)
+            finally:
+                await flush_traces()
+        return len(claimed)
 
-            async def provider(_snapshot, value=turn.input_snapshot.value):
-                nonlocal answer_response
-                request = RetrievalAnswerRequest(
-                    query=value.message,
-                    sources=[SourceFamily.DOC],
-                    resource_refs=[
-                        ResourceRef(
-                            family=SourceFamily.DOC,
-                            source_id=item.source_id,
-                            mode=ResourceMode.SCOPE,
-                        )
-                        for item in value.resolved_resources
-                    ],
-                )
-                answer_boundary = getattr(self.knowledge, "answer_conversation", None)
-                answer = (
-                    await answer_boundary(
-                        request,
-                        value,
-                        **(
-                            {"answer_plan": active_plan, "authorize": require_authorized}
-                            if active_plan is not None
-                            else {}
-                        ),
-                    )
-                    if answer_boundary is not None
-                    else await self.knowledge.answer(request)
-                )
-                answer_response = answer
-                citations = (
-                    await self.conversations.repository.resolve_citations(
-                        answer.trace_id, tuple(item.citation_id for item in answer.citations)
-                    )
-                    if answer.citations
-                    else ()
-                )
-                return ProviderResult(
-                    answer=answer.answer,
-                    graph_context_status=GraphContextStatus(
-                        getattr(answer, "graph_context_status", "UNAVAILABLE")
-                    ),
-                    graph_snapshot_id=getattr(answer, "graph_snapshot_id", None),
-                    retrieval_summary=RetrievalSummary(
-                        "abstained" if answer.abstained else "completed",
-                        trace_id=answer.trace_id,
-                        authorized_hit_count=len(answer.citations),
-                    ),
-                    citations=citations,
-                    abstained=answer.abstained,
-                    answer_plan_id=None if active_plan is None else active_plan.plan_id,
-                )
+    async def _process_claimed_turn(self, conversation_id: str, turn: Any, turn_span: Span) -> None:
+        answer_response = None
+        active_plan = None
+        insights_query_id = getattr(turn.input_snapshot.value, "insights_query_id", None)
+        planner = getattr(self.knowledge, "answer_planner", None)
+        renew = getattr(self.conversations.repository, "renew_processing_lease", None)
 
-            def stream_events(evidence) -> list[dict[str, object]]:
-                if evidence.outcome == "failed":
-                    return []
-                events: list[dict[str, object]] = [
-                    {
-                        "type": "context.assembled",
-                        "payload": {
-                            "sourceCount": len(turn.input_snapshot.value.resolved_resources)
-                        },
+        async def provider(_snapshot, value=turn.input_snapshot.value):
+            nonlocal answer_response
+            request = RetrievalAnswerRequest(
+                query=value.message,
+                sources=[SourceFamily.DOC],
+                resource_refs=[
+                    ResourceRef(
+                        family=SourceFamily.DOC,
+                        source_id=item.source_id,
+                        mode=ResourceMode.SCOPE,
+                    )
+                    for item in value.resolved_resources
+                ],
+            )
+            answer_boundary = getattr(self.knowledge, "answer_conversation", None)
+            answer = (
+                await answer_boundary(
+                    request,
+                    value,
+                    **(
+                        {"answer_plan": active_plan, "authorize": require_authorized}
+                        if active_plan is not None
+                        else {}
+                    ),
+                )
+                if answer_boundary is not None
+                else await self.knowledge.answer(request)
+            )
+            answer_response = answer
+            citations = (
+                await self.conversations.repository.resolve_citations(
+                    answer.trace_id, tuple(item.citation_id for item in answer.citations)
+                )
+                if answer.citations
+                else ()
+            )
+            return ProviderResult(
+                answer=answer.answer,
+                graph_context_status=GraphContextStatus(
+                    getattr(answer, "graph_context_status", "UNAVAILABLE")
+                ),
+                graph_snapshot_id=getattr(answer, "graph_snapshot_id", None),
+                retrieval_summary=RetrievalSummary(
+                    "abstained" if answer.abstained else "completed",
+                    trace_id=answer.trace_id,
+                    authorized_hit_count=len(answer.citations),
+                ),
+                citations=citations,
+                abstained=answer.abstained,
+                answer_plan_id=None if active_plan is None else active_plan.plan_id,
+            )
+
+        def stream_events(evidence, duration_ms: int) -> list[dict[str, object]]:
+            if evidence.outcome == "failed":
+                return []
+            events: list[dict[str, object]] = [
+                {
+                    "type": "context.assembled",
+                    "payload": {
+                        "contextSnapshotId": turn.input_snapshot.snapshot_id,
+                        "tokenCount": current_binding().usage.input_tokens,
                     },
-                    {
-                        "type": "stage.completed",
-                        "payload": {"stage": "knowledge.answer", "outcome": evidence.outcome},
-                    },
+                },
+                {
+                    "type": "stage.completed",
+                    "payload": {"stage": "knowledge.answer", "durationMs": duration_ms},
+                },
+            ]
+            if evidence.retrieval_summary.trace_id is not None:
+                events.append(
                     {
                         "type": "retrieval.hits_ready",
                         "payload": {
-                            "authorizedHitCount": evidence.retrieval_summary.authorized_hit_count
+                            "traceId": evidence.retrieval_summary.trace_id,
+                            "authorizedHitCount": evidence.retrieval_summary.authorized_hit_count,
                         },
-                    },
-                ]
-                if evidence.answer:
-                    events.append({"type": "answer.delta", "payload": {"text": evidence.answer}})
-                if answer_response is not None:
-                    events.extend(
-                        {
-                            "type": "citation.resolved",
-                            "payload": {
-                                "citation": citation.model_dump(mode="json", by_alias=True)
-                            },
-                        }
-                        for citation in answer_response.citations
-                    )
-                return events
+                    }
+                )
+            if evidence.answer:
+                events.append({"type": "answer.delta", "payload": {"text": evidence.answer}})
+            if answer_response is not None:
+                events.extend(
+                    {
+                        "type": "citation.resolved",
+                        "payload": {"citation": citation.model_dump(mode="json", by_alias=True)},
+                    }
+                    for citation in answer_response.citations
+                )
+            return events
 
-            async def fail_turn() -> None:
-                await self.conversations.complete_evidence(
-                    conversation_id,
-                    turn.turn_id,
-                    AnswerEvidence(
-                        "",
-                        "failed",
-                        RetrievalSummary("failed"),
-                        GraphContextStatus.FAILED,
-                    ),
-                    lease_token=turn.lease_token,
-                    terminal_event=(
-                        "turn.failed",
+        async def fail_turn() -> None:
+            await self.conversations.complete_evidence(
+                conversation_id,
+                turn.turn_id,
+                AnswerEvidence(
+                    "",
+                    "failed",
+                    RetrievalSummary("failed"),
+                    GraphContextStatus.FAILED,
+                ),
+                lease_token=turn.lease_token,
+                terminal_event=(
+                    "turn.failed",
+                    {
+                        "problem": build_problem(
+                            "answer-unavailable", correlation_id=turn.turn_id
+                        ).model_dump(mode="json", by_alias=True)
+                    },
+                ),
+            )
+
+        outcome = "deferred"
+        try:
+
+            async def classify(_state):
+                if insights_query_id is not None:
+                    return {"reasoning_mode": "workflow"}
+                if planner is None:
+                    return {"reasoning_mode": "direct"}
+                authorize_planning = getattr(self.knowledge, "authorize_planning", None)
+                if authorize_planning is not None:
+                    await authorize_planning(turn.input_snapshot)
+                load = getattr(self.conversations, "load", None)
+                history = (
+                    ()
+                    if load is None
+                    else tuple(item.input_snapshot for item in (await load(conversation_id)).turns)
+                )
+                plan = await planner.plan(planning_input(turn.input_snapshot, history=history))
+                return {"reasoning_mode": "direct", "answer_plan": plan.to_dict()}
+
+            async def admit(_state):
+                return {"admitted": True}
+
+            async def execute(_state):
+                nonlocal active_plan
+                if insights_query_id is not None:
+                    if self.insights_explanation is None:
+                        raise RuntimeError("Insights explanation runtime is unavailable")
+                    explanation_started = time.monotonic()
+                    result = await self.insights_explanation.explain(
+                        self.conversations.scope,
+                        insights_query_id,
+                        turn.input_snapshot.value.insights_report_refs,
+                        turn.input_snapshot.value.message,
+                        conversation_id=conversation_id,
+                        turn_id=turn.turn_id,
+                        selected_knowledge=turn.input_snapshot.value.resolved_resources,
+                    )
+                    explanation_duration_ms = int((time.monotonic() - explanation_started) * 1000)
+                    if result.get("queryId") != insights_query_id:
+                        raise InsightsQueryUnavailable(
+                            "Insights result changed the historical query ID"
+                        )
+                    try:
+                        InsightsExplanationResult.model_validate(result)
+                    except ValueError as exc:
+                        raise InsightsQueryUnavailable(
+                            "Insights result does not satisfy the response contract"
+                        ) from exc
+                    evidence = AnswerEvidence(
+                        "Insights interpretation",
+                        "completed",
+                        RetrievalSummary("completed", trace_id=insights_query_id),
+                        GraphContextStatus.NOT_REQUESTED,
+                        insights_explanation=dict(result),
+                    )
+                    knowledge_search_performed = (
+                        result.get("knowledgeSearchPerformed", False) is True
+                    )
+                    knowledge_sources = [
                         {
+                            "sourceId": item.source_id,
+                            "revisionId": item.revision_id,
+                            "sourceContentHash": item.source_content_hash,
+                        }
+                        for item in turn.input_snapshot.value.resolved_resources
+                    ]
+                    knowledge_citations = [
+                        {
+                            "citationId": item.get("citationId"),
+                            "sourceId": item.get("sourceId"),
+                            "revisionId": item.get("revisionId"),
+                            "chunkId": item.get("chunkId"),
+                            "publicationId": item.get("publicationId"),
+                            "approvalDigest": item.get("approvalDigest"),
+                        }
+                        for item in result.get("evidenceExcerpts", [])
+                        if isinstance(item, dict) and item.get("sourceId")
+                    ]
+                    audit_span = get_current_span()
+                    audit_span.set_attribute("tap.insights.conversation_id", conversation_id)
+                    audit_span.set_attribute("tap.insights.turn_id", turn.turn_id)
+                    audit_span.set_attribute("tap.insights.graph_run_id", turn.turn_id)
+                    audit_span.set_attribute("tap.insights.tool", "insights.query")
+                    audit_span.set_attribute("tap.insights.query_id", insights_query_id)
+                    metric_version = result.get("metricVersion")
+                    if metric_version is not None:
+                        audit_span.set_attribute("tap.insights.metric_version", metric_version)
+                    audit_span.set_attribute(
+                        "tap.insights.resource_refs",
+                        list(turn.input_snapshot.value.insights_report_refs),
+                    )
+                    audit_span.set_attribute(
+                        "tap.insights.knowledge_search_performed", knowledge_search_performed
+                    )
+                    audit_span.set_attribute(
+                        "tap.insights.knowledge_sources", json.dumps(knowledge_sources)
+                    )
+                    audit_span.set_attribute(
+                        "tap.insights.knowledge_citations", json.dumps(knowledge_citations)
+                    )
+                    audit_events = [
+                        {
+                            "type": "context.assembled",
+                            "payload": {
+                                "contextSnapshotId": turn.input_snapshot.snapshot_id,
+                                "tokenCount": current_binding().usage.input_tokens,
+                            },
+                        },
+                        {
+                            "type": "stage.completed",
+                            "payload": {
+                                "stage": "insights.explanation",
+                                "durationMs": explanation_duration_ms,
+                            },
+                        },
+                    ]
+                    if knowledge_search_performed:
+                        audit_span.set_attribute(
+                            "tap.retrieval.source_ids",
+                            [
+                                item.source_id
+                                for item in turn.input_snapshot.value.resolved_resources
+                            ],
+                        )
+                        audit_events.append(
+                            {
+                                "type": "stage.completed",
+                                "payload": {
+                                    "stage": "knowledge.search",
+                                    "durationMs": explanation_duration_ms,
+                                },
+                            }
+                        )
+                    return {
+                        "result": {
+                            "evidence": _evidence_checkpoint(evidence),
+                            "terminalEvent": {
+                                "type": "turn.completed",
+                                "payload": {"state": "completed"},
+                            },
+                            "streamEvents": audit_events,
+                        }
+                    }
+                if planner is not None:
+                    active_plan = AnswerPlan.from_dict(_state["answer_plan"])
+                    active_plan.validate_binding(planning_input(turn.input_snapshot))
+                answer_started = time.monotonic()
+                evidence = await TurnProcessor(
+                    provider=provider, complete=lambda _evidence: None
+                ).process(turn.input_snapshot)
+                answer_duration_ms = int((time.monotonic() - answer_started) * 1000)
+                terminal_event: dict[str, object] | None
+                if evidence.outcome == "failed":
+                    terminal_event = {
+                        "type": "turn.failed",
+                        "payload": {
                             "problem": build_problem(
                                 "answer-unavailable", correlation_id=turn.turn_id
                             ).model_dump(mode="json", by_alias=True)
                         },
-                    ),
+                    }
+                elif answer_response is None:
+                    terminal_event = None
+                else:
+                    terminal_event = {
+                        "type": (
+                            "turn.abstained" if answer_response.abstained else "turn.completed"
+                        ),
+                        "payload": {
+                            "answer": answer_response.model_dump(mode="json", by_alias=True)
+                        },
+                    }
+                return {
+                    "result": {
+                        "evidence": _evidence_checkpoint(evidence),
+                        "terminalEvent": terminal_event,
+                        "streamEvents": stream_events(evidence, answer_duration_ms),
+                    }
+                }
+
+            async def authorized() -> bool:
+                if renew is None:
+                    return True
+                try:
+                    await renew(
+                        conversation_id,
+                        turn.turn_id,
+                        turn.lease_token,
+                        lease_duration=self.lease_duration,
+                    )
+                except ConversationConflict:
+                    return False
+                return True
+
+            async def require_authorized():
+                if not await authorized():
+                    raise PermissionError("answer plan authorization changed")
+
+            checkpointer_factory = getattr(
+                self.conversations.repository, "graph_checkpointer", None
+            )
+            checkpointer = (
+                checkpointer_factory(turn)
+                if self.checkpointer is None and checkpointer_factory is not None
+                else self.checkpointer or InMemorySaver()
+            )
+            graph = InteractionGraph(
+                graph_version=(
+                    "insights-explanation-v1" if insights_query_id is not None else "fast-chat-v1"
+                ),
+                state_schema_version=1,
+                checkpointer=checkpointer,
+                classify=classify,
+                admit=admit,
+                execute=execute,
+                authorize=authorized,
+            )
+
+            async def run_graph():
+                if await graph.has_checkpoint(run_id=turn.turn_id):
+                    return await graph.resume(run_id=turn.turn_id)
+                return await graph.start(
+                    run_id=turn.turn_id,
+                    payload={"conversationId": conversation_id, "turnId": turn.turn_id},
+                    execution_mode="inline",
                 )
 
+            running = asyncio.create_task(run_graph())
             try:
-
-                async def classify(_state):
-                    if insights_query_id is not None:
-                        return {"reasoning_mode": "workflow"}
-                    if planner is None:
-                        return {"reasoning_mode": "direct"}
-                    authorize_planning = getattr(self.knowledge, "authorize_planning", None)
-                    if authorize_planning is not None:
-                        await authorize_planning(turn.input_snapshot)
-                    load = getattr(self.conversations, "load", None)
-                    history = (
-                        ()
-                        if load is None
-                        else tuple(
-                            item.input_snapshot for item in (await load(conversation_id)).turns
-                        )
-                    )
-                    plan = await planner.plan(planning_input(turn.input_snapshot, history=history))
-                    return {"reasoning_mode": "direct", "answer_plan": plan.to_dict()}
-
-                async def admit(_state):
-                    return {"admitted": True}
-
-                async def execute(_state):
-                    nonlocal active_plan
-                    if insights_query_id is not None:
-                        if self.insights_explanation is None:
-                            raise RuntimeError("Insights explanation runtime is unavailable")
-                        result = await self.insights_explanation.explain(
-                            self.conversations.scope,
-                            insights_query_id,
-                            turn.input_snapshot.value.insights_report_refs,
-                            turn.input_snapshot.value.message,
-                            conversation_id=conversation_id,
-                            turn_id=turn.turn_id,
-                            selected_knowledge=turn.input_snapshot.value.resolved_resources,
-                        )
-                        if result.get("queryId") != insights_query_id:
-                            raise InsightsQueryUnavailable(
-                                "Insights result changed the historical query ID"
-                            )
-                        try:
-                            InsightsExplanationResult.model_validate(result)
-                        except ValueError as exc:
-                            raise InsightsQueryUnavailable(
-                                "Insights result does not satisfy the response contract"
-                            ) from exc
-                        evidence = AnswerEvidence(
-                            "Insights interpretation",
-                            "completed",
-                            RetrievalSummary("completed", trace_id=insights_query_id),
-                            GraphContextStatus.NOT_REQUESTED,
-                            insights_explanation=dict(result),
-                        )
-                        audit = {
-                            "conversationId": conversation_id,
-                            "turnId": turn.turn_id,
-                            "graphRunId": turn.turn_id,
-                            "tool": "insights.query",
-                            "queryId": insights_query_id,
-                            "metricVersion": result.get("metricVersion"),
-                            "resourceRefs": list(turn.input_snapshot.value.insights_report_refs),
-                            "knowledgeSearchPerformed": result.get(
-                                "knowledgeSearchPerformed", False
-                            )
-                            is True,
-                            "knowledgeSources": [
-                                {
-                                    "sourceId": item.source_id,
-                                    "revisionId": item.revision_id,
-                                    "sourceContentHash": item.source_content_hash,
-                                }
-                                for item in turn.input_snapshot.value.resolved_resources
-                            ],
-                            "knowledgeCitations": [
-                                {
-                                    "citationId": item.get("citationId"),
-                                    "sourceId": item.get("sourceId"),
-                                    "revisionId": item.get("revisionId"),
-                                    "chunkId": item.get("chunkId"),
-                                    "publicationId": item.get("publicationId"),
-                                    "approvalDigest": item.get("approvalDigest"),
-                                }
-                                for item in result.get("evidenceExcerpts", [])
-                                if isinstance(item, dict) and item.get("sourceId")
-                            ],
-                        }
-                        audit_events = [
-                            {
-                                "type": "context.assembled",
-                                "payload": {
-                                    "sourceCount": len(turn.input_snapshot.value.resolved_resources)
-                                },
-                            },
-                            {"type": "stage.completed", "payload": audit},
-                        ]
-                        if audit["knowledgeSearchPerformed"]:
-                            audit_events.append(
-                                {
-                                    "type": "stage.completed",
-                                    "payload": {
-                                        "stage": "knowledge.search",
-                                        "conversationId": conversation_id,
-                                        "turnId": turn.turn_id,
-                                        "graphRunId": turn.turn_id,
-                                        "queryId": insights_query_id,
-                                        "sourceIds": [
-                                            item.source_id
-                                            for item in turn.input_snapshot.value.resolved_resources
-                                        ],
-                                    },
-                                }
-                            )
-                        return {
-                            "result": {
-                                "evidence": _evidence_checkpoint(evidence),
-                                "terminalEvent": {
-                                    "type": "turn.completed",
-                                    "payload": {"insightsAudit": audit},
-                                },
-                                "streamEvents": audit_events,
-                            }
-                        }
-                    if planner is not None:
-                        active_plan = AnswerPlan.from_dict(_state["answer_plan"])
-                        active_plan.validate_binding(planning_input(turn.input_snapshot))
-                    evidence = await TurnProcessor(
-                        provider=provider, complete=lambda _evidence: None
-                    ).process(turn.input_snapshot)
-                    terminal_event: dict[str, object] | None
-                    if evidence.outcome == "failed":
-                        terminal_event = {
-                            "type": "turn.failed",
-                            "payload": {
-                                "problem": build_problem(
-                                    "answer-unavailable", correlation_id=turn.turn_id
-                                ).model_dump(mode="json", by_alias=True)
-                            },
-                        }
-                    elif answer_response is None:
-                        terminal_event = None
-                    else:
-                        terminal_event = {
-                            "type": (
-                                "turn.abstained" if answer_response.abstained else "turn.completed"
-                            ),
-                            "payload": {
-                                "answer": answer_response.model_dump(mode="json", by_alias=True)
-                            },
-                        }
-                    return {
-                        "result": {
-                            "evidence": _evidence_checkpoint(evidence),
-                            "terminalEvent": terminal_event,
-                            "streamEvents": stream_events(evidence),
-                        }
-                    }
-
-                async def authorized() -> bool:
-                    if renew is None:
-                        return True
-                    try:
+                while True:
+                    done, _ = await asyncio.wait({running}, timeout=self.renew_interval_seconds)
+                    if done:
+                        state = await running
+                        break
+                    if renew is not None:
                         await renew(
                             conversation_id,
                             turn.turn_id,
                             turn.lease_token,
                             lease_duration=self.lease_duration,
                         )
-                    except ConversationConflict:
-                        return False
-                    return True
-
-                async def require_authorized():
-                    if not await authorized():
-                        raise PermissionError("answer plan authorization changed")
-
-                checkpointer_factory = getattr(
-                    self.conversations.repository, "graph_checkpointer", None
-                )
-                checkpointer = (
-                    checkpointer_factory(turn)
-                    if self.checkpointer is None and checkpointer_factory is not None
-                    else self.checkpointer or InMemorySaver()
-                )
-                graph = InteractionGraph(
-                    graph_version=(
-                        "insights-explanation-v1"
-                        if insights_query_id is not None
-                        else "fast-chat-v1"
+            except BaseException:
+                if not running.done():
+                    running.cancel()
+                    await asyncio.gather(running, return_exceptions=True)
+                raise
+            result = state.get("result", {})
+            evidence = _evidence_from_checkpoint(result.get("evidence"))
+            if insights_query_id is not None and evidence.outcome == "completed":
+                if self.insights_explanation is None or evidence.insights_explanation is None:
+                    raise InsightsAuthorizationChanged("Insights result was not persisted")
+                await asyncio.wait_for(
+                    self.insights_explanation.reauthorize_result(
+                        self.conversations.scope,
+                        insights_query_id,
+                        turn.input_snapshot.value.insights_report_refs,
+                        turn.input_snapshot.value.resolved_resources,
+                        evidence.insights_explanation,
                     ),
-                    state_schema_version=1,
-                    checkpointer=checkpointer,
-                    classify=classify,
-                    admit=admit,
-                    execute=execute,
-                    authorize=authorized,
+                    timeout=20,
                 )
-
-                async def run_graph():
-                    if await graph.has_checkpoint(run_id=turn.turn_id):
-                        return await graph.resume(run_id=turn.turn_id)
-                    return await graph.start(
-                        run_id=turn.turn_id,
-                        payload={"conversationId": conversation_id, "turnId": turn.turn_id},
-                        execution_mode="inline",
-                    )
-
-                running = asyncio.create_task(run_graph())
-                try:
-                    while True:
-                        done, _ = await asyncio.wait({running}, timeout=self.renew_interval_seconds)
-                        if done:
-                            state = await running
-                            break
-                        if renew is not None:
-                            await renew(
-                                conversation_id,
-                                turn.turn_id,
-                                turn.lease_token,
-                                lease_duration=self.lease_duration,
-                            )
-                except BaseException:
-                    if not running.done():
-                        running.cancel()
-                        await asyncio.gather(running, return_exceptions=True)
-                    raise
-                result = state.get("result", {})
-                evidence = _evidence_from_checkpoint(result.get("evidence"))
-                if insights_query_id is not None and evidence.outcome == "completed":
-                    if self.insights_explanation is None or evidence.insights_explanation is None:
-                        raise InsightsAuthorizationChanged("Insights result was not persisted")
-                    await asyncio.wait_for(
-                        self.insights_explanation.reauthorize_result(
-                            self.conversations.scope,
-                            insights_query_id,
-                            turn.input_snapshot.value.insights_report_refs,
-                            turn.input_snapshot.value.resolved_resources,
-                            evidence.insights_explanation,
-                        ),
-                        timeout=20,
-                    )
-                if evidence.outcome not in {"failed", "canceled"}:
-                    await require_authorized()
-                    authorize_completed = getattr(
-                        self.knowledge, "authorize_completed_answer", None
-                    )
-                    if authorize_completed is not None and insights_query_id is None:
-                        await authorize_completed(turn.input_snapshot, evidence)
-                raw_terminal = result.get("terminalEvent")
-                raw_stream_events = result.get("streamEvents", ())
-                terminal_event = (
-                    None
-                    if raw_terminal is None
-                    else (str(raw_terminal["type"]), dict(raw_terminal["payload"]))
-                )
-                persisted_stream_events = tuple(
-                    (str(item["type"]), dict(item["payload"])) for item in raw_stream_events
-                )
-                await self.conversations.complete_evidence(
-                    conversation_id,
-                    turn.turn_id,
-                    evidence,
-                    lease_token=turn.lease_token,
-                    terminal_event=terminal_event,
-                    stream_events=persisted_stream_events,
-                )
-                if self.suggestion_refresh is not None and evidence.outcome == "completed":
-                    actor_id = getattr(turn.input_snapshot.value, "actor_id", None)
-                    if actor_id:
-                        try:
-                            await self.suggestion_refresh.request_refresh_for_actor(
-                                actor_id, RefreshReason.TURN_COMPLETED, now=datetime.now(UTC)
-                            )
-                        except Exception as exc:  # noqa: BLE001 - must never fail a completed turn
-                            _LOGGER.warning(
-                                "prompt suggestion refresh request failed: %s",
-                                type(exc).__name__,
-                            )
-            except InsightsAuthorizationChanged:
-                if insights_query_id is None:
-                    raise
-                try:
-                    await fail_turn()
-                except (ConversationConflict, PermissionError):
-                    continue
-            except PermissionError:
-                # The graph fence proves another worker owns the Turn.
-                continue
-            except ConversationNotFound:
-                # The owner deleted the Conversation; its Turn must not be completed.
-                continue
-            except ConversationConflict:
-                if turn.attempt < self.max_checkpoint_attempts:
-                    continue
-                try:
-                    await fail_turn()
-                except (ConversationConflict, PermissionError):
-                    # Token and expiry checks prevent a real loser from failing the Turn.
-                    continue
-            except GraphCheckpointRetryable:
-                if turn.attempt < self.max_checkpoint_attempts:
-                    continue
-                try:
-                    await fail_turn()
-                except (ConversationConflict, PermissionError):
-                    continue
-            except GraphCheckpointUnavailable:
-                try:
-                    await fail_turn()
-                except (ConversationConflict, PermissionError):
-                    continue
-            except AuthorizationDenied:
-                try:
-                    await fail_turn()
-                except (ConversationConflict, PermissionError):
-                    # Cancellation or lease reclaim won the terminal-state race.
-                    continue
-            except (
-                InsightsBudgetExceeded,
-                InsightsQueryUnavailable,
-                ModelGatewayRejected,
-                ModelGatewayUnavailable,
-                RuntimeError,
-                TimeoutError,
-            ):
-                if insights_query_id is None:
-                    raise
-                try:
-                    await fail_turn()
-                except (ConversationConflict, PermissionError):
-                    continue
-        return len(claimed)
+            if evidence.outcome not in {"failed", "canceled"}:
+                await require_authorized()
+                authorize_completed = getattr(self.knowledge, "authorize_completed_answer", None)
+                if authorize_completed is not None and insights_query_id is None:
+                    await authorize_completed(turn.input_snapshot, evidence)
+            raw_terminal = result.get("terminalEvent")
+            raw_stream_events = result.get("streamEvents", ())
+            terminal_event = (
+                None
+                if raw_terminal is None
+                else (str(raw_terminal["type"]), dict(raw_terminal["payload"]))
+            )
+            persisted_stream_events = tuple(
+                (str(item["type"]), dict(item["payload"])) for item in raw_stream_events
+            )
+            await self.conversations.complete_evidence(
+                conversation_id,
+                turn.turn_id,
+                evidence,
+                lease_token=turn.lease_token,
+                terminal_event=terminal_event,
+                stream_events=persisted_stream_events,
+            )
+            if self.suggestion_refresh is not None and evidence.outcome == "completed":
+                actor_id = getattr(turn.input_snapshot.value, "actor_id", None)
+                if actor_id:
+                    try:
+                        await self.suggestion_refresh.request_refresh_for_actor(
+                            actor_id, RefreshReason.TURN_COMPLETED, now=datetime.now(UTC)
+                        )
+                    except Exception as exc:  # noqa: BLE001 - must never fail a completed turn
+                        _LOGGER.warning(
+                            "prompt suggestion refresh request failed: %s",
+                            type(exc).__name__,
+                        )
+            outcome = evidence.outcome
+        except InsightsAuthorizationChanged:
+            if insights_query_id is None:
+                raise
+            outcome = "failed"
+            try:
+                await fail_turn()
+            except (ConversationConflict, PermissionError):
+                return
+        except PermissionError:
+            # The graph fence proves another worker owns the Turn.
+            return
+        except ConversationNotFound:
+            # The owner deleted the Conversation; its Turn must not be completed.
+            return
+        except ConversationConflict:
+            if turn.attempt < self.max_checkpoint_attempts:
+                return
+            outcome = "failed"
+            try:
+                await fail_turn()
+            except (ConversationConflict, PermissionError):
+                # Token and expiry checks prevent a real loser from failing the Turn.
+                return
+        except GraphCheckpointRetryable:
+            if turn.attempt < self.max_checkpoint_attempts:
+                return
+            outcome = "failed"
+            try:
+                await fail_turn()
+            except (ConversationConflict, PermissionError):
+                return
+        except GraphCheckpointUnavailable:
+            outcome = "failed"
+            try:
+                await fail_turn()
+            except (ConversationConflict, PermissionError):
+                return
+        except AuthorizationDenied:
+            outcome = "failed"
+            try:
+                await fail_turn()
+            except (ConversationConflict, PermissionError):
+                # Cancellation or lease reclaim won the terminal-state race.
+                return
+        except (
+            InsightsBudgetExceeded,
+            InsightsQueryUnavailable,
+            ModelGatewayRejected,
+            ModelGatewayUnavailable,
+            RuntimeError,
+            TimeoutError,
+        ):
+            if insights_query_id is None:
+                raise
+            outcome = "failed"
+            try:
+                await fail_turn()
+            except (ConversationConflict, PermissionError):
+                return
+        finally:
+            turn_span.set_attribute("tap.outcome", outcome)
 
 
 async def main() -> None:
     from tap.entrypoints.tapper_runtime import TapperSettings, create_api_runtime
+    from tap.entrypoints.tracing_setup import start_tracing
 
     settings = TapperSettings.from_mapping(dict(os.environ))
+    start_tracing("tap-ai-worker-generation", settings)
     runtime = await create_api_runtime(settings)
     conversations = runtime.http_services.conversations
     knowledge = runtime.http_services.knowledge

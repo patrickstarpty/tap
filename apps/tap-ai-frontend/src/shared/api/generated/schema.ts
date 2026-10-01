@@ -206,6 +206,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Turn Trace */
+        get: operations["conversation_turn_trace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/insights/explanations": {
         parameters: {
             query?: never;
@@ -976,6 +993,23 @@ export interface paths {
         put?: never;
         /** Retry Source */
         post: operations["knowledge_retry_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/model-calls/{call_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Model Call Detail */
+        get: operations["model_call_detail"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1762,6 +1796,8 @@ export interface components {
              * @enum {string}
              */
             state: "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
+            /** Traceid */
+            traceId?: string | null;
             /** Turnid */
             turnId: string;
         };
@@ -2262,6 +2298,7 @@ export interface components {
              */
             stopReason: "completed" | "budget-exhausted" | "insights-unavailable";
         };
+        JsonValue: unknown;
         /** KnowledgeChunk */
         KnowledgeChunk: {
             /** Charcount */
@@ -2754,6 +2791,86 @@ export interface components {
              * @constant
              */
             status: "ok";
+        };
+        /** ModelCallDetail */
+        ModelCallDetail: {
+            /** Attempts */
+            attempts: number;
+            /** Callid */
+            callId: string;
+            /** Costusd */
+            costUsd?: string | null;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Errorcode */
+            errorCode?: string | null;
+            /** Inputtokens */
+            inputTokens?: number | null;
+            /** Latencyms */
+            latencyMs: number;
+            /** Modelname */
+            modelName: string;
+            /** Operation */
+            operation: string;
+            /** Outputtokens */
+            outputTokens?: number | null;
+            /** Provider */
+            provider?: string | null;
+            /** Reasoning */
+            reasoning?: string | null;
+            /** Request */
+            request: string;
+            /** Response */
+            response?: string | null;
+            /** Spanid */
+            spanId?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error";
+            /** Upstreammodel */
+            upstreamModel?: string | null;
+        };
+        /** ModelCallView */
+        ModelCallView: {
+            /** Attempts */
+            attempts: number;
+            /** Callid */
+            callId: string;
+            /** Costusd */
+            costUsd?: string | null;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Errorcode */
+            errorCode?: string | null;
+            /** Inputtokens */
+            inputTokens?: number | null;
+            /** Latencyms */
+            latencyMs: number;
+            /** Modelname */
+            modelName: string;
+            /** Operation */
+            operation: string;
+            /** Outputtokens */
+            outputTokens?: number | null;
+            /** Provider */
+            provider?: string | null;
+            /** Spanid */
+            spanId?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error";
+            /** Upstreammodel */
+            upstreamModel?: string | null;
         };
         /** ModelCatalogItem */
         ModelCatalogItem: {
@@ -4384,6 +4501,33 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** TraceSpanView */
+        TraceSpanView: {
+            /** Attempt */
+            attempt?: number | null;
+            /** Attributes */
+            attributes: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Durationms */
+            durationMs: number;
+            /** Name */
+            name: string;
+            /** Parentspanid */
+            parentSpanId?: string | null;
+            /** Spanid */
+            spanId: string;
+            /**
+             * Startedat
+             * Format: date-time
+             */
+            startedAt: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error";
+        };
         /** TurnAbstainedEvent */
         TurnAbstainedEvent: {
             payload: components["schemas"]["TurnAbstainedPayload"];
@@ -4471,6 +4615,35 @@ export interface components {
              * @constant
              */
             state: "running";
+        };
+        /** TurnTrace */
+        TurnTrace: {
+            /** Modelcalls */
+            modelCalls: components["schemas"]["ModelCallView"][];
+            /** Spans */
+            spans: components["schemas"]["TraceSpanView"][];
+            summary: components["schemas"]["TurnTraceSummary"];
+            /** Traceid */
+            traceId: string;
+        };
+        /** TurnTraceSummary */
+        TurnTraceSummary: {
+            /** Attemptcount */
+            attemptCount: number;
+            /** Costincomplete */
+            costIncomplete: boolean;
+            /** Costusd */
+            costUsd?: string | null;
+            /** Inputtokens */
+            inputTokens: number;
+            /** Outputtokens */
+            outputTokens: number;
+            /** Requestedmodels */
+            requestedModels: string[];
+            /** Totaldurationms */
+            totalDurationMs: number;
+            /** Upstreammodels */
+            upstreamModels: string[];
         };
         /** ValidationError */
         ValidationError: {
@@ -5555,6 +5728,57 @@ export interface operations {
             };
             /** @description Citation evidence unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_turn_trace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                turn_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TurnTrace"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation, Turn, or trace not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8890,6 +9114,56 @@ export interface operations {
             };
             /** @description Source request failed */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    model_call_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                call_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCallDetail"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Model call not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

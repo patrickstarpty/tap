@@ -519,3 +519,58 @@ def test_conversation_citation_requires_the_turn_immutable_evidence_link():
         ).status_code
         == 404
     )
+
+
+def test_append_route_opens_turn_request_span(span_recorder):
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Models:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            return [STRUCTURED_CHAT_MODEL]
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_conversation_selection(self, _revision_ids):
+            return SimpleNamespace(
+                document_revision_ids=(),
+                source_revision_ids=(),
+                resolved_resources=(),
+            )
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+
+    created = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={"message": "Hello", "modelAlias": "qwen-plus"},
+        headers={"Idempotency-Key": "first-turn"},
+    )
+    assert created.status_code == 202, created.text
+    conversation_id = created.json()["conversationId"]
+    span_recorder.clear()
+
+    appended = client.post(
+        f"/api/v1/projects/tapper-demo/conversations/{conversation_id}/turns",
+        json={"message": "Follow up", "modelAlias": "qwen-plus"},
+        headers={"Idempotency-Key": "second-turn"},
+    )
+    assert appended.status_code == 202, appended.text
+    turn_id = appended.json()["turnId"]
+
+    request_spans = [s for s in span_recorder.get_finished_spans() if s.name == "turn.request"]
+    assert len(request_spans) == 1
+    assert request_spans[0].attributes["tap.turn_id"] == turn_id

@@ -196,10 +196,12 @@ def _raise_collected_errors(message: str, errors: list[BaseException]) -> None:
 
 def main(environment: Mapping[str, str] | None = None) -> None:
     from tap.entrypoints.tapper_runtime import TapperSettings, create_worker_runtime
+    from tap.entrypoints.tracing_setup import start_tracing
     from tap.operations.milvus.client import suppress_pymilvus_rpc_logging
 
     values = dict(os.environ) if environment is None else dict(environment)
     settings = TapperSettings.from_mapping(values)
+    start_tracing("tap-ai-worker-ingestion", settings)
     with suppress_pymilvus_rpc_logging():
         asyncio.run(run(runtime_factory=create_worker_runtime, settings=settings))
 

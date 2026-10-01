@@ -1,7 +1,10 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useConversationStream } from "./queries";
+import { createTestQueryClient } from "../../../shared/testing/renderApp";
+import { useConversationStream, useTurnTrace } from "./queries";
 
 const event = (
   sequence: number,
@@ -202,5 +205,124 @@ describe("useConversationStream", () => {
     expect(result.current.state.turns["turn-2"]?.answer).toBe("second answer");
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("useTurnTrace", () => {
+  const traceJson = (hasLatestSpan: boolean) =>
+    new Response(
+      JSON.stringify({
+        traceId: "trace-1",
+        summary: {
+          totalDurationMs: 100,
+          inputTokens: 1,
+          outputTokens: 1,
+          costUsd: "0.0001",
+          costIncomplete: false,
+          requestedModels: ["gpt-4o"],
+          upstreamModels: ["gpt-4o"],
+          attemptCount: 1,
+        },
+        spans: hasLatestSpan
+          ? [
+              {
+                spanId: "span-1",
+                parentSpanId: null,
+                name: "turn.execute",
+                status: "ok",
+                startedAt: "2026-09-30T00:00:00Z",
+                durationMs: 10,
+                attributes: {},
+                attempt: 1,
+              },
+            ]
+          : [],
+        modelCalls: [],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  function makeWrapper() {
+    const queryClient = createTestQueryClient();
+    return function wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      );
+    };
+  }
+
+  it("does not fetch trace before turn is terminal", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(traceJson(true));
+
+    renderHook(
+      () =>
+        useTurnTrace("project-1", "conversation-1", "turn-1", {
+          enabled: false,
+          latestAttempt: 1,
+        }),
+      { wrapper: makeWrapper() },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("refetches trace until latest attempt execute span appears", async () => {
+    vi.useFakeTimers();
+    let call = 0;
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => {
+        call += 1;
+        return traceJson(call >= 3);
+      });
+
+    renderHook(
+      () =>
+        useTurnTrace("project-1", "conversation-1", "turn-1", {
+          enabled: true,
+          latestAttempt: 1,
+        }),
+      { wrapper: makeWrapper() },
+    );
+
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
+  });
+
+  it("stops refetching after four attempts", async () => {
+    vi.useFakeTimers();
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => traceJson(false));
+
+    renderHook(
+      () =>
+        useTurnTrace("project-1", "conversation-1", "turn-1", {
+          enabled: true,
+          latestAttempt: 1,
+        }),
+      { wrapper: makeWrapper() },
+    );
+
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    vi.useRealTimers();
   });
 });

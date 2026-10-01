@@ -38,6 +38,7 @@ from tap.contracts.http import (
     SourcePage,
     SourceRetryRequest,
 )
+from tap.interfaces.http.trace_service import TraceHttpService
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import RetrievalPolicyContext
@@ -227,6 +228,7 @@ class HttpServices:
     conversations: ConversationService | None = None
     prompt_suggestions: PromptSuggestionService | None = None
     prompt_suggestion_store: SuggestionStore | None = None
+    traces: TraceHttpService | None = None
     graph: GraphStorePort | None = None
     test_plans: TestPlanApplication | None = None
     knowledge_reviews: KnowledgeReviewHttpService | None = None
@@ -305,6 +307,14 @@ def conversation_service(request: Request) -> ConversationService:
 def prompt_suggestion_service(request: Request) -> PromptSuggestionService:
     services = getattr(request.app.state, "http_services", None)
     service = services.prompt_suggestions if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def trace_service(request: Request) -> TraceHttpService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.traces if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service
