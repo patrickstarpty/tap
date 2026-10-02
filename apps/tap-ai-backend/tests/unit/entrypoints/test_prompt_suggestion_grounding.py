@@ -14,6 +14,7 @@ from tap.entrypoints.prompt_suggestion_knowledge import (
     CompositeReadyProjection,
 )
 from tap.modules.knowledge.domain.models import AnswerRequest, ResourceMode, SourceFamily
+from tap.modules.knowledge.ports.errors import AnswerUnavailable
 
 
 @dataclass
@@ -48,6 +49,34 @@ async def test_grounding_uses_scope_resources_and_abstention():
 
     answers.abstained = False
     assert await check.is_grounded("actor-1", "Another question?", ("src-1",)) is True
+
+
+class _FailingAnswerService:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def answer(self, request: AnswerRequest) -> _FakeAnswerResponse:
+        del request
+        raise self.error
+
+
+@pytest.mark.asyncio
+async def test_invalid_grounded_answer_is_not_grounded():
+    check = AnswerGroundingCheck(
+        _FailingAnswerService(
+            AnswerUnavailable("claim text is not one unique complete answer statement")
+        )
+    )
+
+    assert await check.is_grounded("actor-1", "What is the refund policy?", ("src-1",)) is False
+
+
+@pytest.mark.asyncio
+async def test_unavailable_answer_model_fails_the_grounding_check():
+    check = AnswerGroundingCheck(_FailingAnswerService(AnswerUnavailable("model-unavailable")))
+
+    with pytest.raises(AnswerUnavailable):
+        await check.is_grounded("actor-1", "What is the refund policy?", ("src-1",))
 
 
 class _RecordingProjection:

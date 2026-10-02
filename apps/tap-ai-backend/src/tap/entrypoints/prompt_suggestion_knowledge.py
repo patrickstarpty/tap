@@ -33,7 +33,12 @@ from tap.modules.knowledge.domain.models import (
     ResourceRef,
     SourceFamily,
 )
+from tap.modules.knowledge.ports.errors import AnswerUnavailable
 from tap.platform.db.project_scope import require_project_scope, scope_predicates
+
+# The answer adapter reports an unreachable model with this exact message; every
+# other AnswerUnavailable means the model answered but the answer failed validation.
+_MODEL_UNAVAILABLE = "model-unavailable"
 
 _MAX_TOPIC_SOURCES = 30
 _MAX_HEADINGS_PER_SOURCE = 8
@@ -220,7 +225,14 @@ class AnswerGroundingCheck:
                 for source_id in source_ids
             ),
         )
-        response = await self._answers.answer(request)
+        try:
+            response = await self._answers.answer(request)
+        except AnswerUnavailable as error:
+            # An invalid answer means the question cannot be answered reliably,
+            # so the candidate is not grounded; an outage still fails the refresh.
+            if str(error) == _MODEL_UNAVAILABLE:
+                raise
+            return False
         return not response.abstained
 
 
