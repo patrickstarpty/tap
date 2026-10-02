@@ -599,6 +599,7 @@ class MemoryMilvus:
         self.events: list[str] = []
         self.coordinator = MemoryProjectionCoordinator()
         self.require_fresh_receipt_before_create = False
+        self.flushes: list[str] = []
 
     async def collection_exists(self, name: str) -> bool:
         return name in self.collections
@@ -751,6 +752,7 @@ class MemoryMilvus:
 
     async def flush(self, name: str) -> None:
         assert name in self.collections
+        self.flushes.append(name)
 
     async def query_persisted_rows(
         self,
@@ -1112,6 +1114,31 @@ async def test_document_purge_removes_every_revision_and_keeps_only_deletion_fen
     await index.purge_document("doc_a", keep_revision_id=None)
 
     assert _document_revisions(memory) == {f"fence:{current.revision_id}": 1}
+
+
+@pytest.mark.asyncio
+async def test_deletion_path_never_flushes_and_publish_flushes_once() -> None:
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    chunks = tuple(chunk(i, "rev_a") for i in range(1, 3))
+    memory.flushes.clear()
+    await index.upsert_revision(
+        work("rev_a"), chunks, _revision_embeddings(chunks), index_version="tapper-index-v1"
+    )
+    assert len(memory.flushes) == 1
+    target = DeletionTarget(
+        "doc_a", work("rev_a").revision_id, tuple(str(c.chunk_id) for c in chunks), ()
+    )
+    memory.flushes.clear()
+
+    await index.fence_revision(target)
+    await index.delete_revision(target)
+    assert await index.count_revision(target) == 0
+    await index.purge_document("doc_a", keep_revision_id=None)
+
+    assert memory.flushes == []
+    assert _document_revisions(memory) == {f"fence:{target.revision_id}": 1}
 
 
 @pytest.mark.asyncio
