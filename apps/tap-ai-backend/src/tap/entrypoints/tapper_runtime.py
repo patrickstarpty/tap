@@ -1589,46 +1589,6 @@ def _assemble_http_services(
         from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService
 
         traces = MysqlTraceHttpService(conversation_sessions)  # type: ignore[arg-type]
-    prompt_suggestions = None
-    prompt_suggestion_store = None
-    if conversation_sessions is not None:
-        from uuid import uuid4
-
-        from tap.entrypoints.prompt_suggestion_knowledge import (
-            AnswerGroundingCheck,
-            KnowledgeSuggestionSources,
-        )
-        from tap.modules.chat.adapters.model_gateway_suggestions import (
-            ModelGatewaySuggestionGenerator,
-        )
-        from tap.modules.chat.adapters.mysql_suggestion_usage import MysqlSuggestionUsage
-        from tap.modules.chat.adapters.mysql_suggestions import MysqlSuggestionStore
-        from tap.modules.chat.application.suggestions import PromptSuggestionService
-
-        prompt_suggestion_store = MysqlSuggestionStore(
-            conversation_sessions,  # type: ignore[arg-type]
-            scope=repository.scope,
-        )
-        prompt_suggestions = PromptSuggestionService(
-            store=prompt_suggestion_store,
-            knowledge=KnowledgeSuggestionSources(
-                conversation_sessions,  # type: ignore[arg-type]
-                scope=repository.scope,
-            ),
-            usage=MysqlSuggestionUsage(
-                conversation_sessions,  # type: ignore[arg-type]
-                scope=repository.scope,
-            ),
-            generator=ModelGatewaySuggestionGenerator(
-                embeddings.gateway,
-                scope=embeddings.scope,
-                alias=embeddings.chat_alias,
-                timeout_seconds=embeddings.timeout_seconds,
-            ),
-            grounding=AnswerGroundingCheck(answer_service),
-            id_factory=lambda: uuid4().hex,
-            clock=lambda: datetime.now(UTC),
-        )
     graph = None
     graph_enricher = None
     if graph_sessions is not None:
@@ -1682,6 +1642,70 @@ def _assemble_http_services(
                 None if test_plans is None else test_plans.mark_knowledge_sources_changed
             ),
         )
+    knowledge_http = KnowledgeHttpService(
+        documents=documents,
+        answers=answer_service,
+        citations=citations,
+        searches=search_service,
+        sources=SourceService(cast(SourceRepository, repository), documents),
+        corpus_version=corpus_version,
+        graph_enricher=graph_enricher,
+        models=embeddings,
+        answer_planner=_answer_planner(embeddings),
+    )
+    prompt_suggestions = None
+    prompt_suggestion_store = None
+    if conversation_sessions is not None:
+        from uuid import uuid4
+
+        from tap.entrypoints.prompt_suggestion_knowledge import (
+            ConversationGroundingCheck,
+            KnowledgeSuggestionSources,
+        )
+        from tap.modules.chat.adapters.model_gateway_suggestions import (
+            ModelGatewaySuggestionGenerator,
+        )
+        from tap.modules.chat.adapters.mysql_suggestion_usage import MysqlSuggestionUsage
+        from tap.modules.chat.adapters.mysql_suggestions import MysqlSuggestionStore
+        from tap.modules.chat.application.suggestions import PromptSuggestionService
+        from tap.modules.knowledge.adapters.mysql_ready_sources import (
+            MysqlReadySources as SuggestionReadySources,
+        )
+
+        prompt_suggestion_store = MysqlSuggestionStore(
+            conversation_sessions,  # type: ignore[arg-type]
+            scope=repository.scope,
+        )
+        prompt_suggestions = PromptSuggestionService(
+            store=prompt_suggestion_store,
+            knowledge=KnowledgeSuggestionSources(
+                conversation_sessions,  # type: ignore[arg-type]
+                scope=repository.scope,
+            ),
+            usage=MysqlSuggestionUsage(
+                conversation_sessions,  # type: ignore[arg-type]
+                scope=repository.scope,
+            ),
+            generator=ModelGatewaySuggestionGenerator(
+                embeddings.gateway,
+                scope=embeddings.scope,
+                alias=embeddings.chat_alias,
+                timeout_seconds=embeddings.timeout_seconds,
+            ),
+            # Grounding replays the chat planner and answer pipeline, so a shown
+            # suggestion is one that a click would answer with citations.
+            grounding=ConversationGroundingCheck(
+                knowledge_http,
+                ready_sources=SuggestionReadySources(
+                    conversation_sessions,  # type: ignore[arg-type]
+                    repository.scope,
+                ),
+                scope=repository.scope,
+                model_alias=embeddings.chat_alias,
+            ),
+            id_factory=lambda: uuid4().hex,
+            clock=lambda: datetime.now(UTC),
+        )
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]
         model_catalog=ModelCatalog(
@@ -1689,17 +1713,7 @@ def _assemble_http_services(
             scope=embeddings.scope,
             default_alias=embeddings.chat_alias,
         ),
-        knowledge=KnowledgeHttpService(
-            documents=documents,
-            answers=answer_service,
-            citations=citations,
-            searches=search_service,
-            sources=SourceService(cast(SourceRepository, repository), documents),
-            corpus_version=corpus_version,
-            graph_enricher=graph_enricher,
-            models=embeddings,
-            answer_planner=_answer_planner(embeddings),
-        ),
+        knowledge=knowledge_http,
         readiness=readiness,
         scope_provider=scope_provider,
         authorization_policy=authorization_policy,

@@ -482,11 +482,21 @@ test("a published source's suggested question grounds a Tapper answer", async ({
   // The suggestion worker generates candidates asynchronously from published
   // sources; the first read after publish returns an empty page and enqueues
   // a refresh, so poll by reloading until the worker has produced items.
+  // Once the conversation list loads, the workspace restores the most recent
+  // conversation from earlier tests, so wait for that list and then open a
+  // new chat explicitly before looking for suggestions.
   const suggestionsGroup = page.getByRole("group", {
     name: "Suggested questions",
   });
   async function suggestionsReady(): Promise<boolean> {
+    const conversationList = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === `${root}/conversations`,
+    );
     await page.reload();
+    await conversationList;
+    await page.getByRole("button", { name: "New chat", exact: true }).click();
     try {
       await suggestionsGroup.waitFor({ state: "visible", timeout: 3_000 });
     } catch {

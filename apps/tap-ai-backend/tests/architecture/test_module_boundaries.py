@@ -17,6 +17,7 @@ CHAT_API_SYMBOLS = {
     "AuthorizedAnswerExecution",
     "AuthorizedAnswerQuery",
     "get_template",
+    "latest_template_version",
     "AnswerRequest",
     "AnswerResponse",
     "KnowledgeAPI",

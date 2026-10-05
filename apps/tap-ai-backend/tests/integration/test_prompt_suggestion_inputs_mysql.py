@@ -357,7 +357,7 @@ def test_topics_list_headings_in_document_order(owned_project_mysql):
     _run(owned_project_mysql, scenario)
 
 
-def test_main_entities_rank_by_evidence(owned_project_mysql):
+def test_main_entities_rank_domain_entities_by_evidence(owned_project_mysql):
     async def scenario(sessions, engine):
         async with sessions() as session, session.begin():
             await _seed_document(
@@ -420,6 +420,24 @@ def test_main_entities_rank_by_evidence(owned_project_mysql):
                     "ENTITY",
                     "rare-entity",
                     ("evidence-3",),
+                ),
+                # Structural placeholder nodes (one per document / chunk) are not domain
+                # entities even when they carry the most evidence.
+                GraphNode(
+                    "node-document",
+                    "snapshot-1",
+                    "rev-graph",
+                    "ENTITY",
+                    "document:rev-graph",
+                    ("evidence-1", "evidence-2", "evidence-3"),
+                ),
+                GraphNode(
+                    "node-chunk",
+                    "snapshot-1",
+                    "Section 1",
+                    "CONCEPT",
+                    "chunk:h_" + "c" * 64,
+                    ("evidence-1", "evidence-2", "evidence-3"),
                 ),
             ),
             (),

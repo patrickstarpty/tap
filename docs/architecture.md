@@ -69,7 +69,7 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 
 1. 四类触发写入 MySQL 刷新队列表，以（项目、用户、语言）为单位：知识发布（Ready 投影同事务内请求整项目刷新，立即到期）、对话完成（节流 10 分钟）、读取时命中过滤或首次读取（无历史缓存立即到期，其余过滤节流 10 分钟），以及每日兜底扫描（24 小时）。
 2. 独立的 prompt suggestion worker 轮询队列认领到期行，调用 `PromptSuggestionService.refresh`：拼装知识库主题与图谱主要实体、本人历史提问来源、其他用户来源使用次数（仅次数，不含提问原文）作为模型输入，经模型网关 `generate_structured` 生成候选（每次最多 8 条，每条 1–3 个来源，来源须属于本次输入的知识库来源，语言与请求 locale 一致）。
-3. 每条候选以当前用户授权重放问答路径 `AnswerService.answer`（来源以 `ResourceMode.SCOPE` 限定）验证依据，仅 `abstained` 为假的候选写入 MySQL 缓存；刷新失败保留旧缓存而非清空，知识库为空时缓存写为空列表。
+3. 每条候选以当前用户授权、按对话回合的同一路径（冻结来源 → 回答规划 → `answer_conversation`，来源以 `ResourceMode.SCOPE` 限定，不保存对话）验证依据，仅未弃答且带引用的候选写入 MySQL 缓存；刷新失败保留旧缓存而非清空，知识库为空时缓存写为空列表。
 4. `GET /prompt-suggestions` 只读 MySQL 缓存并与知识库当前来源状态比对，过滤掉来源已删除、未发布、当前用户无权限或版本已更新的条目；接口本身从不调用模型，过滤后为空返回空列表，且任一条目被过滤会重新排入一次刷新。
 
 **可观测性**

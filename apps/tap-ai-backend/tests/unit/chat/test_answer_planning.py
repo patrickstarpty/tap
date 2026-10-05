@@ -53,6 +53,22 @@ async def test_explicit_routes_do_not_spend_planning_calls(message, route, count
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["你好", "错误码 E104 如何处理？", "它和上一版有什么不同？"])
+async def test_new_plans_pin_the_latest_answer_template_version(message):
+    from tap.modules.knowledge.application.answer_templates import (
+        get_template,
+        latest_template_version,
+    )
+
+    async def forbidden(_input, _timeout):
+        pytest.fail("explicit input must not call the planning model")
+
+    plan = await planning().AnswerPlanner(forbidden).plan(context(message))
+    assert plan.template_version == latest_template_version(plan.template_id)
+    assert plan.template_digest == get_template(plan.template_id, plan.template_version).digest
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "message,route",
     [

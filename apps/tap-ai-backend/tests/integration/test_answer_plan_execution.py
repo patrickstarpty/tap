@@ -854,7 +854,10 @@ async def test_clarification_asks_for_the_validated_missing_field(missing, requi
 @pytest.mark.asyncio
 async def test_direct_plan_passes_pinned_assembly_to_generation():
     from tap.contracts.http import RetrievalAnswerRequest
-    from tap.modules.knowledge.application.answer_templates import get_template
+    from tap.modules.knowledge.application.answer_templates import (
+        get_template,
+        latest_template_version,
+    )
     from tap.modules.knowledge.ports.models import AnswerGeneration
 
     inputs = []
@@ -869,5 +872,8 @@ async def test_direct_plan_passes_pinned_assembly_to_generation():
         RetrievalAnswerRequest(query=frozen.message), frozen, answer_plan=plan
     )
     assert inputs[0] is not None
-    assert get_template("general", "1").instruction in inputs[0].platform_instruction
+    assert (
+        get_template("general", latest_template_version("general")).instruction
+        in inputs[0].platform_instruction
+    )
     assert inputs[0].context["originalQuestion"] == "你好"

@@ -17,6 +17,7 @@ from tap.modules.chat.domain.conversations import TurnInputSnapshot
 from tap.modules.knowledge.api import AuthorizedAnswerExecution as _AuthorizedAnswerExecution
 from tap.modules.knowledge.api import AuthorizedAnswerQuery as _AuthorizedAnswerQuery
 from tap.modules.knowledge.api import get_template as _get_template
+from tap.modules.knowledge.api import latest_template_version as _latest_template_version
 from tap.platform.telemetry import span
 
 PlannerCall = Callable[[PlanningInput, float], Awaitable[dict[str, Any]]]
@@ -156,9 +157,8 @@ class AnswerPlanner:
                     intent = "explanation"
 
             def build(queries=None):
-                template = _get_template(
-                    _TEMPLATE[intent], "2" if intent == "clarification" else "1"
-                )
+                template_id = _TEMPLATE[intent]
+                template = _get_template(template_id, _latest_template_version(template_id))
                 current_span.set_attribute("tap.plan.kind", route)
                 return AnswerPlan(
                     plan_id=uuid4().hex,

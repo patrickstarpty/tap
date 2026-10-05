@@ -304,6 +304,8 @@ async def test_refresh_drops_invalid_candidates():
             Candidate(question="Duplicate?", source_ids=("src-1",)),
             Candidate(question="duplicate?", source_ids=("src-1",)),
             Candidate(question="Kept?", source_ids=("src-1",)),
+            Candidate(question="哪一条款适用？", source_ids=("src-1",)),
+            Candidate(question="What does src_0123456789abcdef cover?", source_ids=("src-1",)),
         )
     )
     service = _service(store=store, knowledge=knowledge, generator=generator)
