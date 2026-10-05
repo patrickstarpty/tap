@@ -23,6 +23,7 @@ from tap.modules.chat.domain.suggestions import (
     SuggestionInputs,
     SuggestionKey,
     SuggestionSource,
+    is_displayable_question,
 )
 
 _PERSONAL_LIMIT = 20
@@ -129,6 +130,8 @@ class PromptSuggestionService:
         for candidate in candidates:
             question = candidate.question.strip()
             if not question or len(question) > _MAX_QUESTION_LENGTH:
+                continue
+            if not is_displayable_question(question, key.locale):
                 continue
             if not (1 <= len(candidate.source_ids) <= MAX_SOURCES_PER_SUGGESTION):
                 continue

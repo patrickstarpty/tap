@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -83,3 +84,24 @@ def next_due_at(
     if current_due_at is not None:
         due = min(due, current_due_at)
     return due
+
+
+# Questions shown to a user must not expose internal identifiers.
+_IDENTIFIER = re.compile(r"\b(?:src|rev|doc)_[0-9a-z]{6,}|[0-9a-f]{16,}", re.IGNORECASE)
+# Quoted titles may keep their original language, e.g. a Chinese product name in English.
+_QUOTED = re.compile(r"《[^》]*》|“[^”]*”|\"[^\"]*\"|'[^']*'")
+_CJK = re.compile(r"[\u3400-\u9fff]")
+_LATIN = re.compile(r"[A-Za-z]")
+
+
+def is_displayable_question(question: str, locale: SuggestionLocale) -> bool:
+    """A suggestion is shown only in the interface language and without internal IDs."""
+
+    if _IDENTIFIER.search(question):
+        return False
+    body = _QUOTED.sub("", question)
+    cjk = len(_CJK.findall(body))
+    latin = len(_LATIN.findall(body))
+    if locale == "zh":
+        return cjk > 0 and cjk * 4 >= latin
+    return latin > cjk
