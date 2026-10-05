@@ -102,6 +102,36 @@ def test_grounded_output_projects_unique_complete_claims_into_canonical_answer()
     )
 
 
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "Complete paragraph.",
+        "Duplicate paragraph.\n\nDuplicate paragraph.",
+        "A free summary that restates the claims differently.",
+    ],
+)
+def test_grounded_output_rebuilds_answer_from_complete_claims_absent_from_summary(
+    summary: str,
+) -> None:
+    answer, claims = parse_grounded_answer_payload(
+        {
+            "answer": summary,
+            "claims": [
+                {"text": "Approvals need two reviewers.", "evidenceLabels": ["S1"]},
+                {"text": "退款审批需要两名审批人。", "evidenceLabels": ["S2"]},
+            ],
+        },
+        (evidence(label="S1"), evidence(label="S2")),
+        max_answer_chars=16_000,
+        max_claims=64,
+        max_claim_chars=4_000,
+        max_labels_per_claim=16,
+    )
+
+    assert answer == "Approvals need two reviewers.\n\n退款审批需要两名审批人。"
+    assert tuple(claim.evidence_labels for claim in claims) == (("S1",), ("S2",))
+
+
 @pytest.mark.parametrize("answer", ["", "I cannot answer from the supplied evidence."])
 def test_grounded_output_projects_zero_claims_to_closed_abstention(answer: str) -> None:
     assert parse_grounded_answer_payload(
@@ -221,15 +251,13 @@ def test_grounded_output_accepts_all_closed_upper_bounds() -> None:
         },
         {
             "answer": "Complete paragraph.",
-            "claims": [{"text": "Absent paragraph.", "evidenceLabels": ["S1"]}],
-        },
-        {
-            "answer": "Complete paragraph.",
             "claims": [{"text": "Complete", "evidenceLabels": ["S1"]}],
         },
         {
-            "answer": "Duplicate paragraph.\n\nDuplicate paragraph.",
-            "claims": [{"text": "Duplicate paragraph.", "evidenceLabels": ["S1"]}],
+            "answer": "The log records a start and a pass.",
+            "claims": [
+                {"text": "09:41:02  START  Open request\n09:41:04  PASS", "evidenceLabels": ["S1"]}
+            ],
         },
         {
             "answer": "Duplicate claim.",
@@ -261,9 +289,8 @@ def test_grounded_output_accepts_all_closed_upper_bounds() -> None:
         "label-length",
         "unknown-label",
         "duplicate-label",
-        "absent-paragraph",
         "partial-paragraph",
-        "duplicate-answer-paragraph",
+        "quoted-fragment",
         "duplicate-claim-paragraph",
     ),
 )

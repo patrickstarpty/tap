@@ -42,8 +42,13 @@ def parse_grounded_answer_payload(
         if not _bounded_utf8_string(text, maximum=max_claim_chars) or "\n\n" in text:
             raise ValueError("claim text is outside the closed bound")
         is_unique_paragraph = answer_paragraphs.count(text) == 1
-        is_unique_statement = answer.count(text) == 1 and text[-1] in ".!?。！？"
-        if not (is_unique_paragraph or is_unique_statement):
+        # A complete single-line sentence stands on its own even when the model summarised it
+        # differently: the canonical answer below is rebuilt from claims, so every displayed
+        # sentence stays a cited claim.
+        is_complete = text[-1] in ".!?。！？"
+        is_unique_statement = is_complete and answer.count(text) == 1
+        is_complete_sentence = is_complete and "\n" not in text
+        if not (is_unique_paragraph or is_unique_statement or is_complete_sentence):
             raise ValueError("claim text is not one unique complete answer statement")
         all_claims_are_unique_paragraphs &= is_unique_paragraph
         if text in seen_claims:
