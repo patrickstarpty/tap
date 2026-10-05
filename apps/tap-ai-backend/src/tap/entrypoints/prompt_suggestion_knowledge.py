@@ -36,6 +36,10 @@ from tap.modules.knowledge.domain.models import (
 from tap.modules.knowledge.ports.errors import AnswerUnavailable
 from tap.platform.db.project_scope import require_project_scope, scope_predicates
 
+# Placeholder graph extraction emits one node per document and per chunk; they name
+# revisions and sections, not domain entities, so they never reach suggestion prompts.
+_STRUCTURAL_NODE_KEY_PREFIXES = ("document:", "chunk:")
+
 # The answer adapter reports an unreachable model with this exact message; every
 # other AnswerUnavailable means the model answered but the answer failed validation.
 _MODEL_UNAVAILABLE = "model-unavailable"
@@ -186,6 +190,10 @@ class KnowledgeSuggestionSources:
                             *scope_predicates(graph_node_evidence, self._scope),
                             *scope_predicates(graph_node, self._scope),
                             graph_node_evidence.c.source_revision_id.in_(revision_ids),
+                            *(
+                                ~graph_node.c.canonical_key.startswith(prefix)
+                                for prefix in _STRUCTURAL_NODE_KEY_PREFIXES
+                            ),
                         )
                         .group_by(
                             graph_node.c.snapshot_id, graph_node.c.node_id, graph_node.c.label
