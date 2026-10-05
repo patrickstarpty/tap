@@ -311,7 +311,6 @@ class MilvusDocumentIndex:
                 physical = await self._current_target_locked(authority)
                 row = self._fence_row(physical, target)
                 await self._writer.upsert(physical, (row,))
-                await self._writer.flush(physical)
                 persisted = await self._reader.query_persisted_rows(
                     physical,
                     _eq("chunk_id", str(row["chunk_id"])),
@@ -1206,7 +1205,6 @@ class MilvusDocumentIndex:
             raise ValueError("Tapper delete requires unique immutable chunk IDs")
         for batch in _batches(chunk_ids, _DELETE_BATCH):
             await self._writer.delete(physical, batch)
-        await self._writer.flush(physical)
 
     async def _require_revision_parity(
         self,
