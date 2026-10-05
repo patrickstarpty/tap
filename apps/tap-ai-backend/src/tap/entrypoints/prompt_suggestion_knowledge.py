@@ -7,17 +7,27 @@ the ReadyRevisionProjection that triggers a refresh when Knowledge publishes."""
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
-from typing import cast
+from datetime import UTC, datetime
+from typing import Any, cast
+from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from tap.contracts.http import PublishedKnowledgeSource
+from tap.contracts.http import (
+    PublishedKnowledgeSource,
+    ResourceMode,
+    ResourceRef,
+    RetrievalAnswerRequest,
+    SourceFamily,
+)
+from tap.interfaces.http.conversation_selection import freeze_conversation_selection
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.adapters.mysql_suggestions import MysqlSuggestionStore
+from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.suggestion_ports import CurrentSource
+from tap.modules.chat.domain.conversations import TurnInput, TurnInputSnapshot, content_digest
 from tap.modules.chat.domain.suggestions import RefreshReason, TopicSource
 from tap.modules.graph.adapters.mysql import graph_node, graph_node_evidence
 from tap.modules.knowledge.adapters.mysql_documents import (
@@ -26,13 +36,6 @@ from tap.modules.knowledge.adapters.mysql_documents import (
 )
 from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents
 from tap.modules.knowledge.adapters.mysql_ready_sources import MysqlReadySources
-from tap.modules.knowledge.application.answers import AnswerService
-from tap.modules.knowledge.domain.models import (
-    AnswerRequest,
-    ResourceMode,
-    ResourceRef,
-    SourceFamily,
-)
 from tap.modules.knowledge.ports.errors import AnswerUnavailable
 from tap.platform.db.project_scope import require_project_scope, scope_predicates
 
@@ -217,31 +220,88 @@ class KnowledgeSuggestionSources:
         return tuple(entities)
 
 
-class AnswerGroundingCheck:
-    """Grounding is "the current user's AnswerService call does not abstain",
-    scoped to exactly the sources the candidate cites."""
+class ConversationGroundingCheck:
+    """Grounding runs the candidate through the same planner and answer pipeline as a chat
+    turn (without persisting a conversation), scoped to exactly the sources the candidate
+    cites, so a suggestion is shown only when clicking it yields a cited answer."""
 
-    def __init__(self, answers: AnswerService) -> None:
-        self._answers = answers
+    def __init__(
+        self,
+        knowledge: Any,
+        *,
+        ready_sources: Any,
+        scope: ProjectScopeContext,
+        model_alias: str,
+    ) -> None:
+        self._knowledge = knowledge
+        self._ready_sources = ready_sources
+        self._scope = require_project_scope(scope)
+        self._model_alias = model_alias
 
     async def is_grounded(self, actor_id: str, question: str, source_ids: tuple[str, ...]) -> bool:
-        del actor_id  # actor identity is bound by the AnswerService's own scope
-        request = AnswerRequest(
-            query=question,
-            resource_refs=tuple(
-                ResourceRef(SourceFamily.DOC, source_id, ResourceMode.SCOPE)
-                for source_id in source_ids
+        current = {
+            item.source_id: item.revision_id
+            for item in (await self._ready_sources.list_sources()).items
+        }
+        if any(source_id not in current for source_id in source_ids):
+            return False
+        revision_ids = tuple(current[source_id] for source_id in source_ids)
+        selection = await freeze_conversation_selection(
+            self._knowledge, source_revision_ids=revision_ids
+        )
+        value = TurnInput(
+            message=question,
+            actor_id=actor_id,
+            identity_mode=self._scope.identity_mode.value,
+            model_alias=self._model_alias,
+            source_revision_ids=revision_ids,
+            resolved_resources=selection.resolved_resources,
+            acl_digest=selection.acl_digest,
+            retrieval_policy_digest=selection.retrieval_policy_digest,
+        )
+        turn_id = uuid4().hex
+        snapshot = TurnInputSnapshot(
+            snapshot_id=uuid4().hex,
+            project_id=self._scope.project_id,
+            turn_id=turn_id,
+            value=value,
+            digest=content_digest(
+                value.material(project_id=self._scope.project_id, turn_id=turn_id)
             ),
+            created_at=datetime.now(UTC),
+        )
+        planner = getattr(self._knowledge, "answer_planner", None)
+        plan = None
+        if planner is not None:
+            await self._knowledge.authorize_planning(snapshot)
+            plan = await planner.plan(planning_input(snapshot))
+        request = RetrievalAnswerRequest(
+            query=question,
+            sources=[SourceFamily.DOC],
+            resource_refs=[
+                ResourceRef(
+                    family=SourceFamily.DOC, source_id=item.source_id, mode=ResourceMode.SCOPE
+                )
+                for item in value.resolved_resources
+            ],
         )
         try:
-            response = await self._answers.answer(request)
+            answer = await self._knowledge.answer_conversation(
+                request,
+                value,
+                **({"answer_plan": plan, "authorize": _always_authorized} if plan else {}),
+            )
         except AnswerUnavailable as error:
             # An invalid answer means the question cannot be answered reliably,
             # so the candidate is not grounded; an outage still fails the refresh.
             if str(error) == _MODEL_UNAVAILABLE:
                 raise
             return False
-        return not response.abstained
+        return not answer.abstained and bool(answer.citations)
+
+
+async def _always_authorized() -> None:
+    """A dry-run turn holds no lease that could be lost while answering."""
 
 
 class SuggestionReadyProjection:

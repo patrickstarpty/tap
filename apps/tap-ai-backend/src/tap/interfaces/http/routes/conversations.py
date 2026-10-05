@@ -26,6 +26,7 @@ from tap.contracts.http import (
     ConversationTurnSummary,
     TurnTrace,
 )
+from tap.interfaces.http.conversation_selection import freeze_conversation_selection
 from tap.interfaces.http.dependencies import conversation_service, knowledge_service, trace_service
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
@@ -44,7 +45,7 @@ from tap.modules.chat.application.conversations import (
     ConversationNotFound,
     ConversationService,
 )
-from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
+from tap.modules.chat.domain.conversations import TurnInput
 from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.platform.telemetry import bind_trace, span, trace_id_of
@@ -127,25 +128,11 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         raise KnowledgeRuntimeUnavailable
     if services.knowledge is None:
         raise KnowledgeRuntimeUnavailable
-    selected_revision_ids = tuple((*body.source_revision_ids, *body.document_revision_ids))
-    if selected_revision_ids:
-        revisions, policy = await services.knowledge.resolve_conversation_selection(
-            selected_revision_ids
-        )
-        acl_digest = policy.acl_digest
-        retrieval_policy_digest = content_digest(
-            {
-                "decisionId": policy.decision_id,
-                "policyVersion": policy.policy_version,
-                "corpusVersion": policy.active_corpus_version,
-            }
-        )
-    else:
-        revisions = ()
-        acl_digest = content_digest({"mode": "model-only", "resources": []})
-        retrieval_policy_digest = content_digest(
-            {"mode": "model-only", "retrieval": "not-selected"}
-        )
+    selection = await freeze_conversation_selection(
+        services.knowledge,
+        source_revision_ids=tuple(body.source_revision_ids),
+        document_revision_ids=tuple(body.document_revision_ids),
+    )
     return TurnInput(
         message=body.message,
         actor_id=scope.actor_id,
@@ -153,25 +140,7 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         model_alias=body.model_alias,
         source_revision_ids=tuple(body.source_revision_ids),
         document_revision_ids=tuple(body.document_revision_ids),
-        resolved_resources=tuple(
-            FrozenResource(
-                source_id=item.source_id or item.document_id,
-                document_id=item.document_id,
-                revision_id=item.revision_id,
-                source_content_hash=item.source_content_hash,
-                source_revision_id=(
-                    item.revision_id if item.revision_id in body.source_revision_ids else None
-                ),
-                document_revision_id=item.revision_id,
-                label=(
-                    getattr(item, "source_name", None)
-                    or getattr(item, "filename", None)
-                    or item.source_id
-                    or item.document_id
-                ),
-            )
-            for item in revisions
-        ),
+        resolved_resources=selection.resolved_resources,
         agent_revision_id=body.agent_revision_id,
         agent_revision_digest=agent_digest,
         agent_label=(
@@ -204,8 +173,8 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         skill_instruction_template_digests=tuple(
             item.instruction_template_digest for item in skills
         ),
-        acl_digest=acl_digest,
-        retrieval_policy_digest=retrieval_policy_digest,
+        acl_digest=selection.acl_digest,
+        retrieval_policy_digest=selection.retrieval_policy_digest,
     )
 
 
