@@ -54,7 +54,10 @@ from tap.contracts.http import (
 from tap.contracts.http import SourceFamily as HttpSourceFamily
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.policy import RetrievalPolicyContext
-from tap.modules.knowledge.application.answer_templates import get_template
+from tap.modules.knowledge.application.answer_templates import (
+    get_template,
+    latest_template_version,
+)
 from tap.modules.knowledge.application.planned_answer import (
     AuthorizedAnswerExecution,
     AuthorizedAnswerQuery,
@@ -95,6 +98,7 @@ __all__ = [
     "AuthorizedAnswerExecution",
     "AuthorizedAnswerQuery",
     "get_template",
+    "latest_template_version",
     "AnswerRequest",
     "AnswerResponse",
     "KnowledgeAPI",

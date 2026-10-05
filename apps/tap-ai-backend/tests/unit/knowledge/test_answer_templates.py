@@ -228,3 +228,38 @@ async def test_direct_model_consumes_pinned_template_and_schema():
     assert selected.instruction in requests[0].prompt
     assert requests[0].schema == assembled.schema
     assert json.loads(requests[0].context)["originalQuestion"] == "你好"
+
+
+@pytest.mark.parametrize(
+    "template", ["general", "factual", "explanation", "comparison", "procedural", "clarification"]
+)
+def test_claim_sentence_rule_is_an_additive_template_version(template):
+    module = templates()
+    legacy_version = "2" if template == "clarification" else "1"
+    legacy = module.get_template(template, legacy_version)
+    latest = module.get_template(template, module.latest_template_version(template))
+    assert latest.version != legacy.version
+    assert latest.digest != legacy.digest
+    assert "copied exactly once as a full paragraph" in legacy.instruction
+    assert "copied exactly once" not in latest.instruction
+    assert "in your own words as one complete sentence" in latest.instruction
+    assert "joining exactly those claim texts" in latest.instruction
+    if template == "clarification":
+        assert "time-range" in latest.instruction
+    assembled = module.assemble_answer(
+        template_id=template,
+        template_version=latest.version,
+        template_digest=latest.digest,
+        original_question="E104",
+        standalone_question="E104",
+        evidence_map={},
+    )
+    assert assembled.platform_instruction == latest.instruction
+
+
+def test_legacy_template_digests_are_unchanged():
+    module = templates()
+    assert (
+        module.get_template("clarification", "1").digest
+        == "sha256:f8531d6e58b9bf5c119c68181f4db310bf1682b0b2c81f71273483a59924e2a4"
+    )
