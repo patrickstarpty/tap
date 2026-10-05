@@ -105,6 +105,49 @@ describe("E2ERequestFailureAudit", () => {
     }
   });
 
+  it("allows only the current project's turn-trace GET cancellation", () => {
+    const audit = new E2ERequestFailureAudit<object>("project-e2e");
+    const url =
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/conversations/0123456789abcdef0123456789abcdef/turns/fedcba9876543210fedcba9876543210/trace";
+    expect(
+      audit.unexpectedFailure(
+        {},
+        { method: "GET", url, errorText: "net::ERR_ABORTED" },
+      ),
+    ).toBeNull();
+    for (const failure of [
+      { method: "POST", url, errorText: "net::ERR_ABORTED" },
+      { method: "GET", url, errorText: "net::ERR_FAILED" },
+      {
+        method: "GET",
+        url: `${url}?secret=value`,
+        errorText: "net::ERR_ABORTED",
+      },
+      {
+        method: "GET",
+        url: url.replace("/trace", "/spans"),
+        errorText: "net::ERR_ABORTED",
+      },
+      {
+        method: "GET",
+        url: url.replace("fedcba9876543210fedcba9876543210", "not-a-turn"),
+        errorText: "net::ERR_ABORTED",
+      },
+      {
+        method: "GET",
+        url: url.replace("project-e2e", "other-project"),
+        errorText: "net::ERR_ABORTED",
+      },
+      {
+        method: "GET",
+        url: url.replace(":15173", ":18000"),
+        errorText: "net::ERR_ABORTED",
+      },
+    ]) {
+      expect(audit.unexpectedFailure({}, failure)).not.toBeNull();
+    }
+  });
+
   it("allows only exact runtime discovery GET cancellation", () => {
     const audit = new E2ERequestFailureAudit<object>("project-e2e");
     const url = "http://127.0.0.1:15173/api/v1/runtime-mode";

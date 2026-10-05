@@ -90,7 +90,9 @@ function classifyRequest(
   const conversationSuffix = parsed.pathname.slice(conversationPath.length + 1);
   const exactConversationRead =
     parsed.pathname.startsWith(`${conversationPath}/`) &&
-    /^(?:[0-9a-f]{32})(?:\/(?:events|stream))?$/u.test(conversationSuffix) &&
+    /^(?:[0-9a-f]{32})(?:\/(?:events|stream|turns\/[0-9a-f]{32}\/trace))?$/u.test(
+      conversationSuffix,
+    ) &&
     parsed.search === "";
   const exactTask9Read =
     (parsed.pathname === sourcePath && parsed.search === "?limit=50") ||
