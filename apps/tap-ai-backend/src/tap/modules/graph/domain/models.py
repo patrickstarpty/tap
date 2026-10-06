@@ -109,11 +109,12 @@ class GraphNode:
             raise ValueError("unknown node type")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
             raise ValueError("node evidence identities must be unique")
-        deduped_aliases = tuple(dict.fromkeys(self.aliases))
-        if len(deduped_aliases) > NODE_ALIAS_MAX or any(
-            not alias or len(alias) > NODE_ALIAS_LENGTH_MAX for alias in deduped_aliases
+        if (
+            len(self.aliases) > NODE_ALIAS_MAX
+            or len(self.aliases) != len(set(self.aliases))
+            or any(not alias or len(alias) > NODE_ALIAS_LENGTH_MAX for alias in self.aliases)
         ):
-            raise ValueError("node aliases must be bounded and nonblank")
+            raise ValueError("node aliases must be unique, bounded and nonblank")
 
 
 @dataclass(frozen=True, slots=True)
