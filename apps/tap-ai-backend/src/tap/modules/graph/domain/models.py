@@ -10,6 +10,13 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Literal, Mapping
 
+from tap.modules.graph.domain.vocabulary import (
+    NODE_ALIAS_LENGTH_MAX,
+    NODE_ALIAS_MAX,
+    NODE_TYPES,
+    RELATION_LABEL_MAX,
+)
+
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 MAX_GRAPH_DEPTH = 2
 MAX_GRAPH_NODES = 500
@@ -40,7 +47,7 @@ class GraphSnapshot:
     source_revision_ids: tuple[str, ...]
     document_revision_ids: tuple[str, ...]
     source_set_digest: str
-    status: Literal["CANDIDATE", "READY", "FAILED"] = "CANDIDATE"
+    status: Literal["CANDIDATE", "READY", "PARTIAL", "FAILED"] = "CANDIDATE"
 
     def __post_init__(self) -> None:
         _identifier("snapshot_id", self.snapshot_id)
@@ -51,7 +58,7 @@ class GraphSnapshot:
             raise ValueError("document revisions must be canonical")
         if self.source_set_digest != source_set_digest(self.source_revision_ids):
             raise ValueError("source set digest does not match snapshot")
-        if self.status not in {"CANDIDATE", "READY", "FAILED"}:
+        if self.status not in {"CANDIDATE", "READY", "PARTIAL", "FAILED"}:
             raise ValueError("invalid snapshot status")
 
     @classmethod
@@ -62,7 +69,7 @@ class GraphSnapshot:
         project_id: str,
         source_revision_ids: tuple[str, ...],
         document_revision_ids: tuple[str, ...],
-        status: Literal["CANDIDATE", "READY", "FAILED"] = "CANDIDATE",
+        status: Literal["CANDIDATE", "READY", "PARTIAL", "FAILED"] = "CANDIDATE",
     ) -> GraphSnapshot:
         sources = tuple(sorted(source_revision_ids))
         documents = tuple(sorted(document_revision_ids))
@@ -86,6 +93,7 @@ class GraphNode:
     node_type: str
     canonical_key: str
     evidence_ids: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name, value in (("node_id", self.node_id), ("snapshot_id", self.snapshot_id)):
@@ -97,10 +105,15 @@ class GraphNode:
             or len(self.canonical_key) > 512
         ):
             raise ValueError("node label and canonical key must be nonblank")
-        if self.node_type not in {"ENTITY", "CONCEPT", "REQUIREMENT", "SYSTEM", "ACTOR"}:
+        if self.node_type not in NODE_TYPES:
             raise ValueError("unknown node type")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
             raise ValueError("node evidence identities must be unique")
+        deduped_aliases = tuple(dict.fromkeys(self.aliases))
+        if len(deduped_aliases) > NODE_ALIAS_MAX or any(
+            not alias or len(alias) > NODE_ALIAS_LENGTH_MAX for alias in deduped_aliases
+        ):
+            raise ValueError("node aliases must be bounded and nonblank")
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +206,7 @@ class GraphEdge:
     origin: RelationOrigin
     confidence: float
     evidence_ids: tuple[str, ...] = ()
+    relation_label: str = ""
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -214,6 +228,8 @@ class GraphEdge:
             raise ValueError("extracted relation requires evidence")
         if self.origin is RelationOrigin.INFERRED and self.evidence_ids:
             raise ValueError("inferred relation cannot claim direct evidence")
+        if len(self.relation_label) > RELATION_LABEL_MAX:
+            raise ValueError("relation label is too long")
 
 
 @dataclass(frozen=True, slots=True)

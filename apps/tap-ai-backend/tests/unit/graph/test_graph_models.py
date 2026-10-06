@@ -89,3 +89,22 @@ def test_inferred_edges_require_complete_input_fact_lineage():
             confidence=0.8,
             evidence_ids=("evidence-1",),
         )
+
+
+def test_node_accepts_process_type_and_bounded_aliases():
+    node = GraphNode("node-1", "snapshot-1", "核保流程", "PROCESS", "核保流程", (), ("核保", "underwriting"))
+    assert node.aliases == ("核保", "underwriting")
+    with pytest.raises(ValueError):
+        GraphNode("node-1", "snapshot-1", "x", "PROCESS", "x", (), tuple(f"a{i}" for i in range(6)))
+
+
+def test_edge_carries_bounded_relation_label():
+    edge = GraphEdge("edge-1", "snapshot-1", "n1", "n2", "REQUIRES", RelationOrigin.EXTRACTED, 1.0, ("e1",), "需要")
+    assert edge.relation_label == "需要"
+    with pytest.raises(ValueError):
+        GraphEdge("edge-1", "snapshot-1", "n1", "n2", "REQUIRES", RelationOrigin.EXTRACTED, 1.0, ("e1",), "x" * 65)
+
+
+def test_snapshot_accepts_partial_status():
+    assert GraphSnapshot.create(snapshot_id="s", project_id="p", source_revision_ids=("r",),
+                                document_revision_ids=("r",), status="PARTIAL").status == "PARTIAL"

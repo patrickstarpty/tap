@@ -2130,7 +2130,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "CANDIDATE" | "READY" | "FAILED";
+            status: "CANDIDATE" | "READY" | "PARTIAL" | "FAILED";
         };
         /** GraphSubgraphView */
         GraphSubgraphView: {
