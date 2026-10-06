@@ -244,7 +244,7 @@ git commit -m "feat: add project graph tables and version publication"
     - `async def nodes_for_chunks(self, scope, chunk_ids: tuple[str, ...]) -> tuple[str, ...]`：经 `node_sources` 与 `edge_evidence`（边两端）反查，按首次出现去重。
     - `async def match_aliases(self, scope, text: str) -> tuple[AliasMatch, ...]`
     - `async def nodes(self, scope, node_ids: tuple[str, ...]) -> tuple[ProjectNode, ...]`：按给定顺序返回存在的节点（PR 3 用它把 `nodes_for_chunks` 与 `match_aliases` 的 id 变成节点）。
-  - 版本钉住（PR 3 的 STALE 判定依赖此语义）：`overview`、`search`、`neighbors`、`path`、`node_detail`、`highlight`、`nodes_for_chunks`、`match_aliases`、`nodes` 都接受关键字参数 `version: int | None = None`；`None` 表示当前 READY 版本；给定版本仍在 `ProjectGraphCache` 保留窗口内（`keep_per_project=2`）则按该版本查询，否则抛 `ProjectGraphVersionMismatch(current: int)`（定义在 `ports/project_store.py`，HTTP 层映射为 409）。`ProjectSubgraph` 与 `ProjectNodeDetail` 都带 `graph_version: int`。
+  - 版本钉住（PR 3 的 STALE 判定依赖此语义）：`overview`、`search`、`neighbors`、`path`、`node_detail`、`highlight`、`nodes_for_chunks`、`match_aliases`、`nodes` 都接受关键字参数 `version: int | None = None`；`None` 表示当前 READY 版本；给定版本仍在 `ProjectGraphCache` 保留窗口内（`keep_per_project=2`）则按该版本查询，否则抛 `ProjectGraphVersionMismatch(current: int)`（定义在 `ports/project_store.py`，HTTP 层映射为 409）。domain 层 `ProjectSubgraph` 与 `ProjectNodeDetail` 的版本字段名为 `version: int`（Task 1 定义为准），只有契约视图叫 `graph_version`。HTTP 层的 409 只接受与当前版本精确相等的 `graph_version`（spec 3.1）；存储层保留两个版本的窗口只服务进程内调用方（PR 3 在一次回答内钉住版本），两者不矛盾。
   - 来源过滤语义（所有带 `source_revision_ids` 的方法）：非空时，节点须至少一条 `NodeSource.source_revision_id` 在集合内，边须两端可见且至少一条 `EdgeEvidence.source_revision_id` 在集合内；返回的 `sources`/`evidence` 也只含集合内的行。
 - Produces（`application/project_queries.py`）：
   - `@dataclass(frozen=True, slots=True) class LoadedProjectGraph`：`version: ProjectGraphVersion`、`nodes: Mapping[str, ProjectNode]`、`edges: Mapping[str, ProjectEdge]`、`adjacency: Mapping[str, tuple[tuple[str, str], ...]]`（节点 → (邻居, edge_id)）、`node_sources: Mapping[str, tuple[NodeSource, ...]]`、`edge_evidence: Mapping[str, tuple[EdgeEvidence, ...]]`、`chunk_nodes: Mapping[str, tuple[str, ...]]`、`communities: tuple[Community, ...]`、`alias_index: AliasIndex`；`@classmethod from_draft(cls, version: ProjectGraphVersion, draft: ProjectGraphDraft) -> LoadedProjectGraph`；同步方法 `overview/search/neighbors/path/node_detail/highlight/nodes_for_chunks/match_aliases`，参数与端口一致（去掉 `scope`）。
@@ -453,7 +453,7 @@ git commit -m "feat: merge published graph fragments into project versions with 
 - Test: `apps/tap-ai-backend/tests/contract/test_graph_http.py`（追加）、`tests/contract/test_project_graph_http.py`（新建）
 
 **Interfaces:**
-- Consumes：Task 3 `ProjectGraphStorePort`、`ProjectGraphNotReady`；Task 4 `MysqlGraphJobStore.load_batches/record_batch`（PR 1）与新方法 `retry_failed_batches`。
+- Consumes：Task 3 `ProjectGraphStorePort`、`ProjectGraphNotReady`；PR 1 的 `MysqlGraphJobStore.load_batches/record_batch`。`retry_failed_batches` 由本任务自己在 `MysqlGraphJobStore` 上新增（见下方路由说明），不是 Task 4 的产出。
 - Produces（契约模型，字段名经 `ContractModel` 转 camelCase）：
   - `ProjectGraphCommunityView(community_id, label, size)`
   - `ProjectGraphView(graph_version: int | None, status: Literal["EMPTY", "MERGING", "READY", "FAILED"], node_count: int, edge_count: int, communities: list[ProjectGraphCommunityView], merged_at: datetime | None, extracting_revision_ids: list[str], partial_revision_ids: list[str])`
@@ -590,7 +590,7 @@ git commit -m "feat: seed answer graph context from the project graph aliases an
 ### Task 7: 文档、全量检查与隔离 E2E
 
 **Files:**
-- Modify: `docs/architecture.md:57-63`（图谱数据流：片段抽取 → 项目合并 → 回答种子/扩展；第 86–87 行已知差距表更新"每次查询把整个快照载入内存"为已解决、"脉络分析"行改为"PR 3 接入关系引用"）
+- Modify: `docs/architecture.md` 第 4 节"图谱"小节整段（当前第 57–64 行；图谱数据流：片段抽取 → 项目合并 → 回答种子/扩展；第 86–87 行已知差距表更新"每次查询把整个快照载入内存"为已解决、"脉络分析"行改为"PR 3 接入关系引用"）
 - Modify: `docs/superpowers/plans/2026-09-29-v1-roadmap.md:20`、`docs/superpowers/plans/2026-10-01-product-roadmap.md`（"知识图谱脉络分析"行标注 PR 2 已合并、PR 3 进行中）
 - Modify: `docs/superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md`（1.2 表格补一行 `graph_project_merge_job`，说明为合并队列）
 - Modify: `apps/tap-ai-frontend/tests/e2e/knowledge-graph.spec.ts:69`（在片段快照轮询之后追加 API 级轮询 `GET ${root}/knowledge/graph/project` 直到 `status === "READY"` 且 `nodeCount > 0`，超时 30 秒；UI 断言不改）
