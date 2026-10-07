@@ -10,7 +10,12 @@ from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
 from tap.modules.graph.application.extraction import GraphExtractionService
 from tap.modules.graph.application.queries import InMemoryGraphStore
 from tap.modules.graph.domain.extraction import GraphExtractionRequest
-from tap.modules.graph.domain.jobs import GraphBatchStatus, GraphFragmentBatch, GraphJobRequest
+from tap.modules.graph.domain.jobs import (
+    GraphBatchStatus,
+    GraphFragmentBatch,
+    GraphJobLeaseLost,
+    GraphJobRequest,
+)
 from tap.modules.graph.domain.models import (
     Evidence,
     GraphEdge,
@@ -271,29 +276,90 @@ async def test_mysql_batches_survive_reclaim_and_partial_publish(sessions) -> No
     store = MysqlGraphJobStore(sessions)
     claim = await _claim(store)
     draft = _one_batch_draft(claim.snapshot)
+    now = _now()
 
+    # First write: no draft yet, just a pending marker for batch 0.
     await store.record_batch(
         VALIDATION_SCOPE,
         claim,
         GraphFragmentBatch(
-            claim.snapshot.snapshot_id, 0, ("chunk-1",), GraphBatchStatus.READY, draft=draft
+            claim.snapshot.snapshot_id, 0, ("chunk-1",), GraphBatchStatus.PENDING, attempt=1
         ),
-        now=_now(),
+        now=now,
     )
+    # Second write on the same (snapshot_id, batch_index): the upsert must overwrite,
+    # not append, and the later status/attempt/draft must win.
+    await store.record_batch(
+        VALIDATION_SCOPE,
+        claim,
+        GraphFragmentBatch(
+            claim.snapshot.snapshot_id,
+            0,
+            ("chunk-1",),
+            GraphBatchStatus.READY,
+            attempt=2,
+            draft=draft,
+        ),
+        now=now + timedelta(seconds=1),
+    )
+    overwritten = await store.load_batches(VALIDATION_SCOPE, claim)
+    assert len(overwritten) == 1
+    assert overwritten[0].status is GraphBatchStatus.READY
+    assert overwritten[0].attempt == 2
+    assert overwritten[0].draft == draft
+
+    # The live claim can still renew its lease before it expires.
+    renewed = await store.renew(
+        VALIDATION_SCOPE,
+        claim,
+        now=now + timedelta(seconds=2),
+        lease_duration=timedelta(seconds=30),
+    )
+    assert renewed.lease_expires_at == now + timedelta(seconds=32)
+
+    # Once the (renewed) lease has actually expired without a reclaim, renew is fenced too.
+    with pytest.raises(GraphJobLeaseLost):
+        await store.renew(
+            VALIDATION_SCOPE,
+            claim,
+            now=now + timedelta(seconds=40),
+            lease_duration=timedelta(seconds=10),
+        )
+
+    # A worker crash: w2 reclaims the now-expired job.
     reclaimed = (
         await store.claim(
             VALIDATION_SCOPE,
             worker_id="w2",
-            now=_now() + timedelta(minutes=2),
+            now=now + timedelta(seconds=41),
             lease_duration=timedelta(seconds=60),
             limit=1,
         )
     )[0]
+    assert reclaimed.lease_token != claim.lease_token
+
+    # The original (stale) claim is fenced out of both mutating paths after reclaim.
+    with pytest.raises(GraphJobLeaseLost):
+        await store.record_batch(
+            VALIDATION_SCOPE,
+            claim,
+            GraphFragmentBatch(
+                claim.snapshot.snapshot_id, 1, ("chunk-2",), GraphBatchStatus.PENDING, attempt=1
+            ),
+            now=now + timedelta(seconds=42),
+        )
+    with pytest.raises(GraphJobLeaseLost):
+        await store.renew(
+            VALIDATION_SCOPE,
+            claim,
+            now=now + timedelta(seconds=42),
+            lease_duration=timedelta(seconds=10),
+        )
 
     assert (await store.load_batches(VALIDATION_SCOPE, reclaimed))[0].draft == draft
 
     job = await store.complete(
-        VALIDATION_SCOPE, reclaimed, draft, now=_now() + timedelta(minutes=2), status="PARTIAL"
+        VALIDATION_SCOPE, reclaimed, draft, now=now + timedelta(seconds=43), status="PARTIAL"
     )
     assert job.snapshot.status == "PARTIAL"
     assert (
