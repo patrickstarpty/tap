@@ -11,6 +11,7 @@ from tap.modules.graph.domain.models import (
     GraphNode,
     GraphSnapshot,
     GraphSnapshotDraft,
+    InferenceProvenance,
     RelationOrigin,
 )
 from tap.modules.knowledge.domain.documents import ChunkDraft
@@ -220,3 +221,48 @@ def test_assemble_fragment_caps_merged_edges_at_two_thousand() -> None:
     kept_ids = [edge.edge_id for edge in fragment.edges]
     assert kept_ids[:1001] == [f"a-edge-{i}" for i in range(1001)]
     assert kept_ids[1001:] == [f"b-edge-{i}" for i in range(999)]
+
+
+def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() -> None:
+    # 500 "early" nodes fill the node cap and are kept. A later, dropped node
+    # ("node-510") is cited as an inference's input fact. The inference's own edge
+    # sits between two *kept* early nodes, so it survives the endpoint filter and
+    # the edge cap on its own -- but its provenance names a dropped node, so the
+    # edge and its provenance must cascade-drop together, or GraphSnapshotDraft
+    # raises on a dangling input fact.
+    early_nodes = tuple(
+        GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
+        for i in range(500)
+    )
+    late_node = GraphNode("node-510", SNAPSHOT.snapshot_id, "Entity 510", "CONCEPT", "entity-510")
+    inferred_edge = GraphEdge(
+        "edge-inferred",
+        SNAPSHOT.snapshot_id,
+        "node-0",
+        "node-1",
+        "TRIGGERS",
+        RelationOrigin.INFERRED,
+        0.8,
+        (),  # an INFERRED edge carries no direct evidence
+    )
+    provenance = InferenceProvenance(
+        "prov-1",
+        SNAPSHOT.snapshot_id,
+        "edge-inferred",
+        ("node-510",),
+        "sha256:" + "c" * 64,
+    )
+    draft_1 = GraphSnapshotDraft(SNAPSHOT, early_nodes, (), (), ())
+    draft_2 = GraphSnapshotDraft(
+        SNAPSHOT,
+        (late_node, early_nodes[0], early_nodes[1]),
+        (inferred_edge,),
+        (),
+        (provenance,),
+    )
+
+    fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    assert len(fragment.nodes) == 500
+    assert "edge-inferred" not in {edge.edge_id for edge in fragment.edges}
+    assert fragment.provenance == ()

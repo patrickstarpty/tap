@@ -13,6 +13,7 @@ from tap.modules.graph.domain.models import (
     GraphSnapshot,
     GraphSnapshotDraft,
     InferenceProvenance,
+    RelationOrigin,
 )
 from tap.modules.graph.domain.vocabulary import NODE_ALIAS_MAX
 from tap.modules.knowledge.domain.documents import ChunkDraft
@@ -49,9 +50,13 @@ def assemble_fragment(
     worker, the merge truncates deterministically: nodes are kept in first-seen order
     up to ``MAX_GRAPH_NODES``; edges whose endpoint was dropped are dropped too; the
     remaining edges are kept in first-seen order up to the same 2000-edge bound
-    ``GraphSnapshotDraft`` enforces; provenance for a dropped edge is dropped with it
-    (an inference's own provenance always shares its edge's fate, so no further
-    cascade is possible). Evidence has no such cap and is kept in full.
+    ``GraphSnapshotDraft`` enforces. Provenance for a dropped edge is dropped with it,
+    and -- because an ``INFERRED`` edge requires its own provenance, and a
+    provenance's ``input_fact_ids`` can themselves name other (node or edge) facts --
+    dropping one inferred edge can orphan another provenance that cites it as an
+    input fact. This cascades: any ``INFERRED`` edge whose provenance's input facts
+    are no longer all kept is dropped together with that provenance, repeating until
+    nothing more changes. Evidence has no such cap and is kept in full.
     """
 
     nodes_by_id: dict[str, GraphNode] = {}
@@ -115,6 +120,35 @@ def assemble_fragment(
         and edges_by_id[edge_id].target_node_id in kept_node_id_set
     ]
     kept_edge_order = endpoint_filtered_edge_order[:_MAX_GRAPH_EDGES]
+
+    # An INFERRED edge requires its own provenance, and a provenance's input_fact_ids
+    # can themselves name other node or edge facts. Dropping one inferred edge (for
+    # falling past the node/edge cut above, or in an earlier pass of this loop) can
+    # therefore orphan another provenance that cites it as an input fact. Iterate to
+    # a fixpoint: drop any INFERRED edge whose provenance is missing or whose input
+    # facts are not all still kept, together with that provenance; repeat until a
+    # pass drops nothing.
+    provenance_by_edge_id = {
+        provenance_by_id[provenance_id].edge_id: provenance_by_id[provenance_id]
+        for provenance_id in provenance_order
+    }
+    changed = True
+    while changed:
+        changed = False
+        kept_fact_id_set = kept_node_id_set | set(kept_edge_order)
+        next_kept_edge_order = []
+        for edge_id in kept_edge_order:
+            edge = edges_by_id[edge_id]
+            if edge.origin is RelationOrigin.INFERRED:
+                provenance_for_edge = provenance_by_edge_id.get(edge_id)
+                if (
+                    provenance_for_edge is None
+                    or set(provenance_for_edge.input_fact_ids) - kept_fact_id_set
+                ):
+                    changed = True
+                    continue
+            next_kept_edge_order.append(edge_id)
+        kept_edge_order = next_kept_edge_order
     kept_edge_id_set = set(kept_edge_order)
 
     kept_provenance_order = [
