@@ -69,6 +69,7 @@ export TAPPER_WEB_HOST=127.0.0.1
 export TAPPER_WEB_PORT=15173
 export TAP_DEMO_MODE=e2e
 export TAPPER_MODEL_BACKEND=fake
+export TAPPER_GRAPH_EXTRACTION_MODE=fake
 export TAPPER_S3_ENDPOINT=http://127.0.0.1:29000
 export TAPPER_S3_BUCKET=tapper-e2e-objects
 export TAPPER_S3_REGION=us-east-1

@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.graph.application.jobs import InMemoryGraphJobStore
 from tap.modules.graph.application.worker import GraphWorker
-from tap.modules.graph.domain.jobs import GraphJobRequest, GraphJobStatus
-from tap.modules.graph.domain.models import GraphSnapshotDraft
+from tap.modules.graph.domain.jobs import (
+    GraphBatchStatus,
+    GraphFragmentBatch,
+    GraphJobLeaseLost,
+    GraphJobRequest,
+    GraphJobStatus,
+)
+from tap.modules.graph.domain.models import Evidence, GraphNode, GraphSnapshotDraft
 from tap.modules.knowledge.domain.documents import ChunkDraft
+
+NOW = datetime(2026, 9, 13, 9, 0, 0)
 
 
 class Artifacts:
@@ -83,3 +92,240 @@ async def test_worker_publishes_a_claimed_job_atomically(monkeypatch) -> None:
     assert result.ready == 1
     assert result.failed == 0
     assert (await jobs.get_job(VALIDATION_SCOPE, job.job_id)).status is GraphJobStatus.READY
+
+
+def _batch_chunks(count: int) -> tuple[ChunkDraft, ...]:
+    return tuple(
+        ChunkDraft(
+            chunk_id=f"chunk-{index}",
+            logical_chunk_id=f"logical-{index}",
+            root_id="document-1",
+            parent_id=None,
+            content=f"content {index}",
+            anchor_json='{"endOffset":1,"headingPath":[],"startOffset":0,"type":"document"}',
+            source_content_hash="sha256:" + "b" * 64,
+            chunk_content_hash="sha256:" + "a" * 64,
+        )
+        for index in range(count)
+    )
+
+
+class BatchArtifacts:
+    def __init__(self, *, locator: str = "art-batches.chunks", count: int = 25) -> None:
+        self._locator = locator
+        self._chunks = _batch_chunks(count)
+
+    async def read_chunks(self, locator):
+        assert locator == self._locator
+        return self._chunks
+
+
+def _draft_for_batch(snapshot, batch_index: int, chunk_ids: tuple[str, ...]) -> GraphSnapshotDraft:
+    evidence = tuple(
+        Evidence(
+            f"evidence-{batch_index}-{chunk_id}",
+            snapshot.snapshot_id,
+            "revision-1",
+            "revision-1",
+            chunk_id,
+            {"kind": "text", "start": 0, "end": 5},
+            "sha256:" + "a" * 64,
+        )
+        for chunk_id in chunk_ids
+    )
+    node = GraphNode(
+        f"node-{batch_index}",
+        snapshot.snapshot_id,
+        f"Entity {batch_index}",
+        "CONCEPT",
+        f"entity-{batch_index}",
+        tuple(item.evidence_id for item in evidence),
+    )
+    return GraphSnapshotDraft(snapshot, (node,), (), evidence, ())
+
+
+class CountingExtractor:
+    def __init__(self, *, fail_batch_indices: frozenset[int] = frozenset()) -> None:
+        self.requests: list = []
+        self._fail_batch_indices = fail_batch_indices
+
+    async def extract(self, request):
+        self.requests.append(request)
+        if request.batch_index in self._fail_batch_indices:
+            raise RuntimeError("synthetic batch failure")
+        chunk_ids = tuple(str(item["chunkId"]) for item in request.chunks)
+        return _draft_for_batch(request.snapshot, request.batch_index, chunk_ids)
+
+
+async def _requested_job(jobs: InMemoryGraphJobStore, *, locator: str = "art-batches.chunks"):
+    request = GraphJobRequest.create(
+        scope=VALIDATION_SCOPE,
+        revision_id="revision-1",
+        chunks_locator=locator,
+        extraction_profile_digest="sha256:" + "1" * 64,
+        model_alias="qwen-plus",
+    )
+    return await jobs.request(VALIDATION_SCOPE, request, now=NOW)
+
+
+@pytest.mark.asyncio
+async def test_worker_extracts_in_batches_and_publishes_ready(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert [request.batch_index for request in extractor.requests] == [0, 1, 2]
+    second_request = extractor.requests[1]
+    assert second_request.idempotency_key.endswith(":batch:1")
+    assert any(entity["id"] == "node-0" for entity in second_request.known_entities)
+    assert result.partial == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_retries_with_backoff_then_partial(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    extractor = CountingExtractor(fail_batch_indices=frozenset({0}))
+    sleeps: list[float] = []
+
+    async def _record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=3,
+        sleep=_record_sleep,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert sleeps == [1.0, 2.0]
+    assert result.partial == 1
+    batches = await jobs.load_batches(VALIDATION_SCOPE, SimpleNamespace(snapshot=job.snapshot))
+    batch0 = next(batch for batch in batches if batch.batch_index == 0)
+    assert batch0.status is GraphBatchStatus.FAILED
+    assert batch0.attempt == 3
+    assert batch0.failure_code == "RuntimeError"
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "PARTIAL"
+
+
+@pytest.mark.asyncio
+async def test_resume_skips_ready_batches(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    pre_claim = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="seed-worker",
+            now=NOW,
+            lease_duration=timedelta(seconds=1),
+            limit=1,
+        )
+    )[0]
+    batch0_chunk_ids = tuple(f"chunk-{index}" for index in range(10))
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        pre_claim,
+        GraphFragmentBatch(
+            job.snapshot.snapshot_id,
+            0,
+            batch0_chunk_ids,
+            GraphBatchStatus.READY,
+            draft=_draft_for_batch(job.snapshot, 0, batch0_chunk_ids),
+        ),
+        now=NOW,
+    )
+
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=5))
+
+    result = await worker.run_once(limit=1)
+
+    assert [request.batch_index for request in extractor.requests] == [1, 2]
+    assert result.partial == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+
+
+@pytest.mark.asyncio
+async def test_all_batches_failed_fails_the_job(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    extractor = CountingExtractor(fail_batch_indices=frozenset({0, 1, 2}))
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=1,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.failed == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.FAILED
+    assert updated.failure_code == "graph-extraction-failed"
+    assert updated.snapshot.status == "FAILED"
+
+
+class LeaseLostJobs(InMemoryGraphJobStore):
+    async def renew(self, scope, claim, *, now, lease_duration):
+        raise GraphJobLeaseLost(claim.job_id)
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_between_batches_stops_without_publishing(monkeypatch) -> None:
+    jobs = LeaseLostJobs()
+    job = await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.lease_lost == 1
+    assert len(extractor.requests) == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.RUNNING
