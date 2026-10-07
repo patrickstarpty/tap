@@ -103,7 +103,9 @@ def _draft(
             )
         )
         graph_nodes.append(
-            GraphNode(node_id, snapshot.snapshot_id, label, node_type, canonical_key, (evidence_id,))
+            GraphNode(
+                node_id, snapshot.snapshot_id, label, node_type, canonical_key, (evidence_id,)
+            )
         )
     graph_edges = []
     for edge_id, source, target, relation_type, confidence, relation_label in edges or []:
@@ -370,9 +372,7 @@ async def test_lost_lease_cannot_publish_duplicate_version(sessions) -> None:
     fragments = await inputs.load_fragments(VALIDATION_SCOPE)
     draft = merger.merge(VALIDATION_SCOPE, fragments)
 
-    version = await queue.complete(
-        VALIDATION_SCOPE, claim2, draft, now=NOW + timedelta(seconds=2)
-    )
+    version = await queue.complete(VALIDATION_SCOPE, claim2, draft, now=NOW + timedelta(seconds=2))
     assert version is not None and version.version == 1
 
     with pytest.raises(ProjectMergeLeaseLost):

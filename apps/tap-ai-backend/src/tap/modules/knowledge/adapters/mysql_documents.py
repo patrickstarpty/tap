@@ -3290,6 +3290,10 @@ class MysqlDocumentRepository:
                         SourceCommandResult(previous["http_status"], previous["result"])
                     )
             job = await self._request_delete_in_session(session, document_id)
+            if self._source_deleted_projection is not None:
+                await self._source_deleted_projection.after_source_deleted(
+                    session, self._scope, str(document_id), now=await _database_now(session)
+                )
             if command is not None:
                 source_id = await session.scalar(
                     select(knowledge_document.c.source_id)

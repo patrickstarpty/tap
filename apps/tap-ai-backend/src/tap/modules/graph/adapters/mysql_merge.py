@@ -66,9 +66,7 @@ class MysqlProjectMergeQueue:
         self._sessions = sessions
         self._cache = cache
 
-    async def request(
-        self, scope: ProjectScopeContext, *, reason: str, now: datetime
-    ) -> None:
+    async def request(self, scope: ProjectScopeContext, *, reason: str, now: datetime) -> None:
         async with self._sessions() as session, session.begin():
             await self.request_in_transaction(session, scope, reason=reason, now=now)
 
@@ -377,10 +375,7 @@ class MysqlMergeInputs:
                         .select_from(
                             graph_extraction_job.join(
                                 graph_snapshot,
-                                (
-                                    graph_extraction_job.c.project_id
-                                    == graph_snapshot.c.project_id
-                                )
+                                (graph_extraction_job.c.project_id == graph_snapshot.c.project_id)
                                 & (
                                     graph_extraction_job.c.snapshot_id
                                     == graph_snapshot.c.snapshot_id
@@ -427,9 +422,11 @@ class MysqlMergeInputs:
 
 class GraphMergeOnSourceChange:
     """Shared projection requesting a re-merge whenever a durable Knowledge
-    fact that bears on the merged Project graph changes: a source is deleted
-    (fragments it fed may now be orphaned) or a publication changes (the set
-    of currently-ready revisions the merge replays may have shifted)."""
+    fact that bears on the merged Project graph changes: a whole source or a
+    single document is deleted (fragments they fed may now be orphaned,
+    `after_source_deleted`), or a publication is published or withdrawn (the
+    set of currently-ready revisions the merge replays may have shifted,
+    `after_publication_changed`)."""
 
     def __init__(self, queue: MysqlProjectMergeQueue) -> None:
         self._queue = queue
@@ -443,9 +440,7 @@ class GraphMergeOnSourceChange:
         now: datetime,
     ) -> None:
         del source_id
-        await self._queue.request_in_transaction(
-            session, scope, reason="source-deleted", now=now
-        )
+        await self._queue.request_in_transaction(session, scope, reason="source-deleted", now=now)
 
     async def after_publication_changed(
         self, session: AsyncSession, scope: ProjectScopeContext, *, now: datetime

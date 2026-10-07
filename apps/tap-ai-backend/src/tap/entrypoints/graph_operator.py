@@ -116,9 +116,7 @@ async def run(*, settings: TapperSettings, operation: GraphOperation) -> dict[st
                 skipped_count += 1
             await asyncio.sleep(operation.interval_seconds)
         if requeued_count:
-            await MysqlProjectMergeQueue(sessions).request(
-                scope, reason="rebuild", now=_now()
-            )
+            await MysqlProjectMergeQueue(sessions).request(scope, reason="rebuild", now=_now())
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("graph operator settlement unexpectedly returned")

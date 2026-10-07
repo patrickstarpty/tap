@@ -95,13 +95,60 @@ class LeaseLostQueue(InMemoryProjectMergeQueue):
         raise ProjectMergeLeaseLost(scope.project_id)
 
 
-def _worker(*, queue, inputs, monkeypatch, now: datetime = NOW) -> ProjectGraphMergeWorker:
+class RenewCountingQueue(InMemoryProjectMergeQueue):
+    """Loses the lease on the Nth `renew` call (1-indexed); counts every call."""
+
+    def __init__(self, *, lose_on_call: int | None = None) -> None:
+        super().__init__()
+        self.renew_calls = 0
+        self._lose_on_call = lose_on_call
+
+    async def renew(self, scope, claim, *, now, lease_duration):
+        self.renew_calls += 1
+        if self._lose_on_call is not None and self.renew_calls == self._lose_on_call:
+            raise ProjectMergeLeaseLost(scope.project_id)
+        return await super().renew(scope, claim, now=now, lease_duration=lease_duration)
+
+
+class FailLeaseLostQueue(InMemoryProjectMergeQueue):
+    """Simulates another worker having already claimed the row by the time
+    this worker tries to record its own failure."""
+
+    async def fail(self, scope, claim, *, failure_code, now):
+        del claim, failure_code, now
+        raise ProjectMergeLeaseLost(scope.project_id)
+
+
+class RecordingEmbeddings:
+    """Fake embeddings callable: records every batch it was called with and
+    returns one deterministic vector per input text."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ...]] = []
+
+    async def __call__(self, texts):
+        batch = tuple(texts)
+        self.calls.append(batch)
+        return tuple((float(len(text)), 0.0) for text in batch)
+
+
+def _worker(
+    *,
+    queue,
+    inputs,
+    monkeypatch,
+    now: datetime = NOW,
+    embeddings=None,
+    embed_chunk_size: int = 64,
+) -> ProjectGraphMergeWorker:
     worker = ProjectGraphMergeWorker(
         queue=queue,
         inputs=inputs,
         merger=ProjectGraphMerger(),
         scope=VALIDATION_SCOPE,
         worker_id="merge-worker-1",
+        embeddings=embeddings,
+        embed_chunk_size=embed_chunk_size,
     )
     monkeypatch.setattr(worker, "_now", lambda: now)
     return worker
@@ -190,3 +237,102 @@ async def test_lease_lost_is_not_published(monkeypatch) -> None:
 
     assert result == 1
     assert await queue.store.get_current(VALIDATION_SCOPE) is None
+
+
+@pytest.mark.asyncio
+async def test_embedding_dedupes_labels_before_embedding(monkeypatch) -> None:
+    # Three nodes across two fragments share the label "保单"; a fourth is
+    # distinct. The embedder must see each unique label exactly once, not
+    # once per node.
+    fragments = (
+        _fragment("frag-a", label="保单"),
+        _fragment("frag-b", label="保单"),
+        _fragment("frag-c", label="理赔"),
+    )
+    queue = InMemoryProjectMergeQueue()
+    embeddings = RecordingEmbeddings()
+    worker = _worker(
+        queue=queue,
+        inputs=FakeInputs(fragments),
+        monkeypatch=monkeypatch,
+        embeddings=embeddings,
+    )
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == 1
+    embedded_texts = [text for batch in embeddings.calls for text in batch]
+    assert sorted(embedded_texts) == ["保单", "理赔"]
+    current = await queue.store.get_current(VALIDATION_SCOPE)
+    assert current is not None and current.version == 1
+
+
+@pytest.mark.asyncio
+async def test_embedding_renews_the_lease_between_chunks(monkeypatch) -> None:
+    fragments = (
+        _fragment("frag-a", label="A"),
+        _fragment("frag-b", label="B"),
+        _fragment("frag-c", label="C"),
+    )
+    queue = RenewCountingQueue()
+    embeddings = RecordingEmbeddings()
+    worker = _worker(
+        queue=queue,
+        inputs=FakeInputs(fragments),
+        monkeypatch=monkeypatch,
+        embeddings=embeddings,
+        embed_chunk_size=1,
+    )
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == 1
+    # One renew before embedding starts, plus one renew per one-label chunk.
+    assert queue.renew_calls == 1 + 3
+    assert len(embeddings.calls) == 3
+    current = await queue.store.get_current(VALIDATION_SCOPE)
+    assert current is not None and current.version == 1
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_mid_embedding_stops_without_publishing(monkeypatch) -> None:
+    fragments = (
+        _fragment("frag-a", label="A"),
+        _fragment("frag-b", label="B"),
+    )
+    # The pre-embedding renew (call 1) succeeds; the renew after the first
+    # one-label chunk (call 2) loses the lease.
+    queue = RenewCountingQueue(lose_on_call=2)
+    embeddings = RecordingEmbeddings()
+    worker = _worker(
+        queue=queue,
+        inputs=FakeInputs(fragments),
+        monkeypatch=monkeypatch,
+        embeddings=embeddings,
+        embed_chunk_size=1,
+    )
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == 1
+    assert await queue.store.get_current(VALIDATION_SCOPE) is None
+    # Embedding stopped after the chunk whose renew lost the lease; it never
+    # reached the second label's chunk.
+    assert len(embeddings.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_fail_swallows_a_lease_already_lost_to_another_worker(monkeypatch) -> None:
+    queue = FailLeaseLostQueue()
+    worker = _worker(queue=queue, inputs=FailingInputs(), monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    # Must not raise ProjectMergeLeaseLost out of run_once: the pending_work
+    # loop in tapper_ingestion_worker has no guard around it, so an
+    # unswallowed exception here would kill the whole graph worker process.
+    result = await worker.run_once(limit=10)
+
+    assert result == 1

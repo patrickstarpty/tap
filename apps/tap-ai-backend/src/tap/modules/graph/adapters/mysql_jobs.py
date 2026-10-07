@@ -634,19 +634,22 @@ class MysqlGraphJobStore:
                 )
                 .values(status="CANDIDATE")
             )
-            new_digest = "sha256:" + hashlib.sha256(
-                json.dumps(
-                    [
-                        scope.project_id,
-                        revision_id,
-                        extraction_profile_digest,
-                        model_alias,
-                        "rebuild",
-                        now.isoformat(),
-                    ],
-                    separators=(",", ":"),
-                ).encode()
-            ).hexdigest()
+            new_digest = (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(
+                        [
+                            scope.project_id,
+                            revision_id,
+                            extraction_profile_digest,
+                            model_alias,
+                            "rebuild",
+                            now.isoformat(),
+                        ],
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+            )
             await session.execute(
                 update(graph_extraction_job)
                 .where(

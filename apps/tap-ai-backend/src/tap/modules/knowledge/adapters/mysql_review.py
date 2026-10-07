@@ -2580,6 +2580,10 @@ class MysqlKnowledgeReviewRepository:
                     "generation": publication.generation,
                 },
             )
+            if self._publication_projection is not None:
+                await self._publication_projection.after_publication_changed(
+                    session, self._scope, now=publication.withdrawn_at
+                )
         return publication
 
     async def _mark_test_plan_impacts(

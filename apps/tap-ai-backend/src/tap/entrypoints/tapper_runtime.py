@@ -1029,13 +1029,17 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
         else:
             extractor = DeterministicGraphExtraction()
         merge_queue = MysqlProjectMergeQueue(sessions, cache=None)
+        label_embeddings = None
+        if settings.graph_align_embedding:
+            assert model_embeddings is not None
+            label_embeddings = _label_embedder(model_embeddings)
         merge_worker = ProjectGraphMergeWorker(
             queue=merge_queue,
             inputs=MysqlMergeInputs(sessions, MysqlCurrentRevisions(sessions, scope=scope)),
             merger=ProjectGraphMerger(align_threshold=settings.graph_align_threshold),
             scope=scope,
             worker_id=settings.worker_id + "-graph-merge",
-            embeddings=_label_embedder(model_embeddings) if settings.graph_align_embedding else None,
+            embeddings=label_embeddings,
         )
         worker = GraphWorker(
             jobs=MysqlGraphJobStore(sessions, merge_queue=merge_queue),

@@ -50,9 +50,7 @@ class ProjectMergeLeaseLost(Exception):
 
 
 class ProjectMergeQueue(Protocol):
-    async def request(
-        self, scope: ProjectScopeContext, *, reason: str, now: datetime
-    ) -> None: ...
+    async def request(self, scope: ProjectScopeContext, *, reason: str, now: datetime) -> None: ...
 
     async def claim(
         self,
@@ -92,9 +90,7 @@ class ProjectMergeQueue(Protocol):
 
 
 class MergeInputsPort(Protocol):
-    async def load_fragments(
-        self, scope: ProjectScopeContext
-    ) -> tuple[FragmentRecord, ...]: ...
+    async def load_fragments(self, scope: ProjectScopeContext) -> tuple[FragmentRecord, ...]: ...
 
 
 @dataclass(slots=True)
@@ -159,9 +155,7 @@ class InMemoryProjectMergeQueue:
             attempt=row.attempt_count,
         )
 
-    def _owned(
-        self, scope: ProjectScopeContext, claim: MergeClaim, now: datetime
-    ) -> _QueueRow:
+    def _owned(self, scope: ProjectScopeContext, claim: MergeClaim, now: datetime) -> _QueueRow:
         row = self._rows.get(scope.project_id)
         if (
             row is None
