@@ -109,9 +109,21 @@ test("ready knowledge is published as a bounded grounded graph", async ({
     name: /Published source graph|已发布的来源图谱/u,
   });
   await expect(explorer).toBeVisible();
+  // The fixture text ("A verified claim requires supporting evidence.") grounds
+  // a real REQUIRES relation, so the rule-based extractor emits the two
+  // extracted entity nodes and that relation -- not a document-node fallback
+  // (the fallback is reserved for a document with zero relations anywhere; see
+  // the graph-extraction-batching PR). Assert the extracted content directly
+  // instead of a document node named after the uploaded filename.
   await expect(
-    explorer.getByRole("button", { name: new RegExp(filename, "u") }),
+    explorer.getByRole("button", { name: /A verified claim/u }),
   ).toBeVisible();
+  await expect(
+    explorer.getByRole("button", { name: /supporting evidence/u }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: /Labeled relationships|已标注关系/u }),
+  ).toContainText(/REQUIRES/u);
 
   const unavailable = async (route: Route) => {
     await route.fulfill({
