@@ -1,4 +1,4 @@
-"""Golden-question schema and fail-closed validation for Graph relation acceptance.
+"""Golden-question schema, validation and R-citation matching for Graph relation acceptance.
 
 `GOLDEN_SCHEMA` documents the accepted shape as JSON Schema (also used to digest the
 contract). The repository has no `jsonschema` dependency, so `validate_golden` is a
@@ -6,17 +6,19 @@ hand-rolled validator that enforces every constraint the schema describes, plus 
 domain rules (known relation types, manifest-bound sources, human-labeling gates)
 that JSON Schema cannot express.
 
-Matching golden expectations against extracted graph edges is Task 2's job
-(`tap.quality.graph_matcher` or similar); this module only parses and validates.
+The matcher below (`match_question`, `aggregate`, `grounded_rate`, `edge_citations`)
+scores a golden question's R citations against its expected edges; it is pure and
+does no I/O.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
-from tap.modules.graph.domain.vocabulary import RELATION_TYPES
+from tap.modules.graph.domain.vocabulary import RELATION_TYPES, normalize_key
 
 GOLDEN_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -375,3 +377,196 @@ def validate_regression(value: object) -> RegressionSet:
         )
 
     return RegressionSet(groups=tuple(groups), complete=complete)
+
+
+# --- R-citation matching and report aggregation (Task 2) -----------------------------
+
+SYMMETRIC_RELATIONS: frozenset[str] = frozenset({"CONFLICTS_WITH", "RELATED_TO"})
+
+
+@dataclass(frozen=True)
+class EdgeCitation:
+    citation_id: str
+    evidence_label: str
+    edge_id: str
+    subject_label: str
+    object_label: str
+    relation_type: str
+    relation_label: str
+
+
+@dataclass(frozen=True)
+class QuestionResult:
+    question_id: str
+    status: Literal["pass", "miss", "wrong"]
+    correct_edges: tuple[str, ...]
+    missed_edges: tuple[str, ...]
+    wrong_edges: tuple[str, ...]
+    chunk_citations: int
+
+
+def _edge_text(subject: str, relation_type: str, obj: str) -> str:
+    return f"{subject} -{relation_type}-> {obj}"
+
+
+def edge_citations(citations: Sequence[Mapping[str, object]]) -> tuple[EdgeCitation, ...]:
+    """Pick out well-formed `kind == "edge"` citations; skip chunk and malformed entries."""
+    result: list[EdgeCitation] = []
+    for citation in citations:
+        if not isinstance(citation, Mapping) or citation.get("kind") != "edge":
+            continue
+
+        citation_id = citation.get("citationId")
+        if not isinstance(citation_id, str):
+            continue
+        evidence_label = citation.get("evidenceLabel")
+        if not isinstance(evidence_label, str):
+            continue
+        edge_id = citation.get("edgeId")
+        if not isinstance(edge_id, str):
+            continue
+        relation_type = citation.get("relationType")
+        if not isinstance(relation_type, str):
+            continue
+        relation_label = citation.get("relationLabel")
+        if not isinstance(relation_label, str):
+            continue
+
+        subject = citation.get("subject")
+        if not isinstance(subject, Mapping):
+            continue
+        subject_label = subject.get("label")
+        if not isinstance(subject_label, str):
+            continue
+        obj = citation.get("object")
+        if not isinstance(obj, Mapping):
+            continue
+        object_label = obj.get("label")
+        if not isinstance(object_label, str):
+            continue
+
+        result.append(
+            EdgeCitation(
+                citation_id=citation_id,
+                evidence_label=evidence_label,
+                edge_id=edge_id,
+                subject_label=subject_label,
+                object_label=object_label,
+                relation_type=relation_type,
+                relation_label=relation_label,
+            )
+        )
+    return tuple(result)
+
+
+def _expected_keys(question: GoldenQuestion, label: str) -> frozenset[str]:
+    """Keys a citation's label may use to refer to `label`: itself plus any aliases."""
+    keys = {normalize_key(label)}
+    for entity_label, aliases in question.expected_entities:
+        if entity_label == label:
+            keys.add(normalize_key(entity_label))
+            keys.update(normalize_key(alias) for alias in aliases)
+    return frozenset(keys)
+
+
+def _edge_matches(expected: ExpectedEdge, citation: EdgeCitation, question: GoldenQuestion) -> bool:
+    if citation.relation_type != expected.relation_type:
+        return False
+    subject_keys = _expected_keys(question, expected.subject)
+    object_keys = _expected_keys(question, expected.object)
+    cited_subject = normalize_key(citation.subject_label)
+    cited_object = normalize_key(citation.object_label)
+    if cited_subject in subject_keys and cited_object in object_keys:
+        return True
+    return (
+        expected.relation_type in SYMMETRIC_RELATIONS
+        and cited_subject in object_keys
+        and cited_object in subject_keys
+    )
+
+
+def match_question(
+    question: GoldenQuestion, citations: Sequence[Mapping[str, object]]
+) -> QuestionResult:
+    """Score one golden question's R citations against its expected edges (and alternatives).
+
+    Each edge citation either hits an expected edge (directly, via an alternative, or in
+    either direction for a symmetric relation) or is recorded as a wrong edge. A citation
+    matching an alternative counts as a hit for its primary expected edge. Any wrong edge
+    makes the question `wrong`; otherwise at least one correct edge makes it `pass`; else
+    `miss`.
+    """
+    edges = edge_citations(citations)
+    chunk_count = len(citations) - len(edges)
+
+    correct: list[str] = []
+    wrong: list[str] = []
+    matched: set[int] = set()
+    for citation in edges:
+        hit: ExpectedEdge | None = None
+        for expected in question.expected_edges:
+            candidates = (expected, *expected.alternatives)
+            if any(_edge_matches(candidate, citation, question) for candidate in candidates):
+                hit = expected
+                break
+        if hit is None:
+            wrong.append(
+                _edge_text(citation.subject_label, citation.relation_type, citation.object_label)
+            )
+        elif id(hit) not in matched:
+            matched.add(id(hit))
+            correct.append(_edge_text(hit.subject, hit.relation_type, hit.object))
+
+    missed = tuple(
+        _edge_text(expected.subject, expected.relation_type, expected.object)
+        for expected in question.expected_edges
+        if id(expected) not in matched
+    )
+
+    status: Literal["pass", "miss", "wrong"]
+    if wrong:
+        status = "wrong"
+    elif correct:
+        status = "pass"
+    else:
+        status = "miss"
+
+    return QuestionResult(
+        question_id=question.id,
+        status=status,
+        correct_edges=tuple(correct),
+        missed_edges=missed,
+        wrong_edges=tuple(wrong),
+        chunk_citations=chunk_count,
+    )
+
+
+def aggregate(
+    results: Sequence[QuestionResult], *, required_percent: int = 80
+) -> dict[str, object]:
+    """Summarize question results with the same ratio algorithm as `_ratio` in
+    `scripts/evaluate-quality-graph.py`.
+    """
+    total = len(results)
+    passed_count = sum(1 for result in results if result.status == "pass")
+    return {
+        "total": total,
+        "passedCount": passed_count,
+        "actual": f"{passed_count}/{total}",
+        "required": f">={required_percent}%",
+        "passed": total > 0 and passed_count * 100 >= total * required_percent,
+    }
+
+
+def grounded_rate(answers: Sequence[Mapping[str, object]]) -> tuple[int, int]:
+    """Count answers that did not abstain and carry at least one citation, out of the total."""
+    total = len(answers)
+    grounded = 0
+    for answer in answers:
+        if not isinstance(answer, Mapping) or answer.get("abstained") is True:
+            continue
+        citations = answer.get("citations")
+        is_sequence = isinstance(citations, Sequence) and not isinstance(citations, (str, bytes))
+        if is_sequence and citations:
+            grounded += 1
+    return grounded, total
