@@ -35,7 +35,5 @@ def normalize_key(text: str) -> str:
     """Fold width, case, whitespace and punctuation to a canonical comparison key."""
     folded = unicodedata.normalize("NFKC", text).casefold()
     return "".join(
-        ch
-        for ch in folded
-        if not ch.isspace() and not unicodedata.category(ch).startswith("P")
+        ch for ch in folded if not ch.isspace() and not unicodedata.category(ch).startswith("P")
     )
