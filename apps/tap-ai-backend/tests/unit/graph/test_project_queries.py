@@ -230,6 +230,33 @@ def test_highlight_returns_edges_endpoints_and_one_hop_context() -> None:
     assert {node.node_id for node in subgraph.nodes} == {"A", "B", "C", "D"}
 
 
+def test_highlight_caps_total_edges_and_drops_endpoints_of_edges_cut_by_the_cap() -> None:
+    nodes = tuple(
+        ProjectNode(node_id=name, label=name, node_type="ENTITY", canonical_key=name)
+        for name in ("A", "B", "C", "D")
+    )
+    edges = (
+        ProjectEdge("e1", "A", "B", "RELATED_TO", "relates", RelationOrigin.EXTRACTED, 1.0),
+        ProjectEdge("e2", "B", "C", "RELATED_TO", "relates", RelationOrigin.EXTRACTED, 1.0),
+        ProjectEdge("e3", "C", "D", "RELATED_TO", "relates", RelationOrigin.EXTRACTED, 1.0),
+    )
+    loaded = LoadedProjectGraph.from_rows(
+        _version(1),
+        nodes=nodes,
+        edges=edges,
+        node_sources=(),
+        edge_evidence=(),
+        aliases=(),
+        communities=(),
+    )
+    # All three edges are directly requested, but the cap (2) is reached
+    # before `e3` is processed; `e3`'s unique endpoint `D` must not leak into
+    # the result through the endpoints of edges that *were* kept.
+    subgraph = loaded.highlight(("e1", "e2", "e3"), limit=2)
+    assert {edge.edge_id for edge in subgraph.edges} == {"e1", "e2"}
+    assert {node.node_id for node in subgraph.nodes} == {"A", "B", "C"}
+
+
 def test_nodes_for_chunks_uses_node_sources_and_edge_evidence() -> None:
     nodes = tuple(
         ProjectNode(node_id=name, label=name, node_type="ENTITY", canonical_key=name)
