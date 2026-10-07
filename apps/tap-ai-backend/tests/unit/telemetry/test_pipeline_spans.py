@@ -50,6 +50,7 @@ from tests.integration.test_answer_plan_execution import (
 from tests.integration.test_answer_plan_execution import value as planning_value
 from tests.unit.graph.test_graph_worker import Artifacts as GraphArtifacts
 from tests.unit.graph.test_graph_worker import Extractor as GraphExtractor
+from tests.unit.graph.test_graph_worker import _request_chunks as graph_request_chunks
 from tests.unit.knowledge.test_ingestion_worker import (
     Chunker,
     FakeClock,
@@ -343,9 +344,10 @@ async def test_graph_and_test_design_jobs_emit_root_spans(span_recorder) -> None
     )
     job = await jobs.request(VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 9, 0, 0))
     chunks = await GraphArtifacts().read_chunks("art1.chunks")
-    from tap.modules.graph.adapters.fake_extraction import deterministic_draft
+    from tap.modules.graph.adapters.fake_extraction import rule_based_draft
 
-    draft = deterministic_draft(job.snapshot, chunks, filename="revision-1")
+    request_chunks = graph_request_chunks(chunks, revision_id="revision-1")
+    draft = rule_based_draft(job.snapshot, request_chunks, filename="revision-1")
     graph_worker = GraphWorker(
         jobs=jobs,
         artifacts=GraphArtifacts(),
@@ -434,7 +436,7 @@ async def test_graph_idle_run_once_does_not_flush_traces(
 ) -> None:
     """An empty batch must skip the synchronous MySQL flush on the hot loop."""
     import tap.modules.graph.application.worker as graph_worker_module
-    from tap.modules.graph.adapters.fake_extraction import deterministic_draft
+    from tap.modules.graph.adapters.fake_extraction import rule_based_draft
 
     calls = 0
 
@@ -453,7 +455,8 @@ async def test_graph_idle_run_once_does_not_flush_traces(
         model_alias="qwen-plus",
     )
     chunks = await GraphArtifacts().read_chunks("art1.chunks")
-    draft = deterministic_draft(request.snapshot, chunks, filename="revision-1")
+    request_chunks = graph_request_chunks(chunks, revision_id="revision-1")
+    draft = rule_based_draft(request.snapshot, request_chunks, filename="revision-1")
     graph_worker = GraphWorker(
         jobs=jobs,
         artifacts=GraphArtifacts(),

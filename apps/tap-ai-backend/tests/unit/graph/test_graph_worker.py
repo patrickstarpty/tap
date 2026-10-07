@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import pytest
@@ -37,9 +38,23 @@ class Extractor:
         return self._draft
 
 
+def _request_chunks(chunks, *, revision_id: str) -> tuple[dict, ...]:
+    return tuple(
+        {
+            "sourceRevisionId": revision_id,
+            "documentRevisionId": revision_id,
+            "chunkId": str(chunk.chunk_id),
+            "content": chunk.content,
+            "anchor": json.loads(chunk.anchor_json),
+            "contentDigest": chunk.chunk_content_hash,
+        }
+        for chunk in chunks
+    )
+
+
 @pytest.mark.asyncio
 async def test_worker_publishes_a_claimed_job_atomically(monkeypatch) -> None:
-    from tap.modules.graph.adapters.fake_extraction import deterministic_draft
+    from tap.modules.graph.adapters.fake_extraction import rule_based_draft
 
     jobs = InMemoryGraphJobStore()
     request = GraphJobRequest.create(
@@ -51,7 +66,8 @@ async def test_worker_publishes_a_claimed_job_atomically(monkeypatch) -> None:
     )
     job = await jobs.request(VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 9, 0, 0))
     chunks = await Artifacts().read_chunks("art1.chunks")
-    draft = deterministic_draft(job.snapshot, chunks, filename="revision-1")
+    request_chunks = _request_chunks(chunks, revision_id="revision-1")
+    draft = rule_based_draft(job.snapshot, request_chunks, filename="revision-1")
     worker = GraphWorker(
         jobs=jobs,
         artifacts=Artifacts(),
