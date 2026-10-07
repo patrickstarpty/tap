@@ -223,6 +223,121 @@ def test_assemble_fragment_caps_merged_edges_at_two_thousand() -> None:
     assert kept_ids[1001:] == [f"b-edge-{i}" for i in range(999)]
 
 
+def test_assemble_fragment_falls_back_to_a_document_node_when_every_batch_is_empty() -> None:
+    # Every batch of a relation-less document returns ``None`` (nothing grounded)
+    # and the worker never appends it to the drafts list, so assembly sees zero
+    # drafts -- the degenerate case the per-batch extractors deliberately leave to
+    # assembly instead of each minting its own document-node fallback (F1).
+    fragment = assemble_fragment(SNAPSHOT, ())
+
+    assert len(fragment.nodes) == 1
+    assert fragment.nodes[0].canonical_key == "document:revision-1"
+    assert fragment.edges == ()
+    assert fragment.evidence == ()
+    assert fragment.provenance == ()
+
+
+def test_assemble_fragment_merges_duplicate_canonical_keys_across_batches() -> None:
+    # Repro #1 from the F1 review finding: the same raw entity ("核保流程") is
+    # grounded independently in two batches. The rule-based extractor mints the
+    # same *raw* id for it in both batches (deterministic by content hash), but
+    # the worker's per-batch namespacing (b{i}-) gives those raw ids different
+    # literal node ids across batches -- so the only thing tying them back
+    # together is the normalized canonical key, not node_id.
+    evidence_1 = _evidence("evidence-1", "chunk-0")
+    evidence_2 = _evidence("evidence-2", "chunk-1")
+    node_1_batch_1 = GraphNode(
+        "b0-grn_a", SNAPSHOT.snapshot_id, "核保流程", "PROCESS", "核保流程", ("evidence-1",)
+    )
+    node_2_batch_1 = GraphNode(
+        "b0-grn_b", SNAPSHOT.snapshot_id, "健康告知", "CONCEPT", "健康告知", ("evidence-1",)
+    )
+    edge_batch_1 = GraphEdge(
+        "b0-ged_a",
+        SNAPSHOT.snapshot_id,
+        "b0-grn_a",
+        "b0-grn_b",
+        "REQUIRES",
+        RelationOrigin.EXTRACTED,
+        1.0,
+        ("evidence-1",),
+        "需要",
+    )
+    # Batch 2 re-grounds the same two real-world entities under a different
+    # (b1-) namespace prefix, not knowing they were already known.
+    node_1_batch_2 = GraphNode(
+        "b1-grn_a", SNAPSHOT.snapshot_id, "核保流程", "PROCESS", "核保流程", ("evidence-2",)
+    )
+    node_2_batch_2 = GraphNode(
+        "b1-grn_b", SNAPSHOT.snapshot_id, "健康告知", "CONCEPT", "健康告知", ("evidence-2",)
+    )
+    edge_batch_2 = GraphEdge(
+        "b1-ged_a",
+        SNAPSHOT.snapshot_id,
+        "b1-grn_a",
+        "b1-grn_b",
+        "REQUIRES",
+        RelationOrigin.EXTRACTED,
+        1.0,
+        ("evidence-2",),
+        "需要",
+    )
+    draft_1 = GraphSnapshotDraft(
+        SNAPSHOT, (node_1_batch_1, node_2_batch_1), (edge_batch_1,), (evidence_1,), ()
+    )
+    draft_2 = GraphSnapshotDraft(
+        SNAPSHOT, (node_1_batch_2, node_2_batch_2), (edge_batch_2,), (evidence_2,), ()
+    )
+
+    fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    # Exactly one surviving node per real-world entity -- no MySQL
+    # uq_graph_node_canonical collision -- and exactly one surviving edge between
+    # them (the duplicate edge from batch 2 merges rather than violating no
+    # expectation of edge uniqueness, since both now share the same endpoints).
+    assert sorted(node.canonical_key for node in fragment.nodes) == ["健康告知", "核保流程"]
+    assert len(fragment.edges) == 1
+    merged_edge = fragment.edges[0]
+    assert merged_edge.evidence_ids == ("evidence-1", "evidence-2")
+    process_node = next(node for node in fragment.nodes if node.canonical_key == "核保流程")
+    disclosure_node = next(node for node in fragment.nodes if node.canonical_key == "健康告知")
+    assert merged_edge.source_node_id == process_node.node_id
+    assert merged_edge.target_node_id == disclosure_node.node_id
+
+
+def test_assemble_fragment_merges_relation_less_batches_into_one_document_node() -> None:
+    # Repro #2 from the F1 review finding: a document with twelve relation-less
+    # chunks split across two batches must not publish two "document:revision-1"
+    # nodes -- it must publish exactly one, with zero edges, READY rather than
+    # failing MySQL's uq_graph_node_canonical constraint.
+    evidence_1 = _evidence("evidence-1", "chunk-0")
+    evidence_2 = _evidence("evidence-2", "chunk-1")
+    document_node_batch_1 = GraphNode(
+        "b0-grn_doc",
+        SNAPSHOT.snapshot_id,
+        "revision-1",
+        "ENTITY",
+        "document:revision-1",
+        ("evidence-1",),
+    )
+    document_node_batch_2 = GraphNode(
+        "b1-grn_doc",
+        SNAPSHOT.snapshot_id,
+        "revision-1",
+        "ENTITY",
+        "document:revision-1",
+        ("evidence-2",),
+    )
+    draft_1 = GraphSnapshotDraft(SNAPSHOT, (document_node_batch_1,), (), (evidence_1,), ())
+    draft_2 = GraphSnapshotDraft(SNAPSHOT, (document_node_batch_2,), (), (evidence_2,), ())
+
+    fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    assert len(fragment.nodes) == 1
+    assert fragment.nodes[0].canonical_key == "document:revision-1"
+    assert fragment.edges == ()
+
+
 def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() -> None:
     # 500 "early" nodes fill the node cap and are kept. A later, dropped node
     # ("node-510") is cited as an inference's input fact. The inference's own edge

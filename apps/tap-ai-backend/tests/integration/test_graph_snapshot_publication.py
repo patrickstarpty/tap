@@ -8,6 +8,7 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.graph.adapters.mysql import MysqlGraphStore
 from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
 from tap.modules.graph.application.extraction import GraphExtractionService
+from tap.modules.graph.application.fragments import assemble_fragment
 from tap.modules.graph.application.queries import InMemoryGraphStore
 from tap.modules.graph.domain.extraction import GraphExtractionRequest
 from tap.modules.graph.domain.jobs import (
@@ -365,3 +366,86 @@ async def test_mysql_batches_survive_reclaim_and_partial_publish(sessions) -> No
     assert (
         await MysqlGraphStore(sessions).get_snapshot(VALIDATION_SCOPE, job.snapshot.snapshot_id)
     ).status == "PARTIAL"
+
+
+@pytest.mark.asyncio
+async def test_mysql_publish_merges_a_shared_entity_across_batches(sessions) -> None:
+    # F1: two batches independently ground the same real-world entity
+    # ("Policy"/"policy") under different (worker-namespaced) node ids, the way
+    # the rule-based extractor's raw ids collide across batches without a shared
+    # known-entities cache. Publishing the merged fragment must not raise MySQL's
+    # uq_graph_node_canonical(project_id, snapshot_id, canonical_key) IntegrityError.
+    store = MysqlGraphJobStore(sessions)
+    claim = await _claim(store)
+    snapshot = claim.snapshot
+
+    def _evidence(evidence_id: str, chunk_id: str) -> Evidence:
+        return Evidence(
+            evidence_id,
+            snapshot.snapshot_id,
+            snapshot.source_revision_ids[0],
+            snapshot.document_revision_ids[0],
+            chunk_id,
+            {"kind": "text", "start": 0, "end": 5},
+            "sha256:" + "a" * 64,
+        )
+
+    evidence_1 = _evidence("evidence-b0", "chunk-1")
+    evidence_2 = _evidence("evidence-b1", "chunk-2")
+    node_batch_0 = GraphNode(
+        "b0-policy", snapshot.snapshot_id, "Policy", "ENTITY", "policy", ("evidence-b0",)
+    )
+    node_batch_1 = GraphNode(
+        "b1-policy", snapshot.snapshot_id, "Policy", "ENTITY", "policy", ("evidence-b1",)
+    )
+    other_node_batch_0 = GraphNode(
+        "b0-claim", snapshot.snapshot_id, "Claim", "ENTITY", "claim", ("evidence-b0",)
+    )
+    other_node_batch_1 = GraphNode(
+        "b1-claim", snapshot.snapshot_id, "Claim", "ENTITY", "claim", ("evidence-b1",)
+    )
+    edge_batch_0 = GraphEdge(
+        "b0-edge",
+        snapshot.snapshot_id,
+        "b0-policy",
+        "b0-claim",
+        "GOVERNS",
+        RelationOrigin.EXTRACTED,
+        1.0,
+        ("evidence-b0",),
+    )
+    edge_batch_1 = GraphEdge(
+        "b1-edge",
+        snapshot.snapshot_id,
+        "b1-policy",
+        "b1-claim",
+        "GOVERNS",
+        RelationOrigin.EXTRACTED,
+        1.0,
+        ("evidence-b1",),
+    )
+    draft_0 = GraphSnapshotDraft(
+        snapshot,
+        (node_batch_0, other_node_batch_0),
+        (edge_batch_0,),
+        (evidence_1,),
+        (),
+    )
+    draft_1 = GraphSnapshotDraft(
+        snapshot,
+        (node_batch_1, other_node_batch_1),
+        (edge_batch_1,),
+        (evidence_2,),
+        (),
+    )
+
+    fragment = assemble_fragment(snapshot, (draft_0, draft_1))
+    assert len(fragment.nodes) == 2  # merged, not four
+    assert len(fragment.edges) == 1  # merged, not two
+
+    job = await store.complete(VALIDATION_SCOPE, claim, fragment, now=_now(), status="READY")
+    assert job.snapshot.status == "READY"
+    published = await MysqlGraphStore(sessions).get_snapshot(
+        VALIDATION_SCOPE, job.snapshot.snapshot_id
+    )
+    assert published.status == "READY"

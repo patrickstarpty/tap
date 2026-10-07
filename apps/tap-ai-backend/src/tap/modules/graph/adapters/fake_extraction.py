@@ -139,7 +139,7 @@ def _touch_node(
 
 def rule_based_draft(
     snapshot: GraphSnapshot, chunks: tuple[Mapping[str, object], ...], *, filename: str
-) -> GraphSnapshotDraft:
+) -> GraphSnapshotDraft | None:
     evidence: list[Evidence] = []
     node_order: list[str] = []
     nodes_by_key: dict[str, GraphNode] = {}
@@ -242,19 +242,14 @@ def rule_based_draft(
                         existing, evidence_ids=existing.evidence_ids + (evidence_id,)
                     )
 
-    if not edge_order:
-        document_node_id = "grn_" + hashlib.sha256(snapshot.snapshot_id.encode()).hexdigest()[:32]
-        fallback_node = GraphNode(
-            document_node_id,
-            snapshot.snapshot_id,
-            filename,
-            "ENTITY",
-            f"document:{snapshot.document_revision_ids[0]}",
-            tuple(item.evidence_id for item in evidence),
-        )
-        return GraphSnapshotDraft(
-            replace(snapshot, status="CANDIDATE"), (fallback_node,), (), tuple(evidence), ()
-        )
+    if not edge_order and not node_order:
+        # Nothing grounded in this batch at all (no relation triggers matched, no
+        # lone entity touched): a successful batch that contributes nothing. The
+        # document-node fallback for a whole document with no relations anywhere is
+        # the worker's job to add exactly once, at assembly time, across every
+        # batch -- not this one batch's job, which would otherwise mint one
+        # fallback node per relation-less batch of a mixed document.
+        return None
 
     kept_keys = node_order[:_NODE_CAP]
     nodes = tuple(nodes_by_key[key] for key in kept_keys)
@@ -273,6 +268,6 @@ def rule_based_draft(
 class DeterministicGraphExtraction:
     """Extract grounded facts from trigger-word rules without a model."""
 
-    async def extract(self, request: GraphExtractionRequest) -> GraphSnapshotDraft:
+    async def extract(self, request: GraphExtractionRequest) -> GraphSnapshotDraft | None:
         filename = request.document_title or request.snapshot.document_revision_ids[0]
         return rule_based_draft(request.snapshot, request.chunks, filename=filename)
