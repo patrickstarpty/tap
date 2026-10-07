@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.graph.application.jobs import InMemoryGraphJobStore
-from tap.modules.graph.domain.jobs import GraphJobLeaseLost, GraphJobRequest, GraphJobStatus
+from tap.modules.graph.domain.jobs import (
+    ClaimedGraphJob,
+    GraphBatchStatus,
+    GraphFragmentBatch,
+    GraphJobLeaseLost,
+    GraphJobRequest,
+    GraphJobStatus,
+)
 from tap.modules.graph.domain.models import (
     Evidence,
     GraphEdge,
@@ -67,6 +75,88 @@ def _draft(snapshot: GraphSnapshot) -> GraphSnapshotDraft:
         (evidence,),
         (),
     )
+
+
+async def _claimed_job() -> tuple[InMemoryGraphJobStore, ClaimedGraphJob]:
+    jobs = InMemoryGraphJobStore()
+    await jobs.request(VALIDATION_SCOPE, _request(), now=NOW)
+    claimed = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-1",
+            now=NOW,
+            lease_duration=timedelta(seconds=10),
+            limit=1,
+        )
+    )[0]
+    return jobs, claimed
+
+
+def _one_batch_draft(snapshot: GraphSnapshot) -> GraphSnapshotDraft:
+    return _draft(snapshot)
+
+
+@pytest.mark.asyncio
+async def test_batches_round_trip_and_partial_completion_keeps_job_ready() -> None:
+    jobs, claim = await _claimed_job()
+    draft = _one_batch_draft(claim.snapshot)
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        claim,
+        GraphFragmentBatch(
+            claim.snapshot.snapshot_id, 0, ("chunk-1",), GraphBatchStatus.READY, draft=draft
+        ),
+        now=NOW,
+    )
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        claim,
+        GraphFragmentBatch(
+            claim.snapshot.snapshot_id,
+            1,
+            ("chunk-2",),
+            GraphBatchStatus.FAILED,
+            attempt=3,
+            failure_code="ModelGatewayUnavailable",
+        ),
+        now=NOW,
+    )
+
+    batches = await jobs.load_batches(VALIDATION_SCOPE, claim)
+
+    assert [b.batch_index for b in batches] == [0, 1]
+    assert batches[0].draft == draft
+    job = await jobs.complete(VALIDATION_SCOPE, claim, draft, now=NOW, status="PARTIAL")
+    assert job.status is GraphJobStatus.READY
+    assert job.snapshot.status == "PARTIAL"
+
+
+@pytest.mark.asyncio
+async def test_renew_extends_lease_and_fences_lost_claims() -> None:
+    jobs, claim = await _claimed_job()
+
+    renewed = await jobs.renew(
+        VALIDATION_SCOPE, claim, now=NOW, lease_duration=timedelta(seconds=60)
+    )
+    assert renewed.lease_expires_at == NOW + timedelta(seconds=60)
+
+    stale = replace(claim, lease_token="other")
+    with pytest.raises(GraphJobLeaseLost):
+        await jobs.renew(VALIDATION_SCOPE, stale, now=NOW, lease_duration=timedelta(seconds=60))
+    with pytest.raises(GraphJobLeaseLost):
+        await jobs.record_batch(
+            VALIDATION_SCOPE,
+            stale,
+            GraphFragmentBatch(
+                claim.snapshot.snapshot_id,
+                0,
+                ("c",),
+                GraphBatchStatus.PENDING,
+                attempt=1,
+                failure_code="x",
+            ),
+            now=NOW,
+        )
 
 
 @pytest.mark.asyncio

@@ -27,19 +27,136 @@ from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION
 from tap.modules.graph.adapters.mysql import (
     _draft_digest,
     graph_extraction_job,
+    graph_fragment_batch,
     graph_snapshot,
     publish_graph_snapshot,
 )
 from tap.modules.graph.domain.jobs import (
     ClaimedGraphJob,
+    GraphBatchStatus,
+    GraphFragmentBatch,
     GraphJob,
     GraphJobLeaseLost,
     GraphJobRequest,
     GraphJobStatus,
 )
-from tap.modules.graph.domain.models import GraphSnapshot, GraphSnapshotDraft
+from tap.modules.graph.domain.models import (
+    Evidence,
+    GraphEdge,
+    GraphNode,
+    GraphSnapshot,
+    GraphSnapshotDraft,
+    InferenceProvenance,
+    RelationOrigin,
+)
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
+
+
+def serialize_draft(draft: GraphSnapshotDraft) -> dict[str, object]:
+    """Serialize a graph snapshot draft to a JSON-safe payload for durable batch storage."""
+
+    return {
+        "nodes": [
+            {
+                "nodeId": node.node_id,
+                "label": node.label,
+                "nodeType": node.node_type,
+                "canonicalKey": node.canonical_key,
+                "evidenceIds": list(node.evidence_ids),
+                "aliases": list(node.aliases),
+            }
+            for node in draft.nodes
+        ],
+        "edges": [
+            {
+                "edgeId": edge.edge_id,
+                "sourceNodeId": edge.source_node_id,
+                "targetNodeId": edge.target_node_id,
+                "relationType": edge.relation_type,
+                "origin": edge.origin.value,
+                "confidence": edge.confidence,
+                "evidenceIds": list(edge.evidence_ids),
+                "relationLabel": edge.relation_label,
+            }
+            for edge in draft.edges
+        ],
+        "evidence": [
+            {
+                "evidenceId": item.evidence_id,
+                "sourceRevisionId": item.source_revision_id,
+                "documentRevisionId": item.document_revision_id,
+                "chunkId": item.chunk_id,
+                "anchor": dict(item.anchor),
+                "contentDigest": item.content_digest,
+            }
+            for item in draft.evidence
+        ],
+        "provenance": [
+            {
+                "provenanceId": item.provenance_id,
+                "edgeId": item.edge_id,
+                "inputFactIds": list(item.input_fact_ids),
+                "ruleDigest": item.rule_digest,
+            }
+            for item in draft.provenance
+        ],
+    }
+
+
+def deserialize_draft(snapshot: GraphSnapshot, payload: Mapping[str, object]) -> GraphSnapshotDraft:
+    """Rebuild a graph snapshot draft bound to ``snapshot`` from a serialized payload."""
+
+    snapshot_id = snapshot.snapshot_id
+    nodes = tuple(
+        GraphNode(
+            cast(str, item["nodeId"]),
+            snapshot_id,
+            cast(str, item["label"]),
+            cast(str, item["nodeType"]),
+            cast(str, item["canonicalKey"]),
+            tuple(cast("list[str]", item["evidenceIds"])),
+            tuple(cast("list[str]", item["aliases"])),
+        )
+        for item in cast("list[Mapping[str, object]]", payload["nodes"])
+    )
+    edges = tuple(
+        GraphEdge(
+            cast(str, item["edgeId"]),
+            snapshot_id,
+            cast(str, item["sourceNodeId"]),
+            cast(str, item["targetNodeId"]),
+            cast(str, item["relationType"]),
+            RelationOrigin(cast(str, item["origin"])),
+            float(cast(float, item["confidence"])),
+            tuple(cast("list[str]", item["evidenceIds"])),
+            cast(str, item["relationLabel"]),
+        )
+        for item in cast("list[Mapping[str, object]]", payload["edges"])
+    )
+    evidence = tuple(
+        Evidence(
+            cast(str, item["evidenceId"]),
+            snapshot_id,
+            cast(str, item["sourceRevisionId"]),
+            cast(str, item["documentRevisionId"]),
+            cast(str, item["chunkId"]),
+            cast(Mapping[str, object], item["anchor"]),
+            cast(str, item["contentDigest"]),
+        )
+        for item in cast("list[Mapping[str, object]]", payload["evidence"])
+    )
+    provenance = tuple(
+        InferenceProvenance(
+            cast(str, item["provenanceId"]),
+            snapshot_id,
+            cast(str, item["edgeId"]),
+            tuple(cast("list[str]", item["inputFactIds"])),
+            cast(str, item["ruleDigest"]),
+        )
+        for item in cast("list[Mapping[str, object]]", payload["provenance"])
+    )
+    return GraphSnapshotDraft(snapshot, nodes, edges, evidence, provenance)
 
 
 class MysqlGraphJobStore:
@@ -208,6 +325,103 @@ class MysqlGraphJobStore:
                 )
         return tuple(claims)
 
+    async def renew(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedGraphJob,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ClaimedGraphJob:
+        scope = require_project_scope(scope)
+        expires = now + lease_duration
+        async with self._sessions() as session, session.begin():
+            await self._owned_row(session, scope, claim, now)
+            result = await session.execute(
+                update(graph_extraction_job)
+                .where(
+                    *scope_predicates(graph_extraction_job, scope),
+                    graph_extraction_job.c.job_id == claim.job_id,
+                    graph_extraction_job.c.status == GraphJobStatus.RUNNING.value,
+                    graph_extraction_job.c.lease_token == claim.lease_token,
+                    graph_extraction_job.c.lease_expires_at > now,
+                )
+                .values(lease_expires_at=expires, updated_at=now)
+            )
+            if result.rowcount != 1:
+                raise GraphJobLeaseLost(claim.job_id)
+        return replace(claim, lease_expires_at=expires, updated_at=now)
+
+    async def record_batch(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedGraphJob,
+        batch: GraphFragmentBatch,
+        *,
+        now: datetime,
+    ) -> None:
+        scope = require_project_scope(scope)
+        async with self._sessions() as session, session.begin():
+            await self._owned_row(session, scope, claim, now)
+            common = scope_values(scope)
+            statement = insert(graph_fragment_batch).values(
+                **common,
+                snapshot_id=batch.snapshot_id,
+                batch_index=batch.batch_index,
+                job_id=claim.job_id,
+                chunk_ids=list(batch.chunk_ids),
+                status=batch.status.value,
+                attempt=batch.attempt,
+                failure_code=batch.failure_code,
+                draft_json=serialize_draft(batch.draft) if batch.draft is not None else None,
+                updated_at=now,
+            )
+            await session.execute(
+                statement.on_duplicate_key_update(
+                    job_id=statement.inserted.job_id,
+                    chunk_ids=statement.inserted.chunk_ids,
+                    status=statement.inserted.status,
+                    attempt=statement.inserted.attempt,
+                    failure_code=statement.inserted.failure_code,
+                    draft_json=statement.inserted.draft_json,
+                    updated_at=statement.inserted.updated_at,
+                )
+            )
+
+    async def load_batches(
+        self, scope: ProjectScopeContext, claim: ClaimedGraphJob
+    ) -> tuple[GraphFragmentBatch, ...]:
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(graph_fragment_batch)
+                        .where(
+                            *scope_predicates(graph_fragment_batch, scope),
+                            graph_fragment_batch.c.snapshot_id == claim.snapshot.snapshot_id,
+                        )
+                        .order_by(graph_fragment_batch.c.batch_index)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            GraphFragmentBatch(
+                cast(str, row["snapshot_id"]),
+                cast(int, row["batch_index"]),
+                tuple(row["chunk_ids"]),
+                GraphBatchStatus(cast(str, row["status"])),
+                cast(int, row["attempt"]),
+                cast(str | None, row["failure_code"]),
+                deserialize_draft(claim.snapshot, cast(Mapping[str, object], row["draft_json"]))
+                if row["draft_json"] is not None
+                else None,
+            )
+            for row in rows
+        )
+
     async def complete(
         self,
         scope: ProjectScopeContext,
@@ -215,6 +429,7 @@ class MysqlGraphJobStore:
         draft: GraphSnapshotDraft,
         *,
         now: datetime,
+        status: Literal["READY", "PARTIAL"] = "READY",
     ) -> GraphJob:
         scope = require_project_scope(scope)
         async with self._sessions() as session, session.begin():
@@ -222,7 +437,7 @@ class MysqlGraphJobStore:
             current = await self._job(session, scope, row)
             if draft.snapshot != current.snapshot:
                 raise ValueError("graph draft does not match claimed snapshot")
-            snapshot = await publish_graph_snapshot(session, scope, draft, now=now)
+            snapshot = await publish_graph_snapshot(session, scope, draft, now=now, status=status)
             result = await session.execute(
                 update(graph_extraction_job)
                 .where(

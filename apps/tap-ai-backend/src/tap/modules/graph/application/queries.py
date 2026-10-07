@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import replace
+from typing import Literal
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.domain.models import (
@@ -25,7 +26,13 @@ class InMemoryGraphStore:
         self._drafts: dict[tuple[str, str], GraphSnapshotDraft] = {}
         self._active: dict[tuple[str, str], str] = {}
 
-    async def publish(self, scope: ProjectScopeContext, draft: GraphSnapshotDraft) -> GraphSnapshot:
+    async def publish(
+        self,
+        scope: ProjectScopeContext,
+        draft: GraphSnapshotDraft,
+        *,
+        status: Literal["READY", "PARTIAL"] = "READY",
+    ) -> GraphSnapshot:
         scope = require_project_scope(scope)
         if draft.snapshot.project_id != scope.project_id:
             raise ValueError("graph snapshot is outside Project scope")
@@ -34,7 +41,7 @@ class InMemoryGraphStore:
             if self._drafts[key] != draft:
                 raise ValueError("immutable graph snapshot conflict")
             return self._drafts[key].snapshot
-        ready = replace(draft.snapshot, status="READY")
+        ready = replace(draft.snapshot, status=status)
         persisted = replace(draft, snapshot=ready)
         self._drafts[key] = persisted
         self._active[(scope.project_id, ready.source_set_digest)] = ready.snapshot_id
