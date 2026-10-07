@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -50,6 +50,65 @@ def _chunk_request_mapping(chunk: ChunkDraft, *, revision_id: str) -> Mapping[st
         "anchor": json.loads(chunk.anchor_json),
         "contentDigest": chunk.chunk_content_hash,
     }
+
+
+def _namespace_draft(
+    draft: GraphSnapshotDraft, *, batch_index: int, known_entity_ids: frozenset[str]
+) -> GraphSnapshotDraft:
+    """Namespace every id this batch minted so restart-at-``n1``/``e1``/``ev1`` model ids
+    cannot collide with another batch's ids for the same document.
+
+    Evidence, edge and provenance ids are always rewritten under the ``b{batch_index}-``
+    prefix. Node ids are rewritten the same way, except a node id already present in
+    ``known_entity_ids`` (the known entities handed to this batch's request) is an
+    intentional reuse of an entity minted by an earlier batch and keeps its id as-is.
+    Every reference to a rewritten id (edge endpoints, evidence ids, provenance edge id
+    and input-fact ids) is rewritten consistently.
+    """
+
+    prefix = f"b{batch_index}-"
+    node_id_map = {
+        node.node_id: node.node_id if node.node_id in known_entity_ids else prefix + node.node_id
+        for node in draft.nodes
+    }
+    evidence_id_map = {item.evidence_id: prefix + item.evidence_id for item in draft.evidence}
+    edge_id_map = {edge.edge_id: prefix + edge.edge_id for edge in draft.edges}
+    provenance_id_map = {
+        item.provenance_id: prefix + item.provenance_id for item in draft.provenance
+    }
+    fact_id_map = {**node_id_map, **edge_id_map}
+
+    nodes = tuple(
+        replace(
+            node,
+            node_id=node_id_map[node.node_id],
+            evidence_ids=tuple(evidence_id_map[eid] for eid in node.evidence_ids),
+        )
+        for node in draft.nodes
+    )
+    evidence = tuple(
+        replace(item, evidence_id=evidence_id_map[item.evidence_id]) for item in draft.evidence
+    )
+    edges = tuple(
+        replace(
+            edge,
+            edge_id=edge_id_map[edge.edge_id],
+            source_node_id=node_id_map[edge.source_node_id],
+            target_node_id=node_id_map[edge.target_node_id],
+            evidence_ids=tuple(evidence_id_map[eid] for eid in edge.evidence_ids),
+        )
+        for edge in draft.edges
+    )
+    provenance = tuple(
+        replace(
+            item,
+            provenance_id=provenance_id_map[item.provenance_id],
+            edge_id=edge_id_map[item.edge_id],
+            input_fact_ids=tuple(fact_id_map[fact_id] for fact_id in item.input_fact_ids),
+        )
+        for item in draft.provenance
+    )
+    return replace(draft, nodes=nodes, edges=edges, evidence=evidence, provenance=provenance)
 
 
 class GraphWorker:
@@ -118,6 +177,25 @@ class GraphWorker:
         return GraphWorkerRun(len(claims), ready, failed, lease_lost, partial)
 
     async def _run_claim(self, claim: ClaimedGraphJob) -> str:
+        """Process one claimed job end to end, never letting a non-lease error escape.
+
+        Any exception other than ``GraphJobLeaseLost`` (a crash reading chunks, a
+        database error from the job store, an unexpected error assembling the merged
+        fragment, ...) is caught here and turned into a terminal job failure instead
+        of propagating out of ``run_once`` -- which has no caller-side try/except and
+        would otherwise kill the worker process (and, for a condition that recurs on
+        every reclaim, crash-loop it forever, starving every job behind it).
+        """
+        try:
+            return await self._run_claim_body(claim)
+        except GraphJobLeaseLost:
+            raise
+        except Exception as error:
+            failure_code = type(error).__name__[:64]
+            await self._jobs.fail(self._scope, claim, failure_code=failure_code, now=self._now())
+            return "FAILED"
+
+    async def _run_claim_body(self, claim: ClaimedGraphJob) -> str:
         chunks = (await self._artifacts.read_chunks(ArtifactLocator(claim.chunks_locator)))[
             :_CHUNK_READ_LIMIT
         ]
@@ -139,7 +217,7 @@ class GraphWorker:
             elif existing_batch is not None and existing_batch.status is GraphBatchStatus.FAILED:
                 batch_failed += 1
             else:
-                draft, batch_failed_here = await self._run_batch(
+                draft, batch_failed_here, claim = await self._run_batch(
                     claim,
                     index,
                     batch_chunks,
@@ -179,7 +257,7 @@ class GraphWorker:
         *,
         attempt: int,
         drafts_so_far: list[GraphSnapshotDraft],
-    ) -> tuple[GraphSnapshotDraft | None, int]:
+    ) -> tuple[GraphSnapshotDraft | None, int, ClaimedGraphJob]:
         request_chunks = tuple(
             _chunk_request_mapping(chunk, revision_id=claim.revision_id) for chunk in batch_chunks
         )
@@ -196,7 +274,11 @@ class GraphWorker:
                     document_title=claim.revision_id,
                     known_entities=known_entities_from(drafts_so_far),
                 )
-                draft = await self._extractor.extract(request)
+                raw_draft = await self._extractor.extract(request)
+                known_entity_ids = frozenset(str(entity["id"]) for entity in request.known_entities)
+                draft = _namespace_draft(
+                    raw_draft, batch_index=index, known_entity_ids=known_entity_ids
+                )
             except Exception as error:
                 failure_code = type(error).__name__[:64]
                 if attempt >= self._batch_retries:
@@ -213,7 +295,7 @@ class GraphWorker:
                         ),
                         now=self._now(),
                     )
-                    return None, 1
+                    return None, 1, claim
                 await self._jobs.record_batch(
                     self._scope,
                     claim,
@@ -226,6 +308,12 @@ class GraphWorker:
                         failure_code=failure_code,
                     ),
                     now=self._now(),
+                )
+                # Renew now, not only after the whole batch finishes: a long model
+                # timeout plus this attempt's own elapsed time could otherwise outlive
+                # the lease before the next renew at the bottom of the batch loop.
+                claim = await self._jobs.renew(
+                    self._scope, claim, now=self._now(), lease_duration=self._lease_duration
                 )
                 await self._sleep(self._backoff_seconds * 2 ** (attempt - 1))
             else:
@@ -242,5 +330,22 @@ class GraphWorker:
                     ),
                     now=self._now(),
                 )
-                return draft, 0
-        raise AssertionError("graph batch retry loop exited without a terminal outcome")
+                return draft, 0, claim
+        # The retry budget was already exhausted before this call started (e.g.
+        # batch_retries was lowered after a previous PENDING attempt was recorded for
+        # this batch). Record it as terminally failed instead of looping forever or
+        # crashing the worker with an assertion.
+        await self._jobs.record_batch(
+            self._scope,
+            claim,
+            GraphFragmentBatch(
+                claim.snapshot.snapshot_id,
+                index,
+                chunk_ids,
+                GraphBatchStatus.FAILED,
+                attempt=attempt,
+                failure_code="graph-batch-retry-limit-exceeded",
+            ),
+            now=self._now(),
+        )
+        return None, 1, claim

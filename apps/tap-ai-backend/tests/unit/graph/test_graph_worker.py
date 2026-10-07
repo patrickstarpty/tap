@@ -188,7 +188,9 @@ async def test_worker_extracts_in_batches_and_publishes_ready(monkeypatch) -> No
     assert [request.batch_index for request in extractor.requests] == [0, 1, 2]
     second_request = extractor.requests[1]
     assert second_request.idempotency_key.endswith(":batch:1")
-    assert any(entity["id"] == "node-0" for entity in second_request.known_entities)
+    # Batch 0's raw "node-0" id is namespaced ("b0-node-0") before it is offered to
+    # later batches as a known entity -- see test_batch_ids_are_namespaced_except_known_entities.
+    assert any(entity["id"] == "b0-node-0" for entity in second_request.known_entities)
     assert result.partial == 0
     updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
     assert updated.status is GraphJobStatus.READY
@@ -329,3 +331,222 @@ async def test_lease_lost_between_batches_stops_without_publishing(monkeypatch) 
     assert len(extractor.requests) == 1
     updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
     assert updated.status is GraphJobStatus.RUNNING
+
+
+class BrokenArtifacts:
+    async def read_chunks(self, locator):
+        raise RuntimeError("blob store unavailable")
+
+
+@pytest.mark.asyncio
+async def test_read_chunks_error_fails_the_job_and_run_once_returns(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-broken.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BrokenArtifacts(),
+        extractor=CountingExtractor(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.claimed == 1
+    assert result.failed == 1
+    assert result.lease_lost == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.FAILED
+    assert updated.failure_code == "RuntimeError"
+    assert updated.snapshot.status == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_stored_pending_attempt_at_the_limit_becomes_failed(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    pre_claim = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="seed-worker",
+            now=NOW,
+            lease_duration=timedelta(seconds=1),
+            limit=1,
+        )
+    )[0]
+    batch0_chunk_ids = tuple(f"chunk-{index}" for index in range(10))
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        pre_claim,
+        GraphFragmentBatch(
+            job.snapshot.snapshot_id,
+            0,
+            batch0_chunk_ids,
+            GraphBatchStatus.PENDING,
+            attempt=2,
+            failure_code="RuntimeError",
+        ),
+        now=NOW,
+    )
+
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=2,  # lowered below the stored attempt count for batch 0
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=5))
+
+    result = await worker.run_once(limit=1)
+
+    # Batch 0 is never retried through the extractor; it is recorded FAILED outright.
+    assert [request.batch_index for request in extractor.requests] == [1, 2]
+    assert result.partial == 1
+    batches = await jobs.load_batches(VALIDATION_SCOPE, SimpleNamespace(snapshot=job.snapshot))
+    batch0 = next(batch for batch in batches if batch.batch_index == 0)
+    assert batch0.status is GraphBatchStatus.FAILED
+    assert batch0.attempt == 2
+    assert batch0.failure_code == "graph-batch-retry-limit-exceeded"
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "PARTIAL"
+
+
+class ManyNodesExtractor:
+    def __init__(self, *, nodes_per_batch: int) -> None:
+        self._nodes_per_batch = nodes_per_batch
+        self.requests: list = []
+
+    async def extract(self, request):
+        self.requests.append(request)
+        chunk_id = str(request.chunks[0]["chunkId"])
+        evidence = Evidence(
+            "ev1",
+            request.snapshot.snapshot_id,
+            "revision-1",
+            "revision-1",
+            chunk_id,
+            {"kind": "text", "start": 0, "end": 5},
+            "sha256:" + "a" * 64,
+        )
+        # Ids are already batch-qualified at the raw level (unlike a real model's),
+        # deliberately independent of namespacing, so this test exercises the
+        # truncation fix in assemble_fragment in isolation from the namespacing fix.
+        nodes = tuple(
+            GraphNode(
+                f"node-{request.batch_index}-{i}",
+                request.snapshot.snapshot_id,
+                f"Entity {i}",
+                "CONCEPT",
+                f"entity-{request.batch_index}-{i}",
+                ("ev1",),
+            )
+            for i in range(self._nodes_per_batch)
+        )
+        return GraphSnapshotDraft(request.snapshot, nodes, (), (evidence,), ())
+
+
+@pytest.mark.asyncio
+async def test_oversized_merged_draft_completes_instead_of_crashing(monkeypatch) -> None:
+    # 300 distinct nodes per batch, two batches: each batch's own draft is within the
+    # 500-node cap, but the merge (600 distinct nodes) is not.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-oversized.chunks")
+    extractor = ManyNodesExtractor(nodes_per_batch=300)
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(locator="art-oversized.chunks", count=2),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=1,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    # A crash (surfaced pre-fix as the job going FAILED, since assemble_fragment would
+    # raise on construction) is what this test guards against; READY confirms the
+    # merge was truncated to the 500-node cap instead of raising.
+    assert result.ready == 1
+    assert result.failed == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+
+
+class ModelStyleExtractor:
+    """Simulates a model that restarts its own id counter (``n1``/``ev1``/...) every call."""
+
+    def __init__(self) -> None:
+        self.requests: list = []
+
+    async def extract(self, request):
+        self.requests.append(request)
+        chunk_id = str(request.chunks[0]["chunkId"])
+        evidence = Evidence(
+            "ev1",
+            request.snapshot.snapshot_id,
+            "revision-1",
+            "revision-1",
+            chunk_id,
+            {"kind": "text", "start": 0, "end": 5},
+            "sha256:" + "a" * 64,
+        )
+        if request.batch_index in (0, 1):
+            # Batches 0 and 1 each mint a brand-new, unrelated entity -- but both
+            # calls restart the model's own id counter at "n1", purely coincidentally
+            # colliding on the same raw id.
+            label = "Policy" if request.batch_index == 0 else "Claim"
+            node = GraphNode(
+                "n1", request.snapshot.snapshot_id, label, "CONCEPT", label.lower(), ("ev1",)
+            )
+            return GraphSnapshotDraft(request.snapshot, (node,), (), (evidence,), ())
+        # Batch 2: echo one of the known entities' own (already namespaced) id
+        # verbatim, exactly as a well-behaved model reusing a real-world entity it
+        # was told about would.
+        reused_id = str(request.known_entities[0]["id"])
+        node = GraphNode(
+            reused_id, request.snapshot.snapshot_id, "Policy", "CONCEPT", "policy", ("ev1",)
+        )
+        return GraphSnapshotDraft(request.snapshot, (node,), (), (evidence,), ())
+
+
+@pytest.mark.asyncio
+async def test_batch_ids_are_namespaced_except_known_entities(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-three-batches.chunks")
+    extractor = ModelStyleExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(locator="art-three-batches.chunks", count=3),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=1,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.partial == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    batches = await jobs.load_batches(VALIDATION_SCOPE, SimpleNamespace(snapshot=job.snapshot))
+    node_id_by_batch = {
+        batch.batch_index: next(iter(batch.draft.nodes)).node_id for batch in batches
+    }
+
+    # Batches 0 and 1 each minted the raw id "n1" for an unrelated entity; both got
+    # namespaced, so they don't collide with each other or with the raw literal.
+    assert node_id_by_batch[0] != "n1"
+    assert node_id_by_batch[1] != "n1"
+    assert node_id_by_batch[0] != node_id_by_batch[1]
+    # Batch 2 echoed a known entity's exact (already namespaced) id and kept it as-is
+    # -- an intentional reuse, not a fresh id, so it was not re-prefixed.
+    assert node_id_by_batch[2] in {node_id_by_batch[0], node_id_by_batch[1]}

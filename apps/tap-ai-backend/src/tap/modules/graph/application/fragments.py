@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import Sequence
 
 from tap.modules.graph.domain.models import (
+    MAX_GRAPH_NODES,
     Evidence,
     GraphEdge,
     GraphNode,
@@ -15,6 +16,10 @@ from tap.modules.graph.domain.models import (
 )
 from tap.modules.graph.domain.vocabulary import NODE_ALIAS_MAX
 from tap.modules.knowledge.domain.documents import ChunkDraft
+
+# Mirrors GraphSnapshotDraft's own internal edge bound (domain/models.py), which a merge
+# across batches -- each individually within bounds -- can otherwise exceed.
+_MAX_GRAPH_EDGES = 2_000
 
 
 def split_batches(
@@ -38,6 +43,15 @@ def assemble_fragment(
     capped to ``NODE_ALIAS_MAX`` (first-seen order), label/type/canonical_key kept from
     the first occurrence. Edges merge by ``edge_id``: evidence ids union, confidence
     takes the maximum across batches. Evidence and inference provenance dedupe by id.
+
+    Each batch draft is individually within ``GraphSnapshotDraft``'s node/edge bounds,
+    but the merge can still exceed them. Rather than let that raise and crash the
+    worker, the merge truncates deterministically: nodes are kept in first-seen order
+    up to ``MAX_GRAPH_NODES``; edges whose endpoint was dropped are dropped too; the
+    remaining edges are kept in first-seen order up to the same 2000-edge bound
+    ``GraphSnapshotDraft`` enforces; provenance for a dropped edge is dropped with it
+    (an inference's own provenance always shares its edge's fate, so no further
+    cascade is possible). Evidence has no such cap and is kept in full.
     """
 
     nodes_by_id: dict[str, GraphNode] = {}
@@ -91,12 +105,30 @@ def assemble_fragment(
                 provenance_by_id[provenance_item.provenance_id] = provenance_item
                 provenance_order.append(provenance_item.provenance_id)
 
+    kept_node_order = node_order[:MAX_GRAPH_NODES]
+    kept_node_id_set = set(kept_node_order)
+
+    endpoint_filtered_edge_order = [
+        edge_id
+        for edge_id in edge_order
+        if edges_by_id[edge_id].source_node_id in kept_node_id_set
+        and edges_by_id[edge_id].target_node_id in kept_node_id_set
+    ]
+    kept_edge_order = endpoint_filtered_edge_order[:_MAX_GRAPH_EDGES]
+    kept_edge_id_set = set(kept_edge_order)
+
+    kept_provenance_order = [
+        provenance_id
+        for provenance_id in provenance_order
+        if provenance_by_id[provenance_id].edge_id in kept_edge_id_set
+    ]
+
     return GraphSnapshotDraft(
         snapshot,
-        tuple(nodes_by_id[node_id] for node_id in node_order),
-        tuple(edges_by_id[edge_id] for edge_id in edge_order),
+        tuple(nodes_by_id[node_id] for node_id in kept_node_order),
+        tuple(edges_by_id[edge_id] for edge_id in kept_edge_order),
         tuple(evidence_by_id[evidence_id] for evidence_id in evidence_order),
-        tuple(provenance_by_id[provenance_id] for provenance_id in provenance_order),
+        tuple(provenance_by_id[provenance_id] for provenance_id in kept_provenance_order),
     )
 
 
