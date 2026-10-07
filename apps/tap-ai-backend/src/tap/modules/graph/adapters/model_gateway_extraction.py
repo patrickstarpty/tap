@@ -230,17 +230,9 @@ class ModelGatewayGraphExtraction:
                     for item in evidence_raw
                 )
                 node_ids = {node.node_id for node in nodes}
-                kept_edges_raw: list[dict[str, object]] = []
-                dropped = 0
-                for item in edges_raw:
-                    if (
-                        item.get("relationType") not in RELATION_TYPES
-                        or item.get("sourceNodeId") not in node_ids
-                        or item.get("targetNodeId") not in node_ids
-                    ):
-                        dropped += 1
-                        continue
-                    kept_edges_raw.append(item)
+                kept_edges_raw, kept_provenance_raw, dropped = _keep_edges(
+                    edges_raw, provenance_raw, node_ids
+                )
                 edges = tuple(
                     GraphEdge(
                         _string(item, "id"),
@@ -263,7 +255,7 @@ class ModelGatewayGraphExtraction:
                         _strings(item, "inputFactIds"),
                         _string(item, "ruleDigest"),
                     )
-                    for item in provenance_raw
+                    for item in kept_provenance_raw
                 )
             except (KeyError, TypeError) as error:
                 raise ValueError("graph extraction output is malformed") from error
@@ -287,6 +279,47 @@ class ModelGatewayGraphExtraction:
             key = (item.source_revision_id, item.document_revision_id, item.chunk_id)
             if key not in chunks or chunks[key] != item.content_digest:
                 raise ValueError("evidence digest does not resolve to an authorized chunk")
+
+
+def _keep_edges(
+    edges_raw: tuple[dict[str, object], ...],
+    provenance_raw: tuple[dict[str, object], ...],
+    node_ids: set[str],
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int]:
+    """Drop edges outside the vocabulary or batch, then cascade to their provenance.
+
+    An edge is dropped when its relationType is outside RELATION_TYPES or either endpoint
+    is not among this batch's node ids. Dropping an edge also drops the provenance record
+    that cites it (by edgeId), and any INFERRED edge whose provenance lists a dropped edge
+    id as an input fact is dropped in turn, repeating until no further edge is dropped.
+    """
+    provenance_by_edge: dict[object, dict[str, object]] = {
+        item.get("edgeId"): item for item in provenance_raw
+    }
+    dropped_ids: set[object] = {
+        item.get("id")
+        for item in edges_raw
+        if item.get("relationType") not in RELATION_TYPES
+        or item.get("sourceNodeId") not in node_ids
+        or item.get("targetNodeId") not in node_ids
+    }
+    changed = True
+    while changed:
+        changed = False
+        for item in edges_raw:
+            edge_id = item.get("id")
+            if edge_id in dropped_ids or item.get("origin") != "INFERRED":
+                continue
+            provenance_item = provenance_by_edge.get(edge_id)
+            input_facts = provenance_item.get("inputFactIds") if provenance_item else None
+            if isinstance(input_facts, list) and dropped_ids.intersection(input_facts):
+                dropped_ids.add(edge_id)
+                changed = True
+    kept_edges = tuple(item for item in edges_raw if item.get("id") not in dropped_ids)
+    kept_provenance = tuple(
+        item for item in provenance_raw if item.get("edgeId") not in dropped_ids
+    )
+    return kept_edges, kept_provenance, len(dropped_ids)
 
 
 def _objects(value: object, name: str) -> tuple[dict[str, object], ...]:

@@ -206,6 +206,62 @@ async def test_edges_outside_vocabulary_are_dropped_not_fatal():
     assert draft.edges[0].relation_label == "governs"
 
 
+@pytest.mark.asyncio
+async def test_dropped_edge_removes_its_provenance():
+    output = _output()
+    output["edges"].append(
+        {
+            **output["edges"][0],
+            "id": "edge-missing",
+            "targetNodeId": "missing-node",
+            "relationType": "USES",
+            "origin": "INFERRED",
+            "evidenceIds": [],
+        }
+    )
+    output["provenance"].append(
+        {
+            "id": "provenance-missing",
+            "edgeId": "edge-missing",
+            "inputFactIds": ["node-1"],
+            "ruleDigest": "sha256:" + "d" * 64,
+        }
+    )
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    assert draft.provenance == ()
+
+
+@pytest.mark.asyncio
+async def test_dropped_input_fact_cascades_to_inferred_edge(span_recorder):
+    output = _output()
+    output["edges"].append({**output["edges"][0], "id": "edge-x", "relationType": "GOVERNS"})
+    output["edges"].append(
+        {
+            **output["edges"][0],
+            "id": "edge-y",
+            "relationType": "USES",
+            "origin": "INFERRED",
+            "evidenceIds": [],
+        }
+    )
+    output["provenance"].append(
+        {
+            "id": "provenance-y",
+            "edgeId": "edge-y",
+            "inputFactIds": ["edge-x"],
+            "ruleDigest": "sha256:" + "d" * 64,
+        }
+    )
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    assert draft.provenance == ()
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_edges"] == 2
+
+
 def test_schema_locks_vocabulary_and_process_type():
     from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_SCHEMA
 
