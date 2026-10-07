@@ -18,10 +18,12 @@ from tap.modules.graph.domain.models import (
     RelationOrigin,
 )
 from tap.modules.graph.domain.vocabulary import (
+    NODE_ALIAS_LENGTH_MAX,
     NODE_ALIAS_MAX,
     NODE_TYPES,
     RELATION_LABEL_MAX,
     RELATION_TYPES,
+    normalize_key,
 )
 from tap.platform.telemetry import span
 
@@ -146,9 +148,11 @@ GRAPH_EXTRACTION_PROMPT = (
     "Preserve uppercase relation tokens explicitly declared by the document. Apply any explicit "
     "inference rule declared by the document, copy its declared canonical sha256 rule digest, and "
     "record its input edge IDs as provenance. Do not invent facts. Input also carries "
-    "documentTitle and knownEntities from earlier batches of the same document. Reuse a known "
-    "entity's id, label, type, and canonicalKey whenever the same real-world thing appears; "
-    "never emit a new node for it. Classify processes, steps, or workflow stages as PROCESS. "
+    "documentTitle and knownEntities from earlier batches of the same document. When an edge "
+    "in this batch references a known entity, include that known entity in nodes with its "
+    "existing id, label, type, and canonicalKey exactly as given -- never emit a new node "
+    "with a different id for the same real-world thing, and never omit it from nodes just "
+    "because it was already known. Classify processes, steps, or workflow stages as PROCESS. "
     "Use relationType only from the provided enum; put the document's own wording for the "
     "relation in relationLabel (at most 64 characters). List up to five aliases for a node "
     "when the text names it differently."
@@ -165,7 +169,7 @@ class ModelGatewayGraphExtraction:
         self._gateway = gateway
         self._timeout_seconds = timeout_seconds
 
-    async def extract(self, request: GraphExtractionRequest) -> GraphSnapshotDraft:
+    async def extract(self, request: GraphExtractionRequest) -> GraphSnapshotDraft | None:
         with span(
             "graph.extract_batch", {"tap.graph.batch_index": request.batch_index}
         ) as current_span:
@@ -213,7 +217,7 @@ class ModelGatewayGraphExtraction:
                         _string(item, "type"),
                         _string(item, "canonicalKey"),
                         _strings(item, "evidenceIds"),
-                        _optional_strings(item, "aliases")[:NODE_ALIAS_MAX],
+                        _sanitize_aliases(_optional_strings(item, "aliases")),
                     )
                     for item in nodes_raw
                 )
@@ -260,6 +264,13 @@ class ModelGatewayGraphExtraction:
             except (KeyError, TypeError) as error:
                 raise ValueError("graph extraction output is malformed") from error
             current_span.set_attribute("tap.graph.dropped_edges", dropped)
+        if not nodes:
+            # The model grounded nothing in this batch (boilerplate chunks, no
+            # facts to extract): a successful batch with nothing to contribute,
+            # not a failure. ``GraphSnapshotDraft`` requires at least one node, so
+            # there is no way to represent "empty" as a draft; the worker treats
+            # ``None`` as this batch's signal and skips it at assembly.
+            return None
         self._validate_evidence_against_chunks(request, evidence)
         return GraphSnapshotDraft(request.snapshot, nodes, edges, evidence, provenance)
 
@@ -320,6 +331,32 @@ def _keep_edges(
         item for item in provenance_raw if item.get("edgeId") not in dropped_ids
     )
     return kept_edges, kept_provenance, len(dropped_ids)
+
+
+def _sanitize_aliases(raw: tuple[str, ...]) -> tuple[str, ...]:
+    """Clean model-provided aliases before constructing a ``GraphNode``.
+
+    Strips surrounding whitespace, drops blank or over-length (>128 char) entries,
+    dedupes case/width-insensitively (via ``normalize_key``, keeping the
+    first-seen spelling), and caps the result at ``NODE_ALIAS_MAX``. Without this,
+    a model that returns a blank, over-length, or merely differently-cased
+    duplicate alias would make ``GraphNode`` construction raise.
+    """
+
+    seen: set[str] = set()
+    sanitized: list[str] = []
+    for alias in raw:
+        stripped = alias.strip()
+        if not stripped or len(stripped) > NODE_ALIAS_LENGTH_MAX:
+            continue
+        key = normalize_key(stripped)
+        if key in seen:
+            continue
+        seen.add(key)
+        sanitized.append(stripped)
+        if len(sanitized) >= NODE_ALIAS_MAX:
+            break
+    return tuple(sanitized)
 
 
 def _objects(value: object, name: str) -> tuple[dict[str, object], ...]:

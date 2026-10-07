@@ -262,6 +262,38 @@ async def test_dropped_input_fact_cascades_to_inferred_edge(span_recorder):
     assert spans[0].attributes["tap.graph.dropped_edges"] == 2
 
 
+@pytest.mark.asyncio
+async def test_empty_model_output_returns_none_instead_of_raising():
+    # A model returning zero nodes for a boilerplate chunk must not raise (the
+    # domain forbids an empty-nodes GraphSnapshotDraft): it is a successful batch
+    # that simply grounded nothing (F3), not a failure to retry.
+    output = {"nodes": [], "edges": [], "evidence": [], "provenance": []}
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+    assert draft is None
+
+
+@pytest.mark.asyncio
+async def test_node_aliases_are_sanitized_before_construction():
+    output = _output()
+    output["nodes"][0] = output["nodes"][0] | {
+        "aliases": [
+            "  Policy Doc  ",
+            "policy doc",  # dedupes case/width-insensitively with the entry above
+            "",  # blank, dropped
+            "   ",  # blank after stripping, dropped
+            "x" * 129,  # over the 128-char limit, dropped
+            "Alias 2",
+            "Alias 3",
+            "Alias 4",
+            "Alias 5",
+            "Alias 6",  # sixth distinct alias, dropped by the 5-alias cap
+        ]
+    }
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+    node = next(node for node in draft.nodes if node.node_id == "node-1")
+    assert node.aliases == ("Policy Doc", "Alias 2", "Alias 3", "Alias 4", "Alias 5")
+
+
 def test_schema_locks_vocabulary_and_process_type():
     from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_SCHEMA
 
