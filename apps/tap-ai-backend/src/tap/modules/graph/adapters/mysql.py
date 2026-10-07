@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Literal, cast
+from typing import Literal
 
 from sqlalchemy import (
     Column,
@@ -29,19 +29,14 @@ from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.application.queries import InMemoryGraphStore
 from tap.modules.graph.domain.models import (
     Evidence,
-    GraphEdge,
-    GraphNode,
     GraphSearchQuery,
     GraphSnapshot,
     GraphSnapshotDraft,
     GraphSubgraph,
-    InferenceProvenance,
     NeighborQuery,
     PathQuery,
-    RelationOrigin,
     source_set_digest,
 )
-from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 
@@ -263,7 +258,7 @@ graph_fragment_batch = _scoped(
     ),
 )
 
-GRAPH_TABLES = (
+_FRAGMENT_GRAPH_TABLES: tuple[Table, ...] = (
     graph_snapshot,
     graph_snapshot_revision,
     graph_active_snapshot,
@@ -276,6 +271,22 @@ GRAPH_TABLES = (
     graph_extraction_job,
     graph_fragment_batch,
 )
+
+
+def __getattr__(name: str) -> object:
+    # `GRAPH_TABLES` is resolved lazily (PEP 562) rather than built eagerly at
+    # module scope: mysql_project.py imports `_scoped`/`metadata` plus the
+    # fragment tables above from this module, so this module must finish
+    # loading before it, in turn, pulls in `PROJECT_GRAPH_TABLES` here. A
+    # module-scope `GRAPH_TABLES = (..., *PROJECT_GRAPH_TABLES)` would import
+    # mysql_project while this module is still mid-import, which fails
+    # whenever mysql_project (not this module) is the first of the pair
+    # touched in a process.
+    if name == "GRAPH_TABLES":
+        from tap.modules.graph.adapters.mysql_project import PROJECT_GRAPH_TABLES
+
+        return (*_FRAGMENT_GRAPH_TABLES, *PROJECT_GRAPH_TABLES)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 async def publish_graph_snapshot(
@@ -504,142 +515,13 @@ class MysqlGraphStore:
         return None if row is None else _snapshot(row)
 
     async def _memory(self, scope: ProjectScopeContext, snapshot_id: str) -> InMemoryGraphStore:
+        # Deferred import: mysql_project.py imports fragment tables and `_scoped`
+        # from this module, so it must only be loaded once those already exist.
+        from tap.modules.graph.adapters.mysql_project import load_fragment_draft
+
         scope = require_project_scope(scope)
         async with self._sessions() as session:
-            snapshot_row = (
-                (
-                    await session.execute(
-                        select(graph_snapshot).where(
-                            *scope_predicates(graph_snapshot, scope),
-                            graph_snapshot.c.snapshot_id == snapshot_id,
-                        )
-                    )
-                )
-                .mappings()
-                .one_or_none()
-            )
-            if snapshot_row is None:
-                raise GraphFactNotFound("graph snapshot not found")
-            node_rows = (
-                (
-                    await session.execute(
-                        select(graph_node).where(
-                            *scope_predicates(graph_node, scope),
-                            graph_node.c.snapshot_id == snapshot_id,
-                        )
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            edge_rows = (
-                (
-                    await session.execute(
-                        select(graph_edge).where(
-                            *scope_predicates(graph_edge, scope),
-                            graph_edge.c.snapshot_id == snapshot_id,
-                        )
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            evidence_rows = (
-                (
-                    await session.execute(
-                        select(graph_edge_evidence).where(
-                            *scope_predicates(graph_edge_evidence, scope),
-                            graph_edge_evidence.c.snapshot_id == snapshot_id,
-                        )
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            node_evidence_rows = (
-                (
-                    await session.execute(
-                        select(graph_node_evidence).where(
-                            *scope_predicates(graph_node_evidence, scope),
-                            graph_node_evidence.c.snapshot_id == snapshot_id,
-                        )
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            provenance_rows = (
-                (
-                    await session.execute(
-                        select(graph_inference_provenance).where(
-                            *scope_predicates(graph_inference_provenance, scope),
-                            graph_inference_provenance.c.snapshot_id == snapshot_id,
-                        )
-                    )
-                )
-                .mappings()
-                .all()
-            )
-        all_evidence_rows = (*evidence_rows, *node_evidence_rows)
-        unique_evidence_rows = {cast(str, row["evidence_id"]): row for row in all_evidence_rows}
-        evidence = tuple(
-            Evidence(
-                row["evidence_id"],
-                snapshot_id,
-                row["source_revision_id"],
-                row["document_revision_id"],
-                row["chunk_id"],
-                row["anchor_json"],
-                row["content_digest"],
-            )
-            for row in unique_evidence_rows.values()
-        )
-        by_edge: dict[str, list[str]] = {}
-        for row in evidence_rows:
-            by_edge.setdefault(cast(str, row["edge_id"]), []).append(cast(str, row["evidence_id"]))
-        by_node: dict[str, list[str]] = {}
-        for row in node_evidence_rows:
-            by_node.setdefault(cast(str, row["node_id"]), []).append(cast(str, row["evidence_id"]))
-        draft = GraphSnapshotDraft(
-            _snapshot(snapshot_row),
-            tuple(
-                GraphNode(
-                    row["node_id"],
-                    snapshot_id,
-                    row["label"],
-                    row["node_type"],
-                    row["canonical_key"],
-                    tuple(by_node.get(row["node_id"], ())),
-                    tuple(row["aliases"] or ()),
-                )
-                for row in node_rows
-            ),
-            tuple(
-                GraphEdge(
-                    row["edge_id"],
-                    snapshot_id,
-                    row["source_node_id"],
-                    row["target_node_id"],
-                    row["relation_type"],
-                    RelationOrigin(row["origin"]),
-                    float(row["confidence"]),
-                    tuple(by_edge.get(row["edge_id"], ())),
-                    row["relation_label"] or "",
-                )
-                for row in edge_rows
-            ),
-            evidence,
-            tuple(
-                InferenceProvenance(
-                    row["provenance_id"],
-                    snapshot_id,
-                    row["edge_id"],
-                    tuple(row["input_fact_ids"]),
-                    row["rule_digest"],
-                )
-                for row in provenance_rows
-            ),
-        )
+            draft = await load_fragment_draft(session, scope, snapshot_id)
         memory = InMemoryGraphStore()
         await memory.publish(
             scope, replace(draft, snapshot=replace(draft.snapshot, status="CANDIDATE"))
