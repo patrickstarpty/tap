@@ -193,6 +193,8 @@ class InMemoryGraphJobStore:
         now: datetime,
     ) -> None:
         scope = require_project_scope(scope)
+        if batch.snapshot_id != claim.snapshot.snapshot_id:
+            raise ValueError("graph fragment batch does not match the claimed snapshot")
         self._owned(scope, claim, now)
         batches = self._batches.setdefault((scope.project_id, batch.snapshot_id), {})
         batches[batch.batch_index] = batch

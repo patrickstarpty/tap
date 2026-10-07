@@ -361,6 +361,8 @@ class MysqlGraphJobStore:
         now: datetime,
     ) -> None:
         scope = require_project_scope(scope)
+        if batch.snapshot_id != claim.snapshot.snapshot_id:
+            raise ValueError("graph fragment batch does not match the claimed snapshot")
         async with self._sessions() as session, session.begin():
             await self._owned_row(session, scope, claim, now)
             common = scope_values(scope)
