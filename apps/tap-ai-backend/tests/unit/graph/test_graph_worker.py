@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.graph.adapters.fake_extraction import DeterministicGraphExtraction
 from tap.modules.graph.application.jobs import InMemoryGraphJobStore
 from tap.modules.graph.application.worker import GraphWorker
 from tap.modules.graph.domain.jobs import (
@@ -16,7 +17,12 @@ from tap.modules.graph.domain.jobs import (
     GraphJobRequest,
     GraphJobStatus,
 )
-from tap.modules.graph.domain.models import Evidence, GraphNode, GraphSnapshotDraft
+from tap.modules.graph.domain.models import (
+    Evidence,
+    GraphNode,
+    GraphSearchQuery,
+    GraphSnapshotDraft,
+)
 from tap.modules.knowledge.domain.documents import ChunkDraft
 
 NOW = datetime(2026, 9, 13, 9, 0, 0)
@@ -637,6 +643,70 @@ async def test_backoff_sleep_never_exceeds_the_lease_duration(monkeypatch) -> No
     assert all(seconds < 60.0 for seconds in sleeps)
 
 
+class EventOrderJobs(InMemoryGraphJobStore):
+    """Records "renew" each time the lease is renewed, for ordering assertions."""
+
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self._events = events
+
+    async def renew(self, scope, claim, *, now, lease_duration):
+        self._events.append("renew")
+        return await super().renew(scope, claim, now=now, lease_duration=lease_duration)
+
+
+class EventExtractor:
+    """Like CountingExtractor, but also logs "extract" into a shared events list."""
+
+    def __init__(self, events: list[str], *, fail_batch_indices: frozenset[int]) -> None:
+        self._events = events
+        self._fail_batch_indices = fail_batch_indices
+
+    async def extract(self, request):
+        self._events.append("extract")
+        if request.batch_index in self._fail_batch_indices:
+            raise RuntimeError("synthetic batch failure")
+        chunk_ids = tuple(str(item["chunkId"]) for item in request.chunks)
+        return _draft_for_batch(request.snapshot, request.batch_index, chunk_ids)
+
+
+@pytest.mark.asyncio
+async def test_renews_the_lease_again_after_the_backoff_sleep(monkeypatch) -> None:
+    # R4: capping the backoff sleep below the lease duration (M6) is not
+    # enough on its own -- the sleep plus the next attempt's own extract() call
+    # can still together outlive the lease that was renewed only *before* the
+    # sleep. Renew again right after waking up too, so the event right after
+    # each "sleep" is "renew", never the next attempt's "extract" landing
+    # before a renew ever happens.
+    events: list[str] = []
+    jobs = EventOrderJobs(events)
+    await _requested_job(jobs)
+    extractor = EventExtractor(events, fail_batch_indices=frozenset({0}))
+
+    async def _record_sleep(seconds: float) -> None:
+        events.append("sleep")
+
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=3,
+        sleep=_record_sleep,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.partial == 1
+    sleep_positions = [index for index, event in enumerate(events) if event == "sleep"]
+    assert len(sleep_positions) == 2  # batch 0 fails twice before succeeding on attempt 3
+    for position in sleep_positions:
+        assert events[position + 1] == "renew"
+
+
 @pytest.mark.asyncio
 async def test_record_batch_rejects_a_mismatched_snapshot_id() -> None:
     # T3: record_batch must guard that the batch it is given belongs to the
@@ -799,3 +869,109 @@ async def test_batch_ids_are_namespaced_except_known_entities(monkeypatch) -> No
     # Batch 2 echoed a known entity's exact (already namespaced) id and kept it as-is
     # -- an intentional reuse, not a fresh id, so it was not re-prefixed.
     assert node_id_by_batch[2] in {node_id_by_batch[0], node_id_by_batch[1]}
+
+
+class RepeatedContentArtifacts:
+    """12 chunks, all with the same content, split into 2 batches of 10/2."""
+
+    def __init__(self, *, locator: str, content: str) -> None:
+        self._locator = locator
+        self._content = content
+
+    async def read_chunks(self, locator):
+        assert locator == self._locator
+        return tuple(
+            ChunkDraft(
+                chunk_id=f"chunk-{index}",
+                logical_chunk_id=f"logical-{index}",
+                root_id="document-1",
+                parent_id=None,
+                content=self._content,
+                anchor_json=(
+                    '{"endOffset":%d,"headingPath":[],"startOffset":0,"type":"document"}'
+                    % len(self._content)
+                ),
+                source_content_hash="sha256:" + "b" * 64,
+                chunk_content_hash="sha256:" + "a" * 64,
+            )
+            for index in range(12)
+        )
+
+
+@pytest.mark.asyncio
+async def test_batches_a_related_document_through_the_real_rule_based_extractor(
+    monkeypatch,
+) -> None:
+    # R3 repro #1: the real DeterministicGraphExtraction, batch_size 10, 12
+    # chunks all containing the same relation sentence -- each batch
+    # independently grounds the same two real-world entities under its own
+    # batch-namespaced ids, exercising the real canonical-key merge (F1) end to
+    # end rather than hand-built drafts.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-related.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=RepeatedContentArtifacts(
+            locator="art-related.chunks", content="核保流程需要健康告知。"
+        ),
+        extractor=DeterministicGraphExtraction(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert result.partial == 0
+    assert result.failed == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+    published = await jobs._graph.search(
+        VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
+    )
+    by_key = {node.canonical_key: node for node in published.nodes}
+    assert set(by_key) == {"核保流程", "健康告知"}
+    assert len(published.edges) == 1
+    assert published.edges[0].source_node_id == by_key["核保流程"].node_id
+    assert published.edges[0].target_node_id == by_key["健康告知"].node_id
+
+
+@pytest.mark.asyncio
+async def test_batches_a_relation_less_document_into_one_document_node(monkeypatch) -> None:
+    # R3 repro #2: the real DeterministicGraphExtraction, batch_size 10, 12
+    # relation-less chunks -- each batch independently mints its own
+    # "document:<revision>" fallback node; the real canonical-key merge (F1)
+    # must collapse them into exactly one, with zero edges, READY rather than
+    # failing MySQL's uq_graph_node_canonical constraint.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-relationless.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=RepeatedContentArtifacts(
+            locator="art-relationless.chunks", content="今天天气很好。"
+        ),
+        extractor=DeterministicGraphExtraction(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert result.partial == 0
+    assert result.failed == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+    published = await jobs._graph.search(
+        VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
+    )
+    assert len(published.nodes) == 1
+    assert published.nodes[0].canonical_key.startswith("document:")
+    assert published.edges == ()
+    assert published.nodes[0].evidence_ids

@@ -357,6 +357,14 @@ class GraphWorker:
                 # inside the lease window instead of racing its expiry.
                 capped_backoff = min(backoff, max(self._lease_duration.total_seconds() - 1.0, 0.0))
                 await self._sleep(capped_backoff)
+                # Renew again after waking up, not only before sleeping: the cap
+                # above only bounds the sleep itself, but the next attempt's own
+                # extract() call can still take long enough that sleep + call
+                # together outlive the lease renewed before the sleep. Fence on
+                # lease loss here too, same as every other renew in this method.
+                claim = await self._jobs.renew(
+                    self._scope, claim, now=self._now(), lease_duration=self._lease_duration
+                )
             else:
                 await self._jobs.record_batch(
                     self._scope,
