@@ -9,8 +9,8 @@
 .local/milvus-research/
 .local/quality-kb/
 .local/graph-real/
-apps/tap-ai-backend/.local/graph-real/
-apps/tap-ai-backend/tests/fixtures/quality/graph-real/*.pdf
+.local/graph-relations/
+.local/graph-bench/
 .venv/
 .mypy_cache/
 node_modules/

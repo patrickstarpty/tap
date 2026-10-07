@@ -144,34 +144,47 @@ def _upload_source(api: str, project_id: str, entry: CorpusEntry, target: Path) 
     return str(accepted["source"]["sourceId"])
 
 
-def _poll_documents_ready(
-    api: str, project_id: str, source_ids: set[str], deadline: float
+def _source_documents(api: str, project_id: str, source_id: str) -> list[dict[str, Any]]:
+    # `limit` is bounded to <=50 by this backend's route (`Query(..., le=50)`); a source's
+    # own document history never needs more than that to find its latest ready revision.
+    url = f"{api}/api/v1/projects/{project_id}/knowledge/sources/{source_id}?limit=50"
+    request = urllib.request.Request(url)  # noqa: S310
+    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+        body = json.loads(response.read().decode("utf-8"))
+    documents = body.get("documents", {})
+    items = documents.get("items", []) if isinstance(documents, dict) else []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _poll_source_revisions(
+    api: str, project_id: str, source_ids: list[str], deadline: float
 ) -> dict[str, str]:
-    url = f"{api}/api/v1/projects/{project_id}/knowledge/documents?limit=200"
-    while True:
-        request = urllib.request.Request(url)  # noqa: S310
-        with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
-            body = json.loads(response.read().decode("utf-8"))
-        by_source: dict[str, list[dict[str, Any]]] = {}
-        for item in body.get("items", []):
-            by_source.setdefault(str(item.get("sourceId")), []).append(item)
-        revisions: dict[str, str] = {}
-        for source_id in source_ids:
+    """Poll each source's own document page (`SourceDetail.documents.items`) for its
+    `revisionId` once a document reaches `status == "ready"` — `DocumentSummary` from the
+    bulk `knowledge/documents` listing carries no `revisionId`, so that endpoint cannot
+    answer this question (see `SourceDocument`/`DocumentDetail` in `tap.contracts.http`).
+    """
+    revisions: dict[str, str] = {}
+    pending = set(source_ids)
+    while pending:
+        for source_id in sorted(pending):
             ready = next(
                 (
                     item
-                    for item in by_source.get(source_id, [])
+                    for item in _source_documents(api, project_id, source_id)
                     if str(item.get("status", "")).lower() == "ready"
                 ),
                 None,
             )
             if ready is not None:
                 revisions[source_id] = str(ready.get("revisionId"))
-        if len(revisions) == len(source_ids):
+                pending.discard(source_id)
+        if not pending:
             return revisions
         if time.monotonic() > deadline:
             raise TimeoutError("knowledge documents did not become ready before the deadline")
         time.sleep(_POLL_INTERVAL_SECONDS)
+    return revisions
 
 
 def _poll_graph_ready(api: str, project_id: str, deadline: float) -> str:
@@ -189,26 +202,31 @@ def _poll_graph_ready(api: str, project_id: str, deadline: float) -> str:
 
 def cmd_upload(arguments: argparse.Namespace) -> int:
     raw = _load_manifest(arguments.manifest)
-    entries = validate_manifest(raw)
-    for entry in entries:
-        verify_local_file(entry)
+    try:
+        entries = validate_manifest(raw)
+        for entry in entries:
+            verify_local_file(entry)
 
-    project_id = arguments.project_id or _runtime_project_id(arguments.api)
-    deadline = time.monotonic() + arguments.timeout_seconds
+        project_id = arguments.project_id or _runtime_project_id(arguments.api)
+        deadline = time.monotonic() + arguments.timeout_seconds
 
-    sources: list[dict[str, str]] = []
-    for entry in entries:
-        target = download_target(entry)
-        source_id = _upload_source(arguments.api, project_id, entry, target)
-        sources.append({"id": entry.id, "sourceId": source_id, "revisionId": ""})
+        sources: list[dict[str, str]] = []
+        for entry in entries:
+            target = download_target(entry)
+            source_id = _upload_source(arguments.api, project_id, entry, target)
+            sources.append({"id": entry.id, "sourceId": source_id, "revisionId": ""})
 
-    revisions = _poll_documents_ready(
-        arguments.api, project_id, {item["sourceId"] for item in sources}, deadline
-    )
-    for item in sources:
-        item["revisionId"] = revisions[item["sourceId"]]
+        revisions = _poll_source_revisions(
+            arguments.api, project_id, [item["sourceId"] for item in sources], deadline
+        )
+        for item in sources:
+            item["revisionId"] = revisions[item["sourceId"]]
 
-    graph_version = _poll_graph_ready(arguments.api, project_id, deadline)
+        graph_version = _poll_graph_ready(arguments.api, project_id, deadline)
+    except (ValueError, urllib.error.URLError, TimeoutError) as error:
+        print(f"error: {error}")
+        return 1
+
     output = {
         "manifestDigest": manifest_digest(raw),
         "graphVersion": graph_version,
