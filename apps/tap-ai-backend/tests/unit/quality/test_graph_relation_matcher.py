@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from tap.quality.graph_relations import (
+    EdgeCitation,
     ExpectedEdge,
     GoldenQuestion,
     QuestionResult,
     aggregate,
+    edge_citations,
     match_question,
 )
 
@@ -196,3 +198,93 @@ def test_aggregate_threshold_boundary():
     assert aggregate(_results(passed=24, total=30))["passed"] is True
     assert aggregate(_results(passed=23, total=30))["passed"] is False
     assert aggregate(())["passed"] is False
+
+
+def _minimal_edge_citation(
+    *, subject_label: str, relation_type: str, object_label: str
+) -> dict[str, object]:
+    # Only the scoring fields: no citationId, evidenceLabel, edgeId or relationLabel.
+    return {
+        "kind": "edge",
+        "subject": {"label": subject_label},
+        "object": {"label": object_label},
+        "relationType": relation_type,
+    }
+
+
+def test_edge_citation_without_display_fields_still_scores():
+    question = _question(
+        "q-07",
+        expected_entities=(("A", ()), ("B", ())),
+        expected_edges=(ExpectedEdge(subject="A", relation_type="REQUIRES", object="B"),),
+    )
+    citations = [
+        _minimal_edge_citation(subject_label="A", relation_type="REQUIRES", object_label="B")
+    ]
+
+    assert edge_citations(citations) == (
+        EdgeCitation(
+            citation_id="",
+            evidence_label="",
+            edge_id="",
+            subject_label="A",
+            object_label="B",
+            relation_type="REQUIRES",
+            relation_label="",
+        ),
+    )
+
+    result = match_question(question, citations)
+
+    assert result.status == "pass"
+    assert result.correct_edges == ("A -REQUIRES-> B",)
+    assert result.wrong_edges == ()
+
+
+def test_malformed_edge_citation_counts_as_wrong():
+    question = _question(
+        "q-08",
+        expected_entities=(("A", ()), ("B", ())),
+        expected_edges=(ExpectedEdge(subject="A", relation_type="REQUIRES", object="B"),),
+    )
+    malformed_missing_relation_type: dict[str, object] = {
+        "kind": "edge",
+        "subject": {"label": "A"},
+        "object": {"label": "B"},
+    }
+    citations = [
+        _edge_citation(subject_label="A", relation_type="REQUIRES", object_label="B"),
+        malformed_missing_relation_type,
+    ]
+
+    result = match_question(question, citations)
+
+    assert result.status == "wrong"
+    assert result.correct_edges == ("A -REQUIRES-> B",)
+    assert result.wrong_edges == ("<malformed edge citation>",)
+
+
+def test_chunk_citations_counts_only_chunk_kind():
+    question = _question(
+        "q-09",
+        expected_entities=(("A", ()), ("B", ())),
+        expected_edges=(ExpectedEdge(subject="A", relation_type="REQUIRES", object="B"),),
+    )
+    malformed_edge: dict[str, object] = {
+        "kind": "edge",
+        "subject": {"label": "A"},
+        "object": {"label": "B"},
+    }
+    unknown_kind: dict[str, object] = {"kind": "unknown", "citationId": "c-unknown"}
+    citations = [
+        _chunk_citation("c-chunk-1"),
+        _chunk_citation("c-chunk-2"),
+        malformed_edge,
+        unknown_kind,
+    ]
+
+    result = match_question(question, citations)
+
+    assert result.chunk_citations == 2
+    assert result.wrong_edges == ("<malformed edge citation>",)
+    assert result.status == "wrong"

@@ -409,54 +409,62 @@ def _edge_text(subject: str, relation_type: str, obj: str) -> str:
     return f"{subject} -{relation_type}-> {obj}"
 
 
+def _optional_str(value: object) -> str:
+    """Display fields are cosmetic: default to "" instead of rejecting the citation."""
+    return value if isinstance(value, str) else ""
+
+
+def _parse_edge_citation(citation: object) -> EdgeCitation | None:
+    """Parse one `kind == "edge"` citation, or `None` if it cannot even be scored.
+
+    Only `subject.label`, `object.label` and `relationType` are required — those are
+    the fields `_edge_matches` needs. `citationId`, `evidenceLabel`, `edgeId` and
+    `relationLabel` are display-only and default to `""` when missing or the wrong
+    type, so their absence never drops or misclassifies an otherwise-scorable citation.
+    """
+    if not isinstance(citation, Mapping) or citation.get("kind") != "edge":
+        return None
+
+    relation_type = citation.get("relationType")
+    if not isinstance(relation_type, str):
+        return None
+
+    subject = citation.get("subject")
+    if not isinstance(subject, Mapping):
+        return None
+    subject_label = subject.get("label")
+    if not isinstance(subject_label, str):
+        return None
+
+    obj = citation.get("object")
+    if not isinstance(obj, Mapping):
+        return None
+    object_label = obj.get("label")
+    if not isinstance(object_label, str):
+        return None
+
+    return EdgeCitation(
+        citation_id=_optional_str(citation.get("citationId")),
+        evidence_label=_optional_str(citation.get("evidenceLabel")),
+        edge_id=_optional_str(citation.get("edgeId")),
+        subject_label=subject_label,
+        object_label=object_label,
+        relation_type=relation_type,
+        relation_label=_optional_str(citation.get("relationLabel")),
+    )
+
+
 def edge_citations(citations: Sequence[Mapping[str, object]]) -> tuple[EdgeCitation, ...]:
-    """Pick out well-formed `kind == "edge"` citations; skip chunk and malformed entries."""
-    result: list[EdgeCitation] = []
-    for citation in citations:
-        if not isinstance(citation, Mapping) or citation.get("kind") != "edge":
-            continue
+    """Pick out `kind == "edge"` citations that carry the scoring fields.
 
-        citation_id = citation.get("citationId")
-        if not isinstance(citation_id, str):
-            continue
-        evidence_label = citation.get("evidenceLabel")
-        if not isinstance(evidence_label, str):
-            continue
-        edge_id = citation.get("edgeId")
-        if not isinstance(edge_id, str):
-            continue
-        relation_type = citation.get("relationType")
-        if not isinstance(relation_type, str):
-            continue
-        relation_label = citation.get("relationLabel")
-        if not isinstance(relation_label, str):
-            continue
-
-        subject = citation.get("subject")
-        if not isinstance(subject, Mapping):
-            continue
-        subject_label = subject.get("label")
-        if not isinstance(subject_label, str):
-            continue
-        obj = citation.get("object")
-        if not isinstance(obj, Mapping):
-            continue
-        object_label = obj.get("label")
-        if not isinstance(object_label, str):
-            continue
-
-        result.append(
-            EdgeCitation(
-                citation_id=citation_id,
-                evidence_label=evidence_label,
-                edge_id=edge_id,
-                subject_label=subject_label,
-                object_label=object_label,
-                relation_type=relation_type,
-                relation_label=relation_label,
-            )
-        )
-    return tuple(result)
+    An entry missing `subject.label`, `object.label` or `relationType` cannot be
+    represented as an `EdgeCitation` and is skipped here. `match_question` detects
+    those same entries itself (via `_parse_edge_citation`) so it can score them as
+    wrong edges instead of silently dropping them.
+    """
+    return tuple(
+        parsed for citation in citations if (parsed := _parse_edge_citation(citation)) is not None
+    )
 
 
 def _expected_keys(question: GoldenQuestion, label: str) -> frozenset[str]:
@@ -492,17 +500,33 @@ def match_question(
 
     Each edge citation either hits an expected edge (directly, via an alternative, or in
     either direction for a symmetric relation) or is recorded as a wrong edge. A citation
-    matching an alternative counts as a hit for its primary expected edge. Any wrong edge
-    makes the question `wrong`; otherwise at least one correct edge makes it `pass`; else
-    `miss`.
+    matching an alternative counts as a hit for its primary expected edge. A `kind ==
+    "edge"` citation that cannot be parsed (missing `subject.label`, `object.label` or
+    `relationType`) is scored as a wrong edge too — `"<malformed edge citation>"` — never
+    silently dropped, so a malformed citation can only ever make a question worse, not
+    better. `chunk_citations` counts only entries with `kind == "chunk"`; any other kind
+    (including unrecognized ones) is ignored for that count. Any wrong edge makes the
+    question `wrong`; otherwise at least one correct edge makes it `pass`; else `miss`.
     """
-    edges = edge_citations(citations)
-    chunk_count = len(citations) - len(edges)
-
     correct: list[str] = []
     wrong: list[str] = []
     matched: set[int] = set()
-    for citation in edges:
+    chunk_count = 0
+    for raw_citation in citations:
+        if not isinstance(raw_citation, Mapping):
+            continue
+        kind = raw_citation.get("kind")
+        if kind == "chunk":
+            chunk_count += 1
+            continue
+        if kind != "edge":
+            continue
+
+        citation = _parse_edge_citation(raw_citation)
+        if citation is None:
+            wrong.append("<malformed edge citation>")
+            continue
+
         hit: ExpectedEdge | None = None
         for expected in question.expected_edges:
             candidates = (expected, *expected.alternatives)
