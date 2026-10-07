@@ -395,7 +395,7 @@ class MysqlGraphJobStore:
             tuple(snapshot_row["source_revision_ids"]),
             tuple(snapshot_row["document_revision_ids"]),
             cast(str, snapshot_row["source_set_digest"]),
-            cast(Literal["CANDIDATE", "READY", "FAILED"], snapshot_row["status"]),
+            cast(Literal["CANDIDATE", "READY", "PARTIAL", "FAILED"], snapshot_row["status"]),
         )
         return GraphJob(
             cast(str, row["job_id"]),

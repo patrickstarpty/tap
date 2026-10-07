@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import cast
+from typing import Literal, cast
 
 from sqlalchemy import (
     Column,
@@ -18,6 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     insert,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.mysql import DATETIME, JSON
@@ -142,6 +143,7 @@ graph_node = _scoped(
     Column("label", String(512), nullable=False),
     Column("node_type", String(32), nullable=False),
     Column("canonical_key", String(512), nullable=False),
+    Column("aliases", JSON, nullable=True),
     uniques=(
         (("snapshot_id", "node_id"), "uq_graph_node_project_pk"),
         (("snapshot_id", "canonical_key"), "uq_graph_node_canonical"),
@@ -157,6 +159,7 @@ graph_edge = _scoped(
     Column("relation_type", String(64), nullable=False),
     Column("origin", String(16), nullable=False),
     Column("confidence", Float, nullable=False),
+    Column("relation_label", String(64), nullable=False, server_default=text("''")),
     uniques=((("snapshot_id", "edge_id"), "uq_graph_edge_project_pk"),),
     parents=(
         (("snapshot_id",), "graph_snapshot", ("snapshot_id",), "fk_graph_edge_snapshot"),
@@ -239,6 +242,27 @@ graph_extraction_job = _scoped(
     ),
 )
 
+graph_fragment_batch = _scoped(
+    "graph_fragment_batch",
+    Column("snapshot_id", String(64), primary_key=True),
+    Column("batch_index", Integer, primary_key=True),
+    Column("job_id", String(64), nullable=False),
+    Column("chunk_ids", JSON, nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("attempt", Integer, nullable=False, server_default="0"),
+    Column("failure_code", String(64)),
+    Column("draft_json", JSON, nullable=True),
+    Column("updated_at", DATETIME(fsp=6), nullable=False),
+    parents=(
+        (
+            ("snapshot_id",),
+            "graph_snapshot",
+            ("snapshot_id",),
+            "fk_graph_fragment_batch_snapshot",
+        ),
+    ),
+)
+
 GRAPH_TABLES = (
     graph_snapshot,
     graph_snapshot_revision,
@@ -250,6 +274,7 @@ GRAPH_TABLES = (
     graph_edge_evidence,
     graph_inference_provenance,
     graph_extraction_job,
+    graph_fragment_batch,
 )
 
 
@@ -259,6 +284,7 @@ async def publish_graph_snapshot(
     draft: GraphSnapshotDraft,
     *,
     now: datetime,
+    status: Literal["READY", "PARTIAL"] = "READY",
 ) -> GraphSnapshot:
     """Publish all graph facts in the caller-owned transaction."""
 
@@ -267,7 +293,7 @@ async def publish_graph_snapshot(
         raise ValueError("graph publication requires an active transaction")
     if draft.snapshot.project_id != scope.project_id:
         raise ValueError("graph snapshot is outside Project scope")
-    ready = replace(draft.snapshot, status="READY")
+    ready = replace(draft.snapshot, status=status)
     existing = (
         (
             await session.execute(
@@ -288,7 +314,7 @@ async def publish_graph_snapshot(
         same_identity = replace(loaded, status="CANDIDATE") == replace(ready, status="CANDIDATE")
         if not same_identity or loaded.status == "FAILED":
             raise ValueError("immutable graph snapshot conflict")
-        if loaded.status == "READY":
+        if loaded.status in ("READY", "PARTIAL"):
             return loaded
         await session.execute(
             update(graph_snapshot)
@@ -297,7 +323,7 @@ async def publish_graph_snapshot(
                 graph_snapshot.c.snapshot_id == ready.snapshot_id,
                 graph_snapshot.c.status == "CANDIDATE",
             )
-            .values(status="READY")
+            .values(status=status)
         )
     else:
         await session.execute(
@@ -336,6 +362,7 @@ async def publish_graph_snapshot(
                 label=node.label,
                 node_type=node.node_type,
                 canonical_key=node.canonical_key,
+                aliases=list(node.aliases),
             )
         )
     for edge in draft.edges:
@@ -349,6 +376,7 @@ async def publish_graph_snapshot(
                 relation_type=edge.relation_type,
                 origin=edge.origin.value,
                 confidence=edge.confidence,
+                relation_label=edge.relation_label,
             )
         )
     by_evidence = {item.evidence_id: item for item in draft.evidence}
@@ -582,6 +610,7 @@ class MysqlGraphStore:
                     row["node_type"],
                     row["canonical_key"],
                     tuple(by_node.get(row["node_id"], ())),
+                    tuple(row["aliases"] or ()),
                 )
                 for row in node_rows
             ),
@@ -595,6 +624,7 @@ class MysqlGraphStore:
                     RelationOrigin(row["origin"]),
                     float(row["confidence"]),
                     tuple(by_edge.get(row["edge_id"], ())),
+                    row["relation_label"] or "",
                 )
                 for row in edge_rows
             ),
