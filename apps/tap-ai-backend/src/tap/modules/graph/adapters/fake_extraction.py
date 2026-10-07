@@ -45,16 +45,34 @@ _TABLE: tuple[tuple[str, tuple[str, ...], tuple[str, ...], bool], ...] = (
 )
 
 
-def _entity_pattern(trigger: str) -> str:
-    return _CN_ENTITY if any(ord(ch) > 127 for ch in trigger) else _EN_ENTITY
+def _is_english(trigger: str) -> bool:
+    return not any(ord(ch) > 127 for ch in trigger)
 
 
 def _compile(trigger: str) -> re.Pattern[str]:
-    entity = _entity_pattern(trigger)
+    # English triggers and entities are bounded with \b so a shorter trigger (or
+    # entity) cannot match inside a longer word, e.g. "require" inside "requires"
+    # or "requirement", or "uses" inside "causes". \b is meaningless for Chinese
+    # (CJK characters are all "word" characters to re, so there is never a
+    # transition to anchor on) and is intentionally omitted there; the longest-
+    # trigger-first span masking in rule_based_draft handles Chinese overlap
+    # instead (e.g. 须提供 is a substring of 必须提供).
+    if _is_english(trigger):
+        entity = rf"\b(?:{_EN_ENTITY})\b"
+        literal = rf"\b{re.escape(trigger)}\b"
+    else:
+        entity = _CN_ENTITY
+        literal = re.escape(trigger)
     if "…" in trigger:
         prefix, suffix = trigger.split("…", 1)
-        return re.compile(rf"({entity})\s*{re.escape(prefix)}\s*({entity})\s*{re.escape(suffix)}")
-    return re.compile(rf"({entity})\s*{re.escape(trigger)}\s*({entity})$")
+        if _is_english(trigger):
+            prefix = rf"\b{re.escape(prefix)}\b"
+            suffix = rf"\b{re.escape(suffix)}\b"
+        else:
+            prefix = re.escape(prefix)
+            suffix = re.escape(suffix)
+        return re.compile(rf"({entity})\s*{prefix}\s*({entity})\s*{suffix}")
+    return re.compile(rf"({entity})\s*{literal}\s*({entity})$")
 
 
 # Module constant: one entry per trigger variant, carrying the relation type, the
@@ -65,6 +83,13 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str, str, bool], ...] = tuple(
     (_compile(trigger), relation_type, trigger, swap)
     for relation_type, cn_triggers, en_triggers, swap in _TABLE
     for trigger in (*cn_triggers, *en_triggers)
+)
+
+# Tried longest-trigger-first within a sentence so that, e.g., 必须提供 claims its
+# span before the substring trigger 须提供 is tried; a shorter trigger whose match
+# falls inside an already-claimed span is skipped (see rule_based_draft).
+_PATTERNS_BY_TRIGGER_LENGTH: tuple[tuple[re.Pattern[str], str, str, bool], ...] = tuple(
+    sorted(_PATTERNS, key=lambda entry: len(entry[2]), reverse=True)
 )
 
 _ACTOR_HINTS = re.compile(
@@ -140,10 +165,18 @@ def rule_based_draft(
             sentence = raw_sentence.strip()
             if len(sentence) < 4:
                 continue
-            for pattern, relation_type, relation_label, swap in _PATTERNS:
+            claimed_spans: list[tuple[int, int]] = []
+            for pattern, relation_type, relation_label, swap in _PATTERNS_BY_TRIGGER_LENGTH:
                 match = pattern.search(sentence)
                 if not match:
                     continue
+                match_start, match_end = match.span()
+                if any(
+                    match_start < claimed_end and claimed_start < match_end
+                    for claimed_start, claimed_end in claimed_spans
+                ):
+                    continue
+                claimed_spans.append((match_start, match_end))
                 first = match.group(1).strip()
                 second = match.group(2).strip()
                 first_key = normalize_key(first)
