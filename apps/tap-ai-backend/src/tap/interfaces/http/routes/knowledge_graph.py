@@ -34,6 +34,7 @@ from tap.contracts.http import (
 from tap.interfaces.http.dependencies import (
     GraphVersionMismatch,
     graph_jobs_service,
+    graph_node_enrichment_service,
     graph_overview_limit,
     graph_service,
     project_graph_service,
@@ -102,7 +103,7 @@ async def get_project_graph(request: Request) -> ProjectGraphView:
     store = project_graph_service(request)
     jobs = graph_jobs_service(request)
     now = datetime.now(UTC)
-    fragment_states = await jobs.list_fragment_states(scope)  # type: ignore[attr-defined]
+    fragment_states = await jobs.list_fragment_states(scope)
     extracting = sorted(
         {
             revision
@@ -130,7 +131,7 @@ async def get_project_graph(request: Request) -> ProjectGraphView:
             extracting_revision_ids=list(extracting),
             partial_revision_ids=list(partial),
         )
-    merge_state = await jobs.merge_state(scope, now=now)  # type: ignore[attr-defined]
+    merge_state = await jobs.merge_state(scope, now=now)
     project_status: Literal["EMPTY", "MERGING", "FAILED"]
     if merge_state in ("PENDING", "RUNNING"):
         project_status = "MERGING"
@@ -165,7 +166,7 @@ async def get_overview(
 ) -> ProjectGraphSubgraphView:
     store = project_graph_service(request)
     scope = request.state.project_scope
-    await _require_current_version(store, scope, graph_version)
+    current_version = await _require_current_version(store, scope, graph_version)
     limit = node_limit if node_limit is not None else graph_overview_limit(request)
     try:
         subgraph = await store.overview(
@@ -173,6 +174,7 @@ async def get_overview(
             source_revision_ids=tuple(source_revision_ids),
             community_ids=tuple(community_ids),
             node_limit=limit,
+            version=current_version,
         )
     except ProjectGraphNotReady:
         return _EMPTY_PROJECT_SUBGRAPH
@@ -195,13 +197,14 @@ async def search_graph(
         )
         return _subgraph(graph)
     store = project_graph_service(request)
-    await _require_current_version(store, scope, body.graph_version)
+    current_version = await _require_current_version(store, scope, body.graph_version)
     try:
         subgraph = await store.search(
             scope,
             body.query,
             source_revision_ids=tuple(body.source_revision_ids),
             node_limit=body.node_limit,
+            version=current_version,
         )
     except ProjectGraphNotReady:
         return _EMPTY_PROJECT_SUBGRAPH
@@ -219,7 +222,7 @@ async def project_neighbors(
 ) -> ProjectGraphSubgraphView:
     store = project_graph_service(request)
     scope = request.state.project_scope
-    await _require_current_version(store, scope, body.graph_version)
+    current_version = await _require_current_version(store, scope, body.graph_version)
     try:
         subgraph = await store.neighbors(
             scope,
@@ -227,6 +230,7 @@ async def project_neighbors(
             depth=body.depth,
             node_limit=body.node_limit,
             source_revision_ids=tuple(body.source_revision_ids),
+            version=current_version,
         )
     except ProjectGraphNotReady:
         return _EMPTY_PROJECT_SUBGRAPH
@@ -250,7 +254,7 @@ async def bounded_path(
         )
         return _subgraph(graph)
     store = project_graph_service(request)
-    await _require_current_version(store, scope, body.graph_version)
+    current_version = await _require_current_version(store, scope, body.graph_version)
     try:
         subgraph = await store.path(
             scope,
@@ -258,6 +262,7 @@ async def bounded_path(
             body.target_node_id,
             max_hops=body.max_hops,
             source_revision_ids=tuple(body.source_revision_ids),
+            version=current_version,
         )
     except ProjectGraphNotReady:
         return _EMPTY_PROJECT_SUBGRAPH
@@ -281,12 +286,12 @@ async def node_detail(
         graph = await graph_service(request).node_detail(scope, snapshot_id, node_id)
         return _subgraph(graph)
     store = project_graph_service(request)
-    await _require_current_version(store, scope, graph_version)
+    current_version = await _require_current_version(store, scope, graph_version)
     try:
-        detail = await store.node_detail(scope, node_id, version=graph_version)
+        detail = await store.node_detail(scope, node_id, version=current_version)
     except ProjectGraphNotReady:
         return _EMPTY_PROJECT_SUBGRAPH
-    return _project_node_detail(detail)
+    return await _project_node_detail(request, detail)
 
 
 @router.post(
@@ -300,9 +305,9 @@ async def highlight(
 ) -> ProjectGraphSubgraphView:
     store = project_graph_service(request)
     scope = request.state.project_scope
-    await _require_current_version(store, scope, body.graph_version)
+    current_version = await _require_current_version(store, scope, body.graph_version)
     try:
-        subgraph = await store.highlight(scope, tuple(body.edge_ids))
+        subgraph = await store.highlight(scope, tuple(body.edge_ids), version=current_version)
     except ProjectGraphNotReady:
         return _EMPTY_PROJECT_SUBGRAPH
     return _project_subgraph(subgraph)
@@ -318,9 +323,7 @@ async def retry_fragment(request: Request, revision_id: str) -> GraphFragmentRet
     scope = request.state.project_scope
     jobs = graph_jobs_service(request)
     now = datetime.now(UTC)
-    requeued, job_status = await jobs.retry_failed_batches(  # type: ignore[attr-defined]
-        scope, revision_id, now=now
-    )
+    requeued, job_status = await jobs.retry_failed_batches(scope, revision_id, now=now)
     return GraphFragmentRetryView(
         revision_id=revision_id,
         requeued_batches=requeued,
@@ -444,8 +447,12 @@ def _project_subgraph(subgraph: ProjectSubgraph) -> ProjectGraphSubgraphView:
     )
 
 
-def _project_node_detail(detail: ProjectNodeDetail) -> ProjectGraphNodeDetailView:
+async def _project_node_detail(
+    request: Request, detail: ProjectNodeDetail
+) -> ProjectGraphNodeDetailView:
     community = _community_view(detail.community) if detail.community is not None else None
+    enrichment = graph_node_enrichment_service(request)
+    scope = request.state.project_scope
 
     source_order: list[tuple[str, str]] = []
     sources_by_key: dict[tuple[str, str], list[NodeSource]] = {}
@@ -455,22 +462,53 @@ def _project_node_detail(detail: ProjectNodeDetail) -> ProjectGraphNodeDetailVie
             sources_by_key[key] = []
             source_order.append(key)
         sources_by_key[key].append(source)
-    sources = [
-        ProjectGraphSourceGroupView(
-            source_revision_id=key[0],
-            document_revision_id=key[1],
-            source_name=None,
-            evidence=[
-                # The node's own evidence snippet is the only place the
-                # public contract fills `snippet`; every other response
-                # (including this one's sibling edge evidence) leaves it
-                # unset per spec.
-                _node_source_evidence(source)
-                for source in sources_by_key[key]
-            ],
+
+    # The node's own evidence snippet is the only place the public contract
+    # fills `snippet`; every other response (including this one's sibling
+    # edge evidence) leaves it unset per spec. `source_name` and `snippet`
+    # are both best-effort -- `None` when no enrichment provider is wired or
+    # nothing resolves -- and cached per (source_revision_id, chunk_id) so a
+    # node with many sources from the same revision does not repeat lookups.
+    source_names: dict[str, str | None] = {}
+    snippets: dict[tuple[str, str], str | None] = {}
+
+    async def _resolve_source_name(source_revision_id: str) -> str | None:
+        if source_revision_id not in source_names:
+            source_names[source_revision_id] = (
+                None
+                if enrichment is None
+                else await enrichment.source_name(scope, source_revision_id)
+            )
+        return source_names[source_revision_id]
+
+    async def _resolve_snippet(source_revision_id: str, chunk_id: str) -> str | None:
+        snippet_key = (source_revision_id, chunk_id)
+        if snippet_key not in snippets:
+            snippets[snippet_key] = (
+                None
+                if enrichment is None
+                else await enrichment.snippet(scope, source_revision_id, chunk_id)
+            )
+        return snippets[snippet_key]
+
+    sources = []
+    for key in source_order:
+        source_revision_id, document_revision_id = key
+        name = await _resolve_source_name(source_revision_id)
+        evidence = [
+            _node_source_evidence(
+                source, snippet=await _resolve_snippet(source_revision_id, source.chunk_id)
+            )
+            for source in sources_by_key[key]
+        ]
+        sources.append(
+            ProjectGraphSourceGroupView(
+                source_revision_id=source_revision_id,
+                document_revision_id=document_revision_id,
+                source_name=name,
+                evidence=evidence,
+            )
         )
-        for key in source_order
-    ]
 
     relation_order: list[str] = []
     edges_by_relation: dict[str, list[ProjectEdge]] = {}

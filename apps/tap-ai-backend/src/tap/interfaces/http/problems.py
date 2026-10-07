@@ -31,6 +31,9 @@ from tap.modules.chat.application.conversations import (
     InvalidConversationCursor,
 )
 from tap.modules.graph.domain.jobs import GraphJobBusy
+from tap.modules.graph.ports.project_store import (
+    ProjectGraphVersionMismatch as StoreProjectGraphVersionMismatch,
+)
 from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.modules.knowledge.application.answers import (
     AnswerSelectionRejected,
@@ -176,6 +179,24 @@ def register_problem_handlers(app: FastAPI) -> None:
     @app.exception_handler(GraphJobBusy)
     async def graph_job_busy_problem(request: Request, _error: GraphJobBusy) -> JSONResponse:
         return problem_response("graph-job-busy", request)
+
+    @app.exception_handler(StoreProjectGraphVersionMismatch)
+    async def store_graph_version_mismatch_problem(
+        request: Request, error: StoreProjectGraphVersionMismatch
+    ) -> JSONResponse:
+        # A pinned version fell outside the adjacency cache's retention
+        # window between the route's own exact-match check and the store
+        # call it guards (e.g. a concurrent merge published a newer version
+        # and evicted the one just checked) -- same public problem as the
+        # route-level `GraphVersionMismatch`.
+        return problem_response(
+            "graph-version-mismatch",
+            request,
+            detail=(
+                "The requested graph version does not match the current version; "
+                f"current version is {error.current}."
+            ),
+        )
 
     @app.exception_handler(RevisionConflict)
     @app.exception_handler(RevisionImmutable)

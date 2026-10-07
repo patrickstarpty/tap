@@ -81,6 +81,18 @@ class GraphJobStore(Protocol):
         now: datetime,
     ) -> GraphJob: ...
 
+    async def list_fragment_states(
+        self, scope: ProjectScopeContext
+    ) -> tuple[tuple[str, str, str], ...]: ...
+
+    async def retry_failed_batches(
+        self, scope: ProjectScopeContext, revision_id: str, *, now: datetime
+    ) -> tuple[int, GraphJobStatus]: ...
+
+    async def merge_state(
+        self, scope: ProjectScopeContext, *, now: datetime
+    ) -> Literal["IDLE", "PENDING", "RUNNING", "FAILED"]: ...
+
 
 class InMemoryGraphJobStore:
     def __init__(self, *, merge_queue: InMemoryProjectMergeQueue | None = None) -> None:
@@ -308,9 +320,10 @@ class InMemoryGraphJobStore:
             raise GraphFactNotFound(f"graph job not found for revision {revision_id!r}")
         key, job = found
         if (
-            job.status is GraphJobStatus.RUNNING
-            and getattr(job, "lease_expires_at", None) is not None
-            and job.lease_expires_at > now  # type: ignore[attr-defined]
+            isinstance(job, ClaimedGraphJob)
+            and job.status is GraphJobStatus.RUNNING
+            and job.lease_expires_at is not None
+            and job.lease_expires_at > now
         ):
             raise GraphJobBusy(job.job_id)
         batches = self._batches.get((scope.project_id, job.snapshot.snapshot_id), {})
@@ -323,6 +336,10 @@ class InMemoryGraphJobStore:
                 requeued += 1
         if requeued == 0:
             return 0, job.status
+        # Mirror the MySQL store: forget the already-published draft so the
+        # worker's re-completion is treated as fresh facts, not an immutable
+        # conflict against the stale (partially-failed) one.
+        self._graph.reset(scope, job.snapshot.snapshot_id)
         updated = GraphJob(
             job.job_id,
             job.revision_id,

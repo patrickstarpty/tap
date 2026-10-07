@@ -9,6 +9,7 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROFILE_DIGEST
 from tap.modules.graph.application.jobs import InMemoryGraphJobStore
 from tap.modules.graph.application.merge_jobs import InMemoryProjectMergeQueue
+from tap.modules.graph.application.node_enrichment import InMemoryGraphNodeEnrichment
 from tap.modules.graph.application.project_queries import InMemoryProjectGraphStore
 from tap.modules.graph.application.queries import InMemoryGraphStore
 from tap.modules.graph.domain.jobs import (
@@ -33,6 +34,7 @@ from tap.modules.graph.domain.project import (
     ProjectNode,
 )
 from tap.modules.graph.domain.vocabulary import normalize_key
+from tap.modules.graph.ports.project_store import ProjectGraphVersionMismatch
 from tests.conftest import validation_http_services
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -268,6 +270,71 @@ def test_stale_graph_version_is_409():
     assert "1" in response.json()["detail"]
 
 
+def test_store_level_version_mismatch_race_is_also_409():
+    """`_require_current_version` matches the request against `get_current()`
+    before the store call, but a concurrent merge can still evict the pinned
+    version from the cache between that check and the call itself -- the
+    store then raises its own `ProjectGraphVersionMismatch`, which must map
+    to the same public 409 as the route-level check."""
+
+    project_graph = InMemoryProjectGraphStore()
+    asyncio.run(project_graph.publish(VALIDATION_SCOPE, _project_draft(), now=_NOW))
+
+    class _RacyStore(InMemoryProjectGraphStore):
+        async def search(self, scope, text, **kwargs):
+            raise ProjectGraphVersionMismatch(1)
+
+    services = replace(
+        validation_http_services(),
+        graph=InMemoryGraphStore(),
+        project_graph=_RacyStore(),
+        graph_jobs=InMemoryGraphJobStore(),
+    )
+    asyncio.run(services.project_graph.publish(VALIDATION_SCOPE, _project_draft(), now=_NOW))
+    client = _client(services)
+    response = client.post(
+        "/api/v1/projects/tapper-demo/knowledge/graph/query", json={"query": "*"}
+    )
+    assert response.status_code == 409
+    assert response.json()["type"].endswith("/graph-version-mismatch")
+    assert "1" in response.json()["detail"]
+
+
+def test_busy_graph_job_retry_is_409():
+    jobs = InMemoryGraphJobStore()
+    scope = VALIDATION_SCOPE
+    request = GraphJobRequest.create(
+        scope=scope,
+        revision_id="revision-busy",
+        chunks_locator="locator-busy",
+        extraction_profile_digest=GRAPH_EXTRACTION_PROFILE_DIGEST,
+        model_alias="alias-1",
+    )
+    real_now = datetime.now(UTC)
+    asyncio.run(jobs.request(scope, request, now=real_now))
+    # Claim and leave RUNNING with an unexpired lease (no batch recorded as
+    # FAILED, but the busy check must fire before even looking at batches).
+    # Uses real wall-clock time since the HTTP route itself calls
+    # `datetime.now(UTC)`, not the fixed `_NOW` fixture timestamp.
+    asyncio.run(
+        jobs.claim(
+            scope, worker_id="worker-1", now=real_now, lease_duration=timedelta(minutes=5), limit=1
+        )
+    )
+    services = replace(
+        validation_http_services(),
+        graph=InMemoryGraphStore(),
+        project_graph=InMemoryProjectGraphStore(),
+        graph_jobs=jobs,
+    )
+    client = _client(services)
+    response = client.post(
+        "/api/v1/projects/tapper-demo/knowledge/graph/fragments/revision-busy/retry"
+    )
+    assert response.status_code == 409
+    assert response.json()["type"].endswith("/graph-job-busy")
+
+
 def test_query_without_snapshot_id_uses_project_graph():
     project_graph = InMemoryProjectGraphStore()
     asyncio.run(project_graph.publish(VALIDATION_SCOPE, _project_draft(), now=_NOW))
@@ -312,6 +379,47 @@ def test_node_detail_groups_sources_and_relations():
     assert len(body["relations"]) == 1
     assert body["relations"][0]["relationType"] == "GOVERNS"
     assert any(neighbor["nodeId"] == "gpn_claim" for neighbor in body["neighbors"])
+
+
+def test_node_detail_resolves_source_name_and_snippet_from_enrichment_port():
+    project_graph = InMemoryProjectGraphStore()
+    asyncio.run(project_graph.publish(VALIDATION_SCOPE, _project_draft(), now=_NOW))
+    enrichment = InMemoryGraphNodeEnrichment()
+    enrichment.put_source_name(VALIDATION_SCOPE, "source-revision-1", "AIA Health Policy")
+    enrichment.put_snippet(
+        VALIDATION_SCOPE, "source-revision-1", "chunk-1", "Health declaration text."
+    )
+    services = replace(
+        validation_http_services(),
+        graph=InMemoryGraphStore(),
+        project_graph=project_graph,
+        graph_jobs=InMemoryGraphJobStore(),
+        graph_node_enrichment=enrichment,
+    )
+    client = _client(services)
+    response = client.get("/api/v1/projects/tapper-demo/knowledge/graph/nodes/gpn_policy")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sources"][0]["sourceName"] == "AIA Health Policy"
+    assert body["sources"][0]["evidence"][0]["snippet"] == "Health declaration text."
+
+
+def test_node_detail_leaves_source_name_and_snippet_none_when_unresolved():
+    project_graph = InMemoryProjectGraphStore()
+    asyncio.run(project_graph.publish(VALIDATION_SCOPE, _project_draft(), now=_NOW))
+    services = replace(
+        validation_http_services(),
+        graph=InMemoryGraphStore(),
+        project_graph=project_graph,
+        graph_jobs=InMemoryGraphJobStore(),
+        graph_node_enrichment=InMemoryGraphNodeEnrichment(),
+    )
+    client = _client(services)
+    response = client.get("/api/v1/projects/tapper-demo/knowledge/graph/nodes/gpn_policy")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sources"][0]["sourceName"] is None
+    assert body["sources"][0]["evidence"][0]["snippet"] is None
 
 
 def test_fragment_retry_requeues_failed_batches():

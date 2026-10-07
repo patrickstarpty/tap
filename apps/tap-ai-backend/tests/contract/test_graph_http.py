@@ -197,4 +197,13 @@ def test_legacy_snapshot_routes_still_serve_fragment_graphs():
         },
     )
     assert path.status_code == 200
+
+    node = client.get(f"{base}/nodes/node-1", params={"snapshotId": "snapshot-1"})
+    assert node.status_code == 200
+    assert node.json()["snapshotId"] == "snapshot-1"
+    assert node.json()["nodes"][0]["evidenceIds"] == ["evidence-1"]
+
+    fact = client.get(f"{base}/evidence/evidence-1", params={"snapshotId": "snapshot-1"})
+    assert fact.status_code == 200
+    assert fact.json()["documentRevisionId"] == "document-revision-1"
     assert path.json()["snapshotId"] == "snapshot-1"

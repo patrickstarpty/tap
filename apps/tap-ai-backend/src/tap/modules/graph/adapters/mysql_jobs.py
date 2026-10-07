@@ -34,6 +34,7 @@ from tap.modules.graph.adapters.mysql import (
     graph_node,
     graph_node_evidence,
     graph_snapshot,
+    graph_snapshot_document_revision,
     graph_snapshot_revision,
     publish_graph_snapshot,
 )
@@ -734,7 +735,17 @@ class MysqlGraphJobStore:
         itself put back to PENDING so the worker claims it again. A job whose
         lease is RUNNING and not yet expired is busy -- raises `GraphJobBusy`
         rather than racing the in-flight attempt. A job with no FAILED
-        batches is a no-op, returning `(0, <current status>)`."""
+        batches is a no-op, returning `(0, <current status>)`.
+
+        A PARTIAL or FAILED snapshot already carries published facts (or is
+        past `CANDIDATE`), and `publish_graph_snapshot` silently no-ops on a
+        READY/PARTIAL snapshot and raises on a FAILED one -- so once the
+        worker reruns, re-completing the job would never actually update the
+        graph. Requeuing a FAILED batch therefore also resets the snapshot
+        itself to `CANDIDATE` and deletes the facts it already published,
+        *without* touching `graph_fragment_batch` -- the worker reuses every
+        still-READY batch's draft and calls the model only for the ones this
+        method just reset to PENDING."""
 
         scope = require_project_scope(scope)
         async with self._sessions() as session, session.begin():
@@ -778,6 +789,30 @@ class MysqlGraphJobStore:
             requeued = result.rowcount
             if requeued == 0:
                 return 0, job.status
+            snapshot_id = job.snapshot.snapshot_id
+            for table in (
+                graph_inference_provenance,
+                graph_edge_evidence,
+                graph_node_evidence,
+                graph_edge,
+                graph_node,
+                graph_snapshot_revision,
+                graph_snapshot_document_revision,
+            ):
+                await session.execute(
+                    delete(table).where(
+                        *scope_predicates(table, scope),
+                        table.c.snapshot_id == snapshot_id,
+                    )
+                )
+            await session.execute(
+                update(graph_snapshot)
+                .where(
+                    *scope_predicates(graph_snapshot, scope),
+                    graph_snapshot.c.snapshot_id == snapshot_id,
+                )
+                .values(status="CANDIDATE")
+            )
             await session.execute(
                 update(graph_extraction_job)
                 .where(
@@ -892,14 +927,27 @@ class MysqlGraphJobStore:
         digest: str,
         now: datetime,
     ) -> None:
-        key = f"{job.job_id}:{aggregate_version}"
+        # A fragment retry (see `retry_failed_batches`) can legitimately
+        # re-complete the same job with a different `graph_digest` once the
+        # worker reruns, so the key must vary with content: otherwise the
+        # second completion's audit append collides on `job_id:aggregate_
+        # version` against the first's *different* content digest and
+        # `MysqlProjectAudit.append` raises `AuditIdempotencyConflict`. A
+        # digest-stable call (the original, non-retried path) still produces
+        # the same key every time, so existing dedup is unaffected.
+        key = f"{job.job_id}:{aggregate_version}:{digest.removeprefix('sha256:')[:16]}"
         await self._append_audit(session, scope, job, action, digest, key=key)
         await write_project_event(
             session,
             scope=scope,
             envelope=ProjectEventEnvelope(
+                # Identity includes the digest for the same reason the audit
+                # `key` above does: a retried completion of the same job and
+                # snapshot carries different content, and the outbox's own
+                # dedup (keyed by `outbox_id`) would otherwise collide the
+                # second write against the first event's distinct payload.
                 event_id=scoped_outbox_id(
-                    scope, kind=event_type, identity=job.snapshot.snapshot_id
+                    scope, kind=event_type, identity=f"{job.snapshot.snapshot_id}:{digest}"
                 ),
                 event_type=event_type,
                 schema_version=1,

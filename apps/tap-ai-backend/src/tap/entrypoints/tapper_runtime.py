@@ -1684,10 +1684,12 @@ def _assemble_http_services(
     graph_enricher = None
     project_graph = None
     graph_jobs = None
+    graph_node_enrichment = None
     if graph_sessions is not None:
         from tap.modules.graph.adapters.mysql import MysqlGraphStore
         from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
         from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
+        from tap.modules.graph.adapters.mysql_node_enrichment import MysqlGraphNodeEnrichment
         from tap.modules.graph.adapters.mysql_project_store import MysqlProjectGraphStore
         from tap.modules.graph.application.project_queries import ProjectGraphCache
         from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
@@ -1705,6 +1707,10 @@ def _assemble_http_services(
                 graph_sessions,  # type: ignore[arg-type]
                 cache=project_graph_cache,
             ),
+        )
+        graph_node_enrichment = MysqlGraphNodeEnrichment(
+            graph_sessions,  # type: ignore[arg-type]
+            artifacts,
         )
     test_plans = None
     if test_plan_sessions is not None:
@@ -1835,6 +1841,7 @@ def _assemble_http_services(
         project_graph=project_graph,
         graph_jobs=graph_jobs,
         graph_overview_limit=graph_overview_limit,
+        graph_node_enrichment=graph_node_enrichment,
         test_plans=test_plans,
         knowledge_reviews=knowledge_reviews,
         insights_knowledge_search=answer_service,

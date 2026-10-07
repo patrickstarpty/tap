@@ -47,6 +47,8 @@ from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.chat.application.suggestion_ports import SuggestionStore
 from tap.modules.chat.application.suggestions import PromptSuggestionService
+from tap.modules.graph.application.jobs import GraphJobStore
+from tap.modules.graph.application.node_enrichment import GraphNodeEnrichmentPort
 from tap.modules.graph.ports.project_store import ProjectGraphStorePort
 from tap.modules.graph.ports.store import GraphStorePort
 from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
@@ -232,8 +234,9 @@ class HttpServices:
     traces: TraceHttpService | None = None
     graph: GraphStorePort | None = None
     project_graph: ProjectGraphStorePort | None = None
-    graph_jobs: object | None = None
+    graph_jobs: GraphJobStore | None = None
     graph_overview_limit: int = 150
+    graph_node_enrichment: GraphNodeEnrichmentPort | None = None
     test_plans: TestPlanApplication | None = None
     knowledge_reviews: KnowledgeReviewHttpService | None = None
     chunk_manager: object | None = None
@@ -281,7 +284,7 @@ def project_graph_service(request: Request) -> ProjectGraphStorePort:
     return service
 
 
-def graph_jobs_service(request: Request) -> object:
+def graph_jobs_service(request: Request) -> GraphJobStore:
     services = getattr(request.app.state, "http_services", None)
     service = services.graph_jobs if isinstance(services, HttpServices) else None
     if service is None:
@@ -292,6 +295,14 @@ def graph_jobs_service(request: Request) -> object:
 def graph_overview_limit(request: Request) -> int:
     services = getattr(request.app.state, "http_services", None)
     return services.graph_overview_limit if isinstance(services, HttpServices) else 150
+
+
+def graph_node_enrichment_service(request: Request) -> GraphNodeEnrichmentPort | None:
+    """Optional: a response simply leaves `snippet`/`sourceName` unset when
+    no enrichment provider is wired, rather than failing the whole request."""
+
+    services = getattr(request.app.state, "http_services", None)
+    return services.graph_node_enrichment if isinstance(services, HttpServices) else None
 
 
 def test_plan_service(request: Request) -> TestPlanApplication:
