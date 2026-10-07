@@ -34,6 +34,12 @@ class AliasIndex:
     def __len__(self) -> int:
         return len(self._entries)
 
+    @property
+    def entries(self) -> tuple[Alias, ...]:
+        """Raw alias rows, for callers (e.g. prefix/contains search) that need
+        more than the longest-match scan `match()` performs."""
+        return self._entries
+
     def match(self, text: str) -> tuple[AliasMatch, ...]:
         normalized = normalize_key(text)
         masked = bytearray(len(normalized))
