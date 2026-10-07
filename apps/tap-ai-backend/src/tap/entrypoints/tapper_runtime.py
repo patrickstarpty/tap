@@ -775,6 +775,7 @@ async def create_api_runtime(
             review_sessions=async_sessionmaker(engine, expire_on_commit=False),
             parser_socket=settings.parser_socket,
             corpus_version=settings.corpus_version,
+            graph_overview_limit=settings.graph_overview_limit,
         )
         services = replace(services, chunk_manager=chunk_manager)
         if settings.insights_base_url:
@@ -1590,6 +1591,7 @@ def _assemble_http_services(
     review_sessions: async_sessionmaker[AsyncSession] | None = None,
     parser_socket: str | None = None,
     corpus_version: str = "tapper-demo-v1",
+    graph_overview_limit: int = 150,
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -1680,12 +1682,30 @@ def _assemble_http_services(
         traces = MysqlTraceHttpService(conversation_sessions)  # type: ignore[arg-type]
     graph = None
     graph_enricher = None
+    project_graph = None
+    graph_jobs = None
     if graph_sessions is not None:
         from tap.modules.graph.adapters.mysql import MysqlGraphStore
+        from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
+        from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
+        from tap.modules.graph.adapters.mysql_project_store import MysqlProjectGraphStore
+        from tap.modules.graph.application.project_queries import ProjectGraphCache
         from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 
         graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
         graph_enricher = GraphAnswerEnricher(graph, publication_authority=publication_authority)
+        project_graph_cache = ProjectGraphCache()
+        project_graph = MysqlProjectGraphStore(
+            graph_sessions,  # type: ignore[arg-type]
+            cache=project_graph_cache,
+        )
+        graph_jobs = MysqlGraphJobStore(
+            graph_sessions,  # type: ignore[arg-type]
+            merge_queue=MysqlProjectMergeQueue(
+                graph_sessions,  # type: ignore[arg-type]
+                cache=project_graph_cache,
+            ),
+        )
     test_plans = None
     if test_plan_sessions is not None:
         from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
@@ -1812,6 +1832,9 @@ def _assemble_http_services(
         prompt_suggestion_store=prompt_suggestion_store,
         traces=traces,
         graph=graph,
+        project_graph=project_graph,
+        graph_jobs=graph_jobs,
+        graph_overview_limit=graph_overview_limit,
         test_plans=test_plans,
         knowledge_reviews=knowledge_reviews,
         insights_knowledge_search=answer_service,

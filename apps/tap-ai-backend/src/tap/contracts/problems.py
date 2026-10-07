@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, Self
@@ -20,10 +21,21 @@ class ProblemDefinition:
     detail: str
     retryable: bool
     failure_stage: FailureStage | None = None
+    # When set, `detail` above is only a human-readable example (used for the
+    # OpenAPI doc and the registry document) and the actual per-response
+    # detail is checked against this regex instead of an exact string match --
+    # the only way a registered problem may safely carry a caller-visible
+    # dynamic value (e.g. a current graph version number).
+    detail_pattern: str | None = None
 
     @property
     def type(self) -> str:
         return f"https://tap.example/problems/{self.code}"
+
+    def matches_detail(self, detail: str) -> bool:
+        if self.detail_pattern is not None:
+            return re.fullmatch(self.detail_pattern, detail) is not None
+        return detail == self.detail
 
 
 PROBLEM_REGISTRY = MappingProxyType(
@@ -315,6 +327,25 @@ PROBLEM_REGISTRY = MappingProxyType(
                 "graph",
             ),
             ProblemDefinition(
+                "graph-version-mismatch",
+                "Graph version mismatch",
+                409,
+                "The requested graph version does not match the current version; "
+                "current version is 1.",
+                False,
+                "graph",
+                detail_pattern=r"The requested graph version does not match the current "
+                r"version; current version is (?:\d+|none)\.",
+            ),
+            ProblemDefinition(
+                "graph-job-busy",
+                "Graph job busy",
+                409,
+                "The graph extraction job is currently running under an active lease.",
+                False,
+                "graph",
+            ),
+            ProblemDefinition(
                 "model-not-selectable",
                 "Model not selectable",
                 422,
@@ -367,7 +398,11 @@ class ProblemDetails(BaseModel):
                         "type": {"const": item.type},
                         "title": {"const": item.title},
                         "status": {"const": item.status},
-                        "detail": {"const": item.detail},
+                        "detail": (
+                            {"pattern": item.detail_pattern}
+                            if item.detail_pattern is not None
+                            else {"const": item.detail}
+                        ),
                         "retryable": {"const": item.retryable},
                         "failureStage": {"const": item.failure_stage},
                     },
@@ -395,30 +430,27 @@ class ProblemDetails(BaseModel):
     @model_validator(mode="after")
     def validate_registered_problem(self) -> Self:
         definition = _BY_TYPE.get(self.type)
-        if definition is None or (
-            self.title,
-            self.status,
-            self.detail,
-            self.retryable,
-            self.failure_stage,
-        ) != (
-            definition.title,
-            definition.status,
-            definition.detail,
-            definition.retryable,
-            definition.failure_stage,
+        if (
+            definition is None
+            or (self.title, self.status, self.retryable, self.failure_stage)
+            != (definition.title, definition.status, definition.retryable, definition.failure_stage)
+            or not definition.matches_detail(self.detail)
         ):
             raise ValueError("problem must match registered safe semantics")
         return self
 
 
-def build_problem(code: str, *, correlation_id: str, instance: str | None = None) -> ProblemDetails:
+def build_problem(
+    code: str, *, correlation_id: str, instance: str | None = None, detail: str | None = None
+) -> ProblemDetails:
     definition = PROBLEM_REGISTRY[code]
+    if detail is not None and not definition.matches_detail(detail):
+        raise ValueError("problem detail override must match the registered safe pattern")
     return ProblemDetails(
         type=definition.type,
         title=definition.title,
         status=definition.status,
-        detail=definition.detail,
+        detail=detail if detail is not None else definition.detail,
         retryable=definition.retryable,
         failure_stage=definition.failure_stage,
         correlation_id=correlation_id,

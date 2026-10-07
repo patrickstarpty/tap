@@ -43,6 +43,7 @@ from tap.modules.graph.domain.jobs import (
     GraphBatchStatus,
     GraphFragmentBatch,
     GraphJob,
+    GraphJobBusy,
     GraphJobLeaseLost,
     GraphJobRequest,
     GraphJobStatus,
@@ -56,6 +57,7 @@ from tap.modules.graph.domain.models import (
     InferenceProvenance,
     RelationOrigin,
 )
+from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
 
@@ -680,6 +682,125 @@ class MysqlGraphJobStore:
                 key=f"{job_id}:rebuild:{new_digest[7:23]}",
             )
             return job
+
+    async def list_fragment_states(
+        self, scope: ProjectScopeContext
+    ) -> tuple[tuple[str, str, str], ...]:
+        """`(revision_id, job status, snapshot status)` for every graph job in
+        this Project, used by `GET /project` to classify currently-extracting
+        and partial revisions without loading full job/snapshot rows."""
+
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            graph_extraction_job.c.revision_id,
+                            graph_extraction_job.c.status,
+                            graph_snapshot.c.status.label("snapshot_status"),
+                        )
+                        .select_from(
+                            graph_extraction_job.join(
+                                graph_snapshot,
+                                (graph_extraction_job.c.project_id == graph_snapshot.c.project_id)
+                                & (
+                                    graph_extraction_job.c.snapshot_id
+                                    == graph_snapshot.c.snapshot_id
+                                ),
+                            )
+                        )
+                        .where(*scope_predicates(graph_extraction_job, scope))
+                        .order_by(graph_extraction_job.c.revision_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            (
+                cast(str, row["revision_id"]),
+                cast(str, row["status"]),
+                cast(str, row["snapshot_status"]),
+            )
+            for row in rows
+        )
+
+    async def retry_failed_batches(
+        self, scope: ProjectScopeContext, revision_id: str, *, now: datetime
+    ) -> tuple[int, GraphJobStatus]:
+        """Requeue every `FAILED` batch of the revision's current job for
+        re-extraction: FAILED -> PENDING with `attempt` reset, and the job
+        itself put back to PENDING so the worker claims it again. A job whose
+        lease is RUNNING and not yet expired is busy -- raises `GraphJobBusy`
+        rather than racing the in-flight attempt. A job with no FAILED
+        batches is a no-op, returning `(0, <current status>)`."""
+
+        scope = require_project_scope(scope)
+        async with self._sessions() as session, session.begin():
+            row = (
+                (
+                    await session.execute(
+                        select(graph_extraction_job)
+                        .where(
+                            *scope_predicates(graph_extraction_job, scope),
+                            graph_extraction_job.c.revision_id == revision_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise GraphFactNotFound(f"graph job not found for revision {revision_id!r}")
+            job = await self._job(session, scope, cast(Mapping[str, object], row))
+            if (
+                job.status is GraphJobStatus.RUNNING
+                and row["lease_expires_at"] is not None
+                and cast(datetime, row["lease_expires_at"]) > now
+            ):
+                raise GraphJobBusy(job.job_id)
+            result = await session.execute(
+                update(graph_fragment_batch)
+                .where(
+                    *scope_predicates(graph_fragment_batch, scope),
+                    graph_fragment_batch.c.snapshot_id == job.snapshot.snapshot_id,
+                    graph_fragment_batch.c.status == GraphBatchStatus.FAILED.value,
+                )
+                .values(
+                    status=GraphBatchStatus.PENDING.value,
+                    attempt=0,
+                    failure_code=None,
+                    updated_at=now,
+                )
+            )
+            requeued = result.rowcount
+            if requeued == 0:
+                return 0, job.status
+            await session.execute(
+                update(graph_extraction_job)
+                .where(
+                    *scope_predicates(graph_extraction_job, scope),
+                    graph_extraction_job.c.job_id == job.job_id,
+                )
+                .values(
+                    status=GraphJobStatus.PENDING.value,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    failure_code=None,
+                    updated_at=now,
+                )
+            )
+            return requeued, GraphJobStatus.PENDING
+
+    async def merge_state(
+        self, scope: ProjectScopeContext, *, now: datetime
+    ) -> Literal["IDLE", "PENDING", "RUNNING", "FAILED"]:
+        if self._merge_queue is None:
+            return "IDLE"
+        return await self._merge_queue.merge_state(scope, now=now)
 
     async def _owned_row(
         self,

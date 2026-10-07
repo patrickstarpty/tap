@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -87,6 +87,10 @@ class ProjectMergeQueue(Protocol):
         failure_code: str,
         now: datetime,
     ) -> None: ...
+
+    async def merge_state(
+        self, scope: ProjectScopeContext, *, now: datetime
+    ) -> Literal["IDLE", "PENDING", "RUNNING", "FAILED"]: ...
 
 
 class MergeInputsPort(Protocol):
@@ -226,3 +230,19 @@ class InMemoryProjectMergeQueue:
         row.lease_token = None
         row.lease_expires_at = None
         row.claimed_due_at = None
+
+    async def merge_state(
+        self, scope: ProjectScopeContext, *, now: datetime
+    ) -> Literal["IDLE", "PENDING", "RUNNING", "FAILED"]:
+        scope = require_project_scope(scope)
+        row = self._rows.get(scope.project_id)
+        if row is None:
+            return "IDLE"
+        lease_active = row.lease_expires_at is not None and row.lease_expires_at > now
+        if row.lease_owner is not None and lease_active:
+            return "RUNNING"
+        if row.failure_code is not None:
+            return "FAILED"
+        if row.due_at is not None:
+            return "PENDING"
+        return "IDLE"

@@ -1240,9 +1240,14 @@ class GraphSubgraphView(ContractModel):
 
 
 class GraphSearchRequest(ContractModel):
-    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
     query: Annotated[str, Field(strict=True, min_length=1, max_length=500)]
     node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+    source_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=50),
+    ] = []
+    graph_version: StrictInt | None = None
 
 
 class GraphNeighborRequest(ContractModel):
@@ -1252,10 +1257,117 @@ class GraphNeighborRequest(ContractModel):
 
 
 class GraphPathRequest(ContractModel):
-    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
     source_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     target_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+    max_hops: Annotated[StrictInt, Field(ge=1, le=3)] = 3
+    source_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=50),
+    ] = []
+    graph_version: StrictInt | None = None
+
+
+class ProjectGraphCommunityView(ContractModel):
+    community_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    label: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+    size: StrictInt
+
+
+class ProjectGraphView(ContractModel):
+    graph_version: StrictInt | None = None
+    status: Literal["EMPTY", "MERGING", "READY", "FAILED"]
+    node_count: StrictInt
+    edge_count: StrictInt
+    communities: list[ProjectGraphCommunityView] = []
+    merged_at: datetime | None = None
+    extracting_revision_ids: list[str] = []
+    partial_revision_ids: list[str] = []
+
+
+class ProjectGraphNodeView(ContractModel):
+    node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    label: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+    node_type: Annotated[str, Field(strict=True, min_length=1, max_length=32)]
+    canonical_key: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+    degree: StrictInt
+    community_id: str | None = None
+    aliases: list[str] = []
+
+
+class ProjectGraphEdgeView(ContractModel):
+    edge_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    source_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    target_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    relation_type: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    relation_label: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    origin: Literal["EXTRACTED", "INFERRED"]
+    confidence: float
+
+
+class ProjectGraphEvidenceView(ContractModel):
+    owner_kind: Literal["node", "edge"]
+    owner_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    source_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    document_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    chunk_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    anchor: dict[str, object]
+    content_digest: CanonicalSha256 | None = None
+    snippet: Annotated[str, Field(strict=True, min_length=1, max_length=300)] | None = None
+
+
+class ProjectGraphSubgraphView(ContractModel):
+    graph_version: StrictInt
+    nodes: list[ProjectGraphNodeView]
+    edges: list[ProjectGraphEdgeView]
+    evidence: list[ProjectGraphEvidenceView] = []
+
+
+class ProjectGraphRelationGroupView(ContractModel):
+    relation_type: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    edges: list[ProjectGraphEdgeView]
+
+
+class ProjectGraphSourceGroupView(ContractModel):
+    source_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    document_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    source_name: str | None = None
+    evidence: list[ProjectGraphEvidenceView]
+
+
+class ProjectGraphNodeDetailView(ContractModel):
+    graph_version: StrictInt
+    node: ProjectGraphNodeView
+    community: ProjectGraphCommunityView | None = None
+    sources: list[ProjectGraphSourceGroupView] = []
+    relations: list[ProjectGraphRelationGroupView] = []
+    neighbors: list[ProjectGraphNodeView] = []
+
+
+class ProjectGraphNeighborRequest(ContractModel):
+    node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    depth: Annotated[StrictInt, Field(ge=1, le=2)] = 1
+    node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+    source_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=50),
+    ] = []
+    graph_version: StrictInt | None = None
+
+
+class ProjectGraphHighlightRequest(ContractModel):
+    edge_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(min_length=1, max_length=50),
+    ]
+    graph_version: StrictInt | None = None
+
+
+class GraphFragmentRetryView(ContractModel):
+    revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    requeued_batches: StrictInt
+    job_status: Literal["PENDING", "RUNNING", "READY", "FAILED"]
 
 
 class TestPlanGenerationRequestBody(ContractModel):

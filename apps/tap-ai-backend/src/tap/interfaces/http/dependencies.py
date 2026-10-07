@@ -47,6 +47,7 @@ from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.chat.application.suggestion_ports import SuggestionStore
 from tap.modules.chat.application.suggestions import PromptSuggestionService
+from tap.modules.graph.ports.project_store import ProjectGraphStorePort
 from tap.modules.graph.ports.store import GraphStorePort
 from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
@@ -230,6 +231,9 @@ class HttpServices:
     prompt_suggestion_store: SuggestionStore | None = None
     traces: TraceHttpService | None = None
     graph: GraphStorePort | None = None
+    project_graph: ProjectGraphStorePort | None = None
+    graph_jobs: object | None = None
+    graph_overview_limit: int = 150
     test_plans: TestPlanApplication | None = None
     knowledge_reviews: KnowledgeReviewHttpService | None = None
     chunk_manager: object | None = None
@@ -242,12 +246,52 @@ class GraphUnavailable(Exception):
     """The dedicated Graph runtime is unavailable; never represent this as an empty graph."""
 
 
+class GraphVersionMismatch(Exception):
+    """A project graph request named a `graphVersion` that is not the
+    Project's current READY version.
+
+    Stricter than the store-level `ProjectGraphVersionMismatch` (which still
+    serves a version retained in the adjacency cache's window): the public
+    HTTP contract requires an exact match against the current version, so
+    this is raised by the route layer before a query ever reaches the store.
+    `current` is `None` when the Project has no READY version at all.
+    """
+
+    def __init__(self, current: int | None) -> None:
+        self.current = current
+        super().__init__(
+            "requested graph version does not match the current version; "
+            f"current version is {current if current is not None else 'none'}"
+        )
+
+
 def graph_service(request: Request) -> GraphStorePort:
     services = getattr(request.app.state, "http_services", None)
     service = services.graph if isinstance(services, HttpServices) else None
     if service is None:
         raise GraphUnavailable
     return service
+
+
+def project_graph_service(request: Request) -> ProjectGraphStorePort:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.project_graph if isinstance(services, HttpServices) else None
+    if service is None:
+        raise GraphUnavailable
+    return service
+
+
+def graph_jobs_service(request: Request) -> object:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.graph_jobs if isinstance(services, HttpServices) else None
+    if service is None:
+        raise GraphUnavailable
+    return service
+
+
+def graph_overview_limit(request: Request) -> int:
+    services = getattr(request.app.state, "http_services", None)
+    return services.graph_overview_limit if isinstance(services, HttpServices) else 150
 
 
 def test_plan_service(request: Request) -> TestPlanApplication:

@@ -16,6 +16,13 @@ from tap.modules.graph.domain.models import (
 )
 from tests.conftest import validation_http_services
 
+_ORIGIN = "http://127.0.0.1:15180"
+
+
+def _client(services) -> TestClient:
+    app = create_app(services, validation_mode=True, allowed_origins=frozenset({_ORIGIN}))
+    return TestClient(app, headers={"Origin": _ORIGIN})
+
 
 def test_graph_routes_are_project_scoped_and_bounded():
     services = replace(validation_http_services(), graph=InMemoryGraphStore())
@@ -117,3 +124,77 @@ def test_graph_node_and_evidence_deep_links_are_snapshot_scoped():
     assert node.json()["nodes"][0]["evidenceIds"] == ["evidence-1"]
     assert fact.status_code == 200
     assert fact.json()["documentRevisionId"] == "document-revision-1"
+
+
+def test_legacy_snapshot_routes_still_serve_fragment_graphs():
+    """The project-graph routes added alongside this test must not disturb the
+    fragment-scoped snapshot routes this PR keeps available."""
+
+    store = InMemoryGraphStore()
+    evidence = Evidence(
+        "evidence-1",
+        "snapshot-1",
+        "source-revision-1",
+        "document-revision-1",
+        "chunk-1",
+        {"kind": "text", "start": 0, "end": 6},
+        "sha256:" + "a" * 64,
+    )
+    asyncio.run(
+        store.publish(
+            VALIDATION_SCOPE,
+            GraphSnapshotDraft(
+                GraphSnapshot.create(
+                    snapshot_id="snapshot-1",
+                    project_id=VALIDATION_SCOPE.project_id,
+                    source_revision_ids=("source-revision-1",),
+                    document_revision_ids=("document-revision-1",),
+                ),
+                (
+                    GraphNode(
+                        "node-1", "snapshot-1", "Policy", "ENTITY", "policy", ("evidence-1",)
+                    ),
+                    GraphNode("node-2", "snapshot-1", "Claim", "ENTITY", "claim"),
+                ),
+                (
+                    GraphEdge(
+                        "edge-1",
+                        "snapshot-1",
+                        "node-1",
+                        "node-2",
+                        "GOVERNS",
+                        RelationOrigin.EXTRACTED,
+                        1.0,
+                        ("evidence-1",),
+                    ),
+                ),
+                (evidence,),
+                (),
+            ),
+        )
+    )
+    client = _client(replace(validation_http_services(), graph=store))
+    base = "/api/v1/projects/tapper-demo/knowledge/graph"
+
+    snapshots = client.get(f"{base}/snapshots", params={"sourceRevisionId": "source-revision-1"})
+    assert snapshots.status_code == 200
+    assert snapshots.json()["items"][0]["snapshotId"] == "snapshot-1"
+
+    query = client.post(f"{base}/query", json={"snapshotId": "snapshot-1", "query": "*"})
+    assert query.status_code == 200
+    assert query.json()["snapshotId"] == "snapshot-1"
+
+    neighbors = client.post(f"{base}/nodes/node-1/neighbors", json={"snapshotId": "snapshot-1"})
+    assert neighbors.status_code == 200
+    assert neighbors.json()["snapshotId"] == "snapshot-1"
+
+    path = client.post(
+        f"{base}/path",
+        json={
+            "snapshotId": "snapshot-1",
+            "sourceNodeId": "node-1",
+            "targetNodeId": "node-2",
+        },
+    )
+    assert path.status_code == 200
+    assert path.json()["snapshotId"] == "snapshot-1"

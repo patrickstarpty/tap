@@ -537,6 +537,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/knowledge/graph/fragments/{revision_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Fragment */
+        post: operations["graph_retry_fragment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/highlight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Highlight */
+        post: operations["graph_highlight"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/neighbors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Project Neighbors */
+        post: operations["graph_project_neighbors"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}": {
         parameters: {
             query?: never;
@@ -571,6 +622,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/knowledge/graph/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Overview */
+        get: operations["graph_get_overview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/knowledge/graph/path": {
         parameters: {
             query?: never;
@@ -582,6 +650,23 @@ export interface paths {
         put?: never;
         /** Bounded Path */
         post: operations["graph_bounded_path"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/project": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Graph */
+        get: operations["graph_get_project"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2054,6 +2139,18 @@ export interface components {
             /** Sourcerevisionid */
             sourceRevisionId: string;
         };
+        /** GraphFragmentRetryView */
+        GraphFragmentRetryView: {
+            /**
+             * Jobstatus
+             * @enum {string}
+             */
+            jobStatus: "PENDING" | "RUNNING" | "READY" | "FAILED";
+            /** Requeuedbatches */
+            requeuedBatches: number;
+            /** Revisionid */
+            revisionId: string;
+        };
         /** GraphNeighborRequest */
         GraphNeighborRequest: {
             /**
@@ -2087,20 +2184,34 @@ export interface components {
         };
         /** GraphPathRequest */
         GraphPathRequest: {
+            /** Graphversion */
+            graphVersion?: number | null;
+            /**
+             * Maxhops
+             * @default 3
+             */
+            maxHops?: number;
             /**
              * Nodelimit
              * @default 50
              */
             nodeLimit?: number;
             /** Snapshotid */
-            snapshotId: string;
+            snapshotId?: string | null;
             /** Sourcenodeid */
             sourceNodeId: string;
+            /**
+             * Sourcerevisionids
+             * @default []
+             */
+            sourceRevisionIds?: string[];
             /** Targetnodeid */
             targetNodeId: string;
         };
         /** GraphSearchRequest */
         GraphSearchRequest: {
+            /** Graphversion */
+            graphVersion?: number | null;
             /**
              * Nodelimit
              * @default 50
@@ -2109,7 +2220,12 @@ export interface components {
             /** Query */
             query: string;
             /** Snapshotid */
-            snapshotId: string;
+            snapshotId?: string | null;
+            /**
+             * Sourcerevisionids
+             * @default []
+             */
+            sourceRevisionIds?: string[];
         };
         /** GraphSnapshotPage */
         GraphSnapshotPage: {
@@ -2950,7 +3066,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-integrity" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-fact-not-found" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-projection-not-ready" | "https://tap.example/problems/knowledge-review-not-found" | "https://tap.example/problems/knowledge-review-state-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-not-selectable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
+            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-integrity" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-fact-not-found" | "https://tap.example/problems/graph-job-busy" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/graph-version-mismatch" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-projection-not-ready" | "https://tap.example/problems/knowledge-review-not-found" | "https://tap.example/problems/knowledge-review-state-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-not-selectable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
         } & ({
             /** @constant */
             detail?: "The grounded answer could not be committed atomically.";
@@ -3200,6 +3316,19 @@ export interface components {
             type?: "https://tap.example/problems/graph-fact-not-found";
         } | {
             /** @constant */
+            detail?: "The graph extraction job is currently running under an active lease.";
+            /** @constant */
+            failureStage: "graph";
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Graph job busy";
+            /** @constant */
+            type?: "https://tap.example/problems/graph-job-busy";
+        } | {
+            /** @constant */
             detail?: "The graph service is currently unavailable.";
             /** @constant */
             failureStage: "graph";
@@ -3211,6 +3340,18 @@ export interface components {
             title?: "Graph unavailable";
             /** @constant */
             type?: "https://tap.example/problems/graph-unavailable";
+        } | {
+            detail?: unknown;
+            /** @constant */
+            failureStage: "graph";
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Graph version mismatch";
+            /** @constant */
+            type?: "https://tap.example/problems/graph-version-mismatch";
         } | {
             /** @constant */
             detail?: "The idempotency key already identifies a different request.";
@@ -3472,6 +3613,193 @@ export interface components {
             /** @constant */
             type?: "https://tap.example/problems/unsupported-document";
         });
+        /** ProjectGraphCommunityView */
+        ProjectGraphCommunityView: {
+            /** Communityid */
+            communityId: string;
+            /** Label */
+            label: string;
+            /** Size */
+            size: number;
+        };
+        /** ProjectGraphEdgeView */
+        ProjectGraphEdgeView: {
+            /** Confidence */
+            confidence: number;
+            /** Edgeid */
+            edgeId: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "EXTRACTED" | "INFERRED";
+            /** Relationlabel */
+            relationLabel: string;
+            /** Relationtype */
+            relationType: string;
+            /** Sourcenodeid */
+            sourceNodeId: string;
+            /** Targetnodeid */
+            targetNodeId: string;
+        };
+        /** ProjectGraphEvidenceView */
+        ProjectGraphEvidenceView: {
+            /** Anchor */
+            anchor: {
+                [key: string]: unknown;
+            };
+            /** Chunkid */
+            chunkId: string;
+            /** Contentdigest */
+            contentDigest?: string | null;
+            /** Documentrevisionid */
+            documentRevisionId: string;
+            /** Ownerid */
+            ownerId: string;
+            /**
+             * Ownerkind
+             * @enum {string}
+             */
+            ownerKind: "node" | "edge";
+            /** Snippet */
+            snippet?: string | null;
+            /** Sourcerevisionid */
+            sourceRevisionId: string;
+        };
+        /** ProjectGraphHighlightRequest */
+        ProjectGraphHighlightRequest: {
+            /** Edgeids */
+            edgeIds: string[];
+            /** Graphversion */
+            graphVersion?: number | null;
+        };
+        /** ProjectGraphNeighborRequest */
+        ProjectGraphNeighborRequest: {
+            /**
+             * Depth
+             * @default 1
+             */
+            depth?: number;
+            /** Graphversion */
+            graphVersion?: number | null;
+            /** Nodeid */
+            nodeId: string;
+            /**
+             * Nodelimit
+             * @default 50
+             */
+            nodeLimit?: number;
+            /**
+             * Sourcerevisionids
+             * @default []
+             */
+            sourceRevisionIds?: string[];
+        };
+        /** ProjectGraphNodeDetailView */
+        ProjectGraphNodeDetailView: {
+            community?: components["schemas"]["ProjectGraphCommunityView"] | null;
+            /** Graphversion */
+            graphVersion: number;
+            /**
+             * Neighbors
+             * @default []
+             */
+            neighbors?: components["schemas"]["ProjectGraphNodeView"][];
+            node: components["schemas"]["ProjectGraphNodeView"];
+            /**
+             * Relations
+             * @default []
+             */
+            relations?: components["schemas"]["ProjectGraphRelationGroupView"][];
+            /**
+             * Sources
+             * @default []
+             */
+            sources?: components["schemas"]["ProjectGraphSourceGroupView"][];
+        };
+        /** ProjectGraphNodeView */
+        ProjectGraphNodeView: {
+            /**
+             * Aliases
+             * @default []
+             */
+            aliases?: string[];
+            /** Canonicalkey */
+            canonicalKey: string;
+            /** Communityid */
+            communityId?: string | null;
+            /** Degree */
+            degree: number;
+            /** Label */
+            label: string;
+            /** Nodeid */
+            nodeId: string;
+            /** Nodetype */
+            nodeType: string;
+        };
+        /** ProjectGraphRelationGroupView */
+        ProjectGraphRelationGroupView: {
+            /** Edges */
+            edges: components["schemas"]["ProjectGraphEdgeView"][];
+            /** Relationtype */
+            relationType: string;
+        };
+        /** ProjectGraphSourceGroupView */
+        ProjectGraphSourceGroupView: {
+            /** Documentrevisionid */
+            documentRevisionId: string;
+            /** Evidence */
+            evidence: components["schemas"]["ProjectGraphEvidenceView"][];
+            /** Sourcename */
+            sourceName?: string | null;
+            /** Sourcerevisionid */
+            sourceRevisionId: string;
+        };
+        /** ProjectGraphSubgraphView */
+        ProjectGraphSubgraphView: {
+            /** Edges */
+            edges: components["schemas"]["ProjectGraphEdgeView"][];
+            /**
+             * Evidence
+             * @default []
+             */
+            evidence?: components["schemas"]["ProjectGraphEvidenceView"][];
+            /** Graphversion */
+            graphVersion: number;
+            /** Nodes */
+            nodes: components["schemas"]["ProjectGraphNodeView"][];
+        };
+        /** ProjectGraphView */
+        ProjectGraphView: {
+            /**
+             * Communities
+             * @default []
+             */
+            communities?: components["schemas"]["ProjectGraphCommunityView"][];
+            /** Edgecount */
+            edgeCount: number;
+            /**
+             * Extractingrevisionids
+             * @default []
+             */
+            extractingRevisionIds?: string[];
+            /** Graphversion */
+            graphVersion?: number | null;
+            /** Mergedat */
+            mergedAt?: string | null;
+            /** Nodecount */
+            nodeCount: number;
+            /**
+             * Partialrevisionids
+             * @default []
+             */
+            partialRevisionIds?: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "EMPTY" | "MERGING" | "READY" | "FAILED";
+        };
         /** PromptSuggestionItem */
         PromptSuggestionItem: {
             /** Id */
@@ -7000,10 +7328,140 @@ export interface operations {
             };
         };
     };
+    graph_retry_fragment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphFragmentRetryView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_highlight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectGraphHighlightRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectGraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_project_neighbors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectGraphNeighborRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectGraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     graph_get_node: {
         parameters: {
-            query: {
-                snapshotId: string;
+            query?: {
+                snapshotId?: string | null;
+                graphVersion?: number | null;
             };
             header?: never;
             path: {
@@ -7020,7 +7478,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GraphSubgraphView"];
+                    "application/json": components["schemas"]["ProjectGraphNodeDetailView"] | components["schemas"]["GraphSubgraphView"] | components["schemas"]["ProjectGraphSubgraphView"];
                 };
             };
             /** @description Project scope or authorization denied */
@@ -7088,6 +7546,51 @@ export interface operations {
             };
         };
     };
+    graph_get_overview: {
+        parameters: {
+            query?: {
+                sourceRevisionId?: string[];
+                communityId?: string[];
+                nodeLimit?: number | null;
+                graphVersion?: number | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectGraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     graph_bounded_path: {
         parameters: {
             query?: never;
@@ -7109,7 +7612,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GraphSubgraphView"];
+                    "application/json": components["schemas"]["ProjectGraphSubgraphView"] | components["schemas"]["GraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_get_project: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectGraphView"];
                 };
             };
             /** @description Project scope or authorization denied */
@@ -7153,7 +7696,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GraphSubgraphView"];
+                    "application/json": components["schemas"]["ProjectGraphSubgraphView"] | components["schemas"]["GraphSubgraphView"];
                 };
             };
             /** @description Project scope or authorization denied */

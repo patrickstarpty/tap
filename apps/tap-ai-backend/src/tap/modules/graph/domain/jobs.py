@@ -33,6 +33,12 @@ class GraphJobLeaseLost(Exception):
     """The caller no longer owns the graph job transition."""
 
 
+class GraphJobBusy(Exception):
+    """A fragment retry was requested for a job that is RUNNING under an
+    unexpired lease; the caller must wait for that attempt to finish or fail
+    rather than requeue batches out from under it."""
+
+
 @dataclass(frozen=True, slots=True)
 class GraphJobRequest:
     job_id: str

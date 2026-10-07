@@ -347,6 +347,34 @@ class MysqlProjectMergeQueue:
                 )
             )
 
+    async def merge_state(
+        self, scope: ProjectScopeContext, *, now: datetime
+    ) -> Literal["IDLE", "PENDING", "RUNNING", "FAILED"]:
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(graph_project_merge_job).where(
+                            *scope_predicates(graph_project_merge_job, scope)
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            return "IDLE"
+        lease_expires_at = cast("datetime | None", row["lease_expires_at"])
+        lease_active = lease_expires_at is not None and lease_expires_at > now
+        if row["lease_owner"] is not None and lease_active:
+            return "RUNNING"
+        if row["failure_code"] is not None:
+            return "FAILED"
+        if row["due_at"] is not None:
+            return "PENDING"
+        return "IDLE"
+
 
 class MysqlMergeInputs:
     def __init__(
