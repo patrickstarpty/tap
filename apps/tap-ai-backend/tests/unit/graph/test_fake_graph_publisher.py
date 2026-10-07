@@ -112,11 +112,10 @@ async def test_rule_based_does_not_match_uses_inside_causes():
     draft = await DeterministicGraphExtraction().extract(
         _request("This rule causes delays in payout.")
     )
-    # No trigger matched (not even a spurious USES), so this batch grounded
-    # nothing at all -- a successful, empty batch (``None``), not a document-node
-    # fallback. The document-node fallback for a whole relation-less document is
-    # minted once at assembly time (see application/fragments.py), not per batch.
-    assert draft is None
+    assert all(edge.relation_type != "USES" for edge in draft.edges)
+    assert draft.edges == ()
+    assert draft.nodes[0].canonical_key.startswith("document:")
+    assert set(draft.nodes[0].evidence_ids) == {item.evidence_id for item in draft.evidence}
 
 
 @pytest.mark.asyncio
@@ -142,12 +141,12 @@ async def test_rule_based_extracts_the_e2e_fixture_requires_edge():
 
 
 @pytest.mark.asyncio
-async def test_rule_based_extracts_nothing_for_a_relation_less_sentence():
-    # The extractor itself no longer builds a document-node fallback per batch --
-    # see test_graph_fragments.py::test_assemble_fragment_falls_back_to_a_document_node
-    # for the end-to-end (assembly-time) behavior this replaces.
+async def test_rule_based_falls_back_to_a_document_node():
     draft = await DeterministicGraphExtraction().extract(_request("今天天气很好。"))
-    assert draft is None
+    assert len(draft.nodes) == 1
+    assert draft.nodes[0].canonical_key.startswith("document:")
+    assert draft.edges == ()
+    assert set(draft.nodes[0].evidence_ids) == {item.evidence_id for item in draft.evidence}
 
 
 @pytest.mark.asyncio

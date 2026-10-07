@@ -305,37 +305,11 @@ def test_assemble_fragment_merges_duplicate_canonical_keys_across_batches() -> N
     assert merged_edge.target_node_id == disclosure_node.node_id
 
 
-def test_assemble_fragment_merges_relation_less_batches_into_one_document_node() -> None:
-    # Repro #2 from the F1 review finding: a document with twelve relation-less
-    # chunks split across two batches must not publish two "document:revision-1"
-    # nodes -- it must publish exactly one, with zero edges, READY rather than
-    # failing MySQL's uq_graph_node_canonical constraint.
-    evidence_1 = _evidence("evidence-1", "chunk-0")
-    evidence_2 = _evidence("evidence-2", "chunk-1")
-    document_node_batch_1 = GraphNode(
-        "b0-grn_doc",
-        SNAPSHOT.snapshot_id,
-        "revision-1",
-        "ENTITY",
-        "document:revision-1",
-        ("evidence-1",),
-    )
-    document_node_batch_2 = GraphNode(
-        "b1-grn_doc",
-        SNAPSHOT.snapshot_id,
-        "revision-1",
-        "ENTITY",
-        "document:revision-1",
-        ("evidence-2",),
-    )
-    draft_1 = GraphSnapshotDraft(SNAPSHOT, (document_node_batch_1,), (), (evidence_1,), ())
-    draft_2 = GraphSnapshotDraft(SNAPSHOT, (document_node_batch_2,), (), (evidence_2,), ())
-
-    fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
-
-    assert len(fragment.nodes) == 1
-    assert fragment.nodes[0].canonical_key == "document:revision-1"
-    assert fragment.edges == ()
+# The relation-less-multi-batch-document repro (two batches each minting their
+# own "document:revision-1" node) is covered end to end, with the real
+# DeterministicGraphExtraction extractor and the real worker batching loop, by
+# tests/unit/graph/test_graph_worker.py::
+#   test_batches_a_relation_less_document_into_one_document_node
 
 
 def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() -> None:
@@ -367,7 +341,22 @@ def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() 
         ("node-510",),
         "sha256:" + "c" * 64,
     )
-    draft_1 = GraphSnapshotDraft(SNAPSHOT, early_nodes, (), (), ())
+    # An unrelated EXTRACTED edge between two other kept early nodes, so the
+    # document still has a real relation overall once edge-inferred cascades
+    # away -- otherwise the zero-kept-edges document-node fallback (see R2)
+    # would replace everything, which is not what this test is about.
+    evidence = _evidence("evidence-unrelated", "chunk-0")
+    unrelated_edge = GraphEdge(
+        "edge-unrelated",
+        SNAPSHOT.snapshot_id,
+        "node-2",
+        "node-3",
+        "GOVERNS",
+        RelationOrigin.EXTRACTED,
+        1.0,
+        ("evidence-unrelated",),
+    )
+    draft_1 = GraphSnapshotDraft(SNAPSHOT, early_nodes, (unrelated_edge,), (evidence,), ())
     draft_2 = GraphSnapshotDraft(
         SNAPSHOT,
         (late_node, early_nodes[0], early_nodes[1]),
@@ -379,5 +368,172 @@ def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() 
     fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
 
     assert len(fragment.nodes) == 500
-    assert "edge-inferred" not in {edge.edge_id for edge in fragment.edges}
+    assert {edge.edge_id for edge in fragment.edges} == {"edge-unrelated"}
     assert fragment.provenance == ()
+
+
+def test_assemble_fragment_keeps_one_provenance_when_two_batches_infer_the_same_edge() -> None:
+    # R1(a): two batches each independently infer the same real-world relation
+    # (e.g. the same rule fired once per batch) with their own provenance. Once
+    # the duplicate edge merges (shape dedupe), both provenances would cite the
+    # same surviving edge_id -- InferenceProvenance uniqueness forbids that.
+    # Only the first (draft-order) provenance may survive.
+    node_a1 = GraphNode("b0-node-a", SNAPSHOT.snapshot_id, "Entity A", "CONCEPT", "entity-a")
+    node_b1 = GraphNode("b0-node-b", SNAPSHOT.snapshot_id, "Entity B", "CONCEPT", "entity-b")
+    node_a2 = GraphNode("b1-node-a", SNAPSHOT.snapshot_id, "Entity A", "CONCEPT", "entity-a")
+    node_b2 = GraphNode("b1-node-b", SNAPSHOT.snapshot_id, "Entity B", "CONCEPT", "entity-b")
+    edge_1 = GraphEdge(
+        "b0-edge",
+        SNAPSHOT.snapshot_id,
+        "b0-node-a",
+        "b0-node-b",
+        "TRIGGERS",
+        RelationOrigin.INFERRED,
+        0.7,
+        (),
+    )
+    edge_2 = GraphEdge(
+        "b1-edge",
+        SNAPSHOT.snapshot_id,
+        "b1-node-a",
+        "b1-node-b",
+        "TRIGGERS",
+        RelationOrigin.INFERRED,
+        0.9,
+        (),
+    )
+    provenance_1 = InferenceProvenance(
+        "b0-prov", SNAPSHOT.snapshot_id, "b0-edge", ("b0-node-a",), "sha256:" + "c" * 64
+    )
+    provenance_2 = InferenceProvenance(
+        "b1-prov", SNAPSHOT.snapshot_id, "b1-edge", ("b1-node-a",), "sha256:" + "c" * 64
+    )
+    draft_1 = GraphSnapshotDraft(SNAPSHOT, (node_a1, node_b1), (edge_1,), (), (provenance_1,))
+    draft_2 = GraphSnapshotDraft(SNAPSHOT, (node_a2, node_b2), (edge_2,), (), (provenance_2,))
+
+    fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    assert len(fragment.edges) == 1
+    assert len(fragment.provenance) == 1
+    assert fragment.provenance[0].provenance_id == "b0-prov"
+    assert fragment.edges[0].confidence == 0.9
+
+
+def test_assemble_fragment_drops_provenance_whose_inputs_collapse_to_one_fact() -> None:
+    # R1(b): a provenance originally cites two distinct facts that merge into
+    # the same surviving node (e.g. two mentions of the same real-world entity
+    # under different batch-namespaced ids). After remapping, both input facts
+    # collapse to one id -- deduping keeps it valid in general, but when that
+    # single remaining input is the edge's own id, the provenance is
+    # self-referential and invalid; it (and its now-orphaned INFERRED edge) must
+    # be dropped rather than raise.
+    node_a1 = GraphNode("b0-node-a", SNAPSHOT.snapshot_id, "Entity A", "CONCEPT", "entity-a")
+    node_a2 = GraphNode("b1-node-a", SNAPSHOT.snapshot_id, "Entity A", "CONCEPT", "entity-a")
+    node_b = GraphNode("b0-node-b", SNAPSHOT.snapshot_id, "Entity B", "CONCEPT", "entity-b")
+    edge = GraphEdge(
+        "b0-edge",
+        SNAPSHOT.snapshot_id,
+        "b0-node-a",
+        "b0-node-b",
+        "TRIGGERS",
+        RelationOrigin.INFERRED,
+        0.7,
+        (),
+    )
+    # This provenance's only input fact is the edge's own id -- self-referential
+    # and invalid after remap collapses it to just that.
+    provenance = InferenceProvenance(
+        "b0-prov", SNAPSHOT.snapshot_id, "b0-edge", ("b0-edge",), "sha256:" + "c" * 64
+    )
+    draft_1 = GraphSnapshotDraft(SNAPSHOT, (node_a1, node_b), (edge,), (), (provenance,))
+    draft_2 = GraphSnapshotDraft(SNAPSHOT, (node_a2,), (), (), ())
+
+    fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    assert "b0-edge" not in {edge.edge_id for edge in fragment.edges}
+    assert fragment.provenance == ()
+
+
+def test_assemble_fragment_prefers_extracted_edge_over_inferred_of_the_same_shape() -> None:
+    # R1(c): one batch infers a relation (no evidence, carries provenance);
+    # another batch directly extracts the same relation (real evidence). Once
+    # the duplicate shape merges, naively unioning "evidence" onto the INFERRED
+    # edge would violate GraphEdge's "inferred relation cannot claim direct
+    # evidence" rule. The EXTRACTED edge must win outright, and the INFERRED
+    # edge's now-orphaned provenance must be dropped.
+    node_a1 = GraphNode("b0-node-a", SNAPSHOT.snapshot_id, "Entity A", "CONCEPT", "entity-a")
+    node_b1 = GraphNode("b0-node-b", SNAPSHOT.snapshot_id, "Entity B", "CONCEPT", "entity-b")
+    node_a2 = GraphNode("b1-node-a", SNAPSHOT.snapshot_id, "Entity A", "CONCEPT", "entity-a")
+    node_b2 = GraphNode("b1-node-b", SNAPSHOT.snapshot_id, "Entity B", "CONCEPT", "entity-b")
+    inferred_edge = GraphEdge(
+        "b0-edge",
+        SNAPSHOT.snapshot_id,
+        "b0-node-a",
+        "b0-node-b",
+        "TRIGGERS",
+        RelationOrigin.INFERRED,
+        0.7,
+        (),
+    )
+    provenance = InferenceProvenance(
+        "b0-prov", SNAPSHOT.snapshot_id, "b0-edge", ("b0-node-a",), "sha256:" + "c" * 64
+    )
+    evidence = _evidence("evidence-extracted", "chunk-0")
+    extracted_edge = GraphEdge(
+        "b1-edge",
+        SNAPSHOT.snapshot_id,
+        "b1-node-a",
+        "b1-node-b",
+        "TRIGGERS",
+        RelationOrigin.EXTRACTED,
+        0.95,
+        ("evidence-extracted",),
+    )
+    draft_1 = GraphSnapshotDraft(SNAPSHOT, (node_a1, node_b1), (inferred_edge,), (), (provenance,))
+    draft_2 = GraphSnapshotDraft(SNAPSHOT, (node_a2, node_b2), (extracted_edge,), (evidence,), ())
+
+    fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    assert len(fragment.edges) == 1
+    winner = fragment.edges[0]
+    assert winner.origin is RelationOrigin.EXTRACTED
+    assert winner.evidence_ids == ("evidence-extracted",)
+    assert fragment.provenance == ()
+
+
+def test_assemble_fragment_merges_normalize_key_through_accent_folding() -> None:
+    # R4: MySQL's server default collation for canonical_key
+    # (utf8mb4_0900_ai_ci) is accent-insensitive, not just case-insensitive --
+    # "café" and "cafe" collide there. normalize_key (used for the merge above)
+    # must fold accents too, or such a pair would survive assembly as two nodes
+    # and then collide on uq_graph_node_canonical at publish.
+    node_accented = GraphNode(
+        "b0-node", SNAPSHOT.snapshot_id, "Café", "CONCEPT", "café", ("evidence-1",)
+    )
+    node_plain = GraphNode(
+        "b1-node", SNAPSHOT.snapshot_id, "Cafe", "CONCEPT", "cafe", ("evidence-2",)
+    )
+    # An unrelated other node and edge, purely so the merged document has a
+    # real relation overall and does not instead trigger the zero-kept-edges
+    # document-node fallback (see R2), which is not what this test is about.
+    other_node = GraphNode("node-other", SNAPSHOT.snapshot_id, "Other", "CONCEPT", "other")
+    evidence_1 = _evidence("evidence-1", "chunk-0")
+    evidence_2 = _evidence("evidence-2", "chunk-1")
+    edge = GraphEdge(
+        "edge-1",
+        SNAPSHOT.snapshot_id,
+        "b0-node",
+        "node-other",
+        "USES",
+        RelationOrigin.EXTRACTED,
+        1.0,
+        ("evidence-1",),
+    )
+    draft_1 = GraphSnapshotDraft(SNAPSHOT, (node_accented, other_node), (edge,), (evidence_1,), ())
+    draft_2 = GraphSnapshotDraft(SNAPSHOT, (node_plain,), (), (evidence_2,), ())
+
+    fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    merged = next(node for node in fragment.nodes if node.node_id == "b0-node")
+    assert set(merged.evidence_ids) == {"evidence-1", "evidence-2"}
+    assert "b1-node" not in {node.node_id for node in fragment.nodes}

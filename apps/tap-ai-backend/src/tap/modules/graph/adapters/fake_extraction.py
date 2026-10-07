@@ -242,14 +242,29 @@ def rule_based_draft(
                         existing, evidence_ids=existing.evidence_ids + (evidence_id,)
                     )
 
-    if not edge_order and not node_order:
-        # Nothing grounded in this batch at all (no relation triggers matched, no
-        # lone entity touched): a successful batch that contributes nothing. The
-        # document-node fallback for a whole document with no relations anywhere is
-        # the worker's job to add exactly once, at assembly time, across every
-        # batch -- not this one batch's job, which would otherwise mint one
-        # fallback node per relation-less batch of a mixed document.
-        return None
+    if not edge_order:
+        # No relation survived in this batch (no trigger matched, or the only
+        # touch was a lone, relation-less entity): fall back to one document
+        # node carrying every chunk's evidence, same as a single-batch document
+        # always did. This can mint one such node per relation-less batch of a
+        # multi-batch document, but every one of them shares the exact same
+        # canonical key ("document:<revision>"), so assemble_fragment's
+        # canonical-key merge (see application/fragments.py) collapses them
+        # into one -- and, when the document has real relations elsewhere,
+        # strips the stray fallback node entirely rather than publish it
+        # alongside real content.
+        document_node_id = "grn_" + hashlib.sha256(snapshot.snapshot_id.encode()).hexdigest()[:32]
+        fallback_node = GraphNode(
+            document_node_id,
+            snapshot.snapshot_id,
+            filename,
+            "ENTITY",
+            f"document:{snapshot.document_revision_ids[0]}",
+            tuple(item.evidence_id for item in evidence),
+        )
+        return GraphSnapshotDraft(
+            replace(snapshot, status="CANDIDATE"), (fallback_node,), (), tuple(evidence), ()
+        )
 
     kept_keys = node_order[:_NODE_CAP]
     nodes = tuple(nodes_by_key[key] for key in kept_keys)

@@ -163,29 +163,89 @@ def assemble_fragment(
                 edge_order.append(edge.edge_id)
                 edge_shape_to_id[shape] = edge.edge_id
                 continue
-            evidence_ids = existing_edge.evidence_ids
-            for evidence_id in edge.evidence_ids:
-                if evidence_id not in evidence_ids:
-                    evidence_ids += (evidence_id,)
-            edges_by_id[existing_edge.edge_id] = replace(
-                existing_edge,
-                evidence_ids=evidence_ids,
-                confidence=max(existing_edge.confidence, edge.confidence),
-            )
+            if existing_edge.origin is edge.origin:
+                evidence_ids = existing_edge.evidence_ids
+                for evidence_id in edge.evidence_ids:
+                    if evidence_id not in evidence_ids:
+                        evidence_ids += (evidence_id,)
+                merged_edge = replace(
+                    existing_edge,
+                    evidence_ids=evidence_ids,
+                    confidence=max(existing_edge.confidence, edge.confidence),
+                )
+            else:
+                # A same-shape duplicate can turn up with the opposite origin
+                # across batches (e.g. one batch grounds a direct EXTRACTED
+                # mention, another only infers the same relation). The EXTRACTED
+                # edge always wins -- it carries real evidence, which an INFERRED
+                # edge is forbidden from claiming -- keeping the merge's identity
+                # (edge_id) stable either way. The losing INFERRED edge's
+                # provenance becomes orphaned and is dropped in the finalize pass
+                # below, since it no longer names an INFERRED edge.
+                if edge.origin is RelationOrigin.EXTRACTED:
+                    merged_edge = replace(
+                        edge,
+                        edge_id=existing_edge.edge_id,
+                        source_node_id=source,
+                        target_node_id=target,
+                        confidence=max(existing_edge.confidence, edge.confidence),
+                    )
+                else:
+                    merged_edge = replace(
+                        existing_edge, confidence=max(existing_edge.confidence, edge.confidence)
+                    )
+            edges_by_id[existing_edge.edge_id] = merged_edge
         for evidence_item in draft.evidence:
             if evidence_item.evidence_id not in evidence_by_id:
                 evidence_by_id[evidence_item.evidence_id] = evidence_item
                 evidence_order.append(evidence_item.evidence_id)
         for provenance_item in draft.provenance:
             if provenance_item.provenance_id not in provenance_by_id:
-                provenance_by_id[provenance_item.provenance_id] = replace(
-                    provenance_item,
-                    edge_id=_remap_fact_id(provenance_item.edge_id),
-                    input_fact_ids=tuple(
-                        _remap_fact_id(fact_id) for fact_id in provenance_item.input_fact_ids
-                    ),
-                )
+                provenance_by_id[provenance_item.provenance_id] = provenance_item
                 provenance_order.append(provenance_item.provenance_id)
+
+    # Finalize provenance now that every node/edge merge decision across every
+    # draft is known (edge_id_remap and node_id_remap no longer change). A raw
+    # provenance item recorded above can be left domain-invalid, or redundant,
+    # by those merges:
+    #   - its edge_id or input_fact_ids can name a duplicate id that got
+    #     remapped onto a survivor -- remap both now;
+    #   - two originally-distinct input facts can collapse onto the same
+    #     surviving id -- dedupe input_fact_ids (preserving first-seen order);
+    #   - a provenance left with no input facts, or whose only input is its own
+    #     edge, is domain-invalid -- drop it (the cascade below drops the
+    #     orphaned INFERRED edge along with it, exactly as a missing provenance
+    #     already does);
+    #   - two batches can each carry their own provenance for what turns out to
+    #     be the same merged INFERRED edge -- InferenceProvenance uniqueness
+    #     forbids two rows citing the same edge_id, so only the first
+    #     (draft-order) provenance survives per final edge_id;
+    #   - a provenance whose edge ended up EXTRACTED (see the mixed-origin edge
+    #     merge above) is dropped outright -- an EXTRACTED edge never carries
+    #     provenance.
+    finalized_provenance_by_id: dict[str, InferenceProvenance] = {}
+    finalized_provenance_order: list[str] = []
+    claimed_provenance_edge_ids: set[str] = set()
+    for provenance_id in provenance_order:
+        raw_item = provenance_by_id[provenance_id]
+        final_edge_id = _remap_fact_id(raw_item.edge_id)
+        surviving_edge = edges_by_id.get(final_edge_id)
+        if surviving_edge is None or surviving_edge.origin is not RelationOrigin.INFERRED:
+            continue
+        if final_edge_id in claimed_provenance_edge_ids:
+            continue
+        input_fact_ids = tuple(
+            dict.fromkeys(_remap_fact_id(fact_id) for fact_id in raw_item.input_fact_ids)
+        )
+        if not input_fact_ids or final_edge_id in input_fact_ids:
+            continue
+        finalized_provenance_by_id[provenance_id] = replace(
+            raw_item, edge_id=final_edge_id, input_fact_ids=input_fact_ids
+        )
+        finalized_provenance_order.append(provenance_id)
+        claimed_provenance_edge_ids.add(final_edge_id)
+    provenance_by_id = finalized_provenance_by_id
+    provenance_order = finalized_provenance_order
 
     kept_node_order = node_order[:MAX_GRAPH_NODES]
     kept_node_id_set = set(kept_node_order)
@@ -234,22 +294,41 @@ def assemble_fragment(
         if provenance_by_id[provenance_id].edge_id in kept_edge_id_set
     ]
 
-    if not node_order:
-        # Every batch was empty (nothing grounded anywhere in the document): the
-        # degenerate case the per-batch extractors deliberately leave to assembly
-        # (see the docstring above) instead of each minting its own document-node
-        # fallback. A document that *did* ground real nodes but ended up with zero
-        # kept edges (e.g. every edge fell past the node cap) keeps those nodes --
-        # it is not this fallback's concern.
-        fallback_node_id = "grn_" + hashlib.sha256(snapshot.snapshot_id.encode()).hexdigest()[:32]
-        fallback_node = GraphNode(
-            fallback_node_id,
-            snapshot.snapshot_id,
-            snapshot.document_revision_ids[0],
-            "ENTITY",
-            f"document:{snapshot.document_revision_ids[0]}",
-            tuple(evidence_order),
+    _document_prefix = "document:"
+
+    if not kept_edge_order:
+        # The merged document ended up with zero relations -- whether every
+        # batch was empty, a batch only ever touched a lone, relation-less
+        # entity, or every edge was cascade-dropped past the node/edge caps.
+        # Per spec/plan, the published result in every such case is exactly one
+        # document-node fallback and nothing else, never a stray real node.
+        # Reuse an already-merged per-batch fallback node (its canonical key is
+        # always "document:<revision>", so canonical-key merging above already
+        # unioned every batch's own evidence onto it) if one survived; only
+        # synthesize a fresh one (carrying whatever evidence was collected) if
+        # no batch ever produced one.
+        existing_fallback_id = next(
+            (
+                node_id
+                for node_id in kept_node_order
+                if nodes_by_id[node_id].canonical_key.startswith(_document_prefix)
+            ),
+            None,
         )
+        if existing_fallback_id is not None:
+            fallback_node = nodes_by_id[existing_fallback_id]
+        else:
+            fallback_node_id = (
+                "grn_" + hashlib.sha256(snapshot.snapshot_id.encode()).hexdigest()[:32]
+            )
+            fallback_node = GraphNode(
+                fallback_node_id,
+                snapshot.snapshot_id,
+                snapshot.document_revision_ids[0],
+                "ENTITY",
+                f"{_document_prefix}{snapshot.document_revision_ids[0]}",
+                tuple(evidence_order),
+            )
         return GraphSnapshotDraft(
             snapshot,
             (fallback_node,),
@@ -258,9 +337,18 @@ def assemble_fragment(
             (),
         )
 
+    # The document has real relations: drop any stray per-batch document-node
+    # fallback (e.g. from a relation-less batch of an otherwise-related,
+    # multi-batch document) rather than publish it alongside real content.
+    published_node_order = [
+        node_id
+        for node_id in kept_node_order
+        if not nodes_by_id[node_id].canonical_key.startswith(_document_prefix)
+    ]
+
     return GraphSnapshotDraft(
         snapshot,
-        tuple(nodes_by_id[node_id] for node_id in kept_node_order),
+        tuple(nodes_by_id[node_id] for node_id in published_node_order),
         tuple(edges_by_id[edge_id] for edge_id in kept_edge_order),
         tuple(evidence_by_id[evidence_id] for evidence_id in evidence_order),
         tuple(provenance_by_id[provenance_id] for provenance_id in kept_provenance_order),
