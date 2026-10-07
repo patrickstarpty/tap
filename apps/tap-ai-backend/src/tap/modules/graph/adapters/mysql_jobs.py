@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Mapping, cast
 from uuid import uuid4
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,11 +26,18 @@ from tap.modules.governance.domain.audit import (
 from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROFILE_DIGEST
 from tap.modules.graph.adapters.mysql import (
     _draft_digest,
+    graph_edge,
+    graph_edge_evidence,
     graph_extraction_job,
     graph_fragment_batch,
+    graph_inference_provenance,
+    graph_node,
+    graph_node_evidence,
     graph_snapshot,
+    graph_snapshot_revision,
     publish_graph_snapshot,
 )
+from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
 from tap.modules.graph.domain.jobs import (
     ClaimedGraphJob,
     GraphBatchStatus,
@@ -160,8 +167,14 @@ def deserialize_draft(snapshot: GraphSnapshot, payload: Mapping[str, object]) ->
 
 
 class MysqlGraphJobStore:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        merge_queue: MysqlProjectMergeQueue | None = None,
+    ) -> None:
         self._sessions = sessions
+        self._merge_queue = merge_queue
 
     async def request(
         self, scope: ProjectScopeContext, request: GraphJobRequest, *, now: datetime
@@ -440,6 +453,10 @@ class MysqlGraphJobStore:
             if draft.snapshot != current.snapshot:
                 raise ValueError("graph draft does not match claimed snapshot")
             snapshot = await publish_graph_snapshot(session, scope, draft, now=now, status=status)
+            if self._merge_queue is not None:
+                await self._merge_queue.request_in_transaction(
+                    session, scope, reason="fragment-ready", now=now
+                )
             result = await session.execute(
                 update(graph_extraction_job)
                 .where(
@@ -550,6 +567,116 @@ class MysqlGraphJobStore:
                 key=f"{failed.job_id}:failed",
             )
             return failed
+
+    async def reset_for_profile(
+        self,
+        scope: ProjectScopeContext,
+        revision_id: str,
+        *,
+        extraction_profile_digest: str,
+        model_alias: str,
+        now: datetime,
+    ) -> GraphJob:
+        """Requeue extraction for one currently-published revision under a
+        (possibly changed) extraction profile/model: drop every fact the
+        prior snapshot derived, put the snapshot back to CANDIDATE, and
+        rewrite the job row as a fresh PENDING request. Used only by the
+        `graph rebuild` operator CLI; never deletes a project-graph version
+        itself -- the merge worker replays a version once extraction
+        finishes."""
+
+        scope = require_project_scope(scope)
+        async with self._sessions() as session, session.begin():
+            row = (
+                (
+                    await session.execute(
+                        select(graph_extraction_job)
+                        .where(
+                            *scope_predicates(graph_extraction_job, scope),
+                            graph_extraction_job.c.revision_id == revision_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise ValueError("graph job not found for revision")
+            if (
+                row["status"] == GraphJobStatus.RUNNING.value
+                and row["lease_expires_at"] is not None
+                and cast(datetime, row["lease_expires_at"]) > now
+            ):
+                raise ValueError("graph job is running")
+            snapshot_id = cast(str, row["snapshot_id"])
+            job_id = cast(str, row["job_id"])
+            for table in (
+                graph_inference_provenance,
+                graph_edge_evidence,
+                graph_node_evidence,
+                graph_edge,
+                graph_node,
+                graph_snapshot_revision,
+                graph_fragment_batch,
+            ):
+                await session.execute(
+                    delete(table).where(
+                        *scope_predicates(table, scope),
+                        table.c.snapshot_id == snapshot_id,
+                    )
+                )
+            await session.execute(
+                update(graph_snapshot)
+                .where(
+                    *scope_predicates(graph_snapshot, scope),
+                    graph_snapshot.c.snapshot_id == snapshot_id,
+                )
+                .values(status="CANDIDATE")
+            )
+            new_digest = "sha256:" + hashlib.sha256(
+                json.dumps(
+                    [
+                        scope.project_id,
+                        revision_id,
+                        extraction_profile_digest,
+                        model_alias,
+                        "rebuild",
+                        now.isoformat(),
+                    ],
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            await session.execute(
+                update(graph_extraction_job)
+                .where(
+                    *scope_predicates(graph_extraction_job, scope),
+                    graph_extraction_job.c.job_id == job_id,
+                )
+                .values(
+                    request_digest=new_digest,
+                    extraction_profile_digest=extraction_profile_digest,
+                    model_alias=model_alias,
+                    status=GraphJobStatus.PENDING.value,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    attempt_count=0,
+                    failure_code=None,
+                    updated_at=now,
+                )
+            )
+            updated_row = await self._locked_row(session, scope, job_id)
+            job = await self._job(session, scope, updated_row)
+            await self._append_audit(
+                session,
+                scope,
+                job,
+                AuditAction.GRAPH_SNAPSHOT_REQUESTED,
+                new_digest,
+                key=f"{job_id}:rebuild:{new_digest[7:23]}",
+            )
+            return job
 
     async def _owned_row(
         self,

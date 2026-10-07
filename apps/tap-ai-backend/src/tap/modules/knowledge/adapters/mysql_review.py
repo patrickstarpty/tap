@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
-from typing import Literal, cast
+from typing import Literal, Protocol, cast
 
 from sqlalchemy import (
     Column,
@@ -323,15 +323,23 @@ class MysqlApprovedProjectionVerifier:
         }
 
 
+class PublicationChangedProjection(Protocol):
+    async def after_publication_changed(
+        self, session: AsyncSession, scope: ProjectScopeContext, *, now: datetime
+    ) -> None: ...
+
+
 class MysqlKnowledgeReviewRepository:
     def __init__(
         self,
         sessions: async_sessionmaker[AsyncSession],
         *,
         scope: ProjectScopeContext,
+        publication_projection: PublicationChangedProjection | None = None,
     ) -> None:
         self._sessions = sessions
         self._scope = require_project_scope(scope)
+        self._publication_projection = publication_projection
 
     async def resolve_open_review_target(self, *, document_id: str, source_revision_id: str) -> str:
         async with self._sessions() as session:
@@ -2042,6 +2050,10 @@ class MysqlKnowledgeReviewRepository:
                     "sourceRevisionIds": publication.source_revision_ids,
                 },
             )
+            if self._publication_projection is not None:
+                await self._publication_projection.after_publication_changed(
+                    session, self._scope, now=publication.published_at
+                )
         return publication
 
     async def get_publication(self, publication_id: str) -> KnowledgePublication | None:

@@ -24,11 +24,20 @@ from tap.modules.graph.domain.project import (
 from tap.modules.graph.ports.store import GraphFactNotFound
 
 __all__ = [
+    "CurrentRevisionsPort",
     "GraphFactNotFound",
     "ProjectGraphNotReady",
     "ProjectGraphStorePort",
     "ProjectGraphVersionMismatch",
 ]
+
+
+class CurrentRevisionsPort(Protocol):
+    """The currently-published document revision ids a merge may read
+    fragments for; used to bound `MergeInputsPort.load_fragments` to sources
+    that are still ready/published, not merely once extracted."""
+
+    async def current_revision_ids(self, scope: ProjectScopeContext) -> frozenset[str]: ...
 
 
 class ProjectGraphNotReady(LookupError):

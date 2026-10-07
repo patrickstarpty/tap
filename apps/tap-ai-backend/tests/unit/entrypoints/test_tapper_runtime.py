@@ -110,6 +110,19 @@ def test_graph_batch_settings_defaults_and_bounds() -> None:
         TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_BATCH_SIZE": "0"})
 
 
+def test_graph_alignment_settings_defaults_and_bounds() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert (
+        settings.graph_align_embedding,
+        settings.graph_align_threshold,
+        settings.graph_overview_limit,
+    ) == (False, 0.92, 150)
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_THRESHOLD": "1.5"})
+
+
 @pytest.mark.parametrize(
     "name", ["TAPPER_DEFAULT_CHAT_MODEL", "TAPPER_EMBEDDING_MODEL", "TAPPER_VISION_MODEL"]
 )

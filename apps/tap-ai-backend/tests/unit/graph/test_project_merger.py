@@ -139,6 +139,27 @@ def test_merge_of_no_fragments_is_an_empty_draft():
     assert draft.fragment_digest == fragment_digest([])
 
 
+def test_merge_drops_aliases_that_exceed_the_project_alias_column_bound():
+    # graph_project_alias.alias_norm is a String(255) column; a label whose
+    # normalized form exceeds that bound (node.label itself is bounded only
+    # to 512) must be dropped from the alias set instead of failing
+    # publication, while the node it names still merges normally.
+    oversized_label = "长" * 300
+    draft_a = _draft(
+        "frag-a",
+        [("a1", oversized_label, "ENTITY", "保单")],
+        [],
+    )
+    record = _record("frag-a", draft_a)
+
+    draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, [record])
+
+    assert all(len(alias.alias_norm) <= 255 for alias in draft.aliases)
+    node = next(n for n in draft.nodes if n.canonical_key == "保单")
+    assert node.label == oversized_label
+    assert not any(alias.node_id == node.node_id for alias in draft.aliases)
+
+
 def test_merge_rejects_scope_mismatch():
     draft_a = _draft(
         "frag-a",

@@ -29,6 +29,11 @@ from tap.modules.graph.domain.project import (
 )
 from tap.modules.graph.domain.vocabulary import normalize_key
 
+# graph_project_alias.alias_norm is a MySQL String(255) column (see
+# adapters/mysql_project.py); a merged alias whose normalized form exceeds
+# that bound would fail publication, so it is dropped here instead.
+_MAX_ALIAS_NORM_LENGTH = 255
+
 
 def _find_node(draft: GraphSnapshotDraft, node_id: str) -> GraphNode:
     for node in draft.nodes:
@@ -140,7 +145,7 @@ def _aliases_for(
 
     def add(text: str, origin: Literal["LABEL", "MODEL", "MERGE"]) -> None:
         norm = normalize_key(text)
-        if not norm or norm in seen_norms:
+        if not norm or norm in seen_norms or len(norm) > _MAX_ALIAS_NORM_LENGTH:
             return
         seen_norms.add(norm)
         aliases.append(Alias(norm, entity.node_id, origin))

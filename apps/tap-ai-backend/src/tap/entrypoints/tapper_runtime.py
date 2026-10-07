@@ -7,7 +7,7 @@ import inspect
 import ipaddress
 import math
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -107,6 +107,9 @@ class TapperSettings:
     job_batch_size: int
     graph_batch_size: int
     graph_batch_retries: int
+    graph_align_embedding: bool
+    graph_align_threshold: float
+    graph_overview_limit: int
     collection: str
     alias: str
     corpus_version: str
@@ -393,6 +396,23 @@ class TapperSettings:
                 3,
                 minimum=1,
                 maximum=10,
+            ),
+            graph_align_embedding=_fixed_choice(
+                values,
+                "TAPPER_GRAPH_ALIGN_EMBEDDING",
+                default="0",
+                choices=frozenset({"0", "1"}),
+            )
+            == "1",
+            graph_align_threshold=_duration(
+                values, "TAPPER_GRAPH_ALIGN_THRESHOLD", 0.92, maximum=1.0
+            ),
+            graph_overview_limit=_integer(
+                values,
+                "TAPPER_GRAPH_OVERVIEW_LIMIT",
+                150,
+                minimum=10,
+                maximum=500,
             ),
             collection=collection,
             alias=alias,
@@ -942,6 +962,10 @@ def _build_document_repository(
     )
     from tap.modules.chat.adapters.mysql_suggestions import MysqlSuggestionStore
     from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore, MysqlGraphReadyProjection
+    from tap.modules.graph.adapters.mysql_merge import (
+        GraphMergeOnSourceChange,
+        MysqlProjectMergeQueue,
+    )
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 
     graph_jobs = MysqlGraphJobStore(sessions)
@@ -954,6 +978,7 @@ def _build_document_repository(
         sessions,
         scope=scope,
         audit_factory=create_project_audit,
+        source_deleted_projection=GraphMergeOnSourceChange(MysqlProjectMergeQueue(sessions)),
         ready_projection=CompositeReadyProjection(
             MysqlGraphReadyProjection(graph_jobs, model_alias=default_chat_model),
             SuggestionReadyProjection(suggestion_store),
@@ -976,26 +1001,44 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
         redis = _create_redis(settings)
         resources.push(redis)
 
+        from tap.entrypoints.graph_project_knowledge import MysqlCurrentRevisions
         from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
         from tap.modules.graph.adapters.fake_extraction import DeterministicGraphExtraction
         from tap.modules.graph.adapters.model_gateway_extraction import ModelGatewayGraphExtraction
         from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
+        from tap.modules.graph.adapters.mysql_merge import MysqlMergeInputs, MysqlProjectMergeQueue
+        from tap.modules.graph.application.merge_worker import ProjectGraphMergeWorker
+        from tap.modules.graph.application.merger import ProjectGraphMerger
         from tap.modules.graph.application.worker import GraphWorker
         from tap.modules.graph.ports.extraction import GraphExtractionPort
         from tap.modules.knowledge.ports.documents import ArtifactStore
         from tap.platform.messaging.redis_dispatch import AsyncRedisStream
         from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
 
+        model_embeddings: KnowledgeModelGateway | None = None
+        if settings.graph_extraction_mode == "model" or settings.graph_align_embedding:
+            model_embeddings = _create_embeddings(
+                settings, recorder=MysqlModelCallRecorder(sessions)
+            )
+            _push_if_owned(resources, model_embeddings)
         if settings.graph_extraction_mode == "model":
-            embeddings = _create_embeddings(settings, recorder=MysqlModelCallRecorder(sessions))
-            _push_if_owned(resources, embeddings)
+            assert model_embeddings is not None
             extractor: GraphExtractionPort = ModelGatewayGraphExtraction(
-                embeddings.gateway, timeout_seconds=settings.model_timeout_seconds
+                model_embeddings.gateway, timeout_seconds=settings.model_timeout_seconds
             )
         else:
             extractor = DeterministicGraphExtraction()
+        merge_queue = MysqlProjectMergeQueue(sessions, cache=None)
+        merge_worker = ProjectGraphMergeWorker(
+            queue=merge_queue,
+            inputs=MysqlMergeInputs(sessions, MysqlCurrentRevisions(sessions, scope=scope)),
+            merger=ProjectGraphMerger(align_threshold=settings.graph_align_threshold),
+            scope=scope,
+            worker_id=settings.worker_id + "-graph-merge",
+            embeddings=_label_embedder(model_embeddings) if settings.graph_align_embedding else None,
+        )
         worker = GraphWorker(
-            jobs=MysqlGraphJobStore(sessions),
+            jobs=MysqlGraphJobStore(sessions, merge_queue=merge_queue),
             artifacts=cast(ArtifactStore, artifacts),
             extractor=extractor,
             scope=scope,
@@ -1011,7 +1054,12 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             consumer_name=settings.worker_id + "-graph",
             aggregate_type="GraphSnapshot",
         )
-        return WorkerRuntime(worker=worker, wakeups=wakeups, resources=(resources,))
+        return WorkerRuntime(
+            worker=worker,
+            wakeups=wakeups,
+            resources=(resources,),
+            pending_work=merge_worker.run_once,
+        )
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("graph worker resource settlement unexpectedly returned")
@@ -1230,6 +1278,18 @@ def _create_embeddings(
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=settings.model_timeout_seconds,
     )
+
+
+def _label_embedder(
+    embeddings: KnowledgeModelGateway,
+) -> Callable[[Sequence[str]], Awaitable[Sequence[tuple[float, ...]]]]:
+    """Adapt `KnowledgeModelGateway.embed` (one text in, one vector out) to the
+    project graph merge worker's bulk `embeddings` callable."""
+
+    async def embed_many(texts: Sequence[str]) -> Sequence[tuple[float, ...]]:
+        return tuple([(await embeddings.embed(text)).vector for text in texts])
+
+    return embed_many
 
 
 async def _create_document_index(
@@ -1551,6 +1611,10 @@ def _assemble_http_services(
     publication_authority = None
     flowchart_gate = None
     if review_sessions is not None:
+        from tap.modules.graph.adapters.mysql_merge import (
+            GraphMergeOnSourceChange,
+            MysqlProjectMergeQueue,
+        )
         from tap.modules.knowledge.adapters.mysql_review import MysqlKnowledgeReviewRepository
         from tap.modules.knowledge.application.publication import (
             FlowchartPublicationGate,
@@ -1560,6 +1624,9 @@ def _assemble_http_services(
         review_repository = MysqlKnowledgeReviewRepository(
             review_sessions,
             scope=repository.scope,  # type: ignore[arg-type]
+            publication_projection=GraphMergeOnSourceChange(
+                MysqlProjectMergeQueue(review_sessions)
+            ),
         )
         # Chunks index directly; flowchart images still answer only after review.
         flowchart_gate = FlowchartPublicationGate(PublishedKnowledgeAuthority(review_repository))

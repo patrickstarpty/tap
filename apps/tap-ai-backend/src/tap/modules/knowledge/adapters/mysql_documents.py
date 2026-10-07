@@ -803,6 +803,17 @@ class ReadyRevisionProjection(Protocol):
     ) -> None: ...
 
 
+class SourceDeletedProjection(Protocol):
+    async def after_source_deleted(
+        self,
+        session: AsyncSession,
+        scope: ProjectScopeContext,
+        source_id: str,
+        *,
+        now: datetime,
+    ) -> None: ...
+
+
 class MysqlDocumentRepository:
     """The MySQL document/revision/job facts and their transaction boundaries."""
 
@@ -813,10 +824,12 @@ class MysqlDocumentRepository:
         scope: ProjectScopeContext,
         audit_factory: ProjectAuditFactory,
         ready_projection: ReadyRevisionProjection | None = None,
+        source_deleted_projection: SourceDeletedProjection | None = None,
     ) -> None:
         self._scope = require_project_scope(scope)
         self._audit_factory = audit_factory
         self._ready_projection = ready_projection
+        self._source_deleted_projection = source_deleted_projection
         self._answer_snapshot_lock_name = (
             "tap:answer:"
             + sha256(f"{scope.enterprise_id}/{scope.project_id}".encode()).hexdigest()[:48]
@@ -1051,6 +1064,10 @@ class MysqlDocumentRepository:
                 )
                 .values(deleted_at=now, updated_at=now)
             )
+            if self._source_deleted_projection is not None:
+                await self._source_deleted_projection.after_source_deleted(
+                    session, self._scope, source_id, now=now
+                )
             for document in documents:
                 if document["activated_at"] is not None:
                     await self._request_delete_in_session(
