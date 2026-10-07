@@ -192,7 +192,27 @@ class GraphWorker:
             raise
         except Exception as error:
             failure_code = type(error).__name__[:64]
-            await self._jobs.fail(self._scope, claim, failure_code=failure_code, now=self._now())
+            try:
+                await self._jobs.fail(
+                    self._scope, claim, failure_code=failure_code, now=self._now()
+                )
+            except GraphJobLeaseLost:
+                raise
+            except Exception as fail_error:
+                # ``fail`` itself failing (a database error, a transport blip, ...)
+                # must not escape and crash the worker process either. Treat it the
+                # same way a genuinely lost lease is treated: stop working this claim
+                # and let a later reclaim retry it, instead of propagating out of
+                # ``run_once`` (which has no caller-side try/except for this).
+                with span(
+                    "job.graph_extraction.fail_error",
+                    {
+                        "tap.job_id": claim.job_id,
+                        "tap.error.type": type(fail_error).__name__,
+                    },
+                ):
+                    pass
+                raise GraphJobLeaseLost(claim.job_id) from fail_error
             return "FAILED"
 
     async def _run_claim_body(self, claim: ClaimedGraphJob) -> str:
@@ -210,14 +230,20 @@ class GraphWorker:
         for index, batch_chunks in enumerate(batches):
             existing_batch = existing.get(index)
             chunk_ids = tuple(str(chunk.chunk_id) for chunk in batch_chunks)
+            # A stored batch only covers *this* batch if its chunk ids still match --
+            # otherwise the document's chunks were re-split differently since that
+            # batch was recorded (e.g. batch_size changed), and reusing it by index
+            # alone would silently publish facts for the wrong chunks. Recompute.
+            if existing_batch is not None and existing_batch.chunk_ids != chunk_ids:
+                existing_batch = None
             if existing_batch is not None and existing_batch.status is GraphBatchStatus.READY:
-                assert existing_batch.draft is not None
-                drafts.append(existing_batch.draft)
+                if existing_batch.draft is not None:
+                    drafts.append(existing_batch.draft)
                 batch_ready += 1
             elif existing_batch is not None and existing_batch.status is GraphBatchStatus.FAILED:
                 batch_failed += 1
             else:
-                draft, batch_failed_here, claim = await self._run_batch(
+                draft, succeeded, batch_failed_here, claim = await self._run_batch(
                     claim,
                     index,
                     batch_chunks,
@@ -225,8 +251,9 @@ class GraphWorker:
                     attempt=existing_batch.attempt if existing_batch is not None else 0,
                     drafts_so_far=drafts,
                 )
-                if draft is not None:
-                    drafts.append(draft)
+                if succeeded:
+                    if draft is not None:
+                        drafts.append(draft)
                     batch_ready += 1
                 else:
                     batch_failed += batch_failed_here
@@ -257,7 +284,7 @@ class GraphWorker:
         *,
         attempt: int,
         drafts_so_far: list[GraphSnapshotDraft],
-    ) -> tuple[GraphSnapshotDraft | None, int, ClaimedGraphJob]:
+    ) -> tuple[GraphSnapshotDraft | None, bool, int, ClaimedGraphJob]:
         request_chunks = tuple(
             _chunk_request_mapping(chunk, revision_id=claim.revision_id) for chunk in batch_chunks
         )
@@ -275,10 +302,19 @@ class GraphWorker:
                     known_entities=known_entities_from(drafts_so_far),
                 )
                 raw_draft = await self._extractor.extract(request)
-                known_entity_ids = frozenset(str(entity["id"]) for entity in request.known_entities)
-                draft = _namespace_draft(
-                    raw_draft, batch_index=index, known_entity_ids=known_entity_ids
-                )
+                # ``None`` means the extractor grounded nothing in this batch (all
+                # boilerplate, or no relation sentences): a successful batch that
+                # simply contributes nothing, not a failure -- do not namespace or
+                # retry it.
+                if raw_draft is None:
+                    draft = None
+                else:
+                    known_entity_ids = frozenset(
+                        str(entity["id"]) for entity in request.known_entities
+                    )
+                    draft = _namespace_draft(
+                        raw_draft, batch_index=index, known_entity_ids=known_entity_ids
+                    )
             except Exception as error:
                 failure_code = type(error).__name__[:64]
                 if attempt >= self._batch_retries:
@@ -295,7 +331,7 @@ class GraphWorker:
                         ),
                         now=self._now(),
                     )
-                    return None, 1, claim
+                    return None, False, 1, claim
                 await self._jobs.record_batch(
                     self._scope,
                     claim,
@@ -315,7 +351,12 @@ class GraphWorker:
                 claim = await self._jobs.renew(
                     self._scope, claim, now=self._now(), lease_duration=self._lease_duration
                 )
-                await self._sleep(self._backoff_seconds * 2 ** (attempt - 1))
+                backoff = self._backoff_seconds * 2 ** (attempt - 1)
+                # Never sleep for longer than the lease we just renewed: the
+                # extra margin keeps a renew (and any bookkeeping around it)
+                # inside the lease window instead of racing its expiry.
+                capped_backoff = min(backoff, max(self._lease_duration.total_seconds() - 1.0, 0.0))
+                await self._sleep(capped_backoff)
             else:
                 await self._jobs.record_batch(
                     self._scope,
@@ -330,7 +371,7 @@ class GraphWorker:
                     ),
                     now=self._now(),
                 )
-                return draft, 0, claim
+                return draft, True, 0, claim
         # The retry budget was already exhausted before this call started (e.g.
         # batch_retries was lowered after a previous PENDING attempt was recorded for
         # this batch). Record it as terminally failed instead of looping forever or
@@ -348,4 +389,4 @@ class GraphWorker:
             ),
             now=self._now(),
         )
-        return None, 1, claim
+        return None, False, 1, claim

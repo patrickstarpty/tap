@@ -134,7 +134,8 @@ class GraphFragmentBatch:
             raise ValueError("graph fragment batch index must be nonnegative")
         if not self.chunk_ids:
             raise ValueError("graph fragment batch requires chunk ids")
-        if self.status is GraphBatchStatus.READY and self.draft is None:
-            raise ValueError("a ready graph fragment batch requires a draft")
+        # A READY batch's draft may be ``None``: the extractor grounded nothing in
+        # this batch (boilerplate chunks, or a relation-less span of a document) and
+        # the batch still succeeded, contributing nothing to the merged fragment.
         if self.status is not GraphBatchStatus.READY and self.draft is not None:
             raise ValueError("only a ready graph fragment batch may carry a draft")
