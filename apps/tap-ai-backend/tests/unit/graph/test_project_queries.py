@@ -3,7 +3,13 @@ from __future__ import annotations
 import time
 from datetime import datetime
 
-from tap.modules.graph.application.project_queries import LoadedProjectGraph, ProjectGraphCache
+import pytest
+
+from tap.modules.graph.application.project_queries import (
+    LoadedProjectGraph,
+    ProjectGraphCache,
+    resolve_version,
+)
 from tap.modules.graph.domain.models import RelationOrigin
 from tap.modules.graph.domain.project import (
     Community,
@@ -14,6 +20,7 @@ from tap.modules.graph.domain.project import (
     ProjectGraphVersion,
     ProjectNode,
 )
+from tap.modules.graph.ports.project_store import ProjectGraphVersionMismatch
 
 _ANCHOR = {"kind": "text", "start": 0, "end": 1}
 
@@ -101,6 +108,25 @@ def test_cache_keeps_two_versions_per_project_and_invalidates() -> None:
     assert cache.loaded_versions("tapper-demo") == ()
 
 
+def test_resolve_version_current_always_works_even_when_not_cached() -> None:
+    # Nothing has ever been loaded into the cache for this project; the
+    # current-version fast path in `resolve_version` must not consult
+    # `cache.loaded_versions` at all to succeed.
+    cache = ProjectGraphCache(keep_per_project=2)
+    assert resolve_version(cache, "tapper-demo", current_version=5, version=5) == 5
+    assert resolve_version(cache, "tapper-demo", current_version=5, version=None) == 5
+
+
+def test_resolve_version_rejects_a_version_outside_the_retention_window() -> None:
+    cache = ProjectGraphCache(keep_per_project=2)
+    cache.put(_loaded(2))
+    cache.put(_loaded(3))
+    assert resolve_version(cache, "tapper-demo", current_version=3, version=2) == 2
+    with pytest.raises(ProjectGraphVersionMismatch) as excinfo:
+        resolve_version(cache, "tapper-demo", current_version=3, version=1)
+    assert excinfo.value.current == 3
+
+
 def test_overview_rotates_across_communities_by_degree() -> None:
     nodes = tuple(
         ProjectNode(
@@ -159,9 +185,11 @@ def test_path_respects_max_hops() -> None:
         aliases=(),
         communities=(),
     )
-    assert too_far.path("n0", "n4", max_hops=3) == too_far.path("n0", "n4", max_hops=3)
-    assert too_far.path("n0", "n4", max_hops=3).nodes == ()
-    assert too_far.path("n0", "n4", max_hops=3).edges == ()
+    empty = too_far.path("n0", "n4", max_hops=3)
+    assert empty.nodes == ()
+    assert empty.edges == ()
+    assert empty.sources == ()
+    assert empty.evidence == ()
 
     nodes3, edges3 = _chain(4)
     reachable = LoadedProjectGraph.from_rows(

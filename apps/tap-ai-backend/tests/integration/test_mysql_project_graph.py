@@ -286,6 +286,13 @@ async def test_version_switch_invalidates_cache_and_serves_new_version(
         overview_v2 = await store.overview(VALIDATION_SCOPE)
         assert {node.node_id for node in overview_v2.nodes} == {"node-1", "node-2", "node-3"}
         assert store._cache.loaded_versions(VALIDATION_SCOPE.project_id) == (1, 2)
+
+        # v1 is no longer current but is still inside the 2-version retention
+        # window, so a pinned read for it must keep serving v1's rows even
+        # after the switch to v2.
+        pinned_v1 = await store.overview(VALIDATION_SCOPE, version=1)
+        assert pinned_v1.version == 1
+        assert {node.node_id for node in pinned_v1.nodes} == {"node-1", "node-2"}
     finally:
         await engine.dispose()
 

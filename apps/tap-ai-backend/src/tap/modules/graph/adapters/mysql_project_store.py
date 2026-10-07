@@ -106,10 +106,12 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
             version_row = (
                 (
                     await session.execute(
-                        select(graph_project_version).where(
+                        select(graph_project_version)
+                        .where(
                             *scope_predicates(graph_project_version, scope),
                             graph_project_version.c.version == version,
                         )
+                        .order_by(graph_project_version.c.version)
                     )
                 )
                 .mappings()
@@ -119,13 +121,19 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
                 raise ProjectGraphNotReady(
                     f"project {scope.project_id!r} has no graph version {version}"
                 )
+            # Every query below orders by its table's primary-key columns (past
+            # `version`, which the `where` already pins to one value) so row
+            # order — and therefore `LoadedProjectGraph`'s adjacency/evidence
+            # tuple order — is defined rather than left to MySQL's whim.
             node_rows = (
                 (
                     await session.execute(
-                        select(graph_project_node).where(
+                        select(graph_project_node)
+                        .where(
                             *scope_predicates(graph_project_node, scope),
                             graph_project_node.c.version == version,
                         )
+                        .order_by(graph_project_node.c.node_id)
                     )
                 )
                 .mappings()
@@ -134,10 +142,12 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
             edge_rows = (
                 (
                     await session.execute(
-                        select(graph_project_edge).where(
+                        select(graph_project_edge)
+                        .where(
                             *scope_predicates(graph_project_edge, scope),
                             graph_project_edge.c.version == version,
                         )
+                        .order_by(graph_project_edge.c.edge_id)
                     )
                 )
                 .mappings()
@@ -146,9 +156,15 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
             source_rows = (
                 (
                     await session.execute(
-                        select(graph_project_node_source).where(
+                        select(graph_project_node_source)
+                        .where(
                             *scope_predicates(graph_project_node_source, scope),
                             graph_project_node_source.c.version == version,
+                        )
+                        .order_by(
+                            graph_project_node_source.c.node_id,
+                            graph_project_node_source.c.source_revision_id,
+                            graph_project_node_source.c.chunk_id,
                         )
                     )
                 )
@@ -158,9 +174,15 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
             evidence_rows = (
                 (
                     await session.execute(
-                        select(graph_project_edge_evidence).where(
+                        select(graph_project_edge_evidence)
+                        .where(
                             *scope_predicates(graph_project_edge_evidence, scope),
                             graph_project_edge_evidence.c.version == version,
+                        )
+                        .order_by(
+                            graph_project_edge_evidence.c.edge_id,
+                            graph_project_edge_evidence.c.source_revision_id,
+                            graph_project_edge_evidence.c.chunk_id,
                         )
                     )
                 )
@@ -170,10 +192,12 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
             alias_rows = (
                 (
                     await session.execute(
-                        select(graph_project_alias).where(
+                        select(graph_project_alias)
+                        .where(
                             *scope_predicates(graph_project_alias, scope),
                             graph_project_alias.c.version == version,
                         )
+                        .order_by(graph_project_alias.c.alias_norm, graph_project_alias.c.node_id)
                     )
                 )
                 .mappings()
@@ -182,10 +206,12 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
             community_rows = (
                 (
                     await session.execute(
-                        select(graph_project_community).where(
+                        select(graph_project_community)
+                        .where(
                             *scope_predicates(graph_project_community, scope),
                             graph_project_community.c.version == version,
                         )
+                        .order_by(graph_project_community.c.community_id)
                     )
                 )
                 .mappings()

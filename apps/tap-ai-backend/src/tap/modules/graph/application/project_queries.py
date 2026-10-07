@@ -467,18 +467,31 @@ class LoadedProjectGraph:
         )
 
     def highlight(self, edge_ids: tuple[str, ...], *, limit: int = 200) -> ProjectSubgraph:
+        # Deterministic by construction: requested edges are added in request
+        # order (capped at `limit`), then their endpoints are walked in the
+        # order those edges introduced them (never a `set`, whose iteration
+        # order is not meaningful). An edge dropped because the cap was
+        # already full never contributes to `endpoint_order`, so its unique
+        # endpoint cannot leak into the result through a later union.
         collected: dict[str, ProjectEdge] = {}
-        for edge_id in edge_ids:
-            edge = self.edges.get(edge_id)
-            if edge is not None:
-                collected[edge_id] = edge
+        endpoint_order: list[str] = []
+        seen_endpoints: set[str] = set()
 
-        endpoints = {
-            node_id
-            for edge in collected.values()
-            for node_id in (edge.source_node_id, edge.target_node_id)
-        }
-        for endpoint in endpoints:
+        for edge_id in edge_ids:
+            if len(collected) >= limit:
+                break
+            if edge_id in collected:
+                continue
+            edge = self.edges.get(edge_id)
+            if edge is None:
+                continue
+            collected[edge_id] = edge
+            for node_id in (edge.source_node_id, edge.target_node_id):
+                if node_id not in seen_endpoints:
+                    seen_endpoints.add(node_id)
+                    endpoint_order.append(node_id)
+
+        for endpoint in endpoint_order:
             if len(collected) >= limit:
                 break
             for _, adjacent_edge_id in self.adjacency.get(endpoint, ()):
@@ -486,10 +499,10 @@ class LoadedProjectGraph:
                     break
                 collected.setdefault(adjacent_edge_id, self.edges[adjacent_edge_id])
 
-        edges = tuple(collected.values())[:limit]
+        edges = tuple(collected.values())
         node_ids = {
             node_id for edge in edges for node_id in (edge.source_node_id, edge.target_node_id)
-        } | endpoints
+        }
         nodes = tuple(node for node in self.nodes.values() if node.node_id in node_ids)
         edge_ids_final = {edge.edge_id for edge in edges}
         return ProjectSubgraph(
@@ -689,7 +702,6 @@ class InMemoryProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort
     def __init__(self, *, cache: ProjectGraphCache | None = None) -> None:
         self._cache = cache if cache is not None else ProjectGraphCache()
         self._versions: dict[str, list[ProjectGraphVersion]] = {}
-        self._digests: dict[str, dict[str, int]] = {}
         self._merging: set[str] = set()
 
     async def publish(
@@ -698,11 +710,14 @@ class InMemoryProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort
         scope = require_project_scope(scope)
         project_id = scope.project_id
         versions = self._versions.setdefault(project_id, [])
-        digests = self._digests.setdefault(project_id, {})
 
-        existing_version = digests.get(draft.fragment_digest)
-        if existing_version is not None:
-            return next(v for v in versions if v.version == existing_version)
+        # Dedup only against the *current* version's digest, not every past
+        # digest ever published: if the source set changes and later reverts
+        # to a prior state (A -> B -> A), that is a new version (e.g. v3),
+        # not a silent return of the stale v1 that the cache/DB no longer
+        # serves as current.
+        if versions and versions[-1].fragment_digest == draft.fragment_digest:
+            return versions[-1]
 
         next_version = versions[-1].version + 1 if versions else 1
         published = ProjectGraphVersion(
@@ -715,7 +730,6 @@ class InMemoryProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort
             merged_at=now,
         )
         versions.append(published)
-        digests[draft.fragment_digest] = next_version
         self._merging.discard(project_id)
         self._cache.put(LoadedProjectGraph.from_draft(published, draft))
         return published

@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Iterable
 
-from tap.modules.graph.domain.project import Alias
+from tap.modules.graph.domain.project import Alias, AliasMatch
 from tap.modules.graph.domain.vocabulary import normalize_key
 
-
-@dataclass(frozen=True, slots=True)
-class AliasMatch:
-    alias_norm: str
-    node_id: str
-    start: int
-    end: int
+# Re-exported for existing importers (`AliasMatch` now lives in `domain/project.py`
+# alongside `Alias`, so `ports/project_store.py` can import it without reaching
+# into the application layer).
+__all__ = ["AliasIndex", "AliasMatch"]
 
 
 class AliasIndex:

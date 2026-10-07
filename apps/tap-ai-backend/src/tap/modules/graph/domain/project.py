@@ -81,6 +81,14 @@ class Alias:
 
 
 @dataclass(frozen=True, slots=True)
+class AliasMatch:
+    alias_norm: str
+    node_id: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
 class Community:
     community_id: str
     label: str

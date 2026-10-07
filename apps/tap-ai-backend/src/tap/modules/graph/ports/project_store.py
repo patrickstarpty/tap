@@ -10,10 +10,11 @@ single answer even if a background merge publishes a newer version mid-turn.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.domain.project import (
+    AliasMatch,
     Community,
     ProjectGraphVersion,
     ProjectNode,
@@ -21,12 +22,6 @@ from tap.modules.graph.domain.project import (
     ProjectSubgraph,
 )
 from tap.modules.graph.ports.store import GraphFactNotFound
-
-if TYPE_CHECKING:
-    # `AliasMatch` lives in the application layer (Task 1's `alias_index.py`);
-    # imported only for type checking to avoid a ports -> application runtime
-    # cycle (application's `project_queries.py` imports this module directly).
-    from tap.modules.graph.application.alias_index import AliasMatch
 
 __all__ = [
     "GraphFactNotFound",
