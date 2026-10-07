@@ -258,7 +258,7 @@ graph_fragment_batch = _scoped(
     ),
 )
 
-_FRAGMENT_GRAPH_TABLES: tuple[Table, ...] = (
+GRAPH_TABLES = (
     graph_snapshot,
     graph_snapshot_revision,
     graph_active_snapshot,
@@ -271,22 +271,12 @@ _FRAGMENT_GRAPH_TABLES: tuple[Table, ...] = (
     graph_extraction_job,
     graph_fragment_batch,
 )
-
-
-def __getattr__(name: str) -> object:
-    # `GRAPH_TABLES` is resolved lazily (PEP 562) rather than built eagerly at
-    # module scope: mysql_project.py imports `_scoped`/`metadata` plus the
-    # fragment tables above from this module, so this module must finish
-    # loading before it, in turn, pulls in `PROJECT_GRAPH_TABLES` here. A
-    # module-scope `GRAPH_TABLES = (..., *PROJECT_GRAPH_TABLES)` would import
-    # mysql_project while this module is still mid-import, which fails
-    # whenever mysql_project (not this module) is the first of the pair
-    # touched in a process.
-    if name == "GRAPH_TABLES":
-        from tap.modules.graph.adapters.mysql_project import PROJECT_GRAPH_TABLES
-
-        return (*_FRAGMENT_GRAPH_TABLES, *PROJECT_GRAPH_TABLES)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# `graph_project_*`/`graph_merge_log` (defined in adapters/mysql_project.py, as
+# `PROJECT_GRAPH_TABLES`) are intentionally not appended here: this module must
+# stay import-order-independent of mysql_project.py (which itself imports
+# `_scoped`/`metadata` and the fragment tables above from this module), so the
+# composition happens once, in the registry composition root
+# (tap.platform.db.registry.BUSINESS_TABLES), not inside either adapter.
 
 
 async def publish_graph_snapshot(
