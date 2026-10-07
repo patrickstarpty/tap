@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
 from pathlib import Path
 from types import ModuleType
+
+from tap.quality.evidence import canonical_digest
+from tap.quality.graph_corpus import manifest_digest
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts" / "evaluate-graph-relations.py"
@@ -238,10 +242,18 @@ def test_passes_at_24_of_30_and_fails_at_23(tmp_path, monkeypatch):
     assert failing_report["passed"] is False
 
 
-def _regression_document() -> dict[str, object]:
+def _regression_document(*, question_count: int = 17) -> dict[str, object]:
+    questions = [f"r-{index:02d}" for index in range(question_count)]
     return {
         "schemaVersion": "graph-regression-questions-v1",
-        "groups": [{"id": "demo-group", "requiredCount": 0, "questions": []}],
+        "groups": [{"id": "demo-group", "requiredCount": question_count, "questions": questions}],
+    }
+
+
+def _incomplete_regression_document() -> dict[str, object]:
+    return {
+        "schemaVersion": "graph-regression-questions-v1",
+        "groups": [{"id": "demo-group", "requiredCount": 17, "questions": []}],
     }
 
 
@@ -417,4 +429,244 @@ def test_real_mode_rejects_stale_golden_digest(tmp_path, monkeypatch, capsys):
     stderr = capsys.readouterr().err
     assert "real" in stderr
     assert "goldenDigest" in stderr or "golden set" in stderr
+    assert not report_path.exists()
+
+
+def test_regression_group_scores_declared_questions_and_missing_answers(tmp_path, monkeypatch):
+    # The group declares three questions; only two are actually observed. The missing
+    # question must still count toward the denominator (fail closed), not shrink it.
+    golden = _golden([_question(1)])
+    golden_path = _write(tmp_path / "golden.json", golden)
+    regression_path = _write(tmp_path / "regression.json", _regression_document(question_count=3))
+
+    passing_golden_answer = _answer(
+        "q-01", citations=[_edge_citation(subject="A", relation="REQUIRES", obj="B")]
+    )
+    group_answers = [
+        _answer("r-00", group="demo-group", citations=[_chunk_citation("c-r-00")]),
+        # r-01 is declared by the regression document but never observed.
+        _answer("r-02", group="demo-group", citations=[_chunk_citation("c-r-02")]),
+    ]
+    observations = _observations([passing_golden_answer, *group_answers])
+    observations_path = _write(tmp_path / "observations.json", observations)
+    baseline = _observations([passing_golden_answer, *group_answers])
+    baseline_path = _write(tmp_path / "baseline.json", baseline)
+    report_path = tmp_path / "report.json"
+
+    exit_code = _run_main(
+        monkeypatch,
+        [
+            "--golden",
+            str(golden_path),
+            "--observations",
+            str(observations_path),
+            "--report",
+            str(report_path),
+            "--regression",
+            str(regression_path),
+            "--baseline-observations",
+            str(baseline_path),
+        ],
+    )
+
+    assert exit_code == 0
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["regression"]["groups"] == [
+        {
+            "id": "demo-group",
+            "grounded": 2,
+            "total": 3,
+            "baselineGrounded": 2,
+            "baselineTotal": 3,
+            "passed": True,
+        }
+    ]
+
+
+def test_regression_rejects_unknown_question_ids(tmp_path, monkeypatch, capsys):
+    golden = _golden([_question(1)])
+    golden_path = _write(tmp_path / "golden.json", golden)
+    # The regression document only declares "r-00"; the observation names "r-99".
+    regression_path = _write(tmp_path / "regression.json", _regression_document(question_count=1))
+
+    unknown_answer = _answer("r-99", group="demo-group", citations=[_chunk_citation()])
+    observations = _observations([unknown_answer])
+    observations_path = _write(tmp_path / "observations.json", observations)
+    baseline_path = _write(tmp_path / "baseline.json", _observations([]))
+    report_path = tmp_path / "report.json"
+
+    exit_code = _run_main(
+        monkeypatch,
+        [
+            "--golden",
+            str(golden_path),
+            "--observations",
+            str(observations_path),
+            "--report",
+            str(report_path),
+            "--regression",
+            str(regression_path),
+            "--baseline-observations",
+            str(baseline_path),
+        ],
+    )
+
+    assert exit_code == 2
+    assert "demo-group" in capsys.readouterr().err
+    assert not report_path.exists()
+
+
+def _sha(byte_value: bytes) -> str:
+    return "sha256:" + hashlib.sha256(byte_value).hexdigest()
+
+
+def _valid_manifest() -> dict[str, object]:
+    policy_entries = [
+        {
+            "id": f"policy-{index:02d}",
+            "title": f"Policy {index}",
+            "kind": "policy",
+            "sha256": _sha(f"policy-{index}".encode()),
+            "url": f"https://example.invalid/policy-{index}.pdf",
+        }
+        for index in range(1, 9)
+    ]
+    process_entries = [
+        {
+            "id": f"process-{index:02d}",
+            "title": f"Process {index}",
+            "kind": "process",
+            "sha256": _sha(f"process-{index}".encode()),
+            "path": f".local/graph-real/process-{index:02d}.pdf",
+        }
+        for index in range(1, 3)
+    ]
+    return {
+        "schemaVersion": "graph-real-corpus-manifest-v1",
+        "entries": [*policy_entries, *process_entries],
+    }
+
+
+def test_real_mode_rejects_incomplete_regression_set(tmp_path, monkeypatch, capsys):
+    golden = _human_labeled_golden()
+    manifest = _valid_manifest()
+    corpus_digest = manifest_digest(manifest)
+    _write(tmp_path / "manifest.json", manifest)
+    golden["corpus"]["manifest"] = "manifest.json"
+    # goldenDigest must match the document as written to disk, including the manifest
+    # pointer above -- compute it only after corpus.manifest is set.
+    golden_digest = canonical_digest(golden)
+    golden_path = _write(tmp_path / "golden.json", golden)
+
+    # The shipped skeleton: declared but never filled in (requiredCount 17, questions []).
+    regression_path = _write(tmp_path / "regression.json", _incomplete_regression_document())
+
+    real_observations = _observations(
+        [],
+        execution_mode="real",
+        extraction_mode="model",
+        model_actual="litellm/gpt-4o",
+        golden_digest=golden_digest,
+        corpus_digest=corpus_digest,
+        graph_version="graph-v1",
+    )
+    observations_path = _write(tmp_path / "observations.json", real_observations)
+    baseline_observations = _observations(
+        [],
+        corpus_digest=corpus_digest,
+        graph_version="graph-v1",
+        graph_reasoning=False,
+    )
+    baseline_path = _write(tmp_path / "baseline.json", baseline_observations)
+    report_path = tmp_path / "report.json"
+
+    exit_code = _run_main(
+        monkeypatch,
+        [
+            "--golden",
+            str(golden_path),
+            "--observations",
+            str(observations_path),
+            "--report",
+            str(report_path),
+            "--regression",
+            str(regression_path),
+            "--baseline-observations",
+            str(baseline_path),
+            "--real",
+        ],
+    )
+
+    assert exit_code == 2
+    stderr = capsys.readouterr().err
+    assert "real" in stderr
+    assert "regression" in stderr or "complete" in stderr
+    assert not report_path.exists()
+
+
+def test_regression_flags_must_be_paired(tmp_path, monkeypatch, capsys):
+    golden = _golden([_question(1)])
+    golden_path = _write(tmp_path / "golden.json", golden)
+    observations = _observations(
+        [_answer("q-01", citations=[_edge_citation(subject="A", relation="REQUIRES", obj="B")])]
+    )
+    observations_path = _write(tmp_path / "observations.json", observations)
+    regression_path = _write(tmp_path / "regression.json", _regression_document())
+    baseline_path = _write(tmp_path / "baseline.json", _observations([]))
+    report_path = tmp_path / "report.json"
+
+    regression_only_exit_code = _run_main(
+        monkeypatch,
+        [
+            "--golden",
+            str(golden_path),
+            "--observations",
+            str(observations_path),
+            "--report",
+            str(report_path),
+            "--regression",
+            str(regression_path),
+        ],
+    )
+    assert regression_only_exit_code == 2
+    assert capsys.readouterr().err
+    assert not report_path.exists()
+
+    baseline_only_exit_code = _run_main(
+        monkeypatch,
+        [
+            "--golden",
+            str(golden_path),
+            "--observations",
+            str(observations_path),
+            "--report",
+            str(report_path),
+            "--baseline-observations",
+            str(baseline_path),
+        ],
+    )
+    assert baseline_only_exit_code == 2
+    assert capsys.readouterr().err
+    assert not report_path.exists()
+
+
+def test_missing_input_file_exits_2(tmp_path, monkeypatch, capsys):
+    missing_golden_path = tmp_path / "does-not-exist.json"
+    observations_path = _write(tmp_path / "observations.json", _observations([]))
+    report_path = tmp_path / "report.json"
+
+    exit_code = _run_main(
+        monkeypatch,
+        [
+            "--golden",
+            str(missing_golden_path),
+            "--observations",
+            str(observations_path),
+            "--report",
+            str(report_path),
+        ],
+    )
+
+    assert exit_code == 2
+    assert capsys.readouterr().err
     assert not report_path.exists()

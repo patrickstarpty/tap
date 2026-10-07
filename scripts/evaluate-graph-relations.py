@@ -22,6 +22,7 @@ from typing import Any
 from tap.quality.evidence import canonical_digest
 from tap.quality.graph_corpus import manifest_digest, validate_manifest
 from tap.quality.graph_relations import (
+    RegressionGroup,
     aggregate,
     grounded_rate,
     match_question,
@@ -62,10 +63,34 @@ def _citations_for(answer: Mapping[str, Any] | None) -> Sequence[Mapping[str, ob
     return tuple(item for item in citations if isinstance(item, Mapping))
 
 
-def _group_answers(
-    answers: Sequence[Mapping[str, Any]], group_id: str
-) -> list[Mapping[str, Any]]:
-    return [answer for answer in answers if answer.get("group") == group_id]
+def _group_rate(
+    answers: Sequence[Mapping[str, Any]], group: RegressionGroup
+) -> tuple[int, int]:
+    """Score a regression group over its *declared* questions, not just the observed ones.
+
+    A question the regression document declares but that is absent from `answers` counts
+    as not grounded (fail closed) instead of shrinking the denominator — the total is
+    always `len(group.questions)`. An answer tagged with this group's id but naming a
+    question the regression document never declared is rejected outright: the regression
+    document, not the observations file, is the source of truth for group membership.
+    """
+    declared = group.questions
+    declared_ids = frozenset(declared)
+    present: dict[str, Mapping[str, Any]] = {}
+    for answer in answers:
+        if answer.get("group") != group.id:
+            continue
+        question_id = answer.get("questionId")
+        if not isinstance(question_id, str) or question_id not in declared_ids:
+            raise ValueError(
+                f"regression group {group.id} observed an undeclared question id "
+                f"{question_id!r}"
+            )
+        present[question_id] = answer
+    grounded, _ = grounded_rate(
+        [present[question_id] for question_id in declared if question_id in present]
+    )
+    return grounded, len(declared)
 
 
 def evaluate(
@@ -113,11 +138,9 @@ def evaluate(
             else {"answers": []}
         )
         for group in regression_set.groups:
-            grounded, total = grounded_rate(
-                _group_answers(observations_map["answers"], group.id)
-            )
-            baseline_grounded, baseline_total = grounded_rate(
-                _group_answers(baseline_map["answers"], group.id)
+            grounded, total = _group_rate(observations_map["answers"], group)
+            baseline_grounded, baseline_total = _group_rate(
+                baseline_map["answers"], group
             )
             group_passed = grounded * baseline_total >= baseline_grounded * total
             regression_groups.append(
@@ -214,6 +237,16 @@ def validate_real(
 
     _require(regression is not None, "--regression")
     _require(baseline is not None, "--baseline-observations")
+    try:
+        regression_set = validate_regression(regression)
+    except ValueError as error:
+        raise ValueError(
+            f"real mode requires a valid regression document: {error}"
+        ) from error
+    _require(
+        regression_set.complete,
+        "a complete regression set (every group's declared questions filled in)",
+    )
     baseline_map = _mapping(baseline, "baseline observations")
     _require(
         baseline_map.get("graphVersion") == observations_map.get("graphVersion"),
@@ -248,6 +281,10 @@ def main() -> int:
     arguments = parser.parse_args()
 
     try:
+        if (arguments.regression is None) != (arguments.baseline_observations is None):
+            raise ValueError(
+                "--regression and --baseline-observations must be provided together"
+            )
         golden = _load_json(arguments.golden)
         observations = _load_json(arguments.observations)
         regression = _load_json(arguments.regression) if arguments.regression else None
@@ -267,7 +304,7 @@ def main() -> int:
         report = evaluate(
             golden, observations, regression=regression, baseline=baseline
         )
-    except ValueError as error:
+    except (ValueError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 
