@@ -16,7 +16,7 @@
 - 关系词表（spec 1.1）：`REQUIRES`、`APPLIES_TO`、`PART_OF`、`EXCEPTION_OF`、`SUPERSEDES`、`TRIGGERS`、`PRECEDES`、`VALIDATED_BY`、`RESPONSIBLE_FOR`、`USES`、`DEFINES`、`CONFLICTS_WITH`、兜底 `RELATED_TO`。
 - 节点类型：`ENTITY`、`CONCEPT`、`REQUIREMENT`、`SYSTEM`、`ACTOR`、`PROCESS`。
 - `relationLabel` ≤ 64 字符；节点 `aliases` ≤ 5 个，每个 ≤ 128 字符。
-- 批大小 `TAPPER_GRAPH_BATCH_SIZE` 默认 10（1–50）；重试 `TAPPER_GRAPH_BATCH_RETRIES` 默认 3（1–10）；重试退避 1s、2s、4s（`backoff_seconds × 2^attempt`）。
+- 批大小 `TAPPER_GRAPH_BATCH_SIZE` 默认 10（1–50）；重试 `TAPPER_GRAPH_BATCH_RETRIES` 默认 3（1–10）；重试退避 1s、2s（`backoff_seconds × 2^(attempt-1)`；默认 3 次重试只产生 2 次退避，第 3 次失败即终止，不再退避），且每次退避不超过租约时长。
 - 每个文档最多处理前 500 个切片（现状保留）。
 - 批次幂等键：`f"{request_digest}:batch:{batch_index}"`。
 - 迁移编号 `0028_graph_fragment_batch`（spec 5.1 的 `0028_project_graph` 顺延为 `0029`，本 PR 同步修正 spec）。
@@ -53,7 +53,7 @@
   - `GraphSnapshot.status: Literal["CANDIDATE", "READY", "PARTIAL", "FAILED"]`，`create()` 的 `status` 参数同样放宽。
 - Produces（契约）：`GraphSnapshotView.status: Literal["CANDIDATE", "READY", "PARTIAL", "FAILED"]`。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```python
 # tests/unit/graph/test_graph_vocabulary.py
@@ -91,26 +91,26 @@ def test_snapshot_accepts_partial_status():
                                 document_revision_ids=("r",), status="PARTIAL").status == "PARTIAL"
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/unit/graph/test_graph_vocabulary.py tests/unit/graph/test_graph_models.py -v`
 Expected: FAIL（`ModuleNotFoundError: vocabulary`、`TypeError: unexpected argument`）
 
-- [ ] **Step 3: 实现 `vocabulary.py`，修改 `GraphNode`、`GraphEdge`、`GraphSnapshot` 与 `GraphSnapshotView`**
+- [x] **Step 3: 实现 `vocabulary.py`，修改 `GraphNode`、`GraphEdge`、`GraphSnapshot` 与 `GraphSnapshotView`**
 
 `models.py` 的 `GraphNode.__post_init__` 用 `NODE_TYPES` 替换硬编码集合；新增字段放在各自 dataclass 最后以保持位置参数兼容。
 
-- [ ] **Step 4: 运行测试确认通过，再跑图谱全部单元与契约测试**
+- [x] **Step 4: 运行测试确认通过，再跑图谱全部单元与契约测试**
 
 Run: `uv run pytest tests/unit/graph tests/contract/test_graph_http.py tests/contract/test_graph_store_contract.py -v`
 Expected: 全部 PASS
 
-- [ ] **Step 5: 重新生成契约并确认前端类型编译**
+- [x] **Step 5: 重新生成契约并确认前端类型编译**
 
 Run（仓库根目录）: `make contracts && corepack pnpm --dir apps/tap-ai-frontend exec tsc -b`
 Expected: `contracts/` 与 `apps/tap-ai-frontend/src/shared/api/generated/schema.ts` 中 `GraphSnapshotView.status` 含 `PARTIAL`；tsc 无错误。若 `grep -rn '"READY"' apps/tap-ai-frontend/src/features/graph apps/tap-ai-frontend/src/widgets/tap/workspace/LibraryWorkspace.tsx` 有按状态判断"就绪"的分支，把 `"PARTIAL"` 与 `"READY"` 同等对待。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add apps/tap-ai-backend/src/tap/modules/graph/domain apps/tap-ai-backend/src/tap/contracts/http.py apps/tap-ai-backend/tests/unit/graph contracts apps/tap-ai-frontend/src/shared/api/generated
@@ -132,7 +132,7 @@ git commit -m "feat: add graph relation vocabulary, aliases and partial snapshot
 - Produces（列）：`graph_node.aliases JSON null`；`graph_edge.relation_label String(64) not null server_default ""`。
 - Produces：`publish_graph_snapshot(session, scope, draft, *, now, status: Literal["READY", "PARTIAL"] = "READY") -> GraphSnapshot`；已存在 READY 或 PARTIAL 的同一快照直接返回已加载值。`_memory` 读回 `aliases` 与 `relation_label`。
 
-- [ ] **Step 1: 写失败的集成测试（需要 `TAP_DATABASE_URL`，缺失时沿用现有 skip 约定）**
+- [x] **Step 1: 写失败的集成测试（需要 `TAP_DATABASE_URL`，缺失时沿用现有 skip 约定）**
 
 ```python
 # 追加到 tests/integration/test_mysql_graph_store.py
@@ -148,23 +148,23 @@ async def test_publish_round_trips_aliases_relation_label_and_partial_status(ses
     assert graph.edges[0].relation_label == "需要"
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/integration/test_mysql_graph_store.py -k partial -v`
 Expected: FAIL（`TypeError: unexpected keyword 'status'`）
 
-- [ ] **Step 3: 写迁移 `0028_graph_fragment_batch.py`**
+- [x] **Step 3: 写迁移 `0028_graph_fragment_batch.py`**
 
 `down_revision = "0027_prompt_suggestions"`。`upgrade()`：`op.create_table("graph_fragment_batch", ...)` 列与 scope 列、`_scope_constraints` 写法照抄 `0027_prompt_suggestions.py`；`op.add_column("graph_node", sa.Column("aliases", JSON, nullable=True))`；`op.add_column("graph_edge", sa.Column("relation_label", sa.String(64), nullable=False, server_default=""))`。`downgrade()` 反向。
 
-- [ ] **Step 4: 修改 `mysql.py` 表定义、`GRAPH_TABLES`、`publish_graph_snapshot`、`_memory`，并把 `graph_fragment_batch` 加入 `EXPECTED_TABLES`**
+- [x] **Step 4: 修改 `mysql.py` 表定义、`GRAPH_TABLES`、`publish_graph_snapshot`、`_memory`，并把 `graph_fragment_batch` 加入 `EXPECTED_TABLES`**
 
-- [ ] **Step 5: 运行集成、架构与 schema drift 测试**
+- [x] **Step 5: 运行集成、架构与 schema drift 测试**
 
 Run: `uv run pytest tests/integration/test_mysql_graph_store.py tests/architecture/test_migration_metadata.py -v && (cd ../.. && make schema-drift)`
 Expected: 全部 PASS；schema drift 报告无差异（`schema-drift` 需要隔离 MySQL，缺失时跳过并在 PR 描述注明）
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add apps/tap-ai-backend/migrations/versions/0028_graph_fragment_batch.py apps/tap-ai-backend/src/tap/modules/graph/adapters/mysql.py apps/tap-ai-backend/tests
@@ -194,7 +194,7 @@ git commit -m "feat: persist graph fragment batches, aliases and relation labels
 - Produces（`mysql_jobs.py` 模块函数）：`serialize_draft(draft: GraphSnapshotDraft) -> dict[str, object]`、`deserialize_draft(snapshot: GraphSnapshot, payload: Mapping[str, object]) -> GraphSnapshotDraft`（节点含 `aliases`，边含 `relation_label`）。
 - Produces：`InMemoryGraphStore.publish(scope, draft, *, status: Literal["READY", "PARTIAL"] = "READY")`。
 
-- [ ] **Step 1: 写失败的单元测试（内存实现）**
+- [x] **Step 1: 写失败的单元测试（内存实现）**
 
 ```python
 # 追加到 tests/unit/graph/test_graph_jobs.py
@@ -221,19 +221,19 @@ async def test_renew_extends_lease_and_fences_lost_claims():
         await jobs.record_batch(VALIDATION_SCOPE, stale, GraphFragmentBatch(claim.snapshot.snapshot_id, 0, ("c",), GraphBatchStatus.PENDING, attempt=1, failure_code="x"), now=NOW)
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/unit/graph/test_graph_jobs.py -v`
 Expected: FAIL（`AttributeError: record_batch`）
 
-- [ ] **Step 3: 实现 domain 类型、协议、内存实现与 `InMemoryGraphStore.publish(status=)`**
+- [x] **Step 3: 实现 domain 类型、协议、内存实现与 `InMemoryGraphStore.publish(status=)`**
 
-- [ ] **Step 4: 运行单元测试确认通过**
+- [x] **Step 4: 运行单元测试确认通过**
 
 Run: `uv run pytest tests/unit/graph -v`
 Expected: PASS
 
-- [ ] **Step 5: 写失败的 MySQL 集成测试**
+- [x] **Step 5: 写失败的 MySQL 集成测试**
 
 ```python
 # 追加到 tests/integration/test_graph_snapshot_publication.py
@@ -250,16 +250,16 @@ async def test_mysql_batches_survive_reclaim_and_partial_publish(sessions):
     assert (await MysqlGraphStore(sessions).get_snapshot(VALIDATION_SCOPE, job.snapshot.snapshot_id)).status == "PARTIAL"
 ```
 
-- [ ] **Step 6: 实现 `MysqlGraphJobStore.renew / record_batch / load_batches`、`serialize_draft / deserialize_draft`，`complete` 透传 `status`**
+- [x] **Step 6: 实现 `MysqlGraphJobStore.renew / record_batch / load_batches`、`serialize_draft / deserialize_draft`，`complete` 透传 `status`**
 
 `renew` 与 `record_batch` 都先 `_owned_row`（已有的 `FOR UPDATE` 校验）；`record_batch` 用 `insert(...).on_duplicate_key_update(...)`。
 
-- [ ] **Step 7: 运行集成测试确认通过**
+- [x] **Step 7: 运行集成测试确认通过**
 
 Run: `uv run pytest tests/integration/test_graph_snapshot_publication.py tests/unit/graph -v`
 Expected: PASS
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add apps/tap-ai-backend/src/tap/modules/graph apps/tap-ai-backend/tests
@@ -284,7 +284,7 @@ git commit -m "feat: record graph fragment batches and renew extraction leases"
 - Produces（后处理）：`relationType ∉ RELATION_TYPES` 或两端节点 id 不在本批节点集合内的边被丢弃；丢弃数写到 span `graph.extract_batch` 的属性 `tap.graph.dropped_edges`；`relationLabel` 超过 64 字符截断；`aliases` 超过 5 个取前 5 个。证据摘要校验（`_validate_evidence_against_chunks`）保持 fail-closed。
 - `GRAPH_EXTRACTION_PROFILE_DIGEST` 随提示词与 schema 自动变化，无需手改。
 
-- [ ] **Step 1: 写失败的契约测试**
+- [x] **Step 1: 写失败的契约测试**
 
 ```python
 # 追加到 tests/contract/test_graph_extraction_contract.py（把 _output() 里的 "GOVERNS" 改为 "REQUIRES" 并加 "relationLabel": "governs"）
@@ -317,21 +317,21 @@ def test_schema_locks_vocabulary_and_process_type():
     assert "relationLabel" in GRAPH_EXTRACTION_SCHEMA["properties"]["edges"]["items"]["required"]
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/contract/test_graph_extraction_contract.py -v`
 Expected: 新测试 FAIL；现有 `test_invalid_model_facts_fail_closed` 因 `relationLabel` 缺失而 FAIL（下一步一并修）
 
-- [ ] **Step 3: 修改 `GraphExtractionRequest`、schema、提示词、上下文组装与后处理**
+- [x] **Step 3: 修改 `GraphExtractionRequest`、schema、提示词、上下文组装与后处理**
 
 后处理在构造 `GraphEdge` 之前过滤原始边字典；`span("graph.extract_batch", {"tap.graph.batch_index": request.batch_index}) as current` 包住网关调用与后处理，结束前 `current.set_attribute("tap.graph.dropped_edges", dropped)`。
 
-- [ ] **Step 4: 运行契约测试与 schema 检查确认通过**
+- [x] **Step 4: 运行契约测试与 schema 检查确认通过**
 
 Run: `uv run pytest tests/contract/test_graph_extraction_contract.py tests/unit/graph -v`
 Expected: PASS（含 `check_schema(GRAPH_EXTRACTION_SCHEMA)`）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add apps/tap-ai-backend/src/tap/modules/graph apps/tap-ai-backend/tests/contract/test_graph_extraction_contract.py
@@ -370,7 +370,7 @@ git commit -m "feat: batch graph extraction context and enforce the relation voc
 - 回退：整份文档没有任何边时，产出一个节点 `GraphNode("grn_" + sha256(snapshot_id)[:32], snapshot_id, filename, "ENTITY", f"document:{document_revision_id}", 全部证据 id)`，零条边。
 - 上限：最多处理前 500 个切片；节点超过 300 个时按首次出现顺序截断并丢弃涉及被截断节点的边。
 
-- [ ] **Step 1: 写失败的测试（替换 `test_fake_graph_publisher.py` 内容）**
+- [x] **Step 1: 写失败的测试（替换 `test_fake_graph_publisher.py` 内容）**
 
 ```python
 def _request(*contents: str) -> GraphExtractionRequest: ...  # 每段 content 一个切片，chunkId 为 chunk-{i}
@@ -407,19 +407,19 @@ async def test_rule_based_only_emits_vocabulary_relations_and_bounded_nodes():
     assert all(e.source_node_id in {n.node_id for n in draft.nodes} and e.target_node_id in {n.node_id for n in draft.nodes} for e in draft.edges)
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/unit/graph/test_fake_graph_publisher.py -v`
 Expected: FAIL（仍产出 "Section" 节点）
 
-- [ ] **Step 3: 重写 `fake_extraction.py`，更新 `test_graph_worker.py` 改用 `rule_based_draft(job.snapshot, request_chunks, filename="revision-1")`**
+- [x] **Step 3: 重写 `fake_extraction.py`，更新 `test_graph_worker.py` 改用 `rule_based_draft(job.snapshot, request_chunks, filename="revision-1")`**
 
-- [ ] **Step 4: 运行相关测试确认通过**
+- [x] **Step 4: 运行相关测试确认通过**
 
 Run: `uv run pytest tests/unit/graph tests/integration/test_prompt_suggestion_inputs_mysql.py -v`
 Expected: PASS（后者仅在有 MySQL 时运行，确认 `document:` 前缀节点仍被推荐问题实体过滤排除）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add apps/tap-ai-backend/src/tap/modules/graph/adapters/fake_extraction.py apps/tap-ai-backend/tests/unit/graph
@@ -454,7 +454,7 @@ git commit -m "feat: replace placeholder graph extraction with rule-based relati
 - Produces（设置）：`TapperSettings.graph_batch_size: int`（`TAPPER_GRAPH_BATCH_SIZE`，默认 10，1–50）、`graph_batch_retries: int`（`TAPPER_GRAPH_BATCH_RETRIES`，默认 3，1–10），`create_graph_worker_runtime` 传入 `GraphWorker(batch_size=..., batch_retries=...)`。
 - `.env.example`：`TAPPER_GRAPH_EXTRACTION_MODE=model`，紧随其后新增 `TAPPER_GRAPH_BATCH_SIZE=10`、`TAPPER_GRAPH_BATCH_RETRIES=3`，并加一行注释说明 `fake` 仅供测试。`scripts/run-tapper-e2e.sh` 在 `export TAPPER_MODEL_BACKEND=fake` 之后加 `export TAPPER_GRAPH_EXTRACTION_MODE=fake`。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```python
 # tests/unit/graph/test_graph_fragments.py
@@ -497,19 +497,19 @@ def test_graph_batch_settings_defaults_and_bounds():
         TapperSettings.from_mapping({**_minimal_env(), "TAPPER_GRAPH_BATCH_SIZE": "0"})
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/unit/graph/test_graph_fragments.py tests/unit/graph/test_graph_worker.py -v`
 Expected: FAIL（`ModuleNotFoundError: fragments`、`TypeError: batch_size`）
 
-- [ ] **Step 3: 实现 `fragments.py`、重写 `GraphWorker.run_once`、新增设置与接线、改 `.env.example` 与 `run-tapper-e2e.sh`**
+- [x] **Step 3: 实现 `fragments.py`、重写 `GraphWorker.run_once`、新增设置与接线、改 `.env.example` 与 `run-tapper-e2e.sh`**
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `uv run pytest tests/unit/graph tests/unit -k "graph or settings" -v`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add apps/tap-ai-backend/src/tap/modules/graph/application apps/tap-ai-backend/src/tap/entrypoints/tapper_runtime.py apps/tap-ai-backend/tests .env.example scripts/run-tapper-e2e.sh
@@ -526,19 +526,19 @@ git commit -m "feat: extract graph fragments in resumable batches with retries"
 - Modify: `docs/superpowers/plans/2026-09-29-v1-roadmap.md`（子项目 4、5 合并为"知识图谱脉络分析 —— 进行中（PR 1 抽取分批）"，链接本计划与 spec）
 - Modify: `docs/superpowers/plans/2026-10-01-product-roadmap.md`（对应行同步）
 
-- [ ] **Step 1: 更新四份文档；按 Global Constraints 对客户企业名称做一次大小写不敏感的全文检索，必须无输出**
+- [x] **Step 1: 更新四份文档；按 Global Constraints 对客户企业名称做一次大小写不敏感的全文检索，必须无输出**
 
-- [ ] **Step 2: 全量检查**
+- [x] **Step 2: 全量检查**
 
 Run（仓库根目录）: `make check && make test && git diff --check`
 Expected: 全部通过；`make test` 在无 MySQL 时集成测试按现有约定跳过，有 MySQL 时 Task 2、3 的集成测试运行并通过
 
-- [ ] **Step 3: 隔离 E2E**
+- [x] **Step 3: 隔离 E2E**
 
 Run: `make demo-e2e`
 Expected: `knowledge-graph.spec.ts` 通过（夹具句子 "Tapper refund requests above five thousand units require finance review." 经规则式抽取得到 `REQUIRES` 边，`edges[0].origin == "EXTRACTED"`），其余 journey 不劣于当前 main（已知的上传卡住与 Stop 竞态失败项如仍存在，记录在 PR 描述中）
 
-- [ ] **Step 4: 提交并整理 PR 描述**
+- [x] **Step 4: 提交并整理 PR 描述**
 
 ```bash
 git add docs

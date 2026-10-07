@@ -209,7 +209,7 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 
 ### 5.1 迁移
 
-- `0028_graph_fragment_batch`（PR 1：批次表、`graph_node.aliases`、`graph_edge.relation_label`）、`0029_project_graph`（PR 2：项目图九张表与合并队列表）、`0030_edge_citations`（PR 3：`knowledge_citation_snapshot` 的引用种类与边字段列）。旧快照表保留为片段存储。
+- `0028_graph_fragment_batch`（PR 1：批次表、`graph_node.aliases`、`graph_edge.relation_label`）、`0029_project_graph`（PR 2：项目图八张表与合并队列表）、`0030_edge_citations`（PR 3：`knowledge_citation_snapshot` 的引用种类与边字段列）。旧快照表保留为片段存储。
 - 升级后已有片段均为旧档案摘要，不参与合并。操作命令 `graph rebuild --project <id>`（挂在现有 `knowledge-recover` 风格 CLI 下）按项目重新排队全部已发布修订的抽取，限速执行。
 
 ### 5.2 配置
