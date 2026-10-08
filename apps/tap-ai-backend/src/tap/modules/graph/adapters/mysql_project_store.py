@@ -99,24 +99,37 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
     async def _load(self, scope: ProjectScopeContext, version: int) -> LoadedProjectGraph:
         """Read-only load of one published version: one `select` per table,
         filtered by `(project_id, version)`, with no PARTIAL/fragment concept
-        (that lives only in `GraphSnapshotDraft`/`load_fragment_draft`)."""
+        (that lives only in `GraphSnapshotDraft`/`load_fragment_draft`).
+
+        Each `select` names only the columns the row mapping below actually
+        reads — never the five scope columns every `graph_project_*` table
+        carries (`enterprise_id`/`project_id`/`actor_id`/`identity_mode`/
+        `identity_origin`), which `scope_predicates` already filters on and
+        which the resulting domain objects never use — and results are
+        fetched as plain `Row` tuples rather than `RowMapping`s, then
+        unpacked positionally in the same order as the `select(...)` column
+        list below. At 10k nodes / 50k edges this is purely a column-count
+        and row-object-shape change: same tables, same `where`/`order_by`,
+        same values read, same domain objects built."""
 
         scope = require_project_scope(scope)
         async with self._sessions() as session:
             version_row = (
-                (
-                    await session.execute(
-                        select(graph_project_version)
-                        .where(
-                            *scope_predicates(graph_project_version, scope),
-                            graph_project_version.c.version == version,
-                        )
-                        .order_by(graph_project_version.c.version)
+                await session.execute(
+                    select(
+                        graph_project_version.c.status,
+                        graph_project_version.c.fragment_digest,
+                        graph_project_version.c.node_count,
+                        graph_project_version.c.edge_count,
+                        graph_project_version.c.merged_at,
                     )
+                    .where(
+                        *scope_predicates(graph_project_version, scope),
+                        graph_project_version.c.version == version,
+                    )
+                    .order_by(graph_project_version.c.version)
                 )
-                .mappings()
-                .one_or_none()
-            )
+            ).one_or_none()
             if version_row is None:
                 raise ProjectGraphNotReady(
                     f"project {scope.project_id!r} has no graph version {version}"
@@ -126,154 +139,178 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
             # order — and therefore `LoadedProjectGraph`'s adjacency/evidence
             # tuple order — is defined rather than left to MySQL's whim.
             node_rows = (
-                (
-                    await session.execute(
-                        select(graph_project_node)
-                        .where(
-                            *scope_predicates(graph_project_node, scope),
-                            graph_project_node.c.version == version,
-                        )
-                        .order_by(graph_project_node.c.node_id)
+                await session.execute(
+                    select(
+                        graph_project_node.c.node_id,
+                        graph_project_node.c.label,
+                        graph_project_node.c.node_type,
+                        graph_project_node.c.canonical_key,
+                        graph_project_node.c.degree,
+                        graph_project_node.c.community_id,
+                        graph_project_node.c.aliases,
                     )
+                    .where(
+                        *scope_predicates(graph_project_node, scope),
+                        graph_project_node.c.version == version,
+                    )
+                    .order_by(graph_project_node.c.node_id)
                 )
-                .mappings()
-                .all()
-            )
+            ).all()
             edge_rows = (
-                (
-                    await session.execute(
-                        select(graph_project_edge)
-                        .where(
-                            *scope_predicates(graph_project_edge, scope),
-                            graph_project_edge.c.version == version,
-                        )
-                        .order_by(graph_project_edge.c.edge_id)
+                await session.execute(
+                    select(
+                        graph_project_edge.c.edge_id,
+                        graph_project_edge.c.source_node_id,
+                        graph_project_edge.c.target_node_id,
+                        graph_project_edge.c.relation_type,
+                        graph_project_edge.c.relation_label,
+                        graph_project_edge.c.origin,
+                        graph_project_edge.c.confidence,
                     )
+                    .where(
+                        *scope_predicates(graph_project_edge, scope),
+                        graph_project_edge.c.version == version,
+                    )
+                    .order_by(graph_project_edge.c.edge_id)
                 )
-                .mappings()
-                .all()
-            )
+            ).all()
             source_rows = (
-                (
-                    await session.execute(
-                        select(graph_project_node_source)
-                        .where(
-                            *scope_predicates(graph_project_node_source, scope),
-                            graph_project_node_source.c.version == version,
-                        )
-                        .order_by(
-                            graph_project_node_source.c.node_id,
-                            graph_project_node_source.c.source_revision_id,
-                            graph_project_node_source.c.chunk_id,
-                        )
+                await session.execute(
+                    select(
+                        graph_project_node_source.c.node_id,
+                        graph_project_node_source.c.source_revision_id,
+                        graph_project_node_source.c.document_revision_id,
+                        graph_project_node_source.c.chunk_id,
+                        graph_project_node_source.c.anchor_json,
+                        graph_project_node_source.c.fragment_snapshot_id,
+                        graph_project_node_source.c.fragment_node_id,
+                    )
+                    .where(
+                        *scope_predicates(graph_project_node_source, scope),
+                        graph_project_node_source.c.version == version,
+                    )
+                    .order_by(
+                        graph_project_node_source.c.node_id,
+                        graph_project_node_source.c.source_revision_id,
+                        graph_project_node_source.c.chunk_id,
                     )
                 )
-                .mappings()
-                .all()
-            )
+            ).all()
             evidence_rows = (
-                (
-                    await session.execute(
-                        select(graph_project_edge_evidence)
-                        .where(
-                            *scope_predicates(graph_project_edge_evidence, scope),
-                            graph_project_edge_evidence.c.version == version,
-                        )
-                        .order_by(
-                            graph_project_edge_evidence.c.edge_id,
-                            graph_project_edge_evidence.c.source_revision_id,
-                            graph_project_edge_evidence.c.chunk_id,
-                        )
+                await session.execute(
+                    select(
+                        graph_project_edge_evidence.c.edge_id,
+                        graph_project_edge_evidence.c.source_revision_id,
+                        graph_project_edge_evidence.c.document_revision_id,
+                        graph_project_edge_evidence.c.chunk_id,
+                        graph_project_edge_evidence.c.anchor_json,
+                        graph_project_edge_evidence.c.content_digest,
+                        graph_project_edge_evidence.c.fragment_snapshot_id,
+                        graph_project_edge_evidence.c.fragment_edge_id,
+                    )
+                    .where(
+                        *scope_predicates(graph_project_edge_evidence, scope),
+                        graph_project_edge_evidence.c.version == version,
+                    )
+                    .order_by(
+                        graph_project_edge_evidence.c.edge_id,
+                        graph_project_edge_evidence.c.source_revision_id,
+                        graph_project_edge_evidence.c.chunk_id,
                     )
                 )
-                .mappings()
-                .all()
-            )
+            ).all()
             alias_rows = (
-                (
-                    await session.execute(
-                        select(graph_project_alias)
-                        .where(
-                            *scope_predicates(graph_project_alias, scope),
-                            graph_project_alias.c.version == version,
-                        )
-                        .order_by(graph_project_alias.c.alias_norm, graph_project_alias.c.node_id)
+                await session.execute(
+                    select(
+                        graph_project_alias.c.alias_norm,
+                        graph_project_alias.c.node_id,
+                        graph_project_alias.c.origin,
                     )
+                    .where(
+                        *scope_predicates(graph_project_alias, scope),
+                        graph_project_alias.c.version == version,
+                    )
+                    .order_by(graph_project_alias.c.alias_norm, graph_project_alias.c.node_id)
                 )
-                .mappings()
-                .all()
-            )
+            ).all()
             community_rows = (
-                (
-                    await session.execute(
-                        select(graph_project_community)
-                        .where(
-                            *scope_predicates(graph_project_community, scope),
-                            graph_project_community.c.version == version,
-                        )
-                        .order_by(graph_project_community.c.community_id)
+                await session.execute(
+                    select(
+                        graph_project_community.c.community_id,
+                        graph_project_community.c.label,
+                        graph_project_community.c.size,
                     )
+                    .where(
+                        *scope_predicates(graph_project_community, scope),
+                        graph_project_community.c.version == version,
+                    )
+                    .order_by(graph_project_community.c.community_id)
                 )
-                .mappings()
-                .all()
-            )
+            ).all()
 
-        project_version = _version_from_row(scope, version_row)
+        project_version = ProjectGraphVersion(
+            project_id=scope.project_id,
+            version=version,
+            status=version_row[0],
+            fragment_digest=version_row[1],
+            node_count=version_row[2],
+            edge_count=version_row[3],
+            merged_at=version_row[4],
+        )
         nodes = tuple(
             ProjectNode(
-                node_id=row["node_id"],
-                label=row["label"],
-                node_type=row["node_type"],
-                canonical_key=row["canonical_key"],
-                degree=row["degree"],
-                community_id=row["community_id"],
-                aliases=tuple(row["aliases"] or ()),
+                node_id=row[0],
+                label=row[1],
+                node_type=row[2],
+                canonical_key=row[3],
+                degree=row[4],
+                community_id=row[5],
+                aliases=tuple(row[6] or ()),
             )
             for row in node_rows
         )
         edges = tuple(
             ProjectEdge(
-                edge_id=row["edge_id"],
-                source_node_id=row["source_node_id"],
-                target_node_id=row["target_node_id"],
-                relation_type=row["relation_type"],
-                relation_label=row["relation_label"],
-                origin=RelationOrigin(row["origin"]),
-                confidence=float(row["confidence"]),
+                edge_id=row[0],
+                source_node_id=row[1],
+                target_node_id=row[2],
+                relation_type=row[3],
+                relation_label=row[4],
+                origin=RelationOrigin(row[5]),
+                confidence=float(row[6]),
             )
             for row in edge_rows
         )
         node_sources = tuple(
             NodeSource(
-                node_id=row["node_id"],
-                source_revision_id=row["source_revision_id"],
-                document_revision_id=row["document_revision_id"],
-                chunk_id=row["chunk_id"],
-                anchor=row["anchor_json"],
-                fragment_snapshot_id=row["fragment_snapshot_id"],
-                fragment_node_id=row["fragment_node_id"],
+                node_id=row[0],
+                source_revision_id=row[1],
+                document_revision_id=row[2],
+                chunk_id=row[3],
+                anchor=row[4],
+                fragment_snapshot_id=row[5],
+                fragment_node_id=row[6],
             )
             for row in source_rows
         )
         edge_evidence = tuple(
             EdgeEvidence(
-                edge_id=row["edge_id"],
-                source_revision_id=row["source_revision_id"],
-                document_revision_id=row["document_revision_id"],
-                chunk_id=row["chunk_id"],
-                anchor=row["anchor_json"],
-                content_digest=row["content_digest"],
-                fragment_snapshot_id=row["fragment_snapshot_id"],
-                fragment_edge_id=row["fragment_edge_id"],
+                edge_id=row[0],
+                source_revision_id=row[1],
+                document_revision_id=row[2],
+                chunk_id=row[3],
+                anchor=row[4],
+                content_digest=row[5],
+                fragment_snapshot_id=row[6],
+                fragment_edge_id=row[7],
             )
             for row in evidence_rows
         )
         aliases = tuple(
-            Alias(alias_norm=row["alias_norm"], node_id=row["node_id"], origin=row["origin"])
-            for row in alias_rows
+            Alias(alias_norm=row[0], node_id=row[1], origin=row[2]) for row in alias_rows
         )
         communities = tuple(
-            Community(community_id=row["community_id"], label=row["label"], size=row["size"])
+            Community(community_id=row[0], label=row[1], size=row[2])
             for row in community_rows
         )
         return LoadedProjectGraph.from_rows(
