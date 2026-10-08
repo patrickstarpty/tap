@@ -325,6 +325,60 @@ async def test_lease_lost_mid_embedding_stops_without_publishing(monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_embedding_skipped_above_node_cap_but_merge_still_publishes(monkeypatch, caplog):
+    fragments = (
+        _fragment("frag-a", label="A"),
+        _fragment("frag-b", label="B"),
+        _fragment("frag-c", label="C"),
+    )
+    queue = InMemoryProjectMergeQueue()
+    embeddings = RecordingEmbeddings()
+    worker = ProjectGraphMergeWorker(
+        queue=queue,
+        inputs=FakeInputs(fragments),
+        merger=ProjectGraphMerger(),
+        scope=VALIDATION_SCOPE,
+        worker_id="merge-worker-1",
+        embeddings=embeddings,
+        embedding_max_nodes=2,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    with caplog.at_level("WARNING"):
+        result = await worker.run_once(limit=10)
+
+    assert result == 1
+    assert embeddings.calls == []
+    current = await queue.store.get_current(VALIDATION_SCOPE)
+    assert current is not None and current.version == 1
+    assert any(
+        VALIDATION_SCOPE.project_id in record.message and "3" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_logs_a_warning_with_job_kind_project_and_phase(monkeypatch, caplog):
+    queue = LeaseLostQueue()
+    fragments = (_fragment("frag-a"),)
+    inputs = FakeInputs(fragments)
+    worker = _worker(queue=queue, inputs=inputs, monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    with caplog.at_level("WARNING"):
+        result = await worker.run_once(limit=10)
+
+    assert result == 1
+    assert any(
+        "project_merge" in record.message
+        and VALIDATION_SCOPE.project_id in record.message
+        and "renew" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
 async def test_fail_swallows_a_lease_already_lost_to_another_worker(monkeypatch) -> None:
     queue = FailLeaseLostQueue()
     worker = _worker(queue=queue, inputs=FailingInputs(), monkeypatch=monkeypatch)

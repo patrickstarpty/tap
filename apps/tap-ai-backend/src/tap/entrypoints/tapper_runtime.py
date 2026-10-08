@@ -109,6 +109,7 @@ class TapperSettings:
     graph_batch_retries: int
     graph_align_embedding: bool
     graph_align_threshold: float
+    graph_align_embedding_max_nodes: int
     graph_overview_limit: int
     collection: str
     alias: str
@@ -404,8 +405,13 @@ class TapperSettings:
                 choices=frozenset({"0", "1"}),
             )
             == "1",
-            graph_align_threshold=_duration(
-                values, "TAPPER_GRAPH_ALIGN_THRESHOLD", 0.92, maximum=1.0
+            graph_align_threshold=_ratio(values, "TAPPER_GRAPH_ALIGN_THRESHOLD", 0.92),
+            graph_align_embedding_max_nodes=_integer(
+                values,
+                "TAPPER_GRAPH_ALIGN_EMBEDDING_MAX_NODES",
+                2000,
+                minimum=1,
+                maximum=20000,
             ),
             graph_overview_limit=_integer(
                 values,
@@ -1041,6 +1047,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             scope=scope,
             worker_id=settings.worker_id + "-graph-merge",
             embeddings=label_embeddings,
+            embedding_max_nodes=settings.graph_align_embedding_max_nodes,
         )
         worker = GraphWorker(
             jobs=MysqlGraphJobStore(sessions, merge_queue=merge_queue),
@@ -1977,6 +1984,18 @@ def _duration(
         raise ValueError(f"{name} must be a finite duration") from None
     if not math.isfinite(parsed) or not 0 < parsed <= maximum:
         raise ValueError(f"{name} must be a finite bounded duration")
+    return parsed
+
+
+def _ratio(values: Mapping[str, str], name: str, default: float) -> float:
+    """Parse a float bounded to the closed [0, 1] interval (e.g. a similarity threshold)."""
+    raw = _value(values, name, str(default))
+    try:
+        parsed = float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a finite ratio") from None
+    if not math.isfinite(parsed) or not 0.0 <= parsed <= 1.0:
+        raise ValueError(f"{name} must be between 0 and 1")
     return parsed
 
 
