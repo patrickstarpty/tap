@@ -21,6 +21,44 @@ from tap.modules.knowledge.api import latest_template_version as _latest_templat
 from tap.platform.telemetry import span
 
 PlannerCall = Callable[[PlanningInput, float], Awaitable[dict[str, Any]]]
+# Anchored relation-question cues, kept as small independent patterns rather
+# than one monolithic alternation so each one's false-positive risk can be
+# reasoned about on its own.
+_RELATION_WORD = re.compile(r"关系(?!型|户)")
+_DEPENDENCY_KEYWORD = re.compile(r"影响|依赖|前置条件|上游|下游|触发")
+_CHINESE_INTERROGATIVE = re.compile(r"什么|吗|哪些|哪个")
+_SEQUENCE_QUESTION = re.compile(r"之后是什么|下一步是什么")
+_WHAT_FOLLOWS_QUESTION = re.compile(
+    r"^\s*(?:what|which)\s+(?:follows|comes after)\b(?!\s+is\s+a\b)", re.I
+)
+_ENGLISH_RELATION_KEYWORD = re.compile(
+    r"\b(?:relate|related|relationship|depend(?:s)?|affect|trigger)\b", re.I
+)
+_ENGLISH_QUESTION_LEAD = re.compile(r"^\s*(?:what|which|how|does|do|is|are)\b", re.I)
+
+
+def _is_relation_question(original: str) -> bool:
+    """A question asks how two things relate, what depends on or follows
+    something, or which rules affect an entity. Each cue below is anchored to
+    a concrete distinguishing feature instead of a bare keyword, so a mention
+    of a *kind* of relationship (`关系型`/`关系户`) or a declarative sentence
+    that merely contains a relation word (`What follows is a list of
+    rules`) does not qualify as a question about one."""
+    if _RELATION_WORD.search(original):
+        return True
+    if _DEPENDENCY_KEYWORD.search(original) and _CHINESE_INTERROGATIVE.search(original):
+        return True
+    if _SEQUENCE_QUESTION.search(original):
+        return True
+    if _WHAT_FOLLOWS_QUESTION.search(original):
+        return True
+    if _ENGLISH_RELATION_KEYWORD.search(original) and (
+        _ENGLISH_QUESTION_LEAD.search(original) or original.rstrip().endswith("?")
+    ):
+        return True
+    return False
+
+
 _TEMPLATE = {
     "general_chat": "general",
     "transform_text": "general",
@@ -151,15 +189,7 @@ class AnswerPlanner:
             else:
                 if ambiguous:
                     standalone = value.authorized_referents[0] + "：" + original
-                if re.search(
-                    r"什么关系|有何关系|之间.{0,10}(?:有|是)?什么关系|"
-                    r"哪些.*(?:影响|依赖|触发)|之后是什么|下一步是什么|"
-                    r"relationship between|how (?:does|do|is) .+ relate|"
-                    r"what (?:follows|comes after)\b[^.!?\n]*\?|"
-                    r"which .+ (?:affect|depend on|trigger)",
-                    original,
-                    re.I,
-                ):
+                if _is_relation_question(original):
                     intent, route = "relation", "graph"
                 elif complex_query:
                     intent = "comparison"

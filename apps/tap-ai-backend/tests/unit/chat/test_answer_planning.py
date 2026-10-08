@@ -604,3 +604,56 @@ async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_chang
 
     plan = await planning().AnswerPlanner(model).plan(context("比较章节 A 和 B"))
     assert plan.degradation_reason == "invalid-plan"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message,should_route_to_graph",
+    [
+        # Fix round 2/5: recall -- natural phrasings that must reach relation/graph.
+        ("A和B之间的关系", True),  # regression: bare 关系 after 之间 with no 什么/有/是
+        ("A和B有什么关系", True),
+        ("A与B是什么关系", True),
+        ("A和B的关系是什么", True),
+        ("A会影响B吗", True),
+        ("A影响哪些流程", True),
+        ("A依赖什么", True),
+        ("A的前置条件是什么", True),
+        ("A的上游是什么", True),
+        ("提交后下一步是什么", True),
+        ("核保之后是什么步骤", True),
+        ("what is the relationship between A and B", True),
+        ("how does A relate to B", True),
+        ("How are A and B related?", True),
+        ("What depends on A?", True),
+        ("Does A affect B?", True),
+        ("which systems affect claims", True),
+        ("What comes after underwriting?", True),
+        ("what follows underwriting", True),  # regression: no "?"
+        # Fix round 2/5: precision -- lookalikes that must not reach relation/graph.
+        ("提交申请后下一步是否需要审批", False),
+        ("两个系统之间的关系型数据库配置", False),
+        ("这条规则与审批有什么关系型约束", False),
+        ("他们是什么关系户", False),
+        ("What follows is a list of rules", False),
+        ("What follows is a list of rules?", False),
+        ("如何提交理赔申请", False),
+        ("比较核保流程和理赔流程的不同", False),
+        ("哪些字段是必填的", False),
+        ("which of these documents are PDFs", False),
+    ],
+)
+async def test_relation_heuristic_precision_and_recall_table(message, should_route_to_graph):
+    """Review fix round 2/5: a demo-facing, table-driven check of the relation
+    heuristic's recall (natural question phrasings in Chinese and English)
+    and precision (lookalikes that must stay off the graph route) in one
+    place, so the whole acceptance surface is visible and regression-checked
+    together rather than split across ad hoc single-case tests."""
+
+    plan = await planning().AnswerPlanner().plan(context(message))
+    if should_route_to_graph:
+        assert plan.intent == "relation", message
+        assert plan.route == "graph", message
+    else:
+        assert plan.intent != "relation", message
+        assert plan.route != "graph", message
