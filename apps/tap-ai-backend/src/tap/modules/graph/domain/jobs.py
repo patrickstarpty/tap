@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.graph.domain.models import GraphSnapshot
+from tap.modules.graph.domain.models import GraphSnapshot, GraphSnapshotDraft
 from tap.platform.db.project_scope import require_project_scope
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -19,6 +19,12 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 class GraphJobStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    READY = "READY"
+    FAILED = "FAILED"
+
+
+class GraphBatchStatus(StrEnum):
+    PENDING = "PENDING"
     READY = "READY"
     FAILED = "FAILED"
 
@@ -111,3 +117,25 @@ class ClaimedGraphJob(GraphJob):
     lease_owner: str = ""
     lease_token: str = ""
     lease_expires_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GraphFragmentBatch:
+    snapshot_id: str
+    batch_index: int
+    chunk_ids: tuple[str, ...]
+    status: GraphBatchStatus
+    attempt: int = 0
+    failure_code: str | None = None
+    draft: GraphSnapshotDraft | None = None
+
+    def __post_init__(self) -> None:
+        if self.batch_index < 0:
+            raise ValueError("graph fragment batch index must be nonnegative")
+        if not self.chunk_ids:
+            raise ValueError("graph fragment batch requires chunk ids")
+        # A READY batch's draft may be ``None``: the extractor grounded nothing in
+        # this batch (boilerplate chunks, or a relation-less span of a document) and
+        # the batch still succeeded, contributing nothing to the merged fragment.
+        if self.status is not GraphBatchStatus.READY and self.draft is not None:
+            raise ValueError("only a ready graph fragment batch may carry a draft")

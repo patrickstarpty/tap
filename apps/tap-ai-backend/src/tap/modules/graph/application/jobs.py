@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.application.queries import InMemoryGraphStore
 from tap.modules.graph.domain.jobs import (
     ClaimedGraphJob,
+    GraphFragmentBatch,
     GraphJob,
     GraphJobLeaseLost,
     GraphJobRequest,
@@ -35,6 +36,28 @@ class GraphJobStore(Protocol):
         limit: int,
     ) -> tuple[ClaimedGraphJob, ...]: ...
 
+    async def renew(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedGraphJob,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ClaimedGraphJob: ...
+
+    async def record_batch(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedGraphJob,
+        batch: GraphFragmentBatch,
+        *,
+        now: datetime,
+    ) -> None: ...
+
+    async def load_batches(
+        self, scope: ProjectScopeContext, claim: ClaimedGraphJob
+    ) -> tuple[GraphFragmentBatch, ...]: ...
+
     async def complete(
         self,
         scope: ProjectScopeContext,
@@ -42,6 +65,7 @@ class GraphJobStore(Protocol):
         draft: GraphSnapshotDraft,
         *,
         now: datetime,
+        status: Literal["READY", "PARTIAL"] = "READY",
     ) -> GraphJob: ...
 
     async def fail(
@@ -58,6 +82,7 @@ class InMemoryGraphJobStore:
     def __init__(self) -> None:
         self._jobs: dict[tuple[str, str], GraphJob] = {}
         self._requests: dict[tuple[str, str], str] = {}
+        self._batches: dict[tuple[str, str], dict[int, GraphFragmentBatch]] = {}
         self._graph = InMemoryGraphStore()
 
     async def request(
@@ -145,6 +170,42 @@ class InMemoryGraphJobStore:
             raise GraphJobLeaseLost(claim.job_id)
         return current
 
+    async def renew(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedGraphJob,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ClaimedGraphJob:
+        scope = require_project_scope(scope)
+        current = self._owned(scope, claim, now)
+        renewed = replace(current, lease_expires_at=now + lease_duration, updated_at=now)
+        self._jobs[(scope.project_id, current.job_id)] = renewed
+        return renewed
+
+    async def record_batch(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedGraphJob,
+        batch: GraphFragmentBatch,
+        *,
+        now: datetime,
+    ) -> None:
+        scope = require_project_scope(scope)
+        if batch.snapshot_id != claim.snapshot.snapshot_id:
+            raise ValueError("graph fragment batch does not match the claimed snapshot")
+        self._owned(scope, claim, now)
+        batches = self._batches.setdefault((scope.project_id, batch.snapshot_id), {})
+        batches[batch.batch_index] = batch
+
+    async def load_batches(
+        self, scope: ProjectScopeContext, claim: ClaimedGraphJob
+    ) -> tuple[GraphFragmentBatch, ...]:
+        scope = require_project_scope(scope)
+        batches = self._batches.get((scope.project_id, claim.snapshot.snapshot_id), {})
+        return tuple(batches[index] for index in sorted(batches))
+
     async def complete(
         self,
         scope: ProjectScopeContext,
@@ -152,11 +213,12 @@ class InMemoryGraphJobStore:
         draft: GraphSnapshotDraft,
         *,
         now: datetime,
+        status: Literal["READY", "PARTIAL"] = "READY",
     ) -> GraphJob:
         current = self._owned(scope, claim, now)
         if draft.snapshot != current.snapshot:
             raise ValueError("graph draft does not match claimed snapshot")
-        ready_snapshot = await self._graph.publish(scope, draft)
+        ready_snapshot = await self._graph.publish(scope, draft, status=status)
         ready = GraphJob(
             current.job_id,
             current.revision_id,

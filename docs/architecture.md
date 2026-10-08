@@ -60,8 +60,10 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 
 **图谱**
 
-1. graph worker 从已摄取文档抽取实体与关系，写入 MySQL 快照。
+1. graph worker 按文档修订分批（默认 10 个切片一批）用模型抽取实体与关系，关系限定为受控词表并带原文标签，批次结果持久化到 `graph_fragment_batch`，可重试与恢复；全部批次成功为 READY，部分失败为 PARTIAL。
 2. 查询 API 读取快照，载入内存图存储后返回节点、边与证据。
+
+本地 CI/E2E 用规则式假抽取（`TAPPER_GRAPH_EXTRACTION_MODE=fake`），演示与真实环境用 `model`。
 
 LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为固定的 `classify → admit → execute` 三步。
 
@@ -83,7 +85,7 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 | V1 能力 | 现状缺口 |
 | --- | --- |
 | [可靠问答](superpowers/plans/2026-09-29-v1-roadmap.md#1-可靠问答) | 仓库内质量用例为空；SSE 为数据库轮询，无 token 级流式；摄取任务租约回收不递增 `attempt`（Turn 回收递增但无上限）、摄取瞬时失败直接永久失败、worker loop 无异常保护 |
-| [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 每次查询把整个快照载入内存 |
-| [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 仅关键词取节点拼入上下文；无多跳扩展、路径推理、关系边引用与路径高亮 |
+| [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 抽取分批已实现（PR 1）；剩余缺口为项目级图合并，每次查询仍是按来源快照载入内存，详见[知识图谱脉络分析设计](superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md)（PR 2） |
+| [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 仅关键词取节点拼入上下文；剩余缺口为项目级图合并与关系分析推理（无多跳扩展、路径推理、关系边引用与路径高亮），详见[知识图谱脉络分析设计](superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md)（PR 2/PR 3） |
 | [Skills/Agents](superpowers/plans/2026-09-29-v1-roadmap.md#4-skillsagents) | 工具白名单硬编码为 `knowledge.search` / `knowledge.answer`；无导入能力 |
 | [可观测性](superpowers/plans/2026-09-29-v1-roadmap.md#5-可观测性) | 追踪数据无保留期与清理任务，`model_call_content` 原文永久保留会持续增长；DashScope 部分模型算不出成本，需要手动在 `deploy/local/litellm/config.yaml` 配置 `input_cost_per_token`/`output_cost_per_token` |

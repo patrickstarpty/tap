@@ -105,6 +105,8 @@ class TapperSettings:
     embedding_dimension: int
     poll_seconds: float
     job_batch_size: int
+    graph_batch_size: int
+    graph_batch_retries: int
     collection: str
     alias: str
     corpus_version: str
@@ -377,6 +379,20 @@ class TapperSettings:
                 10,
                 minimum=1,
                 maximum=50,
+            ),
+            graph_batch_size=_integer(
+                values,
+                "TAPPER_GRAPH_BATCH_SIZE",
+                10,
+                minimum=1,
+                maximum=50,
+            ),
+            graph_batch_retries=_integer(
+                values,
+                "TAPPER_GRAPH_BATCH_RETRIES",
+                3,
+                minimum=1,
+                maximum=10,
             ),
             collection=collection,
             alias=alias,
@@ -984,6 +1000,8 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             extractor=extractor,
             scope=scope,
             worker_id=settings.worker_id + "-graph",
+            batch_size=settings.graph_batch_size,
+            batch_retries=settings.graph_batch_retries,
         )
         wakeups = RedisWakeupConsumer(
             scope=scope,

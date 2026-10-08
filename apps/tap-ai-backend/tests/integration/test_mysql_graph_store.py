@@ -14,6 +14,7 @@ from tap.modules.graph.adapters.mysql import (
     graph_active_snapshot,
     graph_node_evidence,
     graph_snapshot_revision,
+    publish_graph_snapshot,
 )
 from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
 from tap.modules.graph.domain.jobs import GraphJobLeaseLost, GraphJobRequest, GraphJobStatus
@@ -21,6 +22,7 @@ from tap.modules.graph.domain.models import (
     Evidence,
     GraphEdge,
     GraphNode,
+    GraphSearchQuery,
     GraphSnapshot,
     GraphSnapshotDraft,
     NeighborQuery,
@@ -29,7 +31,12 @@ from tap.modules.graph.domain.models import (
 from tap.platform.db.schema import outbox
 
 
-def _draft(snapshot_id: str) -> GraphSnapshotDraft:
+def _draft(
+    snapshot_id: str,
+    *,
+    aliases: tuple[str, ...] = (),
+    relation_label: str = "",
+) -> GraphSnapshotDraft:
     evidence = Evidence(
         "evidence-1",
         snapshot_id,
@@ -47,7 +54,9 @@ def _draft(snapshot_id: str) -> GraphSnapshotDraft:
             document_revision_ids=("document-revision-1",),
         ),
         (
-            GraphNode("node-1", snapshot_id, "Policy", "ENTITY", "policy", ("evidence-1",)),
+            GraphNode(
+                "node-1", snapshot_id, "Policy", "ENTITY", "policy", ("evidence-1",), aliases
+            ),
             GraphNode("node-2", snapshot_id, "Claim", "ENTITY", "claim"),
         ),
         (
@@ -60,6 +69,7 @@ def _draft(snapshot_id: str) -> GraphSnapshotDraft:
                 RelationOrigin.EXTRACTED,
                 1.0,
                 ("evidence-1",),
+                relation_label,
             ),
         ),
         (evidence,),
@@ -250,5 +260,34 @@ async def test_mysql_graph_job_recovers_expired_lease_and_completes_all_facts_at
             assert (
                 await session.scalar(select(func.count()).select_from(graph_snapshot_revision)) == 1
             )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_publish_round_trips_aliases_relation_label_and_partial_status(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        draft = _draft(
+            "snapshot-aliases-1", aliases=("核保", "underwriting"), relation_label="需要"
+        )
+        async with sessions() as session, session.begin():
+            snapshot = await publish_graph_snapshot(
+                session,
+                VALIDATION_SCOPE,
+                draft,
+                now=datetime(2026, 9, 13, 9, 0, 0),
+                status="PARTIAL",
+            )
+        assert snapshot.status == "PARTIAL"
+        store = MysqlGraphStore(sessions)
+        graph = await store.search(
+            VALIDATION_SCOPE, GraphSearchQuery(snapshot.snapshot_id, "*", 50)
+        )
+        assert graph.nodes[0].aliases == ("核保", "underwriting")
+        assert graph.edges[0].relation_label == "需要"
     finally:
         await engine.dispose()

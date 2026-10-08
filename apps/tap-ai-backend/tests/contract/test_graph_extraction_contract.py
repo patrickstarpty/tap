@@ -1,3 +1,6 @@
+import json
+from dataclasses import replace
+
 import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
@@ -6,6 +9,7 @@ from tap.modules.ai.domain.models import ModelCallAudit, ModelOperation, ModelRe
 from tap.modules.graph.adapters.model_gateway_extraction import ModelGatewayGraphExtraction
 from tap.modules.graph.domain.extraction import GraphExtractionRequest
 from tap.modules.graph.domain.models import GraphSnapshot
+from tap.modules.graph.domain.vocabulary import NODE_TYPES, RELATION_TYPES
 
 
 class Gateway:
@@ -81,7 +85,8 @@ def _output():
                 "id": "edge-1",
                 "sourceNodeId": "node-1",
                 "targetNodeId": "node-2",
-                "relationType": "GOVERNS",
+                "relationType": "REQUIRES",
+                "relationLabel": "governs",
                 "origin": "EXTRACTED",
                 "confidence": 1.0,
                 "evidenceIds": ["evidence-1"],
@@ -147,7 +152,13 @@ async def test_model_gateway_extraction_defines_specific_types_before_entity_fal
             "node type",
         ),
         (
-            lambda value: value | {"edges": [value["edges"][0] | {"targetNodeId": "missing"}]},
+            lambda value: value
+            | {
+                "nodes": [
+                    value["nodes"][0] | {"evidenceIds": ["missing-evidence"]},
+                    value["nodes"][1],
+                ]
+            },
             "dangling",
         ),
         (
@@ -165,3 +176,129 @@ async def test_model_gateway_extraction_defines_specific_types_before_entity_fal
 async def test_invalid_model_facts_fail_closed(mutate, message):
     with pytest.raises(ValueError, match=message):
         await ModelGatewayGraphExtraction(Gateway(mutate(_output()))).extract(_request())
+
+
+@pytest.mark.asyncio
+async def test_batch_context_carries_title_and_known_entities():
+    gateway = Gateway(_output())
+    request = replace(
+        _request(),
+        batch_index=2,
+        document_title="Claims policy",
+        known_entities=(
+            {"id": "node-1", "label": "Policy", "type": "ENTITY", "canonicalKey": "policy"},
+        ),
+    )
+    await ModelGatewayGraphExtraction(gateway).extract(request)
+    context = json.loads(gateway.requests[0].context)
+    assert context["batchIndex"] == 2 and context["documentTitle"] == "Claims policy"
+    assert context["knownEntities"][0]["id"] == "node-1"
+    assert "knownEntities" in gateway.requests[0].prompt
+
+
+@pytest.mark.asyncio
+async def test_edges_outside_vocabulary_are_dropped_not_fatal():
+    output = _output()
+    output["edges"].append({**output["edges"][0], "id": "edge-2", "relationType": "GOVERNS"})
+    output["edges"].append({**output["edges"][0], "id": "edge-3", "targetNodeId": "missing-node"})
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    assert draft.edges[0].relation_label == "governs"
+
+
+@pytest.mark.asyncio
+async def test_dropped_edge_removes_its_provenance():
+    output = _output()
+    output["edges"].append(
+        {
+            **output["edges"][0],
+            "id": "edge-missing",
+            "targetNodeId": "missing-node",
+            "relationType": "USES",
+            "origin": "INFERRED",
+            "evidenceIds": [],
+        }
+    )
+    output["provenance"].append(
+        {
+            "id": "provenance-missing",
+            "edgeId": "edge-missing",
+            "inputFactIds": ["node-1"],
+            "ruleDigest": "sha256:" + "d" * 64,
+        }
+    )
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    assert draft.provenance == ()
+
+
+@pytest.mark.asyncio
+async def test_dropped_input_fact_cascades_to_inferred_edge(span_recorder):
+    output = _output()
+    output["edges"].append({**output["edges"][0], "id": "edge-x", "relationType": "GOVERNS"})
+    output["edges"].append(
+        {
+            **output["edges"][0],
+            "id": "edge-y",
+            "relationType": "USES",
+            "origin": "INFERRED",
+            "evidenceIds": [],
+        }
+    )
+    output["provenance"].append(
+        {
+            "id": "provenance-y",
+            "edgeId": "edge-y",
+            "inputFactIds": ["edge-x"],
+            "ruleDigest": "sha256:" + "d" * 64,
+        }
+    )
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    assert draft.provenance == ()
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_edges"] == 2
+
+
+@pytest.mark.asyncio
+async def test_empty_model_output_returns_none_instead_of_raising():
+    # A model returning zero nodes for a boilerplate chunk must not raise (the
+    # domain forbids an empty-nodes GraphSnapshotDraft): it is a successful batch
+    # that simply grounded nothing (F3), not a failure to retry.
+    output = {"nodes": [], "edges": [], "evidence": [], "provenance": []}
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+    assert draft is None
+
+
+@pytest.mark.asyncio
+async def test_node_aliases_are_sanitized_before_construction():
+    output = _output()
+    output["nodes"][0] = output["nodes"][0] | {
+        "aliases": [
+            "  Policy Doc  ",
+            "policy doc",  # dedupes case/width-insensitively with the entry above
+            "",  # blank, dropped
+            "   ",  # blank after stripping, dropped
+            "x" * 129,  # over the 128-char limit, dropped
+            "Alias 2",
+            "Alias 3",
+            "Alias 4",
+            "Alias 5",
+            "Alias 6",  # sixth distinct alias, dropped by the 5-alias cap
+        ]
+    }
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+    node = next(node for node in draft.nodes if node.node_id == "node-1")
+    assert node.aliases == ("Policy Doc", "Alias 2", "Alias 3", "Alias 4", "Alias 5")
+
+
+def test_schema_locks_vocabulary_and_process_type():
+    from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_SCHEMA
+
+    nodes = GRAPH_EXTRACTION_SCHEMA["properties"]["nodes"]["items"]["properties"]
+    edges = GRAPH_EXTRACTION_SCHEMA["properties"]["edges"]["items"]["properties"]
+    assert set(nodes["type"]["enum"]) == NODE_TYPES and nodes["aliases"]["maxItems"] == 5
+    assert set(edges["relationType"]["enum"]) == RELATION_TYPES
+    assert "relationLabel" in GRAPH_EXTRACTION_SCHEMA["properties"]["edges"]["items"]["required"]

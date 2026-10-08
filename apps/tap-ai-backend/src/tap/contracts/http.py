@@ -1198,7 +1198,7 @@ class GraphSnapshotView(ContractModel):
     source_set_digest: CanonicalSha256
     source_revision_ids: list[str]
     document_revision_ids: list[str]
-    status: Literal["CANDIDATE", "READY", "FAILED"]
+    status: Literal["CANDIDATE", "READY", "PARTIAL", "FAILED"]
 
 
 class GraphSnapshotPage(ContractModel):

@@ -17,6 +17,9 @@ class GraphExtractionRequest:
     chunks: tuple[Mapping[str, object], ...]
     model_alias: str
     idempotency_key: str
+    batch_index: int = 0
+    document_title: str = ""
+    known_entities: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         scope = require_project_scope(self.scope)
@@ -26,3 +29,5 @@ class GraphExtractionRequest:
             raise ValueError("graph extraction requires document chunks")
         if not self.model_alias.strip() or not self.idempotency_key.strip():
             raise ValueError("graph extraction model and idempotency key are required")
+        if self.batch_index < 0:
+            raise ValueError("graph extraction batch index must be nonnegative")

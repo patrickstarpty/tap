@@ -101,6 +101,15 @@ def test_settings_defaults() -> None:
     )
 
 
+def test_graph_batch_settings_defaults_and_bounds() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert settings.graph_batch_size == 10 and settings.graph_batch_retries == 3
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_BATCH_SIZE": "0"})
+
+
 @pytest.mark.parametrize(
     "name", ["TAPPER_DEFAULT_CHAT_MODEL", "TAPPER_EMBEDDING_MODEL", "TAPPER_VISION_MODEL"]
 )

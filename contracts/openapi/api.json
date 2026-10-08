@@ -2539,6 +2539,7 @@
             "enum": [
               "CANDIDATE",
               "READY",
+              "PARTIAL",
               "FAILED"
             ],
             "title": "Status",

@@ -39,6 +39,7 @@ EXPECTED_TABLES = {
     "graph_edge_evidence",
     "graph_inference_provenance",
     "graph_extraction_job",
+    "graph_fragment_batch",
     "knowledge_source",
     "knowledge_source_command",
     "knowledge_source_legacy_map",

@@ -214,6 +214,13 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                 idempotency_key="quality-graph:" + case_id,
             )
             draft = await extractor.extract(request)
+            if draft is None:
+                # This evaluation script sends one case's documents as a single,
+                # un-batched request; an extractor grounding nothing is a quality
+                # failure for that case, not a success to silently skip.
+                raise ValueError(
+                    f"graph extraction grounded no facts for case {case_id}"
+                )
             await store.publish(VALIDATION_SCOPE, draft)
             for document in selected_documents:
                 for label in labels_by_document[document["documentId"]]:
