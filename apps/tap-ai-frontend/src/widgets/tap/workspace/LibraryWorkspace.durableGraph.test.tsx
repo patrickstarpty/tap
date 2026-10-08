@@ -7,6 +7,7 @@ import type {
   GraphProject,
   GraphSubgraph,
 } from "../../../features/graph/model/graph";
+import { GraphVersionConflictError } from "../../../features/graph/api/client";
 import {
   useGraphNode,
   useGraphOverview,
@@ -16,13 +17,24 @@ import {
 import { WORKSPACE_COPY } from "./copy";
 import { LibraryWorkspace } from "./LibraryWorkspace";
 
-vi.mock("../../../features/graph/api/queries", () => ({
-  useGraphProject: vi.fn(),
-  useGraphOverview: vi.fn(),
-  useGraphSearch: vi.fn(),
-  useGraphNode: vi.fn(),
-  useGraphHighlight: vi.fn(() => ({ data: undefined, isPending: false })),
-}));
+// `useGraphVersionGuard` is kept real (not stubbed) so the version-conflict
+// test below can observe its actual `queryClient.refetchQueries` side
+// effect — every other hook stays a plain mock, as in the rest of this
+// file.
+vi.mock("../../../features/graph/api/queries", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../../features/graph/api/queries")
+    >();
+  return {
+    useGraphProject: vi.fn(),
+    useGraphOverview: vi.fn(),
+    useGraphSearch: vi.fn(),
+    useGraphNode: vi.fn(),
+    useGraphHighlight: vi.fn(() => ({ data: undefined, isPending: false })),
+    useGraphVersionGuard: actual.useGraphVersionGuard,
+  };
+});
 
 function queryResult<T>(
   data: T | undefined,
@@ -30,6 +42,7 @@ function queryResult<T>(
     isPending: boolean;
     isError: boolean;
     isSuccess: boolean;
+    error: unknown;
   }> = {},
 ) {
   return {
@@ -37,6 +50,7 @@ function queryResult<T>(
     isPending: overrides.isPending ?? false,
     isError: overrides.isError ?? false,
     isSuccess: overrides.isSuccess ?? data !== undefined,
+    error: overrides.error,
   } as never;
 }
 
@@ -91,6 +105,13 @@ function renderLibrary(overrides: {
   publishedSources?: Parameters<typeof LibraryWorkspace>[0]["publishedSources"];
   publishedSourcesLoading?: boolean;
   loadState?: "loading" | "loaded" | "error";
+  // Lets a test give `useGraphNode` a per-`nodeId` response (e.g. the
+  // selected node's own detail vs. a relation neighbor's) instead of the
+  // single static fixture every other test uses.
+  nodeImplementation?: (
+    ...args: Parameters<typeof useGraphNode>
+  ) => ReturnType<typeof queryResult>;
+  queryClient?: QueryClient;
 }) {
   vi.mocked(useGraphProject).mockReturnValue(
     queryResult(overrides.project ?? undefined, {
@@ -104,15 +125,18 @@ function renderLibrary(overrides: {
   vi.mocked(useGraphSearch).mockImplementation(() =>
     queryResult(overrides.search),
   );
-  vi.mocked(useGraphNode).mockReturnValue(queryResult(undefined));
+  if (overrides.nodeImplementation) {
+    vi.mocked(useGraphNode).mockImplementation(overrides.nodeImplementation);
+  } else {
+    vi.mocked(useGraphNode).mockReturnValue(queryResult(undefined));
+  }
 
   const copy = WORKSPACE_COPY[overrides.locale ?? "en"];
-  return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+  const queryClient =
+    overrides.queryClient ??
+    new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const result = render(
+    <QueryClientProvider client={queryClient}>
       <LibraryWorkspace
         copy={copy}
         locale={overrides.locale ?? "en"}
@@ -139,6 +163,7 @@ function renderLibrary(overrides: {
       />
     </QueryClientProvider>,
   );
+  return { ...result, queryClient };
 }
 
 it("renders communities from the project graph and colors nodes by community", async () => {
@@ -497,4 +522,122 @@ it("matches nodes by their localized node type label when searching", async () =
 
   const results = screen.getByRole("region", { name: "搜索结果" });
   expect(within(results).getByText("uw0")).toBeVisible();
+});
+
+it("keeps the node detail panel open for a relation neighbor outside the drawn view", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    nodeImplementation: ((_projectId, _graphVersion, nodeId) => {
+      if (nodeId === "n0") {
+        return queryResult({
+          graphVersion: 1,
+          node: {
+            nodeId: "n0",
+            label: "n0",
+            nodeType: "CONCEPT",
+            canonicalKey: "n0",
+            degree: 1,
+            communityId: "underwriting",
+            aliases: [],
+          },
+          community: {
+            communityId: "underwriting",
+            label: "Underwriting",
+            size: 5,
+          },
+          sources: [],
+          relations: [
+            {
+              relationType: "REQUIRES",
+              edges: [
+                {
+                  edgeId: "e1",
+                  sourceNodeId: "n0",
+                  targetNodeId: "ghost",
+                  relationType: "REQUIRES",
+                  relationLabel: "Requires",
+                  confidence: 0.9,
+                  origin: "EXTRACTED",
+                },
+              ],
+            },
+          ],
+          neighbors: [
+            {
+              nodeId: "ghost",
+              label: "Ghost node",
+              nodeType: "CONCEPT",
+              canonicalKey: "ghost",
+              degree: 1,
+              aliases: [],
+            },
+          ],
+        });
+      }
+      if (nodeId === "ghost") {
+        return queryResult({
+          graphVersion: 1,
+          node: {
+            nodeId: "ghost",
+            label: "Ghost node",
+            nodeType: "CONCEPT",
+            canonicalKey: "ghost",
+            degree: 1,
+            communityId: null,
+            aliases: [],
+          },
+          community: null,
+          sources: [],
+          relations: [],
+          neighbors: [],
+        });
+      }
+      return queryResult(undefined);
+    }) as Parameters<typeof renderLibrary>[0]["nodeImplementation"],
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(screen.getByRole("button", { name: /n0/ }));
+  await userEvent.click(screen.getByRole("button", { name: /Ghost node/ }));
+
+  expect(
+    screen.getByRole("heading", { name: "Ghost node", level: 3 }),
+  ).toBeVisible();
+  expect(
+    screen.queryByText("Select a node to inspect its relationships."),
+  ).not.toBeInTheDocument();
+});
+
+it("refetches the project without showing an error when a node 409s on a stale version", async () => {
+  const project = buildProject();
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const refetchSpy = vi.spyOn(queryClient, "refetchQueries");
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    nodeImplementation: ((_projectId, _graphVersion, nodeId) =>
+      nodeId === null
+        ? queryResult(undefined)
+        : queryResult(undefined, {
+            isError: true,
+            error: new GraphVersionConflictError(),
+          })) as Parameters<typeof renderLibrary>[0]["nodeImplementation"],
+    queryClient,
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(screen.getByRole("button", { name: /n0/ }));
+
+  expect(screen.getByText("Loading node details…")).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(refetchSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      queryKey: ["graph", "tapper-demo", "project"],
+      exact: true,
+    }),
+  );
 });

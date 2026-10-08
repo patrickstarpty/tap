@@ -169,7 +169,6 @@ export interface WorkspaceCopy {
     nodeDetails: string;
     searchResults: string;
     noMatchingNodes: string;
-    viewSource: string;
     selectNode: string;
     community: string;
     relationships: string;
@@ -187,6 +186,8 @@ export interface WorkspaceCopy {
     askAboutNode: string;
     showAllRelations(n: number): string;
     relationCount(n: number): string;
+    relationIncoming: string;
+    relationOutgoing: string;
     nodeDetailsLoading: string;
     nodeDetailsError: string;
     enterFullscreen: string;
@@ -208,6 +209,22 @@ export interface WorkspaceCopy {
     otherCommunity: string;
     nodeTypes: Record<
       "ENTITY" | "CONCEPT" | "REQUIREMENT" | "SYSTEM" | "ACTOR" | "PROCESS",
+      string
+    >;
+    relationTypes: Record<
+      | "REQUIRES"
+      | "APPLIES_TO"
+      | "PART_OF"
+      | "EXCEPTION_OF"
+      | "SUPERSEDES"
+      | "TRIGGERS"
+      | "PRECEDES"
+      | "VALIDATED_BY"
+      | "RESPONSIBLE_FOR"
+      | "USES"
+      | "DEFINES"
+      | "CONFLICTS_WITH"
+      | "RELATED_TO",
       string
     >;
   };
@@ -394,7 +411,6 @@ export const WORKSPACE_COPY = {
       searchResults: "Search results",
       noMatchingNodes:
         "No matching documents, concepts or entities. Try another keyword or clear the filters.",
-      viewSource: "View source in document list",
       selectNode: "Select a node to inspect its relationships.",
       community: "Topic group",
       relationships: "Relationships",
@@ -412,6 +428,8 @@ export const WORKSPACE_COPY = {
       askAboutNode: "Ask about this",
       showAllRelations: (n: number) => `Show all (${n})`,
       relationCount: (n: number) => `${n} relations`,
+      relationIncoming: "Incoming",
+      relationOutgoing: "Outgoing",
       nodeDetailsLoading: "Loading node details…",
       nodeDetailsError: "Node details are unavailable. Try again.",
       enterFullscreen: "Enter fullscreen",
@@ -442,6 +460,21 @@ export const WORKSPACE_COPY = {
         SYSTEM: "System",
         ACTOR: "Actor",
         PROCESS: "Process",
+      },
+      relationTypes: {
+        REQUIRES: "Requires",
+        APPLIES_TO: "Applies to",
+        PART_OF: "Part of",
+        EXCEPTION_OF: "Exception of",
+        SUPERSEDES: "Supersedes",
+        TRIGGERS: "Triggers",
+        PRECEDES: "Precedes",
+        VALIDATED_BY: "Validated by",
+        RESPONSIBLE_FOR: "Responsible for",
+        USES: "Uses",
+        DEFINES: "Defines",
+        CONFLICTS_WITH: "Conflicts with",
+        RELATED_TO: "Related to",
       },
     },
   },
@@ -616,7 +649,6 @@ export const WORKSPACE_COPY = {
       nodeDetails: "节点详情",
       searchResults: "搜索结果",
       noMatchingNodes: "没有匹配的文档、概念或实体，请更换关键词或清除筛选。",
-      viewSource: "在文档列表中查看来源",
       selectNode: "选择节点以查看其关系。",
       community: "主题分组",
       relationships: "关系",
@@ -634,6 +666,8 @@ export const WORKSPACE_COPY = {
       askAboutNode: "就此提问",
       showAllRelations: (n: number) => `显示全部 (${n})`,
       relationCount: (n: number) => `${n} 条关系`,
+      relationIncoming: "流入",
+      relationOutgoing: "流出",
       nodeDetailsLoading: "正在加载节点详情…",
       nodeDetailsError: "节点详情暂时无法加载，请重试。",
       enterFullscreen: "进入全屏",
@@ -660,6 +694,21 @@ export const WORKSPACE_COPY = {
         SYSTEM: "系统",
         ACTOR: "角色",
         PROCESS: "流程",
+      },
+      relationTypes: {
+        REQUIRES: "需要",
+        APPLIES_TO: "适用于",
+        PART_OF: "属于",
+        EXCEPTION_OF: "例外于",
+        SUPERSEDES: "取代",
+        TRIGGERS: "触发",
+        PRECEDES: "先于",
+        VALIDATED_BY: "由其验证",
+        RESPONSIBLE_FOR: "负责",
+        USES: "使用",
+        DEFINES: "定义",
+        CONFLICTS_WITH: "与其冲突",
+        RELATED_TO: "与其相关",
       },
     },
   },

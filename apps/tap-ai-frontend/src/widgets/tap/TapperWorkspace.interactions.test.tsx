@@ -49,6 +49,7 @@ vi.mock("../../features/graph/api/queries", () => ({
   useGraphSearch: vi.fn(() => defaultGraphQueryResult()),
   useGraphNode: vi.fn(() => defaultGraphQueryResult()),
   useGraphHighlight: vi.fn(() => defaultGraphQueryResult()),
+  useGraphVersionGuard: vi.fn(),
 }));
 
 const DEFAULT_SOURCES = [

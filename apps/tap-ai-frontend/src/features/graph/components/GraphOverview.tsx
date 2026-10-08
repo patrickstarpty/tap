@@ -14,9 +14,11 @@ import type { PublishedSourceRevision } from "../../../widgets/tap/workspace/Lib
 
 import { useGraphLayout } from "../model/layout";
 import {
+  useGraphNode,
   useGraphOverview,
   useGraphProject,
   useGraphSearch,
+  useGraphVersionGuard,
 } from "../api/queries";
 import { MAX_GRAPH_NODES, OVERVIEW_PAGE } from "../model/graph";
 import { NodeDetailPanel } from "./NodeDetailPanel";
@@ -122,6 +124,26 @@ export function GraphOverview({
   const subgraph =
     trimmedQuery.length > 0 ? searchQuery.data : overviewQuery.data;
 
+  // `NodeDetailPanel` (below) issues its own `GET /node` fetch for
+  // `selectedNodeId`, but that query's error is only visible to the
+  // version guard if something in *this* component also reads it — call
+  // the same hook here (same query key, so react-query serves/shares one
+  // request) purely to surface its error into `useGraphVersionGuard`.
+  const nodeQuery = useGraphNode(gatedProjectId, graphVersion, selectedNodeId);
+
+  // A 409 on any of these queries means the graph was re-merged mid-session
+  // (a stale `graphVersion`) — without this guard, that 409 would otherwise
+  // be a dead end (see `graphUnavailable`/`nodeDetailsError`). The guard
+  // invalidates every graph query and refetches `GET /project`; once that
+  // resolves with the fresh version, every query below naturally re-keys
+  // and retries on its own.
+  useGraphVersionGuard(projectId, [
+    projectQuery.error,
+    overviewQuery.error,
+    searchQuery.error,
+    nodeQuery.error,
+  ]);
+
   // Same size-descending order as the palette assignment in
   // `toOverviewData` so the force layout seeds communities in the same
   // visual order their colors are assigned.
@@ -145,21 +167,15 @@ export function GraphOverview({
     if (normalizedQuery.length === 0) setSelectedNodeId(null);
   }, [normalizedQuery]);
 
-  const visibleNodeIds = useMemo(
-    () =>
-      new Set(
-        overview.nodes
-          .filter((node) => effectiveSelectedCommunities.has(node.community))
-          .map((node) => node.id),
-      ),
-    [overview.nodes, effectiveSelectedCommunities],
-  );
-
+  // The node detail panel stays open for any selected node id, including a
+  // relation neighbor that isn't drawn in the current (community-filtered
+  // or paginated) overview — community toggles and pagination narrow what
+  // the *canvas* draws, not which node is actually selected. The selection
+  // is only cleared when the node it points at could truly have
+  // disappeared: the graph was re-merged to a new version.
   useEffect(() => {
-    if (selectedNodeId !== null && !visibleNodeIds.has(selectedNodeId)) {
-      setSelectedNodeId(null);
-    }
-  }, [selectedNodeId, visibleNodeIds]);
+    setSelectedNodeId(null);
+  }, [graphVersion]);
 
   const toggleCommunity = (communityId: string) => {
     setSelectedCommunities((current) => {
@@ -199,6 +215,12 @@ export function GraphOverview({
     [publishedSources],
   );
 
+  // A node selected from the canvas is always drawn in `overview.nodes`,
+  // so its palette color/community label come from there; a node selected
+  // by navigating a relation link may not be (it can be outside the
+  // community filter or page the canvas currently draws) — `NodeDetailPanel`
+  // falls back to `GET /node`'s own `community` and a neutral color for
+  // those (see `NodeDetailPanel`'s `color`/`communityLabel` fallbacks).
   const selectedNode =
     selectedNodeId !== null
       ? (overview.nodes.find((node) => node.id === selectedNodeId) ?? null)
@@ -209,21 +231,24 @@ export function GraphOverview({
   // is the one place those revision ids are resolved to the real source
   // ids `onAskAboutNode`/`onOpenSource` expect (see `sourceIdByRevisionId`
   // above). A revision with no matching published source (not yet
-  // resolvable) is dropped rather than forwarded as a raw revision id.
+  // resolvable) is dropped rather than forwarded as a raw revision id, and
+  // `canOpenSource` lets the panel hide "Open original" entirely for it
+  // rather than rendering a button that silently no-ops on click.
   const detailPanel = (
     <aside
       className="tap-graph-inspector"
-      hidden={selectedNode === null}
+      hidden={selectedNodeId === null}
       role="region"
       aria-label={libraryCopy.nodeDetails}
     >
-      {selectedNode !== null && graphVersion !== null ? (
+      {selectedNodeId !== null && graphVersion !== null ? (
         <NodeDetailPanel
+          key={selectedNodeId}
           projectId={projectId}
           graphVersion={graphVersion}
-          nodeId={selectedNode.id}
-          color={selectedNode.color}
-          communityLabel={selectedNode.communityLabel}
+          nodeId={selectedNodeId}
+          color={selectedNode?.color}
+          communityLabel={selectedNode?.communityLabel}
           copy={copy}
           locale={locale}
           onClose={() => setSelectedNodeId(null)}
@@ -245,6 +270,9 @@ export function GraphOverview({
                   if (sourceId !== undefined) onOpenSource(sourceId, trigger);
                 }
               : undefined
+          }
+          canOpenSource={(sourceRevisionId) =>
+            sourceIdByRevisionId.has(sourceRevisionId)
           }
         />
       ) : (
