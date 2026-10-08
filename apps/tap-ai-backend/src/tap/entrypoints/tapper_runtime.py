@@ -1695,11 +1695,13 @@ def _assemble_http_services(
         from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 
         graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
-        graph_enricher = GraphAnswerEnricher(graph, publication_authority=publication_authority)
         project_graph_cache = ProjectGraphCache()
         project_graph = MysqlProjectGraphStore(
             graph_sessions,  # type: ignore[arg-type]
             cache=project_graph_cache,
+        )
+        graph_enricher = GraphAnswerEnricher(
+            project_graph, publication_authority=publication_authority
         )
         graph_jobs = MysqlGraphJobStore(
             graph_sessions,  # type: ignore[arg-type]
