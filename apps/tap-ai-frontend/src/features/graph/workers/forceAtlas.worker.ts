@@ -1,18 +1,22 @@
 import Graph from "graphology";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 import type { GraphEdge } from "../model/graph";
+import { seedPositions } from "../model/layout";
 
 self.onmessage = (
   event: MessageEvent<{
-    nodes: { id: string }[];
+    nodes: { id: string; communityId: string }[];
     edges: GraphEdge[];
+    communityOrder: string[];
     reducedMotion: boolean;
   }>,
 ) => {
   const graph = new Graph();
-  event.data.nodes.forEach((node, index) => {
-    const angle = (index / Math.max(event.data.nodes.length, 1)) * Math.PI * 2;
-    graph.addNode(node.id, { x: Math.cos(angle), y: Math.sin(angle) });
+  const seeded = seedPositions(event.data.nodes, event.data.communityOrder);
+  const seededById = new Map(seeded.map((position) => [position.id, position]));
+  event.data.nodes.forEach((node) => {
+    const position = seededById.get(node.id) ?? { x: 0, y: 0 };
+    graph.addNode(node.id, { x: position.x, y: position.y });
   });
   event.data.edges.forEach((edge) => {
     if (graph.hasNode(edge.sourceNodeId) && graph.hasNode(edge.targetNodeId)) {
@@ -20,7 +24,9 @@ self.onmessage = (
     }
   });
   if (!event.data.reducedMotion && graph.order > 1) {
-    forceAtlas2.assign(graph, { iterations: Math.min(100, graph.order * 2) });
+    forceAtlas2.assign(graph, {
+      iterations: Math.min(150, graph.order * 2),
+    });
   }
   self.postMessage(
     graph.nodes().map((id) => ({
