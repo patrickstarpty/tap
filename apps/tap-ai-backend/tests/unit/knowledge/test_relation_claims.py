@@ -125,3 +125,25 @@ def test_all_claims_dropped_leaves_empty_text() -> None:
     assert result.claims == ()
     assert result.text == ""
     assert result.dropped == 1
+
+
+def test_punctuation_only_alias_never_matches_as_substring() -> None:
+    # Subject's only name is punctuation-only ("、"); it must not be treated as a
+    # universal substring match. The text mentions the object but never the subject.
+    relation = RelationEvidence(
+        label="R1",
+        edge_id="e-2",
+        subject_node_id="A",
+        subject_label="、",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="健康告知",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(_SUPPORT,),
+        on_path=False,
+    )
+    assert not claim_mentions_both_endpoints("健康告知非常重要。", relation)

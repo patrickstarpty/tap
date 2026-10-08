@@ -117,6 +117,11 @@ class CitationSnapshot:
         if self.citation_kind == "edge":
             if any(not isinstance(field, str) or not field for field in edge_fields):
                 raise ValueError("edge citation snapshot requires all edge fields")
+            _bounded("edge citation graph version", self.graph_version, maximum=64)
+            _bounded("edge citation edge ID", self.edge_id, maximum=128)
+            _bounded("edge citation subject node ID", self.subject_node_id, maximum=128)
+            _bounded("edge citation object node ID", self.object_node_id, maximum=128)
+            _bounded("edge citation relation type", self.relation_type, maximum=32)
             if len(self.relation_label or "") > 64:
                 raise ValueError("edge citation relation label must be at most 64 characters")
         elif any(field is not None for field in edge_fields):
@@ -373,7 +378,8 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
                 or _RELATION_CITATION_LABEL_PATTERN.fullmatch(citation.evidence_label) is None
             ):
                 raise ValueError("gateway citation evidence labels are malformed")
-            assert citation.edge is not None  # enforced by Citation.__post_init__
+            if citation.edge is None:
+                raise ValueError("gateway edge citation must carry edge facts")
             edge_graph_versions.add(citation.edge.graph_version)
         else:
             raise ValueError("gateway citation kind must be chunk or edge")

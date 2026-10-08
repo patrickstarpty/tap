@@ -84,4 +84,8 @@ def claim_mentions_both_endpoints(text: str, relation: RelationEvidence) -> bool
 
 
 def _mentions_any(normalized_text: str, terms: tuple[str, ...]) -> bool:
-    return any(term and normalize_key(term) in normalized_text for term in terms)
+    for term in terms:
+        key = normalize_key(term) if term else ""
+        if key and key in normalized_text:
+            return True
+    return False

@@ -927,6 +927,49 @@ def test_edge_citation_snapshot_requires_all_edge_fields() -> None:
         )
 
 
+def test_edge_citation_snapshot_bounds_edge_field_widths() -> None:
+    anchor_json = json.dumps(
+        {"endOffset": 12, "headingPath": ["Policy"], "startOffset": 3, "type": "document"},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+    def _edge_snapshot(**overrides: str) -> CitationSnapshot:
+        fields: dict[str, str] = {
+            "graph_version": "7",
+            "edge_id": "e-1",
+            "subject_node_id": "A",
+            "object_node_id": "B",
+            "relation_type": "REQUIRES",
+            "relation_label": "REQUIRES",
+        }
+        fields.update(overrides)
+        return CitationSnapshot(
+            trace_id="trace-a",
+            citation_id="citation-a",
+            document_id="doc_a",
+            revision_id="rev_a",
+            chunk_id="chunk-a",
+            source_content_hash=SOURCE_HASH,
+            chunk_content_hash=CHUNK_HASH,
+            anchor_json=anchor_json,
+            citation_kind="edge",
+            **fields,
+        )
+
+    _edge_snapshot()  # widths at the limit must pass
+    with pytest.raises(ValueError):
+        _edge_snapshot(graph_version="v" * 65)
+    with pytest.raises(ValueError):
+        _edge_snapshot(edge_id="e" * 129)
+    with pytest.raises(ValueError):
+        _edge_snapshot(subject_node_id="n" * 129)
+    with pytest.raises(ValueError):
+        _edge_snapshot(object_node_id="n" * 129)
+    with pytest.raises(ValueError):
+        _edge_snapshot(relation_type="R" * 33)
+
+
 @pytest.mark.asyncio
 async def test_canonical_source_expands_documents_and_preserves_document_chunk_identity():
     source_id = "src_" + "a" * 32
