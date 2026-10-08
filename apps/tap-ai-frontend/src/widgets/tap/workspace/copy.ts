@@ -198,6 +198,10 @@ export interface WorkspaceCopy {
     inferred: string;
     graphNavigationHint: string;
     overviewCaption: string;
+    highlightedPath: string;
+    highlightCaption: string;
+    clearHighlight: string;
+    versionUpdated: string;
     loadMore: string;
     extractingSources(n: number): string;
     partialSources(n: number): string;
@@ -430,6 +434,11 @@ export const WORKSPACE_COPY = {
       relationCount: (n: number) => `${n} relations`,
       relationIncoming: "Incoming",
       relationOutgoing: "Outgoing",
+      highlightedPath: "Highlighted path",
+      highlightCaption: "Relations cited by the answer",
+      clearHighlight: "Back to overview",
+      versionUpdated:
+        "The graph has been updated; some relations are no longer available.",
       nodeDetailsLoading: "Loading node details…",
       nodeDetailsError: "Node details are unavailable. Try again.",
       enterFullscreen: "Enter fullscreen",
@@ -666,8 +675,12 @@ export const WORKSPACE_COPY = {
       askAboutNode: "就此提问",
       showAllRelations: (n: number) => `显示全部 (${n})`,
       relationCount: (n: number) => `${n} 条关系`,
-      relationIncoming: "流入",
-      relationOutgoing: "流出",
+      relationIncoming: "被指向",
+      relationOutgoing: "指向",
+      highlightedPath: "高亮路径",
+      highlightCaption: "回答引用的关系",
+      clearHighlight: "返回总览",
+      versionUpdated: "图谱版本已更新，部分关系不再可用。",
       nodeDetailsLoading: "正在加载节点详情…",
       nodeDetailsError: "节点详情暂时无法加载，请重试。",
       enterFullscreen: "进入全屏",

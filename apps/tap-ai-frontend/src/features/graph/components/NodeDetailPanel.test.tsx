@@ -490,3 +490,24 @@ it("treats a stale-version 409 as still loading, with no error alert", () => {
   // The header stays mounted even in this pseudo-loading state.
   expect(screen.getByRole("heading", { name: "Node details" })).toBeVisible();
 });
+
+it("shows the error body with a working retry button once the project refetch has settled and the version conflict persists", async () => {
+  const user = userEvent.setup();
+  const refetch = vi.fn();
+  renderPanelWithMock(
+    queryResult(undefined, {
+      isError: true,
+      error: new GraphVersionConflictError(),
+      refetch,
+    }),
+    { projectRefetchSettled: true },
+  );
+
+  expect(screen.queryByText("Loading node details…")).not.toBeInTheDocument();
+  expect(
+    screen.getByText("Node details are unavailable. Try again."),
+  ).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Retry loading" }));
+  expect(refetch).toHaveBeenCalled();
+});

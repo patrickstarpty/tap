@@ -42,6 +42,7 @@ function queryResult<T>(
     isPending: boolean;
     isError: boolean;
     isSuccess: boolean;
+    isFetching: boolean;
     error: unknown;
   }> = {},
 ) {
@@ -50,6 +51,7 @@ function queryResult<T>(
     isPending: overrides.isPending ?? false,
     isError: overrides.isError ?? false,
     isSuccess: overrides.isSuccess ?? data !== undefined,
+    isFetching: overrides.isFetching ?? false,
     error: overrides.error,
   } as never;
 }
@@ -98,6 +100,12 @@ function renderLibrary(overrides: {
   project?: GraphProject | null;
   projectPending?: boolean;
   projectError?: boolean;
+  // Mirrors `useGraphVersionGuard`'s `refetchQueries` call for `GET
+  // /project` still being in flight — `GraphOverview` reads this (as
+  // `!projectQuery.isFetching`) to decide whether a lingering version
+  // conflict on the node query is still "waiting for the fresh version" or
+  // has settled and should surface as an error instead of loading forever.
+  projectFetching?: boolean;
   overview?: GraphSubgraph;
   search?: GraphSubgraph;
   locale?: "en" | "zh";
@@ -117,6 +125,7 @@ function renderLibrary(overrides: {
     queryResult(overrides.project ?? undefined, {
       isPending: overrides.projectPending ?? false,
       isError: overrides.projectError ?? false,
+      isFetching: overrides.projectFetching ?? false,
     }),
   );
   vi.mocked(useGraphOverview).mockImplementation(() =>
@@ -619,6 +628,11 @@ it("refetches the project without showing an error when a node 409s on a stale v
   renderLibrary({
     project,
     overview: buildOverview(buildNodes(1, "underwriting")),
+    // The guard's own `GET /project` refetch (asserted via `refetchSpy`
+    // below) is still in flight at this point — `projectFetching: true`
+    // mirrors that so the node query's conflict reads as "still loading",
+    // not a settled, stuck conflict.
+    projectFetching: true,
     nodeImplementation: ((_projectId, _graphVersion, nodeId) =>
       nodeId === null
         ? queryResult(undefined)

@@ -43,6 +43,20 @@ export interface NodeDetailPanelProps {
    */
   canOpenSource?: (sourceId: string) => boolean;
   onSelectNode: (nodeId: string) => void;
+  /**
+   * Whether the project's `GET /project` refetch triggered by
+   * `useGraphVersionGuard` has settled (resolved or failed) since the
+   * current version conflict began. While it is still in flight, a stale
+   * `graphVersion` 409 is shown as loading (the panel is waiting for the
+   * fresh version so the query above can re-key and retry on its own). If
+   * the refetch has already settled and the conflict persists — e.g. the
+   * project graph actually did not change version — treating it as
+   * perpetual loading would leave the panel stuck forever, so it falls
+   * through to the normal error body with a working retry button instead.
+   * Defaults to `false` (not yet settled) so a bare conflict still reads as
+   * loading, matching the pre-existing behavior.
+   */
+  projectRefetchSettled?: boolean;
 }
 
 /**
@@ -213,6 +227,7 @@ export function NodeDetailPanel({
   onOpenSource,
   canOpenSource,
   onSelectNode,
+  projectRefetchSettled = false,
 }: NodeDetailPanelProps) {
   const libraryCopy = copy.library;
   const nodeDetailQuery = useGraphNode(projectId, graphVersion, nodeId);
@@ -221,11 +236,16 @@ export function NodeDetailPanel({
   // `useGraphVersionGuard` (it refetches `GET /project` and every query
   // re-keys once the fresh version is known) — treat it as still loading
   // rather than a dead-end error so the panel just waits for that refetch.
+  // But if that refetch has already settled and the conflict is still
+  // here (e.g. the project graph's version genuinely did not change),
+  // waiting forever would leave the panel stuck on "loading" — fall
+  // through to the normal error body instead.
   const isVersionConflict =
     nodeDetailQuery.error instanceof GraphVersionConflictError;
+  const isPendingVersionConflict = isVersionConflict && !projectRefetchSettled;
 
   let body: ReactNode;
-  if (nodeDetailQuery.isPending || isVersionConflict) {
+  if (nodeDetailQuery.isPending || isPendingVersionConflict) {
     body = <p role="status">{libraryCopy.nodeDetailsLoading}</p>;
   } else if (nodeDetailQuery.isError || detail === undefined) {
     body = (
