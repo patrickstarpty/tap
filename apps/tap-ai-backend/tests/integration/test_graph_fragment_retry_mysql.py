@@ -4,7 +4,7 @@ reruns, not just flip its own row back to PENDING."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -12,10 +12,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROFILE_DIGEST
 from tap.modules.graph.adapters.mysql import graph_node, graph_snapshot
 from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
-from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
-from tap.modules.graph.adapters.mysql_project import graph_project_merge_job
+from tap.modules.graph.adapters.mysql_merge import MysqlMergeInputs, MysqlProjectMergeQueue
+from tap.modules.graph.adapters.mysql_project import (
+    graph_project_merge_job,
+    graph_project_node_source,
+)
+from tap.modules.graph.application.merger import ProjectGraphMerger
 from tap.modules.graph.application.worker import GraphWorker
 from tap.modules.graph.domain.jobs import GraphJobBusy, GraphJobRequest, GraphJobStatus
 from tap.modules.graph.domain.models import (
@@ -30,6 +35,17 @@ from tap.modules.knowledge.domain.documents import ChunkDraft
 from tap.platform.db.project_scope import scope_predicates
 
 _LOCATOR = "art1.fragment-retry.chunks"
+
+
+class _FixedCurrentRevisions:
+    """A fixed set of currently-published revision ids for `MysqlMergeInputs`."""
+
+    def __init__(self, revision_ids: set[str]) -> None:
+        self._revision_ids = frozenset(revision_ids)
+
+    async def current_revision_ids(self, scope) -> frozenset[str]:
+        del scope
+        return self._revision_ids
 
 
 class _Artifacts:
@@ -87,14 +103,19 @@ class _SwitchableExtractor:
         )
         # A batch with zero edges collapses to one document fallback node once
         # merged (see assemble_fragment's docstring), so this needs a real edge
-        # between two nodes to keep its own namespaced node ids intact.
+        # between two nodes to keep its own namespaced node ids intact. Labels
+        # must also be distinct per node (not a shared "Policy"): the
+        # project-level merge aligns same-type nodes whose labels share an
+        # alignment key, and four identically-labelled ENTITY nodes would
+        # collapse into one cluster, turning the edge between them into a
+        # self-loop that `merge_edges` drops.
         return GraphSnapshotDraft(
             request.snapshot,
             (
                 GraphNode(
                     source_id,
                     request.snapshot.snapshot_id,
-                    "Policy",
+                    f"Policy {source_id}",
                     "ENTITY",
                     source_id,
                     (evidence.evidence_id,),
@@ -102,7 +123,7 @@ class _SwitchableExtractor:
                 GraphNode(
                     target_id,
                     request.snapshot.snapshot_id,
-                    "Policy",
+                    f"Policy {target_id}",
                     "ENTITY",
                     target_id,
                     (evidence.evidence_id,),
@@ -146,7 +167,11 @@ async def test_retry_resets_a_partial_snapshot_so_the_rerun_actually_republishes
         scope=VALIDATION_SCOPE,
         revision_id="revision-fragment-retry",
         chunks_locator=_LOCATOR,
-        extraction_profile_digest="sha256:" + "e" * 64,
+        # MysqlMergeInputs only replays fragments matching the real
+        # extraction profile digest -- see test_project_merge_mysql.py's
+        # note on `_PROFILE_DIGEST` -- so the merge at the end of this test
+        # needs the genuine digest, not an arbitrary placeholder.
+        extraction_profile_digest=GRAPH_EXTRACTION_PROFILE_DIGEST,
         model_alias="qwen-plus",
     )
     await jobs.request(VALIDATION_SCOPE, request, now=_now())
@@ -273,6 +298,9 @@ async def test_retry_resets_a_partial_snapshot_so_the_rerun_actually_republishes
             "b1-node-batch-1-b",
         }
 
+    # Republishing the retried batch must have requested a fresh merge (not
+    # just inherited a leftover `due_at` from the first, partial completion).
+    async with sessions() as session:
         merge_row = (
             (
                 await session.execute(
@@ -284,7 +312,41 @@ async def test_retry_resets_a_partial_snapshot_so_the_rerun_actually_republishes
             .mappings()
             .one()
         )
-        assert merge_row["due_at"] is not None
+    assert merge_row["due_at"] is not None
+
+    # Actually run the merge and confirm the retried batch's node reached the
+    # merged project graph, not merely that a merge was requested. `due_at`
+    # was set from `GraphWorker`'s own real wall-clock completion timestamp
+    # (not the test's fixed `_now()`), so the claim must use real "now" too.
+    real_now = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=1)
+    merge_claim = await merge_queue.claim(
+        VALIDATION_SCOPE,
+        worker_id="retry-merge-worker-1",
+        now=real_now,
+        lease_duration=timedelta(seconds=60),
+    )
+    assert merge_claim is not None
+    merge_inputs = MysqlMergeInputs(
+        sessions, _FixedCurrentRevisions({"revision-fragment-retry"})
+    )
+    fragments = await merge_inputs.load_fragments(VALIDATION_SCOPE)
+    merged_draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, fragments)
+    await merge_queue.complete(VALIDATION_SCOPE, merge_claim, merged_draft, now=real_now)
+
+    async with sessions() as session:
+        retried_node_source_rows = (
+            (
+                await session.execute(
+                    select(graph_project_node_source.c.node_id).where(
+                        *scope_predicates(graph_project_node_source, VALIDATION_SCOPE),
+                        graph_project_node_source.c.fragment_node_id == "b1-node-batch-1-a",
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+    assert len(retried_node_source_rows) == 1
 
 
 @pytest.mark.asyncio
