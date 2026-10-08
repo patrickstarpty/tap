@@ -20,6 +20,7 @@ from tap.quality.evidence import canonical_digest
 
 __all__ = [
     "BENCH_KINDS",
+    "LOAD_MS_LIMIT_MS",
     "NODE_TYPES",
     "P95_LIMIT_MS",
     "RELATION_TYPES",
@@ -31,6 +32,9 @@ __all__ = [
 
 BENCH_KINDS: tuple[str, ...] = ("neighbors", "path", "overview")
 P95_LIMIT_MS = 300.0
+# Spec 1.3: "1万节点、5万边装载一次应在1秒内完成" — a one-time cache-fill load, not a
+# per-query budget (that's `P95_LIMIT_MS`).
+LOAD_MS_LIMIT_MS = 1000.0
 
 _NODE_TYPES_ORDERED: tuple[str, ...] = tuple(sorted(NODE_TYPES))
 _RELATION_TYPES_ORDERED: tuple[str, ...] = tuple(sorted(RELATION_TYPES))
@@ -61,10 +65,13 @@ def synthesize_graph(
 ) -> BenchGraph:
     """Deterministically synthesize one `BenchGraph` for `seed`.
 
-    Edge generation retries on a `(source, target, relation_type)` collision
-    (or a same-node self-loop draw) without consuming the deterministic
-    relation-type cycle, so the resulting edge set is reproducible for a given
-    `seed` regardless of how many collisions were skipped along the way.
+    A rejected draw (a `(source, target, relation_type)` collision, a
+    same-node self-loop, or too-small a community pool) still consumes `rng`
+    like any other draw — only the relation-type assignment is exempt: it
+    cycles by *accepted*-edge index, not by draw/attempt count, so it does
+    not shift when a retry happens to occur. The resulting edge set is
+    therefore reproducible for a given `seed` regardless of how many
+    collisions were skipped along the way.
     """
     if node_count <= 0 or edge_count < 0 or community_count <= 0 or source_count <= 0:
         raise ValueError("graph_bench synthesize_graph requires positive sizes")
