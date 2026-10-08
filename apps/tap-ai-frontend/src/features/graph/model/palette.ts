@@ -10,10 +10,10 @@ export const GRAPH_PALETTE: readonly string[] = [
   "#e05b73",
   "#8b5cf6",
   "#0891b2",
-  "#16a34a",
-  "#f97316",
-  "#db2777",
-  "#0ea5e9",
+  "#15803d",
+  "#c2410c",
+  "#a21caf",
+  "#4d7c0f",
 ];
 
 export const OTHER_COMMUNITY_COLOR = "#64748b";

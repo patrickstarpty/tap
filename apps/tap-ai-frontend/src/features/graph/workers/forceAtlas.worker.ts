@@ -1,7 +1,7 @@
 import Graph from "graphology";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 import type { GraphEdge } from "../model/graph";
-import { seedPositions } from "../model/layout";
+import { seedPositions } from "../model/layoutGeometry";
 
 self.onmessage = (
   event: MessageEvent<{

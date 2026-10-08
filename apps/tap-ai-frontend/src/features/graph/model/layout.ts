@@ -1,97 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GraphEdge, GraphNode } from "./graph";
+import {
+  scaleToCanvas,
+  seedPositions,
+  type LayoutPosition,
+} from "./layoutGeometry";
 
-export type LayoutPosition = { id: string; x: number; y: number };
+export type { LayoutPosition };
+export { scaleToCanvas, seedPositions };
 
-const COMMUNITY_RADIUS = 0.6;
-const NODE_RADIUS = 0.15;
 const CANVAS_WIDTH = 1560;
 const CANVAS_HEIGHT = 1120;
-
-function groupByCommunity(
-  nodes: { id: string; communityId: string }[],
-): Map<string, { id: string; communityId: string }[]> {
-  const groups = new Map<string, { id: string; communityId: string }[]>();
-  for (const node of nodes) {
-    const members = groups.get(node.communityId) ?? [];
-    members.push(node);
-    groups.set(node.communityId, members);
-  }
-  return groups;
-}
-
-function communityCenters(
-  communityOrder: string[],
-): Map<string, { x: number; y: number }> {
-  const centers = new Map<string, { x: number; y: number }>();
-  communityOrder.forEach((communityId, index) => {
-    if (communityOrder.length <= 1) {
-      centers.set(communityId, { x: 0, y: 0 });
-      return;
-    }
-    const angle = (index / communityOrder.length) * Math.PI * 2;
-    centers.set(communityId, {
-      x: Math.cos(angle) * COMMUNITY_RADIUS,
-      y: Math.sin(angle) * COMMUNITY_RADIUS,
-    });
-  });
-  return centers;
-}
-
-export function seedPositions(
-  nodes: { id: string; communityId: string }[],
-  communityOrder: string[],
-): LayoutPosition[] {
-  const groups = groupByCommunity(nodes);
-  const order =
-    communityOrder.length > 0 ? communityOrder : [...groups.keys()];
-  const centers = communityCenters(order);
-
-  const positions: LayoutPosition[] = [];
-  for (const [communityId, members] of groups) {
-    const center = centers.get(communityId) ?? { x: 0, y: 0 };
-    members.forEach((member, index) => {
-      const angle = (index / Math.max(members.length, 1)) * Math.PI * 2;
-      positions.push({
-        id: member.id,
-        x: center.x + Math.cos(angle) * NODE_RADIUS,
-        y: center.y + Math.sin(angle) * NODE_RADIUS,
-      });
-    });
-  }
-  return positions;
-}
-
-function scaleAxis(
-  value: number,
-  min: number,
-  max: number,
-  dimension: number,
-  margin: number,
-): number {
-  if (max === min) return dimension / 2;
-  return margin + ((value - min) / (max - min)) * (dimension - margin * 2);
-}
-
-export function scaleToCanvas(
-  positions: LayoutPosition[],
-  width: number,
-  height: number,
-  margin = 80,
-): LayoutPosition[] {
-  if (positions.length === 0) return [];
-  const xs = positions.map((position) => position.x);
-  const ys = positions.map((position) => position.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  return positions.map((position) => ({
-    id: position.id,
-    x: scaleAxis(position.x, minX, maxX, width, margin),
-    y: scaleAxis(position.y, minY, maxY, height, margin),
-  }));
-}
 
 function toSeeds(
   nodes: GraphNode[],
@@ -120,6 +39,22 @@ function computeSeededLayout(
   return toPositionMap(scaled);
 }
 
+// Content signatures (not array identity) key the worker-respawn effect, so
+// callers passing freshly derived arrays with unchanged content (e.g.
+// `communities.map(c => c.id)` recomputed every render) do not cause the
+// worker to be torn down and recreated on every render.
+function nodesSignature(seeds: { id: string; communityId: string }[]): string {
+  return seeds.map((seed) => `${seed.id}:${seed.communityId}`).join("|");
+}
+
+function edgesSignature(edges: GraphEdge[]): string {
+  return edges.map((edge) => edge.edgeId).join("|");
+}
+
+function communityOrderSignature(communityOrder: string[]): string {
+  return communityOrder.join("|");
+}
+
 export function useGraphLayout(
   nodes: GraphNode[],
   edges: GraphEdge[],
@@ -128,7 +63,9 @@ export function useGraphLayout(
   const hasWorker = typeof Worker !== "undefined";
   const seeds = useMemo(() => toSeeds(nodes), [nodes]);
   // Pure fallback: computed on every render without touching state, so a
-  // Worker-less environment (e.g. jsdom) never triggers a setState loop.
+  // Worker-less environment (e.g. jsdom) never triggers a setState loop, and
+  // every currently-known node always has a position even before the worker
+  // (re)computes a refined layout for a grown node set.
   const seededFallback = useMemo(
     () => computeSeededLayout(nodes, communityOrder),
     [nodes, communityOrder],
@@ -136,6 +73,19 @@ export function useGraphLayout(
   const [workerPositions, setWorkerPositions] = useState<
     Map<string, { x: number; y: number }> | null
   >(null);
+
+  const nodesSig = useMemo(() => nodesSignature(seeds), [seeds]);
+  const edgesSig = useMemo(() => edgesSignature(edges), [edges]);
+  const communitySig = useMemo(
+    () => communityOrderSignature(communityOrder),
+    [communityOrder],
+  );
+
+  // Read the latest inputs from a ref inside the effect, so the effect's own
+  // dependency array can stay on content signatures instead of array
+  // identities (fixes the respawn loop described in review I1).
+  const latestInputs = useRef({ seeds, edges, communityOrder });
+  latestInputs.current = { seeds, edges, communityOrder };
 
   useEffect(() => {
     if (!hasWorker) return;
@@ -147,17 +97,30 @@ export function useGraphLayout(
       const scaled = scaleToCanvas(event.data, CANVAS_WIDTH, CANVAS_HEIGHT);
       setWorkerPositions(toPositionMap(scaled));
     };
+    const current = latestInputs.current;
     worker.postMessage({
-      nodes: seeds,
-      edges,
-      communityOrder,
+      nodes: current.seeds,
+      edges: current.edges,
+      communityOrder: current.communityOrder,
       reducedMotion:
         typeof window !== "undefined" &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches,
     });
     return () => worker.terminate();
-  }, [hasWorker, seeds, edges, communityOrder]);
+  }, [hasWorker, nodesSig, edgesSig, communitySig]);
 
-  if (!hasWorker) return seededFallback;
-  return workerPositions ?? seededFallback;
+  return useMemo(() => {
+    if (!hasWorker || !workerPositions) return seededFallback;
+    // Overlay: the seeded fallback guarantees every current node has a
+    // position immediately (e.g. right after "load more" adds nodes the
+    // worker hasn't replied for yet); the worker's refined positions take
+    // precedence for nodes it has already resolved, but only for nodes
+    // still present in the current set (a stale worker reply for a node
+    // that has since dropped out must not resurrect it).
+    const merged = new Map(seededFallback);
+    for (const [id, position] of workerPositions) {
+      if (merged.has(id)) merged.set(id, position);
+    }
+    return merged;
+  }, [hasWorker, seededFallback, workerPositions]);
 }
