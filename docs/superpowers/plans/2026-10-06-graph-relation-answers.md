@@ -12,7 +12,7 @@
 
 ## 依赖 PR 2 的接口
 
-本计划使用 PR 2 交付的存储端口 `ProjectGraphStorePort`（`tap.modules.graph.ports.project_store`；内存实现 `InMemoryProjectGraphStore` 在 `application/project_queries.py`，MySQL 实现 `MysqlProjectGraphStore` 在 `adapters/mysql_project.py`）。本计划其余地方写的 `ProjectGraphStore` 一律指 `ProjectGraphStorePort`：
+本计划使用 PR 2 交付的存储端口 `ProjectGraphStorePort`（`tap.modules.graph.ports.project_store`；内存实现 `InMemoryProjectGraphStore` 在 `application/project_queries.py`，MySQL 实现 `MysqlProjectGraphStore` 在 `adapters/mysql_project_store.py`）。本计划其余地方写的 `ProjectGraphStore` 一律指 `ProjectGraphStorePort`：
 
 以下签名已与 PR 2 计划（`2026-10-06-graph-project-merge.md` Task 3）核对一致，端口为 `ProjectGraphStorePort`（`tap.modules.graph.ports.project_store`）：
 

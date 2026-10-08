@@ -45,7 +45,7 @@
 
 ### 1.2 项目级图与合并
 
-新增表（迁移 `0028_project_graph`，列出主要列）：
+新增表（迁移 `0029_project_graph`，列出主要列；`graph_fragment_batch` 属于 `0028_graph_fragment_batch`）：
 
 | 表 | 主要列 | 说明 |
 | --- | --- | --- |

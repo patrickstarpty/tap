@@ -607,7 +607,7 @@ Expected: 全部通过；无 MySQL 时集成测试按约定跳过，有 MySQL �
 Run: `make demo-e2e`
 Expected: `knowledge-graph.spec.ts` 通过——规则式假抽取对夹具句子 "A verified claim requires supporting evidence." 产出 `REQUIRES` 边，片段 READY 后 graph worker 的 `pending_work` 合并出项目图 version 1，`GET /project` 返回 `READY`；旧 `GET /snapshots` 与 Library 的"Published source graph"视图行为不变；其余 journey 不劣于当前 main
 
-- [x] **Step 4: 提交并整理 PR 描述**
+- [ ] **Step 4: 提交并整理 PR 描述**
 
 ```bash
 git add docs apps/tap-ai-frontend/tests/e2e/knowledge-graph.spec.ts
