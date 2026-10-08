@@ -58,6 +58,7 @@
 | `graph_project_community` | project_id、version、community_id、label、size | 社区；`label` 取社区内度数最高节点的 label |
 | `graph_fragment_batch` | revision_id、batch_index、status、attempt、failure_code、updated_at | 批次状态 |
 | `graph_merge_log` | project_id、version、node_id、merged_from（JSON：片段 id 与片段节点 id 列表）、rule（EXACT/ALIAS/EMBEDDING） | 合并审计 |
+| `graph_project_merge_job` | project_id（主键）、lease_owner、lease_token、lease_expires_at、due_at、claimed_due_at、attempt_count、failure_code、last_reason | 项目级合并队列，复用 `MysqlGraphJobStore` 的租约与幂等模式 |
 
 合并规则：
 

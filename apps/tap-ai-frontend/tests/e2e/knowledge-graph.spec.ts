@@ -68,6 +68,22 @@ test("ready knowledge is published as a bounded grounded graph", async ({
     )
     .not.toBe("");
 
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/knowledge/graph/project`,
+        );
+        const body = (await response.json()) as {
+          status: string;
+          nodeCount: number;
+        };
+        return body.status === "READY" && body.nodeCount > 0;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+
   const graph = await page.request.post(`${root}/knowledge/graph/query`, {
     headers: { Origin: ORIGIN },
     data: { snapshotId, query: "*", nodeLimit: 500 },

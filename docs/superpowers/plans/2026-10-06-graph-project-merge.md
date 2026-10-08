@@ -79,7 +79,7 @@
 - Produces（`application/merger.py`）：
   - `class ProjectGraphMerger`：`__init__(self, *, align_threshold: float = 0.92)`；`merge(self, scope: ProjectScopeContext, fragments: Sequence[FragmentRecord], *, embeddings: Mapping[tuple[str, str], tuple[float, ...]] | None = None) -> ProjectGraphDraft`：依次 `resolve_entities` → `merge_edges` → 度数 → `propagate_labels` → `community_label` → 别名（LABEL：成员 label 的 `normalize_key`；MODEL：片段 aliases；MERGE：被合并掉的 label）→ `NodeSource`/`EdgeEvidence`（从片段 `evidence_ids` 展开）→ `MergeLogEntry`（仅多成员实体）→ `fragment_digest(fragments)`。片段为空时返回零节点的草稿。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```python
 # tests/unit/graph/test_project_alignment.py
@@ -137,21 +137,21 @@ def test_merge_of_no_fragments_is_an_empty_draft(): ...
 def test_merge_rejects_scope_mismatch(): ...                        # 片段 project_id 与 scope 不同 → ValueError
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/unit/graph/test_project_alignment.py tests/unit/graph/test_project_communities.py tests/unit/graph/test_alias_index.py tests/unit/graph/test_project_merger.py -v`
 Expected: FAIL（`ModuleNotFoundError`）
 
-- [ ] **Step 3: 实现 `domain/project.py`、`alignment.py`、`communities.py`、`alias_index.py`、`merger.py`**
+- [x] **Step 3: 实现 `domain/project.py`、`alignment.py`、`communities.py`、`alias_index.py`、`merger.py`**
 
 余弦相似度用标准库 `math` 手写，不引入 numpy。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `uv run pytest tests/unit/graph -v`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add apps/tap-ai-backend/src/tap/modules/graph/domain/project.py apps/tap-ai-backend/src/tap/modules/graph/application apps/tap-ai-backend/tests/unit/graph
@@ -185,7 +185,7 @@ git commit -m "feat: add project graph model with entity alignment and label pro
   - `async def prune_project_versions(session, scope, *, keep_latest: int = 2) -> int`：删除比第 `keep_latest` 新版本更早的全部行，返回删除的版本数。
   - `async def load_fragment_draft(session, scope, snapshot_id: str) -> GraphSnapshotDraft`：从 `mysql.py:478-617` 的 `_memory` 抽出的只读装载（含 `aliases` 与 `relation_label`），`_memory` 改为调用它。
 
-- [ ] **Step 1: 写失败的集成测试**
+- [x] **Step 1: 写失败的集成测试**
 
 ```python
 # tests/integration/test_mysql_project_graph.py
@@ -195,23 +195,23 @@ async def test_publish_version_writes_all_tables_and_prunes_old_versions(owned_p
     # graph_project_node_source / edge_evidence / alias / community / merge_log 的 version=3 行数与草稿一致
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/integration/test_mysql_project_graph.py tests/architecture/test_migration_metadata.py -v`
 Expected: FAIL（`ImportError: mysql_project`；`EXPECTED_TABLES` 不含新表）
 
-- [ ] **Step 3: 写迁移 `0029_project_graph.py`**
+- [x] **Step 3: 写迁移 `0029_project_graph.py`**
 
 `_scope_columns`/`_scope_constraints` 写法照抄 `0027_prompt_suggestions.py:17-37`；每张表都带 `project_id`、`actor_id`、`enterprise_id`、`identity_mode`、`identity_origin` 与 `uq_<table>_project_pk` 唯一约束；`downgrade()` 按依赖反序 `drop_table`。
 
-- [ ] **Step 4: 实现 `mysql_project.py`，扩展 `GRAPH_TABLES`，把九张表加入 `EXPECTED_TABLES`**
+- [x] **Step 4: 实现 `mysql_project.py`，扩展 `GRAPH_TABLES`，把九张表加入 `EXPECTED_TABLES`**
 
-- [ ] **Step 5: 运行集成、架构与 schema drift 测试**
+- [x] **Step 5: 运行集成、架构与 schema drift 测试**
 
 Run: `uv run pytest tests/integration/test_mysql_project_graph.py tests/integration/test_mysql_graph_store.py tests/architecture -v && (cd ../.. && make schema-drift)`
 Expected: 全部 PASS；schema drift 无差异（无隔离 MySQL 时跳过并在 PR 描述注明）
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add apps/tap-ai-backend/migrations/versions/0029_project_graph.py apps/tap-ai-backend/src/tap/modules/graph/adapters apps/tap-ai-backend/tests
@@ -252,7 +252,7 @@ git commit -m "feat: add project graph tables and version publication"
   - `class InMemoryProjectGraphStore(ProjectGraphStorePort)`：`async def publish(self, scope, draft: ProjectGraphDraft, *, now: datetime) -> ProjectGraphVersion`（版本号递增，摘要相同则返回现有版本）；`async def mark_merging(self, scope) -> None`（供 `GET /project` 测试展示 MERGING）。
 - Produces（`MysqlProjectGraphStore`）：`__init__(self, sessions: async_sessionmaker[AsyncSession], *, cache: ProjectGraphCache | None = None)`；`get_current` 读 `status="READY"` 的最大版本；其余方法先 `get_current`，缓存未命中时 `_load(scope, version) -> LoadedProjectGraph`（八张表各一条 `select ... where project_id, version`，不经 `GraphSnapshotDraft`），`put` 后委托 `LoadedProjectGraph`；没有 READY 版本抛 `ProjectGraphNotReady`。
 
-- [ ] **Step 1: 写失败的单元测试**
+- [x] **Step 1: 写失败的单元测试**
 
 ```python
 # tests/unit/graph/test_project_queries.py
@@ -281,19 +281,19 @@ async def test_same_digest_republish_returns_existing_version(): ...
 async def test_cross_project_reads_see_no_graph(): ...
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/unit/graph/test_project_queries.py tests/contract/test_project_graph_store_contract.py -v`
 Expected: FAIL（`ModuleNotFoundError: project_queries`）
 
-- [ ] **Step 3: 实现端口、`LoadedProjectGraph`、`ProjectGraphCache`、`InMemoryProjectGraphStore`**
+- [x] **Step 3: 实现端口、`LoadedProjectGraph`、`ProjectGraphCache`、`InMemoryProjectGraphStore`**
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `uv run pytest tests/unit/graph tests/contract/test_project_graph_store_contract.py -v`
 Expected: PASS
 
-- [ ] **Step 5: 写失败的 MySQL 集成测试（追加到 `test_mysql_project_graph.py`）**
+- [x] **Step 5: 写失败的 MySQL 集成测试（追加到 `test_mysql_project_graph.py`）**
 
 ```python
 @pytest.mark.asyncio
@@ -310,14 +310,14 @@ async def test_overview_source_filter_drops_nodes_without_in_filter_evidence(own
 async def test_mysql_queries_are_project_scoped(owned_project_mysql): ...   # 其他 project 的 scope get_current 为 None
 ```
 
-- [ ] **Step 6: 实现 `MysqlProjectGraphStore`**
+- [x] **Step 6: 实现 `MysqlProjectGraphStore`**
 
-- [ ] **Step 7: 运行集成测试确认通过**
+- [x] **Step 7: 运行集成测试确认通过**
 
 Run: `uv run pytest tests/integration/test_mysql_project_graph.py -v`
 Expected: PASS
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add apps/tap-ai-backend/src/tap/modules/graph apps/tap-ai-backend/tests
@@ -363,7 +363,7 @@ git commit -m "feat: serve project graph queries from a per-version adjacency ca
 - Produces（CLI，`entrypoints/graph_operator.py`，风格同 `knowledge_operator.py:37-52, 194-229`）：`parse_arguments(arguments) -> GraphOperation`，argparse 子命令 `graph rebuild --project <id>`（`--project` 仅接受 `VALIDATION_SCOPE.project_id`）、`--limit`（默认 100，1–500）、`--interval-seconds`（默认 1.0，限速）；`async def run(*, settings, operation) -> dict[str, int]` 对 `MysqlCurrentRevisions` 的每个修订读取 `knowledge_document_revision.chunks_blob_locator` 后调用 `reset_for_profile(... extraction_profile_digest=GRAPH_EXTRACTION_PROFILE_DIGEST, model_alias=settings.default_chat_model)`，每次之间 `asyncio.sleep(interval)`，最后 `queue.request(reason="rebuild")`；输出 JSON `{"requeuedCount": n, "skippedCount": m}`（RUNNING 的跳过）。`cli()` 退出码 0/1/130。Make 目标 `graph-rebuild: ## requeue graph extraction for every published revision; pass ARGS` → `uv run --project apps/tap-ai-backend python scripts/graph-operator.py $(ARGS)`。
 - `.env.example` 在 `TAPPER_GRAPH_BATCH_RETRIES=3` 之后追加 `TAPPER_GRAPH_ALIGN_EMBEDDING=0`、`TAPPER_GRAPH_ALIGN_THRESHOLD=0.92`、`TAPPER_GRAPH_OVERVIEW_LIMIT=150`。
 
-- [ ] **Step 1: 写失败的单元测试（内存队列与 worker）**
+- [x] **Step 1: 写失败的单元测试（内存队列与 worker）**
 
 ```python
 # tests/unit/graph/test_merge_worker.py
@@ -393,19 +393,19 @@ def test_graph_rebuild_arguments_bind_the_validation_project():
         parse_arguments(["graph", "rebuild", "--project", "other"])
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/unit/graph/test_merge_worker.py tests/unit/test_tapper_settings.py tests/unit/test_graph_operator.py -v`
 Expected: FAIL（`ModuleNotFoundError`、`AttributeError: graph_align_embedding`）
 
-- [ ] **Step 3: 实现 `merge_jobs.py`、`merge_worker.py`、设置字段与解析、`graph_operator.py`、`scripts/graph-operator.py`、Make 目标、`.env.example`**
+- [x] **Step 3: 实现 `merge_jobs.py`、`merge_worker.py`、设置字段与解析、`graph_operator.py`、`scripts/graph-operator.py`、Make 目标、`.env.example`**
 
-- [ ] **Step 4: 运行单元测试确认通过**
+- [x] **Step 4: 运行单元测试确认通过**
 
 Run: `uv run pytest tests/unit/graph tests/unit/test_tapper_settings.py tests/unit/test_graph_operator.py -v`
 Expected: PASS
 
-- [ ] **Step 5: 写失败的 MySQL 集成测试**
+- [x] **Step 5: 写失败的 MySQL 集成测试**
 
 ```python
 # tests/integration/test_project_merge_mysql.py（用 MysqlGraphStore.publish 发布片段快照，用 MysqlGraphJobStore 建 job 行；CurrentRevisions 用可变集合的 fake）
@@ -426,14 +426,14 @@ async def test_reset_for_profile_clears_fragment_and_requeues_job(owned_project_
     # READY 片段 + 两条批次行 → reset_for_profile 后 job PENDING、新 request_digest、graph_node/graph_fragment_batch 为 0 行、快照 CANDIDATE
 ```
 
-- [ ] **Step 6: 实现 `mysql_merge.py`、`graph_project_knowledge.py`、`MysqlGraphJobStore` 的 `merge_queue` 与 `reset_for_profile`、`SourceDeletedProjection` 钩子、`publish` 钩子与运行时接线**
+- [x] **Step 6: 实现 `mysql_merge.py`、`graph_project_knowledge.py`、`MysqlGraphJobStore` 的 `merge_queue` 与 `reset_for_profile`、`SourceDeletedProjection` 钩子、`publish` 钩子与运行时接线**
 
-- [ ] **Step 7: 运行集成测试与相关现有测试确认通过**
+- [x] **Step 7: 运行集成测试与相关现有测试确认通过**
 
 Run: `uv run pytest tests/integration/test_project_merge_mysql.py tests/integration/test_mysql_graph_store.py tests/integration/test_graph_snapshot_publication.py tests/integration/test_document_ledger.py tests/unit -k "graph or settings or operator" -v`
 Expected: PASS
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add apps/tap-ai-backend/src apps/tap-ai-backend/tests apps/tap-ai-backend/migrations scripts/graph-operator.py Makefile .env.example
@@ -480,7 +480,7 @@ git commit -m "feat: merge published graph fragments into project versions with 
   - 所有项目图路由：请求 `graph_version` 非空且 ≠ `get_current().version` → 抛 `GraphVersionMismatch` → 409，problem `type` 以 `/graph-version-mismatch` 结尾，`detail` 含当前版本号；`ProjectGraphNotReady` → `GET /project` 返回 `EMPTY`，其余路由返回 `ProjectGraphSubgraphView(graph_version=0, nodes=[], edges=[])`。
   - `GET /snapshots`、`GET /evidence/{evidence_id}`、`POST /nodes/{node_id}/neighbors` 保持 `knowledge_graph.py:29-129` 原样。
 
-- [ ] **Step 1: 写失败的契约测试**
+- [x] **Step 1: 写失败的契约测试**
 
 ```python
 # tests/contract/test_project_graph_http.py（services = replace(validation_http_services(), graph=InMemoryGraphStore(), project_graph=InMemoryProjectGraphStore(), graph_jobs=InMemoryGraphJobStore())）
@@ -499,24 +499,24 @@ def test_fragment_retry_requeues_failed_batches(): ...            # 预置 FAILE
 def test_legacy_snapshot_routes_still_serve_fragment_graphs(): ...  # /snapshots、/nodes/{id}?snapshotId、/evidence、/nodes/{id}/neighbors 与改动前断言一致
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/contract/test_project_graph_http.py tests/contract/test_graph_http.py -v`
 Expected: FAIL（404 或 `TypeError: project_graph`）
 
-- [ ] **Step 3: 实现契约模型、依赖、异常映射、路由与运行时注入**
+- [x] **Step 3: 实现契约模型、依赖、异常映射、路由与运行时注入**
 
-- [ ] **Step 4: 运行契约测试确认通过**
+- [x] **Step 4: 运行契约测试确认通过**
 
 Run: `uv run pytest tests/contract -k graph -v`
 Expected: PASS
 
-- [ ] **Step 5: 重新生成契约并确认前端类型编译**
+- [x] **Step 5: 重新生成契约并确认前端类型编译**
 
 Run（仓库根目录）: `make contracts && corepack pnpm --dir apps/tap-ai-frontend exec tsc -b`
 Expected: `contracts/` 与 `apps/tap-ai-frontend/src/shared/api/generated/schema.ts` 出现 `ProjectGraphView` 等类型；`GraphSearchRequest.snapshotId` 变为可选后 tsc 无错误（前端现有调用都传 `snapshotId`）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add apps/tap-ai-backend/src apps/tap-ai-backend/tests contracts apps/tap-ai-frontend/src/shared/api/generated
@@ -549,7 +549,7 @@ git commit -m "feat: expose project graph overview, search, path, detail and hig
     7. facts：节点 `{"kind": "node", "id", "label", "type", "aliases", "communityId", "seed": bool, "evidence": [...]}`；边 `{"kind": "edge", "id", "sourceNodeId", "targetNodeId", "relationType", "relationLabel", "origin", "confidence", "evidence": [...]}`；`evidence` 项沿用 `graph_enrichment.py:154-161` 的 `_evidence_locator` 字段。span 属性 `tap.graph.version`、`tap.graph.seed_count`、`tap.graph.node_count`、`tap.graph.edge_count`。
   - `knowledge_service.py:432` 的调用改为 `enrich(self.scope, tuple(frozen_input.source_revision_ids), domain_request.query, chunk_ids=())`：该调用先于检索执行，本 PR 只用问题种子；检索切片种子由 PR 3 把调用移到检索之后时接入。
 
-- [ ] **Step 1: 重写失败的单元测试**
+- [x] **Step 1: 重写失败的单元测试**
 
 ```python
 # tests/unit/knowledge/test_graph_enrichment.py（store = InMemoryProjectGraphStore，发布含别名 "健康告知书"/"健康告知" 与两条边的草稿）
@@ -566,19 +566,19 @@ async def test_no_ready_version_is_not_ready_and_errors_are_fail_soft(): ...   #
 async def test_publication_authority_denial_is_failed(): ...      # authorize_selection 抛 AuthorizationDenied → FAILED
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `uv run pytest tests/unit/knowledge/test_graph_enrichment.py -v`
 Expected: FAIL（`TypeError: chunk_ids`、`AttributeError: graph_version`）
 
-- [ ] **Step 3: 改写 `graph_enrichment.py`，更新 `knowledge_service.py` 调用与 `tapper_runtime.py` 注入**
+- [x] **Step 3: 改写 `graph_enrichment.py`，更新 `knowledge_service.py` 调用与 `tapper_runtime.py` 注入**
 
-- [ ] **Step 4: 运行相关测试确认通过**
+- [x] **Step 4: 运行相关测试确认通过**
 
 Run: `uv run pytest tests/unit/knowledge tests/unit/chat tests/contract -k "graph or enrich or answer" -v`
 Expected: PASS（`graph_snapshot_id` 继续满足 `conversations.py:292-296` 与 `http.py:890-900` 的 APPLIED 配对校验）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add apps/tap-ai-backend/src apps/tap-ai-backend/tests/unit/knowledge
@@ -595,19 +595,19 @@ git commit -m "feat: seed answer graph context from the project graph aliases an
 - Modify: `docs/superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md`（1.2 表格补一行 `graph_project_merge_job`，说明为合并队列）
 - Modify: `apps/tap-ai-frontend/tests/e2e/knowledge-graph.spec.ts:69`（在片段快照轮询之后追加 API 级轮询 `GET ${root}/knowledge/graph/project` 直到 `status === "READY"` 且 `nodeCount > 0`，超时 30 秒；UI 断言不改）
 
-- [ ] **Step 1: 更新四份文档与 E2E 断言；对客户企业名称做一次大小写不敏感全文检索，必须无输出**
+- [x] **Step 1: 更新四份文档与 E2E 断言；对客户企业名称做一次大小写不敏感全文检索，必须无输出**
 
-- [ ] **Step 2: 全量检查**
+- [x] **Step 2: 全量检查**
 
 Run（仓库根目录）: `make check && make test && git diff --check`
 Expected: 全部通过；无 MySQL 时集成测试按约定跳过，有 MySQL 时 Task 2、3、4 的集成测试运行并通过
 
-- [ ] **Step 3: 隔离 E2E**
+- [x] **Step 3: 隔离 E2E**
 
 Run: `make demo-e2e`
 Expected: `knowledge-graph.spec.ts` 通过——规则式假抽取对夹具句子 "A verified claim requires supporting evidence." 产出 `REQUIRES` 边，片段 READY 后 graph worker 的 `pending_work` 合并出项目图 version 1，`GET /project` 返回 `READY`；旧 `GET /snapshots` 与 Library 的"Published source graph"视图行为不变；其余 journey 不劣于当前 main
 
-- [ ] **Step 4: 提交并整理 PR 描述**
+- [x] **Step 4: 提交并整理 PR 描述**
 
 ```bash
 git add docs apps/tap-ai-frontend/tests/e2e/knowledge-graph.spec.ts

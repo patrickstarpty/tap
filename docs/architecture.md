@@ -60,8 +60,9 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 
 **图谱**
 
-1. graph worker 按文档修订分批（默认 10 个切片一批）用模型抽取实体与关系，关系限定为受控词表并带原文标签，批次结果持久化到 `graph_fragment_batch`，可重试与恢复；全部批次成功为 READY，部分失败为 PARTIAL。
-2. 查询 API 读取快照，载入内存图存储后返回节点、边与证据。
+1. graph worker 按文档修订分批（默认 10 个切片一批）用模型抽取实体与关系，关系限定为受控词表并带原文标签，批次结果持久化到 `graph_fragment_batch`，可重试与恢复；全部批次成功为 READY，部分失败为 PARTIAL（片段抽取）。
+2. 片段发布（READY/PARTIAL）、知识发布/撤销发布、来源删除、单文档删除均把项目加入 `graph_project_merge_job` 合并队列；graph worker 的 `pending_work` 钩子串行认领、租约执行合并（复用 `MysqlGraphJobStore` 的 `FOR UPDATE` 租约与幂等模式），对项目内全部满足档案摘要的 READY/PARTIAL 片段做全量重放：三级实体对齐（规范化 canonical key 精确匹配 → 别名表匹配 → embedding 相似度，默认关闭）、边合并（按两端节点与关系类型合并，置信度取最大值、证据取并集）、标签传播社区划分，`fragment_digest` 不变则跳过，版本就绪后原子切换为 READY 并只保留一个旧版本（项目合并）。
+3. 项目图按（project_id、version）在进程内缓存邻接表，版本切换时失效；查询 API（总览、搜索、路径、节点详情、邻居、高亮、按片段反查）与 `GraphAnswerEnricher`（按检索到的切片种子 + 别名最长匹配，取代整句子串匹配）都读这份缓存；响应带 `graphVersion`，请求携带的 `graphVersion` 与当前不符时返回 409。旧的按来源快照查询路由（`GET /snapshots` 等）原样保留给文档详情页的片段视图。`graph rebuild` CLI 可手动触发重建与首次合并。
 
 本地 CI/E2E 用规则式假抽取（`TAPPER_GRAPH_EXTRACTION_MODE=fake`），演示与真实环境用 `model`。
 
@@ -85,7 +86,7 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 | V1 能力 | 现状缺口 |
 | --- | --- |
 | [可靠问答](superpowers/plans/2026-09-29-v1-roadmap.md#1-可靠问答) | 仓库内质量用例为空；SSE 为数据库轮询，无 token 级流式；摄取任务租约回收不递增 `attempt`（Turn 回收递增但无上限）、摄取瞬时失败直接永久失败、worker loop 无异常保护 |
-| [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 抽取分批已实现（PR 1）；剩余缺口为项目级图合并，每次查询仍是按来源快照载入内存，详见[知识图谱脉络分析设计](superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md)（PR 2） |
-| [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 仅关键词取节点拼入上下文；剩余缺口为项目级图合并与关系分析推理（无多跳扩展、路径推理、关系边引用与路径高亮），详见[知识图谱脉络分析设计](superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md)（PR 2/PR 3） |
+| [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 抽取分批（PR 1）与项目级图合并、按（project_id、version）缓存邻接表（PR 2）已实现，"每次查询把整个快照载入内存"已解决；剩余缺口为真实资料业务验证，详见[知识图谱脉络分析设计](superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md) |
+| [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 项目级图合并与 `GraphAnswerEnricher` 按切片种子 + 别名最长匹配已实现（PR 2）；剩余缺口为 PR 3 接入关系引用（多跳扩展、路径推理、关系边引用与路径高亮），详见[知识图谱脉络分析设计](superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md) |
 | [Skills/Agents](superpowers/plans/2026-09-29-v1-roadmap.md#4-skillsagents) | 工具白名单硬编码为 `knowledge.search` / `knowledge.answer`；无导入能力 |
 | [可观测性](superpowers/plans/2026-09-29-v1-roadmap.md#5-可观测性) | 追踪数据无保留期与清理任务，`model_call_content` 原文永久保留会持续增长；DashScope 部分模型算不出成本，需要手动在 `deploy/local/litellm/config.yaml` 配置 `input_cost_per_token`/`output_cost_per_token` |
