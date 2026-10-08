@@ -58,10 +58,7 @@ describe("seedPositions", () => {
 
       for (const member of members) {
         const position = byId.get(member.id)!;
-        const distance = Math.hypot(
-          position.x - centerX,
-          position.y - centerY,
-        );
+        const distance = Math.hypot(position.x - centerX, position.y - centerY);
         expect(distance).toBeLessThanOrEqual(0.2);
       }
     }
@@ -104,21 +101,24 @@ describe("useGraphLayout", () => {
         label: "Node 1",
         nodeType: "Entity",
         canonicalKey: "n1",
-        community: "alpha",
+        communityId: "alpha",
+        degree: 1,
       },
       {
         nodeId: "n2",
         label: "Node 2",
         nodeType: "Entity",
         canonicalKey: "n2",
-        community: "alpha",
+        communityId: "alpha",
+        degree: 1,
       },
       {
         nodeId: "n3",
         label: "Node 3",
         nodeType: "Entity",
         canonicalKey: "n3",
-        community: "beta",
+        communityId: "beta",
+        degree: 0,
       },
     ];
     const edges: GraphEdge[] = [
@@ -127,6 +127,7 @@ describe("useGraphLayout", () => {
         sourceNodeId: "n1",
         targetNodeId: "n2",
         relationType: "RELATES_TO",
+        relationLabel: "Relates to",
         origin: "EXTRACTED",
         confidence: 0.9,
       },
@@ -146,7 +147,8 @@ function buildNode(id: string, community: string): GraphNode {
     label: id,
     nodeType: "Entity",
     canonicalKey: id,
-    community,
+    communityId: community,
+    degree: 0,
   };
 }
 
@@ -165,13 +167,18 @@ describe("useGraphLayout with a Worker", () => {
         sourceNodeId: "n1",
         targetNodeId: "n2",
         relationType: "RELATES_TO",
+        relationLabel: "Relates to",
         origin: "EXTRACTED",
         confidence: 0.9,
       },
     ];
 
     const { rerender } = renderHook(
-      ({ nodes, edges, order }: {
+      ({
+        nodes,
+        edges,
+        order,
+      }: {
         nodes: GraphNode[];
         edges: GraphEdge[];
         order: string[];

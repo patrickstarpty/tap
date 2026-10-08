@@ -12,12 +12,10 @@ export { scaleToCanvas, seedPositions };
 const CANVAS_WIDTH = 1560;
 const CANVAS_HEIGHT = 1120;
 
-function toSeeds(
-  nodes: GraphNode[],
-): { id: string; communityId: string }[] {
+function toSeeds(nodes: GraphNode[]): { id: string; communityId: string }[] {
   return nodes.map((node) => ({
     id: node.nodeId,
-    communityId: node.community ?? "",
+    communityId: node.communityId ?? "",
   }));
 }
 
@@ -70,9 +68,10 @@ export function useGraphLayout(
     () => computeSeededLayout(nodes, communityOrder),
     [nodes, communityOrder],
   );
-  const [workerPositions, setWorkerPositions] = useState<
-    Map<string, { x: number; y: number }> | null
-  >(null);
+  const [workerPositions, setWorkerPositions] = useState<Map<
+    string,
+    { x: number; y: number }
+  > | null>(null);
 
   const nodesSig = useMemo(() => nodesSignature(seeds), [seeds]);
   const edgesSig = useMemo(() => edgesSignature(edges), [edges]);

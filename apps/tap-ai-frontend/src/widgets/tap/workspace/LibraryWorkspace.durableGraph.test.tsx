@@ -1,303 +1,281 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 
-import { createKnowledgeClient } from "../../../features/knowledge/api/client";
+import type {
+  GraphProject,
+  GraphSubgraph,
+} from "../../../features/graph/model/graph";
 import {
-  useActiveGraph,
+  useGraphNode,
+  useGraphOverview,
+  useGraphProject,
   useGraphSearch,
 } from "../../../features/graph/api/queries";
 import { WORKSPACE_COPY } from "./copy";
 import { LibraryWorkspace } from "./LibraryWorkspace";
 
-vi.mock("../../../features/knowledge/api/client", () => ({
-  createKnowledgeClient: vi.fn(),
-}));
 vi.mock("../../../features/graph/api/queries", () => ({
-  useActiveGraph: vi.fn(),
+  useGraphProject: vi.fn(),
+  useGraphOverview: vi.fn(),
   useGraphSearch: vi.fn(),
+  useGraphNode: vi.fn(),
+  useGraphHighlight: vi.fn(() => ({ data: undefined, isPending: false })),
 }));
 
-it("offers only the published source graph", async () => {
-  const getSource = vi.fn(async (sourceId: string) => ({
-    documents: { items: [{ status: "ready", revisionId: `rev_${sourceId}` }] },
-  }));
-  vi.mocked(createKnowledgeClient).mockReturnValue({ getSource } as never);
-  vi.mocked(useActiveGraph).mockImplementation(
-    (_projectId, revisionIds) =>
-      ({
-        data: revisionIds.length
-          ? { items: [{ snapshotId: `snap_${revisionIds[0]}` }] }
-          : undefined,
-        isPending: revisionIds.length === 0,
-        isError: false,
-      }) as never,
-  );
-  vi.mocked(useGraphSearch).mockImplementation(
-    (_projectId, snapshotId) =>
-      ({
-        data: snapshotId
-          ? {
-              snapshotId,
-              nodes: [
-                {
-                  nodeId: "doc",
-                  nodeType: "DOCUMENT",
-                  label: "rev_source",
-                  canonicalKey: "doc",
-                },
-                {
-                  nodeId: "age",
-                  nodeType: "CONCEPT",
-                  label: "Age eligibility",
-                  canonicalKey: "age",
-                },
-              ],
-              edges: [
-                {
-                  edgeId: "edge",
-                  sourceNodeId: "doc",
-                  targetNodeId: "age",
-                  relationType: "CONTAINS",
-                  origin: "EXTRACTED",
-                  confidence: 1,
-                },
-              ],
-            }
-          : undefined,
-        isPending: snapshotId === null,
-        isError: false,
-      }) as never,
-  );
+function queryResult<T>(
+  data: T | undefined,
+  overrides: Partial<{
+    isPending: boolean;
+    isError: boolean;
+    isSuccess: boolean;
+  }> = {},
+) {
+  return {
+    data,
+    isPending: overrides.isPending ?? false,
+    isError: overrides.isError ?? false,
+    isSuccess: overrides.isSuccess ?? data !== undefined,
+  } as never;
+}
 
-  render(
+function buildProject(overrides: Partial<GraphProject> = {}): GraphProject {
+  return {
+    graphVersion: 1,
+    status: "READY",
+    nodeCount: 8,
+    edgeCount: 4,
+    mergedAt: "2026-01-01T00:00:00Z",
+    communities: [
+      { communityId: "underwriting", label: "Underwriting", size: 5 },
+      { communityId: "claims", label: "Claims", size: 3 },
+    ],
+    extractingRevisionIds: [],
+    partialRevisionIds: [],
+    ...overrides,
+  } as GraphProject;
+}
+
+function buildNodes(
+  count: number,
+  communityId: string,
+  prefix = "n",
+): GraphSubgraph["nodes"] {
+  return Array.from({ length: count }, (_, index) => ({
+    nodeId: `${prefix}${index}`,
+    label: `${prefix}${index}`,
+    nodeType: "CONCEPT",
+    canonicalKey: `${prefix}${index}`,
+    degree: 1,
+    communityId,
+    aliases: [],
+  }));
+}
+
+function buildOverview(
+  nodes: GraphSubgraph["nodes"],
+  edges: GraphSubgraph["edges"] = [],
+): GraphSubgraph {
+  return { graphVersion: 1, nodes, edges, evidence: [] };
+}
+
+function renderLibrary(overrides: {
+  project: GraphProject;
+  overview?: GraphSubgraph;
+  search?: GraphSubgraph;
+  locale?: "en" | "zh";
+  sources?: Parameters<typeof LibraryWorkspace>[0]["sources"];
+  publishedSources?: Parameters<typeof LibraryWorkspace>[0]["publishedSources"];
+}) {
+  vi.mocked(useGraphProject).mockReturnValue(queryResult(overrides.project));
+  vi.mocked(useGraphOverview).mockImplementation(() =>
+    queryResult(overrides.overview),
+  );
+  vi.mocked(useGraphSearch).mockImplementation(() =>
+    queryResult(overrides.search),
+  );
+  vi.mocked(useGraphNode).mockReturnValue(queryResult(undefined));
+
+  const copy = WORKSPACE_COPY[overrides.locale ?? "en"];
+  return render(
     <QueryClientProvider
       client={
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
       <LibraryWorkspace
-        copy={WORKSPACE_COPY.en}
-        locale="en"
+        copy={copy}
+        locale={overrides.locale ?? "en"}
         graphProjectId="tapper-demo"
-        sources={[
-          {
-            id: "src_a",
-            name: "Underwriting rules",
-            type: "Markdown",
-            status: "ready",
-            origin: "knowledge-base",
-            description: "Published source",
-          },
-          {
-            id: "src_b",
-            name: "Claims control",
-            type: "Markdown",
-            status: "ready",
-            origin: "knowledge-base",
-            description: "Published source",
-          },
-        ]}
+        sources={
+          overrides.sources ?? [
+            {
+              id: "src_a",
+              name: "Underwriting rules",
+              type: "Markdown",
+              status: "ready",
+              origin: "knowledge-base",
+              description: "Published source",
+            },
+          ]
+        }
+        publishedSources={
+          overrides.publishedSources ?? [
+            { sourceId: "src_a", revisionId: "rev_src_a" },
+          ]
+        }
       />
     </QueryClientProvider>,
   );
-  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-  expect(
-    screen.queryByRole("button", { name: "Domain overview" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Published source graph" }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "Graph source" })).toBeVisible();
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
-  );
-  expect(
-    screen.getByRole("group", { name: "Life insurance knowledge graph" }),
-  ).toBeVisible();
-  expect(
-    screen.getByText(/nodes and relationships come from the service/i),
-  ).toBeVisible();
-  expect(screen.getByRole("button", { name: /Age eligibility/ })).toBeVisible();
-  expect(
-    within(screen.getByRole("list", { name: "Concepts" })).getByText(
-      "Age eligibility",
-    ),
-  ).toBeVisible();
-  expect(vi.mocked(useActiveGraph).mock.lastCall?.[1]).toEqual(["rev_src_a"]);
+}
 
+it("renders communities from the project graph and colors nodes by community", async () => {
+  const project = buildProject();
+  const nodes = [
+    ...buildNodes(1, "underwriting", "uw"),
+    ...buildNodes(1, "claims", "cl"),
+  ];
+  renderLibrary({ project, overview: buildOverview(nodes) });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(
+    screen.getByRole("checkbox", { name: "Underwriting · 5 nodes" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("combobox", { name: "Graph source" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText(/Published source graph/i)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Underwriting/ })).toBeVisible();
+});
+
+it("shows an empty state for a project without communities", async () => {
+  const project = buildProject({ nodeCount: 0, communities: [] });
+  renderLibrary({ project });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(screen.getByText("No knowledge graph yet.")).toBeVisible();
+  expect(screen.getByText(/built automatically/i)).toBeVisible();
+  expect(screen.queryByRole("group")).not.toBeInTheDocument();
+});
+
+it("loads more nodes when the overview is truncated", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(150, "underwriting")),
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+
+  const lastCall = vi.mocked(useGraphOverview).mock.calls.at(-1);
+  expect(lastCall?.[2]).toMatchObject({ nodeLimit: 300 });
+});
+
+it("passes the filtered published sources to the overview", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    sources: [
+      {
+        id: "src_a",
+        name: "Underwriting rules",
+        type: "Markdown",
+        status: "ready",
+        origin: "knowledge-base",
+        description: "Published source",
+      },
+      {
+        id: "src_b",
+        name: "Failed upload",
+        type: "Markdown",
+        status: "failed",
+        origin: "knowledge-base",
+        description: "Failed source",
+      },
+    ],
+    publishedSources: [
+      { sourceId: "src_a", revisionId: "rev_src_a" },
+      { sourceId: "src_b", revisionId: "rev_src_b" },
+    ],
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Documents" }));
   await userEvent.selectOptions(
-    screen.getByRole("combobox", { name: "Graph source" }),
-    "src_b",
-  );
-  await waitFor(() =>
-    expect(getSource).toHaveBeenCalledWith("src_b", expect.anything()),
-  );
-  await waitFor(() =>
-    expect(vi.mocked(useActiveGraph).mock.lastCall?.[1]).toEqual(["rev_src_b"]),
-  );
-});
-
-it("describes the published graph without stale wording", async () => {
-  const getSource = vi.fn(async (sourceId: string) => ({
-    documents: { items: [{ status: "ready", revisionId: `rev_${sourceId}` }] },
-  }));
-  vi.mocked(createKnowledgeClient).mockReturnValue({ getSource } as never);
-  vi.mocked(useActiveGraph).mockImplementation(
-    (_projectId, revisionIds) =>
-      ({
-        data: revisionIds.length
-          ? { items: [{ snapshotId: `snap_${revisionIds[0]}` }] }
-          : undefined,
-        isPending: revisionIds.length === 0,
-        isError: false,
-      }) as never,
-  );
-  vi.mocked(useGraphSearch).mockImplementation(
-    (_projectId, snapshotId) =>
-      ({
-        data: snapshotId ? { snapshotId, nodes: [], edges: [] } : undefined,
-        isPending: snapshotId === null,
-        isError: false,
-      }) as never,
-  );
-
-  render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
-      <LibraryWorkspace
-        copy={WORKSPACE_COPY.en}
-        locale="en"
-        graphProjectId="tapper-demo"
-        sources={[
-          {
-            id: "src_a",
-            name: "Underwriting rules",
-            type: "Markdown",
-            status: "ready",
-            origin: "knowledge-base",
-            description: "Published source",
-          },
-        ]}
-      />
-    </QueryClientProvider>,
+    screen.getByRole("combobox", { name: "Status" }),
+    "ready",
   );
   await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-  await waitFor(() =>
-    expect(
-      screen.getByText(
-        "Published source graph · nodes and relationships come from the service.",
-      ),
-    ).toBeVisible(),
-  );
+
+  const lastCall = vi.mocked(useGraphOverview).mock.calls.at(-1);
+  expect(lastCall?.[2]).toMatchObject({ sourceRevisionIds: ["rev_src_a"] });
 });
 
-it("searches the published graph, inspects a node, and jumps to its source in the document list", async () => {
-  const getSource = vi.fn(async (sourceId: string) => ({
-    documents: { items: [{ status: "ready", revisionId: `rev_${sourceId}` }] },
-  }));
-  vi.mocked(createKnowledgeClient).mockReturnValue({ getSource } as never);
-  vi.mocked(useActiveGraph).mockImplementation(
-    (_projectId, revisionIds) =>
-      ({
-        data: revisionIds.length
-          ? { items: [{ snapshotId: `snap_${revisionIds[0]}` }] }
-          : undefined,
-        isPending: revisionIds.length === 0,
-        isError: false,
-      }) as never,
-  );
-  vi.mocked(useGraphSearch).mockImplementation(
-    (_projectId, snapshotId) =>
-      ({
-        data: snapshotId
-          ? {
-              snapshotId,
-              nodes: [
-                {
-                  nodeId: "doc",
-                  nodeType: "DOCUMENT",
-                  label: "rev_source",
-                  canonicalKey: "doc",
-                },
-                {
-                  nodeId: "age",
-                  nodeType: "CONCEPT",
-                  label: "Age eligibility",
-                  canonicalKey: "age",
-                },
-              ],
-              edges: [
-                {
-                  edgeId: "edge",
-                  sourceNodeId: "doc",
-                  targetNodeId: "age",
-                  relationType: "CONTAINS",
-                  origin: "EXTRACTED",
-                  confidence: 1,
-                },
-              ],
-            }
-          : undefined,
-        isPending: snapshotId === null,
-        isError: false,
-      }) as never,
-  );
-
-  render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
-      <LibraryWorkspace
-        copy={WORKSPACE_COPY.en}
-        locale="en"
-        graphProjectId="tapper-demo"
-        sources={[
-          {
-            id: "src_a",
-            name: "Underwriting rules",
-            type: "Markdown",
-            status: "ready",
-            origin: "knowledge-base",
-            description: "Published source about Age eligibility",
-          },
-        ]}
-      />
-    </QueryClientProvider>,
-  );
+it("shows extraction footer counts", async () => {
+  const project = buildProject({
+    extractingRevisionIds: ["rev_src_a", "rev_src_b"],
+    partialRevisionIds: ["rev_src_c"],
+  });
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    sources: [
+      {
+        id: "src_a",
+        name: "A",
+        type: "Markdown",
+        status: "ready",
+        origin: "knowledge-base",
+        description: "",
+      },
+      {
+        id: "src_b",
+        name: "B",
+        type: "Markdown",
+        status: "ready",
+        origin: "knowledge-base",
+        description: "",
+      },
+      {
+        id: "src_c",
+        name: "C",
+        type: "Markdown",
+        status: "ready",
+        origin: "knowledge-base",
+        description: "",
+      },
+    ],
+    publishedSources: [
+      { sourceId: "src_a", revisionId: "rev_src_a" },
+      { sourceId: "src_b", revisionId: "rev_src_b" },
+      { sourceId: "src_c", revisionId: "rev_src_c" },
+    ],
+  });
 
   await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
-  );
 
-  const search = screen.getByRole("textbox", { name: "Search library" });
-  await userEvent.type(search, "Age");
-  const results = screen.getByRole("region", { name: "Search results" });
-  await userEvent.click(
-    within(results).getByRole("button", { name: /Age eligibility/ }),
-  );
-  expect(
-    within(screen.getByRole("region", { name: "Node details" })).getByText(
-      "Age eligibility",
-    ),
-  ).toBeVisible();
+  expect(screen.getByText("2 sources still extracting")).toBeVisible();
+  expect(screen.getByText("1 partially failed")).toBeVisible();
+});
 
-  await userEvent.click(
-    screen.getByRole("button", { name: "View source in document list" }),
-  );
+it("renders Chinese overview copy", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(150, "underwriting")),
+    locale: "zh",
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "知识图谱" }));
+
+  expect(screen.getByText(/项目知识总览/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "加载更多" })).toBeVisible();
   expect(
-    screen.getByRole("tab", { name: "Documents", selected: true }),
-  ).toBeVisible();
-  expect(
-    within(screen.getByRole("list", { name: "Library sources" })).getByText(
-      "Underwriting rules",
-    ),
-  ).toBeVisible();
+    within(screen.getByRole("button", { name: "加载更多" })),
+  ).toBeDefined();
 });

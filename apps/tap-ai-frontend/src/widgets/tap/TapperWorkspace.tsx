@@ -16,7 +16,10 @@ import { TapperChat, type ChatAttachment } from "./workspace/TapperChat";
 import { CatalogWorkspace } from "./workspace/CatalogWorkspace";
 import { WORKSPACE_COPY, type WorkspaceCopy } from "./workspace/copy";
 import { KnowledgeSourcesPanel } from "./workspace/KnowledgeSourcesPanel";
-import { LibraryWorkspace } from "./workspace/LibraryWorkspace";
+import {
+  LibraryWorkspace,
+  type PublishedSourceRevision,
+} from "./workspace/LibraryWorkspace";
 import { AccessibleDialog } from "./workspace/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
@@ -707,6 +710,8 @@ function ProjectLibraryWorkspace({
   sources,
   loadState,
   onReload,
+  publishedSources = [],
+  onAskAboutNode,
 }: {
   projectId: string;
   graphProjectId?: string;
@@ -715,6 +720,8 @@ function ProjectLibraryWorkspace({
   sources: readonly LibrarySource[];
   loadState: "loading" | "loaded" | "error";
   onReload: () => void;
+  publishedSources?: readonly PublishedSourceRevision[];
+  onAskAboutNode?: (label: string, sourceIds: string[]) => void;
 }) {
   const upload = useUploadSourceMutation(projectId);
   const uploadIntents = useRef(new WeakMap<File, string>());
@@ -751,6 +758,14 @@ function ProjectLibraryWorkspace({
         sources={sources}
         loadState={loadState}
         onReload={onReload}
+        publishedSources={publishedSources}
+        onAskAboutNode={onAskAboutNode}
+        onOpenSource={(revisionId) => {
+          const sourceId = publishedSources.find(
+            (item) => item.revisionId === revisionId,
+          )?.sourceId;
+          if (sourceId !== undefined) setInspected(sourceId);
+        }}
         onInspectSource={(sourceId, trigger) => {
           opener.current = trigger;
           setInspected(sourceId);
@@ -1539,6 +1554,14 @@ export function TapperWorkspace() {
     }
     return [...grouped.values()];
   }, [publishedSourcesQuery.data?.items]);
+  const publishedSourceRevisions = useMemo(
+    () =>
+      (publishedSourcesQuery.data?.items ?? []).map((item) => ({
+        sourceId: item.sourceId,
+        revisionId: item.revisionId,
+      })),
+    [publishedSourcesQuery.data?.items],
+  );
   const [pendingAttachments, setPendingAttachments] = useState<
     readonly {
       id: string;
@@ -1709,6 +1732,29 @@ export function TapperWorkspace() {
           : conversation,
       ),
     );
+  };
+
+  const askAboutGraphNode = (label: string, sourceRevisionIds: string[]) => {
+    const sourceIds = sourceRevisionIds
+      .map(
+        (revisionId) =>
+          publishedSourceRevisions.find(
+            (item) => item.revisionId === revisionId,
+          )?.sourceId,
+      )
+      .filter((id): id is string => id !== undefined);
+    if (sourceIds.length > 0) {
+      updateActiveConversation((conversation) => ({
+        ...conversation,
+        selectedSourceIds: [
+          ...new Set([...conversation.selectedSourceIds, ...sourceIds]),
+        ],
+      }));
+    }
+    setMessageDraft((current) =>
+      current.length > 0 ? current : `Tell me more about ${label}.`,
+    );
+    setActiveModule("tapper");
   };
 
   const pickSuggestion = (item: PromptSuggestionItem) => {
@@ -2399,6 +2445,8 @@ export function TapperWorkspace() {
               onReload={() => {
                 void sourcesQuery.refetch();
               }}
+              publishedSources={publishedSourceRevisions}
+              onAskAboutNode={askAboutGraphNode}
             />
           ) : (
             <LibraryWorkspace copy={copy} sources={sourceItems} />

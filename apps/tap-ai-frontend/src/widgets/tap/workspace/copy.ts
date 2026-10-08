@@ -134,8 +134,6 @@ export interface WorkspaceCopy {
     skillCatalog: string;
   };
   library: {
-    testingCommunity: string;
-
     listView: string;
     cardView: string;
     preview: string;
@@ -156,7 +154,6 @@ export interface WorkspaceCopy {
     clearFilters: string;
     knowledgeGraphImage: string;
     graphSummary: string;
-    visibleDocuments: string;
     concepts: string;
     labeledRelationships: string;
     search: string;
@@ -168,14 +165,6 @@ export interface WorkspaceCopy {
     noResults: string;
     communities: string;
     selectAllTopics: string;
-    sourceCommunity: string;
-    newBusinessCommunity: string;
-    servicingCommunity: string;
-    claimsCommunity: string;
-    codebaseCommunity: string;
-    applicationCommunity: string;
-    underwritingCommunity: string;
-    partiesCommunity: string;
     nodes: string;
     nodeDetails: string;
     searchResults: string;
@@ -185,9 +174,6 @@ export interface WorkspaceCopy {
     community: string;
     relationships: string;
     provenance: string;
-    documentNode: string;
-    conceptNode: string;
-    entityNode: string;
     connections: string;
     zoomIn: string;
     zoomOut: string;
@@ -201,6 +187,18 @@ export interface WorkspaceCopy {
     extracted: string;
     inferred: string;
     graphNavigationHint: string;
+    overviewCaption: string;
+    loadMore: string;
+    extractingSources(n: number): string;
+    partialSources(n: number): string;
+    graphEmpty: string;
+    graphEmptyHint: string;
+    graphMerging: string;
+    otherCommunity: string;
+    nodeTypes: Record<
+      "ENTITY" | "CONCEPT" | "REQUIREMENT" | "SYSTEM" | "ACTOR" | "PROCESS",
+      string
+    >;
   };
 }
 
@@ -354,7 +352,6 @@ export const WORKSPACE_COPY = {
       preview: "Preview",
       download: "Download file",
       noPreview: "No preview available for this source.",
-      testingCommunity: "Testing",
       heading: "Library",
       description:
         "Browse source material and explore its curated domain context.",
@@ -368,9 +365,8 @@ export const WORKSPACE_COPY = {
       allTypes: "All types",
       allStatuses: "All statuses",
       clearFilters: "Clear filters",
-      knowledgeGraphImage: "Life insurance knowledge graph",
+      knowledgeGraphImage: "Project knowledge graph",
       graphSummary: "Knowledge graph summary",
-      visibleDocuments: "Visible documents",
       concepts: "Concepts",
       labeledRelationships: "Labeled relationships",
       search: "Search library",
@@ -382,14 +378,6 @@ export const WORKSPACE_COPY = {
       noResults: "No matching sources",
       communities: "Topic groups",
       selectAllTopics: "Select all",
-      sourceCommunity: "Sources",
-      newBusinessCommunity: "New business",
-      servicingCommunity: "Policy servicing",
-      claimsCommunity: "Claims",
-      codebaseCommunity: "Codebase",
-      applicationCommunity: "Application",
-      underwritingCommunity: "Underwriting",
-      partiesCommunity: "Parties",
       nodes: "nodes",
       nodeDetails: "Node details",
       searchResults: "Search results",
@@ -400,9 +388,6 @@ export const WORKSPACE_COPY = {
       community: "Topic group",
       relationships: "Relationships",
       provenance: "Provenance",
-      documentNode: "Document",
-      conceptNode: "Concept",
-      entityNode: "Entity",
       connections: "connections",
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
@@ -417,6 +402,24 @@ export const WORKSPACE_COPY = {
       inferred: "INFERRED",
       graphNavigationHint:
         "Drag to pan, use the controls to zoom, and select a node to inspect its relationships.",
+      overviewCaption:
+        "Project knowledge overview · nodes and relationships come from the service.",
+      loadMore: "Load more",
+      extractingSources: (n: number) => `${n} sources still extracting`,
+      partialSources: (n: number) => `${n} partially failed`,
+      graphEmpty: "No knowledge graph yet.",
+      graphEmptyHint:
+        "The graph is built automatically after sources are published.",
+      graphMerging: "The graph is being rebuilt…",
+      otherCommunity: "Other",
+      nodeTypes: {
+        ENTITY: "Entity",
+        CONCEPT: "Concept",
+        REQUIREMENT: "Requirement",
+        SYSTEM: "System",
+        ACTOR: "Actor",
+        PROCESS: "Process",
+      },
     },
   },
   zh: {
@@ -561,7 +564,6 @@ export const WORKSPACE_COPY = {
       preview: "预览",
       download: "下载文件",
       noPreview: "此来源暂无可用预览。",
-      testingCommunity: "测试验证",
       heading: "知识库",
       description: "浏览知识来源，并探索经过编排的领域上下文。",
       addSource: "添加来源",
@@ -574,9 +576,8 @@ export const WORKSPACE_COPY = {
       allTypes: "全部类型",
       allStatuses: "全部状态",
       clearFilters: "清除筛选",
-      knowledgeGraphImage: "寿险知识图谱",
+      knowledgeGraphImage: "项目知识图谱",
       graphSummary: "知识图谱摘要",
-      visibleDocuments: "可见文档",
       concepts: "概念",
       labeledRelationships: "已标注关系",
       search: "搜索知识库",
@@ -588,14 +589,6 @@ export const WORKSPACE_COPY = {
       noResults: "没有匹配的来源",
       communities: "主题分组",
       selectAllTopics: "全选",
-      sourceCommunity: "来源",
-      newBusinessCommunity: "新单",
-      servicingCommunity: "保全",
-      claimsCommunity: "理赔",
-      codebaseCommunity: "代码库",
-      applicationCommunity: "投保申请",
-      underwritingCommunity: "核保",
-      partiesCommunity: "参与方",
       nodes: "个节点",
       nodeDetails: "节点详情",
       searchResults: "搜索结果",
@@ -605,9 +598,6 @@ export const WORKSPACE_COPY = {
       community: "主题分组",
       relationships: "关系",
       provenance: "来源依据",
-      documentNode: "文档",
-      conceptNode: "概念",
-      entityNode: "实体",
       connections: "个关联",
       zoomIn: "放大",
       zoomOut: "缩小",
@@ -621,6 +611,22 @@ export const WORKSPACE_COPY = {
       extracted: "已抽取",
       inferred: "推断",
       graphNavigationHint: "拖动以平移画布，使用控件缩放，并选择节点查看关系。",
+      overviewCaption: "项目知识总览 · 节点与关系来自服务。",
+      loadMore: "加载更多",
+      extractingSources: (n: number) => `${n} 个来源仍在抽取`,
+      partialSources: (n: number) => `${n} 个部分失败`,
+      graphEmpty: "暂无知识图谱。",
+      graphEmptyHint: "来源发布后会自动建图。",
+      graphMerging: "图谱正在重建…",
+      otherCommunity: "其他",
+      nodeTypes: {
+        ENTITY: "实体",
+        CONCEPT: "概念",
+        REQUIREMENT: "需求",
+        SYSTEM: "系统",
+        ACTOR: "角色",
+        PROCESS: "流程",
+      },
     },
   },
 } as const satisfies Record<Locale, WorkspaceCopy>;

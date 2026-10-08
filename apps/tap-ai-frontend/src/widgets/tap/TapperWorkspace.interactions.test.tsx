@@ -22,9 +22,10 @@ import {
   renderApp,
 } from "../../shared/testing/renderApp";
 import { RuntimeClientProvider } from "../../features/runtime/api/queries";
-import { createKnowledgeClient } from "../../features/knowledge/api/client";
 import {
-  useActiveGraph,
+  useGraphNode,
+  useGraphOverview,
+  useGraphProject,
   useGraphSearch,
 } from "../../features/graph/api/queries";
 import { TapperWorkspace } from "./TapperWorkspace";
@@ -34,24 +35,20 @@ const workspaceStyles = readFileSync(
   "utf8",
 );
 
-// This module's LibraryWorkspace/ProjectKnowledgeGraph calls the real
-// createKnowledgeClient() directly (not the injected fakeKnowledgeClient
-// context) to fetch a source's graph detail, and calls the real graph query
-// hooks unconditionally on every render. Mock both so tests that switch to
-// the Knowledge Graph tab in durable/api mode exercise a deterministic
-// published graph instead of an unmocked network call. Tests that never
-// reach a ready source (selectedId stays null) are unaffected by these
-// defaults since that branch short-circuits before either is consulted.
+// `LibraryWorkspace`'s graph panel (`GraphOverview`) calls the real graph
+// query hooks unconditionally on every render. Mock them so tests that
+// switch to the Knowledge Graph tab exercise a deterministic project graph
+// instead of an unmocked network call.
 function defaultGraphQueryResult() {
   return { data: undefined, isPending: false, isError: false } as never;
 }
 
-vi.mock("../../features/knowledge/api/client", () => ({
-  createKnowledgeClient: vi.fn(),
-}));
 vi.mock("../../features/graph/api/queries", () => ({
-  useActiveGraph: vi.fn(() => defaultGraphQueryResult()),
+  useGraphProject: vi.fn(() => defaultGraphQueryResult()),
+  useGraphOverview: vi.fn(() => defaultGraphQueryResult()),
   useGraphSearch: vi.fn(() => defaultGraphQueryResult()),
+  useGraphNode: vi.fn(() => defaultGraphQueryResult()),
+  useGraphHighlight: vi.fn(() => defaultGraphQueryResult()),
 }));
 
 const DEFAULT_SOURCES = [
@@ -874,11 +871,16 @@ describe("Tap product workspace interactions", () => {
   });
 
   afterEach(() => {
-    vi.mocked(createKnowledgeClient).mockReset();
-    vi.mocked(useActiveGraph)
+    vi.mocked(useGraphProject)
+      .mockReset()
+      .mockImplementation(() => defaultGraphQueryResult());
+    vi.mocked(useGraphOverview)
       .mockReset()
       .mockImplementation(() => defaultGraphQueryResult());
     vi.mocked(useGraphSearch)
+      .mockReset()
+      .mockImplementation(() => defaultGraphQueryResult());
+    vi.mocked(useGraphNode)
       .mockReset()
       .mockImplementation(() => defaultGraphQueryResult());
     vi.unstubAllGlobals();
@@ -2959,46 +2961,43 @@ describe("Tap product workspace interactions", () => {
 
   it("switches the Library between All sources and an interactive Knowledge Graph", async () => {
     const user = userEvent.setup();
-    const getSource = vi.fn(async (sourceId: string) => ({
-      documents: {
-        items: [{ status: "ready", revisionId: `rev_${sourceId}` }],
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 2,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 2 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
       },
-    }));
-    vi.mocked(createKnowledgeClient).mockReturnValue({ getSource } as never);
-    vi.mocked(useActiveGraph).mockImplementation(
-      (_projectId, revisionIds) =>
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
         ({
-          data: revisionIds.length
-            ? { items: [{ snapshotId: `snap_${revisionIds[0]}` }] }
-            : undefined,
-          isPending: revisionIds.length === 0,
-          isError: false,
-        }) as never,
-    );
-    vi.mocked(useGraphSearch).mockImplementation(
-      (_projectId, snapshotId) =>
-        ({
-          data: snapshotId
-            ? {
-                snapshotId,
-                nodes: [
-                  {
-                    nodeId: "doc",
-                    nodeType: "DOCUMENT",
-                    label: "rev_source",
-                    canonicalKey: "doc",
-                  },
-                  {
-                    nodeId: "age",
-                    nodeType: "CONCEPT",
-                    label: "Age eligibility",
-                    canonicalKey: "age",
-                  },
-                ],
-                edges: [],
-              }
-            : undefined,
-          isPending: snapshotId === null,
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "age",
+                nodeType: "CONCEPT",
+                label: "Age eligibility",
+                canonicalKey: "age",
+                degree: 1,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
           isError: false,
         }) as never,
     );
@@ -3021,6 +3020,10 @@ describe("Tap product workspace interactions", () => {
       within(filteredSources).queryByText("life-underwriting-rules.md"),
     ).toBeNull();
 
+    // The Knowledge Graph overview switches to a project-wide search once
+    // the shared query is non-empty (see `GraphOverview`), so clear it
+    // before switching tabs to see the default overview instead.
+    await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
     expect(
       screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
@@ -3029,8 +3032,8 @@ describe("Tap product workspace interactions", () => {
       screen.getByRole("tabpanel", { name: "Knowledge Graph" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("combobox", { name: "Graph source" }),
-    ).toBeVisible();
+      screen.queryByRole("combobox", { name: "Graph source" }),
+    ).not.toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
     );
@@ -3041,7 +3044,6 @@ describe("Tap product workspace interactions", () => {
       screen.getByRole("button", { name: /Age eligibility/ }),
     ).toBeVisible();
 
-    await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Documents" }));
     expect(screen.getByRole("list", { name: "Library sources" })).toBeVisible();
   });
@@ -3120,7 +3122,7 @@ describe("Tap product workspace interactions", () => {
     expect(input).toHaveValue("Keep this draft");
   });
 
-  it("does not substitute the illustrative graph without a published revision", async () => {
+  it("does not substitute an illustrative graph before the project graph loads", async () => {
     const user = userEvent.setup();
     renderKnowledgeApp(<TapperWorkspace />, {
       api: fakeKnowledgeClient(),
@@ -3129,9 +3131,7 @@ describe("Tap product workspace interactions", () => {
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
-    expect(
-      await screen.findByText("Select a ready source to view its graph."),
-    ).toBeVisible();
+    expect(await screen.findByText("No knowledge graph yet.")).toBeVisible();
     expect(screen.queryByText("Illustrative view")).not.toBeInTheDocument();
   });
 
@@ -3144,9 +3144,7 @@ describe("Tap product workspace interactions", () => {
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
-    expect(
-      await screen.findByText("Select a ready source to view its graph."),
-    ).toBeVisible();
+    expect(await screen.findByText("No knowledge graph yet.")).toBeVisible();
     expect(
       screen.queryByRole("region", { name: "Knowledge graph summary" }),
     ).not.toBeInTheDocument();
