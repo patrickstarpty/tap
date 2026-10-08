@@ -58,6 +58,7 @@ __all__ = [
 
 _RELATION_LABEL_PATTERN = re.compile(r"^R(?:[1-9]|1[0-9]|20)$")
 _SNIPPET_MAX = 300
+_MAX_RELATIONS = 20
 
 
 class RelationContextStatus(StrEnum):
@@ -102,7 +103,7 @@ class RelationSupport:
     snippet: str | None = None
 
     def __post_init__(self) -> None:
-        if self.evidence_label and self.snippet:
+        if self.evidence_label is not None and self.snippet is not None:
             raise ValueError("relation support cannot carry both an evidence_label and a snippet")
         if self.snippet is not None and len(self.snippet) > _SNIPPET_MAX:
             raise ValueError(f"relation support snippet must be at most {_SNIPPET_MAX} characters")
@@ -111,6 +112,13 @@ class RelationSupport:
 
 @dataclass(frozen=True, slots=True)
 class RelationEvidence:
+    """`subject_aliases`/`object_aliases` come from PR 2's merged `ProjectNode.aliases`,
+    which carry no per-source provenance (aliases are merged across every project
+    source, not just the ones selected for this answer). They are used here only
+    for endpoint matching (citation validation's "claim text must contain an
+    endpoint label or alias" rule) and must never be surfaced in prompts or events,
+    since an alias could originate from a source outside the current selection."""
+
     label: str
     edge_id: str
     subject_node_id: str
@@ -272,7 +280,21 @@ async def seed_from_query(
     scope: ProjectScopeContext,
     version: int,
     query: str,
+    *,
+    allowed_source_revision_ids: frozenset[str],
 ) -> tuple[ProjectNode, ...]:
+    """Alias-match the question, then keep only matches that have at least one
+    visible source inside `allowed_source_revision_ids` -- PR 2's merged
+    aliases carry no per-source provenance, so an alias hit alone cannot tell
+    whether the node is actually backed by a selected source. Visibility is
+    checked with a one-hop, one-node `store.neighbors` call pinned to
+    `version` and filtered to the selection: `_node_visible` (the store's own
+    visibility rule) always keeps the queried node itself when it is visible,
+    regardless of `node_limit`. An empty selection returns `()` without
+    calling the store."""
+    if not allowed_source_revision_ids:
+        return ()
+    source_revision_ids = tuple(sorted(allowed_source_revision_ids))
     matches = await store.match_aliases(scope, query, version=version)
     node_ids = tuple(dict.fromkeys(match.node_id for match in matches))
     if not node_ids:
@@ -280,7 +302,21 @@ async def seed_from_query(
     nodes_by_id = {
         node.node_id: node for node in await store.nodes(scope, node_ids, version=version)
     }
-    return tuple(nodes_by_id[node_id] for node_id in node_ids if node_id in nodes_by_id)
+    visible_node_ids: list[str] = []
+    for node_id in node_ids:
+        if node_id not in nodes_by_id:
+            continue
+        visible = await store.neighbors(
+            scope,
+            node_id,
+            depth=1,
+            node_limit=1,
+            source_revision_ids=source_revision_ids,
+            version=version,
+        )
+        if any(node.node_id == node_id for node in visible.nodes):
+            visible_node_ids.append(node_id)
+    return tuple(nodes_by_id[node_id] for node_id in visible_node_ids)
 
 
 def expansion_depth(seed_count: int) -> int:
@@ -297,6 +333,9 @@ async def expand(
     node_limit: int = 60,
     edge_limit: int = 200,
 ) -> ProjectSubgraph:
+    if not allowed_source_revision_ids:
+        return ProjectSubgraph(version=version, nodes=(), edges=(), sources=(), evidence=())
+
     depth = expansion_depth(len(seeds))
     source_revision_ids = tuple(sorted(allowed_source_revision_ids))
 
@@ -331,8 +370,13 @@ async def expand(
                 evidence_seen.add(key)
                 evidence.append(item)
 
-    seed_id_set = {seed.node_id for seed in seeds}
-    ordered_node_ids = [node_id for node_id in seed_id_set if node_id in nodes_by_id] + [
+    # De-duplicated, given-order seed ids: a `set` iteration order is not
+    # stable across processes/hash seeds, so both the discovery order below
+    # and the `node_limit` cut must be driven by this ordered sequence, not
+    # by iterating `seed_id_set` directly.
+    seed_ids_ordered = tuple(dict.fromkeys(seed.node_id for seed in seeds))
+    seed_id_set = set(seed_ids_ordered)
+    ordered_node_ids = [node_id for node_id in seed_ids_ordered if node_id in nodes_by_id] + [
         node_id for node_id in nodes_by_id if node_id not in seed_id_set
     ]
     selected_node_ids = tuple(ordered_node_ids[:node_limit])
@@ -349,7 +393,8 @@ async def expand(
         for edge in candidate_edges
         if edge.source_node_id in seed_id_set or edge.target_node_id in seed_id_set
     ]
-    other_edges = [edge for edge in candidate_edges if edge not in seed_adjacent_edges]
+    seed_adjacent_edge_ids = {edge.edge_id for edge in seed_adjacent_edges}
+    other_edges = [edge for edge in candidate_edges if edge.edge_id not in seed_adjacent_edge_ids]
     selected_edges = tuple((seed_adjacent_edges + other_edges)[:edge_limit])
     selected_edge_ids = {edge.edge_id for edge in selected_edges}
 
@@ -413,17 +458,28 @@ async def find_paths(
     max_hops: int = 3,
     path_limit: int = 10,
 ) -> tuple[RelationPath, ...]:
+    if not allowed_source_revision_ids:
+        return ()
     source_revision_ids = tuple(sorted(allowed_source_revision_ids))
 
     pairs: list[tuple[ProjectNode, ProjectNode]] = []
+    seen_pairs: set[frozenset[str]] = set()
+
+    def add_pair(left: ProjectNode, right: ProjectNode) -> None:
+        if left.node_id == right.node_id:
+            return
+        key = frozenset({left.node_id, right.node_id})
+        if key in seen_pairs:
+            return
+        seen_pairs.add(key)
+        pairs.append((left, right))
+
     for index, left in enumerate(query_seeds):
         for right in query_seeds[index + 1 :]:
-            if left.node_id != right.node_id:
-                pairs.append((left, right))
+            add_pair(left, right)
     for left in query_seeds:
         for right in evidence_seeds:
-            if left.node_id != right.node_id:
-                pairs.append((left, right))
+            add_pair(left, right)
 
     paths: list[RelationPath] = []
     for left, right in pairs:
@@ -533,6 +589,8 @@ def assemble(
     evidence_by_chunk = {ref.chunk_id: ref.label for ref in evidence}
     relations: list[RelationEvidence] = []
     for edge, on_path, edge_evidence_items in ranked:
+        if len(relations) >= _MAX_RELATIONS:
+            break
         subject = nodes_by_id.get(edge.source_node_id)
         obj = nodes_by_id.get(edge.target_node_id)
         if subject is None or obj is None:
@@ -566,12 +624,18 @@ def assemble(
 def snippet_chunk_refs(
     ranked: tuple[tuple[ProjectEdge, bool, tuple[EdgeEvidence, ...]], ...],
     evidence: tuple[EvidenceRef, ...],
+    *,
+    allowed_source_revision_ids: frozenset[str],
 ) -> tuple[tuple[str, str], ...]:
+    if not allowed_source_revision_ids:
+        return ()
     evidence_chunk_ids = {ref.chunk_id for ref in evidence}
     seen: set[tuple[str, str]] = set()
     refs: list[tuple[str, str]] = []
     for _edge, _on_path, edge_evidence_items in ranked:
         for item in edge_evidence_items:
+            if item.source_revision_id not in allowed_source_revision_ids:
+                continue
             if item.chunk_id in evidence_chunk_ids:
                 continue
             key = (item.document_revision_id, item.chunk_id)

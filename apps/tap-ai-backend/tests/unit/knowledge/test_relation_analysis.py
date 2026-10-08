@@ -9,7 +9,9 @@ stand-in, not the full reference store in
 Fixture graph: nodes A/B/C/D; edges A->B REQUIRES 0.9, B->C PRECEDES 0.8,
 C->D USES 0.7, A->D RELATED_TO 0.95. A->B/B->C/C->D are evidenced in
 `rev-1`; A->D is evidenced only in `rev-2` (used to exercise authorized-source
-filtering). Chunk `chunk-1` supports A->B.
+filtering). Chunk `chunk-1` supports A->B. Node E is aliased "投保审核" and
+has a source only in `rev-2` (used to exercise node-level, not just
+edge-level, source-visibility filtering for query seeds).
 """
 
 from __future__ import annotations
@@ -54,6 +56,9 @@ _NODE_B = ProjectNode(
 _NODE_C = ProjectNode(node_id="C", label="节点 C", node_type="ENTITY", canonical_key="c")
 _NODE_D = ProjectNode(
     node_id="D", label="节点 D", node_type="ENTITY", canonical_key="d", aliases=("健康告知",)
+)
+_NODE_E = ProjectNode(
+    node_id="E", label="节点 E", node_type="ENTITY", canonical_key="e", aliases=("投保审核",)
 )
 
 _EDGE_AB = ProjectEdge(
@@ -117,12 +122,14 @@ class FakeProjectGraphStore:
         edges: tuple[ProjectEdge, ...],
         edge_evidence: dict[str, tuple[EdgeEvidence, ...]],
         node_chunks: dict[str, tuple[str, ...]],
+        node_sources: dict[str, tuple[str, ...]] | None = None,
     ) -> None:
         self._nodes_by_id = {node.node_id: node for node in nodes}
         self._edges = edges
         self._edge_by_id = {edge.edge_id: edge for edge in edges}
         self._edge_evidence = edge_evidence
         self._node_chunks = node_chunks
+        self._node_sources = node_sources or {}
         aliases = tuple(
             Alias(alias_norm=alias, node_id=node.node_id, origin="LABEL")
             for node in nodes
@@ -139,6 +146,14 @@ class FakeProjectGraphStore:
             for edge_id, items in self._edge_evidence.items()
             if any(item.source_revision_id in allowed for item in items)
         }
+
+    def _node_visible(self, node_id: str, source_revision_ids: tuple[str, ...]) -> bool:
+        if node_id not in self._nodes_by_id:
+            return False
+        if not source_revision_ids:
+            return True
+        allowed = set(source_revision_ids)
+        return any(revision in allowed for revision in self._node_sources.get(node_id, ()))
 
     async def nodes_for_chunks(
         self, scope, chunk_ids: tuple[str, ...], *, version: int | None = None
@@ -168,6 +183,10 @@ class FakeProjectGraphStore:
         source_revision_ids: tuple[str, ...] = (),
         version: int | None = None,
     ) -> ProjectSubgraph:
+        if not self._node_visible(node_id, source_revision_ids):
+            return ProjectSubgraph(
+                version=version or 1, nodes=(), edges=(), sources=(), evidence=()
+            )
         authorized_edge_ids = self._edges_authorized(source_revision_ids)
         visited = {node_id}
         frontier = {node_id}
@@ -266,7 +285,7 @@ class FakeProjectGraphStore:
 
 def _build_store() -> FakeProjectGraphStore:
     return FakeProjectGraphStore(
-        nodes=(_NODE_A, _NODE_B, _NODE_C, _NODE_D),
+        nodes=(_NODE_A, _NODE_B, _NODE_C, _NODE_D, _NODE_E),
         edges=(_EDGE_AB, _EDGE_BC, _EDGE_CD, _EDGE_AD),
         edge_evidence={
             "e-ab": (_evidence("e-ab", "chunk-1", "rev-1"),),
@@ -275,7 +294,60 @@ def _build_store() -> FakeProjectGraphStore:
             "e-ad": (_evidence("e-ad", "chunk-4", "rev-2"),),
         },
         node_chunks={"chunk-1": ("A",)},
+        node_sources={
+            "A": ("rev-1",),
+            "B": ("rev-1",),
+            "C": ("rev-1",),
+            "D": ("rev-1",),
+            "E": ("rev-2",),
+        },
     )
+
+
+class _ExplodingStore:
+    """A `ProjectGraphStorePort` stand-in whose every method fails the test if
+    called -- used to prove an empty source selection short-circuits before
+    any store round-trip."""
+
+    async def nodes_for_chunks(self, *args: object, **kwargs: object) -> tuple[str, ...]:
+        raise AssertionError("nodes_for_chunks should not be called for an empty selection")
+
+    async def nodes(self, *args: object, **kwargs: object) -> tuple[ProjectNode, ...]:
+        raise AssertionError("nodes should not be called for an empty selection")
+
+    async def match_aliases(self, *args: object, **kwargs: object) -> tuple[object, ...]:
+        raise AssertionError("match_aliases should not be called for an empty selection")
+
+    async def neighbors(self, *args: object, **kwargs: object) -> ProjectSubgraph:
+        raise AssertionError("neighbors should not be called for an empty selection")
+
+    async def path(self, *args: object, **kwargs: object) -> ProjectSubgraph:
+        raise AssertionError("path should not be called for an empty selection")
+
+
+@pytest.mark.asyncio
+async def test_expand_with_empty_selection_returns_empty_subgraph_without_store_calls() -> None:
+    subgraph = await expand(
+        _ExplodingStore(),
+        _SCOPE,
+        1,
+        (_NODE_A,),
+        allowed_source_revision_ids=frozenset(),
+    )
+    assert subgraph == ProjectSubgraph(version=1, nodes=(), edges=(), sources=(), evidence=())
+
+
+@pytest.mark.asyncio
+async def test_find_paths_with_empty_selection_returns_empty_without_store_calls() -> None:
+    paths = await find_paths(
+        _ExplodingStore(),
+        _SCOPE,
+        1,
+        (_NODE_A, _NODE_C),
+        (),
+        allowed_source_revision_ids=frozenset(),
+    )
+    assert paths == ()
 
 
 @pytest.mark.asyncio
@@ -292,8 +364,33 @@ async def test_seed_from_evidence_dedupes_and_seed_from_query_matches_aliases() 
     evidence_seeds = await seed_from_evidence(store, _SCOPE, 1, evidence)
     assert [node.node_id for node in evidence_seeds] == ["A"]
 
-    query_seeds = await seed_from_query(store, _SCOPE, 1, "核保与健康告知")
+    query_seeds = await seed_from_query(
+        store, _SCOPE, 1, "核保与健康告知", allowed_source_revision_ids=frozenset({"rev-1"})
+    )
     assert [node.node_id for node in query_seeds] == ["B", "D"]
+
+
+@pytest.mark.asyncio
+async def test_seed_from_query_excludes_node_without_visible_source_in_selection() -> None:
+    store = _build_store()
+    seeds = await seed_from_query(
+        store, _SCOPE, 1, "投保审核", allowed_source_revision_ids=frozenset({"rev-1"})
+    )
+    assert seeds == ()
+
+    visible_seeds = await seed_from_query(
+        store, _SCOPE, 1, "投保审核", allowed_source_revision_ids=frozenset({"rev-2"})
+    )
+    assert [node.node_id for node in visible_seeds] == ["E"]
+
+
+@pytest.mark.asyncio
+async def test_seed_from_query_with_empty_selection_returns_no_seeds_without_match_aliases() -> (
+    None
+):
+    store = _ExplodingStore()
+    seeds = await seed_from_query(store, _SCOPE, 1, "核保", allowed_source_revision_ids=frozenset())
+    assert seeds == ()
 
 
 def test_expansion_depth_is_two_below_three_seeds() -> None:
@@ -318,6 +415,21 @@ async def test_expand_respects_limits_and_authorized_sources() -> None:
     assert "A" in node_ids
     assert "D" not in node_ids
     assert "e-ad" not in {edge.edge_id for edge in subgraph.edges}
+
+
+@pytest.mark.asyncio
+async def test_expand_seed_order_is_stable_when_seeds_exceed_node_limit() -> None:
+    store = _build_store()
+    subgraph = await expand(
+        store,
+        _SCOPE,
+        1,
+        (_NODE_D, _NODE_C, _NODE_B, _NODE_A),
+        allowed_source_revision_ids=frozenset({"rev-1"}),
+        node_limit=2,
+        edge_limit=200,
+    )
+    assert [node.node_id for node in subgraph.nodes] == ["D", "C"]
 
 
 @pytest.mark.asyncio
@@ -362,6 +474,25 @@ async def test_find_paths_bounds_hops_and_count() -> None:
         path_limit=1,
     )
     assert len(limited_paths) == 1
+
+
+@pytest.mark.asyncio
+async def test_find_paths_dedupes_unordered_seed_pairs() -> None:
+    # (A, C) is both a query-seed pair and a query x evidence-seed pair here
+    # (C also appears as an "evidence" seed): it must only consume one
+    # `path_limit` slot, not two.
+    store = _build_store()
+    paths = await find_paths(
+        store,
+        _SCOPE,
+        1,
+        (_NODE_A, _NODE_C),
+        (_NODE_C,),
+        allowed_source_revision_ids=frozenset({"rev-1"}),
+        max_hops=3,
+        path_limit=10,
+    )
+    assert len(paths) == 1
 
 
 def test_rank_edges_prefers_path_edges_then_confidence_times_adjacency() -> None:
@@ -487,5 +618,75 @@ def test_snippet_chunk_refs_excludes_already_cited_chunks() -> None:
             label="S2", chunk_id="chunk-1", source_revision_id="rev-1", document_revision_id="doc-1"
         ),
     )
-    refs = snippet_chunk_refs(ranked, evidence)
+    refs = snippet_chunk_refs(ranked, evidence, allowed_source_revision_ids=frozenset({"rev-1"}))
     assert refs == (("doc-1", "chunk-9"),)
+
+
+def test_snippet_chunk_refs_excludes_unselected_revisions() -> None:
+    ranked = (
+        (_EDGE_AD, False, (_evidence("e-ad", "chunk-4", "rev-2"),)),
+        (_EDGE_BC, True, (_evidence("e-bc", "chunk-9", "rev-1"),)),
+    )
+    refs = snippet_chunk_refs(ranked, (), allowed_source_revision_ids=frozenset({"rev-1"}))
+    assert refs == (("doc-1", "chunk-9"),)
+
+
+def test_snippet_chunk_refs_with_empty_selection_returns_no_refs() -> None:
+    ranked = ((_EDGE_BC, True, (_evidence("e-bc", "chunk-9", "rev-1"),)),)
+    refs = snippet_chunk_refs(ranked, (), allowed_source_revision_ids=frozenset())
+    assert refs == ()
+
+
+def test_assemble_drops_support_from_unselected_revision() -> None:
+    nodes_by_id = {"A": _NODE_A, "D": _NODE_D}
+    ranked = ((_EDGE_AD, False, (_evidence("e-ad", "chunk-4", "rev-2"),)),)
+    relations = assemble(
+        ranked,
+        nodes_by_id,
+        (),
+        {"chunk-4": "chunk four content"},
+        allowed_source_revision_ids=frozenset({"rev-1"}),
+    )
+    assert relations == ()
+
+
+def test_assemble_stops_at_twenty_relations_instead_of_raising() -> None:
+    nodes_by_id = {"A": _NODE_A, "B": _NODE_B}
+    ranked = []
+    snippets = {}
+    for index in range(21):
+        edge = ProjectEdge(
+            edge_id=f"e-many-{index}",
+            source_node_id="A",
+            target_node_id="B",
+            relation_type="REQUIRES",
+            relation_label="REQUIRES",
+            origin=RelationOrigin.EXTRACTED,
+            confidence=0.5,
+        )
+        chunk_id = f"chunk-many-{index}"
+        snippets[chunk_id] = f"content {index}"
+        ranked.append((edge, False, (_evidence(edge.edge_id, chunk_id, "rev-1"),)))
+
+    relations = assemble(
+        tuple(ranked),
+        nodes_by_id,
+        (),
+        snippets,
+        allowed_source_revision_ids=frozenset({"rev-1"}),
+    )
+    assert len(relations) == 20
+    assert relations[-1].label == "R20"
+
+
+def test_relation_support_rejects_empty_string_snippet_alongside_evidence_label() -> None:
+    with pytest.raises(ValueError):
+        RelationSupport(
+            chunk_id="chunk-1",
+            source_revision_id="rev-1",
+            document_revision_id="doc-1",
+            content_digest="d1",
+            anchor={},
+            evidence_label="S1",
+            snippet="",
+        )
