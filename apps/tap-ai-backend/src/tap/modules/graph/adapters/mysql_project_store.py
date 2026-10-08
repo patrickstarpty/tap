@@ -107,10 +107,14 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
         `identity_origin`), which `scope_predicates` already filters on and
         which the resulting domain objects never use — and results are
         fetched as plain `Row` tuples rather than `RowMapping`s, then
-        unpacked positionally in the same order as the `select(...)` column
-        list below. At 10k nodes / 50k edges this is purely a column-count
-        and row-object-shape change: same tables, same `where`/`order_by`,
-        same values read, same domain objects built."""
+        destructured by tuple unpacking (`for a, b, ... in rows`) in the
+        same order as the `select(...)` column list below, rather than by
+        positional index: a `select(...)` column added/removed/reordered
+        without a matching change to the unpacking raises `ValueError`
+        (wrong number of values to unpack) instead of silently mapping the
+        wrong column into the wrong field. At 10k nodes / 50k edges this is
+        purely a column-count and row-object-shape change: same tables, same
+        `where`/`order_by`, same values read, same domain objects built."""
 
         scope = require_project_scope(scope)
         async with self._sessions() as session:
@@ -248,70 +252,99 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
                 )
             ).all()
 
+        (status, fragment_digest, node_count, edge_count, merged_at) = version_row
         project_version = ProjectGraphVersion(
             project_id=scope.project_id,
             version=version,
-            status=version_row[0],
-            fragment_digest=version_row[1],
-            node_count=version_row[2],
-            edge_count=version_row[3],
-            merged_at=version_row[4],
+            status=status,
+            fragment_digest=fragment_digest,
+            node_count=node_count,
+            edge_count=edge_count,
+            merged_at=merged_at,
         )
         nodes = tuple(
             ProjectNode(
-                node_id=row[0],
-                label=row[1],
-                node_type=row[2],
-                canonical_key=row[3],
-                degree=row[4],
-                community_id=row[5],
-                aliases=tuple(row[6] or ()),
+                node_id=node_id,
+                label=label,
+                node_type=node_type,
+                canonical_key=canonical_key,
+                degree=degree,
+                community_id=community_id,
+                aliases=tuple(aliases_json or ()),
             )
-            for row in node_rows
+            for node_id, label, node_type, canonical_key, degree, community_id, aliases_json in (
+                node_rows
+            )
         )
         edges = tuple(
             ProjectEdge(
-                edge_id=row[0],
-                source_node_id=row[1],
-                target_node_id=row[2],
-                relation_type=row[3],
-                relation_label=row[4],
-                origin=RelationOrigin(row[5]),
-                confidence=float(row[6]),
+                edge_id=edge_id,
+                source_node_id=source_node_id,
+                target_node_id=target_node_id,
+                relation_type=relation_type,
+                relation_label=relation_label,
+                origin=RelationOrigin(origin),
+                confidence=float(confidence),
             )
-            for row in edge_rows
+            for (
+                edge_id,
+                source_node_id,
+                target_node_id,
+                relation_type,
+                relation_label,
+                origin,
+                confidence,
+            ) in edge_rows
         )
         node_sources = tuple(
             NodeSource(
-                node_id=row[0],
-                source_revision_id=row[1],
-                document_revision_id=row[2],
-                chunk_id=row[3],
-                anchor=row[4],
-                fragment_snapshot_id=row[5],
-                fragment_node_id=row[6],
+                node_id=node_id,
+                source_revision_id=source_revision_id,
+                document_revision_id=document_revision_id,
+                chunk_id=chunk_id,
+                anchor=anchor_json,
+                fragment_snapshot_id=fragment_snapshot_id,
+                fragment_node_id=fragment_node_id,
             )
-            for row in source_rows
+            for (
+                node_id,
+                source_revision_id,
+                document_revision_id,
+                chunk_id,
+                anchor_json,
+                fragment_snapshot_id,
+                fragment_node_id,
+            ) in source_rows
         )
         edge_evidence = tuple(
             EdgeEvidence(
-                edge_id=row[0],
-                source_revision_id=row[1],
-                document_revision_id=row[2],
-                chunk_id=row[3],
-                anchor=row[4],
-                content_digest=row[5],
-                fragment_snapshot_id=row[6],
-                fragment_edge_id=row[7],
+                edge_id=edge_id,
+                source_revision_id=source_revision_id,
+                document_revision_id=document_revision_id,
+                chunk_id=chunk_id,
+                anchor=anchor_json,
+                content_digest=content_digest,
+                fragment_snapshot_id=fragment_snapshot_id,
+                fragment_edge_id=fragment_edge_id,
             )
-            for row in evidence_rows
+            for (
+                edge_id,
+                source_revision_id,
+                document_revision_id,
+                chunk_id,
+                anchor_json,
+                content_digest,
+                fragment_snapshot_id,
+                fragment_edge_id,
+            ) in evidence_rows
         )
         aliases = tuple(
-            Alias(alias_norm=row[0], node_id=row[1], origin=row[2]) for row in alias_rows
+            Alias(alias_norm=alias_norm, node_id=node_id, origin=origin)
+            for alias_norm, node_id, origin in alias_rows
         )
         communities = tuple(
-            Community(community_id=row[0], label=row[1], size=row[2])
-            for row in community_rows
+            Community(community_id=community_id, label=label, size=size)
+            for community_id, label, size in community_rows
         )
         return LoadedProjectGraph.from_rows(
             project_version,
