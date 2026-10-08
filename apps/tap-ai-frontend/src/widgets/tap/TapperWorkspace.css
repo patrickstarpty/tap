@@ -2039,6 +2039,28 @@
   gap: 12px;
 }
 
+.tap-graph-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 32px 16px;
+  color: var(--tap-muted);
+  text-align: center;
+}
+
+.tap-graph-extraction-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 8px;
+  background: var(--tap-surface);
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
 .tap-graph-communities,
 .tap-graph-inspector {
   min-width: 0;

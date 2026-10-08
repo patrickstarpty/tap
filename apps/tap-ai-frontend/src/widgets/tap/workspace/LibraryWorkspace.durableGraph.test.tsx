@@ -81,14 +81,22 @@ function buildOverview(
 }
 
 function renderLibrary(overrides: {
-  project: GraphProject;
+  project?: GraphProject | null;
+  projectPending?: boolean;
+  projectError?: boolean;
   overview?: GraphSubgraph;
   search?: GraphSubgraph;
   locale?: "en" | "zh";
   sources?: Parameters<typeof LibraryWorkspace>[0]["sources"];
   publishedSources?: Parameters<typeof LibraryWorkspace>[0]["publishedSources"];
+  publishedSourcesLoading?: boolean;
 }) {
-  vi.mocked(useGraphProject).mockReturnValue(queryResult(overrides.project));
+  vi.mocked(useGraphProject).mockReturnValue(
+    queryResult(overrides.project ?? undefined, {
+      isPending: overrides.projectPending ?? false,
+      isError: overrides.projectError ?? false,
+    }),
+  );
   vi.mocked(useGraphOverview).mockImplementation(() =>
     queryResult(overrides.overview),
   );
@@ -125,6 +133,7 @@ function renderLibrary(overrides: {
             { sourceId: "src_a", revisionId: "rev_src_a" },
           ]
         }
+        publishedSourcesLoading={overrides.publishedSourcesLoading ?? false}
       />
     </QueryClientProvider>,
   );
@@ -147,7 +156,13 @@ it("renders communities from the project graph and colors nodes by community", a
     screen.queryByRole("combobox", { name: "Graph source" }),
   ).not.toBeInTheDocument();
   expect(screen.queryByText(/Published source graph/i)).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Underwriting/ })).toBeVisible();
+  const uwNode = screen.getByRole("button", { name: /Underwriting/ });
+  expect(uwNode).toBeVisible();
+  // "Underwriting" (size 5) is the largest community, so it gets the first
+  // palette color (features/graph/model/palette.ts's GRAPH_PALETTE[0]).
+  expect(uwNode.style.getPropertyValue("--tap-community-color")).toBe(
+    "#2563eb",
+  );
 });
 
 it("shows an empty state for a project without communities", async () => {
@@ -278,4 +293,127 @@ it("renders Chinese overview copy", async () => {
   expect(
     within(screen.getByRole("button", { name: "加载更多" })),
   ).toBeDefined();
+});
+
+it("shows a loading message while the project graph is loading", async () => {
+  renderLibrary({ project: undefined, projectPending: true });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(screen.getByText("Loading the knowledge graph…")).toBeVisible();
+});
+
+it("shows an unavailable message when the project graph query fails", async () => {
+  renderLibrary({ project: undefined, projectError: true });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(
+    screen.getByText(
+      "The knowledge graph is temporarily unavailable. Try again.",
+    ),
+  ).toBeVisible();
+});
+
+it("shows a loading state while published sources are still loading", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    publishedSourcesLoading: true,
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(screen.getByText("Loading sources")).toBeVisible();
+  expect(vi.mocked(useGraphOverview).mock.calls.at(-1)?.[0]).toBeNull();
+});
+
+it("shows a no-match state when Library filters match no published source", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    sources: [
+      {
+        id: "src_a",
+        name: "Underwriting rules",
+        type: "Markdown",
+        status: "ready",
+        origin: "knowledge-base",
+        description: "Published source",
+      },
+    ],
+    publishedSources: [{ sourceId: "src_a", revisionId: "rev_src_a" }],
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  await userEvent.selectOptions(
+    screen.getByRole("combobox", { name: "Status" }),
+    "failed",
+  );
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(screen.getByText("No matching sources")).toBeVisible();
+  expect(vi.mocked(useGraphOverview).mock.calls.at(-1)?.[0]).toBeNull();
+});
+
+it("keeps the graph scoped to type/status facets, not the free-text search box", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    sources: [
+      {
+        id: "src_a",
+        name: "Underwriting rules",
+        type: "Markdown",
+        status: "ready",
+        origin: "knowledge-base",
+        description: "Published source",
+      },
+      {
+        id: "src_b",
+        name: "Claims control",
+        type: "Markdown",
+        status: "ready",
+        origin: "knowledge-base",
+        description: "Published source",
+      },
+    ],
+    publishedSources: [
+      { sourceId: "src_a", revisionId: "rev_src_a" },
+      { sourceId: "src_b", revisionId: "rev_src_b" },
+    ],
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Search library" }),
+    "Underwriting",
+  );
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  const lastCall = vi.mocked(useGraphOverview).mock.calls.at(-1);
+  expect(lastCall?.[2]).toMatchObject({
+    sourceRevisionIds: ["rev_src_a", "rev_src_b"],
+  });
+});
+
+it("renders localized node type labels in the Chinese search results", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting", "uw")),
+    locale: "zh",
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "知识图谱" }));
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "搜索知识库" }),
+    "uw0",
+  );
+
+  expect(screen.getByText(/概念/)).toBeVisible();
+  expect(screen.queryByText(/CONCEPT/)).not.toBeInTheDocument();
 });

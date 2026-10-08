@@ -6,7 +6,7 @@ import {
   FullscreenExitOutlined,
   MenuFoldOutlined,
 } from "@ant-design/icons";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   KeyboardEvent,
@@ -32,32 +32,14 @@ function displayLabel(label: string): string {
   return label.length > 27 ? `${label.slice(0, 25)}…` : label;
 }
 
-/**
- * A purely presentational, data-agnostic SVG canvas: it renders whatever
- * `nodes`/`edges`/`communities` it is given, with no built-in notion of a
- * fixed topic or node-type taxonomy. Data fetching, community-filter state
- * and node-detail content all live with the caller (e.g.
- * `features/graph/components/GraphOverview.tsx`, or a future caller that
- * can import this widgets-layer component).
- */
-export function KnowledgeGraph({
-  copy,
-  nodes,
-  edges,
-  communities,
-  activeCommunities,
-  onToggleCommunity,
-  onSelectAllCommunities,
-  statusFooter,
-  searchQuery,
-  selectedNodeId,
-  onSelectNode,
-  highlight = null,
-  detailPanel,
-  caption,
-  onLoadMore,
-  loadMoreLabel,
-}: {
+function nodeTypeLabel(copy: WorkspaceCopy, nodeType: string): string {
+  return (
+    copy.library.nodeTypes[nodeType as keyof typeof copy.library.nodeTypes] ??
+    nodeType
+  );
+}
+
+export interface KnowledgeGraphProps {
   copy: WorkspaceCopy;
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -82,7 +64,36 @@ export function KnowledgeGraph({
   caption: string;
   onLoadMore?: () => void;
   loadMoreLabel?: string;
-}) {
+}
+
+/**
+ * The single, data-agnostic SVG canvas: it renders whatever
+ * `nodes`/`edges`/`communities` it is given, with no built-in notion of a
+ * fixed topic or node-type taxonomy. Data fetching, community-filter state
+ * and node-detail content all live with the caller (e.g.
+ * `features/graph/components/GraphOverview.tsx`, injected as its `Canvas`
+ * prop via a type-only import of `KnowledgeGraphProps` — `features/` may
+ * not import a `widgets/` value, but this widget may be, and is, injected
+ * from `LibraryWorkspace.tsx`).
+ */
+export function KnowledgeGraph({
+  copy,
+  nodes,
+  edges,
+  communities,
+  activeCommunities,
+  onToggleCommunity,
+  onSelectAllCommunities,
+  statusFooter,
+  searchQuery,
+  selectedNodeId,
+  onSelectNode,
+  highlight = null,
+  detailPanel,
+  caption,
+  onLoadMore,
+  loadMoreLabel,
+}: KnowledgeGraphProps) {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [communitiesOpen, setCommunitiesOpen] = useState(
     () =>
@@ -120,16 +131,24 @@ export function KnowledgeGraph({
   } | null>(null);
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
 
-  const visibleNodes = nodes.filter((node) =>
-    activeCommunities.has(node.community),
+  const visibleNodes = useMemo(
+    () => nodes.filter((node) => activeCommunities.has(node.community)),
+    [nodes, activeCommunities],
   );
-  const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
-  const visibleEdges = edges.filter(
-    (edge) =>
-      visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target),
+  const nodeById = useMemo(
+    () => new Map(visibleNodes.map((node) => [node.id, node])),
+    [visibleNodes],
   );
-  const selectedNode =
-    visibleNodes.find((node) => node.id === selectedNodeId) ?? null;
+  const visibleEdges = useMemo(
+    () =>
+      edges.filter(
+        (edge) => nodeById.has(edge.source) && nodeById.has(edge.target),
+      ),
+    [edges, nodeById],
+  );
+  const selectedNode = selectedNodeId
+    ? (nodeById.get(selectedNodeId) ?? null)
+    : null;
   const matchesQuery = (node: GraphNode) =>
     [node.label, node.communityLabel, node.nodeType, ...node.aliases].some(
       (value) => value?.toLocaleLowerCase().includes(normalizedQuery),
@@ -142,6 +161,16 @@ export function KnowledgeGraph({
     if (edge.source === focusedNodeId) neighborhood.add(edge.target);
     if (edge.target === focusedNodeId) neighborhood.add(edge.source);
   }
+
+  const nodeTypeGroups = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const node of visibleNodes) {
+      const members = groups.get(node.nodeType) ?? [];
+      members.push(node.label);
+      groups.set(node.nodeType, members);
+    }
+    return groups;
+  }, [visibleNodes]);
 
   const selectNodeFromKeyboard = (
     event: KeyboardEvent<SVGGElement>,
@@ -227,7 +256,8 @@ export function KnowledgeGraph({
                   >
                     <strong>{node.label}</strong>
                     <span>
-                      {node.nodeType} · {node.communityLabel}
+                      {nodeTypeLabel(copy, node.nodeType)} ·{" "}
+                      {node.communityLabel}
                     </span>
                   </button>
                 </li>
@@ -323,12 +353,8 @@ export function KnowledgeGraph({
             <g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>
               <g className="tap-graph-edges" aria-hidden="true">
                 {visibleEdges.map((edge) => {
-                  const source = visibleNodes.find(
-                    (node) => node.id === edge.source,
-                  );
-                  const target = visibleNodes.find(
-                    (node) => node.id === edge.target,
-                  );
+                  const source = nodeById.get(edge.source);
+                  const target = nodeById.get(edge.target);
                   if (!source || !target) return null;
                   const middleX = (source.x + target.x) / 2;
                   const middleY = (source.y + target.y) / 2;
@@ -390,7 +416,7 @@ export function KnowledgeGraph({
                       key={node.id}
                       role="button"
                       tabIndex={0}
-                      aria-label={`${node.label} · ${node.nodeType} · ${node.communityLabel}`}
+                      aria-label={`${node.label} · ${nodeTypeLabel(copy, node.nodeType)} · ${node.communityLabel}`}
                       aria-pressed={selected}
                       className="tap-graph-node"
                       style={
@@ -450,15 +476,21 @@ export function KnowledgeGraph({
           aria-label={copy.library.graphSummary}
         >
           <h2>{copy.library.graphSummary}</h2>
+          {[...nodeTypeGroups.entries()].map(([nodeType, labels]) => (
+            <div key={nodeType}>
+              <h3>{nodeTypeLabel(copy, nodeType)}</h3>
+              <ul aria-label={nodeTypeLabel(copy, nodeType)}>
+                {labels.map((label) => (
+                  <li key={label}>{label}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
           <h3>{copy.library.labeledRelationships}</h3>
           <ul aria-label={copy.library.labeledRelationships}>
             {visibleEdges.map((edge) => {
-              const source = visibleNodes.find(
-                (node) => node.id === edge.source,
-              );
-              const target = visibleNodes.find(
-                (node) => node.id === edge.target,
-              );
+              const source = nodeById.get(edge.source);
+              const target = nodeById.get(edge.target);
               if (!source || !target) return null;
               return (
                 <li key={edge.id}>

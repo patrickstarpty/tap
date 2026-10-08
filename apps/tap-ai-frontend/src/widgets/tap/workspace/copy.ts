@@ -194,6 +194,8 @@ export interface WorkspaceCopy {
     graphEmpty: string;
     graphEmptyHint: string;
     graphMerging: string;
+    graphLoading: string;
+    graphUnavailable: string;
     otherCommunity: string;
     nodeTypes: Record<
       "ENTITY" | "CONCEPT" | "REQUIREMENT" | "SYSTEM" | "ACTOR" | "PROCESS",
@@ -411,6 +413,9 @@ export const WORKSPACE_COPY = {
       graphEmptyHint:
         "The graph is built automatically after sources are published.",
       graphMerging: "The graph is being rebuilt…",
+      graphLoading: "Loading the knowledge graph…",
+      graphUnavailable:
+        "The knowledge graph is temporarily unavailable. Try again.",
       otherCommunity: "Other",
       nodeTypes: {
         ENTITY: "Entity",
@@ -618,6 +623,8 @@ export const WORKSPACE_COPY = {
       graphEmpty: "暂无知识图谱。",
       graphEmptyHint: "来源发布后会自动建图。",
       graphMerging: "图谱正在重建…",
+      graphLoading: "正在加载知识图谱…",
+      graphUnavailable: "知识图谱暂时无法加载，请重试。",
       otherCommunity: "其他",
       nodeTypes: {
         ENTITY: "实体",

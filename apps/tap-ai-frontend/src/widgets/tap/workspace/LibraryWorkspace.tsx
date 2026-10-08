@@ -25,7 +25,11 @@ import { FileTypeIcon } from "./FileTypeIcon";
 import { getFileTypeFamily } from "./fileTypes";
 import { AccessibleDialog } from "./AccessibleDialog";
 import type { WorkspaceCopy } from "./copy";
-import { GraphOverview } from "../../../features/graph/components/GraphOverview";
+import {
+  GraphOverview,
+  type GraphSourceScope,
+} from "../../../features/graph/components/GraphOverview";
+import { KnowledgeGraph } from "./KnowledgeGraph";
 import type { LibrarySource } from "./model";
 
 type LibraryMode = "list" | "graph";
@@ -46,6 +50,7 @@ interface LibraryWorkspaceProps {
   graphProjectId?: string;
   locale?: "en" | "zh";
   publishedSources?: readonly PublishedSourceRevision[];
+  publishedSourcesLoading?: boolean;
   onAskAboutNode?: (label: string, sourceIds: string[]) => void;
   onOpenSource?: (sourceId: string) => void;
 }
@@ -72,6 +77,7 @@ export function LibraryWorkspace({
   graphProjectId,
   locale = "en",
   publishedSources = [],
+  publishedSourcesLoading = false,
   onAskAboutNode,
   onOpenSource,
 }: LibraryWorkspaceProps) {
@@ -118,6 +124,20 @@ export function LibraryWorkspace({
     normalizedQuery.length > 0 ||
     typeFilter !== "all" ||
     statusFilter !== "all";
+  // The graph is scoped by the type/status facets, not by the free-text
+  // search box: the search box drives the Knowledge Graph's own node
+  // search (see `GraphOverview`/`KnowledgeGraph`), not which sources the
+  // overview is built from.
+  const sourceFilterActive = typeFilter !== "all" || statusFilter !== "all";
+  const graphSourceRevisionIds = useMemo(
+    () => publishedRevisionIdsOf(facetSources, publishedSources),
+    [facetSources, publishedSources],
+  );
+  const sourceScope: GraphSourceScope = publishedSourcesLoading
+    ? { status: "loading" }
+    : sourceFilterActive && graphSourceRevisionIds.length === 0
+      ? { status: "no-match" }
+      : { status: "ready", sourceRevisionIds: graphSourceRevisionIds };
 
   const selectMode = (nextMode: LibraryMode) => {
     setMode(nextMode);
@@ -413,12 +433,11 @@ export function LibraryWorkspace({
               locale={locale}
               copy={copy}
               query={query}
-              sourceRevisionIds={publishedRevisionIdsOf(
-                visibleSources,
-                publishedSources,
-              )}
+              sourceScope={sourceScope}
+              publishedSources={publishedSources}
               onAskAboutNode={onAskAboutNode}
               onOpenSource={onOpenSource}
+              Canvas={KnowledgeGraph}
             />
           )}
         </div>

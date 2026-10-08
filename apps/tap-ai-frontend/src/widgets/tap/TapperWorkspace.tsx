@@ -711,6 +711,7 @@ function ProjectLibraryWorkspace({
   loadState,
   onReload,
   publishedSources = [],
+  publishedSourcesLoading = false,
   onAskAboutNode,
 }: {
   projectId: string;
@@ -721,6 +722,7 @@ function ProjectLibraryWorkspace({
   loadState: "loading" | "loaded" | "error";
   onReload: () => void;
   publishedSources?: readonly PublishedSourceRevision[];
+  publishedSourcesLoading?: boolean;
   onAskAboutNode?: (label: string, sourceIds: string[]) => void;
 }) {
   const upload = useUploadSourceMutation(projectId);
@@ -759,12 +761,15 @@ function ProjectLibraryWorkspace({
         loadState={loadState}
         onReload={onReload}
         publishedSources={publishedSources}
+        publishedSourcesLoading={publishedSourcesLoading}
         onAskAboutNode={onAskAboutNode}
-        onOpenSource={(revisionId) => {
-          const sourceId = publishedSources.find(
-            (item) => item.revisionId === revisionId,
-          )?.sourceId;
-          if (sourceId !== undefined) setInspected(sourceId);
+        onOpenSource={(sourceId) => {
+          // No trigger element exists for this path (the click happened
+          // inside the graph canvas, not a Library list row), so clear the
+          // opener instead of leaving a stale one that would steal focus
+          // when the dialog closes.
+          opener.current = null;
+          setInspected(sourceId);
         }}
         onInspectSource={(sourceId, trigger) => {
           opener.current = trigger;
@@ -1734,15 +1739,10 @@ export function TapperWorkspace() {
     );
   };
 
-  const askAboutGraphNode = (label: string, sourceRevisionIds: string[]) => {
-    const sourceIds = sourceRevisionIds
-      .map(
-        (revisionId) =>
-          publishedSourceRevisions.find(
-            (item) => item.revisionId === revisionId,
-          )?.sourceId,
-      )
-      .filter((id): id is string => id !== undefined);
+  // `GraphOverview` already resolves published-source revision ids to real
+  // source ids (via the `publishedSources` it is given), so `sourceIds`
+  // here are real source ids — no reverse mapping needed.
+  const askAboutGraphNode = (label: string, sourceIds: string[]) => {
     if (sourceIds.length > 0) {
       updateActiveConversation((conversation) => ({
         ...conversation,
@@ -1751,10 +1751,9 @@ export function TapperWorkspace() {
         ],
       }));
     }
-    setMessageDraft((current) =>
-      current.length > 0 ? current : `Tell me more about ${label}.`,
-    );
+    setMessageDraft(label);
     setActiveModule("tapper");
+    setSourcesCollapsed(false);
   };
 
   const pickSuggestion = (item: PromptSuggestionItem) => {
@@ -2446,6 +2445,7 @@ export function TapperWorkspace() {
                 void sourcesQuery.refetch();
               }}
               publishedSources={publishedSourceRevisions}
+              publishedSourcesLoading={publishedSourcesQuery.isPending}
               onAskAboutNode={askAboutGraphNode}
             />
           ) : (
