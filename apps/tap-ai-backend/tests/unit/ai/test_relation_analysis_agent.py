@@ -10,6 +10,7 @@ failure hook.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
 
 import pytest
@@ -18,16 +19,20 @@ from opentelemetry import context as otel_context
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.application.agents.protocol import AgentContext
 from tap.modules.ai.application.agents.relation_analysis import RelationAnalysisAgent
-from tap.modules.graph.domain.project import ProjectGraphVersion
+from tap.modules.graph.domain.project import ProjectGraphVersion, ProjectNode
+from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.modules.knowledge.application.relation_analysis import (
+    EvidenceRef,
     RelationAnalysisInput,
     RelationContextStatus,
 )
+from tap.modules.knowledge.domain.review import KnowledgePublication
 from tap.platform.telemetry import span
 from tests.unit.knowledge.test_relation_analysis import FakeProjectGraphStore, _build_store
 
 _SCOPE = VALIDATION_SCOPE
 _SPAN_NAMES = {"graph.seed", "graph.expand", "graph.path", "relation.rank"}
+_NOW = datetime(2026, 9, 23, 9, tzinfo=UTC)
 
 
 class FakeSnippets:
@@ -104,6 +109,77 @@ class BumpAfterFirstCallStore(VersionedStore):
             return await super().get_current(scope)
         finally:
             self._version = original
+
+
+class _PublicationRepository:
+    def __init__(self, publication: KnowledgePublication | None) -> None:
+        self._publication = publication
+
+    async def current_publication(self) -> KnowledgePublication | None:
+        return self._publication
+
+
+def _publication(**changes: Any) -> KnowledgePublication:
+    values: dict[str, Any] = {
+        "publication_id": "publication-1",
+        "project_id": _SCOPE.project_id,
+        "review_id": "review-1",
+        "review_version": 1,
+        "approval_digest": "sha256:" + "a" * 64,
+        "source_revision_ids": ("rev-1",),
+        "approved_item_ids": ("item-allowed",),
+        "generation": "gen-1",
+        "published_by": "reviewer-1",
+        "published_at": _NOW - timedelta(hours=1),
+        "expires_at": _NOW + timedelta(hours=1),
+    }
+    values.update(changes)
+    return KnowledgePublication(**values)
+
+
+def _single_edge_store(*, anchor: Mapping[str, object]) -> VersionedStore:
+    """One `x -> y` edge whose sole support chunk carries `anchor` -- used to
+    drive `_publication_authority.authorize_evidence` down a specific
+    accept/deny path without the five-node fixture graph's noise."""
+    from tap.modules.graph.application.alias_index import AliasIndex
+    from tap.modules.graph.domain.models import RelationOrigin
+    from tap.modules.graph.domain.project import Alias, EdgeEvidence, ProjectEdge
+
+    node_x = ProjectNode(node_id="x", label="节点 X", node_type="ENTITY", canonical_key="x")
+    node_y = ProjectNode(node_id="y", label="节点 Y", node_type="ENTITY", canonical_key="y")
+    edge = ProjectEdge(
+        edge_id="e-1",
+        source_node_id="x",
+        target_node_id="y",
+        relation_type="RELATED_TO",
+        relation_label="RELATED_TO",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    edge_evidence = {
+        "e-1": (
+            EdgeEvidence(
+                edge_id="e-1",
+                source_revision_id="rev-1",
+                document_revision_id="rev-1",
+                chunk_id="chunk-1",
+                anchor=anchor,
+                content_digest="digest-1",
+                fragment_snapshot_id="fragment-1",
+                fragment_edge_id="fe-1",
+            ),
+        )
+    }
+    store = VersionedStore(
+        version=7,
+        nodes=(node_x, node_y),
+        edges=(edge,),
+        edge_evidence=edge_evidence,
+        node_chunks={"chunk-x": ("x",)},
+        node_sources={"x": ("rev-1",), "y": ("rev-1",)},
+    )
+    store._alias_index = AliasIndex.build((Alias(alias_norm="x", node_id="x", origin="LABEL"),))
+    return store
 
 
 def _input(**overrides: Any) -> RelationAnalysisInput:
@@ -262,3 +338,78 @@ async def test_agent_caps_augment_chunks_at_five() -> None:
 
     assert result.status is RelationContextStatus.APPLIED
     assert len(result.augment_chunks) == 5
+
+
+@pytest.mark.asyncio
+async def test_agent_fails_when_support_is_outside_the_current_publication() -> None:
+    store = _single_edge_store(anchor={"inventoryItemId": "item-blocked"})
+    authority = PublishedKnowledgeAuthority(
+        _PublicationRepository(_publication()), now=lambda: _NOW
+    )
+    agent = RelationAnalysisAgent(
+        store,
+        FakeSnippets({"chunk-1": "x 到 y 的片段"}),
+        publication_authority=authority,
+    )
+
+    result = await agent.run(_context(), _input(query="x", evidence=()))
+
+    assert result.status is RelationContextStatus.FAILED
+    assert result.diagnostics["failure"] == 1
+    assert result.relations == ()
+
+
+@pytest.mark.asyncio
+async def test_agent_applies_when_support_is_authorized_by_the_current_publication() -> None:
+    store = _single_edge_store(anchor={"inventoryItemId": "item-allowed"})
+    authority = PublishedKnowledgeAuthority(
+        _PublicationRepository(_publication()), now=lambda: _NOW
+    )
+    agent = RelationAnalysisAgent(
+        store,
+        FakeSnippets({"chunk-1": "x 到 y 的片段"}),
+        publication_authority=authority,
+    )
+
+    result = await agent.run(_context(), _input(query="x", evidence=()))
+
+    assert result.status is RelationContextStatus.APPLIED
+    assert result.relations
+
+
+@pytest.mark.asyncio
+async def test_seed_outside_the_selection_is_excluded_from_seeds() -> None:
+    """`seed_from_evidence` does not itself filter by selection (it trusts
+    `value.evidence` to already be in-selection S labels), so this proves the
+    agent's own `_visible_seed_nodes` -- which only keeps seeds that survived
+    `expand`'s source-revision filter -- is what actually excludes a node
+    whose only source lies outside `source_revision_ids`."""
+    outside = ProjectNode(
+        node_id="outside", label="节点 Outside", node_type="ENTITY", canonical_key="outside"
+    )
+    store = VersionedStore(
+        version=7,
+        nodes=(outside,),
+        edges=(),
+        edge_evidence={},
+        node_chunks={"chunk-outside": ("outside",)},
+        node_sources={"outside": ("rev-2",)},
+    )
+    agent = RelationAnalysisAgent(store, FakeSnippets())
+
+    result = await agent.run(
+        _context(),
+        _input(
+            query="不存在的问题",
+            evidence=(
+                EvidenceRef(
+                    label="S1",
+                    chunk_id="chunk-outside",
+                    source_revision_id="rev-2",
+                    document_revision_id="doc-outside",
+                ),
+            ),
+        ),
+    )
+
+    assert result.seeds == ()

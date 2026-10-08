@@ -17,6 +17,7 @@ from sqlalchemy.sql.selectable import Select
 
 from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import (
     MysqlDocumentRepository,
@@ -42,6 +43,7 @@ from tap.modules.knowledge.ports.answers import (
 from tap.modules.knowledge.ports.citations import CitationSnapshotCorrupt
 from tap.modules.knowledge.ports.documents import ArtifactLocator
 from tap.platform.db.session import create_engine_and_session_factory
+from tests.owned_mysql import owned_project_database_url
 
 pytestmark = pytest.mark.skipif(
     os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1",
@@ -1048,9 +1050,110 @@ def test_concurrent_retention_is_globally_serialized_and_cascades_old_citations(
     asyncio.run(scenario())
 
 
-def test_load_chunk_locators_returns_only_scoped_ready_revisions() -> None:
+_OTHER_SCOPE = ProjectScopeContext(
+    enterprise_id="local",
+    project_id="other-project",
+    actor_id="tapper-local-user",
+    identity_mode=IdentityMode.VALIDATION,
+)
+
+
+async def seed_ready_other_project(engine, suffix: str) -> ReadyDocumentRevision:  # type: ignore[no-untyped-def]
+    """Same shape as `seed_ready`, but scoped to a different `project_id` --
+    used to prove `load_chunk_locators` is scope-filtered, not just a bare
+    `revision_id IN (...)` lookup."""
+    document_id = f"doc_{suffix}"
+    source_id = legacy_source_id(_OTHER_SCOPE.project_id, document_id)
+    revision_id = f"rev_{suffix}"
+    now = datetime(2026, 8, 28, 9, 0)
+    async with engine.begin() as connection:
+        from tap.modules.knowledge.adapters.mysql_documents import knowledge_source
+        from tap.platform.db.project_scope import scope_values
+
+        await connection.execute(
+            text("INSERT INTO project (enterprise_id,project_id) VALUES ('local','other-project')")
+        )
+        await connection.execute(
+            knowledge_source.insert().values(
+                **scope_values(_OTHER_SCOPE),
+                source_id=source_id,
+                name="fixture",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO knowledge_document (source_id,enterprise_id,project_id,actor_id,iden"
+                "tity_mode,identity_origin,document_id,filename,media_type,current_revi"
+                "sion_id,source_content_hash,dedupe_key,reservation_parser_version,rese"
+                "rvation_chunker_version,reservation_pipeline_version,status,stage,chun"
+                "k_count,activated_at,created_at,updated_at) VALUES (:source_id,'local','other-pro"
+                "ject','tapper-local-user','validation','VALIDATION',:document_id,:filena"
+                "me,'text/markdown',NULL,:source_hash,:dedupe_key,'tapper-parser-v1','t"
+                "apper-structure-512-v1','tapper-ingestion-v1','ready','ready',1,:now,:"
+                "now,:now)"
+            ),
+            {
+                "source_id": source_id,
+                "document_id": document_id,
+                "filename": f"{suffix}.md",
+                "source_hash": SOURCE_HASH,
+                "dedupe_key": "sha256:" + suffix[0] * 64,
+                "now": now,
+            },
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO knowledge_document_revision (source_id,enterprise_id,project_id,acto"
+                "r_id,identity_mode,identity_origin,revision_id,document_id,source_cont"
+                "ent_hash,original_blob_locator,normalized_blob_locator,chunks_blob_loc"
+                "ator,parser_version,chunker_version,pipeline_version,created_at) VALUE"
+                "S (:source_id,'local','other-project','tapper-local-user','validation',"
+                "'VALIDATION',:revision_id,:document_id,:source_hash,'original',:normalized,:chunks"
+                ",'tapper-parser-v1','tapper-structure-512-v1','tapper-ingestion-v1',:n"
+                "ow)"
+            ),
+            {
+                "revision_id": revision_id,
+                "source_id": source_id,
+                "document_id": document_id,
+                "source_hash": SOURCE_HASH,
+                "normalized": f"tapper-artifacts/revisions/{revision_id}/normalized-v1.json",
+                "chunks": f"tapper-artifacts/revisions/{revision_id}/chunks-v1.jsonl.gz",
+                "now": now,
+            },
+        )
+        await connection.execute(
+            text(
+                "UPDATE knowledge_document SET current_revision_id=:revision_id "
+                "WHERE document_id=:document_id"
+            ),
+            {"revision_id": revision_id, "document_id": document_id},
+        )
+    return ReadyDocumentRevision(
+        document_id,
+        revision_id,
+        SOURCE_HASH,
+        source_id,
+        source_name="fixture",
+        filename=f"{suffix}.md",
+    )
+
+
+def test_load_chunk_locators_returns_only_scoped_revisions_with_a_locator(
+    owned_project_mysql,  # type: ignore[no-untyped-def]
+) -> None:
+    """`load_chunk_locators` filters on `scope_predicates` (excludes another
+    project's revision even when its id is requested and it has a locator)
+    and on a non-NULL `chunks_blob_locator` (excludes a revision whose chunk
+    artifact was never produced). It does not filter by document/source
+    "ready" status -- no such join is specified for it -- so the name says
+    only what it actually checks."""
+
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        database_url = owned_project_database_url(owned_project_mysql)
+        engine, sessions = create_engine_and_session_factory(database_url)
         await clean(engine)
         repository = MysqlDocumentRepository(
             sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
@@ -1058,6 +1161,7 @@ def test_load_chunk_locators_returns_only_scoped_ready_revisions() -> None:
         try:
             with_locator = await seed_ready(engine, "a")
             without_locator = await seed_ready(engine, "b")
+            other_project = await seed_ready_other_project(engine, "c")
             async with engine.begin() as connection:
                 await connection.execute(
                     text(
@@ -1068,7 +1172,11 @@ def test_load_chunk_locators_returns_only_scoped_ready_revisions() -> None:
                 )
 
             locators = await repository.load_chunk_locators(
-                (with_locator.revision_id, without_locator.revision_id)
+                (
+                    with_locator.revision_id,
+                    without_locator.revision_id,
+                    other_project.revision_id,
+                )
             )
 
             assert set(locators) == {with_locator.revision_id}

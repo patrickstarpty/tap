@@ -218,6 +218,11 @@ class RelationAnalysisAgent:
                     paths=paths,
                 )
 
+            # Augment candidates are not run through `_publication_authority`
+            # here -- only the relations' own support is (above). They are
+            # unauthorized snippet candidates for later retrieval fusion;
+            # Task 5's `authorize_selection` re-check at fusion time is what
+            # actually gates them before they can reach a prompt or event.
             augment_chunks = self._augment_chunks(
                 refs, snippet_map, _evidence_by_ref(subgraph.evidence)
             )
