@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import NoReturn, Protocol, cast
+from typing import Mapping, NoReturn, Protocol, cast
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -1676,6 +1676,27 @@ class MysqlDocumentRepository:
                         knowledge_answer_snapshot.c.trace_id.in_(expired),
                     )
                 )
+
+    async def load_chunk_locators(
+        self, revision_ids: tuple[str, ...]
+    ) -> Mapping[str, ArtifactLocator]:
+        """Scoped `chunks_blob_locator` lookup for relation-evidence snippet
+        reads; a revision with no chunk artifact yet (locator still NULL) is
+        simply absent from the result, not an error."""
+        if not revision_ids:
+            return {}
+        revision = knowledge_document_revision
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(revision.c.revision_id, revision.c.chunks_blob_locator).where(
+                        *scope_predicates(revision, self._scope),
+                        revision.c.revision_id.in_(revision_ids),
+                        revision.c.chunks_blob_locator.is_not(None),
+                    )
+                )
+            ).all()
+        return {row.revision_id: ArtifactLocator(row.chunks_blob_locator) for row in rows}
 
     async def load_citation(
         self, citation_id: str, *, historical: bool = False

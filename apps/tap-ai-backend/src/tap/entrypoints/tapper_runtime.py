@@ -1699,7 +1699,6 @@ def _assemble_http_services(
         from tap.modules.graph.adapters.mysql_node_enrichment import MysqlGraphNodeEnrichment
         from tap.modules.graph.adapters.mysql_project_store import MysqlProjectGraphStore
         from tap.modules.graph.application.project_queries import ProjectGraphCache
-        from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 
         graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
         project_graph_cache = ProjectGraphCache()
@@ -1707,9 +1706,9 @@ def _assemble_http_services(
             graph_sessions,  # type: ignore[arg-type]
             cache=project_graph_cache,
         )
-        graph_enricher = GraphAnswerEnricher(
-            project_graph, publication_authority=publication_authority
-        )
+        # `GraphAnswerEnricher` and `graph.enrich` are retired by the relation
+        # analysis agent subgraph (PR 3); `graph_enricher` stays `None` until
+        # a later task wires the new agent into the answer flow.
         graph_jobs = MysqlGraphJobStore(
             graph_sessions,  # type: ignore[arg-type]
             merge_queue=MysqlProjectMergeQueue(

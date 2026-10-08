@@ -19,7 +19,6 @@ from tap.modules.chat.application.plan_answer import AnswerPlanner, PlanningInpu
 from tap.modules.graph.application.jobs import InMemoryGraphJobStore
 from tap.modules.graph.application.worker import GraphWorker
 from tap.modules.graph.domain.jobs import GraphJobRequest
-from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.modules.knowledge.domain.models import (
     AnswerRequest,
@@ -179,90 +178,6 @@ async def test_planned_retrieval_emits_one_span_per_query(span_recorder) -> None
 
     spans = [item for item in span_recorder.get_finished_spans() if item.name == "retrieval.search"]
     assert len(spans) == 3
-
-
-@pytest.mark.asyncio
-async def test_graph_enricher_emits_counts(span_recorder) -> None:
-    from datetime import UTC, datetime
-
-    from tap.modules.graph.application.project_queries import InMemoryProjectGraphStore
-    from tap.modules.graph.domain.models import RelationOrigin
-    from tap.modules.graph.domain.project import (
-        EdgeEvidence,
-        NodeSource,
-        ProjectEdge,
-        ProjectGraphDraft,
-        ProjectNode,
-    )
-
-    anchor = {"kind": "text", "start": 0, "end": 6}
-    draft = ProjectGraphDraft(
-        fragment_digest="sha256:" + "a" * 64,
-        nodes=(
-            ProjectNode("node-1", "Policy", "ENTITY", "policy"),
-            ProjectNode("node-2", "Claim", "ENTITY", "claim"),
-        ),
-        edges=(
-            ProjectEdge(
-                "edge-1",
-                "node-1",
-                "node-2",
-                "RELATED_TO",
-                "GOVERNS",
-                RelationOrigin.EXTRACTED,
-                1.0,
-            ),
-        ),
-        node_sources=(
-            NodeSource(
-                "node-1",
-                "source-revision-1",
-                "document-revision-1",
-                "chunk-1",
-                anchor,
-                "frag-1",
-                "fnode-1",
-            ),
-            NodeSource(
-                "node-2",
-                "source-revision-1",
-                "document-revision-1",
-                "chunk-2",
-                anchor,
-                "frag-1",
-                "fnode-2",
-            ),
-        ),
-        edge_evidence=(
-            EdgeEvidence(
-                "edge-1",
-                "source-revision-1",
-                "document-revision-1",
-                "chunk-3",
-                anchor,
-                "sha256:" + "b" * 64,
-                "frag-1",
-                "fedge-1",
-            ),
-        ),
-        aliases=(),
-        communities=(),
-        merge_log=(),
-    )
-    store = InMemoryProjectGraphStore()
-    await store.publish(VALIDATION_SCOPE, draft, now=datetime.now(UTC))
-
-    result_context = await GraphAnswerEnricher(store).enrich(
-        VALIDATION_SCOPE, ("source-revision-1",), "", chunk_ids=("chunk-1",)
-    )
-
-    spans = [item for item in span_recorder.get_finished_spans() if item.name == "graph.enrich"]
-    assert len(spans) == 1
-    attributes = spans[0].attributes
-    assert attributes["tap.graph.version"] == result_context.graph_version
-    assert attributes["tap.graph.seed_count"] == 1
-    assert attributes["tap.graph.node_count"] == 2
-    assert attributes["tap.graph.edge_count"] == 1
 
 
 @pytest.mark.asyncio

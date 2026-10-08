@@ -40,6 +40,7 @@ from tap.modules.knowledge.ports.answers import (
     ReadyDocumentRevision,
 )
 from tap.modules.knowledge.ports.citations import CitationSnapshotCorrupt
+from tap.modules.knowledge.ports.documents import ArtifactLocator
 from tap.platform.db.session import create_engine_and_session_factory
 
 pytestmark = pytest.mark.skipif(
@@ -1040,6 +1041,40 @@ def test_concurrent_retention_is_globally_serialized_and_cascades_old_citations(
             assert answer_count == 1000
             assert oldest == 0
             assert old_citation == 0
+        finally:
+            await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_load_chunk_locators_returns_only_scoped_ready_revisions() -> None:
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        await clean(engine)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        try:
+            with_locator = await seed_ready(engine, "a")
+            without_locator = await seed_ready(engine, "b")
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE knowledge_document_revision SET chunks_blob_locator=NULL "
+                        "WHERE revision_id=:revision_id"
+                    ),
+                    {"revision_id": without_locator.revision_id},
+                )
+
+            locators = await repository.load_chunk_locators(
+                (with_locator.revision_id, without_locator.revision_id)
+            )
+
+            assert set(locators) == {with_locator.revision_id}
+            assert locators[with_locator.revision_id] == ArtifactLocator(
+                f"tapper-artifacts/revisions/{with_locator.revision_id}/chunks-v1.jsonl.gz"
+            )
         finally:
             await clean(engine)
             await engine.dispose()
