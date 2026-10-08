@@ -29,6 +29,7 @@ import {
   GraphOverview,
   type GraphSourceScope,
 } from "../../../features/graph/components/GraphOverview";
+import type { GraphHighlightState } from "../../../features/graph/model/highlight";
 import { KnowledgeGraph } from "./KnowledgeGraph";
 import type { LibrarySource } from "./model";
 
@@ -53,6 +54,8 @@ interface LibraryWorkspaceProps {
   publishedSourcesLoading?: boolean;
   onAskAboutNode?: (label: string, sourceIds: string[]) => void;
   onOpenSource?: (sourceId: string, trigger: HTMLElement) => void;
+  graphHighlight?: GraphHighlightState | null;
+  onClearGraphHighlight?: () => void;
 }
 
 function publishedRevisionIdsOf(
@@ -80,12 +83,17 @@ export function LibraryWorkspace({
   publishedSourcesLoading = false,
   onAskAboutNode,
   onOpenSource,
+  graphHighlight = null,
+  onClearGraphHighlight,
 }: LibraryWorkspaceProps) {
   const [uploadPending, setUploadPending] = useState(false);
   const [uploadFailed, setUploadFailed] = useState(false);
   const [view, setView] = useState<"list" | "cards">("cards");
+  // A pending graph highlight (e.g. "View in Library" on an answer's edge
+  // citation) must land on the Knowledge Graph tab, not the Documents list,
+  // even when a project is selected (which otherwise defaults to "list").
   const [mode, setMode] = useState<LibraryMode>(() =>
-    graphProjectId === undefined ? "graph" : "list",
+    graphProjectId === undefined || graphHighlight !== null ? "graph" : "list",
   );
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -440,6 +448,8 @@ export function LibraryWorkspace({
               publishedSources={publishedSources}
               onAskAboutNode={onAskAboutNode}
               onOpenSource={onOpenSource}
+              highlight={graphHighlight}
+              onClearHighlight={onClearGraphHighlight}
               Canvas={KnowledgeGraph}
             />
           )}

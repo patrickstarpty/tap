@@ -27,9 +27,57 @@ const GRAPH_HORIZONTAL_MARGIN = 24;
 const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 1.75;
 export const EDGE_LABEL_ZOOM = 1.25;
+// Padding (canvas units) added around a highlighted path's bounding box
+// before computing the fit-to-viewport zoom, so the fitted nodes are never
+// flush against the canvas edge.
+const FIT_TO_NODES_PADDING = 240;
 
 function displayLabel(label: string): string {
   return label.length > 27 ? `${label.slice(0, 25)}…` : label;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Computes the zoom/pan that fits `nodeIds`' bounding box (looked up by
+ * position in `nodes`) into the canvas, centered. A node id with no match
+ * in `nodes` (e.g. outside the currently drawn overview) is simply
+ * skipped — `null` is returned only when none of `nodeIds` are found, so
+ * the view is left unchanged rather than fit to an empty box.
+ */
+function fitToNodes(
+  nodes: GraphNode[],
+  nodeIds: ReadonlySet<string>,
+): { zoom: number; pan: { x: number; y: number } } | null {
+  const points = nodes.filter((node) => nodeIds.has(node.id));
+  if (points.length === 0) return null;
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const zoom = clamp(
+    Math.min(
+      GRAPH_WIDTH / (width + FIT_TO_NODES_PADDING),
+      GRAPH_HEIGHT / (height + FIT_TO_NODES_PADDING),
+    ),
+    MIN_ZOOM,
+    MAX_ZOOM,
+  );
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  return {
+    zoom,
+    pan: {
+      x: GRAPH_WIDTH / 2 - centerX * zoom,
+      y: GRAPH_HEIGHT / 2 - centerY * zoom,
+    },
+  };
 }
 
 function nodeTypeLabel(copy: WorkspaceCopy, nodeType: string): string {
@@ -135,6 +183,26 @@ export function KnowledgeGraph({
     startY: number;
   } | null>(null);
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+  const highlightActive = highlight != null;
+
+  // Fit the viewport to the highlighted path once per highlight (not on
+  // every render) — keyed off a content signature rather than the
+  // `highlight` object's own identity, since the caller recomputes a new
+  // `nodeIds`/`edgeIds` Set on most renders even when the highlighted set
+  // itself hasn't actually changed.
+  const highlightSignature = highlight
+    ? [...highlight.nodeIds].sort().join(",")
+    : null;
+  useEffect(() => {
+    if (highlightSignature === null || highlight == null) return;
+    const fit = fitToNodes(nodes, highlight.nodeIds);
+    if (fit === null) return;
+    setZoom(fit.zoom);
+    setPan(fit.pan);
+    // `nodes`/`highlight` are intentionally excluded: this must run only
+    // when the highlighted set itself changes (`highlightSignature`), not
+    // on every re-render that passes a new-but-equal object/array.
+  }, [highlightSignature]);
 
   const visibleNodes = useMemo(
     () => nodes.filter((node) => activeCommunities.has(node.community)),
@@ -415,7 +483,7 @@ export function KnowledgeGraph({
                       ? matchesQuery(node)
                       : (highlight?.nodeIds.has(node.id) ?? false);
                   const dimmed =
-                    normalizedQuery.length > 0
+                    normalizedQuery.length > 0 || highlightActive
                       ? !highlighted
                       : Boolean(focusedNodeId) && !neighborhood.has(node.id);
                   const selected = node.id === selectedNodeId;

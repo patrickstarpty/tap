@@ -9,11 +9,13 @@ import type {
 } from "../../../features/graph/model/graph";
 import { GraphVersionConflictError } from "../../../features/graph/api/client";
 import {
+  useGraphHighlight,
   useGraphNode,
   useGraphOverview,
   useGraphProject,
   useGraphSearch,
 } from "../../../features/graph/api/queries";
+import type { GraphHighlightState } from "../../../features/graph/model/highlight";
 import { WORKSPACE_COPY } from "./copy";
 import { LibraryWorkspace } from "./LibraryWorkspace";
 
@@ -31,7 +33,7 @@ vi.mock("../../../features/graph/api/queries", async (importOriginal) => {
     useGraphOverview: vi.fn(),
     useGraphSearch: vi.fn(),
     useGraphNode: vi.fn(),
-    useGraphHighlight: vi.fn(() => ({ data: undefined, isPending: false })),
+    useGraphHighlight: vi.fn(),
     useGraphVersionGuard: actual.useGraphVersionGuard,
   };
 });
@@ -120,6 +122,9 @@ function renderLibrary(overrides: {
     ...args: Parameters<typeof useGraphNode>
   ) => ReturnType<typeof queryResult>;
   queryClient?: QueryClient;
+  highlight?: GraphHighlightState | null;
+  onClearGraphHighlight?: () => void;
+  highlightResponse?: GraphSubgraph;
 }) {
   vi.mocked(useGraphProject).mockReturnValue(
     queryResult(overrides.project ?? undefined, {
@@ -139,12 +144,21 @@ function renderLibrary(overrides: {
   } else {
     vi.mocked(useGraphNode).mockReturnValue(queryResult(undefined));
   }
+  vi.mocked(useGraphHighlight).mockReturnValue(
+    queryResult(overrides.highlightResponse),
+  );
 
   const copy = WORKSPACE_COPY[overrides.locale ?? "en"];
   const queryClient =
     overrides.queryClient ??
     new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const result = render(
+  // A function, not a hoisted constant: React bails out of re-rendering a
+  // subtree whose element is the exact same object reference as last time
+  // (no prop identity change at any level), so `rerenderSame` below must
+  // build a *fresh* element on every call for a test that swaps a mocked
+  // hook's return value and expects the resulting update to actually
+  // reach `GraphOverview`.
+  const buildElement = () => (
     <QueryClientProvider client={queryClient}>
       <LibraryWorkspace
         copy={copy}
@@ -169,10 +183,14 @@ function renderLibrary(overrides: {
         }
         publishedSourcesLoading={overrides.publishedSourcesLoading ?? false}
         loadState={overrides.loadState}
+        graphHighlight={overrides.highlight ?? null}
+        onClearGraphHighlight={overrides.onClearGraphHighlight}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  return { ...result, queryClient };
+  const result = render(buildElement());
+  const rerenderSame = () => result.rerender(buildElement());
+  return { ...result, queryClient, rerenderSame };
 }
 
 it("renders communities from the project graph and colors nodes by community", async () => {
@@ -654,4 +672,203 @@ it("refetches the project without showing an error when a node 409s on a stale v
       exact: true,
     }),
   );
+});
+
+function buildHighlightEdge(
+  overrides: Partial<GraphSubgraph["edges"][number]> = {},
+): GraphSubgraph["edges"][number] {
+  return {
+    edgeId: "e1",
+    sourceNodeId: "uw1",
+    targetNodeId: "hd1",
+    relationType: "REQUIRES",
+    relationLabel: "requires",
+    confidence: 0.9,
+    origin: "EXTRACTED",
+    ...overrides,
+  };
+}
+
+function buildHighlightNode(
+  overrides: Partial<GraphSubgraph["nodes"][number]> = {},
+): GraphSubgraph["nodes"][number] {
+  return {
+    nodeId: "uw1",
+    label: "Underwriting review",
+    nodeType: "PROCESS",
+    canonicalKey: "uw1",
+    degree: 2,
+    communityId: "underwriting",
+    aliases: [],
+    ...overrides,
+  };
+}
+
+const HIGHLIGHT_GRAPH_NODES: GraphSubgraph["nodes"] = [
+  buildHighlightNode(),
+  buildHighlightNode({ nodeId: "hd1", label: "Health disclosure" }),
+  buildHighlightNode({ nodeId: "me1", label: "Medical exam" }),
+  buildHighlightNode({ nodeId: "ot1", label: "Other node" }),
+];
+const HIGHLIGHT_GRAPH_EDGES: GraphSubgraph["edges"] = [
+  buildHighlightEdge(),
+  buildHighlightEdge({
+    edgeId: "e2",
+    sourceNodeId: "hd1",
+    targetNodeId: "me1",
+    relationType: "TRIGGERS",
+    relationLabel: "triggers",
+  }),
+];
+const HIGHLIGHT_STATE: GraphHighlightState = {
+  edgeIds: ["e1", "e2"],
+  graphVersion: "1",
+  turnId: "turn_1",
+};
+
+it("highlights cited edges, dims the rest and lists the path as text", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: HIGHLIGHT_STATE,
+    highlightResponse: buildOverview(
+      HIGHLIGHT_GRAPH_NODES.slice(0, 3),
+      HIGHLIGHT_GRAPH_EDGES,
+    ),
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(
+    screen.getByRole("button", { name: /Underwriting review/ }),
+  ).toHaveAttribute("data-highlighted", "true");
+  expect(
+    screen.getByRole("button", { name: /Health disclosure/ }),
+  ).toHaveAttribute("data-highlighted", "true");
+  expect(screen.getByRole("button", { name: /Other node/ })).toHaveAttribute(
+    "data-dimmed",
+    "true",
+  );
+
+  const region = screen.getByRole("region", { name: "Highlighted path" });
+  expect(
+    within(region).getByText(
+      "Underwriting review —requires→ Health disclosure",
+    ),
+  ).toBeVisible();
+});
+
+it("renders a version-updated notice when highlight omits requested edges", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: HIGHLIGHT_STATE,
+    // Only `e1` of the two requested edge ids comes back — `e2` no longer
+    // exists in the current graph.
+    highlightResponse: buildOverview(HIGHLIGHT_GRAPH_NODES.slice(0, 2), [
+      HIGHLIGHT_GRAPH_EDGES[0]!,
+    ]),
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(
+    screen.getByText(
+      "The graph has been updated; some relations are no longer available.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Underwriting review/ }),
+  ).toHaveAttribute("data-highlighted", "true");
+});
+
+it("fits the viewport to the highlighted nodes", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: HIGHLIGHT_STATE,
+    highlightResponse: buildOverview(
+      HIGHLIGHT_GRAPH_NODES.slice(0, 3),
+      HIGHLIGHT_GRAPH_EDGES,
+    ),
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(
+    screen.getByRole("status", { name: "Zoom level" }),
+  ).not.toHaveTextContent("100%");
+});
+
+it("calls back to clear the highlight from the Highlighted path region", async () => {
+  const project = buildProject();
+  const onClearGraphHighlight = vi.fn();
+  renderLibrary({
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: HIGHLIGHT_STATE,
+    highlightResponse: buildOverview(
+      HIGHLIGHT_GRAPH_NODES.slice(0, 3),
+      HIGHLIGHT_GRAPH_EDGES,
+    ),
+    onClearGraphHighlight,
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Back to overview" }),
+  );
+
+  expect(onClearGraphHighlight).toHaveBeenCalled();
+});
+
+it("returns focus to the canvas region, not the document body, when the node detail panel closes on a graph version change", async () => {
+  const project = buildProject({ graphVersion: 1 });
+  const { rerenderSame } = renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    nodeImplementation: (() =>
+      queryResult({
+        graphVersion: 1,
+        node: {
+          nodeId: "n0",
+          label: "n0",
+          nodeType: "CONCEPT",
+          canonicalKey: "n0",
+          degree: 1,
+          communityId: "underwriting",
+          aliases: [],
+        },
+        community: {
+          communityId: "underwriting",
+          label: "Underwriting",
+          size: 5,
+        },
+        sources: [],
+        relations: [],
+        neighbors: [],
+      })) as Parameters<typeof renderLibrary>[0]["nodeImplementation"],
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(screen.getByRole("button", { name: /n0/ }));
+  expect(screen.getByRole("heading", { name: "n0", level: 3 })).toBeVisible();
+
+  vi.mocked(useGraphProject).mockReturnValue(
+    queryResult(buildProject({ graphVersion: 2 }), {}),
+  );
+  rerenderSame();
+
+  expect(
+    screen.queryByRole("heading", { name: "n0", level: 3 }),
+  ).not.toBeInTheDocument();
+  expect(document.body).not.toHaveFocus();
+  expect(
+    screen.getByRole("region", {
+      name: "Drag to pan, use the controls to zoom, and select a node to inspect its relationships.",
+    }),
+  ).toHaveFocus();
 });

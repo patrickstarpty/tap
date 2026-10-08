@@ -20,6 +20,10 @@ import {
   LibraryWorkspace,
   type PublishedSourceRevision,
 } from "./workspace/LibraryWorkspace";
+import {
+  readGraphHighlight,
+  useGraphHighlightState,
+} from "../../features/graph/model/highlight";
 import { AccessibleDialog } from "./workspace/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
@@ -713,6 +717,8 @@ function ProjectLibraryWorkspace({
   publishedSources = [],
   publishedSourcesLoading = false,
   onAskAboutNode,
+  graphHighlight = null,
+  onClearGraphHighlight,
 }: {
   projectId: string;
   graphProjectId?: string;
@@ -724,6 +730,8 @@ function ProjectLibraryWorkspace({
   publishedSources?: readonly PublishedSourceRevision[];
   publishedSourcesLoading?: boolean;
   onAskAboutNode?: (label: string, sourceIds: string[]) => void;
+  graphHighlight?: ReturnType<typeof useGraphHighlightState>[0];
+  onClearGraphHighlight?: () => void;
 }) {
   const upload = useUploadSourceMutation(projectId);
   const uploadIntents = useRef(new WeakMap<File, string>());
@@ -763,6 +771,8 @@ function ProjectLibraryWorkspace({
         publishedSources={publishedSources}
         publishedSourcesLoading={publishedSourcesLoading}
         onAskAboutNode={onAskAboutNode}
+        graphHighlight={graphHighlight}
+        onClearGraphHighlight={onClearGraphHighlight}
         onOpenSource={(sourceId, trigger) => {
           // The graph node detail panel's "Open original" button passes
           // its own trigger element explicitly (rather than relying on
@@ -949,9 +959,11 @@ export function TapperWorkspace() {
   const sourcesQuery = useSourceListQuery(projectId);
   const publishedSourcesQuery = usePublishedSourcesQuery(projectId);
   const [locale, setLocale] = useState<Locale>("en");
-  const [activeModule, setActiveModule] = useState<ProductModule>(() =>
-    durableTestPlanPath() !== null ? "test-management" : "tapper",
-  );
+  const [activeModule, setActiveModule] = useState<ProductModule>(() => {
+    if (readGraphHighlight() !== null) return "library";
+    return durableTestPlanPath() !== null ? "test-management" : "tapper";
+  });
+  const [graphHighlight, clearGraphHighlight] = useGraphHighlightState();
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );
@@ -2449,6 +2461,8 @@ export function TapperWorkspace() {
               publishedSources={publishedSourceRevisions}
               publishedSourcesLoading={publishedSourcesQuery.isPending}
               onAskAboutNode={askAboutGraphNode}
+              graphHighlight={graphHighlight}
+              onClearGraphHighlight={clearGraphHighlight}
             />
           ) : (
             <LibraryWorkspace copy={copy} sources={sourceItems} />
