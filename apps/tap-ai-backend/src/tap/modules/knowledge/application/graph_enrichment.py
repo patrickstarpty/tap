@@ -235,8 +235,17 @@ class GraphAnswerEnricher:
                     }
                 )
 
+            # Only expose seeds that survived both the source-revision filter
+            # and the node_limit cap: a seed dropped by either must not leak
+            # past the selection/publication gate into PR 3's relation
+            # analysis, and must agree with the "seed" flag on `facts` (which
+            # only ever covers `selected_node_ids`).
+            visible_seed_ids = tuple(
+                node_id for node_id in seed_ids if node_id in selected_node_id_set
+            )
+
             current_span.set_attribute("tap.graph.version", version)
-            current_span.set_attribute("tap.graph.seed_count", len(seed_ids))
+            current_span.set_attribute("tap.graph.seed_count", len(visible_seed_ids))
             current_span.set_attribute("tap.graph.node_count", len(selected_node_ids))
             current_span.set_attribute("tap.graph.edge_count", len(selected_edges))
             return GraphAnswerContext(
@@ -244,7 +253,7 @@ class GraphAnswerEnricher:
                 current.version_id,
                 tuple(facts),
                 version,
-                tuple(seed_ids),
+                visible_seed_ids,
             )
 
 
