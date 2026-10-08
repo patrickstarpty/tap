@@ -18,7 +18,13 @@ from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
 from tap.modules.graph.adapters.mysql_project import graph_project_merge_job
 from tap.modules.graph.application.worker import GraphWorker
 from tap.modules.graph.domain.jobs import GraphJobBusy, GraphJobRequest, GraphJobStatus
-from tap.modules.graph.domain.models import Evidence, GraphNode, GraphSnapshotDraft
+from tap.modules.graph.domain.models import (
+    Evidence,
+    GraphEdge,
+    GraphNode,
+    GraphSnapshotDraft,
+    RelationOrigin,
+)
 from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.modules.knowledge.domain.documents import ChunkDraft
 from tap.platform.db.project_scope import scope_predicates
@@ -66,6 +72,8 @@ class _SwitchableExtractor:
         self.calls += 1
         index = request.batch_index
         node_id = f"node-batch-{index}"
+        source_id = f"{node_id}-a"
+        target_id = f"{node_id}-b"
         if index == 1 and self.fail_batch_one:
             raise RuntimeError("simulated extraction failure")
         evidence = Evidence(
@@ -77,19 +85,41 @@ class _SwitchableExtractor:
             {"kind": "text", "start": 0, "end": 5},
             "sha256:" + ("c" if index == 0 else "d") * 64,
         )
+        # A batch with zero edges collapses to one document fallback node once
+        # merged (see assemble_fragment's docstring), so this needs a real edge
+        # between two nodes to keep its own namespaced node ids intact.
         return GraphSnapshotDraft(
             request.snapshot,
             (
                 GraphNode(
-                    node_id,
+                    source_id,
                     request.snapshot.snapshot_id,
                     "Policy",
                     "ENTITY",
-                    node_id,
+                    source_id,
+                    (evidence.evidence_id,),
+                ),
+                GraphNode(
+                    target_id,
+                    request.snapshot.snapshot_id,
+                    "Policy",
+                    "ENTITY",
+                    target_id,
                     (evidence.evidence_id,),
                 ),
             ),
-            (),
+            (
+                GraphEdge(
+                    f"edge-batch-{index}",
+                    request.snapshot.snapshot_id,
+                    source_id,
+                    target_id,
+                    "RELATES_TO",
+                    RelationOrigin.EXTRACTED,
+                    0.9,
+                    (evidence.evidence_id,),
+                ),
+            ),
             (evidence,),
             (),
         )
@@ -163,7 +193,10 @@ async def test_retry_resets_a_partial_snapshot_so_the_rerun_actually_republishes
             .mappings()
             .all()
         )
-        assert {row["node_id"] for row in node_rows} == {"b0-node-batch-0"}
+        assert {row["node_id"] for row in node_rows} == {
+            "b0-node-batch-0-a",
+            "b0-node-batch-0-b",
+        }
 
     # Retry requeues exactly the one FAILED batch and resets the snapshot.
     requeued, status = await jobs.retry_failed_batches(
@@ -233,7 +266,12 @@ async def test_retry_resets_a_partial_snapshot_so_the_rerun_actually_republishes
             .mappings()
             .all()
         )
-        assert {row["node_id"] for row in node_rows} == {"b0-node-batch-0", "b1-node-batch-1"}
+        assert {row["node_id"] for row in node_rows} == {
+            "b0-node-batch-0-a",
+            "b0-node-batch-0-b",
+            "b1-node-batch-1-a",
+            "b1-node-batch-1-b",
+        }
 
         merge_row = (
             (
