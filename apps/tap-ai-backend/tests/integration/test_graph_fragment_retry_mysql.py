@@ -16,10 +16,7 @@ from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION
 from tap.modules.graph.adapters.mysql import graph_node, graph_snapshot
 from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
 from tap.modules.graph.adapters.mysql_merge import MysqlMergeInputs, MysqlProjectMergeQueue
-from tap.modules.graph.adapters.mysql_project import (
-    graph_project_merge_job,
-    graph_project_node_source,
-)
+from tap.modules.graph.adapters.mysql_project import graph_project_node_source
 from tap.modules.graph.application.merger import ProjectGraphMerger
 from tap.modules.graph.application.worker import GraphWorker
 from tap.modules.graph.domain.jobs import GraphJobBusy, GraphJobRequest, GraphJobStatus
@@ -298,24 +295,9 @@ async def test_retry_resets_a_partial_snapshot_so_the_rerun_actually_republishes
             "b1-node-batch-1-b",
         }
 
-    # Republishing the retried batch must have requested a fresh merge (not
-    # just inherited a leftover `due_at` from the first, partial completion).
-    async with sessions() as session:
-        merge_row = (
-            (
-                await session.execute(
-                    select(graph_project_merge_job.c.due_at).where(
-                        *scope_predicates(graph_project_merge_job, VALIDATION_SCOPE)
-                    )
-                )
-            )
-            .mappings()
-            .one()
-        )
-    assert merge_row["due_at"] is not None
-
-    # Actually run the merge and confirm the retried batch's node reached the
-    # merged project graph, not merely that a merge was requested. `due_at`
+    # Run the merge and confirm the retried batch's node reached the merged
+    # project graph; that's the real proof the republish requested a fresh
+    # merge, not just the presence of a queued job. The merge job's `due_at`
     # was set from `GraphWorker`'s own real wall-clock completion timestamp
     # (not the test's fixed `_now()`), so the claim must use real "now" too.
     real_now = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=1)

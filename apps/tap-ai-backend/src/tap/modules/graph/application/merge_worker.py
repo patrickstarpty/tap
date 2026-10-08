@@ -30,8 +30,9 @@ logger = logging.getLogger(__name__)
 _DEFAULT_EMBED_CHUNK_SIZE = 64
 
 # Level-3 embedding alignment is O(N^2 * dim) pure Python and blocks the
-# event loop; past this many candidate nodes in one merge, skip it rather
-# than risk starving every other coroutine for the lease duration.
+# event loop; past this many raw fragment nodes (summed across all fragments
+# feeding one merge) in one merge, skip it rather than risk starving every
+# other coroutine for the lease duration.
 _DEFAULT_EMBEDDING_MAX_NODES = 2000
 
 

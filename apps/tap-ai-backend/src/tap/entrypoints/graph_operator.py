@@ -45,11 +45,13 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> GraphOperation:
             "`graph rebuild` requeues extraction for every currently-published "
             "revision under the given extraction profile; it does not request a "
             "merge itself -- each fragment already requests one when it "
-            "republishes. Until every requeued fragment finishes re-extracting "
-            "and republishing, the merged graph is in a degraded window: it is "
-            "partially rebuilt (a mix of old and new fragments), and the "
-            "previous graph version is retained and served until two newer "
-            "versions have published."
+            "republishes. This opens a degraded window: once the first "
+            "re-extracted fragment republishes, the merge publishes a new "
+            "current version containing only the fragments that are READY at "
+            "that point, so the graph shrinks to the re-extracted subset and "
+            "grows back as the remaining fragments finish. The previous "
+            "version is kept for one cycle, but query routes only ever serve "
+            "the current version."
         )
     )
     parser.add_argument("resource", choices=["graph"])

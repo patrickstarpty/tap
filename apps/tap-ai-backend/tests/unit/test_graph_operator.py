@@ -9,8 +9,9 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 def test_rebuild_help_documents_the_degraded_window(capsys) -> None:
     """`graph rebuild` no longer requests a merge itself (fragments request
     their own as they republish); the help text must say so, and must warn
-    that the graph is partially rebuilt and the previous version is served
-    until two newer versions publish."""
+    that the graph shrinks to the re-extracted subset once the first
+    fragment republishes and grows back as the rest finish, with the
+    previous version kept for one cycle but not served by query routes."""
     with pytest.raises(SystemExit):
         cli(["graph", "rebuild", "--help"])
 
