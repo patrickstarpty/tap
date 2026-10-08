@@ -748,11 +748,11 @@ class AuthorizedRetrieval:
             for reason, present in (
                 ("partial-evidence", missing),
                 ("invalid-relation-citation", stripped > 0),
-                (
-                    "relation-support-unresolvable",
-                    relation_outcome is not None
-                    and "relation-support-unresolvable" in relation_outcome.diagnostics,
-                ),
+                # Only relations a claim actually cites can degrade the answer;
+                # an unresolvable relation that no claim cited never reached
+                # the reader, so it must not count (diagnostics still report
+                # the total separately).
+                ("relation-support-unresolvable", unresolvable_cited > 0),
             )
             if present
         )
@@ -771,7 +771,7 @@ class AuthorizedRetrieval:
             ),
             embedding_provenance=run.response.embedding_provenance,
             answer_provenance=self._generation_provenance(generation),
-            degraded_mode=missing or stripped > 0 or unresolvable_total > 0,
+            degraded_mode=missing or stripped > 0 or unresolvable_cited > 0,
             degradation_reasons=degradation_reasons,
             relation=relation_outcome,
         )
@@ -890,6 +890,13 @@ class AuthorizedRetrieval:
                 continue
             source_item = evidence_by_label.get(support.evidence_label)
             if source_item is None:
+                continue
+            # The model echoed the `S` label back and extraction never
+            # validates it; without recomputing the real chunk identity and
+            # requiring it to match the support's own `chunk_id` (same guard
+            # as the snippet-only path below), a stale or mismatched label
+            # would silently mint a citation for the wrong chunk.
+            if source_item.chunk_id != support.chunk_id:
                 continue
             return Citation(
                 family=source_item.family,

@@ -1721,7 +1721,9 @@ def test_citations_cap_renumbers_surviving_s_citations_contiguously() -> None:
         context = RelationContext(
             status=RelationContextStatus.APPLIED,
             graph_version="7",
-            relations=(_relation_evidence_for("R1", support_label="S1"),),
+            relations=(
+                _relation_evidence_for("R1", support_label="S1", support_chunk_id=hits[0].chunk_id),
+            ),
         )
         relation = _FakeRelationAnalysis(context)
         knowledge = _relation_retrieval(search, model, relation_analysis=relation)
@@ -1854,7 +1856,10 @@ def test_citations_cap_drops_lowest_ranked_r_when_no_s_is_droppable() -> None:
             for index in range(1, 6)
         )
         relations = tuple(
-            _relation_evidence_for(f"R{n}", support_label=f"S{n}") for n in range(1, 7)
+            _relation_evidence_for(
+                f"R{n}", support_label=f"S{n}", support_chunk_id=f"chunk-base-{n}"
+            )
+            for n in range(1, 7)
         )
         context = RelationContext(
             status=RelationContextStatus.APPLIED,
@@ -1925,10 +1930,11 @@ def _snippet_only_relation_evidence(
     document_id: str | None,
     anchor: dict[str, object] | None = None,
     chunk_id: str | None = None,
+    label: str = "R1",
 ) -> RelationEvidence:
     resolved_anchor = anchor if anchor is not None else _SNIPPET_ANCHOR
     return RelationEvidence(
-        label="R1",
+        label=label,
         edge_id="e-1",
         subject_node_id="A",
         subject_label="核保流程",
@@ -2091,6 +2097,128 @@ def test_unresolvable_snippet_only_support_degrades_and_excludes_relation_count(
         assert response.relation is not None
         assert response.relation.relation_count == 0
         assert response.relation.diagnostics.get("relation-support-unresolvable") == 1
+
+    asyncio.run(scenario())
+
+
+def test_uncited_unresolvable_relation_does_not_degrade() -> None:
+    """Task 5 review: an unresolvable relation that no claim cited never
+    reached the reader, so it must not flip `degraded_mode` or add
+    `relation-support-unresolvable` to `degradation_reasons` -- only the
+    diagnostics total (and `relation_count`, which already excludes every
+    unresolvable relation) still reflect it."""
+
+    async def scenario() -> None:
+        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="核保流程需要健康告知。",
+                    claims=(
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1",)),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(
+                _relation_evidence_for("R1", support_label="S1", support_chunk_id="chunk-s1"),
+                _snippet_only_relation_evidence(document_id=None, label="R2"),
+            ),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        assert response.degraded_mode is False
+        assert "relation-support-unresolvable" not in response.degradation_reasons
+        assert response.relation is not None
+        assert response.relation.relation_count == 1
+        assert response.relation.diagnostics.get("relation-support-unresolvable") == 1
+
+    asyncio.run(scenario())
+
+
+def test_s_label_support_chunk_id_mismatch_is_treated_as_unresolvable() -> None:
+    """Task 5 review: a relation support that carries an `S` label must still
+    have its own `chunk_id` verified against that label's actual chunk --
+    same identity guard as the snippet-only path. A mismatch (stale or wrong
+    label) is skipped in favour of the next support instead of silently
+    minting a citation for the wrong chunk."""
+
+    async def scenario() -> None:
+        search = _SequencedSearchPort(
+            (
+                _relation_hit("chunk-s1", "rev-1", item_id="item-1"),
+                _relation_hit("chunk-s2", "rev-1", item_id="item-2", local_rank=2),
+            ),
+        )
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="核保流程需要健康告知。",
+                    claims=(
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1",)),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        relation_evidence = RelationEvidence(
+            label="R1",
+            edge_id="e-1",
+            subject_node_id="A",
+            subject_label="核保流程",
+            subject_aliases=(),
+            object_node_id="B",
+            object_label="健康告知",
+            object_aliases=(),
+            relation_type="REQUIRES",
+            relation_label="REQUIRES",
+            origin="EXTRACTED",
+            confidence=0.9,
+            support=(
+                RelationSupport(
+                    chunk_id="chunk-stale-does-not-match-s1",
+                    source_revision_id="rev-1",
+                    document_revision_id="rev-1",
+                    content_digest="sha256:" + "f" * 64,
+                    anchor={"page": 1},
+                    evidence_label="S1",
+                ),
+                RelationSupport(
+                    chunk_id="chunk-s2",
+                    source_revision_id="rev-1",
+                    document_revision_id="rev-1",
+                    content_digest="sha256:" + "f" * 64,
+                    anchor={"page": 1},
+                    evidence_label="S2",
+                ),
+            ),
+            on_path=False,
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(relation_evidence,),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        edge_citations = [c for c in response.citations if c.kind == "edge"]
+        assert len(edge_citations) == 1
+        s2_citation = next(c for c in response.citations if c.evidence_label == "S2")
+        assert edge_citations[0].chunk_id == s2_citation.chunk_id
 
     asyncio.run(scenario())
 
