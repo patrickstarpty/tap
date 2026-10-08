@@ -5,6 +5,7 @@ per-document fragment snapshot.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
@@ -20,6 +21,8 @@ from tap.modules.graph.ports.project_store import (
 )
 from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.platform.telemetry import span
+
+logger = logging.getLogger(__name__)
 
 
 class GraphContextStatus(StrEnum):
@@ -196,7 +199,12 @@ class GraphAnswerEnricher:
                     await self._publication_authority.revalidate(publication)
             except (ProjectGraphNotReady, GraphFactNotFound, AuthorizationDenied):
                 return GraphAnswerContext(GraphContextStatus.FAILED)
-            except Exception:
+            except Exception as error:
+                logger.warning(
+                    "graph answer enrichment unavailable: project_id=%s error_type=%s",
+                    scope.project_id,
+                    type(error).__name__,
+                )
                 return GraphAnswerContext(GraphContextStatus.UNAVAILABLE)
 
             facts: list[Mapping[str, object]] = []

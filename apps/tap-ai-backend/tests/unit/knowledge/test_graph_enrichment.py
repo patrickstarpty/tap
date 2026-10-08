@@ -302,7 +302,7 @@ async def test_hidden_seed_is_absent_from_seed_node_ids_and_facts():
 
 
 @pytest.mark.asyncio
-async def test_no_ready_version_is_not_ready_and_errors_are_fail_soft():
+async def test_no_ready_version_is_not_ready_and_errors_are_fail_soft(caplog):
     empty_result = await GraphAnswerEnricher(InMemoryProjectGraphStore()).enrich(
         VALIDATION_SCOPE, ("rev-1",), _QUERY
     )
@@ -312,10 +312,16 @@ async def test_no_ready_version_is_not_ready_and_errors_are_fail_soft():
         async def get_current(self, scope):
             raise RuntimeError("boom")
 
-    broken_result = await GraphAnswerEnricher(_BrokenStore()).enrich(
-        VALIDATION_SCOPE, ("rev-1",), _QUERY
-    )
+    with caplog.at_level("WARNING"):
+        broken_result = await GraphAnswerEnricher(_BrokenStore()).enrich(
+            VALIDATION_SCOPE, ("rev-1",), _QUERY
+        )
     assert broken_result.status is GraphContextStatus.UNAVAILABLE
+    # The exception type must be logged rather than swallowed silently.
+    assert any(
+        "RuntimeError" in record.message and VALIDATION_SCOPE.project_id in record.message
+        for record in caplog.records
+    )
 
 
 class _DenyingAuthority:
