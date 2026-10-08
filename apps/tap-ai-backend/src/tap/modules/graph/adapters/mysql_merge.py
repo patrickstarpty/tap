@@ -403,7 +403,11 @@ class MysqlMergeInputs:
                         .select_from(
                             graph_extraction_job.join(
                                 graph_snapshot,
-                                (graph_extraction_job.c.project_id == graph_snapshot.c.project_id)
+                                (
+                                    graph_extraction_job.c.enterprise_id
+                                    == graph_snapshot.c.enterprise_id
+                                )
+                                & (graph_extraction_job.c.project_id == graph_snapshot.c.project_id)
                                 & (
                                     graph_extraction_job.c.snapshot_id
                                     == graph_snapshot.c.snapshot_id
@@ -411,6 +415,10 @@ class MysqlMergeInputs:
                             ).join(
                                 graph_snapshot_revision,
                                 (
+                                    graph_snapshot.c.enterprise_id
+                                    == graph_snapshot_revision.c.enterprise_id
+                                )
+                                & (
                                     graph_snapshot.c.project_id
                                     == graph_snapshot_revision.c.project_id
                                 )
