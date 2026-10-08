@@ -187,7 +187,8 @@ def merge_edges(
     results: list[tuple[ProjectEdge, tuple[tuple[str, str], ...]]] = []
     for (source_id, relation_type, target_id), items in groups.items():
         confidence = max(edge.confidence for _, edge in items)
-        relation_label = _majority([edge.relation_label for _, edge in items])
+        non_blank_labels = [edge.relation_label for _, edge in items if edge.relation_label.strip()]
+        relation_label = _majority(non_blank_labels) if non_blank_labels else relation_type
         origin = (
             RelationOrigin.EXTRACTED
             if any(edge.origin is RelationOrigin.EXTRACTED for _, edge in items)

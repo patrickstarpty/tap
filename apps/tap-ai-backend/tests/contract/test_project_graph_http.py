@@ -9,6 +9,7 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROFILE_DIGEST
 from tap.modules.graph.application.jobs import InMemoryGraphJobStore
 from tap.modules.graph.application.merge_jobs import InMemoryProjectMergeQueue
+from tap.modules.graph.application.merger import ProjectGraphMerger
 from tap.modules.graph.application.node_enrichment import InMemoryGraphNodeEnrichment
 from tap.modules.graph.application.project_queries import InMemoryProjectGraphStore
 from tap.modules.graph.application.queries import InMemoryGraphStore
@@ -28,6 +29,7 @@ from tap.modules.graph.domain.models import (
 from tap.modules.graph.domain.project import (
     Alias,
     EdgeEvidence,
+    FragmentRecord,
     NodeSource,
     ProjectEdge,
     ProjectGraphDraft,
@@ -249,6 +251,74 @@ def test_overview_query_neighbors_path_and_highlight_carry_graph_version():
     highlight = client.post(f"{base}/highlight", json={"edgeIds": ["gpe_policy_governs_claim"]})
     assert highlight.status_code == 200
     assert highlight.json()["graphVersion"] == 1
+
+
+def test_overview_serializes_an_edge_merged_from_blank_relation_labels():
+    """A fragment edge with blank ``relation_label`` (the ``GraphEdge`` default) must
+    not reach the HTTP layer as an empty string -- ``ProjectGraphEdgeView.relation_label``
+    has ``min_length=1`` and would raise a 500 on serialization. ``merge_edges`` must
+    fall back to the relation type so the overview route still serializes."""
+    snapshot = GraphSnapshot.create(
+        snapshot_id="snapshot-blank",
+        project_id=VALIDATION_SCOPE.project_id,
+        source_revision_ids=("source-revision-1",),
+        document_revision_ids=("document-revision-1",),
+        status="READY",
+    )
+    evidence = Evidence(
+        "evidence-1",
+        "snapshot-blank",
+        "source-revision-1",
+        "document-revision-1",
+        "chunk-1",
+        {"kind": "text", "start": 0, "end": 6},
+        "sha256:" + "d" * 64,
+    )
+    draft = GraphSnapshotDraft(
+        snapshot,
+        (
+            GraphNode("node-1", "snapshot-blank", "Policy", "ENTITY", "policy", ("evidence-1",)),
+            GraphNode("node-2", "snapshot-blank", "Claim", "ENTITY", "claim"),
+        ),
+        (
+            GraphEdge(
+                "edge-1",
+                "snapshot-blank",
+                "node-1",
+                "node-2",
+                "GOVERNS",
+                RelationOrigin.EXTRACTED,
+                1.0,
+                ("evidence-1",),
+                relation_label="",
+            ),
+        ),
+        (evidence,),
+        (),
+    )
+    record = FragmentRecord(
+        snapshot_id="snapshot-blank",
+        revision_id="snapshot-blank-revision",
+        status="READY",
+        content_digest="sha256:" + "e" * 64,
+        draft=draft,
+    )
+    merged_draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, [record])
+    assert merged_draft.edges[0].relation_label == "GOVERNS"
+
+    project_graph = InMemoryProjectGraphStore()
+    asyncio.run(project_graph.publish(VALIDATION_SCOPE, merged_draft, now=_NOW))
+    services = replace(
+        validation_http_services(),
+        graph=InMemoryGraphStore(),
+        project_graph=project_graph,
+        graph_jobs=InMemoryGraphJobStore(),
+    )
+    client = _client(services)
+    response = client.get("/api/v1/projects/tapper-demo/knowledge/graph/overview")
+    assert response.status_code == 200
+    labels = {edge["relationLabel"] for edge in response.json()["edges"]}
+    assert labels == {"GOVERNS"}
 
 
 def test_stale_graph_version_is_409():

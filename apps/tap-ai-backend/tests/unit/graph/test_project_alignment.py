@@ -173,3 +173,47 @@ def test_merge_edges_unions_evidence_and_takes_max_confidence():
     assert edge.confidence == 0.9
     assert edge.relation_label == "需要"
     assert len(evidence_pairs) == 2
+
+
+def test_merge_edges_ignores_blank_label_when_a_real_label_exists():
+    a = _edge_fragment(
+        "frag-a",
+        ["n-src", "n-dst"],
+        [("e1", "n-src", "n-dst", "REQUIRES", 0.6, "", "ev-a1")],
+    )
+    b = _edge_fragment(
+        "frag-b",
+        ["m-src", "m-dst"],
+        [("e2", "m-src", "m-dst", "REQUIRES", 0.9, "需要", "ev-b1")],
+    )
+    entity_of = {
+        ("frag-a", "n-src"): "pid-src",
+        ("frag-a", "n-dst"): "pid-dst",
+        ("frag-b", "m-src"): "pid-src",
+        ("frag-b", "m-dst"): "pid-dst",
+    }
+
+    merged = merge_edges([a, b], entity_of)
+
+    assert len(merged) == 1
+    edge, _ = merged[0]
+    assert edge.relation_label == "需要"
+
+
+def test_merge_edges_falls_back_to_relation_type_when_all_labels_blank():
+    a = _edge_fragment(
+        "frag-a",
+        ["n-src", "n-dst"],
+        [("e1", "n-src", "n-dst", "REQUIRES", 0.6, "", "ev-a1")],
+    )
+    entity_of = {
+        ("frag-a", "n-src"): "pid-src",
+        ("frag-a", "n-dst"): "pid-dst",
+    }
+
+    merged = merge_edges([a], entity_of)
+
+    assert len(merged) == 1
+    edge, _ = merged[0]
+    assert edge.relation_label == "REQUIRES"
+    assert edge.relation_label != ""
