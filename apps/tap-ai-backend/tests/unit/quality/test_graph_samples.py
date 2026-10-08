@@ -81,24 +81,40 @@ def test_cross_source_requires_two_distinct_source_revisions() -> None:
     assert is_cross_source(different_revisions) is True
 
 
-def _verdicts(*, correct: int, wrong: int, blank: int = 0) -> list[dict[str, str]]:
+def _reviewed_row(
+    columns: tuple[str, ...], *, verdict: str, reviewer: str, reviewed_at: str
+) -> dict[str, str]:
+    row = {column: "" for column in columns}
+    row.update({"verdict": verdict, "reviewer": reviewer, "reviewedAt": reviewed_at})
+    return row
+
+
+def _verdicts(
+    *, correct: int, wrong: int, blank: int = 0, columns: tuple[str, ...] = EDGE_COLUMNS
+) -> list[dict[str, str]]:
     rows = [
-        {"verdict": "correct", "reviewer": "human:zhang", "reviewedAt": "2026-10-06"}
+        _reviewed_row(columns, verdict="correct", reviewer="human:zhang", reviewed_at="2026-10-06")
         for _ in range(correct)
     ]
     rows += [
-        {"verdict": "wrong", "reviewer": "human:zhang", "reviewedAt": "2026-10-06"}
+        _reviewed_row(columns, verdict="wrong", reviewer="human:zhang", reviewed_at="2026-10-06")
         for _ in range(wrong)
     ]
-    rows += [{"verdict": "", "reviewer": "", "reviewedAt": ""} for _ in range(blank)]
+    rows += [_reviewed_row(columns, verdict="", reviewer="", reviewed_at="") for _ in range(blank)]
     return rows
 
 
 def test_tally_thresholds_and_incomplete_review() -> None:
     assert tally(_verdicts(correct=43, wrong=7), kind="edges")["passed"] is True
     assert tally(_verdicts(correct=42, wrong=8), kind="edges")["passed"] is False
-    assert tally(_verdicts(correct=29, wrong=1), kind="merges")["passed"] is True
-    assert tally(_verdicts(correct=28, wrong=2), kind="merges")["passed"] is False
+    assert (
+        tally(_verdicts(correct=29, wrong=1, columns=MERGE_COLUMNS), kind="merges")["passed"]
+        is True
+    )
+    assert (
+        tally(_verdicts(correct=28, wrong=2, columns=MERGE_COLUMNS), kind="merges")["passed"]
+        is False
+    )
     with pytest.raises(ValueError, match="incomplete"):
         tally(_verdicts(correct=49, wrong=0, blank=1), kind="edges")
 
@@ -113,3 +129,27 @@ def test_tally_rejects_placeholder_reviewer() -> None:
     rows2[0]["reviewer"] = "machine-generated"
     with pytest.raises(ValueError, match="incomplete"):
         tally(rows2, kind="edges")
+
+
+def test_tally_rejects_placeholder_reviewed_at() -> None:
+    rows = _verdicts(correct=5, wrong=0)
+    rows[0]["reviewedAt"] = "pending-review"
+    with pytest.raises(ValueError, match="incomplete"):
+        tally(rows, kind="edges")
+
+    rows2 = _verdicts(correct=5, wrong=0)
+    rows2[0]["reviewedAt"] = "machine-generated"
+    with pytest.raises(ValueError, match="incomplete"):
+        tally(rows2, kind="edges")
+
+
+def test_tally_rejects_rows_whose_columns_do_not_match_the_expected_header() -> None:
+    rows = _verdicts(correct=5, wrong=0)
+    del rows[0]["note"]
+    rows[0]["unexpectedColumn"] = "x"
+    with pytest.raises(ValueError, match="incomplete"):
+        tally(rows, kind="edges")
+
+    merge_rows = _verdicts(correct=5, wrong=0, columns=EDGE_COLUMNS)
+    with pytest.raises(ValueError, match="incomplete"):
+        tally(merge_rows, kind="merges")

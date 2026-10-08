@@ -193,9 +193,14 @@ def tally(
     <=5% wrong (`_maximum`) — the same ratio/maximum algorithm as
     `scripts/evaluate-quality-graph.py:39-52`.
     """
+    expected_columns = set(EDGE_COLUMNS if kind == "edges" else MERGE_COLUMNS)
     total = len(rows)
     correct = 0
     for row in rows:
+        if set(row.keys()) != expected_columns:
+            raise ValueError(
+                "sample review incomplete: CSV header does not match the expected columns"
+            )
         verdict = row.get("verdict")
         reviewer = row.get("reviewer")
         reviewed_at = row.get("reviewedAt")
@@ -207,7 +212,11 @@ def tally(
             or reviewer.startswith(_PLACEHOLDER_REVIEWER_PREFIXES)
         ):
             raise ValueError("sample review incomplete")
-        if not isinstance(reviewed_at, str) or not reviewed_at.strip():
+        if (
+            not isinstance(reviewed_at, str)
+            or not reviewed_at.strip()
+            or reviewed_at.startswith(_PLACEHOLDER_REVIEWER_PREFIXES)
+        ):
             raise ValueError("sample review incomplete")
         if verdict == "correct":
             correct += 1

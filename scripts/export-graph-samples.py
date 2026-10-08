@@ -2,13 +2,19 @@
 """Export a deterministic random sample of Graph edges or cross-source merge
 candidates as CSV for human review (spec 4.3).
 
-Reads the current `READY` `graph_project_*` version (or `--graph-version`) off
-a running Tapper MySQL database. Edge candidates are every `EXTRACTED` edge;
-their evidence snippet is the chunk body behind the edge's first
-`graph_project_edge_evidence` row, truncated to 300 characters — resolved via
-the source revision's chunk blob when one is on record, otherwise left blank
-rather than failing the export. Merge candidates are every node whose sources
-(`graph_project_node_source`) span >=2 distinct `source_revision_id`s.
+Reads the current `READY` `graph_project_*` version (or `--graph-version`,
+rejected if it has no `READY` row) off a running Tapper MySQL database. Edge
+candidates are every `EXTRACTED` edge; their evidence snippet and source
+title are resolved through `MysqlGraphNodeEnrichment` — the same scoped,
+`deleted_at`-filtered, 300-char-truncating, `ArtifactError`-only-catching path
+`GET /nodes/{node_id}` already uses — rather than ad hoc queries here. Merge
+candidates are every node whose sources (`graph_project_node_source`) span
+>=2 distinct `source_revision_id`s.
+
+Exits non-zero (after still writing the CSV) when any sampled edge's snippet
+or source title could not be resolved, since a human reviewer cannot judge a
+blank row; warns (without failing) when fewer rows were available than
+`--count` requested.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ import argparse
 import asyncio
 import csv
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.entrypoints.tapper_runtime import TapperSettings, _create_blob, _open_database
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.graph.adapters.mysql_node_enrichment import MysqlGraphNodeEnrichment
 from tap.modules.graph.adapters.mysql_project import (
     graph_merge_log,
     graph_project_edge,
@@ -34,12 +42,6 @@ from tap.modules.graph.adapters.mysql_project import (
     graph_project_node_source,
     graph_project_version,
 )
-from tap.modules.knowledge.adapters.mysql_documents import (
-    knowledge_document,
-    knowledge_document_revision,
-    knowledge_source,
-)
-from tap.modules.knowledge.ports.documents import ArtifactLocator
 from tap.platform.db.project_scope import scope_predicates
 from tap.quality.graph_samples import (
     EDGE_COLUMNS,
@@ -59,7 +61,22 @@ def _rows(result: Result[Any]) -> list[dict[str, object]]:
 
 
 async def _resolve_version(session: AsyncSession, graph_version: int | None) -> int:
+    """Return the version to sample: `graph_version` if it names a `READY`
+    row, the current `READY` version if omitted; raises `ValueError` either
+    way nothing qualifies, so an operator sees a clear message instead of an
+    empty/wrong-version export."""
     if graph_version is not None:
+        exists = (
+            await session.execute(
+                select(graph_project_version.c.version).where(
+                    *scope_predicates(graph_project_version, VALIDATION_SCOPE),
+                    graph_project_version.c.version == graph_version,
+                    graph_project_version.c.status == "READY",
+                )
+            )
+        ).scalar_one_or_none()
+        if exists is None:
+            raise ValueError(f"graph version {graph_version} has no READY row")
         return graph_version
     current = (
         await session.execute(
@@ -77,57 +94,17 @@ async def _resolve_version(session: AsyncSession, graph_version: int | None) -> 
     return int(current)
 
 
-async def _source_title(session: AsyncSession, source_revision_id: str) -> str:
-    """Resolve one source revision's human-facing title via the knowledge chain
-    `revision -> document -> source`; returns "" if the revision is unknown
-    (e.g. a quality fixture revision with no real knowledge-module rows)."""
-    name = (
-        await session.execute(
-            select(knowledge_source.c.name)
-            .select_from(
-                knowledge_document_revision.join(
-                    knowledge_document,
-                    knowledge_document_revision.c.document_id
-                    == knowledge_document.c.document_id,
-                ).join(
-                    knowledge_source,
-                    knowledge_document.c.source_id == knowledge_source.c.source_id,
-                )
-            )
-            .where(knowledge_document_revision.c.revision_id == source_revision_id)
+def _warn_if_fewer_than_requested(kind: str, count: int, sampled: int) -> None:
+    if sampled < count:
+        print(
+            f"warning: requested {count} {kind} samples but only {sampled} are available",
+            file=sys.stderr,
         )
-    ).scalar_one_or_none()
-    return str(name) if name is not None else ""
-
-
-async def _evidence_snippet(
-    session: AsyncSession, blob_store: Any, source_revision_id: str, chunk_id: str
-) -> str:
-    """Resolve the chunk body for one evidence row; "" when the revision has no
-    recorded chunk blob (never raises so one unreadable chunk cannot abort the
-    whole export)."""
-    locator = (
-        await session.execute(
-            select(knowledge_document_revision.c.chunks_blob_locator).where(
-                knowledge_document_revision.c.revision_id == source_revision_id
-            )
-        )
-    ).scalar_one_or_none()
-    if not locator:
-        return ""
-    try:
-        chunks = await blob_store.read_chunks(ArtifactLocator(str(locator)))
-    except Exception:
-        return ""
-    for chunk in chunks:
-        if str(chunk.chunk_id) == chunk_id:
-            return str(chunk.content)
-    return ""
 
 
 async def export_edges(
     sessions: async_sessionmaker[AsyncSession],
-    blob_store: Any,
+    enrichment: MysqlGraphNodeEnrichment,
     *,
     count: int,
     seed: int,
@@ -135,8 +112,12 @@ async def export_edges(
     graph_version: int | None,
 ) -> int:
     """Export a deterministic sample of `EXTRACTED` edges as an `EDGE_COLUMNS`
-    CSV; `sessions`/`blob_store` are injected so this can run against any
-    database/blob backend (including an isolated test one)."""
+    CSV; `sessions`/`enrichment` are injected so this can run against any
+    database/blob backend (including an isolated test one).
+
+    Returns 1 (after still writing the CSV) if any sampled edge ends up with
+    a blank snippet or source title; 0 otherwise.
+    """
     async with sessions() as session:
         version = await _resolve_version(session, graph_version)
         edge_rows = _rows(
@@ -149,6 +130,7 @@ async def export_edges(
             )
         )
         sampled = sample_rows(edge_rows, count=count, seed=seed)
+        _warn_if_fewer_than_requested("edge", count, len(sampled))
         node_rows = _rows(
             await session.execute(
                 select(graph_project_node).where(
@@ -159,6 +141,7 @@ async def export_edges(
         )
         nodes_by_id = {row["node_id"]: row for row in node_rows}
         csv_rows: list[dict[str, str]] = []
+        blank_count = 0
         for edge in sampled:
             evidence_row = (
                 (
@@ -184,30 +167,44 @@ async def export_edges(
             subject = nodes_by_id[edge["source_node_id"]]
             object_ = nodes_by_id[edge["target_node_id"]]
             if evidence_row is None:
-                evidence = {"source_title": "", "chunk_id": "", "snippet": ""}
+                source_title = ""
+                snippet = ""
+                chunk_id: object = ""
             else:
-                source_title = await _source_title(
-                    session, str(evidence_row["source_revision_id"])
+                source_revision_id = str(evidence_row["source_revision_id"])
+                chunk_id = evidence_row["chunk_id"]
+                source_title = (
+                    await enrichment.source_name(VALIDATION_SCOPE, source_revision_id)
+                    or ""
                 )
-                snippet = await _evidence_snippet(
-                    session,
-                    blob_store,
-                    str(evidence_row["source_revision_id"]),
-                    str(evidence_row["chunk_id"]),
+                snippet = (
+                    await enrichment.snippet(
+                        VALIDATION_SCOPE, source_revision_id, str(chunk_id)
+                    )
+                    or ""
                 )
-                evidence = {
-                    "source_title": source_title,
-                    "chunk_id": evidence_row["chunk_id"],
-                    "snippet": snippet,
-                }
+            if not source_title or not snippet:
+                blank_count += 1
+            evidence = {
+                "source_title": source_title,
+                "chunk_id": chunk_id,
+                "snippet": snippet,
+            }
             csv_rows.append(edge_csv_row(edge, subject, object_, evidence))
     _write_csv(output, EDGE_COLUMNS, csv_rows)
     print(f"exported {len(csv_rows)} edge samples to {output}")
+    if blank_count > 0:
+        print(
+            f"warning: {blank_count} edge sample(s) have a blank snippet or source title",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
 async def export_merges(
     sessions: async_sessionmaker[AsyncSession],
+    enrichment: MysqlGraphNodeEnrichment,
     *,
     count: int,
     seed: int,
@@ -215,8 +212,8 @@ async def export_merges(
     graph_version: int | None,
 ) -> int:
     """Export a deterministic sample of cross-source merge candidates as a
-    `MERGE_COLUMNS` CSV; `sessions` is injected so this can run against any
-    database backend (including an isolated test one)."""
+    `MERGE_COLUMNS` CSV; `sessions`/`enrichment` are injected so this can run
+    against any database/blob backend (including an isolated test one)."""
     async with sessions() as session:
         version = await _resolve_version(session, graph_version)
         source_rows = _rows(
@@ -245,13 +242,19 @@ async def export_merges(
             )
         )
         sampled = sample_rows(node_rows, count=count, seed=seed)
+        _warn_if_fewer_than_requested("merge", count, len(sampled))
         csv_rows: list[dict[str, str]] = []
         for node in sampled:
             node_id = str(node["node_id"])
             sources = sources_by_node[node_id]
             titles: list[dict[str, object]] = []
             for source in sources:
-                title = await _source_title(session, str(source["source_revision_id"]))
+                title = (
+                    await enrichment.source_name(
+                        VALIDATION_SCOPE, str(source["source_revision_id"])
+                    )
+                    or ""
+                )
                 titles.append(
                     {
                         "source_revision_id": source["source_revision_id"],
@@ -289,11 +292,12 @@ async def _run(arguments: argparse.Namespace) -> int:
     settings = TapperSettings.from_mapping(dict(os.environ))
     engine, sessions = _open_database(settings)
     try:
+        blob_store = _create_blob(settings)
+        enrichment = MysqlGraphNodeEnrichment(sessions, blob_store)
         if arguments.kind == "edges":
-            blob_store = _create_blob(settings)
             return await export_edges(
                 sessions,
-                blob_store,
+                enrichment,
                 count=arguments.count,
                 seed=arguments.seed,
                 output=arguments.output,
@@ -301,6 +305,7 @@ async def _run(arguments: argparse.Namespace) -> int:
             )
         return await export_merges(
             sessions,
+            enrichment,
             count=arguments.count,
             seed=arguments.seed,
             output=arguments.output,
@@ -310,7 +315,7 @@ async def _run(arguments: argparse.Namespace) -> int:
         await engine.dispose()
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="kind", required=True)
     for kind in ("edges", "merges"):
@@ -319,8 +324,12 @@ def main() -> int:
         sub.add_argument("--seed", type=int, required=True)
         sub.add_argument("--output", type=Path, required=True)
         sub.add_argument("--graph-version", type=int, default=None)
-    arguments = parser.parse_args()
-    return asyncio.run(_run(arguments))
+    arguments = parser.parse_args(argv)
+    try:
+        return asyncio.run(_run(arguments))
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
