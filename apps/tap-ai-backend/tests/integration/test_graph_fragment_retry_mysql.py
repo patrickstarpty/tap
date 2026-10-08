@@ -326,9 +326,7 @@ async def test_retry_resets_a_partial_snapshot_so_the_rerun_actually_republishes
         lease_duration=timedelta(seconds=60),
     )
     assert merge_claim is not None
-    merge_inputs = MysqlMergeInputs(
-        sessions, _FixedCurrentRevisions({"revision-fragment-retry"})
-    )
+    merge_inputs = MysqlMergeInputs(sessions, _FixedCurrentRevisions({"revision-fragment-retry"}))
     fragments = await merge_inputs.load_fragments(VALIDATION_SCOPE)
     merged_draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, fragments)
     await merge_queue.complete(VALIDATION_SCOPE, merge_claim, merged_draft, now=real_now)

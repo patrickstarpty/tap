@@ -111,8 +111,7 @@ class ProjectGraphMergeWorker:
                 await self._queue.complete(self._scope, claim, draft, now=self._now())
             except ProjectMergeLeaseLost:
                 logger.warning(
-                    "project graph merge lease lost: job_kind=project_merge "
-                    "project_id=%s phase=%s",
+                    "project graph merge lease lost: job_kind=project_merge project_id=%s phase=%s",
                     self._scope.project_id,
                     phase,
                 )
