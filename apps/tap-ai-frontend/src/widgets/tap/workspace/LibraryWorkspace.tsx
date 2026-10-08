@@ -133,11 +133,14 @@ export function LibraryWorkspace({
     () => publishedRevisionIdsOf(facetSources, publishedSources),
     [facetSources, publishedSources],
   );
-  const sourceScope: GraphSourceScope = publishedSourcesLoading
-    ? { status: "loading" }
-    : sourceFilterActive && graphSourceRevisionIds.length === 0
-      ? { status: "no-match" }
-      : { status: "ready", sourceRevisionIds: graphSourceRevisionIds };
+  const sourceScope: GraphSourceScope =
+    publishedSourcesLoading || loadState === "loading"
+      ? { status: "loading" }
+      : sourceFilterActive && loadState === "error"
+        ? { status: "unavailable" }
+        : sourceFilterActive && graphSourceRevisionIds.length === 0
+          ? { status: "no-match" }
+          : { status: "ready", sourceRevisionIds: graphSourceRevisionIds };
 
   const selectMode = (nextMode: LibraryMode) => {
     setMode(nextMode);

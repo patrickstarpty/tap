@@ -40,7 +40,8 @@ function nodeTypeLabel(copy: WorkspaceCopy, nodeType: string): string {
 export type GraphSourceScope =
   | { status: "ready"; sourceRevisionIds: readonly string[] }
   | { status: "loading" }
-  | { status: "no-match" };
+  | { status: "no-match" }
+  | { status: "unavailable" };
 
 export function GraphOverview({
   projectId,
@@ -99,8 +100,11 @@ export function GraphOverview({
     () => communitiesBySize.map((community) => community.communityId),
     [communitiesBySize],
   );
-  const effectiveSelectedCommunities =
-    selectedCommunities ?? new Set([...realCommunityIds, OTHER_COMMUNITY_ID]);
+  const effectiveSelectedCommunities = useMemo(
+    () =>
+      selectedCommunities ?? new Set([...realCommunityIds, OTHER_COMMUNITY_ID]),
+    [selectedCommunities, realCommunityIds],
+  );
   const communityIdsForRequest = useMemo(() => {
     const allRealSelected = realCommunityIds.every((id) =>
       effectiveSelectedCommunities.has(id),
@@ -190,16 +194,13 @@ export function GraphOverview({
   const partialCount = sourceRevisionIds.filter((id) =>
     (project?.partialRevisionIds ?? []).includes(id),
   ).length;
-  const statusFooter =
-    extractingCount > 0 || partialCount > 0 ? (
-      <p className="tap-graph-extraction-footer" role="status">
-        {extractingCount > 0 ? (
-          <span>{libraryCopy.extractingSources(extractingCount)}</span>
-        ) : null}
-        {partialCount > 0 ? (
-          <span>{libraryCopy.partialSources(partialCount)}</span>
-        ) : null}
-      </p>
+  const communitiesFooter = {
+    extracting: extractingCount,
+    partial: partialCount,
+  };
+  const communitiesNotice =
+    project?.status === "MERGING" ? (
+      <p role="status">{libraryCopy.graphMerging}</p>
     ) : null;
 
   const sourceIdByRevisionId = useMemo(
@@ -336,6 +337,9 @@ export function GraphOverview({
   if (sourceScope.status === "loading") {
     return <p role="status">{copy.sources.loading}</p>;
   }
+  if (sourceScope.status === "unavailable") {
+    return <p role="alert">{libraryCopy.graphUnavailable}</p>;
+  }
   if (sourceScope.status === "no-match") {
     return <p role="status">{libraryCopy.noResults}</p>;
   }
@@ -360,14 +364,8 @@ export function GraphOverview({
       activeCommunities={effectiveSelectedCommunities}
       onToggleCommunity={toggleCommunity}
       onSelectAllCommunities={selectAllCommunities}
-      statusFooter={
-        <>
-          {project.status === "MERGING" ? (
-            <p role="status">{libraryCopy.graphMerging}</p>
-          ) : null}
-          {statusFooter}
-        </>
-      }
+      communitiesFooter={communitiesFooter}
+      communitiesNotice={communitiesNotice}
       searchQuery={query}
       selectedNodeId={selectedNodeId}
       onSelectNode={setSelectedNodeId}

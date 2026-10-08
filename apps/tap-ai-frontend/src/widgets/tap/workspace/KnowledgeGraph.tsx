@@ -52,7 +52,11 @@ export interface KnowledgeGraphProps {
   activeCommunities: ReadonlySet<string>;
   onToggleCommunity: (communityId: string) => void;
   onSelectAllCommunities: (all: boolean) => void;
-  statusFooter: ReactNode;
+  // Rendered inside the community column (via `CommunityList`'s own
+  // `footer`/`notice` slots) rather than as a bare, unplaced child of the
+  // 3-column `.tap-graph-workspace` grid.
+  communitiesFooter: { extracting: number; partial: number };
+  communitiesNotice?: ReactNode;
   searchQuery: string;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string | null) => void;
@@ -84,7 +88,8 @@ export function KnowledgeGraph({
   activeCommunities,
   onToggleCommunity,
   onSelectAllCommunities,
-  statusFooter,
+  communitiesFooter,
+  communitiesNotice = null,
   searchQuery,
   selectedNodeId,
   onSelectNode,
@@ -150,9 +155,13 @@ export function KnowledgeGraph({
     ? (nodeById.get(selectedNodeId) ?? null)
     : null;
   const matchesQuery = (node: GraphNode) =>
-    [node.label, node.communityLabel, node.nodeType, ...node.aliases].some(
-      (value) => value?.toLocaleLowerCase().includes(normalizedQuery),
-    );
+    [
+      node.label,
+      node.communityLabel,
+      node.nodeType,
+      nodeTypeLabel(copy, node.nodeType),
+      ...node.aliases,
+    ].some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
   const matchingNodes = nodes.filter(matchesQuery);
 
   const focusedNodeId = hoveredNodeId ?? selectedNode?.id;
@@ -227,11 +236,11 @@ export function KnowledgeGraph({
           selected={activeCommunities}
           onToggle={onToggleCommunity}
           onSelectAll={onSelectAllCommunities}
-          footer={{ extracting: 0, partial: 0 }}
+          footer={communitiesFooter}
+          notice={communitiesNotice}
           copy={copy.library}
         />
       ) : null}
-      {statusFooter}
 
       {normalizedQuery ? (
         <section

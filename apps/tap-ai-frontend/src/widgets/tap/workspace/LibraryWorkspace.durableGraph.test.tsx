@@ -90,6 +90,7 @@ function renderLibrary(overrides: {
   sources?: Parameters<typeof LibraryWorkspace>[0]["sources"];
   publishedSources?: Parameters<typeof LibraryWorkspace>[0]["publishedSources"];
   publishedSourcesLoading?: boolean;
+  loadState?: "loading" | "loaded" | "error";
 }) {
   vi.mocked(useGraphProject).mockReturnValue(
     queryResult(overrides.project ?? undefined, {
@@ -134,6 +135,7 @@ function renderLibrary(overrides: {
           ]
         }
         publishedSourcesLoading={overrides.publishedSourcesLoading ?? false}
+        loadState={overrides.loadState}
       />
     </QueryClientProvider>,
   );
@@ -274,8 +276,16 @@ it("shows extraction footer counts", async () => {
 
   await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
-  expect(screen.getByText("2 sources still extracting")).toBeVisible();
-  expect(screen.getByText("1 partially failed")).toBeVisible();
+  // The footer must render inside the community column (`CommunityList`'s
+  // own `footer` slot), not as an unplaced child of the 3-column canvas
+  // grid, which would otherwise land it in the canvas or inspector cell.
+  const communityRegion = screen.getByRole("complementary", {
+    name: "Topic groups",
+  });
+  expect(
+    within(communityRegion).getByText("2 sources still extracting"),
+  ).toBeVisible();
+  expect(within(communityRegion).getByText("1 partially failed")).toBeVisible();
 });
 
 it("renders Chinese overview copy", async () => {
@@ -358,6 +368,54 @@ it("shows a no-match state when Library filters match no published source", asyn
   expect(vi.mocked(useGraphOverview).mock.calls.at(-1)?.[0]).toBeNull();
 });
 
+it("shows a loading state (not no-match) when a facet is active and the source list is still loading", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    sources: [],
+    publishedSources: [],
+    loadState: "loading",
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  await userEvent.selectOptions(
+    screen.getByRole("combobox", { name: "Status" }),
+    "failed",
+  );
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(screen.getByText("Loading sources")).toBeVisible();
+  expect(screen.queryByText("No matching sources")).not.toBeInTheDocument();
+  expect(vi.mocked(useGraphOverview).mock.calls.at(-1)?.[0]).toBeNull();
+});
+
+it("shows an unavailable state (not no-match) when a facet is active and the source list failed to load", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    sources: [],
+    publishedSources: [],
+    loadState: "error",
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  await userEvent.selectOptions(
+    screen.getByRole("combobox", { name: "Status" }),
+    "failed",
+  );
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(
+    screen.getByText(
+      "The knowledge graph is temporarily unavailable. Try again.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText("No matching sources")).not.toBeInTheDocument();
+  expect(vi.mocked(useGraphOverview).mock.calls.at(-1)?.[0]).toBeNull();
+});
+
 it("keeps the graph scoped to type/status facets, not the free-text search box", async () => {
   const project = buildProject();
   renderLibrary({
@@ -402,9 +460,11 @@ it("keeps the graph scoped to type/status facets, not the free-text search box",
 
 it("renders localized node type labels in the Chinese search results", async () => {
   const project = buildProject();
+  const nodes = buildNodes(1, "underwriting", "uw");
   renderLibrary({
     project,
-    overview: buildOverview(buildNodes(1, "underwriting", "uw")),
+    overview: buildOverview(nodes),
+    search: buildOverview(nodes),
     locale: "zh",
   });
 
@@ -414,6 +474,27 @@ it("renders localized node type labels in the Chinese search results", async () 
     "uw0",
   );
 
-  expect(screen.getByText(/概念/)).toBeVisible();
-  expect(screen.queryByText(/CONCEPT/)).not.toBeInTheDocument();
+  const results = screen.getByRole("region", { name: "搜索结果" });
+  expect(within(results).getByText(/概念/)).toBeVisible();
+  expect(within(results).queryByText(/CONCEPT/)).not.toBeInTheDocument();
+});
+
+it("matches nodes by their localized node type label when searching", async () => {
+  const project = buildProject();
+  const nodes = buildNodes(1, "underwriting", "uw");
+  renderLibrary({
+    project,
+    overview: buildOverview(nodes),
+    search: buildOverview(nodes),
+    locale: "zh",
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "知识图谱" }));
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "搜索知识库" }),
+    "概念",
+  );
+
+  const results = screen.getByRole("region", { name: "搜索结果" });
+  expect(within(results).getByText("uw0")).toBeVisible();
 });

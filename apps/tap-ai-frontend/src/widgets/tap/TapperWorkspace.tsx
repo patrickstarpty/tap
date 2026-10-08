@@ -764,11 +764,13 @@ function ProjectLibraryWorkspace({
         publishedSourcesLoading={publishedSourcesLoading}
         onAskAboutNode={onAskAboutNode}
         onOpenSource={(sourceId) => {
-          // No trigger element exists for this path (the click happened
-          // inside the graph canvas, not a Library list row), so clear the
-          // opener instead of leaving a stale one that would steal focus
-          // when the dialog closes.
-          opener.current = null;
+          // There is no explicit trigger element passed through this path
+          // (the click happened inside the graph canvas, not a Library
+          // list row), but the browser focuses a button on click, so the
+          // clicked "View source"/"Open original" button is still the
+          // active element at this point — use it as the opener so focus
+          // returns there when the dialog closes.
+          opener.current = document.activeElement as HTMLElement | null;
           setInspected(sourceId);
         }}
         onInspectSource={(sourceId, trigger) => {

@@ -3048,6 +3048,121 @@ describe("Tap product workspace interactions", () => {
     expect(screen.getByRole("list", { name: "Library sources" })).toBeVisible();
   });
 
+  it("returns focus to the 'View source' button after closing the opened source", async () => {
+    const user = userEvent.setup();
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "age",
+                nodeType: "CONCEPT",
+                label: "Age eligibility",
+                canonicalKey: "age",
+                degree: 0,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    vi.mocked(useGraphNode).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            node: {
+              nodeId: "age",
+              nodeType: "CONCEPT",
+              label: "Age eligibility",
+              canonicalKey: "age",
+              degree: 0,
+              communityId: "underwriting",
+              aliases: [],
+            },
+            community: {
+              communityId: "underwriting",
+              label: "Underwriting",
+              size: 1,
+            },
+            sources: [
+              {
+                sourceRevisionId: "rev_life_underwriting_rules",
+                documentRevisionId: "rev_life_underwriting_rules",
+                sourceName: "life-underwriting-rules.md",
+                evidence: [],
+              },
+            ],
+            relations: [],
+            neighbors: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    // The graph's node-detail "View source" button opens the sourceId
+    // resolved from `publishedSources` (DEFAULT_SOURCES), but the fake
+    // knowledge client's `getSource` looks a source up by the *document*
+    // fixture's own deterministic `sourceId` (derived from `documentId`).
+    // Point the published source's id at that same value so opening it
+    // resolves instead of erroring.
+    const matchingSourceId = document({
+      documentId: "life-underwriting-rules",
+      filename: "life-underwriting-rules.md",
+      stage: "ready",
+      status: "ready",
+    }).sourceId;
+    const api = defaultKnowledgeClient().withPublishedSources({
+      items: [{ ...DEFAULT_SOURCES[0], sourceId: matchingSourceId }],
+    });
+    const queryClient = createTestQueryClient();
+    seedAgentSkillCatalog(queryClient, api.projectId);
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
+    );
+    await user.click(screen.getByRole("button", { name: /Age eligibility/ }));
+    const viewSourceButton = await screen.findByRole("button", {
+      name: "View source in document list",
+    });
+    await user.click(viewSourceButton);
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Close Knowledge sources" }),
+    );
+
+    expect(viewSourceButton).toHaveFocus();
+  });
+
   it("combines Library type and status filters and clears them together", async () => {
     const user = userEvent.setup();
     renderWorkspaceWithLibraryStatuses();

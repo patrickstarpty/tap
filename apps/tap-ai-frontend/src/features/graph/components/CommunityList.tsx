@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 // `import type` only: dependency-cruiser's `features-do-not-import-upward`
 // rule (features/ may not import widgets/) does not flag type-only imports
 // (verified against `dependency-cruiser.cjs`), only value imports. This
@@ -20,6 +20,7 @@ export function CommunityList({
   onToggle,
   onSelectAll,
   footer,
+  notice = null,
   copy,
 }: {
   communities: readonly CommunitySummary[];
@@ -27,6 +28,10 @@ export function CommunityList({
   onToggle: (communityId: string) => void;
   onSelectAll: (all: boolean) => void;
   footer: { extracting: number; partial: number };
+  // Status content that belongs with the community column (e.g. a "the
+  // graph is being rebuilt" notice) rather than floating as an unplaced
+  // child of the canvas layout's grid.
+  notice?: ReactNode;
   copy: CommunityListCopy;
 }) {
   const allSelected = communities.every((community) =>
@@ -39,6 +44,7 @@ export function CommunityList({
   return (
     <aside className="tap-graph-communities" aria-label={copy.communities}>
       <h2>{copy.communities}</h2>
+      {notice}
       <label className="tap-graph-select-all">
         <input
           type="checkbox"
