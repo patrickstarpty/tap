@@ -621,6 +621,7 @@ class MysqlGraphJobStore:
                 graph_edge,
                 graph_node,
                 graph_snapshot_revision,
+                graph_snapshot_document_revision,
                 graph_fragment_batch,
             ):
                 await session.execute(
