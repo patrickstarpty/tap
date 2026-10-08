@@ -80,10 +80,20 @@ def assemble_fragment(
 
     If, after all of the above, the merged document has zero edges (every batch was
     either empty or only ever touched a lone, relation-less entity), the whole
-    result is replaced by exactly one ``document:``-prefixed fallback node carrying
-    every evidence id collected so far and zero edges -- the per-batch extractors
-    never emit this fallback themselves, precisely so a relation-less batch of an
-    otherwise-related document cannot leave a stray extra document node behind.
+    result is replaced by exactly one fallback node (reusing one a per-batch
+    extractor already minted, if any survived the merge, since its canonical
+    key -- exactly ``f"document:{revision_id}"`` for one of this snapshot's own
+    revisions -- already collapsed every batch's copy into one via the
+    canonical-key merge above; otherwise a fresh one is synthesized here)
+    carrying every evidence id collected so far and zero edges. A per-batch
+    extractor is free to mint its own such fallback node when it grounds
+    nothing (see ``rule_based_draft``); when the document *does* end up with
+    real edges elsewhere, any such stray fallback node is instead dropped from
+    the published result rather than kept alongside real content. Either way,
+    only an *exact* match against one of this snapshot's own reserved fallback
+    keys identifies a fallback node -- never merely a ``"document:"`` prefix,
+    since a real node (e.g. from a model) could legitimately have a
+    canonical key that happens to start with it.
     """
 
     nodes_by_id: dict[str, GraphNode] = {}
@@ -294,7 +304,18 @@ def assemble_fragment(
         if provenance_by_id[provenance_id].edge_id in kept_edge_id_set
     ]
 
-    _document_prefix = "document:"
+    # A fallback node is identified by an *exact* match on one of this
+    # snapshot's own reserved fallback keys ("document:<revision_id>", exactly
+    # as rule_based_draft/assemble_fragment build it below) -- never merely by
+    # a "document:" prefix. A model is free to mint a real, edge-bearing node
+    # whose own canonicalKey happens to start with "document:" (e.g.
+    # "document:handbook") for an unrelated real-world thing; prefix-matching
+    # would misidentify it as this snapshot's fallback and strip it while
+    # leaving its edge behind, which then fails validation with a dangling
+    # edge endpoint.
+    fallback_canonical_keys = {
+        f"document:{revision_id}" for revision_id in snapshot.document_revision_ids
+    }
 
     if not kept_edge_order:
         # The merged document ended up with zero relations -- whether every
@@ -311,7 +332,7 @@ def assemble_fragment(
             (
                 node_id
                 for node_id in kept_node_order
-                if nodes_by_id[node_id].canonical_key.startswith(_document_prefix)
+                if nodes_by_id[node_id].canonical_key in fallback_canonical_keys
             ),
             None,
         )
@@ -326,7 +347,7 @@ def assemble_fragment(
                 snapshot.snapshot_id,
                 snapshot.document_revision_ids[0],
                 "ENTITY",
-                f"{_document_prefix}{snapshot.document_revision_ids[0]}",
+                f"document:{snapshot.document_revision_ids[0]}",
                 tuple(evidence_order),
             )
         return GraphSnapshotDraft(
@@ -343,7 +364,7 @@ def assemble_fragment(
     published_node_order = [
         node_id
         for node_id in kept_node_order
-        if not nodes_by_id[node_id].canonical_key.startswith(_document_prefix)
+        if nodes_by_id[node_id].canonical_key not in fallback_canonical_keys
     ]
 
     return GraphSnapshotDraft(

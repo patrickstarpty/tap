@@ -974,4 +974,10 @@ async def test_batches_a_relation_less_document_into_one_document_node(monkeypat
     assert len(published.nodes) == 1
     assert published.nodes[0].canonical_key.startswith("document:")
     assert published.edges == ()
-    assert published.nodes[0].evidence_ids
+    # Grounding must be complete, not just nonempty: one evidence id per chunk
+    # across both batches (10 + 2), not merely whichever batch happened to
+    # survive the canonical-key merge.
+    assert len(published.nodes[0].evidence_ids) == 12
+    assert {item.chunk_id for item in published.evidence} == {
+        f"chunk-{index}" for index in range(12)
+    }

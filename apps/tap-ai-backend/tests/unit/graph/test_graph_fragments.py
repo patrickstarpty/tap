@@ -224,10 +224,11 @@ def test_assemble_fragment_caps_merged_edges_at_two_thousand() -> None:
 
 
 def test_assemble_fragment_falls_back_to_a_document_node_when_every_batch_is_empty() -> None:
-    # Every batch of a relation-less document returns ``None`` (nothing grounded)
-    # and the worker never appends it to the drafts list, so assembly sees zero
-    # drafts -- the degenerate case the per-batch extractors deliberately leave to
-    # assembly instead of each minting its own document-node fallback (F1).
+    # Every batch of a relation-less document returns ``None`` (nothing
+    # grounded, e.g. the model extractor's empty-batch signal) and the worker
+    # never appends it to the drafts list, so assembly sees zero drafts. No
+    # per-batch fallback node survives to reuse, so assemble_fragment must
+    # synthesize one fresh, rather than publish a draft with zero nodes.
     fragment = assemble_fragment(SNAPSHOT, ())
 
     assert len(fragment.nodes) == 1
@@ -419,16 +420,58 @@ def test_assemble_fragment_keeps_one_provenance_when_two_batches_infer_the_same_
     assert fragment.edges[0].confidence == 0.9
 
 
-def test_assemble_fragment_drops_provenance_whose_inputs_collapse_to_one_fact() -> None:
-    # R1(b): a provenance originally cites two distinct facts that merge into
-    # the same surviving node (e.g. two mentions of the same real-world entity
-    # under different batch-namespaced ids). After remapping, both input facts
-    # collapse to one id -- deduping keeps it valid in general, but when that
-    # single remaining input is the edge's own id, the provenance is
-    # self-referential and invalid; it (and its now-orphaned INFERRED edge) must
-    # be dropped rather than raise.
+def test_assemble_fragment_dedupes_provenance_inputs_that_collapse_to_one_node() -> None:
+    # R1(b): a provenance originally cites two *distinct* input facts
+    # ("b0-node-a" and "b1-node-a") that each name the same real-world entity
+    # mentioned in a different batch -- so the canonical-key merge collapses
+    # them onto the same surviving node. After remapping, both input facts
+    # become the same id; deduping must keep the provenance valid (one
+    # surviving input, still citing a real fact) instead of letting
+    # InferenceProvenance's uniqueness check raise on two identical ids.
     node_a1 = GraphNode("b0-node-a", SNAPSHOT.snapshot_id, "Entity A", "CONCEPT", "entity-a")
     node_a2 = GraphNode("b1-node-a", SNAPSHOT.snapshot_id, "Entity A", "CONCEPT", "entity-a")
+    node_b = GraphNode("b0-node-b", SNAPSHOT.snapshot_id, "Entity B", "CONCEPT", "entity-b")
+    node_c = GraphNode("b0-node-c", SNAPSHOT.snapshot_id, "Entity C", "CONCEPT", "entity-c")
+    edge = GraphEdge(
+        "b0-edge",
+        SNAPSHOT.snapshot_id,
+        "b0-node-b",
+        "b0-node-c",
+        "TRIGGERS",
+        RelationOrigin.INFERRED,
+        0.7,
+        (),
+    )
+    # Two distinct input facts naming the same real-world entity under its
+    # two different batch-namespaced ids. Both ids must be present in the
+    # same draft for GraphSnapshotDraft's own dangling-input-fact check to
+    # accept it as constructed (a real per-batch draft would only ever cite
+    # facts grounded in its own batch); the cross-batch merge this test
+    # exercises is in assemble_fragment's node dedup, not in draft
+    # construction.
+    provenance = InferenceProvenance(
+        "b0-prov",
+        SNAPSHOT.snapshot_id,
+        "b0-edge",
+        ("b0-node-a", "b1-node-a"),
+        "sha256:" + "c" * 64,
+    )
+    draft = GraphSnapshotDraft(
+        SNAPSHOT, (node_a1, node_a2, node_b, node_c), (edge,), (), (provenance,)
+    )
+
+    fragment = assemble_fragment(SNAPSHOT, (draft,))
+
+    assert "b0-edge" in {edge.edge_id for edge in fragment.edges}
+    assert len(fragment.provenance) == 1
+    assert fragment.provenance[0].input_fact_ids == ("b0-node-a",)
+
+
+def test_assemble_fragment_drops_provenance_that_cites_only_its_own_edge() -> None:
+    # A provenance whose only input fact is its own edge's id is
+    # self-referential and invalid; it (and its now-orphaned INFERRED edge)
+    # must be dropped rather than raise.
+    node_a = GraphNode("b0-node-a", SNAPSHOT.snapshot_id, "Entity A", "CONCEPT", "entity-a")
     node_b = GraphNode("b0-node-b", SNAPSHOT.snapshot_id, "Entity B", "CONCEPT", "entity-b")
     edge = GraphEdge(
         "b0-edge",
@@ -440,15 +483,12 @@ def test_assemble_fragment_drops_provenance_whose_inputs_collapse_to_one_fact() 
         0.7,
         (),
     )
-    # This provenance's only input fact is the edge's own id -- self-referential
-    # and invalid after remap collapses it to just that.
     provenance = InferenceProvenance(
         "b0-prov", SNAPSHOT.snapshot_id, "b0-edge", ("b0-edge",), "sha256:" + "c" * 64
     )
-    draft_1 = GraphSnapshotDraft(SNAPSHOT, (node_a1, node_b), (edge,), (), (provenance,))
-    draft_2 = GraphSnapshotDraft(SNAPSHOT, (node_a2,), (), (), ())
+    draft = GraphSnapshotDraft(SNAPSHOT, (node_a, node_b), (edge,), (), (provenance,))
 
-    fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+    fragment = assemble_fragment(SNAPSHOT, (draft,))
 
     assert "b0-edge" not in {edge.edge_id for edge in fragment.edges}
     assert fragment.provenance == ()
@@ -537,3 +577,57 @@ def test_assemble_fragment_merges_normalize_key_through_accent_folding() -> None
     merged = next(node for node in fragment.nodes if node.node_id == "b0-node")
     assert set(merged.evidence_ids) == {"evidence-1", "evidence-2"}
     assert "b1-node" not in {node.node_id for node in fragment.nodes}
+
+
+def test_assemble_fragment_keeps_a_real_node_whose_key_merely_starts_with_document() -> None:
+    # N1: a model is free to mint a real, edge-bearing node whose own
+    # canonicalKey happens to start with "document:" for an unrelated
+    # real-world thing (e.g. "document:handbook", when SNAPSHOT's own
+    # revision is "revision-1" -- this snapshot's actual reserved fallback key
+    # is "document:revision-1", not this one). Prefix-matching would
+    # misidentify it as this snapshot's own fallback node and strip it while
+    # leaving its edge behind, which then fails GraphSnapshotDraft's dangling
+    # edge endpoint check. Only an exact match against this snapshot's own
+    # revision-derived fallback key may identify a fallback node.
+    handbook_node = GraphNode(
+        "node-handbook", SNAPSHOT.snapshot_id, "Handbook", "ENTITY", "document:handbook"
+    )
+    other_node = GraphNode("node-other", SNAPSHOT.snapshot_id, "Other", "CONCEPT", "other")
+    evidence = _evidence("evidence-1", "chunk-0")
+    handbook_edge = GraphEdge(
+        "edge-handbook",
+        SNAPSHOT.snapshot_id,
+        "node-handbook",
+        "node-other",
+        "USES",
+        RelationOrigin.EXTRACTED,
+        1.0,
+        ("evidence-1",),
+    )
+    # The document also has other, unrelated edges elsewhere.
+    node_a = GraphNode("node-a", SNAPSHOT.snapshot_id, "Entity A", "CONCEPT", "entity-a")
+    node_b = GraphNode("node-b", SNAPSHOT.snapshot_id, "Entity B", "CONCEPT", "entity-b")
+    evidence_2 = _evidence("evidence-2", "chunk-1")
+    other_edge = GraphEdge(
+        "edge-other",
+        SNAPSHOT.snapshot_id,
+        "node-a",
+        "node-b",
+        "GOVERNS",
+        RelationOrigin.EXTRACTED,
+        1.0,
+        ("evidence-2",),
+    )
+    draft = GraphSnapshotDraft(
+        SNAPSHOT,
+        (handbook_node, other_node, node_a, node_b),
+        (handbook_edge, other_edge),
+        (evidence, evidence_2),
+        (),
+    )
+
+    fragment = assemble_fragment(SNAPSHOT, (draft,))
+
+    assert "node-handbook" in {node.node_id for node in fragment.nodes}
+    assert "edge-handbook" in {edge.edge_id for edge in fragment.edges}
+    assert "edge-other" in {edge.edge_id for edge in fragment.edges}
