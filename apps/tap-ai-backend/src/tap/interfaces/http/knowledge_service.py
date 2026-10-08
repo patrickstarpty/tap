@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Protocol
 from uuid import uuid4
 
 from tap.contracts.http import (
@@ -102,7 +102,6 @@ class KnowledgeHttpService:
         searches: SearchOperations | None = None,
         sources: SourceService | None = None,
         corpus_version: str = "tapper-demo-v1",
-        graph_enricher=None,
         models: Any | None = None,
         answer_planner: Any | None = None,
     ) -> None:
@@ -114,7 +113,6 @@ class KnowledgeHttpService:
         self._searches = searches
         self._sources = sources
         self._corpus_version = corpus_version
-        self._graph_enricher = graph_enricher
         self._models = models
         self.answer_planner = answer_planner
 
@@ -334,7 +332,7 @@ class KnowledgeHttpService:
             )
             if authorize is not None:
                 await authorize()
-            if answer_plan.route != "retrieve":
+            if answer_plan.route not in {"retrieve", "graph"}:
                 from tap.modules.knowledge.application.answer_templates import assemble_answer
 
                 answer_input = assemble_answer(
@@ -398,7 +396,7 @@ class KnowledgeHttpService:
             )
         ):
             raise ValueError("accepted retrieval authority changed")
-        if answer_plan is not None and answer_plan.route != "retrieve":
+        if answer_plan is not None and answer_plan.route not in {"retrieve", "graph"}:
             await self._answers.authorize_frozen_selection(revisions)
             if answer_plan.route != "direct":
                 return self._stopped_answer(answer_plan, answer_input)
@@ -427,20 +425,11 @@ class KnowledgeHttpService:
                 graph_context_status="NOT_SELECTED",
             )
         domain_request = answer_request_from_http(request)
-        graph_context = None
-        if self._graph_enricher is not None:
-            graph_context = await self._graph_enricher.enrich(
-                self.scope,
-                tuple(frozen_input.source_revision_ids),
-                domain_request.query,
-                chunk_ids=(),
-            )
         response = await self._answers.answer_frozen(
             domain_request,
             revisions,
             policy,
             governance=governance,
-            graph_context=() if graph_context is None else graph_context.facts,
             model_alias=frozen_input.model_alias,
             **(
                 {"answer_execution": self._execution(answer_plan), "authorize": authorize}
@@ -448,14 +437,7 @@ class KnowledgeHttpService:
                 else {}
             ),
         )
-        return answer_response_to_http(
-            response,
-            graph_context_status=cast(
-                Literal["APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"],
-                "UNAVAILABLE" if graph_context is None else graph_context.status.value,
-            ),
-            graph_snapshot_id=None if graph_context is None else graph_context.snapshot_id,
-        )
+        return answer_response_to_http(response)
 
     @staticmethod
     def _execution(plan):

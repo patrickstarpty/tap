@@ -8,15 +8,19 @@ import json
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any, cast
+from types import MappingProxyType
+from typing import Any, Protocol, cast
 
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import (
     AuthorizationDenied,
     PolicyUnavailable,
     ResourceGrant,
     RetrievalPolicyContext,
 )
+from tap.modules.ai.application.agents.protocol import AgentContext
+from tap.modules.ai.application.agents.registry import AgentRegistry
 from tap.modules.knowledge.application.answer_templates import assemble_answer
 from tap.modules.knowledge.application.planned_answer import AuthorizedAnswerExecution
 from tap.modules.knowledge.application.publication import (
@@ -24,6 +28,14 @@ from tap.modules.knowledge.application.publication import (
     PublicationBinding,
     PublishedKnowledgeAuthority,
 )
+from tap.modules.knowledge.application.relation_analysis import (
+    EvidenceRef,
+    RelationAnalysisInput,
+    RelationContext,
+    RelationContextStatus,
+    RelationEvidence,
+)
+from tap.modules.knowledge.application.relation_claims import reconcile_relation_claims
 from tap.modules.knowledge.domain.flowchart_paths import (
     flowchart_claim_is_consistent,
     flowchart_path_context,
@@ -41,12 +53,14 @@ from tap.modules.knowledge.domain.models import (
     ContextLayerKind,
     ContextSnapshot,
     DocumentAnchor,
+    EdgeCitation,
     Evidence,
     FailureAnchor,
     FilterableSubtree,
     ModelCallProvenance,
     OpenApiAnchor,
     QueryPlan,
+    RelationOutcome,
     ResolvedResourceRef,
     ResourceMode,
     ResourceRef,
@@ -64,6 +78,7 @@ from tap.modules.knowledge.ports.errors import ModelUnavailable, SearchUnavailab
 from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
     Embedding,
+    GeneratedClaim,
     SearchExecution,
     SearchHit,
 )
@@ -75,6 +90,62 @@ from tap.modules.knowledge.ports.search import (
     SearchPort,
 )
 from tap.platform.telemetry import span
+
+_MAX_EVIDENCE = 20
+
+
+class RelationAnalysis(Protocol):
+    """Narrow retrieval-facing relation analysis port: run the deterministic
+    relation subgraph against selection-filtered retrieval evidence."""
+
+    async def analyse(
+        self,
+        query: str,
+        evidence: tuple[Evidence, ...],
+        source_revision_ids: tuple[str, ...],
+        *,
+        turn_id: str | None = None,
+    ) -> RelationContext: ...
+
+
+class RegisteredRelationAnalysis:
+    """Adapts the retrieval-facing `RelationAnalysis` port onto the
+    `"relation-analysis"` agent subgraph resolved from an `AgentRegistry`."""
+
+    def __init__(self, registry: AgentRegistry, *, scope: ProjectScopeContext) -> None:
+        self._agent = registry.get("relation-analysis")
+        self._scope = scope
+
+    async def analyse(
+        self,
+        query: str,
+        evidence: tuple[Evidence, ...],
+        source_revision_ids: tuple[str, ...],
+        *,
+        turn_id: str | None = None,
+    ) -> RelationContext:
+        context = AgentContext(
+            scope=self._scope,
+            source_revision_ids=frozenset(source_revision_ids),
+            graph_version=None,
+            turn_id=turn_id,
+        )
+        value = RelationAnalysisInput(
+            query=query,
+            source_revision_ids=frozenset(source_revision_ids),
+            evidence=tuple(_evidence_ref(item) for item in evidence),
+            graph_version=None,
+        )
+        return cast(RelationContext, await self._agent.run(context, value))
+
+
+def _evidence_ref(item: Evidence) -> EvidenceRef:
+    return EvidenceRef(
+        label=item.evidence_label,
+        chunk_id=item.chunk_id,
+        source_revision_id=item.source.revision,
+        document_revision_id=item.source.revision,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,8 +205,10 @@ def _resolve_generated_claims(
     evidence: tuple[Evidence, ...],
     *,
     id_factory: Callable[[], str],
+    extra_citation_ids: Mapping[str, str] = MappingProxyType({}),
 ) -> tuple[Claim, ...] | None:
     citations_by_label = {item.evidence_label: item.citation_id for item in evidence}
+    citations_by_label.update(extra_citation_ids)
     claims: list[Claim] = []
     for generated_claim in generation.claims:
         citation_ids = tuple(
@@ -187,6 +260,8 @@ class AuthorizedRetrieval:
         id_factory: Callable[[], str],
         publication_authority: PublishedKnowledgeAuthority | None = None,
         flowchart_gate: FlowchartPublicationGate | None = None,
+        relation_analysis: RelationAnalysis | None = None,
+        retrieval_augment: bool = True,
     ) -> None:
         self._search = search
         if models is not None:
@@ -205,6 +280,8 @@ class AuthorizedRetrieval:
         self._publication_authority = publication_authority
         # Direct chunk lifecycles skip publication, except for reviewed flowchart images.
         self._flowchart_gate = None if publication_authority is not None else flowchart_gate
+        self._relation_analysis = relation_analysis
+        self._retrieval_augment = retrieval_augment
 
     async def search(
         self,
@@ -383,10 +460,32 @@ class AuthorizedRetrieval:
         self._validate_binding(current, run.plan, run.context_snapshot)
         if authorize is not None:
             await authorize()
+
+        relation: RelationContext | None = None
+        if self._relation_analysis is not None:
+            relation = await self._relation_analysis.analyse(
+                request.query,
+                run.response.evidence,
+                tuple(sorted({resource.revision for resource in run.plan.resources})),
+                turn_id=None if answer_execution is None else answer_execution.plan_id,
+            )
+        if relation is not None and self._retrieval_augment and relation.augment_chunks:
+            run, relation = await self._augment_from_relations(
+                run, relation, request, policy, frozen_policy=frozen_policy, authorize=authorize
+            )
+        relation_first = answer_execution is not None and answer_execution.intent == "relation"
+
         generation_query = (
             (await self._redactor.redact(request.query)).sanitized_text
             if answer_execution is not None
             else run.plan.sanitized_query
+        )
+        use_extended_answer = (
+            governance is not None
+            or graph_context
+            or model_alias is not None
+            or answer_input is not None
+            or relation is not None
         )
         generation = (
             await cast(Any, self._answers).answer(
@@ -396,12 +495,11 @@ class AuthorizedRetrieval:
                 governance=governance,
                 graph_context=graph_context,
                 model_alias=model_alias,
+                relation_context=relation,
+                relation_first=relation_first,
                 **({"answer_input": answer_input} if answer_input is not None else {}),
             )
-            if governance is not None
-            or graph_context
-            or model_alias is not None
-            or answer_input is not None
+            if use_extended_answer
             else await self._answers.answer(
                 run.plan.sanitized_query,
                 run.response.evidence,
@@ -419,16 +517,121 @@ class AuthorizedRetrieval:
             for claim in generation.claims
         ):
             return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+
+        relation_outcome: RelationOutcome | None = None
+        stripped = 0
+        unresolvable = 0
+        extra_citation_ids: dict[str, str] = {}
+        edge_citations: tuple[Citation, ...] = ()
+        if relation is not None:
+            reconciled = reconcile_relation_claims(
+                generation, relation, graph_version=relation.graph_version
+            )
+            stripped = reconciled.stripped
+            if reconciled.claims == () and generation.claims:
+                return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+            generation = replace(generation, text=reconciled.text, claims=reconciled.claims)
+            if relation.status is RelationContextStatus.APPLIED:
+                by_label = relation.by_label()
+                used_labels = tuple(
+                    dict.fromkeys(
+                        label
+                        for claim in generation.claims
+                        for label in claim.evidence_labels
+                        if label.startswith("R")
+                    )
+                )
+                resolved: dict[str, Citation] = {}
+                for label in used_labels:
+                    relation_evidence = by_label.get(label)
+                    if relation_evidence is None:
+                        continue
+                    built = self._edge_citation_for_relation(
+                        relation_evidence, run.response.evidence, relation.graph_version or ""
+                    )
+                    if built is None:
+                        unresolvable += 1
+                        continue
+                    resolved[label] = built
+                if unresolvable:
+                    final_claims: list[GeneratedClaim] = []
+                    for claim in generation.claims:
+                        kept = tuple(
+                            label
+                            for label in claim.evidence_labels
+                            if label in resolved or not label.startswith("R")
+                        )
+                        if not kept:
+                            continue
+                        final_claims.append(
+                            claim
+                            if kept == claim.evidence_labels
+                            else replace(claim, evidence_labels=kept)
+                        )
+                    generation = replace(
+                        generation,
+                        text="\n\n".join(claim.text for claim in final_claims),
+                        claims=tuple(final_claims),
+                    )
+                    if not final_claims and reconciled.claims:
+                        return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+                # Renumber only the edge citations actually surviving into the final
+                # claims, sequentially R1..Rn, so the closed R-position rule in
+                # `ports/answers.py` holds regardless of the original R-labels' gaps.
+                final_used_labels = tuple(
+                    dict.fromkeys(
+                        label
+                        for claim in generation.claims
+                        for label in claim.evidence_labels
+                        if label in resolved
+                    )
+                )
+                renumbered: list[Citation] = []
+                for position, label in enumerate(final_used_labels, start=1):
+                    source_citation = resolved[label]
+                    renumbered.append(replace(source_citation, evidence_label=f"R{position}"))
+                    extra_citation_ids[label] = renumbered[-1].citation_id
+                edge_citations = tuple(renumbered)
+            diagnostics = dict(relation.diagnostics)
+            if unresolvable:
+                diagnostics["relation-support-unresolvable"] = unresolvable
+            relation_outcome = RelationOutcome(
+                status=relation.status,
+                graph_version=relation.graph_version,
+                seed_count=len(relation.seeds),
+                paths=relation.path_summaries(),
+                relation_count=len(relation.relations),
+                diagnostics=diagnostics,
+            )
+
         claims = _resolve_generated_claims(
             generation,
             run.response.evidence,
             id_factory=self._id_factory,
+            extra_citation_ids=extra_citation_ids,
         )
         if claims is None:
             return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
         if not generation.text and not claims:
             return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
 
+        cited_citation_ids = {citation_id for claim in claims for citation_id in claim.citation_ids}
+        used_edge_citations = tuple(
+            item for item in edge_citations if item.citation_id in cited_citation_ids
+        )
+        degradation_reasons = tuple(
+            reason
+            for reason, present in (
+                ("partial-evidence", missing),
+                ("invalid-relation-citation", stripped > 0),
+                (
+                    "relation-support-unresolvable",
+                    relation_outcome is not None
+                    and "relation-support-unresolvable" in relation_outcome.diagnostics,
+                ),
+            )
+            if present
+        )
         return AnswerResponse(
             trace_id=run.response.trace_id,
             query_plan_id=run.response.query_plan_id,
@@ -438,12 +641,148 @@ class AuthorizedRetrieval:
             answer=generation.text,
             abstained=False,
             claims=claims,
-            citations=tuple(self._citation(item) for item in run.response.evidence),
+            citations=(
+                *(self._citation(item) for item in run.response.evidence),
+                *used_edge_citations,
+            ),
             embedding_provenance=run.response.embedding_provenance,
             answer_provenance=self._generation_provenance(generation),
-            degraded_mode=missing,
-            degradation_reasons=("partial-evidence",) if missing else (),
+            degraded_mode=missing or stripped > 0,
+            degradation_reasons=degradation_reasons,
+            relation=relation_outcome,
         )
+
+    async def _augment_from_relations(
+        self,
+        run: _RetrievalRun,
+        relation: RelationContext,
+        answer_request: AnswerRequest,
+        policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool,
+        authorize,
+    ) -> tuple[_RetrievalRun, RelationContext]:
+        """Re-authorize `relation.augment_chunks` and fuse the surviving candidates
+        into `run.response.evidence` through a normal, fully-ACL'd retrieval call,
+        exactly like the existing flowchart business-rule supplement above -- this
+        is what actually gates augmentation, not the agent (see Task 3 amendment)."""
+        capacity = _MAX_EVIDENCE - len(run.response.evidence)
+        if capacity <= 0:
+            return run, relation
+        # ACL-selected revisions (every revision the policy grants access to), not
+        # just the ones this particular query happened to scope for search -- a
+        # candidate's revision can be selected yet still rejected a line below by
+        # the current publication (`authorize_selection`), which is the actual gate.
+        allowed_revisions = {grant.revision for grant in policy.resource_grants}
+        candidates = []
+        for chunk in relation.augment_chunks:
+            if chunk.source_revision_id not in allowed_revisions:
+                continue
+            if self._publication_authority is not None:
+                try:
+                    await self._publication_authority.authorize_selection(
+                        policy.project_id, (chunk.source_revision_id,)
+                    )
+                except AuthorizationDenied:
+                    continue
+            candidates.append(chunk)
+        if not candidates:
+            return run, relation
+        candidate_chunk_ids = {chunk.chunk_id for chunk in candidates}
+        seed_labels = tuple(dict.fromkeys(seed.label for seed in relation.seeds))
+        augment_query = (
+            answer_request.query
+            if not seed_labels
+            else f"{answer_request.query} {' '.join(seed_labels)}"
+        )
+        if authorize is not None:
+            await authorize()
+        try:
+            augmentation = await self._retrieve(
+                replace(
+                    answer_request.as_search_request(),
+                    query=augment_query,
+                    top_k=min(5, capacity),
+                ),
+                policy,
+                frozen_policy=frozen_policy,
+                authorize=authorize,
+            )
+        except (SearchUnavailable, ModelUnavailable):
+            return run, relation
+        if self._publication_authority is not None and augmentation.publication is not None:
+            await self._publication_authority.revalidate(augmentation.publication)
+        if self._publication_authority is not None and run.publication is not None:
+            await self._publication_authority.revalidate(run.publication)
+        existing = {
+            (item.source.source_id, item.source.revision, item.chunk_id)
+            for item in run.response.evidence
+        }
+        merged = list(run.response.evidence)
+        for item in augmentation.response.evidence:
+            identity = (item.source.source_id, item.source.revision, item.chunk_id)
+            if (
+                item.chunk_id in candidate_chunk_ids
+                and identity not in existing
+                and len(merged) < _MAX_EVIDENCE
+            ):
+                existing.add(identity)
+                merged.append(replace(item, evidence_label=f"S{len(merged) + 1}"))
+        if len(merged) == len(run.response.evidence):
+            return run, relation
+        publication = run.publication
+        if self._publication_authority is not None:
+            publication = await self._publication_authority.authorize_selection(
+                policy.project_id,
+                tuple(sorted({item.source.revision for item in merged})),
+            )
+        new_run = replace(
+            run, response=replace(run.response, evidence=tuple(merged)), publication=publication
+        )
+        evidence_refs = tuple(_evidence_ref(item) for item in merged)
+        return new_run, relation.rebind(evidence_refs)
+
+    def _edge_citation_for_relation(
+        self,
+        relation: RelationEvidence,
+        evidence: tuple[Evidence, ...],
+        graph_version: str,
+    ) -> Citation | None:
+        """Build one `kind="edge"` citation from the relation's first support that
+        is already a cited chunk (`S` label) -- the only resolution this task
+        guarantees (see Task 5 report: a snippet-only support that never gets
+        promoted to `S` by `_augment_from_relations` is left unresolved rather
+        than risking a citation that cannot be re-validated against a real
+        selected document revision)."""
+        evidence_by_label = {item.evidence_label: item for item in evidence}
+        for support in relation.support:
+            if support.evidence_label is None:
+                continue
+            source_item = evidence_by_label.get(support.evidence_label)
+            if source_item is None:
+                continue
+            return Citation(
+                family=source_item.family,
+                citation_id=self._id_factory(),
+                evidence_label=relation.label,
+                chunk_id=source_item.chunk_id,
+                logical_chunk_id=source_item.logical_chunk_id,
+                source=source_item.source,
+                chunk_content_hash=source_item.chunk_content_hash,
+                content_role=source_item.content_role,
+                kind="edge",
+                edge=EdgeCitation(
+                    edge_id=relation.edge_id,
+                    graph_version=graph_version,
+                    subject_node_id=relation.subject_node_id,
+                    subject_label=relation.subject_label,
+                    object_node_id=relation.object_node_id,
+                    object_label=relation.object_label,
+                    relation_type=relation.relation_type,
+                    relation_label=relation.relation_label,
+                ),
+            )
+        return None
 
     async def _planned_retrieval(self, request, policy, execution, *, frozen_policy, authorize):
         if (

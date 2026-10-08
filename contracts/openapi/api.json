@@ -1513,9 +1513,11 @@
                 "enum": [
                   "APPLIED",
                   "NOT_READY",
+                  "STALE",
                   "FAILED",
                   "UNAVAILABLE",
-                  "NOT_SELECTED"
+                  "NOT_SELECTED",
+                  "EMPTY"
                 ],
                 "type": "string"
               },
@@ -2260,6 +2262,61 @@
           "incidentId"
         ],
         "title": "FailureAnchor",
+        "type": "object"
+      },
+      "GraphContextSummaryView": {
+        "additionalProperties": false,
+        "properties": {
+          "graphVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Graphversion"
+          },
+          "paths": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "relationCount": {
+            "minimum": 0,
+            "title": "Relationcount",
+            "type": "integer"
+          },
+          "seedCount": {
+            "minimum": 0,
+            "title": "Seedcount",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "APPLIED",
+              "NOT_READY",
+              "STALE",
+              "FAILED",
+              "EMPTY"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "seedCount",
+          "relationCount"
+        ],
+        "title": "GraphContextSummaryView",
         "type": "object"
       },
       "GraphEdgeView": {
@@ -7403,14 +7460,27 @@
             "title": "Degradedmode",
             "type": "boolean"
           },
+          "graphContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphContextSummaryView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "graphContextStatus": {
             "default": "NOT_SELECTED",
             "enum": [
               "APPLIED",
               "NOT_READY",
+              "STALE",
               "FAILED",
               "UNAVAILABLE",
-              "NOT_SELECTED"
+              "NOT_SELECTED",
+              "EMPTY"
             ],
             "title": "Graphcontextstatus",
             "type": "string"
@@ -7525,9 +7595,29 @@
             "default": null,
             "title": "Derivedfromchunkids"
           },
+          "edge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RetrievalEdgeCitation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "evidenceLabel": {
             "minLength": 1,
             "title": "Evidencelabel",
+            "type": "string"
+          },
+          "kind": {
+            "default": "chunk",
+            "enum": [
+              "chunk",
+              "edge"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "logicalChunkId": {
@@ -7608,6 +7698,69 @@
           "citationIds"
         ],
         "title": "RetrievalClaim",
+        "type": "object"
+      },
+      "RetrievalEdgeCitation": {
+        "additionalProperties": false,
+        "properties": {
+          "edgeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Edgeid",
+            "type": "string"
+          },
+          "graphVersion": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Graphversion",
+            "type": "string"
+          },
+          "objectLabel": {
+            "minLength": 1,
+            "title": "Objectlabel",
+            "type": "string"
+          },
+          "objectNodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Objectnodeid",
+            "type": "string"
+          },
+          "relationLabel": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Relationlabel",
+            "type": "string"
+          },
+          "relationType": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Relationtype",
+            "type": "string"
+          },
+          "subjectLabel": {
+            "minLength": 1,
+            "title": "Subjectlabel",
+            "type": "string"
+          },
+          "subjectNodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Subjectnodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edgeId",
+          "graphVersion",
+          "subjectNodeId",
+          "subjectLabel",
+          "objectNodeId",
+          "objectLabel",
+          "relationType",
+          "relationLabel"
+        ],
+        "title": "RetrievalEdgeCitation",
         "type": "object"
       },
       "RetrievalHit": {
@@ -11144,14 +11297,26 @@
             "title": "Degradedmode",
             "type": "boolean"
           },
+          "graphContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphContextSummaryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "graphContextStatus": {
             "default": "NOT_SELECTED",
             "enum": [
               "APPLIED",
               "NOT_READY",
+              "STALE",
               "FAILED",
               "UNAVAILABLE",
-              "NOT_SELECTED"
+              "NOT_SELECTED",
+              "EMPTY"
             ],
             "title": "Graphcontextstatus",
             "type": "string"

@@ -831,6 +831,17 @@ class RetrievalHit(ContractModel):
         return self
 
 
+class RetrievalEdgeCitation(ContractModel):
+    edge_id: str = Field(min_length=1, max_length=128)
+    graph_version: str = Field(min_length=1, max_length=64)
+    subject_node_id: str = Field(min_length=1, max_length=128)
+    subject_label: str = Field(min_length=1)
+    object_node_id: str = Field(min_length=1, max_length=128)
+    object_label: str = Field(min_length=1)
+    relation_type: str = Field(min_length=1, max_length=32)
+    relation_label: str = Field(min_length=1, max_length=64)
+
+
 class RetrievalCitation(ContractModel):
     citation_id: str = Field(min_length=1)
     evidence_label: str = Field(min_length=1)
@@ -843,6 +854,8 @@ class RetrievalCitation(ContractModel):
     publication_id: ShortIdentifier | None = None
     approval_digest: CanonicalSha256 | None = None
     approved_item_id: ShortIdentifier | None = None
+    kind: Literal["chunk", "edge"] = "chunk"
+    edge: RetrievalEdgeCitation | None = None
 
     @model_validator(mode="after")
     def validate_internal_source_family(self, info: ValidationInfo) -> Self:
@@ -852,6 +865,12 @@ class RetrievalCitation(ContractModel):
         expected = context["source_family"]
         if not isinstance(expected, SourceFamily) or expected is not self.source.derived_family:
             raise ValueError("citation family does not match source provenance")
+        return self
+
+    @model_validator(mode="after")
+    def validate_edge_kind(self) -> Self:
+        if (self.kind == "edge") != (self.edge is not None):
+            raise ValueError("citation kind and edge payload must agree")
         return self
 
 
@@ -874,6 +893,14 @@ class RetrievalSearchResponse(ContractModel):
     hits: list[RetrievalHit]
 
 
+class GraphContextSummaryView(ContractModel):
+    status: Literal["APPLIED", "NOT_READY", "STALE", "FAILED", "EMPTY"]
+    graph_version: str | None = None
+    seed_count: int = Field(ge=0)
+    paths: list[list[str]] = Field(default_factory=list)
+    relation_count: int = Field(ge=0)
+
+
 class RetrievalAnswerResponse(ContractModel):
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
@@ -888,9 +915,10 @@ class RetrievalAnswerResponse(ContractModel):
     claims: list[RetrievalClaim]
     citations: Annotated[list[RetrievalCitation], Field(max_length=20)]
     graph_context_status: Literal[
-        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+        "APPLIED", "NOT_READY", "STALE", "FAILED", "UNAVAILABLE", "NOT_SELECTED", "EMPTY"
     ] = "NOT_SELECTED"
     graph_snapshot_id: str | None = None
+    graph_context: GraphContextSummaryView | None = None
 
     @model_validator(mode="after")
     def validate_graph_context(self) -> Self:
@@ -1068,7 +1096,8 @@ class ConversationTurnSummary(ContractModel):
     answer_evidence_snapshot_id: str | None = None
     answer_evidence_snapshot_digest: CanonicalSha256 | None = None
     graph_context_status: (
-        Literal["APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"] | None
+        Literal["APPLIED", "NOT_READY", "STALE", "FAILED", "UNAVAILABLE", "NOT_SELECTED", "EMPTY"]
+        | None
     ) = None
     graph_snapshot_id: str | None = None
     input: ConversationTurnInputView

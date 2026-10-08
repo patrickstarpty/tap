@@ -1688,7 +1688,6 @@ def _assemble_http_services(
 
         traces = MysqlTraceHttpService(conversation_sessions)  # type: ignore[arg-type]
     graph = None
-    graph_enricher = None
     project_graph = None
     graph_jobs = None
     graph_node_enrichment = None
@@ -1707,8 +1706,8 @@ def _assemble_http_services(
             cache=project_graph_cache,
         )
         # `GraphAnswerEnricher` and `graph.enrich` are retired by the relation
-        # analysis agent subgraph (PR 3); `graph_enricher` stays `None` until
-        # a later task wires the new agent into the answer flow.
+        # analysis agent subgraph (PR 3); the answer flow's `relation_analysis`
+        # stays unwired until a later task registers the agent here.
         graph_jobs = MysqlGraphJobStore(
             graph_sessions,  # type: ignore[arg-type]
             merge_queue=MysqlProjectMergeQueue(
@@ -1772,7 +1771,6 @@ def _assemble_http_services(
         searches=search_service,
         sources=SourceService(cast(SourceRepository, repository), documents),
         corpus_version=corpus_version,
-        graph_enricher=graph_enricher,
         models=embeddings,
         answer_planner=_answer_planner(embeddings),
     )

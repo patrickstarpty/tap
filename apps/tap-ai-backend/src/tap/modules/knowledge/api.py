@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from tap.contracts.http import AbstentionReason as HttpAbstentionReason
@@ -19,6 +19,9 @@ from tap.contracts.http import (
 )
 from tap.contracts.http import (
     FailureAnchor as HttpFailureAnchor,
+)
+from tap.contracts.http import (
+    GraphContextSummaryView as HttpGraphContextSummaryView,
 )
 from tap.contracts.http import (
     OpenApiAnchor as HttpOpenApiAnchor,
@@ -37,6 +40,9 @@ from tap.contracts.http import (
 )
 from tap.contracts.http import (
     RetrievalClaim as HttpClaim,
+)
+from tap.contracts.http import (
+    RetrievalEdgeCitation as HttpEdgeCitation,
 )
 from tap.contracts.http import (
     RetrievalHit as HttpHit,
@@ -220,14 +226,27 @@ def search_response_to_http(response: SearchResponse) -> HttpSearchResponse:
     )
 
 
-def answer_response_to_http(
-    response: AnswerResponse,
-    *,
+def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
+    relation = response.relation
     graph_context_status: Literal[
-        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
-    ] = "NOT_SELECTED",
-    graph_snapshot_id: str | None = None,
-) -> HttpAnswerResponse:
+        "APPLIED", "NOT_READY", "STALE", "FAILED", "UNAVAILABLE", "NOT_SELECTED", "EMPTY"
+    ] = "UNAVAILABLE" if relation is None else cast(Any, relation.status.value)
+    graph_snapshot_id = (
+        relation.graph_version
+        if relation is not None and relation.status.value == "APPLIED"
+        else None
+    )
+    graph_context = (
+        None
+        if relation is None
+        else HttpGraphContextSummaryView(
+            status=cast(Any, relation.status.value),
+            graph_version=relation.graph_version,
+            seed_count=relation.seed_count,
+            paths=[list(path) for path in relation.paths],
+            relation_count=relation.relation_count,
+        )
+    )
     return HttpAnswerResponse(
         trace_id=response.trace_id,
         query_plan_id=response.query_plan_id,
@@ -256,6 +275,7 @@ def answer_response_to_http(
         citations=[_citation_to_http(item) for item in response.citations],
         graph_context_status=graph_context_status,
         graph_snapshot_id=graph_snapshot_id,
+        graph_context=graph_context,
     )
 
 
@@ -404,6 +424,21 @@ def _citation_to_http(citation: Citation) -> HttpCitation:
             "publicationId": citation.publication_id,
             "approvalDigest": citation.approval_digest,
             "approvedItemId": citation.approved_item_id,
+            "kind": citation.kind,
+            "edge": (
+                None
+                if citation.edge is None
+                else HttpEdgeCitation(
+                    edge_id=citation.edge.edge_id,
+                    graph_version=citation.edge.graph_version,
+                    subject_node_id=citation.edge.subject_node_id,
+                    subject_label=citation.edge.subject_label,
+                    object_node_id=citation.edge.object_node_id,
+                    object_label=citation.edge.object_label,
+                    relation_type=citation.edge.relation_type,
+                    relation_label=citation.edge.relation_label,
+                )
+            ),
         },
         context={"source_family": HttpSourceFamily(citation.family.value)},
     )

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 
-from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.access.domain.policy import ResourceGrant, RetrievalPolicyContext
 from tap.modules.knowledge.application.answers import (
     AnswerSelectionRejected,
     AnswerService,
@@ -16,6 +18,15 @@ from tap.modules.knowledge.application.answers import (
     DocumentStateChanged,
     ReadyDocumentRevision,
 )
+from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+from tap.modules.knowledge.application.relation_analysis import (
+    RelationContext,
+    RelationContextStatus,
+    RelationEvidence,
+    RelationSupport,
+    SeedNode,
+)
+from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
 from tap.modules.knowledge.domain.documents import (
     DocumentId,
     RevisionId,
@@ -42,8 +53,21 @@ from tap.modules.knowledge.domain.models import (
     SourceFamily,
     SourceRevisionRef,
 )
+from tap.modules.knowledge.domain.review import KnowledgePublication
 from tap.modules.knowledge.domain.sources import legacy_source_id
 from tap.modules.knowledge.ports.errors import ModelUnavailable, SearchUnavailable
+from tap.modules.knowledge.ports.models import (
+    AnswerGeneration,
+    Embedding,
+    GeneratedClaim,
+    IndexRevision,
+    SearchHit,
+)
+from tests.contract.test_knowledge_api import (
+    CurrentPolicyVerifier,
+    PassthroughRedactor,
+    policy_context,
+)
 
 SOURCE_HASH = "sha256:" + "a" * 64
 SECOND_HASH = "sha256:" + "b" * 64
@@ -1032,3 +1056,460 @@ async def test_unpublished_flowchart_images_are_refused_while_text_sources_answe
     rows, _policy = await published.resolve_conversation_selection(("rev_a", "rev_b"))
     assert {row.revision_id for row in rows} == {"rev_a", "rev_b"}
     await published.authorize_frozen_selection((text, image))
+
+
+# ---------------------------------------------------------------------------
+# PR 3 Task 5: relation analysis wired into `AuthorizedRetrieval.answer` --
+# prompt records, retrieval-augmentation re-authorization, claim
+# reconciliation and edge citations.
+# ---------------------------------------------------------------------------
+
+_PUB_HASH = "sha256:" + "d" * 64
+
+
+def _relation_hit(
+    chunk_id: str,
+    revision: str,
+    *,
+    content: str = "relation evidence content",
+    item_id: str,
+    generation: str = "gen-1",
+    local_rank: int = 1,
+) -> SearchHit:
+    content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return SearchHit(
+        family=SourceFamily.DOC,
+        chunk_id=chunk_id,
+        logical_chunk_id="h_" + "2" * 64,
+        title=None,
+        content=content,
+        source=SourceRevisionRef(
+            source_id="src_demo",
+            source_type="doc",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision=revision,
+            source_content_hash=_PUB_HASH,
+            anchor=DocumentAnchor(
+                inventory_item_id=item_id, start_offset=0, end_offset=len(content)
+            ),
+        ),
+        chunk_content_hash=content_hash,
+        content_role=ContentRole.SOURCE,
+        index_revision=IndexRevision(generation, "search-schema-v1", "corpus-17"),
+        embedding_model_version="tap-embedding-v1",
+        score=0.9,
+        local_rank=local_rank,
+    )
+
+
+class _SequencedSearchPort:
+    """Returns one configured hit tuple per call, in order."""
+
+    def __init__(self, *responses: tuple[SearchHit, ...]) -> None:
+        self._responses = list(responses)
+        self.executions: list[object] = []
+
+    async def search(self, execution) -> tuple[SearchHit, ...]:
+        self.executions.append(execution)
+        if not self._responses:
+            return ()
+        return self._responses.pop(0)
+
+
+class _RecordingModel:
+    embedding_model_id = "tap-embedding-v1"
+    embedding_dimension = 2
+
+    def __init__(self, generations: list[AnswerGeneration]) -> None:
+        self._generations = list(generations)
+        self.calls: list[dict[str, object]] = []
+
+    async def embed(self, query: str) -> Embedding:
+        return Embedding(
+            vector=(0.25, 0.5), model_id=self.embedding_model_id, provider_request_id="e-1"
+        )
+
+    async def answer(self, query, evidence, profile_id, **kwargs) -> AnswerGeneration:
+        self.calls.append(
+            {"query": query, "evidence": evidence, "profile_id": profile_id, **kwargs}
+        )
+        return self._generations.pop(0) if len(self._generations) > 1 else self._generations[0]
+
+
+class _FakeRelationAnalysis:
+    def __init__(self, context: RelationContext) -> None:
+        self._context = context
+        self.calls: list[dict[str, object]] = []
+
+    async def analyse(self, query, evidence, source_revision_ids, *, turn_id=None):
+        self.calls.append(
+            {"query": query, "evidence": evidence, "source_revision_ids": source_revision_ids}
+        )
+        return self._context
+
+
+def _resource_grant(revision: str) -> ResourceGrant:
+    return ResourceGrant(
+        family="doc",
+        source_id="src_demo",
+        revision_kind="blob_version",
+        revision=revision,
+        source_content_hash=_PUB_HASH,
+        allow_all_anchors=True,
+    )
+
+
+def _relation_retrieval(
+    search,
+    model,
+    *,
+    relation_analysis=None,
+    retrieval_augment: bool = True,
+    publication_authority=None,
+):
+    ids = iter(f"id-{index}" for index in range(10_000))
+    return AuthorizedRetrieval(
+        search=search,
+        embeddings=model,
+        answers=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=lambda: next(ids),
+        publication_authority=publication_authority,
+        relation_analysis=relation_analysis,
+        retrieval_augment=retrieval_augment,
+    )
+
+
+def _single_revision_request() -> AnswerRequest:
+    return AnswerRequest(
+        query="核保流程与健康告知的关系是什么？",
+        answer_mode=AnswerMode.QUICK,
+        resource_refs=(
+            ResourceRef(
+                family=SourceFamily.DOC,
+                source_id="src_demo",
+                mode=ResourceMode.SCOPE,
+                requested_revision="rev-1",
+            ),
+        ),
+    )
+
+
+def _single_revision_policy() -> RetrievalPolicyContext:
+    return policy_context(
+        allowed_source_families=frozenset({"doc"}),
+        resource_grants=(_resource_grant("rev-1"),),
+    )
+
+
+def test_empty_relation_context_yields_no_relation_claim_and_empty_event() -> None:
+    async def scenario() -> None:
+        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="没有依据的关系。\n\n已验证的事实。",
+                    claims=(
+                        GeneratedClaim(text="没有依据的关系。", evidence_labels=("R1",)),
+                        GeneratedClaim(text="已验证的事实。", evidence_labels=("S1",)),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        relation = _FakeRelationAnalysis(
+            RelationContext(status=RelationContextStatus.EMPTY, graph_version="7")
+        )
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        assert response.answer == "已验证的事实。"
+        assert response.relation is not None
+        assert response.relation.status is RelationContextStatus.EMPTY
+        assert all(citation.kind == "chunk" for citation in response.citations)
+        assert "invalid-relation-citation" in response.degradation_reasons
+
+    asyncio.run(scenario())
+
+
+def test_stale_context_answers_chunk_only() -> None:
+    async def scenario() -> None:
+        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="已验证的事实。",
+                    claims=(GeneratedClaim(text="已验证的事实。", evidence_labels=("S1",)),),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        relation = _FakeRelationAnalysis(
+            RelationContext(status=RelationContextStatus.STALE, graph_version="8")
+        )
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        assert response.relation is not None
+        assert response.relation.status is RelationContextStatus.STALE
+        assert all(citation.kind == "chunk" for citation in response.citations)
+
+    asyncio.run(scenario())
+
+
+def test_augmentation_disabled_by_flag() -> None:
+    async def scenario() -> None:
+        search = _SequencedSearchPort(
+            (_relation_hit("chunk-s1", "rev-1", item_id="item-1"),),
+            (_relation_hit("chunk-aug-1", "rev-1", item_id="item-aug1"),),
+        )
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="已验证的事实。",
+                    claims=(GeneratedClaim(text="已验证的事实。", evidence_labels=("S1",)),),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        support = RelationSupport(
+            chunk_id="chunk-aug-1",
+            source_revision_id="rev-1",
+            document_revision_id="rev-1",
+            content_digest="sha256:" + "e" * 64,
+            anchor={"page": 1},
+            snippet="candidate snippet",
+        )
+        relation_evidence = RelationEvidence(
+            label="R1",
+            edge_id="e-1",
+            subject_node_id="A",
+            subject_label="核保流程",
+            subject_aliases=(),
+            object_node_id="B",
+            object_label="健康告知",
+            object_aliases=(),
+            relation_type="REQUIRES",
+            relation_label="REQUIRES",
+            origin="EXTRACTED",
+            confidence=0.9,
+            support=(
+                RelationSupport(
+                    chunk_id="chunk-s1",
+                    source_revision_id="rev-1",
+                    document_revision_id="rev-1",
+                    content_digest="sha256:" + "f" * 64,
+                    anchor={"page": 1},
+                    evidence_label="S1",
+                ),
+            ),
+            on_path=False,
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(relation_evidence,),
+            augment_chunks=(support,),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(
+            search, model, relation_analysis=relation, retrieval_augment=False
+        )
+        await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert len(search.executions) == 1  # no second retrieval was attempted
+
+    asyncio.run(scenario())
+
+
+def test_augmentation_never_adds_unauthorized_chunks() -> None:
+    async def scenario() -> None:
+        publication = KnowledgePublication(
+            publication_id="publication-1",
+            project_id="project-a",
+            review_id="review-1",
+            review_version=1,
+            approval_digest="sha256:" + "a" * 64,
+            source_revision_ids=("rev-1",),
+            approved_item_ids=("item-1", "item-aug1"),
+            generation="gen-1",
+            published_by="reviewer-1",
+            published_at=datetime(2026, 1, 1, tzinfo=UTC),
+            expires_at=datetime(2030, 1, 1, tzinfo=UTC),
+        )
+
+        class _Repository:
+            async def current_publication(self):
+                return publication
+
+        authority = PublishedKnowledgeAuthority(_Repository())
+
+        search = _SequencedSearchPort(
+            (_relation_hit("chunk-s1", "rev-1", item_id="item-1"),),
+            (_relation_hit("chunk-aug-1", "rev-1", item_id="item-aug1"),),
+        )
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="已验证的事实。",
+                    claims=(GeneratedClaim(text="已验证的事实。", evidence_labels=("S1",)),),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        augment_candidates = (
+            RelationSupport(
+                chunk_id="chunk-aug-1",
+                source_revision_id="rev-1",
+                document_revision_id="rev-1",
+                content_digest="sha256:" + "e" * 64,
+                anchor={"page": 1},
+                snippet="selected and published",
+            ),
+            RelationSupport(
+                chunk_id="chunk-aug-2",
+                source_revision_id="rev-2",
+                document_revision_id="rev-2",
+                content_digest="sha256:" + "e" * 64,
+                anchor={"page": 1},
+                snippet="unselected revision",
+            ),
+            RelationSupport(
+                chunk_id="chunk-aug-3",
+                source_revision_id="rev-3",
+                document_revision_id="rev-3",
+                content_digest="sha256:" + "e" * 64,
+                anchor={"page": 1},
+                snippet="selected but not published",
+            ),
+        )
+        relation_evidence = RelationEvidence(
+            label="R1",
+            edge_id="e-1",
+            subject_node_id="A",
+            subject_label="核保流程",
+            subject_aliases=(),
+            object_node_id="B",
+            object_label="健康告知",
+            object_aliases=(),
+            relation_type="REQUIRES",
+            relation_label="REQUIRES",
+            origin="EXTRACTED",
+            confidence=0.9,
+            support=(
+                RelationSupport(
+                    chunk_id="chunk-s1",
+                    source_revision_id="rev-1",
+                    document_revision_id="rev-1",
+                    content_digest="sha256:" + "f" * 64,
+                    anchor={"page": 1},
+                    evidence_label="S1",
+                ),
+            ),
+            on_path=False,
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            seeds=(SeedNode(node_id="A", label="核保流程", origin="query"),),
+            relations=(relation_evidence,),
+            augment_chunks=augment_candidates,
+        )
+        relation = _FakeRelationAnalysis(context)
+        policy = policy_context(
+            allowed_source_families=frozenset({"doc"}),
+            resource_grants=(_resource_grant("rev-1"), _resource_grant("rev-3")),
+        )
+        knowledge = _relation_retrieval(
+            search, model, relation_analysis=relation, publication_authority=authority
+        )
+        response = await knowledge.answer(_single_revision_request(), policy)
+
+        assert not response.abstained
+        final_evidence = model.calls[-1]["evidence"]
+        assert len(final_evidence) == 2
+        assert {item.chunk_id for item in final_evidence} == {"chunk-s1", "chunk-aug-1"}
+        assert len(final_evidence) <= 20
+
+    asyncio.run(scenario())
+
+
+def test_edge_citation_reuses_s_chunk_fields_and_gets_r_label() -> None:
+    async def scenario() -> None:
+        search = _SequencedSearchPort(
+            (
+                _relation_hit("chunk-s1", "rev-1", item_id="item-1"),
+                _relation_hit("chunk-s2", "rev-1", item_id="item-2", local_rank=2),
+            ),
+        )
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="核保流程需要健康告知。",
+                    claims=(
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1",)),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        relation_evidence = RelationEvidence(
+            label="R1",
+            edge_id="e-1",
+            subject_node_id="A",
+            subject_label="核保流程",
+            subject_aliases=(),
+            object_node_id="B",
+            object_label="健康告知",
+            object_aliases=(),
+            relation_type="REQUIRES",
+            relation_label="REQUIRES",
+            origin="EXTRACTED",
+            confidence=0.9,
+            support=(
+                RelationSupport(
+                    chunk_id="chunk-s2",
+                    source_revision_id="rev-1",
+                    document_revision_id="rev-1",
+                    content_digest="sha256:" + "f" * 64,
+                    anchor={"page": 1},
+                    evidence_label="S2",
+                ),
+            ),
+            on_path=False,
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(relation_evidence,),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        edge_citations = [citation for citation in response.citations if citation.kind == "edge"]
+        assert len(edge_citations) == 1
+        edge_citation = edge_citations[0]
+        s2_citation = next(
+            citation for citation in response.citations if citation.evidence_label == "S2"
+        )
+        assert edge_citation.chunk_id == s2_citation.chunk_id
+        assert edge_citation.evidence_label == "R1"
+        assert edge_citation.edge is not None
+        assert edge_citation.edge.relation_type == "REQUIRES"
+
+    asyncio.run(scenario())
