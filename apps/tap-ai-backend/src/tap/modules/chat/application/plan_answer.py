@@ -29,11 +29,12 @@ _TEMPLATE = {
     "comparison": "comparison",
     "procedural": "procedural",
     "clarification": "clarification",
+    "relation": "explanation",
 }
 
 
 def authorized_execution(plan: AnswerPlan) -> _AuthorizedAnswerExecution:
-    if plan.route != "retrieve":
+    if plan.route not in {"retrieve", "graph"}:
         raise ValueError("only admitted retrieval plans may reach Knowledge")
     remaining = plan.deadline_at - time.time()
     if remaining <= 0:
@@ -58,6 +59,7 @@ def authorized_execution(plan: AnswerPlan) -> _AuthorizedAnswerExecution:
         plan.evidence_limit,
         remaining,
         plan.output_requirements,
+        intent=plan.intent,
     )
 
 
@@ -149,7 +151,15 @@ class AnswerPlanner:
             else:
                 if ambiguous:
                     standalone = value.authorized_referents[0] + "：" + original
-                if complex_query:
+                if re.search(
+                    r"什么关系|有何关系|之间.*关系|哪些.*(?:影响|依赖|触发)|之后是什么|下一步是|"
+                    r"relationship between|how (?:does|do|is) .+ relate|"
+                    r"what (?:follows|comes after)|which .+ (?:affect|depend on|trigger)",
+                    original,
+                    re.I,
+                ):
+                    intent, route = "relation", "graph"
+                elif complex_query:
                     intent = "comparison"
                 elif re.search(r"如何|步骤|how to", original, re.I):
                     intent = "procedural"
@@ -179,7 +189,7 @@ class AnswerPlanner:
                     if queries is not None
                     else (
                         (PlannedQuery("q1", standalone, (), standalone, value.source_ids),)
-                        if route == "retrieve"
+                        if route in {"retrieve", "graph"}
                         else ()
                     ),
                     source_ids=value.source_ids,
@@ -213,7 +223,7 @@ class AnswerPlanner:
                     "queries",
                 }:
                     raise ValueError("invalid planning schema")
-                if raw["route"] not in {"retrieve", "clarify"}:
+                if raw["route"] not in {"retrieve", "graph", "clarify"}:
                     raise ValueError("model cannot authorize direct or capability routes")
                 if (
                     type(raw["confidence"]) not in {int, float}

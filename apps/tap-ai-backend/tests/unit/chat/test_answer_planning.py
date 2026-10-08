@@ -473,3 +473,50 @@ async def test_recent_user_context_requires_matching_authorized_source_lineage()
     other = snapshot("other", "其他规范 v2，上一版是 v1", replace(resource, source_id="source-b"))
     rejected = await module.AnswerPlanner().plan(module.planning_input(current, history=(other,)))
     assert rejected.route == "clarify"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "核保流程和健康告知是什么关系",
+        "哪些规则影响理赔时效",
+        "What is the relationship between underwriting and claims",
+    ],
+)
+async def test_relation_questions_route_to_graph_with_queries(message):
+    module = planning()
+
+    async def forbidden(_input, _timeout):
+        pytest.fail("relation heuristic must not call the planning model")
+
+    plan = await module.AnswerPlanner(forbidden).plan(context(message))
+    assert plan.intent == "relation"
+    assert plan.route == "graph"
+    assert len(plan.queries) == 1
+    assert plan.template_id == "explanation"
+
+
+@pytest.mark.asyncio
+async def test_graph_route_requires_queries_like_retrieve():
+    plan = await planning().AnswerPlanner().plan(context("核保流程和健康告知是什么关系"))
+    assert plan.route == "graph"
+    assert len(plan.queries) == 1
+    with pytest.raises(ValueError):
+        replace(plan, route="graph", queries=())
+
+
+@pytest.mark.asyncio
+async def test_authorized_execution_accepts_graph_route_and_carries_intent():
+    module = planning()
+    plan = await module.AnswerPlanner().plan(context("核保流程和健康告知是什么关系"))
+    assert plan.route == "graph"
+    execution = module.authorized_execution(plan)
+    assert execution.intent == "relation"
+
+
+def test_planner_schema_lists_relation_intent_and_graph_route():
+    from tap.modules.chat.adapters.model_gateway_planner import PLANNER_SCHEMA
+
+    assert "relation" in PLANNER_SCHEMA["properties"]["intent"]["enum"]
+    assert "graph" in PLANNER_SCHEMA["properties"]["route"]["enum"]
