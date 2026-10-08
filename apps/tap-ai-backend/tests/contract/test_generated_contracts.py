@@ -193,7 +193,7 @@ def test_exporter_emits_private_events_and_problem_registry_without_public_leak(
     internal = json.loads((tmp_path / "events/project-event.schema.json").read_bytes())
     problems = json.loads((tmp_path / "problem-types.json").read_bytes())
     types = {variant["properties"]["event_type"]["const"] for variant in internal["oneOf"]}
-    assert len(types) == 27
+    assert len(types) == 28
     assert "conversation.turn.requested" in types
     assert "ai.graph-run.checkpointed" in types
     assert any(

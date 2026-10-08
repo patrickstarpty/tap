@@ -110,6 +110,41 @@ def test_graph_batch_settings_defaults_and_bounds() -> None:
         TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_BATCH_SIZE": "0"})
 
 
+def test_graph_alignment_settings_defaults_and_bounds() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert (
+        settings.graph_align_embedding,
+        settings.graph_align_threshold,
+        settings.graph_overview_limit,
+        settings.graph_align_embedding_max_nodes,
+    ) == (False, 0.92, 150, 2000)
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_THRESHOLD": "1.5"})
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_THRESHOLD": "-0.1"})
+
+
+def test_graph_align_embedding_max_nodes_defaults_and_bounds() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.graph_align_embedding_max_nodes == 2000
+
+    overridden = TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_EMBEDDING_MAX_NODES": "500"}
+    )
+    assert overridden.graph_align_embedding_max_nodes == 500
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_EMBEDDING_MAX_NODES": "0"})
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(
+            S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_EMBEDDING_MAX_NODES": "20001"}
+        )
+
+
 @pytest.mark.parametrize(
     "name", ["TAPPER_DEFAULT_CHAT_MODEL", "TAPPER_EMBEDDING_MODEL", "TAPPER_VISION_MODEL"]
 )

@@ -15,6 +15,7 @@ from tap.modules.chat.adapters.mysql_conversations import (
 from tap.modules.chat.adapters.mysql_suggestions import prompt_suggestion, prompt_suggestion_refresh
 from tap.modules.governance.adapters.schema import project_audit
 from tap.modules.graph.adapters.mysql import GRAPH_TABLES
+from tap.modules.graph.adapters.mysql_project import PROJECT_GRAPH_TABLES
 from tap.modules.knowledge.adapters.mysql_audit import knowledge_search_audit
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_answer_snapshot,
@@ -84,6 +85,7 @@ BUSINESS_TABLES = (
     skill_revision,
     *AI_GRAPH_TABLES,
     *GRAPH_TABLES,
+    *PROJECT_GRAPH_TABLES,
     *TEST_MANAGEMENT_TABLES,
     trace_span,
     model_call,

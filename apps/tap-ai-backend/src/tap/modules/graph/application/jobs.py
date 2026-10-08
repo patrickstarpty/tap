@@ -8,16 +8,20 @@ from typing import Literal, Protocol
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.graph.application.merge_jobs import InMemoryProjectMergeQueue
 from tap.modules.graph.application.queries import InMemoryGraphStore
 from tap.modules.graph.domain.jobs import (
     ClaimedGraphJob,
+    GraphBatchStatus,
     GraphFragmentBatch,
     GraphJob,
+    GraphJobBusy,
     GraphJobLeaseLost,
     GraphJobRequest,
     GraphJobStatus,
 )
 from tap.modules.graph.domain.models import GraphSnapshot, GraphSnapshotDraft
+from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.platform.db.project_scope import require_project_scope
 
 
@@ -77,13 +81,26 @@ class GraphJobStore(Protocol):
         now: datetime,
     ) -> GraphJob: ...
 
+    async def list_fragment_states(
+        self, scope: ProjectScopeContext
+    ) -> tuple[tuple[str, str, str], ...]: ...
+
+    async def retry_failed_batches(
+        self, scope: ProjectScopeContext, revision_id: str, *, now: datetime
+    ) -> tuple[int, GraphJobStatus]: ...
+
+    async def merge_state(
+        self, scope: ProjectScopeContext, *, now: datetime
+    ) -> Literal["IDLE", "PENDING", "RUNNING", "FAILED"]: ...
+
 
 class InMemoryGraphJobStore:
-    def __init__(self) -> None:
+    def __init__(self, *, merge_queue: InMemoryProjectMergeQueue | None = None) -> None:
         self._jobs: dict[tuple[str, str], GraphJob] = {}
         self._requests: dict[tuple[str, str], str] = {}
         self._batches: dict[tuple[str, str], dict[int, GraphFragmentBatch]] = {}
         self._graph = InMemoryGraphStore()
+        self._merge_queue = merge_queue
 
     async def request(
         self, scope: ProjectScopeContext, request: GraphJobRequest, *, now: datetime
@@ -275,3 +292,73 @@ class InMemoryGraphJobStore:
         self, scope: ProjectScopeContext, source_ids: tuple[str, ...]
     ) -> GraphSnapshot | None:
         return await self._graph.active_snapshot(scope, source_ids)
+
+    async def list_fragment_states(
+        self, scope: ProjectScopeContext
+    ) -> tuple[tuple[str, str, str], ...]:
+        scope = require_project_scope(scope)
+        return tuple(
+            (job.revision_id, job.status.value, job.snapshot.status)
+            for (project_id, _), job in self._jobs.items()
+            if project_id == scope.project_id
+        )
+
+    def _job_for_revision(
+        self, scope: ProjectScopeContext, revision_id: str
+    ) -> tuple[tuple[str, str], GraphJob] | None:
+        for key, job in self._jobs.items():
+            if key[0] == scope.project_id and job.revision_id == revision_id:
+                return key, job
+        return None
+
+    async def retry_failed_batches(
+        self, scope: ProjectScopeContext, revision_id: str, *, now: datetime
+    ) -> tuple[int, GraphJobStatus]:
+        scope = require_project_scope(scope)
+        found = self._job_for_revision(scope, revision_id)
+        if found is None:
+            raise GraphFactNotFound(f"graph job not found for revision {revision_id!r}")
+        key, job = found
+        if (
+            isinstance(job, ClaimedGraphJob)
+            and job.status is GraphJobStatus.RUNNING
+            and job.lease_expires_at is not None
+            and job.lease_expires_at > now
+        ):
+            raise GraphJobBusy(job.job_id)
+        batches = self._batches.get((scope.project_id, job.snapshot.snapshot_id), {})
+        requeued = 0
+        for index, batch in list(batches.items()):
+            if batch.status is GraphBatchStatus.FAILED:
+                batches[index] = replace(
+                    batch, status=GraphBatchStatus.PENDING, attempt=0, failure_code=None
+                )
+                requeued += 1
+        if requeued == 0:
+            return 0, job.status
+        # Mirror the MySQL store: forget the already-published draft so the
+        # worker's re-completion is treated as fresh facts, not an immutable
+        # conflict against the stale (partially-failed) one.
+        self._graph.reset(scope, job.snapshot.snapshot_id)
+        updated = GraphJob(
+            job.job_id,
+            job.revision_id,
+            job.snapshot,
+            job.chunks_locator,
+            job.extraction_profile_digest,
+            job.request_digest,
+            job.model_alias,
+            GraphJobStatus.PENDING,
+            job.created_at,
+            now,
+            None,
+        )
+        self._jobs[key] = updated
+        return requeued, GraphJobStatus.PENDING
+
+    async def merge_state(
+        self, scope: ProjectScopeContext, *, now: datetime
+    ) -> Literal["IDLE", "PENDING", "RUNNING", "FAILED"]:
+        if self._merge_queue is None:
+            return "IDLE"
+        return await self._merge_queue.merge_state(scope, now=now)

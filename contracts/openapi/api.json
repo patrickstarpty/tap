@@ -2356,6 +2356,38 @@
         "title": "GraphEvidenceView",
         "type": "object"
       },
+      "GraphFragmentRetryView": {
+        "additionalProperties": false,
+        "properties": {
+          "jobStatus": {
+            "enum": [
+              "PENDING",
+              "RUNNING",
+              "READY",
+              "FAILED"
+            ],
+            "title": "Jobstatus",
+            "type": "string"
+          },
+          "requeuedBatches": {
+            "title": "Requeuedbatches",
+            "type": "integer"
+          },
+          "revisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Revisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revisionId",
+          "requeuedBatches",
+          "jobStatus"
+        ],
+        "title": "GraphFragmentRetryView",
+        "type": "object"
+      },
       "GraphNeighborRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2426,6 +2458,24 @@
       "GraphPathRequest": {
         "additionalProperties": false,
         "properties": {
+          "graphVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphversion"
+          },
+          "maxHops": {
+            "default": 3,
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Maxhops",
+            "type": "integer"
+          },
           "nodeLimit": {
             "default": 50,
             "maximum": 500.0,
@@ -2434,16 +2484,34 @@
             "type": "integer"
           },
           "snapshotId": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Snapshotid",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshotid"
           },
           "sourceNodeId": {
             "maxLength": 128,
             "minLength": 1,
             "title": "Sourcenodeid",
             "type": "string"
+          },
+          "sourceRevisionIds": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Sourcerevisionids",
+            "type": "array"
           },
           "targetNodeId": {
             "maxLength": 128,
@@ -2453,7 +2521,6 @@
           }
         },
         "required": [
-          "snapshotId",
           "sourceNodeId",
           "targetNodeId"
         ],
@@ -2463,6 +2530,17 @@
       "GraphSearchRequest": {
         "additionalProperties": false,
         "properties": {
+          "graphVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphversion"
+          },
           "nodeLimit": {
             "default": 50,
             "maximum": 500.0,
@@ -2477,14 +2555,31 @@
             "type": "string"
           },
           "snapshotId": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Snapshotid",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshotid"
+          },
+          "sourceRevisionIds": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Sourcerevisionids",
+            "type": "array"
           }
         },
         "required": [
-          "snapshotId",
           "query"
         ],
         "title": "GraphSearchRequest",
@@ -5604,6 +5699,31 @@
           {
             "properties": {
               "detail": {
+                "const": "The graph extraction job is currently running under an active lease."
+              },
+              "failureStage": {
+                "const": "graph"
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 409
+              },
+              "title": {
+                "const": "Graph job busy"
+              },
+              "type": {
+                "const": "https://tap.example/problems/graph-job-busy"
+              }
+            },
+            "required": [
+              "failureStage"
+            ]
+          },
+          {
+            "properties": {
+              "detail": {
                 "const": "The graph service is currently unavailable."
               },
               "failureStage": {
@@ -5620,6 +5740,31 @@
               },
               "type": {
                 "const": "https://tap.example/problems/graph-unavailable"
+              }
+            },
+            "required": [
+              "failureStage"
+            ]
+          },
+          {
+            "properties": {
+              "detail": {
+                "pattern": "The requested graph version does not match the current version; current version is (?:\\d+|none)\\."
+              },
+              "failureStage": {
+                "const": "graph"
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 409
+              },
+              "title": {
+                "const": "Graph version mismatch"
+              },
+              "type": {
+                "const": "https://tap.example/problems/graph-version-mismatch"
               }
             },
             "required": [
@@ -6163,7 +6308,9 @@
               "https://tap.example/problems/empty-document",
               "https://tap.example/problems/execution-provider-unavailable",
               "https://tap.example/problems/graph-fact-not-found",
+              "https://tap.example/problems/graph-job-busy",
               "https://tap.example/problems/graph-unavailable",
+              "https://tap.example/problems/graph-version-mismatch",
               "https://tap.example/problems/idempotency-conflict",
               "https://tap.example/problems/knowledge-projection-not-ready",
               "https://tap.example/problems/knowledge-review-not-found",
@@ -6199,6 +6346,549 @@
           "retryable"
         ],
         "title": "ProblemDetails",
+        "type": "object"
+      },
+      "ProjectGraphCommunityView": {
+        "additionalProperties": false,
+        "properties": {
+          "communityId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Communityid",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "communityId",
+          "label",
+          "size"
+        ],
+        "title": "ProjectGraphCommunityView",
+        "type": "object"
+      },
+      "ProjectGraphEdgeView": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "edgeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Edgeid",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "EXTRACTED",
+              "INFERRED"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "relationLabel": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Relationlabel",
+            "type": "string"
+          },
+          "relationType": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Relationtype",
+            "type": "string"
+          },
+          "sourceNodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sourcenodeid",
+            "type": "string"
+          },
+          "targetNodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Targetnodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edgeId",
+          "sourceNodeId",
+          "targetNodeId",
+          "relationType",
+          "relationLabel",
+          "origin",
+          "confidence"
+        ],
+        "title": "ProjectGraphEdgeView",
+        "type": "object"
+      },
+      "ProjectGraphEvidenceView": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "additionalProperties": true,
+            "title": "Anchor",
+            "type": "object"
+          },
+          "chunkId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "contentDigest": {
+            "anyOf": [
+              {
+                "maxLength": 71,
+                "minLength": 71,
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contentdigest"
+          },
+          "documentRevisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Documentrevisionid",
+            "type": "string"
+          },
+          "ownerId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Ownerid",
+            "type": "string"
+          },
+          "ownerKind": {
+            "enum": [
+              "node",
+              "edge"
+            ],
+            "title": "Ownerkind",
+            "type": "string"
+          },
+          "snippet": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snippet"
+          },
+          "sourceRevisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sourcerevisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ownerKind",
+          "ownerId",
+          "sourceRevisionId",
+          "documentRevisionId",
+          "chunkId",
+          "anchor"
+        ],
+        "title": "ProjectGraphEvidenceView",
+        "type": "object"
+      },
+      "ProjectGraphHighlightRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "edgeIds": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Edgeids",
+            "type": "array"
+          },
+          "graphVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphversion"
+          }
+        },
+        "required": [
+          "edgeIds"
+        ],
+        "title": "ProjectGraphHighlightRequest",
+        "type": "object"
+      },
+      "ProjectGraphNeighborRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "depth": {
+            "default": 1,
+            "maximum": 2.0,
+            "minimum": 1.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "graphVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphversion"
+          },
+          "nodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "nodeLimit": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Nodelimit",
+            "type": "integer"
+          },
+          "sourceRevisionIds": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Sourcerevisionids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "title": "ProjectGraphNeighborRequest",
+        "type": "object"
+      },
+      "ProjectGraphNodeDetailView": {
+        "additionalProperties": false,
+        "properties": {
+          "community": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectGraphCommunityView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "graphVersion": {
+            "title": "Graphversion",
+            "type": "integer"
+          },
+          "neighbors": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProjectGraphNodeView"
+            },
+            "title": "Neighbors",
+            "type": "array"
+          },
+          "node": {
+            "$ref": "#/components/schemas/ProjectGraphNodeView"
+          },
+          "relations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProjectGraphRelationGroupView"
+            },
+            "title": "Relations",
+            "type": "array"
+          },
+          "sources": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProjectGraphSourceGroupView"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "graphVersion",
+          "node"
+        ],
+        "title": "ProjectGraphNodeDetailView",
+        "type": "object"
+      },
+      "ProjectGraphNodeView": {
+        "additionalProperties": false,
+        "properties": {
+          "aliases": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "canonicalKey": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Canonicalkey",
+            "type": "string"
+          },
+          "communityId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Communityid"
+          },
+          "degree": {
+            "title": "Degree",
+            "type": "integer"
+          },
+          "label": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "nodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "nodeType": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Nodetype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "label",
+          "nodeType",
+          "canonicalKey",
+          "degree"
+        ],
+        "title": "ProjectGraphNodeView",
+        "type": "object"
+      },
+      "ProjectGraphRelationGroupView": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectGraphEdgeView"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "relationType": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Relationtype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relationType",
+          "edges"
+        ],
+        "title": "ProjectGraphRelationGroupView",
+        "type": "object"
+      },
+      "ProjectGraphSourceGroupView": {
+        "additionalProperties": false,
+        "properties": {
+          "documentRevisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Documentrevisionid",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectGraphEvidenceView"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "sourceName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcename"
+          },
+          "sourceRevisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sourcerevisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceRevisionId",
+          "documentRevisionId",
+          "evidence"
+        ],
+        "title": "ProjectGraphSourceGroupView",
+        "type": "object"
+      },
+      "ProjectGraphSubgraphView": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectGraphEdgeView"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProjectGraphEvidenceView"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "graphVersion": {
+            "title": "Graphversion",
+            "type": "integer"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectGraphNodeView"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "graphVersion",
+          "nodes",
+          "edges"
+        ],
+        "title": "ProjectGraphSubgraphView",
+        "type": "object"
+      },
+      "ProjectGraphView": {
+        "additionalProperties": false,
+        "properties": {
+          "communities": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProjectGraphCommunityView"
+            },
+            "title": "Communities",
+            "type": "array"
+          },
+          "edgeCount": {
+            "title": "Edgecount",
+            "type": "integer"
+          },
+          "extractingRevisionIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Extractingrevisionids",
+            "type": "array"
+          },
+          "graphVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphversion"
+          },
+          "mergedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mergedat"
+          },
+          "nodeCount": {
+            "title": "Nodecount",
+            "type": "integer"
+          },
+          "partialRevisionIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Partialrevisionids",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "EMPTY",
+              "MERGING",
+              "READY",
+              "FAILED"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "nodeCount",
+          "edgeCount"
+        ],
+        "title": "ProjectGraphView",
         "type": "object"
       },
       "PromptSuggestionItem": {
@@ -13849,6 +14539,197 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/knowledge/graph/fragments/{revision_id}/retry": {
+      "post": {
+        "operationId": "graph_retry_fragment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphFragmentRetryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Fragment",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/highlight": {
+      "post": {
+        "operationId": "graph_highlight",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectGraphHighlightRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Highlight",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/neighbors": {
+      "post": {
+        "operationId": "graph_project_neighbors",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectGraphNeighborRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project Neighbors",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}": {
       "get": {
         "operationId": "graph_get_node",
@@ -13876,10 +14757,33 @@
           {
             "in": "query",
             "name": "snapshotId",
-            "required": true,
+            "required": false,
             "schema": {
-              "title": "Snapshotid",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Snapshotid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "graphVersion",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Graphversion"
             }
           }
         ],
@@ -13888,7 +14792,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GraphSubgraphView"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProjectGraphNodeDetailView"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GraphSubgraphView"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ProjectGraphSubgraphView"
+                    }
+                  ],
+                  "title": "Response Graph Get Node"
                 }
               }
             },
@@ -13994,6 +14909,122 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/knowledge/graph/overview": {
+      "get": {
+        "operationId": "graph_get_overview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceRevisionId",
+            "required": false,
+            "schema": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50,
+              "title": "Sourcerevisionid",
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "communityId",
+            "required": false,
+            "schema": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50,
+              "title": "Communityid",
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "nodeLimit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 500,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Nodelimit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "graphVersion",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Graphversion"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Overview",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/knowledge/graph/path": {
       "post": {
         "operationId": "graph_bounded_path",
@@ -14025,7 +15056,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GraphSubgraphView"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProjectGraphSubgraphView"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GraphSubgraphView"
+                    }
+                  ],
+                  "title": "Response Graph Bounded Path"
                 }
               }
             },
@@ -14053,6 +15092,60 @@
           }
         },
         "summary": "Bounded Path",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/project": {
+      "get": {
+        "operationId": "graph_get_project",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project Graph",
         "tags": [
           "knowledge-graph"
         ]
@@ -14089,7 +15182,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GraphSubgraphView"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProjectGraphSubgraphView"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GraphSubgraphView"
+                    }
+                  ],
+                  "title": "Response Graph Search"
                 }
               }
             },

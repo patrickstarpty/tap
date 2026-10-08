@@ -1095,6 +1095,31 @@
         {
           "properties": {
             "detail": {
+              "const": "The graph extraction job is currently running under an active lease."
+            },
+            "failureStage": {
+              "const": "graph"
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Graph job busy"
+            },
+            "type": {
+              "const": "https://tap.example/problems/graph-job-busy"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The graph service is currently unavailable."
             },
             "failureStage": {
@@ -1111,6 +1136,31 @@
             },
             "type": {
               "const": "https://tap.example/problems/graph-unavailable"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "pattern": "The requested graph version does not match the current version; current version is (?:\\d+|none)\\."
+            },
+            "failureStage": {
+              "const": "graph"
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Graph version mismatch"
+            },
+            "type": {
+              "const": "https://tap.example/problems/graph-version-mismatch"
             }
           },
           "required": [
@@ -1654,7 +1704,9 @@
             "https://tap.example/problems/empty-document",
             "https://tap.example/problems/execution-provider-unavailable",
             "https://tap.example/problems/graph-fact-not-found",
+            "https://tap.example/problems/graph-job-busy",
             "https://tap.example/problems/graph-unavailable",
+            "https://tap.example/problems/graph-version-mismatch",
             "https://tap.example/problems/idempotency-conflict",
             "https://tap.example/problems/knowledge-projection-not-ready",
             "https://tap.example/problems/knowledge-review-not-found",

@@ -166,6 +166,15 @@
       "type": "https://tap.example/problems/graph-fact-not-found"
     },
     {
+      "code": "graph-job-busy",
+      "detail": "The graph extraction job is currently running under an active lease.",
+      "failureStage": "graph",
+      "retryable": false,
+      "status": 409,
+      "title": "Graph job busy",
+      "type": "https://tap.example/problems/graph-job-busy"
+    },
+    {
       "code": "graph-unavailable",
       "detail": "The graph service is currently unavailable.",
       "failureStage": "graph",
@@ -173,6 +182,15 @@
       "status": 503,
       "title": "Graph unavailable",
       "type": "https://tap.example/problems/graph-unavailable"
+    },
+    {
+      "code": "graph-version-mismatch",
+      "detail": "The requested graph version does not match the current version; current version is 1.",
+      "failureStage": "graph",
+      "retryable": false,
+      "status": 409,
+      "title": "Graph version mismatch",
+      "type": "https://tap.example/problems/graph-version-mismatch"
     },
     {
       "code": "idempotency-conflict",

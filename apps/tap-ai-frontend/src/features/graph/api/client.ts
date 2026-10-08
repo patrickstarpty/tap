@@ -64,7 +64,11 @@ export function createGraphClient(
         },
       );
       if (!result.data) throw new Error("Graph search failed.");
-      return result.data;
+      // `snapshotId` is always supplied here, so the server always takes the
+      // legacy fragment-scoped branch and the response always matches
+      // `GraphSubgraph`; the generated type is a union only because the
+      // project-graph branch (unused by this client) returns a different shape.
+      return result.data as GraphSubgraph;
     },
     async neighbors(snapshotId, nodeId, depth = 1, nodeLimit = 50, signal) {
       const result = await http.POST(
@@ -88,7 +92,9 @@ export function createGraphClient(
         },
       );
       if (!result.data) throw new Error("Graph path failed.");
-      return result.data;
+      // Same union narrowing as `search` above: `snapshotId` is always
+      // supplied here, so the response always matches `GraphSubgraph`.
+      return result.data as GraphSubgraph;
     },
   };
 }

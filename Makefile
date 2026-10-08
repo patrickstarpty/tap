@@ -340,6 +340,10 @@ migration-check: ## preserve frozen 0005 data through an exact migration revisio
 knowledge-recover: ## bounded Knowledge operator; pass ARGS with command and explicit --project
 	uv run --project apps/tap-ai-backend python scripts/knowledge-operator.py $(ARGS)
 
+.PHONY: graph-rebuild
+graph-rebuild: ## requeue graph extraction for every published revision; pass ARGS
+	uv run --project apps/tap-ai-backend python scripts/graph-operator.py $(ARGS)
+
 .PHONY: object-store-build
 object-store-build: ## build the pinned local MinIO image for an explicit platform
 	bash scripts/build-tapper-object-store.sh build --platform "$(PLATFORM)"

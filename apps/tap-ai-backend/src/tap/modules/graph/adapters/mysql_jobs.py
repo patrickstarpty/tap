@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Mapping, cast
 from uuid import uuid4
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,16 +26,25 @@ from tap.modules.governance.domain.audit import (
 from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROFILE_DIGEST
 from tap.modules.graph.adapters.mysql import (
     _draft_digest,
+    graph_edge,
+    graph_edge_evidence,
     graph_extraction_job,
     graph_fragment_batch,
+    graph_inference_provenance,
+    graph_node,
+    graph_node_evidence,
     graph_snapshot,
+    graph_snapshot_document_revision,
+    graph_snapshot_revision,
     publish_graph_snapshot,
 )
+from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
 from tap.modules.graph.domain.jobs import (
     ClaimedGraphJob,
     GraphBatchStatus,
     GraphFragmentBatch,
     GraphJob,
+    GraphJobBusy,
     GraphJobLeaseLost,
     GraphJobRequest,
     GraphJobStatus,
@@ -49,6 +58,7 @@ from tap.modules.graph.domain.models import (
     InferenceProvenance,
     RelationOrigin,
 )
+from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
 
@@ -160,8 +170,14 @@ def deserialize_draft(snapshot: GraphSnapshot, payload: Mapping[str, object]) ->
 
 
 class MysqlGraphJobStore:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        merge_queue: MysqlProjectMergeQueue | None = None,
+    ) -> None:
         self._sessions = sessions
+        self._merge_queue = merge_queue
 
     async def request(
         self, scope: ProjectScopeContext, request: GraphJobRequest, *, now: datetime
@@ -440,6 +456,10 @@ class MysqlGraphJobStore:
             if draft.snapshot != current.snapshot:
                 raise ValueError("graph draft does not match claimed snapshot")
             snapshot = await publish_graph_snapshot(session, scope, draft, now=now, status=status)
+            if self._merge_queue is not None:
+                await self._merge_queue.request_in_transaction(
+                    session, scope, reason="fragment-ready", now=now
+                )
             result = await session.execute(
                 update(graph_extraction_job)
                 .where(
@@ -551,6 +571,277 @@ class MysqlGraphJobStore:
             )
             return failed
 
+    async def reset_for_profile(
+        self,
+        scope: ProjectScopeContext,
+        revision_id: str,
+        *,
+        extraction_profile_digest: str,
+        model_alias: str,
+        now: datetime,
+    ) -> GraphJob:
+        """Requeue extraction for one currently-published revision under a
+        (possibly changed) extraction profile/model: drop every fact the
+        prior snapshot derived, put the snapshot back to CANDIDATE, and
+        rewrite the job row as a fresh PENDING request. Used only by the
+        `graph rebuild` operator CLI; never deletes a project-graph version
+        itself -- the merge worker replays a version once extraction
+        finishes."""
+
+        scope = require_project_scope(scope)
+        async with self._sessions() as session, session.begin():
+            row = (
+                (
+                    await session.execute(
+                        select(graph_extraction_job)
+                        .where(
+                            *scope_predicates(graph_extraction_job, scope),
+                            graph_extraction_job.c.revision_id == revision_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise ValueError("graph job not found for revision")
+            if (
+                row["status"] == GraphJobStatus.RUNNING.value
+                and row["lease_expires_at"] is not None
+                and cast(datetime, row["lease_expires_at"]) > now
+            ):
+                raise ValueError("graph job is running")
+            snapshot_id = cast(str, row["snapshot_id"])
+            job_id = cast(str, row["job_id"])
+            for table in (
+                graph_inference_provenance,
+                graph_edge_evidence,
+                graph_node_evidence,
+                graph_edge,
+                graph_node,
+                graph_snapshot_revision,
+                graph_snapshot_document_revision,
+                graph_fragment_batch,
+            ):
+                await session.execute(
+                    delete(table).where(
+                        *scope_predicates(table, scope),
+                        table.c.snapshot_id == snapshot_id,
+                    )
+                )
+            await session.execute(
+                update(graph_snapshot)
+                .where(
+                    *scope_predicates(graph_snapshot, scope),
+                    graph_snapshot.c.snapshot_id == snapshot_id,
+                )
+                .values(status="CANDIDATE")
+            )
+            new_digest = (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(
+                        [
+                            scope.project_id,
+                            revision_id,
+                            extraction_profile_digest,
+                            model_alias,
+                            "rebuild",
+                            now.isoformat(),
+                        ],
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+            )
+            await session.execute(
+                update(graph_extraction_job)
+                .where(
+                    *scope_predicates(graph_extraction_job, scope),
+                    graph_extraction_job.c.job_id == job_id,
+                )
+                .values(
+                    request_digest=new_digest,
+                    extraction_profile_digest=extraction_profile_digest,
+                    model_alias=model_alias,
+                    status=GraphJobStatus.PENDING.value,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    attempt_count=0,
+                    failure_code=None,
+                    updated_at=now,
+                )
+            )
+            updated_row = await self._locked_row(session, scope, job_id)
+            job = await self._job(session, scope, updated_row)
+            await self._append_audit(
+                session,
+                scope,
+                job,
+                AuditAction.GRAPH_SNAPSHOT_REQUESTED,
+                new_digest,
+                key=f"{job_id}:rebuild:{new_digest[7:23]}",
+            )
+            return job
+
+    async def list_fragment_states(
+        self, scope: ProjectScopeContext
+    ) -> tuple[tuple[str, str, str], ...]:
+        """`(revision_id, job status, snapshot status)` for every graph job in
+        this Project, used by `GET /project` to classify currently-extracting
+        and partial revisions without loading full job/snapshot rows."""
+
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            graph_extraction_job.c.revision_id,
+                            graph_extraction_job.c.status,
+                            graph_snapshot.c.status.label("snapshot_status"),
+                        )
+                        .select_from(
+                            graph_extraction_job.join(
+                                graph_snapshot,
+                                (
+                                    graph_extraction_job.c.enterprise_id
+                                    == graph_snapshot.c.enterprise_id
+                                )
+                                & (graph_extraction_job.c.project_id == graph_snapshot.c.project_id)
+                                & (
+                                    graph_extraction_job.c.snapshot_id
+                                    == graph_snapshot.c.snapshot_id
+                                ),
+                            )
+                        )
+                        .where(*scope_predicates(graph_extraction_job, scope))
+                        .order_by(graph_extraction_job.c.revision_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            (
+                cast(str, row["revision_id"]),
+                cast(str, row["status"]),
+                cast(str, row["snapshot_status"]),
+            )
+            for row in rows
+        )
+
+    async def retry_failed_batches(
+        self, scope: ProjectScopeContext, revision_id: str, *, now: datetime
+    ) -> tuple[int, GraphJobStatus]:
+        """Requeue every `FAILED` batch of the revision's current job for
+        re-extraction: FAILED -> PENDING with `attempt` reset, and the job
+        itself put back to PENDING so the worker claims it again. A job whose
+        lease is RUNNING and not yet expired is busy -- raises `GraphJobBusy`
+        rather than racing the in-flight attempt. A job with no FAILED
+        batches is a no-op, returning `(0, <current status>)`.
+
+        A PARTIAL or FAILED snapshot already carries published facts (or is
+        past `CANDIDATE`), and `publish_graph_snapshot` silently no-ops on a
+        READY/PARTIAL snapshot and raises on a FAILED one -- so once the
+        worker reruns, re-completing the job would never actually update the
+        graph. Requeuing a FAILED batch therefore also resets the snapshot
+        itself to `CANDIDATE` and deletes the facts it already published,
+        *without* touching `graph_fragment_batch` -- the worker reuses every
+        still-READY batch's draft and calls the model only for the ones this
+        method just reset to PENDING."""
+
+        scope = require_project_scope(scope)
+        async with self._sessions() as session, session.begin():
+            row = (
+                (
+                    await session.execute(
+                        select(graph_extraction_job)
+                        .where(
+                            *scope_predicates(graph_extraction_job, scope),
+                            graph_extraction_job.c.revision_id == revision_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise GraphFactNotFound(f"graph job not found for revision {revision_id!r}")
+            job = await self._job(session, scope, cast(Mapping[str, object], row))
+            if (
+                job.status is GraphJobStatus.RUNNING
+                and row["lease_expires_at"] is not None
+                and cast(datetime, row["lease_expires_at"]) > now
+            ):
+                raise GraphJobBusy(job.job_id)
+            result = await session.execute(
+                update(graph_fragment_batch)
+                .where(
+                    *scope_predicates(graph_fragment_batch, scope),
+                    graph_fragment_batch.c.snapshot_id == job.snapshot.snapshot_id,
+                    graph_fragment_batch.c.status == GraphBatchStatus.FAILED.value,
+                )
+                .values(
+                    status=GraphBatchStatus.PENDING.value,
+                    attempt=0,
+                    failure_code=None,
+                    updated_at=now,
+                )
+            )
+            requeued = result.rowcount
+            if requeued == 0:
+                return 0, job.status
+            snapshot_id = job.snapshot.snapshot_id
+            for table in (
+                graph_inference_provenance,
+                graph_edge_evidence,
+                graph_node_evidence,
+                graph_edge,
+                graph_node,
+                graph_snapshot_revision,
+                graph_snapshot_document_revision,
+            ):
+                await session.execute(
+                    delete(table).where(
+                        *scope_predicates(table, scope),
+                        table.c.snapshot_id == snapshot_id,
+                    )
+                )
+            await session.execute(
+                update(graph_snapshot)
+                .where(
+                    *scope_predicates(graph_snapshot, scope),
+                    graph_snapshot.c.snapshot_id == snapshot_id,
+                )
+                .values(status="CANDIDATE")
+            )
+            await session.execute(
+                update(graph_extraction_job)
+                .where(
+                    *scope_predicates(graph_extraction_job, scope),
+                    graph_extraction_job.c.job_id == job.job_id,
+                )
+                .values(
+                    status=GraphJobStatus.PENDING.value,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    failure_code=None,
+                    updated_at=now,
+                )
+            )
+            return requeued, GraphJobStatus.PENDING
+
+    async def merge_state(
+        self, scope: ProjectScopeContext, *, now: datetime
+    ) -> Literal["IDLE", "PENDING", "RUNNING", "FAILED"]:
+        if self._merge_queue is None:
+            return "IDLE"
+        return await self._merge_queue.merge_state(scope, now=now)
+
     async def _owned_row(
         self,
         session: AsyncSession,
@@ -641,14 +932,27 @@ class MysqlGraphJobStore:
         digest: str,
         now: datetime,
     ) -> None:
-        key = f"{job.job_id}:{aggregate_version}"
+        # A fragment retry (see `retry_failed_batches`) can legitimately
+        # re-complete the same job with a different `graph_digest` once the
+        # worker reruns, so the key must vary with content: otherwise the
+        # second completion's audit append collides on `job_id:aggregate_
+        # version` against the first's *different* content digest and
+        # `MysqlProjectAudit.append` raises `AuditIdempotencyConflict`. A
+        # digest-stable call (the original, non-retried path) still produces
+        # the same key every time, so existing dedup is unaffected.
+        key = f"{job.job_id}:{aggregate_version}:{digest.removeprefix('sha256:')[:16]}"
         await self._append_audit(session, scope, job, action, digest, key=key)
         await write_project_event(
             session,
             scope=scope,
             envelope=ProjectEventEnvelope(
+                # Identity includes the digest for the same reason the audit
+                # `key` above does: a retried completion of the same job and
+                # snapshot carries different content, and the outbox's own
+                # dedup (keyed by `outbox_id`) would otherwise collide the
+                # second write against the first event's distinct payload.
                 event_id=scoped_outbox_id(
-                    scope, kind=event_type, identity=job.snapshot.snapshot_id
+                    scope, kind=event_type, identity=f"{job.snapshot.snapshot_id}:{digest}"
                 ),
                 event_type=event_type,
                 schema_version=1,

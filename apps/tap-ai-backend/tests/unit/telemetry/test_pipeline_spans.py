@@ -183,62 +183,84 @@ async def test_planned_retrieval_emits_one_span_per_query(span_recorder) -> None
 
 @pytest.mark.asyncio
 async def test_graph_enricher_emits_counts(span_recorder) -> None:
-    from tap.modules.graph.application.queries import InMemoryGraphStore
-    from tap.modules.graph.domain.models import (
-        Evidence,
-        GraphEdge,
-        GraphNode,
-        GraphSnapshot,
-        GraphSnapshotDraft,
-        RelationOrigin,
+    from datetime import UTC, datetime
+
+    from tap.modules.graph.application.project_queries import InMemoryProjectGraphStore
+    from tap.modules.graph.domain.models import RelationOrigin
+    from tap.modules.graph.domain.project import (
+        EdgeEvidence,
+        NodeSource,
+        ProjectEdge,
+        ProjectGraphDraft,
+        ProjectNode,
     )
 
-    evidence = Evidence(
-        "evidence-1",
-        "snapshot-1",
-        "source-revision-1",
-        "document-revision-1",
-        "chunk-1",
-        {"kind": "text", "start": 0, "end": 6},
-        "sha256:" + "a" * 64,
-    )
-    draft = GraphSnapshotDraft(
-        GraphSnapshot.create(
-            snapshot_id="snapshot-1",
-            project_id=VALIDATION_SCOPE.project_id,
-            source_revision_ids=("source-revision-1",),
-            document_revision_ids=("document-revision-1",),
+    anchor = {"kind": "text", "start": 0, "end": 6}
+    draft = ProjectGraphDraft(
+        fragment_digest="sha256:" + "a" * 64,
+        nodes=(
+            ProjectNode("node-1", "Policy", "ENTITY", "policy"),
+            ProjectNode("node-2", "Claim", "ENTITY", "claim"),
         ),
-        (
-            GraphNode("node-1", "snapshot-1", "Policy", "ENTITY", "policy"),
-            GraphNode("node-2", "snapshot-1", "Claim", "ENTITY", "claim"),
-        ),
-        (
-            GraphEdge(
+        edges=(
+            ProjectEdge(
                 "edge-1",
-                "snapshot-1",
                 "node-1",
                 "node-2",
+                "RELATED_TO",
                 "GOVERNS",
                 RelationOrigin.EXTRACTED,
                 1.0,
-                ("evidence-1",),
             ),
         ),
-        (evidence,),
-        (),
+        node_sources=(
+            NodeSource(
+                "node-1",
+                "source-revision-1",
+                "document-revision-1",
+                "chunk-1",
+                anchor,
+                "frag-1",
+                "fnode-1",
+            ),
+            NodeSource(
+                "node-2",
+                "source-revision-1",
+                "document-revision-1",
+                "chunk-2",
+                anchor,
+                "frag-1",
+                "fnode-2",
+            ),
+        ),
+        edge_evidence=(
+            EdgeEvidence(
+                "edge-1",
+                "source-revision-1",
+                "document-revision-1",
+                "chunk-3",
+                anchor,
+                "sha256:" + "b" * 64,
+                "frag-1",
+                "fedge-1",
+            ),
+        ),
+        aliases=(),
+        communities=(),
+        merge_log=(),
     )
-    store = InMemoryGraphStore()
-    await store.publish(VALIDATION_SCOPE, draft)
+    store = InMemoryProjectGraphStore()
+    await store.publish(VALIDATION_SCOPE, draft, now=datetime.now(UTC))
 
     result_context = await GraphAnswerEnricher(store).enrich(
-        VALIDATION_SCOPE, ("source-revision-1",), "*"
+        VALIDATION_SCOPE, ("source-revision-1",), "", chunk_ids=("chunk-1",)
     )
 
     spans = [item for item in span_recorder.get_finished_spans() if item.name == "graph.enrich"]
     assert len(spans) == 1
     attributes = spans[0].attributes
-    assert attributes["tap.graph.snapshot_id"] == result_context.snapshot_id
+    assert attributes["tap.graph.version"] == result_context.graph_version
+    assert attributes["tap.graph.seed_count"] == 1
     assert attributes["tap.graph.node_count"] == 2
     assert attributes["tap.graph.edge_count"] == 1
 

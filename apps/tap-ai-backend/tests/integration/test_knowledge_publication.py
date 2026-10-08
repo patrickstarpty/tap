@@ -537,3 +537,65 @@ async def test_independent_document_publications_remain_current_and_withdraw_sep
 
     finally:
         await engine.dispose()
+
+
+async def test_withdraw_requests_a_project_graph_merge(owned_project_mysql):
+    """Withdrawing a publication must also request a merge: it removes a
+    revision from the currently-ready set `MysqlMergeInputs` replays, the
+    same way publishing one requests a merge."""
+
+    from sqlalchemy import select
+
+    from tap.modules.graph.adapters.mysql_merge import (
+        GraphMergeOnSourceChange,
+        MysqlProjectMergeQueue,
+    )
+    from tap.modules.graph.adapters.mysql_project import graph_project_merge_job
+    from tap.platform.db.project_scope import scope_predicates
+
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        await seed_authority(sessions)
+        merge_queue = MysqlProjectMergeQueue(sessions)
+        repository = MysqlKnowledgeReviewRepository(
+            sessions,
+            scope=VALIDATION_SCOPE,
+            publication_projection=GraphMergeOnSourceChange(merge_queue),
+        )
+        await repository.create_review(approved_review())
+        application = KnowledgeReviewApplication(repository, ReadyProjection())
+        published = await application.publish_review(
+            "krv_mysql_001",
+            generation="generation-001",
+            idempotency_key="publish-withdraw-trigger",
+            actor_id="synthetic-reviewer-02",
+            expected_version=4,
+            now=NOW,
+        )
+
+        withdrawn = await application.withdraw_publication(
+            published.publication_id,
+            idempotency_key="withdraw-withdraw-trigger",
+            actor_id="synthetic-publisher-03",
+            expected_version=1,
+            now=NOW + timedelta(minutes=1),
+        )
+
+        assert withdrawn.status == "withdrawn"
+        async with sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(graph_project_merge_job).where(
+                            *scope_predicates(graph_project_merge_job, VALIDATION_SCOPE)
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert row["due_at"] is not None
+        assert row["last_reason"] == "publication-changed"
+    finally:
+        await engine.dispose()

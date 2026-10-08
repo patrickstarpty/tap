@@ -433,6 +433,7 @@ class KnowledgeHttpService:
                 self.scope,
                 tuple(frozen_input.source_revision_ids),
                 domain_request.query,
+                chunk_ids=(),
             )
         response = await self._answers.answer_frozen(
             domain_request,

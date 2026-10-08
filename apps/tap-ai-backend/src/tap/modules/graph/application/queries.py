@@ -47,6 +47,16 @@ class InMemoryGraphStore:
         self._active[(scope.project_id, ready.source_set_digest)] = ready.snapshot_id
         return ready
 
+    def reset(self, scope: ProjectScopeContext, snapshot_id: str) -> None:
+        """Forget a snapshot's published draft so a later `publish` with new
+        facts is treated as fresh rather than rejected as an immutable
+        conflict against the stale draft -- the in-memory mirror of resetting
+        a MySQL snapshot row back to `CANDIDATE` and deleting its fact rows
+        before a fragment retry."""
+
+        scope = require_project_scope(scope)
+        self._drafts.pop((scope.project_id, snapshot_id), None)
+
     async def active_snapshot(
         self, scope: ProjectScopeContext, source_ids: tuple[str, ...]
     ) -> GraphSnapshot | None:

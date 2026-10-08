@@ -12,7 +12,7 @@
 
 ## 依赖 PR 2 的接口
 
-本计划按以下假设使用 PR 2 交付的 `ProjectGraphStore`（`tap.modules.graph.application.project_graph`）；PR 2 计划定稿后以其为准，在 Task 2 开始前修正本节与 Task 2/3/9 的引用：
+本计划使用 PR 2 交付的存储端口 `ProjectGraphStorePort`（`tap.modules.graph.ports.project_store`；内存实现 `InMemoryProjectGraphStore` 在 `application/project_queries.py`，MySQL 实现 `MysqlProjectGraphStore` 在 `adapters/mysql_project_store.py`）。本计划其余地方写的 `ProjectGraphStore` 一律指 `ProjectGraphStorePort`：
 
 以下签名已与 PR 2 计划（`2026-10-06-graph-project-merge.md` Task 3）核对一致，端口为 `ProjectGraphStorePort`（`tap.modules.graph.ports.project_store`）：
 
@@ -22,10 +22,10 @@
 - `async match_aliases(scope, text: str, *, version) -> tuple[AliasMatch, ...]`，`AliasMatch(alias_norm, node_id, start, end)`，最长匹配、遮蔽区间、同一 node_id 只返回首次；再经 `nodes()` 取节点。
 - `async neighbors(scope, node_id: str, *, depth: int = 1, node_limit: int = 50, source_revision_ids: tuple[str, ...] = (), version) -> ProjectSubgraph`：单个种子；本 PR 对每个种子各调一次后合并，`source_revision_ids=tuple(sorted(allowed_source_revision_ids))`。
 - `async path(scope, source_node_id, target_node_id, *, max_hops: int = 3, source_revision_ids, version) -> ProjectSubgraph`：BFS 最短路径子图，超过 `max_hops` 返回空子图；本 PR 从返回子图沿边由起点走到终点重建有序的 `RelationPath`。
-- `ProjectSubgraph(graph_version: int, nodes: tuple[ProjectNode, ...], edges: tuple[ProjectEdge, ...], evidence: tuple[EdgeEvidence | NodeSource, ...])`；来源过滤语义由 PR 2 保证（节点至少一条来源、边两端可见且至少一条证据在集合内）。
-- `ProjectEdge(edge_id, source_node_id, target_node_id, relation_type, relation_label, origin, confidence, evidence: tuple[EdgeEvidence, ...])`，`EdgeEvidence(source_revision_id, document_revision_id, chunk_id, anchor: Mapping, content_digest)`。
+- `ProjectSubgraph(version: int, nodes: tuple[ProjectNode, ...], edges: tuple[ProjectEdge, ...], sources: tuple[NodeSource, ...] = (), evidence: tuple[EdgeEvidence, ...] = ())`；边的支撑证据不在 `ProjectEdge` 上，而是 `subgraph.evidence` 中 `edge_id` 相同的 `EdgeEvidence` 行（`assemble` 据此取支撑切片）；来源过滤语义由 PR 2 保证（节点至少一条来源、边两端可见且至少一条证据在集合内）。
+- `ProjectEdge(edge_id, source_node_id, target_node_id, relation_type, relation_label, origin, confidence)`（无内嵌证据），`EdgeEvidence(edge_id, source_revision_id, document_revision_id, chunk_id, anchor: Mapping, content_digest, fragment_snapshot_id, fragment_edge_id)`，`NodeSource(node_id, source_revision_id, document_revision_id, chunk_id, anchor, fragment_snapshot_id, fragment_node_id)`。
 - `ProjectNode(node_id, label, node_type, canonical_key, aliases: tuple[str, ...], degree, community_id)`。
-- 表对象 `graph_project_node`、`graph_project_edge`、`graph_project_edge_evidence` 从 `tap.modules.graph.adapters.mysql` 导出，列名如 spec 1.2。
+- 表对象 `graph_project_node`、`graph_project_edge`、`graph_project_edge_evidence` 从 `tap.modules.graph.adapters.mysql_project` 导入，列名如 spec 1.2。
 - PR 2 把 `GraphAnswerEnricher` 改读项目图并保留 `tests/unit/knowledge/test_graph_enrichment.py`；本 PR 删除两者。
 - PR 1 的 `tap.modules.graph.domain.vocabulary.normalize_key(text) -> str` 可用。
 - 迁移链：PR 1 `0028_graph_fragment_batch` → PR 2 `0029_project_graph` → 本 PR `0030_edge_citations`。

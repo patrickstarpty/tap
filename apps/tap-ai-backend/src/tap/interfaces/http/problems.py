@@ -12,7 +12,11 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from tap.contracts.problems import ProblemDetails, build_problem
-from tap.interfaces.http.dependencies import GraphUnavailable, KnowledgeRuntimeUnavailable
+from tap.interfaces.http.dependencies import (
+    GraphUnavailable,
+    GraphVersionMismatch,
+    KnowledgeRuntimeUnavailable,
+)
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
 from tap.modules.ai.domain.assets import AssetRevisionRejected
 from tap.modules.ai.domain.models import (
@@ -25,6 +29,10 @@ from tap.modules.chat.application.conversations import (
     ConversationIntegrityError,
     ConversationNotFound,
     InvalidConversationCursor,
+)
+from tap.modules.graph.domain.jobs import GraphJobBusy
+from tap.modules.graph.ports.project_store import (
+    ProjectGraphVersionMismatch as StoreProjectGraphVersionMismatch,
 )
 from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.modules.knowledge.application.answers import (
@@ -86,8 +94,8 @@ def document_parse_problem(error: DocumentParseRejected) -> str:
     return "unsupported-document"
 
 
-def problem_response(code: str, request: Request) -> JSONResponse:
-    problem = build_problem(code, correlation_id=request.state.correlation_id)
+def problem_response(code: str, request: Request, *, detail: str | None = None) -> JSONResponse:
+    problem = build_problem(code, correlation_id=request.state.correlation_id, detail=detail)
     return JSONResponse(
         status_code=problem.status,
         content=problem.model_dump(by_alias=True, exclude_none=True),
@@ -153,6 +161,42 @@ def register_problem_handlers(app: FastAPI) -> None:
         request: Request, _error: GraphFactNotFound
     ) -> JSONResponse:
         return problem_response("graph-fact-not-found", request)
+
+    @app.exception_handler(GraphVersionMismatch)
+    async def graph_version_mismatch_problem(
+        request: Request, error: GraphVersionMismatch
+    ) -> JSONResponse:
+        current = error.current if error.current is not None else "none"
+        return problem_response(
+            "graph-version-mismatch",
+            request,
+            detail=(
+                "The requested graph version does not match the current version; "
+                f"current version is {current}."
+            ),
+        )
+
+    @app.exception_handler(GraphJobBusy)
+    async def graph_job_busy_problem(request: Request, _error: GraphJobBusy) -> JSONResponse:
+        return problem_response("graph-job-busy", request)
+
+    @app.exception_handler(StoreProjectGraphVersionMismatch)
+    async def store_graph_version_mismatch_problem(
+        request: Request, error: StoreProjectGraphVersionMismatch
+    ) -> JSONResponse:
+        # A pinned version fell outside the adjacency cache's retention
+        # window between the route's own exact-match check and the store
+        # call it guards (e.g. a concurrent merge published a newer version
+        # and evicted the one just checked) -- same public problem as the
+        # route-level `GraphVersionMismatch`.
+        return problem_response(
+            "graph-version-mismatch",
+            request,
+            detail=(
+                "The requested graph version does not match the current version; "
+                f"current version is {error.current}."
+            ),
+        )
 
     @app.exception_handler(RevisionConflict)
     @app.exception_handler(RevisionImmutable)
