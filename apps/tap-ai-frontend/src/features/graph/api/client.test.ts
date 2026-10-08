@@ -27,6 +27,20 @@ function problemResponse(detail: string, status = 409): Response {
   );
 }
 
+function graphJobBusyResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      type: "https://tap.example/problems/graph-job-busy",
+      title: "Graph job busy",
+      status: 409,
+      detail: "A graph job is already running for this project.",
+      failureStage: "graph",
+      retryable: false,
+    }),
+    { status: 409, headers: { "content-type": "application/problem+json" } },
+  );
+}
+
 const subgraph = { graphVersion: 2, nodes: [], edges: [], evidence: [] };
 
 describe("createGraphClient", () => {
@@ -88,6 +102,42 @@ describe("createGraphClient", () => {
     expect(Object.prototype.hasOwnProperty.call(caught, "currentVersion")).toBe(
       false,
     );
+  });
+
+  it("does not map a graph-job-busy 409 to a version conflict", async () => {
+    const fetcher = vi.fn(async () => graphJobBusyResponse());
+    vi.stubGlobal("fetch", fetcher);
+
+    const client = createGraphClient("project-1");
+    let caught: unknown;
+    try {
+      await client.retryFragment("rev_x", "retry-intent-1");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).not.toBeInstanceOf(GraphVersionConflictError);
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).name).not.toBe("GraphVersionConflictError");
+  });
+
+  it("omits graphVersion when it is 0 (no version)", async () => {
+    const requests: Request[] = [];
+    const fetcher = vi.fn(async (input: Request) => {
+      requests.push(input);
+      return jsonResponse(subgraph);
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const client = createGraphClient("project-1");
+    await client.overview({
+      sourceRevisionIds: [],
+      communityIds: [],
+      nodeLimit: 150,
+      graphVersion: 0,
+    });
+
+    const overviewUrl = new URL(requests[0]!.url);
+    expect(overviewUrl.searchParams.has("graphVersion")).toBe(false);
   });
 
   it("retries a fragment with an idempotency key", async () => {

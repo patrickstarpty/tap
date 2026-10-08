@@ -159,8 +159,8 @@ export function useGraphHighlight(
   });
 }
 
-export function useRetryFragmentMutation(projectId: string) {
-  const client = useMemo(() => createGraphClient(projectId), [projectId]);
+export function useRetryFragmentMutation(projectId: string | null) {
+  const client = useOptionalGraphClient(projectId);
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: ["graph", projectId, "retry-fragment"],
@@ -171,7 +171,12 @@ export function useRetryFragmentMutation(projectId: string) {
     }: {
       revisionId: string;
       idempotencyKey: string;
-    }) => client.retryFragment(revisionId, idempotencyKey),
+    }) => {
+      if (client === null) {
+        throw new Error("A project ID is required to retry a fragment.");
+      }
+      return client.retryFragment(revisionId, idempotencyKey);
+    },
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: graphKeys.project(projectId) }),
   });
@@ -182,39 +187,54 @@ export function useRetryFragmentMutation(projectId: string) {
  * `GraphVersionConflictError`. The `/graph-version-mismatch` problem body
  * carries the current version only in free-text `detail`, so there is no
  * structured version to dedupe on. Instead this guard tracks a local,
- * monotonically increasing "conflict generation": each rising edge of
- * `hasConflict` (no conflict -> conflict) bumps the generation and fires
- * exactly one invalidate/refetch for it, regardless of how many renders
- * observe the same ongoing conflict.
+ * monotonically increasing "conflict generation" ref: every rising edge of
+ * `hasConflict` (no conflict -> conflict) bumps the generation and is the
+ * one that gets to act on it, so a conflict that is still being handled
+ * (generation unchanged) never re-triggers, while a later, distinct
+ * conflict (generation advances again) does.
  *
- * The `["graph", projectId]` prefix is marked stale without an immediate
- * refetch (`refetchType: "none"`), and only `GET /project` is explicitly
- * refetched. This avoids re-issuing the still-stale-versioned query that
- * just 409'd (which would 409 again before the new version is known).
- * Once `GET /project` resolves with the current `graphVersion`, callers
- * that thread that version into their query keys (e.g. `useGraphOverview`)
- * naturally compute a new key and fetch fresh data.
+ * On each new generation, the entire `["graph", projectId]` prefix is
+ * invalidated (satisfying the "409 invalidates every graph query" global
+ * constraint — e.g. a cached `highlight` result with no `graphVersion` in
+ * its key is still marked stale) but with `refetchType: "none"`, so nothing
+ * refetches yet. Only `GET /project` is then explicitly refetched — this
+ * avoids re-issuing the still-stale-versioned query that just 409'd (which
+ * would 409 again before the new version is known). Once `GET /project`
+ * resolves with the current `graphVersion`, callers that thread that
+ * version into their own query keys (e.g. `useGraphOverview`) naturally
+ * compute a new key and fetch fresh data.
  */
 export function useGraphVersionGuard(
   projectId: string | null,
   errors: readonly unknown[],
 ): void {
   const queryClient = useQueryClient();
-  const conflictGenerationRef = useRef(0);
-  const triggeredGenerationRef = useRef(0);
+  const generationRef = useRef(0);
+  const handledGenerationRef = useRef(0);
+  const previousHasConflictRef = useRef(false);
   const hasConflict = errors.some(
     (error) => error instanceof GraphVersionConflictError,
   );
 
+  // Bump the generation only on the rising edge (no conflict -> conflict),
+  // not on every render while a conflict is ongoing.
+  if (hasConflict && !previousHasConflictRef.current) {
+    generationRef.current += 1;
+  }
+  previousHasConflictRef.current = hasConflict;
+  const generation = generationRef.current;
+
   useEffect(() => {
-    if (!hasConflict) return;
-    conflictGenerationRef.current += 1;
-    if (triggeredGenerationRef.current >= conflictGenerationRef.current) return;
-    triggeredGenerationRef.current = conflictGenerationRef.current;
+    if (generation === 0 || handledGenerationRef.current >= generation) return;
+    handledGenerationRef.current = generation;
     if (projectId === null) return;
+    void queryClient.invalidateQueries({
+      queryKey: graphKeys.all(projectId),
+      refetchType: "none",
+    });
     void queryClient.refetchQueries({
       queryKey: graphKeys.project(projectId),
       exact: true,
     });
-  }, [hasConflict, projectId, queryClient]);
+  }, [generation, projectId, queryClient]);
 }

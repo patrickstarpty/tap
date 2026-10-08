@@ -22,6 +22,41 @@ export class GraphVersionConflictError extends Error {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * `POST /fragments/{id}/retry` (and other graph endpoints) can 409 for
+ * reasons other than a stale `graphVersion` (e.g. `graph-job-busy`). Only
+ * the problem whose `type` ends with `/graph-version-mismatch` is a version
+ * conflict; any other 409 must surface as a normal failure.
+ */
+function isVersionMismatchProblem(problem: unknown): boolean {
+  return (
+    isRecord(problem) &&
+    typeof problem.type === "string" &&
+    problem.type.endsWith("/graph-version-mismatch")
+  );
+}
+
+/**
+ * The project graph never pins an absent version: a not-ready `GET
+ * /project` fallback returns `graphVersion: 0`, which means "no version"
+ * and must never be echoed back as a pinned request parameter. `null` and
+ * `undefined` mean the same thing. Normalizes all three to `undefined` so
+ * the request simply omits `graphVersion`.
+ */
+function pinnedVersion(
+  graphVersion: number | null | undefined,
+): number | undefined {
+  return graphVersion === null ||
+    graphVersion === undefined ||
+    graphVersion === 0
+    ? undefined
+    : graphVersion;
+}
+
 export interface GraphClient {
   project(signal?: AbortSignal): Promise<GraphProject>;
   overview(
@@ -100,10 +135,13 @@ export function createGraphClient(
   const pathProject = { project_id: projectId };
 
   async function unwrap<T>(
-    promise: Promise<{ data?: T; response: Response }>,
+    promise: Promise<{ data?: T; error?: unknown; response: Response }>,
   ): Promise<T> {
     const result = await promise;
-    if (result.response.status === 409) {
+    if (
+      result.response.status === 409 &&
+      isVersionMismatchProblem(result.error)
+    ) {
       throw new GraphVersionConflictError();
     }
     if (result.data === undefined) {
@@ -133,7 +171,7 @@ export function createGraphClient(
               sourceRevisionId: sourceRevisionIds,
               communityId: communityIds,
               nodeLimit,
-              graphVersion: graphVersion ?? undefined,
+              graphVersion: pinnedVersion(graphVersion),
             },
           },
           signal,
@@ -148,7 +186,7 @@ export function createGraphClient(
             query,
             sourceRevisionIds,
             ...(nodeLimit === undefined ? {} : { nodeLimit }),
-            graphVersion: graphVersion ?? undefined,
+            graphVersion: pinnedVersion(graphVersion),
           },
           signal,
         }),
@@ -168,7 +206,7 @@ export function createGraphClient(
             nodeId,
             ...(depth === undefined ? {} : { depth }),
             ...(nodeLimit === undefined ? {} : { nodeLimit }),
-            graphVersion: graphVersion ?? undefined,
+            graphVersion: pinnedVersion(graphVersion),
           },
           signal,
         }),
@@ -185,7 +223,7 @@ export function createGraphClient(
             sourceNodeId,
             targetNodeId,
             ...(nodeLimit === undefined ? {} : { nodeLimit }),
-            graphVersion: graphVersion ?? undefined,
+            graphVersion: pinnedVersion(graphVersion),
           },
           signal,
         }),
@@ -201,7 +239,7 @@ export function createGraphClient(
           {
             params: {
               path: { ...pathProject, node_id: nodeId },
-              query: { graphVersion: graphVersion ?? undefined },
+              query: { graphVersion: pinnedVersion(graphVersion) },
             },
             signal,
           },
