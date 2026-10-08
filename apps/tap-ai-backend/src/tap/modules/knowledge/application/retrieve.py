@@ -195,6 +195,21 @@ def _canonical_document_anchor_json(anchor: DocumentAnchor) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
+def _content_role_from_mapping(anchor: Mapping[str, object]) -> ContentRole:
+    """A relation support's raw anchor mapping carries no dedicated content-role
+    field today, but honor one if a future ledger ever attaches it rather than
+    hardcoding past it. Project-graph edge evidence is otherwise always
+    extracted from source chunks, never generated summaries, so `SOURCE` is
+    the only legitimate fallback."""
+    raw = anchor.get("contentRole")
+    if isinstance(raw, str):
+        try:
+            return ContentRole(raw)
+        except ValueError:
+            pass
+    return ContentRole.SOURCE
+
+
 def _label_num(label: str) -> int:
     return int(label[1:])
 
@@ -577,7 +592,8 @@ class AuthorizedRetrieval:
 
         relation_outcome: RelationOutcome | None = None
         stripped = 0
-        unresolvable = 0
+        unresolvable_cited = 0
+        unresolvable_total = 0
         dropped_for_cap = 0
         extra_citation_ids: dict[str, str] = {}
         edge_citations: tuple[Citation, ...] = ()
@@ -591,7 +607,21 @@ class AuthorizedRetrieval:
                 return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
             generation = replace(generation, text=reconciled.text, claims=reconciled.claims)
             if relation.status is RelationContextStatus.APPLIED:
-                by_label = relation.by_label()
+                # Resolve every ranked relation up front (not just the cited
+                # ones) so `relation_count` and the unresolvable diagnostic
+                # reflect the whole R1..Rn context, independent of what the
+                # model happened to cite this turn.
+                all_resolved: dict[str, Citation | None] = {
+                    relation_evidence.label: self._edge_citation_for_relation(
+                        relation_evidence,
+                        run.response.evidence,
+                        relation.graph_version or "",
+                        run.plan.resources,
+                    )
+                    for relation_evidence in relation.relations
+                }
+                unresolvable_total = sum(1 for item in all_resolved.values() if item is None)
+
                 used_labels = tuple(
                     dict.fromkeys(
                         label
@@ -602,17 +632,9 @@ class AuthorizedRetrieval:
                 )
                 resolved: dict[str, Citation] = {}
                 for label in used_labels:
-                    relation_evidence = by_label.get(label)
-                    if relation_evidence is None:
-                        continue
-                    built = self._edge_citation_for_relation(
-                        relation_evidence,
-                        run.response.evidence,
-                        relation.graph_version or "",
-                        run.plan.resources,
-                    )
+                    built = all_resolved.get(label)
                     if built is None:
-                        unresolvable += 1
+                        unresolvable_cited += 1
                         continue
                     resolved[label] = built
 
@@ -641,6 +663,16 @@ class AuthorizedRetrieval:
                         s_citations = [
                             item for item in s_citations if item.citation_id not in drop_ids
                         ]
+                        # `ports/answers.py` requires chunk citations to be
+                        # exactly S1..Sn with no gaps; dropping one from the
+                        # middle (e.g. augmented chunks at the tail) must not
+                        # leave a hole. Claims resolve citations by
+                        # `citation_id` (already fixed at this point), so
+                        # relabeling here does not touch claim resolution.
+                        s_citations = [
+                            replace(item, evidence_label=f"S{position}")
+                            for position, item in enumerate(s_citations, start=1)
+                        ]
                     overflow = len(s_citations) + len(resolved) - _MAX_EVIDENCE
                 if overflow > 0:
                     worst_r_labels = sorted(resolved, key=_label_num, reverse=True)[:overflow]
@@ -649,7 +681,7 @@ class AuthorizedRetrieval:
                     dropped_for_cap = len(worst_r_labels)
                     stripped += dropped_for_cap
 
-                if unresolvable or dropped_for_cap:
+                if unresolvable_cited or dropped_for_cap:
                     final_claims: list[GeneratedClaim] = []
                     for claim in generation.claims:
                         kept = tuple(
@@ -685,14 +717,14 @@ class AuthorizedRetrieval:
                     extra_citation_ids[label] = citation.citation_id
                 edge_citations = tuple(renumbered)
             diagnostics = dict(relation.diagnostics)
-            if unresolvable:
-                diagnostics["relation-support-unresolvable"] = unresolvable
+            if unresolvable_total:
+                diagnostics["relation-support-unresolvable"] = unresolvable_total
             relation_outcome = RelationOutcome(
                 status=relation.status,
                 graph_version=relation.graph_version,
                 seed_count=len(relation.seeds),
                 paths=relation.path_summaries(),
-                relation_count=max(0, len(relation.relations) - unresolvable),
+                relation_count=max(0, len(relation.relations) - unresolvable_total),
                 diagnostics=diagnostics,
             )
 
@@ -739,7 +771,7 @@ class AuthorizedRetrieval:
             ),
             embedding_provenance=run.response.embedding_provenance,
             answer_provenance=self._generation_provenance(generation),
-            degraded_mode=missing or stripped > 0 or unresolvable > 0,
+            degraded_mode=missing or stripped > 0 or unresolvable_total > 0,
             degradation_reasons=degradation_reasons,
             relation=relation_outcome,
         )
@@ -893,6 +925,13 @@ class AuthorizedRetrieval:
             chunk_id = str(
                 chunk_id_for(RevisionId(resource.revision), anchor_json, support.content_digest)
             )
+            # The model echoed `anchorJson` back and extraction never validates
+            # it; recomputing the real chunk identity and requiring it to match
+            # the support's own `chunk_id` is what actually catches anchor
+            # drift -- without it, a mismatched anchor would silently mint a
+            # citation for a chunk that was never indexed.
+            if chunk_id != support.chunk_id:
+                continue
             logical_chunk_id = logical_chunk_projection_id(
                 logical_chunk_id_for(DocumentId(support.document_id), anchor_json)
             )
@@ -904,7 +943,7 @@ class AuthorizedRetrieval:
                 logical_chunk_id=logical_chunk_id,
                 source=source,
                 chunk_content_hash=support.content_digest,
-                content_role=ContentRole.SOURCE,
+                content_role=_content_role_from_mapping(support.anchor),
                 kind="edge",
                 edge=self._edge_fields(relation, graph_version),
             )

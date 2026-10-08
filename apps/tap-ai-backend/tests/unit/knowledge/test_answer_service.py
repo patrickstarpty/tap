@@ -37,6 +37,7 @@ from tap.modules.knowledge.domain.documents import (
     RevisionId,
     chunk_id_for,
     logical_chunk_id_for,
+    logical_chunk_projection_id,
 )
 from tap.modules.knowledge.domain.models import (
     AbstentionReason,
@@ -1070,6 +1071,7 @@ async def test_unpublished_flowchart_images_are_refused_while_text_sources_answe
 # ---------------------------------------------------------------------------
 
 _PUB_HASH = "sha256:" + "d" * 64
+_SRC_ID = "src_" + "d" * 32
 
 
 def _relation_hit(
@@ -1089,7 +1091,7 @@ def _relation_hit(
         title=None,
         content=content,
         source=SourceRevisionRef(
-            source_id="src_demo",
+            source_id=_SRC_ID,
             source_type="doc",
             revision_kind=RevisionKind.BLOB_VERSION,
             revision=revision,
@@ -1104,6 +1106,55 @@ def _relation_hit(
         embedding_model_version="tap-embedding-v1",
         score=0.9,
         local_rank=local_rank,
+    )
+
+
+_REAL_HIT_DOCUMENT_ID = "doc_demo"
+
+
+def _real_formula_hit(index: int, *, revision: str = "rev-1") -> SearchHit:
+    """Like `_relation_hit`, but with a formula-correct `chunk_id`/
+    `logical_chunk_id` (matching `chunk_id_for`/`logical_chunk_id_for`) so the
+    resulting evidence survives `AnswerSnapshot.from_response`'s strict
+    recomputation check -- needed to reproduce the C1 snapshot-layer failure
+    end-to-end, not just at the `AuthorizedRetrieval.answer` boundary."""
+    anchor = DocumentAnchor(heading_path=(f"H{index}",), start_offset=0, end_offset=10)
+    anchor_json = json.dumps(
+        {
+            "endOffset": anchor.end_offset,
+            "headingPath": list(anchor.heading_path),
+            "startOffset": anchor.start_offset,
+            "type": "document",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    content = f"relation evidence content {index}"
+    content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+    chunk_id = str(chunk_id_for(RevisionId(revision), anchor_json, content_hash))
+    logical_chunk_id = "h_" + str(
+        logical_chunk_id_for(DocumentId(_REAL_HIT_DOCUMENT_ID), anchor_json)
+    ).removeprefix("lc_")
+    return SearchHit(
+        family=SourceFamily.DOC,
+        chunk_id=chunk_id,
+        logical_chunk_id=logical_chunk_id,
+        title=None,
+        content=content,
+        source=SourceRevisionRef(
+            source_id=_SRC_ID,
+            source_type="doc",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision=revision,
+            source_content_hash=_PUB_HASH,
+            anchor=anchor,
+        ),
+        chunk_content_hash=content_hash,
+        content_role=ContentRole.SOURCE,
+        index_revision=IndexRevision("gen-1", "search-schema-v1", "corpus-17"),
+        embedding_model_version="tap-embedding-v1",
+        score=0.9,
+        local_rank=index,
     )
 
 
@@ -1156,7 +1207,7 @@ class _FakeRelationAnalysis:
 def _resource_grant(revision: str) -> ResourceGrant:
     return ResourceGrant(
         family="doc",
-        source_id="src_demo",
+        source_id=_SRC_ID,
         revision_kind="blob_version",
         revision=revision,
         source_content_hash=_PUB_HASH,
@@ -1193,7 +1244,7 @@ def _single_revision_request() -> AnswerRequest:
         resource_refs=(
             ResourceRef(
                 family=SourceFamily.DOC,
-                source_id="src_demo",
+                source_id=_SRC_ID,
                 mode=ResourceMode.SCOPE,
                 requested_revision="rev-1",
             ),
@@ -1348,7 +1399,7 @@ def _preferred_revision_request(revision: str = "rev-1") -> AnswerRequest:
         resource_refs=(
             ResourceRef(
                 family=SourceFamily.DOC,
-                source_id="src_demo",
+                source_id=_SRC_ID,
                 mode=ResourceMode.PREFERRED,
                 requested_revision=revision,
             ),
@@ -1560,7 +1611,7 @@ def _deep_revision_request() -> AnswerRequest:
         resource_refs=(
             ResourceRef(
                 family=SourceFamily.DOC,
-                source_id="src_demo",
+                source_id=_SRC_ID,
                 mode=ResourceMode.SCOPE,
                 requested_revision="rev-1",
             ),
@@ -1643,6 +1694,114 @@ def test_citations_are_capped_at_twenty_dropping_uncited_s_first() -> None:
     asyncio.run(scenario())
 
 
+def test_citations_cap_renumbers_surviving_s_citations_contiguously() -> None:
+    """C1 (reproduced): dropping a *middle* uncited S citation (S19, while S20
+    is cited) must not leave a gap -- `ports/answers.py` requires chunk
+    citations to be exactly S1..Sn. The survivors are renumbered contiguously;
+    the claim's own citation (originally S20) still resolves to its original
+    chunk by `citation_id`, independent of the display label."""
+
+    async def scenario() -> None:
+        hits = tuple(_real_formula_hit(index) for index in range(1, 21))
+        search = _SequencedSearchPort(hits)
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="已验证的事实。\n\n核保流程需要健康告知。",
+                    claims=(
+                        GeneratedClaim(text="已验证的事实。", evidence_labels=("S20",)),
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1",)),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(_relation_evidence_for("R1", support_label="S1"),),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_deep_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        chunk_citations = [c for c in response.citations if c.kind == "chunk"]
+        edge_citations = [c for c in response.citations if c.kind == "edge"]
+        assert len(response.citations) == 20
+        assert len(chunk_citations) == 19
+        assert len(edge_citations) == 1
+        # Contiguous S1..S19, no gap left by dropping the old S19.
+        assert {c.evidence_label for c in chunk_citations} == {f"S{n}" for n in range(1, 20)}
+        # The chunk originally labelled S20 (chunk 20's hit) survived, renumbered.
+        renumbered = next(c for c in chunk_citations if c.chunk_id == hits[19].chunk_id)
+        assert renumbered.evidence_label == "S19"
+        # The claim that cited the original "S20" still resolves to chunk-20's
+        # citation by `citation_id`, regardless of the new display label.
+        s_claim = next(claim for claim in response.claims if claim.text == "已验证的事实。")
+        assert s_claim.citation_ids == (renumbered.citation_id,)
+
+    asyncio.run(scenario())
+
+
+def test_answer_snapshot_accepts_contiguous_s_labels_after_a_cap_drop() -> None:
+    """C1 (reproduced): `AnswerSnapshot.from_response` requires chunk citations
+    to be exactly S1..Sn (`ports/answers.py`). Before this fix, dropping an
+    uncited S citation from the middle (e.g. an augmented chunk at the tail)
+    left a gap (...S18, S20, R1) and the whole answer was lost as
+    `AnswerSnapshotUnavailable`; this directly exercises the retrieve.py
+    renumbering fix's output shape against that same strict check, using the
+    only profile the local snapshot gateway accepts (QUICK_HYBRID_V1)."""
+    citations = tuple(
+        citation(citation_id=f"citation-s{n}", evidence_label=f"S{n}") for n in range(1, 20)
+    ) + (
+        replace(
+            citation(citation_id="citation-r1", evidence_label="R1"),
+            kind="edge",
+            edge=EdgeCitation(
+                edge_id="e-1",
+                graph_version="7",
+                subject_node_id="A",
+                subject_label="核保流程",
+                object_node_id="B",
+                object_label="健康告知",
+                relation_type="REQUIRES",
+                relation_label="REQUIRES",
+            ),
+        ),
+    )
+    answer_text = "核保流程需要健康告知。"
+    response = AnswerResponse(
+        trace_id="trace-a",
+        query_plan_id="plan-a",
+        context_snapshot_id="context-a",
+        corpus_version="tapper-demo-v1",
+        retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
+        answer=answer_text,
+        abstained=False,
+        claims=(
+            Claim(
+                claim_id="claim-1",
+                text=answer_text,
+                answer_start=0,
+                answer_end=len(answer_text),
+                citation_ids=("citation-r1",),
+            ),
+        ),
+        citations=citations,
+        embedding_provenance=ModelCallProvenance("text-embedding-v4", "embed-a"),
+        answer_provenance=ModelCallProvenance("qwen-plus", "answer-a"),
+    )
+
+    snapshot = AnswerSnapshot.from_response(
+        response=response, query="q", selected_revisions=(ready(),)
+    )
+    assert len(snapshot.citations) == 20
+    assert snapshot.citations[-1].citation_kind == "edge"
+
+
 def test_citations_cap_drops_lowest_ranked_r_when_no_s_is_droppable() -> None:
     """C1: 15 S citations (all cited) plus 6 cited R overflow by one; every S is
     used so none can be dropped, so the lowest-ranked cited R (R6) is dropped
@@ -1721,9 +1880,53 @@ def test_citations_cap_drops_lowest_ranked_r_when_no_s_is_droppable() -> None:
     asyncio.run(scenario())
 
 
+_SNIPPET_ANCHOR: dict[str, object] = {
+    "type": "document",
+    "startOffset": 0,
+    "endOffset": 10,
+    "headingPath": ["H"],
+}
+_SNIPPET_CONTENT_DIGEST = "sha256:" + "f" * 64
+
+
+def _snippet_anchor_json(anchor: dict[str, object]) -> str:
+    value = dict(anchor)
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _expected_snippet_chunk_id(
+    *,
+    revision: str = "rev-1",
+    anchor: dict[str, object] | None = None,
+    content_digest: str | None = None,
+) -> str:
+    return str(
+        chunk_id_for(
+            RevisionId(revision),
+            _snippet_anchor_json(anchor if anchor is not None else _SNIPPET_ANCHOR),
+            content_digest if content_digest is not None else _SNIPPET_CONTENT_DIGEST,
+        )
+    )
+
+
+def _expected_snippet_logical_chunk_id(
+    *, document_id: str, anchor: dict[str, object] | None = None
+) -> str:
+    return logical_chunk_projection_id(
+        logical_chunk_id_for(
+            DocumentId(document_id),
+            _snippet_anchor_json(anchor if anchor is not None else _SNIPPET_ANCHOR),
+        )
+    )
+
+
 def _snippet_only_relation_evidence(
-    *, document_id: str | None, anchor: dict[str, object] | None = None
+    *,
+    document_id: str | None,
+    anchor: dict[str, object] | None = None,
+    chunk_id: str | None = None,
 ) -> RelationEvidence:
+    resolved_anchor = anchor if anchor is not None else _SNIPPET_ANCHOR
     return RelationEvidence(
         label="R1",
         edge_id="e-1",
@@ -1739,20 +1942,15 @@ def _snippet_only_relation_evidence(
         confidence=0.9,
         support=(
             RelationSupport(
-                chunk_id="chunk-snippet-1",
+                chunk_id=(
+                    chunk_id
+                    if chunk_id is not None
+                    else _expected_snippet_chunk_id(anchor=resolved_anchor)
+                ),
                 source_revision_id="rev-1",
                 document_revision_id="rev-1",
-                content_digest="sha256:" + "f" * 64,
-                anchor=(
-                    anchor
-                    if anchor is not None
-                    else {
-                        "type": "document",
-                        "startOffset": 0,
-                        "endOffset": 10,
-                        "headingPath": ["H"],
-                    }
-                ),
+                content_digest=_SNIPPET_CONTENT_DIGEST,
+                anchor=resolved_anchor,
                 snippet="核保流程与健康告知相关的片段。",
                 document_id=document_id,
             ),
@@ -1797,9 +1995,60 @@ def test_snippet_only_support_is_resolved_into_a_citable_edge_citation() -> None
         assert edge_citations[0].chunk_id not in {
             c.chunk_id for c in response.citations if c.kind == "chunk"
         }
+        assert edge_citations[0].chunk_id == _expected_snippet_chunk_id()
+        assert edge_citations[0].logical_chunk_id == _expected_snippet_logical_chunk_id(
+            document_id="doc-xyz"
+        )
         assert response.degraded_mode is False
         assert response.relation is not None
         assert response.relation.relation_count == 1
+
+    asyncio.run(scenario())
+
+
+def test_snippet_only_support_with_anchor_drift_is_unresolvable_and_degraded() -> None:
+    """I2 follow-up: the model echoes `anchorJson` and extraction never
+    validates it, so the support's own `chunk_id` can drift from what the
+    anchor+digest actually recompute. Require the recomputed `chunk_id` to
+    match `support.chunk_id`, or treat the support as unresolvable rather than
+    minting a citation for a chunk that was never indexed."""
+
+    async def scenario() -> None:
+        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="已验证的事实。\n\n核保流程需要健康告知。",
+                    claims=(
+                        GeneratedClaim(text="已验证的事实。", evidence_labels=("S1",)),
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1",)),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(
+                _snippet_only_relation_evidence(
+                    document_id="doc-xyz", chunk_id="chunk-drifted-does-not-match-formula"
+                ),
+            ),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        assert response.answer == "已验证的事实。"
+        assert all(c.kind == "chunk" for c in response.citations)
+        assert response.degraded_mode is True
+        assert response.relation is not None
+        assert response.relation.relation_count == 0
+        assert response.relation.diagnostics.get("relation-support-unresolvable") == 1
 
     asyncio.run(scenario())
 
@@ -1974,7 +2223,7 @@ def test_intent_relation_execution_sets_relation_first_through_planned_retrieval
                     id="q1",
                     text=query,
                     depends_on=(),
-                    source_ids=("src_demo",),
+                    source_ids=(_SRC_ID,),
                     evidence_goal="relation",
                 ),
             ),
