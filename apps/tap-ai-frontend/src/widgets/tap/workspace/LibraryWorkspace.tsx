@@ -52,7 +52,7 @@ interface LibraryWorkspaceProps {
   publishedSources?: readonly PublishedSourceRevision[];
   publishedSourcesLoading?: boolean;
   onAskAboutNode?: (label: string, sourceIds: string[]) => void;
-  onOpenSource?: (sourceId: string) => void;
+  onOpenSource?: (sourceId: string, trigger: HTMLElement) => void;
 }
 
 function publishedRevisionIdsOf(

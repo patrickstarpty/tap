@@ -3048,7 +3048,7 @@ describe("Tap product workspace interactions", () => {
     expect(screen.getByRole("list", { name: "Library sources" })).toBeVisible();
   });
 
-  it("returns focus to the 'View source' button after closing the opened source", async () => {
+  it("returns focus to the 'Open original' button after closing the opened source", async () => {
     const user = userEvent.setup();
     vi.mocked(useGraphProject).mockReturnValue({
       data: {
@@ -3124,7 +3124,7 @@ describe("Tap product workspace interactions", () => {
           isError: false,
         }) as never,
     );
-    // The graph's node-detail "View source" button opens the sourceId
+    // The graph's node-detail "Open original" button opens the sourceId
     // resolved from `publishedSources` (DEFAULT_SOURCES), but the fake
     // knowledge client's `getSource` looks a source up by the *document*
     // fixture's own deterministic `sourceId` (derived from `documentId`).
@@ -3150,17 +3150,128 @@ describe("Tap product workspace interactions", () => {
       expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
     );
     await user.click(screen.getByRole("button", { name: /Age eligibility/ }));
-    const viewSourceButton = await screen.findByRole("button", {
-      name: "View source in document list",
+    const openOriginalButton = await screen.findByRole("button", {
+      name: "Open original",
     });
-    await user.click(viewSourceButton);
+    await user.click(openOriginalButton);
 
     const dialog = await screen.findByRole("dialog");
     await user.click(
       within(dialog).getByRole("button", { name: "Close Knowledge sources" }),
     );
 
-    expect(viewSourceButton).toHaveFocus();
+    expect(openOriginalButton).toHaveFocus();
+  });
+
+  it("fills the composer and source chips when asking about a graph node", async () => {
+    const user = userEvent.setup();
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "disclosure",
+                nodeType: "CONCEPT",
+                label: "Health disclosure",
+                canonicalKey: "disclosure",
+                degree: 0,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    vi.mocked(useGraphNode).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            node: {
+              nodeId: "disclosure",
+              nodeType: "CONCEPT",
+              label: "Health disclosure",
+              canonicalKey: "disclosure",
+              degree: 0,
+              communityId: "underwriting",
+              aliases: [],
+            },
+            community: {
+              communityId: "underwriting",
+              label: "Underwriting",
+              size: 1,
+            },
+            // Both revision ids resolve to a published source id in
+            // `DEFAULT_SOURCES` (the fixture `defaultKnowledgeClient` seeds
+            // below), so `GraphOverview` can map them to real source ids
+            // before `askAboutGraphNode` ever sees them.
+            sources: [
+              {
+                sourceRevisionId: "rev_life_underwriting_rules",
+                documentRevisionId: "rev_life_underwriting_rules",
+                sourceName: "life-underwriting-rules.md",
+                evidence: [],
+              },
+              {
+                sourceRevisionId: "rev_health_disclosure_guide",
+                documentRevisionId: "rev_health_disclosure_guide",
+                sourceName: "health-disclosure-guide.pdf",
+                evidence: [],
+              },
+            ],
+            relations: [],
+            neighbors: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    const api = defaultKnowledgeClient();
+    const queryClient = createTestQueryClient();
+    seedAgentSkillCatalog(queryClient, api.projectId);
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
+    );
+    await user.click(screen.getByRole("button", { name: /Health disclosure/ }));
+    await user.click(screen.getByRole("button", { name: "Ask about this" }));
+
+    expect(screen.getByRole("textbox", { name: "Message Tapper" })).toHaveValue(
+      "Health disclosure",
+    );
+    expect(
+      screen.getByRole("checkbox", { name: /life-underwriting-rules\.md/ }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: /health-disclosure-guide\.pdf/ }),
+    ).toBeChecked();
   });
 
   it("combines Library type and status filters and clears them together", async () => {

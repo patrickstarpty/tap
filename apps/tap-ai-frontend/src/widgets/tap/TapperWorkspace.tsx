@@ -763,14 +763,14 @@ function ProjectLibraryWorkspace({
         publishedSources={publishedSources}
         publishedSourcesLoading={publishedSourcesLoading}
         onAskAboutNode={onAskAboutNode}
-        onOpenSource={(sourceId) => {
-          // There is no explicit trigger element passed through this path
-          // (the click happened inside the graph canvas, not a Library
-          // list row), but the browser focuses a button on click, so the
-          // clicked "View source"/"Open original" button is still the
-          // active element at this point — use it as the opener so focus
-          // returns there when the dialog closes.
-          opener.current = document.activeElement as HTMLElement | null;
+        onOpenSource={(sourceId, trigger) => {
+          // The graph node detail panel's "Open original" button passes
+          // its own trigger element explicitly (rather than relying on
+          // `document.activeElement`, which Safari does not set on a
+          // button click), so this reuses the same `onInspectSource` path
+          // the Library list rows use — focus returns to that button when
+          // the dialog closes in every browser, not just Chromium.
+          opener.current = trigger;
           setInspected(sourceId);
         }}
         onInspectSource={(sourceId, trigger) => {

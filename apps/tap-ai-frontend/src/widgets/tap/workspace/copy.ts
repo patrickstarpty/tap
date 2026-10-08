@@ -180,6 +180,15 @@ export interface WorkspaceCopy {
     resetView: string;
     toggleCommunities: string;
     closeNodeDetails: string;
+    aliases: string;
+    nodeSources: string;
+    evidenceSnippets: string;
+    openOriginal: string;
+    askAboutNode: string;
+    showAllRelations(n: number): string;
+    relationCount(n: number): string;
+    nodeDetailsLoading: string;
+    nodeDetailsError: string;
     enterFullscreen: string;
     exitFullscreen: string;
     fullscreenUnavailable: string;
@@ -396,6 +405,15 @@ export const WORKSPACE_COPY = {
       resetView: "Reset view",
       toggleCommunities: "Toggle topic groups",
       closeNodeDetails: "Close node details",
+      aliases: "Aliases",
+      nodeSources: "Sources",
+      evidenceSnippets: "Evidence",
+      openOriginal: "Open original",
+      askAboutNode: "Ask about this",
+      showAllRelations: (n: number) => `Show all (${n})`,
+      relationCount: (n: number) => `${n} relations`,
+      nodeDetailsLoading: "Loading node details…",
+      nodeDetailsError: "Node details are unavailable. Try again.",
       enterFullscreen: "Enter fullscreen",
       exitFullscreen: "Exit fullscreen",
       fullscreenUnavailable: "Fullscreen is unavailable in this browser.",
@@ -609,6 +627,15 @@ export const WORKSPACE_COPY = {
       resetView: "重置视图",
       toggleCommunities: "显示或收起主题分组",
       closeNodeDetails: "关闭节点详情",
+      aliases: "别名",
+      nodeSources: "来源",
+      evidenceSnippets: "证据片段",
+      openOriginal: "打开原件",
+      askAboutNode: "就此提问",
+      showAllRelations: (n: number) => `显示全部 (${n})`,
+      relationCount: (n: number) => `${n} 条关系`,
+      nodeDetailsLoading: "正在加载节点详情…",
+      nodeDetailsError: "节点详情暂时无法加载，请重试。",
       enterFullscreen: "进入全屏",
       exitFullscreen: "退出全屏",
       fullscreenUnavailable: "当前浏览器不支持全屏。",

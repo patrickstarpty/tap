@@ -1,6 +1,6 @@
 import { CloseOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useState } from "react";
-import type { ComponentType, CSSProperties } from "react";
+import type { ComponentType } from "react";
 
 // `import type` only — see the note in `CommunityList.tsx`: type-only
 // imports from `widgets/` are not flagged by dependency-cruiser's
@@ -14,20 +14,13 @@ import type { PublishedSourceRevision } from "../../../widgets/tap/workspace/Lib
 
 import { useGraphLayout } from "../model/layout";
 import {
-  useGraphNode,
   useGraphOverview,
   useGraphProject,
   useGraphSearch,
 } from "../api/queries";
 import { MAX_GRAPH_NODES, OVERVIEW_PAGE } from "../model/graph";
+import { NodeDetailPanel } from "./NodeDetailPanel";
 import { OTHER_COMMUNITY_ID, toOverviewData } from "./toOverviewData";
-
-function nodeTypeLabel(copy: WorkspaceCopy, nodeType: string): string {
-  return (
-    copy.library.nodeTypes[nodeType as keyof typeof copy.library.nodeTypes] ??
-    nodeType
-  );
-}
 
 /**
  * Describes whether `sourceRevisionIds` is ready to scope a graph query.
@@ -46,6 +39,7 @@ export type GraphSourceScope =
 export function GraphOverview({
   projectId,
   copy,
+  locale,
   query,
   sourceScope,
   publishedSources = [],
@@ -60,7 +54,7 @@ export function GraphOverview({
   sourceScope: GraphSourceScope;
   publishedSources?: readonly PublishedSourceRevision[];
   onAskAboutNode?: (label: string, sourceIds: string[]) => void;
-  onOpenSource?: (sourceId: string) => void;
+  onOpenSource?: (sourceId: string, trigger: HTMLElement) => void;
   Canvas: ComponentType<KnowledgeGraphProps>;
 }) {
   const libraryCopy = copy.library;
@@ -127,12 +121,6 @@ export function GraphOverview({
   );
   const subgraph =
     trimmedQuery.length > 0 ? searchQuery.data : overviewQuery.data;
-
-  const nodeDetailQuery = useGraphNode(
-    gatedProjectId,
-    graphVersion,
-    selectedNodeId,
-  );
 
   // Same size-descending order as the palette assignment in
   // `toOverviewData` so the force layout seeds communities in the same
@@ -210,16 +198,18 @@ export function GraphOverview({
       ),
     [publishedSources],
   );
-  const nodeDetail = nodeDetailQuery.data;
-  const nodeDetailSourceIds = (nodeDetail?.sources ?? [])
-    .map((source) => sourceIdByRevisionId.get(source.sourceRevisionId))
-    .filter((id): id is string => id !== undefined);
 
   const selectedNode =
     selectedNodeId !== null
       ? (overview.nodes.find((node) => node.id === selectedNodeId) ?? null)
       : null;
 
+  // `NodeDetailPanel` only knows the `sourceRevisionId`s its own `GET
+  // /node` fetch returns — it has no access to `publishedSources`, so this
+  // is the one place those revision ids are resolved to the real source
+  // ids `onAskAboutNode`/`onOpenSource` expect (see `sourceIdByRevisionId`
+  // above). A revision with no matching published source (not yet
+  // resolvable) is dropped rather than forwarded as a raw revision id.
   const detailPanel = (
     <aside
       className="tap-graph-inspector"
@@ -227,102 +217,49 @@ export function GraphOverview({
       role="region"
       aria-label={libraryCopy.nodeDetails}
     >
-      <header>
-        <h2>{libraryCopy.nodeDetails}</h2>
-        <button
-          type="button"
-          aria-label={libraryCopy.closeNodeDetails}
-          onClick={() => setSelectedNodeId(null)}
-        >
-          <CloseOutlined aria-hidden="true" />
-        </button>
-      </header>
-      {selectedNode === null ? (
-        <p className="tap-graph-inspector-empty">{libraryCopy.selectNode}</p>
+      {selectedNode !== null && graphVersion !== null ? (
+        <NodeDetailPanel
+          projectId={projectId}
+          graphVersion={graphVersion}
+          nodeId={selectedNode.id}
+          color={selectedNode.color}
+          communityLabel={selectedNode.communityLabel}
+          copy={copy}
+          locale={locale}
+          onClose={() => setSelectedNodeId(null)}
+          onSelectNode={setSelectedNodeId}
+          onAskAboutNode={
+            onAskAboutNode
+              ? (label, sourceRevisionIds) => {
+                  const resolvedSourceIds = sourceRevisionIds
+                    .map((revisionId) => sourceIdByRevisionId.get(revisionId))
+                    .filter((id): id is string => id !== undefined);
+                  onAskAboutNode(label, resolvedSourceIds);
+                }
+              : undefined
+          }
+          onOpenSource={
+            onOpenSource
+              ? (sourceRevisionId, trigger) => {
+                  const sourceId = sourceIdByRevisionId.get(sourceRevisionId);
+                  if (sourceId !== undefined) onOpenSource(sourceId, trigger);
+                }
+              : undefined
+          }
+        />
       ) : (
         <>
-          <div className="tap-graph-inspector-title">
-            <span
-              style={
-                { "--tap-community-color": selectedNode.color } as CSSProperties
-              }
-              aria-hidden="true"
-            />
-            <div>
-              <small>{nodeTypeLabel(copy, selectedNode.nodeType)}</small>
-              <h3>{selectedNode.label}</h3>
-            </div>
-          </div>
-          <dl>
-            <div>
-              <dt>{libraryCopy.community}</dt>
-              <dd>{selectedNode.communityLabel}</dd>
-            </div>
-            <div>
-              <dt>{libraryCopy.relationships}</dt>
-              <dd>
-                {
-                  overview.edges.filter(
-                    (edge) =>
-                      edge.source === selectedNode.id ||
-                      edge.target === selectedNode.id,
-                  ).length
-                }{" "}
-                {libraryCopy.connections}
-              </dd>
-            </div>
-          </dl>
-          {selectedNode.aliases.length > 0 ? (
-            <p>{selectedNode.aliases.join(", ")}</p>
-          ) : null}
-          <ul className="tap-graph-inspector-relations">
-            {overview.edges
-              .filter(
-                (edge) =>
-                  edge.source === selectedNode.id ||
-                  edge.target === selectedNode.id,
-              )
-              .map((edge) => {
-                const otherId =
-                  edge.source === selectedNode.id ? edge.target : edge.source;
-                const otherNode = overview.nodes.find(
-                  (node) => node.id === otherId,
-                );
-                return (
-                  <li key={edge.id}>
-                    <span>{edge.label}</span>
-                    <strong>{otherNode?.label ?? otherId}</strong>
-                  </li>
-                );
-              })}
-          </ul>
-          {onAskAboutNode ? (
+          <header>
+            <h2>{libraryCopy.nodeDetails}</h2>
             <button
               type="button"
-              onClick={() =>
-                onAskAboutNode(selectedNode.label, nodeDetailSourceIds)
-              }
+              aria-label={libraryCopy.closeNodeDetails}
+              onClick={() => setSelectedNodeId(null)}
             >
-              {copy.chat.messageTapper}
+              <CloseOutlined aria-hidden="true" />
             </button>
-          ) : null}
-          {onOpenSource
-            ? (nodeDetail?.sources ?? []).map((source) => {
-                const sourceId = sourceIdByRevisionId.get(
-                  source.sourceRevisionId,
-                );
-                if (sourceId === undefined) return null;
-                return (
-                  <button
-                    key={source.sourceRevisionId}
-                    type="button"
-                    onClick={() => onOpenSource(sourceId)}
-                  >
-                    {libraryCopy.viewSource}
-                  </button>
-                );
-              })
-            : null}
+          </header>
+          <p className="tap-graph-inspector-empty">{libraryCopy.selectNode}</p>
         </>
       )}
     </aside>
