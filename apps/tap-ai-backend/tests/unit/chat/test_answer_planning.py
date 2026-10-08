@@ -520,3 +520,87 @@ def test_planner_schema_lists_relation_intent_and_graph_route():
 
     assert "relation" in PLANNER_SCHEMA["properties"]["intent"]["enum"]
     assert "graph" in PLANNER_SCHEMA["properties"]["route"]["enum"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "route,intent",
+    [("retrieve", "comparison"), ("graph", "relation")],
+)
+async def test_model_injected_constraint_in_query_text_falls_back_on_every_route(route, intent):
+    """Review I1: the query-constraint equality check must not be skipped for
+    the graph route -- a model-returned plan that injects a negation/version
+    into a query's text (absent from the original question entirely) must
+    fall back to `invalid-plan` on every admitted route, not just retrieve."""
+
+    async def model(_input, _timeout):
+        return suggestion(
+            intent=intent,
+            route=route,
+            standalone_query="compare underwriting and claims",
+            queries=[
+                {
+                    "id": "q1",
+                    "text": "underwriting claims not v3",
+                    "depends_on": [],
+                    "evidence_goal": "underwriting claims not v3",
+                    "source_ids": ["source-a"],
+                }
+            ],
+        )
+
+    plan = await planning().AnswerPlanner(model).plan(context("compare underwriting and claims"))
+    assert plan.degradation_reason == "invalid-plan"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "提交申请后下一步是否需要审批",
+        "两个系统之间的关系型数据库配置",
+        "What follows is a list of rules.",
+    ],
+)
+async def test_relation_heuristic_false_positives_do_not_route_to_graph(message):
+    """Review M1: tightened patterns must not fire on a 下一步是否 (not 下一步是什么)
+    question, a 关系型 (database kind) mention merely near 之间, or a declarative
+    'What follows is ...' sentence that happens to contain the bare phrase."""
+
+    plan = await planning().AnswerPlanner().plan(context(message))
+    assert plan.intent != "relation"
+    assert plan.route != "graph"
+
+
+@pytest.mark.asyncio
+async def test_ordinary_procedural_question_does_not_route_to_graph():
+    plan = await planning().AnswerPlanner().plan(context("如何提交理赔申请"))
+    assert plan.intent == "procedural"
+    assert plan.route == "retrieve"
+
+
+@pytest.mark.asyncio
+async def test_ordinary_comparison_question_does_not_route_to_graph():
+    plan = await planning().AnswerPlanner(None).plan(context("比较核保流程和理赔流程的不同"))
+    assert plan.intent == "comparison"
+    assert plan.route == "retrieve"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw_changes",
+    [
+        {"intent": "relation", "route": "retrieve"},
+        {"intent": "comparison", "route": "graph"},
+    ],
+)
+async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_changes):
+    """Review M2: intent=relation and route=graph must be admitted together or
+    not at all; a mismatched model plan falls back the same way other invalid
+    model plans do."""
+
+    async def model(_input, _timeout):
+        return suggestion(**raw_changes)
+
+    plan = await planning().AnswerPlanner(model).plan(context("比较章节 A 和 B"))
+    assert plan.degradation_reason == "invalid-plan"

@@ -152,9 +152,11 @@ class AnswerPlanner:
                 if ambiguous:
                     standalone = value.authorized_referents[0] + "：" + original
                 if re.search(
-                    r"什么关系|有何关系|之间.*关系|哪些.*(?:影响|依赖|触发)|之后是什么|下一步是|"
+                    r"什么关系|有何关系|之间.{0,10}(?:有|是)?什么关系|"
+                    r"哪些.*(?:影响|依赖|触发)|之后是什么|下一步是什么|"
                     r"relationship between|how (?:does|do|is) .+ relate|"
-                    r"what (?:follows|comes after)|which .+ (?:affect|depend on|trigger)",
+                    r"what (?:follows|comes after)\b[^.!?\n]*\?|"
+                    r"which .+ (?:affect|depend on|trigger)",
                     original,
                     re.I,
                 ):
@@ -225,6 +227,8 @@ class AnswerPlanner:
                     raise ValueError("invalid planning schema")
                 if raw["route"] not in {"retrieve", "graph", "clarify"}:
                     raise ValueError("model cannot authorize direct or capability routes")
+                if (raw["intent"] == "relation") != (raw["route"] == "graph"):
+                    raise ValueError("relation intent and graph route must pair")
                 if (
                     type(raw["confidence"]) not in {int, float}
                     or not isinstance(raw["missing"], list)
@@ -254,11 +258,9 @@ class AnswerPlanner:
                     )
                 ):
                     raise ValueError("model changed constraint associations")
-                if (
-                    set(protected_constraints(" ".join(query["text"] for query in raw["queries"])))
-                    != set(protected_constraints(original))
-                    and raw["route"] == "retrieve"
-                ):
+                if set(
+                    protected_constraints(" ".join(query["text"] for query in raw["queries"]))
+                ) != set(protected_constraints(original)) and raw["route"] in {"retrieve", "graph"}:
                     raise ValueError("model queries changed exact constraints")
                 queries = tuple(
                     PlannedQuery(

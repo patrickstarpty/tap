@@ -891,11 +891,12 @@ class AuthorizedRetrieval:
             source_item = evidence_by_label.get(support.evidence_label)
             if source_item is None:
                 continue
-            # The model echoed the `S` label back and extraction never
-            # validates it; without recomputing the real chunk identity and
-            # requiring it to match the support's own `chunk_id` (same guard
-            # as the snippet-only path below), a stale or mismatched label
-            # would silently mint a citation for the wrong chunk.
+            # `RelationContext.rebind` assigns `evidence_label` deterministically
+            # by matching `support.chunk_id` to the evidence item's own chunk_id
+            # (`relation_analysis.py`), so this should already hold -- the check
+            # is defence in depth against a future rebinding bug or a relation
+            # context built some other way, not a guard against untrusted model
+            # input (the model never supplies this label/chunk_id pairing).
             if source_item.chunk_id != support.chunk_id:
                 continue
             return Citation(
