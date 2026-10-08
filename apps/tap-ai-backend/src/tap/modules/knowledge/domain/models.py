@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 
 class SourceFamily(str, Enum):
@@ -532,6 +532,22 @@ class ModelCallProvenance:
 
 
 @dataclass(frozen=True, slots=True)
+class EdgeCitation:
+    """Project-graph edge facts for an `R`-labeled citation. `relation_label`
+    is the merged edge's display label (never blank -- PR 2 falls back to
+    `relation_type` when a relation has no explicit label)."""
+
+    edge_id: str
+    graph_version: str
+    subject_node_id: str
+    subject_label: str
+    object_node_id: str
+    object_label: str
+    relation_type: str
+    relation_label: str
+
+
+@dataclass(frozen=True, slots=True)
 class Citation:
     family: SourceFamily
     citation_id: str
@@ -545,6 +561,8 @@ class Citation:
     publication_id: str | None = None
     approval_digest: str | None = None
     approved_item_id: str | None = None
+    kind: Literal["chunk", "edge"] = "chunk"
+    edge: EdgeCitation | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.family, SourceFamily):
@@ -552,6 +570,8 @@ class Citation:
         _digest("citation chunk content hash", self.chunk_content_hash)
         if self.approval_digest is not None:
             _digest("citation approval digest", self.approval_digest)
+        if (self.kind == "edge") != (self.edge is not None):
+            raise ValueError("citation kind and edge payload must agree")
 
 
 @dataclass(frozen=True, slots=True)

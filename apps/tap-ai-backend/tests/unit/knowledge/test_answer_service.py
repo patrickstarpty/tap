@@ -31,6 +31,7 @@ from tap.modules.knowledge.domain.models import (
     Claim,
     ContentRole,
     DocumentAnchor,
+    EdgeCitation,
     ModelCallProvenance,
     ResourceMode,
     ResourceRef,
@@ -812,6 +813,117 @@ def test_snapshot_value_rejects_citation_rebound_to_another_trace() -> None:
                     anchor_json=anchor_json,
                 ),
             ),
+        )
+
+
+def _edge_citation(
+    *,
+    citation_id: str,
+    evidence_label: str,
+    graph_version: str = "7",
+) -> Citation:
+    base = citation(citation_id=citation_id, evidence_label=evidence_label)
+    return replace(
+        base,
+        kind="edge",
+        edge=EdgeCitation(
+            edge_id="e-1",
+            graph_version=graph_version,
+            subject_node_id="A",
+            subject_label="节点 A",
+            object_node_id="B",
+            object_label="节点 B",
+            relation_type="REQUIRES",
+            relation_label="REQUIRES",
+        ),
+    )
+
+
+def test_snapshot_accepts_edge_citations_after_chunk_citations_with_one_graph_version() -> None:
+    s1 = citation(citation_id="citation-1", evidence_label="S1")
+    s2 = citation(citation_id="citation-2", evidence_label="S2")
+    r1 = _edge_citation(citation_id="citation-3", evidence_label="R1")
+
+    def build(citations: tuple[Citation, ...]) -> AnswerResponse:
+        answer = "The rule is grounded."
+        return AnswerResponse(
+            trace_id="trace-a",
+            query_plan_id="plan-a",
+            context_snapshot_id="context-a",
+            corpus_version="tapper-demo-v1",
+            retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
+            answer=answer,
+            abstained=False,
+            abstention_reason=None,
+            claims=(
+                Claim(
+                    claim_id="claim-a",
+                    text=answer,
+                    answer_start=0,
+                    answer_end=len(answer),
+                    citation_ids=tuple(item.citation_id for item in citations),
+                ),
+            ),
+            citations=citations,
+            embedding_provenance=ModelCallProvenance("text-embedding-v4", "embed-request"),
+            answer_provenance=ModelCallProvenance("qwen-plus", "answer-request"),
+        )
+
+    ok = AnswerSnapshot.from_response(
+        response=build((s1, s2, r1)),
+        query="q",
+        selected_revisions=(ready(),),
+    )
+    assert ok.citations[-1].citation_kind == "edge"
+    assert ok.citations[-1].graph_version == "7"
+
+    with pytest.raises(ValueError):
+        AnswerSnapshot.from_response(
+            response=build((r1, s1, s2)),
+            query="q",
+            selected_revisions=(ready(),),
+        )
+
+    r2 = _edge_citation(citation_id="citation-4", evidence_label="R2", graph_version="8")
+    with pytest.raises(ValueError):
+        AnswerSnapshot.from_response(
+            response=build((s1, s2, r1, r2)),
+            query="q",
+            selected_revisions=(ready(),),
+        )
+
+
+def test_edge_citation_snapshot_requires_all_edge_fields() -> None:
+    anchor_json = json.dumps(
+        {"endOffset": 12, "headingPath": ["Policy"], "startOffset": 3, "type": "document"},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    with pytest.raises(ValueError):
+        CitationSnapshot(
+            trace_id="trace-a",
+            citation_id="citation-a",
+            document_id="doc_a",
+            revision_id="rev_a",
+            chunk_id="chunk-a",
+            source_content_hash=SOURCE_HASH,
+            chunk_content_hash=CHUNK_HASH,
+            anchor_json=anchor_json,
+            citation_kind="edge",
+            edge_id=None,
+        )
+    with pytest.raises(ValueError):
+        CitationSnapshot(
+            trace_id="trace-a",
+            citation_id="citation-a",
+            document_id="doc_a",
+            revision_id="rev_a",
+            chunk_id="chunk-a",
+            source_content_hash=SOURCE_HASH,
+            chunk_content_hash=CHUNK_HASH,
+            anchor_json=anchor_json,
+            citation_kind="chunk",
+            edge_id="e-1",
         )
 
 
