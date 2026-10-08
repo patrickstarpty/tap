@@ -24,6 +24,8 @@ class _ChunkLocatorLedger(Protocol):
         self, revision_ids: tuple[str, ...]
     ) -> Mapping[str, ArtifactLocator]: ...
 
+    async def load_document_ids(self, revision_ids: tuple[str, ...]) -> Mapping[str, str]: ...
+
 
 class ArtifactChunkSnippets:
     """Reads chunk content for relation-evidence snippets.
@@ -53,3 +55,8 @@ class ArtifactChunkSnippets:
                 if chunk.chunk_id in wanted_chunk_ids and chunk.chunk_id not in result:
                     result[chunk.chunk_id] = chunk.content
         return result
+
+    async def document_ids(self, revision_ids: tuple[str, ...]) -> Mapping[str, str]:
+        if not revision_ids:
+            return {}
+        return await self._ledger.load_document_ids(tuple(dict.fromkeys(revision_ids)))

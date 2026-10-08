@@ -831,13 +831,20 @@ class RetrievalHit(ContractModel):
         return self
 
 
-class RetrievalEdgeCitation(ContractModel):
+class GraphEndpointView(ContractModel):
+    """One edge citation endpoint (subject or object); nested shape matches
+    Task 7's `EdgeCitationView` ahead of time so Task 7 does not need to
+    reshape this contract again."""
+
+    node_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1)
+
+
+class EdgeCitationView(ContractModel):
     edge_id: str = Field(min_length=1, max_length=128)
     graph_version: str = Field(min_length=1, max_length=64)
-    subject_node_id: str = Field(min_length=1, max_length=128)
-    subject_label: str = Field(min_length=1)
-    object_node_id: str = Field(min_length=1, max_length=128)
-    object_label: str = Field(min_length=1)
+    subject: GraphEndpointView
+    object: GraphEndpointView
     relation_type: str = Field(min_length=1, max_length=32)
     relation_label: str = Field(min_length=1, max_length=64)
 
@@ -855,7 +862,7 @@ class RetrievalCitation(ContractModel):
     approval_digest: CanonicalSha256 | None = None
     approved_item_id: ShortIdentifier | None = None
     kind: Literal["chunk", "edge"] = "chunk"
-    edge: RetrievalEdgeCitation | None = None
+    edge: EdgeCitationView | None = None
 
     @model_validator(mode="after")
     def validate_internal_source_family(self, info: ValidationInfo) -> Self:

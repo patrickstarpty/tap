@@ -1870,7 +1870,7 @@ export interface components {
             /** Attempt */
             attempt: number;
             /** Graphcontextstatus */
-            graphContextStatus?: ("APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED") | null;
+            graphContextStatus?: ("APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY") | null;
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
             input: components["schemas"]["ConversationTurnInputView"];
@@ -2058,6 +2058,19 @@ export interface components {
             /** Updatedat */
             updatedAt: string;
         };
+        /** EdgeCitationView */
+        EdgeCitationView: {
+            /** Edgeid */
+            edgeId: string;
+            /** Graphversion */
+            graphVersion: string;
+            object: components["schemas"]["GraphEndpointView"];
+            /** Relationlabel */
+            relationLabel: string;
+            /** Relationtype */
+            relationType: string;
+            subject: components["schemas"]["GraphEndpointView"];
+        };
         /** FailureAnchor */
         FailureAnchor: {
             /** Incidentid */
@@ -2099,6 +2112,25 @@ export interface components {
              */
             type: "failure";
         };
+        /** GraphContextSummaryView */
+        GraphContextSummaryView: {
+            /**
+             * Graphversion
+             * @default null
+             */
+            graphVersion?: string | null;
+            /** Paths */
+            paths?: string[][];
+            /** Relationcount */
+            relationCount: number;
+            /** Seedcount */
+            seedCount: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "EMPTY";
+        };
         /** GraphEdgeView */
         GraphEdgeView: {
             /** Confidence */
@@ -2121,6 +2153,18 @@ export interface components {
             sourceNodeId: string;
             /** Targetnodeid */
             targetNodeId: string;
+        };
+        /**
+         * GraphEndpointView
+         * @description One edge citation endpoint (subject or object); nested shape matches
+         *     Task 7's `EdgeCitationView` ahead of time so Task 7 does not need to
+         *     reshape this contract again.
+         */
+        GraphEndpointView: {
+            /** Label */
+            label: string;
+            /** Nodeid */
+            nodeId: string;
         };
         /** GraphEvidenceView */
         GraphEvidenceView: {
@@ -3973,12 +4017,14 @@ export interface components {
             degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
+            /** @default null */
+            graphContext?: components["schemas"]["GraphContextSummaryView"] | null;
             /**
              * Graphcontextstatus
              * @default NOT_SELECTED
              * @enum {string}
              */
-            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY";
             /**
              * Graphsnapshotid
              * @default null
@@ -4015,8 +4061,16 @@ export interface components {
              * @default null
              */
             derivedFromChunkIds?: string[] | null;
+            /** @default null */
+            edge?: components["schemas"]["EdgeCitationView"] | null;
             /** Evidencelabel */
             evidenceLabel: string;
+            /**
+             * Kind
+             * @default chunk
+             * @enum {string}
+             */
+            kind?: "chunk" | "edge";
             /** Logicalchunkid */
             logicalChunkId: string;
             /**
@@ -5088,7 +5142,7 @@ export interface components {
              * @default NOT_SELECTED
              * @enum {string}
              */
-            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY";
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
             /** Queryplanid */
@@ -5204,12 +5258,13 @@ export interface components {
             degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
+            graphContext?: components["schemas"]["GraphContextSummaryView"] | null;
             /**
              * Graphcontextstatus
              * @default NOT_SELECTED
              * @enum {string}
              */
-            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY";
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
             /** Queryplanid */

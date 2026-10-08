@@ -19,9 +19,16 @@ from tap.modules.knowledge.ports.documents import ArtifactLocator
 
 
 class _FakeLedger:
-    def __init__(self, locators: Mapping[str, ArtifactLocator]) -> None:
+    def __init__(
+        self,
+        locators: Mapping[str, ArtifactLocator],
+        *,
+        document_ids: Mapping[str, str] | None = None,
+    ) -> None:
         self._locators = dict(locators)
+        self._document_ids = dict(document_ids or {})
         self.calls: list[tuple[str, ...]] = []
+        self.document_id_calls: list[tuple[str, ...]] = []
 
     async def load_chunk_locators(
         self, revision_ids: tuple[str, ...]
@@ -31,6 +38,14 @@ class _FakeLedger:
             revision_id: self._locators[revision_id]
             for revision_id in revision_ids
             if revision_id in self._locators
+        }
+
+    async def load_document_ids(self, revision_ids: tuple[str, ...]) -> Mapping[str, str]:
+        self.document_id_calls.append(revision_ids)
+        return {
+            revision_id: self._document_ids[revision_id]
+            for revision_id in revision_ids
+            if revision_id in self._document_ids
         }
 
 
@@ -105,3 +120,25 @@ async def test_empty_refs_returns_empty_without_calling_the_ledger() -> None:
 
     assert result == {}
     assert ledger.calls == []
+
+
+@pytest.mark.asyncio
+async def test_document_ids_resolves_and_dedupes_revisions() -> None:
+    ledger = _FakeLedger({}, document_ids={"rev-1": "doc-1", "rev-2": "doc-2"})
+    reader = ArtifactChunkSnippets(ledger, _FakeArtifacts({}))
+
+    result = await reader.document_ids(("rev-1", "rev-1", "rev-missing", "rev-2"))
+
+    assert result == {"rev-1": "doc-1", "rev-2": "doc-2"}
+    assert ledger.document_id_calls == [("rev-1", "rev-missing", "rev-2")]
+
+
+@pytest.mark.asyncio
+async def test_document_ids_empty_input_skips_the_ledger() -> None:
+    ledger = _FakeLedger({})
+    reader = ArtifactChunkSnippets(ledger, _FakeArtifacts({}))
+
+    result = await reader.document_ids(())
+
+    assert result == {}
+    assert ledger.document_id_calls == []

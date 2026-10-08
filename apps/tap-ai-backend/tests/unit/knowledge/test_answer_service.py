@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import pytest
 
 from tap.modules.access.domain.policy import ResourceGrant, RetrievalPolicyContext
+from tap.modules.knowledge.application.answer_templates import get_template
 from tap.modules.knowledge.application.answers import (
     AnswerSelectionRejected,
     AnswerService,
@@ -17,6 +18,10 @@ from tap.modules.knowledge.application.answers import (
     CitationSnapshot,
     DocumentStateChanged,
     ReadyDocumentRevision,
+)
+from tap.modules.knowledge.application.planned_answer import (
+    AuthorizedAnswerExecution,
+    AuthorizedAnswerQuery,
 )
 from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.modules.knowledge.application.relation_analysis import (
@@ -1331,16 +1336,40 @@ def test_augmentation_disabled_by_flag() -> None:
     asyncio.run(scenario())
 
 
+def _preferred_revision_request(revision: str = "rev-1") -> AnswerRequest:
+    """Like `_single_revision_request`, but `PREFERRED` (not `SCOPE`) -- it still
+    resolves into `run.plan.resources` (so augmentation treats it as
+    "selected"), but does not narrow which hits `_hit_is_in_execution` accepts,
+    letting a test's fake search port return hits for several revisions in one
+    call without being rejected as "outside bound execution"."""
+    return AnswerRequest(
+        query="核保流程与健康告知的关系是什么？",
+        answer_mode=AnswerMode.QUICK,
+        resource_refs=(
+            ResourceRef(
+                family=SourceFamily.DOC,
+                source_id="src_demo",
+                mode=ResourceMode.PREFERRED,
+                requested_revision=revision,
+            ),
+        ),
+    )
+
+
 def test_augmentation_never_adds_unauthorized_chunks() -> None:
     async def scenario() -> None:
+        # Published at the repository level for all three revisions -- "published"
+        # and "selected" are independent axes; what must gate chunk-aug-2/3 out is
+        # the augmentation's own selection filter below, not the search/publication
+        # layer happening to never return their hits.
         publication = KnowledgePublication(
             publication_id="publication-1",
             project_id="project-a",
             review_id="review-1",
             review_version=1,
             approval_digest="sha256:" + "a" * 64,
-            source_revision_ids=("rev-1",),
-            approved_item_ids=("item-1", "item-aug1"),
+            source_revision_ids=("rev-1", "rev-2", "rev-3"),
+            approved_item_ids=("item-1", "item-aug1", "item-aug2", "item-aug3"),
             generation="gen-1",
             published_by="reviewer-1",
             published_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -1355,7 +1384,11 @@ def test_augmentation_never_adds_unauthorized_chunks() -> None:
 
         search = _SequencedSearchPort(
             (_relation_hit("chunk-s1", "rev-1", item_id="item-1"),),
-            (_relation_hit("chunk-aug-1", "rev-1", item_id="item-aug1"),),
+            (
+                _relation_hit("chunk-aug-1", "rev-1", item_id="item-aug1", local_rank=1),
+                _relation_hit("chunk-aug-2", "rev-2", item_id="item-aug2", local_rank=2),
+                _relation_hit("chunk-aug-3", "rev-3", item_id="item-aug3", local_rank=3),
+            ),
         )
         model = _RecordingModel(
             [
@@ -1375,7 +1408,7 @@ def test_augmentation_never_adds_unauthorized_chunks() -> None:
                 document_revision_id="rev-1",
                 content_digest="sha256:" + "e" * 64,
                 anchor={"page": 1},
-                snippet="selected and published",
+                snippet="selected",
             ),
             RelationSupport(
                 chunk_id="chunk-aug-2",
@@ -1383,7 +1416,7 @@ def test_augmentation_never_adds_unauthorized_chunks() -> None:
                 document_revision_id="rev-2",
                 content_digest="sha256:" + "e" * 64,
                 anchor={"page": 1},
-                snippet="unselected revision",
+                snippet="unselected and ungranted revision",
             ),
             RelationSupport(
                 chunk_id="chunk-aug-3",
@@ -1391,7 +1424,7 @@ def test_augmentation_never_adds_unauthorized_chunks() -> None:
                 document_revision_id="rev-3",
                 content_digest="sha256:" + "e" * 64,
                 anchor={"page": 1},
-                snippet="selected but not published",
+                snippet="granted by policy but not selected for this query",
             ),
         )
         relation_evidence = RelationEvidence(
@@ -1427,6 +1460,9 @@ def test_augmentation_never_adds_unauthorized_chunks() -> None:
             augment_chunks=augment_candidates,
         )
         relation = _FakeRelationAnalysis(context)
+        # rev-3 has a policy grant (ACL-authorized in general) but is not part of
+        # *this* request's resource_refs, so it is "granted but unselected" --
+        # distinct from rev-2, which has no grant at all.
         policy = policy_context(
             allowed_source_families=frozenset({"doc"}),
             resource_grants=(_resource_grant("rev-1"), _resource_grant("rev-3")),
@@ -1434,12 +1470,14 @@ def test_augmentation_never_adds_unauthorized_chunks() -> None:
         knowledge = _relation_retrieval(
             search, model, relation_analysis=relation, publication_authority=authority
         )
-        response = await knowledge.answer(_single_revision_request(), policy)
+        response = await knowledge.answer(_preferred_revision_request(), policy)
 
         assert not response.abstained
         final_evidence = model.calls[-1]["evidence"]
         assert len(final_evidence) == 2
         assert {item.chunk_id for item in final_evidence} == {"chunk-s1", "chunk-aug-1"}
+        merged_chunk = next(item for item in final_evidence if item.chunk_id == "chunk-aug-1")
+        assert merged_chunk.evidence_label == "S2"
         assert len(final_evidence) <= 20
 
     asyncio.run(scenario())
@@ -1511,5 +1549,450 @@ def test_edge_citation_reuses_s_chunk_fields_and_gets_r_label() -> None:
         assert edge_citation.evidence_label == "R1"
         assert edge_citation.edge is not None
         assert edge_citation.edge.relation_type == "REQUIRES"
+
+    asyncio.run(scenario())
+
+
+def _deep_revision_request() -> AnswerRequest:
+    return AnswerRequest(
+        query="核保流程与健康告知的关系是什么？",
+        answer_mode=AnswerMode.DEEP,
+        resource_refs=(
+            ResourceRef(
+                family=SourceFamily.DOC,
+                source_id="src_demo",
+                mode=ResourceMode.SCOPE,
+                requested_revision="rev-1",
+            ),
+        ),
+    )
+
+
+def _relation_evidence_for(
+    label: str, *, support_label: str, support_chunk_id: str = "chunk-1"
+) -> RelationEvidence:
+    return RelationEvidence(
+        label=label,
+        edge_id=f"e-{label}",
+        subject_node_id="A",
+        subject_label="核保流程",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="健康告知",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(
+            RelationSupport(
+                chunk_id=support_chunk_id,
+                source_revision_id="rev-1",
+                document_revision_id="rev-1",
+                content_digest="sha256:" + "f" * 64,
+                anchor={"page": 1},
+                evidence_label=support_label,
+            ),
+        ),
+        on_path=False,
+    )
+
+
+def test_citations_are_capped_at_twenty_dropping_uncited_s_first() -> None:
+    """C1: 20 S citations (none cited by any claim) plus 1 cited R overflow the
+    closed 20-citation bound; the lowest-ranked *uncited* S (S20) is dropped
+    first, with no claim/degradation impact."""
+
+    async def scenario() -> None:
+        hits = tuple(
+            _relation_hit(f"chunk-{index}", "rev-1", item_id=f"item-{index}")
+            for index in range(1, 21)
+        )
+        search = _SequencedSearchPort(hits)
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="核保流程需要健康告知。",
+                    claims=(
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1",)),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(_relation_evidence_for("R1", support_label="S1"),),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_deep_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        assert len(response.citations) == 20
+        labels = {citation.evidence_label for citation in response.citations}
+        assert "S20" not in labels
+        assert {f"S{n}" for n in range(1, 20)} <= labels
+        assert "R1" in labels
+        assert response.degraded_mode is False
+        assert "invalid-relation-citation" not in response.degradation_reasons
+
+    asyncio.run(scenario())
+
+
+def test_citations_cap_drops_lowest_ranked_r_when_no_s_is_droppable() -> None:
+    """C1: 15 S citations (all cited) plus 6 cited R overflow by one; every S is
+    used so none can be dropped, so the lowest-ranked cited R (R6) is dropped
+    instead, stripped from its claim and counted as `invalid-relation-citation`
+    / degraded. Quick profile: 10 base + 5 augmented S."""
+
+    async def scenario() -> None:
+        base_hits = tuple(
+            _relation_hit(f"chunk-base-{index}", "rev-1", item_id=f"item-base-{index}")
+            for index in range(1, 11)
+        )
+        augment_hits = tuple(
+            _relation_hit(f"chunk-aug-{index}", "rev-1", item_id=f"item-aug-{index}")
+            for index in range(1, 6)
+        )
+        search = _SequencedSearchPort(base_hits, augment_hits)
+        all_s_claim_text = "全部切片均已验证。"
+        r_claim_texts = [f"核保流程需要健康告知（关系{n}）。" for n in range(1, 7)]
+        generation_text = "\n\n".join([all_s_claim_text, *r_claim_texts])
+        claims = (
+            GeneratedClaim(
+                text=all_s_claim_text,
+                evidence_labels=tuple(f"S{n}" for n in range(1, 16)),
+            ),
+            *(
+                GeneratedClaim(text=r_claim_texts[n - 1], evidence_labels=(f"R{n}",))
+                for n in range(1, 7)
+            ),
+        )
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text=generation_text,
+                    claims=claims,
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        augment_candidates = tuple(
+            RelationSupport(
+                chunk_id=f"chunk-aug-{index}",
+                source_revision_id="rev-1",
+                document_revision_id="rev-1",
+                content_digest="sha256:" + "e" * 64,
+                anchor={"page": 1},
+                snippet=f"augment candidate {index}",
+            )
+            for index in range(1, 6)
+        )
+        relations = tuple(
+            _relation_evidence_for(f"R{n}", support_label=f"S{n}") for n in range(1, 7)
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=relations,
+            augment_chunks=augment_candidates,
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        assert len(response.citations) == 20
+        s_labels = {c.evidence_label for c in response.citations if c.kind == "chunk"}
+        r_labels = {c.evidence_label for c in response.citations if c.kind == "edge"}
+        assert len(s_labels) == 15
+        assert len(r_labels) == 5
+        assert response.degraded_mode is True
+        assert "invalid-relation-citation" in response.degradation_reasons
+        # R6 (the worst-ranked cited relation) was dropped; its claim is gone too.
+        assert not any("关系6" in claim.text for claim in response.claims)
+
+    asyncio.run(scenario())
+
+
+def _snippet_only_relation_evidence(
+    *, document_id: str | None, anchor: dict[str, object] | None = None
+) -> RelationEvidence:
+    return RelationEvidence(
+        label="R1",
+        edge_id="e-1",
+        subject_node_id="A",
+        subject_label="核保流程",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="健康告知",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(
+            RelationSupport(
+                chunk_id="chunk-snippet-1",
+                source_revision_id="rev-1",
+                document_revision_id="rev-1",
+                content_digest="sha256:" + "f" * 64,
+                anchor=(
+                    anchor
+                    if anchor is not None
+                    else {
+                        "type": "document",
+                        "startOffset": 0,
+                        "endOffset": 10,
+                        "headingPath": ["H"],
+                    }
+                ),
+                snippet="核保流程与健康告知相关的片段。",
+                document_id=document_id,
+            ),
+        ),
+        on_path=False,
+    )
+
+
+def test_snippet_only_support_is_resolved_into_a_citable_edge_citation() -> None:
+    """I2: a relation support that never became an `S` label (snippet-only) is
+    still reconstructed into a citable edge citation from its own fields plus
+    the matching selected revision."""
+
+    async def scenario() -> None:
+        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="核保流程需要健康告知。",
+                    claims=(
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1",)),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(_snippet_only_relation_evidence(document_id="doc-xyz"),),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        edge_citations = [c for c in response.citations if c.kind == "edge"]
+        assert len(edge_citations) == 1
+        assert edge_citations[0].evidence_label == "R1"
+        assert edge_citations[0].chunk_id not in {
+            c.chunk_id for c in response.citations if c.kind == "chunk"
+        }
+        assert response.degraded_mode is False
+        assert response.relation is not None
+        assert response.relation.relation_count == 1
+
+    asyncio.run(scenario())
+
+
+def test_unresolvable_snippet_only_support_degrades_and_excludes_relation_count() -> None:
+    """I2: when a snippet-only support's document_id cannot be resolved (never
+    carried alongside the snippet), the R citation cannot be built; the claim's
+    R label is stripped, `degraded_mode` is set, and the relation does not
+    count toward `graphContext.relationCount`."""
+
+    async def scenario() -> None:
+        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="已验证的事实。\n\n核保流程需要健康告知。",
+                    claims=(
+                        GeneratedClaim(text="已验证的事实。", evidence_labels=("S1",)),
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1",)),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(_snippet_only_relation_evidence(document_id=None),),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        assert response.answer == "已验证的事实。"
+        assert all(c.kind == "chunk" for c in response.citations)
+        assert response.degraded_mode is True
+        assert response.relation is not None
+        assert response.relation.relation_count == 0
+        assert response.relation.diagnostics.get("relation-support-unresolvable") == 1
+
+    asyncio.run(scenario())
+
+
+def test_citing_only_r2_renumbers_to_r1_with_the_right_edge() -> None:
+    """M4: the model may cite any original R label; the surviving edge citation
+    is always renumbered starting at R1 (ascending original-rank order), never
+    keeping a gap from an unused earlier label."""
+
+    async def scenario() -> None:
+        search = _SequencedSearchPort(
+            (
+                _relation_hit("chunk-s1", "rev-1", item_id="item-1"),
+                _relation_hit("chunk-s2", "rev-1", item_id="item-2", local_rank=2),
+            ),
+        )
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="核保流程需要健康告知。",
+                    claims=(
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R2",)),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(
+                _relation_evidence_for("R1", support_label="S1"),
+                _relation_evidence_for("R2", support_label="S2", support_chunk_id="chunk-s2"),
+            ),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        edge_citations = [c for c in response.citations if c.kind == "edge"]
+        assert len(edge_citations) == 1
+        assert edge_citations[0].evidence_label == "R1"
+        s2_citation = next(c for c in response.citations if c.evidence_label == "S2")
+        assert edge_citations[0].chunk_id == s2_citation.chunk_id
+        assert edge_citations[0].edge is not None
+        assert edge_citations[0].edge.relation_type == "REQUIRES"
+
+    asyncio.run(scenario())
+
+
+def test_stale_context_omits_relation_prompt() -> None:
+    """M5: a STALE (non-applied) relation context never triggers the relation
+    prompt text unless `relation_first` is true."""
+
+    async def scenario() -> None:
+        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        received_relation_first: list[bool] = []
+
+        class _PromptRecordingModel(_RecordingModel):
+            async def answer(self, query, evidence, profile_id, **kwargs):
+                received_relation_first.append(bool(kwargs.get("relation_first")))
+                return await super().answer(query, evidence, profile_id, **kwargs)
+
+        model = _PromptRecordingModel(
+            [
+                AnswerGeneration(
+                    text="已验证的事实。",
+                    claims=(GeneratedClaim(text="已验证的事实。", evidence_labels=("S1",)),),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        relation = _FakeRelationAnalysis(
+            RelationContext(status=RelationContextStatus.STALE, graph_version="8")
+        )
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert received_relation_first == [False]
+
+    asyncio.run(scenario())
+
+
+def test_intent_relation_execution_sets_relation_first_through_planned_retrieval() -> None:
+    """M5: `AuthorizedAnswerExecution(intent="relation")`, constructed directly as
+    the brief specifies, is exactly what makes `AuthorizedRetrieval.answer`'s
+    `relation_first` true -- exercised through the real planned-retrieval path,
+    not a standalone boolean check."""
+
+    async def scenario() -> None:
+        query = "核保流程与健康告知的关系是什么？"
+        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        received_relation_first: list[bool] = []
+
+        class _PromptRecordingModel(_RecordingModel):
+            async def answer(self, query, evidence, profile_id, **kwargs):
+                received_relation_first.append(bool(kwargs.get("relation_first")))
+                return await super().answer(query, evidence, profile_id, **kwargs)
+
+        model = _PromptRecordingModel(
+            [
+                AnswerGeneration(
+                    text="已验证的事实。",
+                    claims=(GeneratedClaim(text="已验证的事实。", evidence_labels=("S1",)),),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        relation = _FakeRelationAnalysis(
+            RelationContext(status=RelationContextStatus.EMPTY, graph_version="7")
+        )
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        template = get_template("general", "1")
+        answer_execution = AuthorizedAnswerExecution(
+            plan_id="plan-a",
+            project_id="project-a",
+            acl_digest="sha256:acl-17",
+            model_alias="model-a",
+            original_question=query,
+            standalone_question=query,
+            queries=(
+                AuthorizedAnswerQuery(
+                    id="q1",
+                    text=query,
+                    depends_on=(),
+                    source_ids=("src_demo",),
+                    evidence_goal="relation",
+                ),
+            ),
+            template_id="general",
+            template_version="1",
+            template_digest=template.digest,
+            candidate_limit=20,
+            evidence_limit=10,
+            remaining_seconds=30.0,
+            intent="relation",
+        )
+        assert answer_execution.intent == "relation"
+
+        request = replace(_single_revision_request(), query=query)
+        await knowledge.answer(
+            request, _single_revision_policy(), answer_execution=answer_execution
+        )
+
+        assert received_relation_first == [True]
 
     asyncio.run(scenario())

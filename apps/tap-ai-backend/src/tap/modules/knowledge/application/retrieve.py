@@ -36,6 +36,13 @@ from tap.modules.knowledge.application.relation_analysis import (
     RelationEvidence,
 )
 from tap.modules.knowledge.application.relation_claims import reconcile_relation_claims
+from tap.modules.knowledge.domain.documents import (
+    DocumentId,
+    RevisionId,
+    chunk_id_for,
+    logical_chunk_id_for,
+    logical_chunk_projection_id,
+)
 from tap.modules.knowledge.domain.flowchart_paths import (
     flowchart_claim_is_consistent,
     flowchart_path_context,
@@ -49,6 +56,7 @@ from tap.modules.knowledge.domain.models import (
     Citation,
     Claim,
     CodeAnchor,
+    ContentRole,
     ContextLayer,
     ContextLayerKind,
     ContextSnapshot,
@@ -146,6 +154,49 @@ def _evidence_ref(item: Evidence) -> EvidenceRef:
         source_revision_id=item.source.revision,
         document_revision_id=item.source.revision,
     )
+
+
+def _document_anchor_from_mapping(anchor: Mapping[str, object]) -> DocumentAnchor | None:
+    """Parse a relation support's raw anchor mapping into a `DocumentAnchor`,
+    or `None` if it is not the `document` anchor shape -- the caller then
+    skips this support in favor of the next one (Task 5 review I2)."""
+    if anchor.get("type") != "document":
+        return None
+    start_offset = anchor.get("startOffset")
+    end_offset = anchor.get("endOffset")
+    if start_offset is None or end_offset is None:
+        return None
+    try:
+        return DocumentAnchor(
+            heading_path=tuple(cast(Any, anchor.get("headingPath")) or ()),
+            page=None if anchor.get("page") is None else int(cast(Any, anchor["page"])),
+            bbox=tuple(cast(Any, anchor.get("bbox")) or ()),
+            start_offset=int(cast(Any, start_offset)),
+            end_offset=int(cast(Any, end_offset)),
+            inventory_item_id=cast(Any, anchor.get("inventoryItemId")),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _canonical_document_anchor_json(anchor: DocumentAnchor) -> str:
+    value: dict[str, object] = {
+        "endOffset": anchor.end_offset,
+        "headingPath": list(anchor.heading_path),
+        "startOffset": anchor.start_offset,
+        "type": "document",
+    }
+    if anchor.page is not None:
+        value["page"] = anchor.page
+    if anchor.inventory_item_id is not None:
+        value["inventoryItemId"] = anchor.inventory_item_id
+    if anchor.bbox:
+        value["bbox"] = list(anchor.bbox)
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _label_num(label: str) -> int:
+    return int(label[1:])
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,7 +522,13 @@ class AuthorizedRetrieval:
             )
         if relation is not None and self._retrieval_augment and relation.augment_chunks:
             run, relation = await self._augment_from_relations(
-                run, relation, request, policy, frozen_policy=frozen_policy, authorize=authorize
+                run,
+                relation,
+                request,
+                policy,
+                frozen_policy=frozen_policy,
+                answer_plan_id=None if answer_execution is None else answer_execution.plan_id,
+                authorize=authorize,
             )
         relation_first = answer_execution is not None and answer_execution.intent == "relation"
 
@@ -521,8 +578,10 @@ class AuthorizedRetrieval:
         relation_outcome: RelationOutcome | None = None
         stripped = 0
         unresolvable = 0
+        dropped_for_cap = 0
         extra_citation_ids: dict[str, str] = {}
         edge_citations: tuple[Citation, ...] = ()
+        s_citations = [self._citation(item) for item in run.response.evidence]
         if relation is not None:
             reconciled = reconcile_relation_claims(
                 generation, relation, graph_version=relation.graph_version
@@ -547,13 +606,50 @@ class AuthorizedRetrieval:
                     if relation_evidence is None:
                         continue
                     built = self._edge_citation_for_relation(
-                        relation_evidence, run.response.evidence, relation.graph_version or ""
+                        relation_evidence,
+                        run.response.evidence,
+                        relation.graph_version or "",
+                        run.plan.resources,
                     )
                     if built is None:
                         unresolvable += 1
                         continue
                     resolved[label] = built
-                if unresolvable:
+
+                # The closed 20-citation bound (`ports/answers.py`) covers S and R
+                # together; augmentation routinely pushes S toward 20 on its own.
+                # Drop the lowest-ranked *uncited* S citations first (they cost
+                # nothing claim-wise), then -- only if still over -- the
+                # lowest-ranked cited R citations, stripping those labels from
+                # claims and counting them as `stripped` (same bucket as an
+                # invalid R citation: `invalid-relation-citation` / degraded).
+                used_s_labels = {
+                    label
+                    for claim in generation.claims
+                    for label in claim.evidence_labels
+                    if label.startswith("S")
+                }
+                overflow = len(s_citations) + len(resolved) - _MAX_EVIDENCE
+                if overflow > 0:
+                    droppable_s = sorted(
+                        (item for item in s_citations if item.evidence_label not in used_s_labels),
+                        key=lambda item: _label_num(item.evidence_label),
+                        reverse=True,
+                    )
+                    drop_ids = {item.citation_id for item in droppable_s[:overflow]}
+                    if drop_ids:
+                        s_citations = [
+                            item for item in s_citations if item.citation_id not in drop_ids
+                        ]
+                    overflow = len(s_citations) + len(resolved) - _MAX_EVIDENCE
+                if overflow > 0:
+                    worst_r_labels = sorted(resolved, key=_label_num, reverse=True)[:overflow]
+                    for label in worst_r_labels:
+                        del resolved[label]
+                    dropped_for_cap = len(worst_r_labels)
+                    stripped += dropped_for_cap
+
+                if unresolvable or dropped_for_cap:
                     final_claims: list[GeneratedClaim] = []
                     for claim in generation.claims:
                         kept = tuple(
@@ -575,22 +671,18 @@ class AuthorizedRetrieval:
                     )
                     if not final_claims and reconciled.claims:
                         return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
-                # Renumber only the edge citations actually surviving into the final
-                # claims, sequentially R1..Rn, so the closed R-position rule in
-                # `ports/answers.py` holds regardless of the original R-labels' gaps.
-                final_used_labels = tuple(
-                    dict.fromkeys(
-                        label
-                        for claim in generation.claims
-                        for label in claim.evidence_labels
-                        if label in resolved
-                    )
-                )
+                # Renumber the surviving edge citations sequentially R1..Rn in
+                # ascending original-rank order (not order of first appearance in
+                # claim text), so the closed R-position rule in `ports/answers.py`
+                # holds regardless of the original R-labels' gaps, and citing only
+                # e.g. R2 always comes out as R1 -- deterministic and independent
+                # of how the model ordered its claims.
+                final_labels_sorted = sorted(resolved, key=_label_num)
                 renumbered: list[Citation] = []
-                for position, label in enumerate(final_used_labels, start=1):
-                    source_citation = resolved[label]
-                    renumbered.append(replace(source_citation, evidence_label=f"R{position}"))
-                    extra_citation_ids[label] = renumbered[-1].citation_id
+                for position, label in enumerate(final_labels_sorted, start=1):
+                    citation = replace(resolved[label], evidence_label=f"R{position}")
+                    renumbered.append(citation)
+                    extra_citation_ids[label] = citation.citation_id
                 edge_citations = tuple(renumbered)
             diagnostics = dict(relation.diagnostics)
             if unresolvable:
@@ -600,7 +692,7 @@ class AuthorizedRetrieval:
                 graph_version=relation.graph_version,
                 seed_count=len(relation.seeds),
                 paths=relation.path_summaries(),
-                relation_count=len(relation.relations),
+                relation_count=max(0, len(relation.relations) - unresolvable),
                 diagnostics=diagnostics,
             )
 
@@ -642,12 +734,12 @@ class AuthorizedRetrieval:
             abstained=False,
             claims=claims,
             citations=(
-                *(self._citation(item) for item in run.response.evidence),
+                *s_citations,
                 *used_edge_citations,
             ),
             embedding_provenance=run.response.embedding_provenance,
             answer_provenance=self._generation_provenance(generation),
-            degraded_mode=missing or stripped > 0,
+            degraded_mode=missing or stripped > 0 or unresolvable > 0,
             degradation_reasons=degradation_reasons,
             relation=relation_outcome,
         )
@@ -660,6 +752,7 @@ class AuthorizedRetrieval:
         policy: RetrievalPolicyContext,
         *,
         frozen_policy: bool,
+        answer_plan_id: str | None,
         authorize,
     ) -> tuple[_RetrievalRun, RelationContext]:
         """Re-authorize `relation.augment_chunks` and fuse the surviving candidates
@@ -669,11 +762,10 @@ class AuthorizedRetrieval:
         capacity = _MAX_EVIDENCE - len(run.response.evidence)
         if capacity <= 0:
             return run, relation
-        # ACL-selected revisions (every revision the policy grants access to), not
-        # just the ones this particular query happened to scope for search -- a
-        # candidate's revision can be selected yet still rejected a line below by
-        # the current publication (`authorize_selection`), which is the actual gate.
-        allowed_revisions = {grant.revision for grant in policy.resource_grants}
+        # Only the revisions this query actually scoped for search (`run.plan`'s
+        # resolved resources) -- a candidate granted by policy but outside this
+        # query's own selection is "unselected", same as one with no grant at all.
+        allowed_revisions = {resource.revision for resource in run.plan.resources}
         candidates = []
         for chunk in relation.augment_chunks:
             if chunk.source_revision_id not in allowed_revisions:
@@ -706,6 +798,7 @@ class AuthorizedRetrieval:
                 ),
                 policy,
                 frozen_policy=frozen_policy,
+                answer_plan_id=answer_plan_id,
                 authorize=authorize,
             )
         except (SearchUnavailable, ModelUnavailable):
@@ -747,13 +840,18 @@ class AuthorizedRetrieval:
         relation: RelationEvidence,
         evidence: tuple[Evidence, ...],
         graph_version: str,
+        resources: tuple[ResolvedResourceRef, ...],
     ) -> Citation | None:
-        """Build one `kind="edge"` citation from the relation's first support that
-        is already a cited chunk (`S` label) -- the only resolution this task
-        guarantees (see Task 5 report: a snippet-only support that never gets
-        promoted to `S` by `_augment_from_relations` is left unresolved rather
-        than risking a citation that cannot be re-validated against a real
-        selected document revision)."""
+        """Build one `kind="edge"` citation from the relation's first resolvable
+        support. A support already cited as an `S` label has its chunk fields
+        copied verbatim; a snippet-only support (never promoted to `S` by
+        `_augment_from_relations`) is reconstructed from its own
+        `RelationSupport` fields plus the matching selected revision's
+        `source_content_hash` (Task 5 review I2) -- real formulas
+        (`chunk_id_for`/`logical_chunk_id_for`), the same ones the search index
+        itself uses, so the resulting identity is re-verifiable. A support
+        whose anchor is not the `document` shape, or whose revision/document_id
+        cannot be resolved, is skipped in favor of the next support."""
         evidence_by_label = {item.evidence_label: item for item in evidence}
         for support in relation.support:
             if support.evidence_label is None:
@@ -771,18 +869,59 @@ class AuthorizedRetrieval:
                 chunk_content_hash=source_item.chunk_content_hash,
                 content_role=source_item.content_role,
                 kind="edge",
-                edge=EdgeCitation(
-                    edge_id=relation.edge_id,
-                    graph_version=graph_version,
-                    subject_node_id=relation.subject_node_id,
-                    subject_label=relation.subject_label,
-                    object_node_id=relation.object_node_id,
-                    object_label=relation.object_label,
-                    relation_type=relation.relation_type,
-                    relation_label=relation.relation_label,
-                ),
+                edge=self._edge_fields(relation, graph_version),
+            )
+        resources_by_revision = {resource.revision: resource for resource in resources}
+        for support in relation.support:
+            if support.evidence_label is not None or support.document_id is None:
+                continue
+            resource = resources_by_revision.get(support.document_revision_id)
+            if resource is None or resource.revision_kind is not RevisionKind.BLOB_VERSION:
+                continue
+            anchor = _document_anchor_from_mapping(support.anchor)
+            if anchor is None:
+                continue
+            anchor_json = _canonical_document_anchor_json(anchor)
+            source = SourceRevisionRef(
+                source_id=resource.source_id,
+                source_type="doc",
+                revision_kind=resource.revision_kind,
+                revision=resource.revision,
+                source_content_hash=resource.source_content_hash,
+                anchor=anchor,
+            )
+            chunk_id = str(
+                chunk_id_for(RevisionId(resource.revision), anchor_json, support.content_digest)
+            )
+            logical_chunk_id = logical_chunk_projection_id(
+                logical_chunk_id_for(DocumentId(support.document_id), anchor_json)
+            )
+            return Citation(
+                family=SourceFamily.DOC,
+                citation_id=self._id_factory(),
+                evidence_label=relation.label,
+                chunk_id=chunk_id,
+                logical_chunk_id=logical_chunk_id,
+                source=source,
+                chunk_content_hash=support.content_digest,
+                content_role=ContentRole.SOURCE,
+                kind="edge",
+                edge=self._edge_fields(relation, graph_version),
             )
         return None
+
+    @staticmethod
+    def _edge_fields(relation: RelationEvidence, graph_version: str) -> EdgeCitation:
+        return EdgeCitation(
+            edge_id=relation.edge_id,
+            graph_version=graph_version,
+            subject_node_id=relation.subject_node_id,
+            subject_label=relation.subject_label,
+            object_node_id=relation.object_node_id,
+            object_label=relation.object_label,
+            relation_type=relation.relation_type,
+            relation_label=relation.relation_label,
+        )
 
     async def _planned_retrieval(self, request, policy, execution, *, frozen_policy, authorize):
         if (

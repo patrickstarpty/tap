@@ -1698,6 +1698,24 @@ class MysqlDocumentRepository:
             ).all()
         return {row.revision_id: ArtifactLocator(row.chunks_blob_locator) for row in rows}
 
+    async def load_document_ids(self, revision_ids: tuple[str, ...]) -> Mapping[str, str]:
+        """Scoped `document_id` lookup for the same revisions `load_chunk_locators`
+        resolves -- lets a snippet-only relation support be traced back to its
+        document root identity without widening this ledger's own access."""
+        if not revision_ids:
+            return {}
+        revision = knowledge_document_revision
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(revision.c.revision_id, revision.c.document_id).where(
+                        *scope_predicates(revision, self._scope),
+                        revision.c.revision_id.in_(revision_ids),
+                    )
+                )
+            ).all()
+        return {row.revision_id: row.document_id for row in rows}
+
     async def load_citation(
         self, citation_id: str, *, historical: bool = False
     ) -> CitationLookup | None:

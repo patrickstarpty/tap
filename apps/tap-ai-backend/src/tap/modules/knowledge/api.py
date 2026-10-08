@@ -18,10 +18,16 @@ from tap.contracts.http import (
     DocumentAnchor as HttpDocumentAnchor,
 )
 from tap.contracts.http import (
+    EdgeCitationView as HttpEdgeCitation,
+)
+from tap.contracts.http import (
     FailureAnchor as HttpFailureAnchor,
 )
 from tap.contracts.http import (
     GraphContextSummaryView as HttpGraphContextSummaryView,
+)
+from tap.contracts.http import (
+    GraphEndpointView as HttpGraphEndpointView,
 )
 from tap.contracts.http import (
     OpenApiAnchor as HttpOpenApiAnchor,
@@ -40,9 +46,6 @@ from tap.contracts.http import (
 )
 from tap.contracts.http import (
     RetrievalClaim as HttpClaim,
-)
-from tap.contracts.http import (
-    RetrievalEdgeCitation as HttpEdgeCitation,
 )
 from tap.contracts.http import (
     RetrievalHit as HttpHit,
@@ -431,10 +434,14 @@ def _citation_to_http(citation: Citation) -> HttpCitation:
                 else HttpEdgeCitation(
                     edge_id=citation.edge.edge_id,
                     graph_version=citation.edge.graph_version,
-                    subject_node_id=citation.edge.subject_node_id,
-                    subject_label=citation.edge.subject_label,
-                    object_node_id=citation.edge.object_node_id,
-                    object_label=citation.edge.object_label,
+                    subject=HttpGraphEndpointView(
+                        node_id=citation.edge.subject_node_id,
+                        label=citation.edge.subject_label,
+                    ),
+                    object=HttpGraphEndpointView(
+                        node_id=citation.edge.object_node_id,
+                        label=citation.edge.object_label,
+                    ),
                     relation_type=citation.edge.relation_type,
                     relation_label=citation.edge.relation_label,
                 )

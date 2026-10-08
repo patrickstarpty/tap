@@ -36,14 +36,27 @@ _NOW = datetime(2026, 9, 23, 9, tzinfo=UTC)
 
 
 class FakeSnippets:
-    def __init__(self, content: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        content: Mapping[str, str] | None = None,
+        *,
+        document_ids: Mapping[str, str] | None = None,
+    ) -> None:
         self._content = dict(content or {})
+        self._document_ids = dict(document_ids or {})
 
     async def snippets(self, refs: tuple[tuple[str, str], ...]) -> Mapping[str, str]:
         return {
             chunk_id: self._content[chunk_id]
             for _document_revision_id, chunk_id in refs
             if chunk_id in self._content
+        }
+
+    async def document_ids(self, revision_ids: tuple[str, ...]) -> Mapping[str, str]:
+        return {
+            revision_id: self._document_ids[revision_id]
+            for revision_id in revision_ids
+            if revision_id in self._document_ids
         }
 
 

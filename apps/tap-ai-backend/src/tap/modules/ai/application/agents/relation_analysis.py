@@ -182,12 +182,16 @@ class RelationAnalysisAgent:
                     ranked, value.evidence, allowed_source_revision_ids=allowed
                 )
                 snippet_map = await self._snippets.snippets(refs)
+                document_id_map = await self._snippets.document_ids(
+                    tuple(dict.fromkeys(document_revision_id for document_revision_id, _ in refs))
+                )
                 relations = assemble(
                     ranked,
                     nodes_by_id,
                     value.evidence,
                     snippet_map,
                     allowed_source_revision_ids=allowed,
+                    document_ids=document_id_map,
                 )
                 rank_span.set_attribute("tap.relation.count", len(relations))
 
@@ -224,7 +228,7 @@ class RelationAnalysisAgent:
             # Task 5's `authorize_selection` re-check at fusion time is what
             # actually gates them before they can reach a prompt or event.
             augment_chunks = self._augment_chunks(
-                refs, snippet_map, _evidence_by_ref(subgraph.evidence)
+                refs, snippet_map, _evidence_by_ref(subgraph.evidence), document_id_map
             )
 
             return RelationContext(
@@ -247,12 +251,13 @@ class RelationAnalysisAgent:
         refs: tuple[tuple[str, str], ...],
         snippet_map: Mapping[str, str],
         evidence_by_ref: Mapping[tuple[str, str], EdgeEvidence],
+        document_id_map: Mapping[str, str],
     ) -> tuple[RelationSupport, ...]:
         augmented: list[RelationSupport] = []
         for ref in refs:
             if len(augmented) >= _MAX_AUGMENT_CHUNKS:
                 break
-            _document_revision_id, chunk_id = ref
+            document_revision_id, chunk_id = ref
             snippet = snippet_map.get(chunk_id)
             evidence_item = evidence_by_ref.get(ref)
             if snippet is None or evidence_item is None:
@@ -266,6 +271,7 @@ class RelationAnalysisAgent:
                     anchor=evidence_item.anchor,
                     evidence_label=None,
                     snippet=snippet[:300],
+                    document_id=document_id_map.get(document_revision_id),
                 )
             )
         return tuple(augmented)

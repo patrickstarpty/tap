@@ -4,11 +4,22 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from types import MappingProxyType
 from typing import Literal, Mapping, TypeAlias
 
-from tap.modules.knowledge.application.relation_analysis import RelationContextStatus
+
+class RelationContextStatus(StrEnum):
+    """Outcome of one relation analysis subgraph run; owned by the domain so
+    `AnswerResponse`/`RelationOutcome` do not depend on the application layer.
+    Re-exported (not redefined) from `application.relation_analysis` for the
+    existing import sites."""
+
+    APPLIED = "APPLIED"
+    NOT_READY = "NOT_READY"
+    STALE = "STALE"
+    FAILED = "FAILED"
+    EMPTY = "EMPTY"
 
 
 class SourceFamily(str, Enum):

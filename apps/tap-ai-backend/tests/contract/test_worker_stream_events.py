@@ -80,6 +80,34 @@ class _Knowledge:
         )
 
 
+@pytest.mark.parametrize("status", ["STALE", "EMPTY"])
+def test_turn_completed_accepts_stale_and_empty_graph_context_status(status: str) -> None:
+    """PR 3 Task 5 review I4: the relation analysis subgraph's `STALE`/`EMPTY`
+    outcomes must be streamable, not just the HTTP answer contract."""
+    envelope = _envelope(
+        sequence=1,
+        event_type="turn.completed",
+        payload={
+            "answer": {
+                "traceId": "trace-1",
+                "queryPlanId": "plan-1",
+                "contextSnapshotId": "context-1",
+                "corpusVersion": "tapper-demo-v1",
+                "retrievalProfileId": "quick-hybrid-v1",
+                "degradedMode": False,
+                "answer": "grounded",
+                "abstained": False,
+                "abstentionReason": None,
+                "claims": [],
+                "citations": [],
+                "graphContextStatus": status,
+                "graphSnapshotId": None,
+            }
+        },
+    )
+    ChatEventEnvelope.model_validate(envelope)
+
+
 @pytest.mark.asyncio
 async def test_knowledge_events_validate_against_contract() -> None:
     conversations = _KnowledgeConversations()

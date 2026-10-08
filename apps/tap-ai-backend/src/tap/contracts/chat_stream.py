@@ -148,7 +148,7 @@ class RetrievalAnswerResponse(StreamContractModel):
     claims: list[AnswerClaim]
     citations: list[Citation]
     graph_context_status: Literal[
-        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+        "APPLIED", "NOT_READY", "STALE", "FAILED", "UNAVAILABLE", "NOT_SELECTED", "EMPTY"
     ] = "NOT_SELECTED"
     graph_snapshot_id: str | None = None
 

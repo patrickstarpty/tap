@@ -22,3 +22,11 @@ class ChunkSnippetReader(Protocol):
     """
 
     async def snippets(self, refs: tuple[tuple[str, str], ...]) -> Mapping[str, str]: ...
+
+    async def document_ids(self, revision_ids: tuple[str, ...]) -> Mapping[str, str]:
+        """Resolve each document revision's document root identity -- needed to
+        reconstruct a citation for a snippet-only relation support (one whose
+        chunk never became an `S` label) without a second answer-pipeline-owned
+        document lookup. A revision that cannot be resolved simply has no
+        entry, same convention as `snippets`."""
+        ...

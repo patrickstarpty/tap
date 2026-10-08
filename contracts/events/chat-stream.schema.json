@@ -1900,9 +1900,11 @@
           "enum": [
             "APPLIED",
             "NOT_READY",
+            "STALE",
             "FAILED",
             "UNAVAILABLE",
-            "NOT_SELECTED"
+            "NOT_SELECTED",
+            "EMPTY"
           ],
           "title": "Graphcontextstatus",
           "type": "string"

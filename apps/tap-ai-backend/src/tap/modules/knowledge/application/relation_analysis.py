@@ -22,7 +22,6 @@ import dataclasses
 import re
 from collections import deque
 from dataclasses import dataclass, field
-from enum import StrEnum
 from types import MappingProxyType
 from typing import Literal, Mapping
 
@@ -35,6 +34,7 @@ from tap.modules.graph.domain.project import (
     ProjectSubgraph,
 )
 from tap.modules.graph.ports.project_store import ProjectGraphStorePort
+from tap.modules.knowledge.domain.models import RelationContextStatus
 
 __all__ = [
     "EvidenceRef",
@@ -59,14 +59,6 @@ __all__ = [
 _RELATION_LABEL_PATTERN = re.compile(r"^R(?:[1-9]|1[0-9]|20)$")
 _SNIPPET_MAX = 300
 _MAX_RELATIONS = 20
-
-
-class RelationContextStatus(StrEnum):
-    APPLIED = "APPLIED"
-    NOT_READY = "NOT_READY"
-    STALE = "STALE"
-    FAILED = "FAILED"
-    EMPTY = "EMPTY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +93,13 @@ class RelationSupport:
     anchor: Mapping[str, object]
     evidence_label: str | None = None
     snippet: str | None = None
+    # The support's document root identity (distinct from `document_revision_id`,
+    # which is the *revision*) -- carried alongside a snippet-only support so a
+    # citation can later be reconstructed via `chunk_id_for`/`logical_chunk_id_for`
+    # without the answer pipeline needing its own document lookup. Populated only
+    # for snippet-only supports (`evidence_label is None`); an S-labelled support's
+    # citation is always copied from the already-resolved evidence instead.
+    document_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.evidence_label is not None and self.snippet is not None:
@@ -538,6 +537,7 @@ def _resolve_support(
     evidence_by_chunk: Mapping[str, str],
     snippets: Mapping[str, str],
     allowed_source_revision_ids: frozenset[str],
+    document_ids: Mapping[str, str],
 ) -> tuple[RelationSupport, ...]:
     supports: list[RelationSupport] = []
     seen_chunks: set[str] = set()
@@ -572,6 +572,7 @@ def _resolve_support(
                     anchor=item.anchor,
                     evidence_label=None,
                     snippet=snippet[:_SNIPPET_MAX],
+                    document_id=document_ids.get(item.document_revision_id),
                 )
             )
             seen_chunks.add(item.chunk_id)
@@ -585,6 +586,7 @@ def assemble(
     snippets: Mapping[str, str],
     *,
     allowed_source_revision_ids: frozenset[str],
+    document_ids: Mapping[str, str] = MappingProxyType({}),
 ) -> tuple[RelationEvidence, ...]:
     evidence_by_chunk = {ref.chunk_id: ref.label for ref in evidence}
     relations: list[RelationEvidence] = []
@@ -596,7 +598,11 @@ def assemble(
         if subject is None or obj is None:
             continue
         support = _resolve_support(
-            edge_evidence_items, evidence_by_chunk, snippets, allowed_source_revision_ids
+            edge_evidence_items,
+            evidence_by_chunk,
+            snippets,
+            allowed_source_revision_ids,
+            document_ids,
         )
         if not support:
             continue
