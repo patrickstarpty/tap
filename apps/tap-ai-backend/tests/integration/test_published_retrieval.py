@@ -6,15 +6,6 @@ import pytest
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.graph.application.project_queries import InMemoryProjectGraphStore
-from tap.modules.graph.application.queries import InMemoryGraphStore
-from tap.modules.graph.domain.models import (
-    Evidence as GraphEvidence,
-)
-from tap.modules.graph.domain.models import (
-    GraphNode,
-    GraphSnapshot,
-    GraphSnapshotDraft,
-)
 from tap.modules.graph.domain.project import Alias, NodeSource, ProjectGraphDraft, ProjectNode
 from tap.modules.graph.domain.vocabulary import normalize_key
 from tap.modules.knowledge.api import KnowledgeAPI, answer_response_to_http
@@ -356,7 +347,9 @@ async def test_graph_evidence_outside_the_approved_slice_fails_closed() -> None:
         edges=(),
         node_sources=(node_source,),
         edge_evidence=(),
-        aliases=(Alias(alias_norm=normalize_key("Unapproved fact"), node_id=node_id, origin="LABEL"),),
+        aliases=(
+            Alias(alias_norm=normalize_key("Unapproved fact"), node_id=node_id, origin="LABEL"),
+        ),
         communities=(),
         merge_log=(),
     )

@@ -41,16 +41,15 @@ from tap.modules.graph.domain.models import (
     GraphSnapshotDraft,
     RelationOrigin,
 )
+from tap.modules.graph.domain.project import project_node_id
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document,
     knowledge_document_revision,
     knowledge_source,
 )
-from tap.platform.db.project_scope import scope_values
+from tap.platform.db.project_scope import scope_predicates, scope_values
 from tests.object_settings import S3_SETTINGS
 from tests.owned_mysql import owned_project_database_url
-from tap.modules.graph.domain.project import project_node_id
-from tap.platform.db.project_scope import scope_predicates
 
 NOW = datetime(2026, 10, 7, 9, 0, 0)
 # MysqlMergeInputs only replays fragments whose extraction_profile_digest matches
