@@ -23,7 +23,6 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationS
 from tap.modules.access.application.scope import RequestFacts
 from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROFILE_DIGEST
 from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
-from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
 from tap.modules.knowledge.adapters.mysql_documents import knowledge_document_revision
 from tap.platform.db.project_scope import scope_predicates
 
@@ -41,7 +40,17 @@ class GraphOperation:
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> GraphOperation:
     parser = argparse.ArgumentParser(
-        description="Operate on the current local Validation Project's merged graph"
+        description=(
+            "Operate on the current local Validation Project's merged graph. "
+            "`graph rebuild` requeues extraction for every currently-published "
+            "revision under the given extraction profile; it does not request a "
+            "merge itself -- each fragment already requests one when it "
+            "republishes. Until every requeued fragment finishes re-extracting "
+            "and republishing, the merged graph is in a degraded window: it is "
+            "partially rebuilt (a mix of old and new fragments), and the "
+            "previous graph version is retained and served until two newer "
+            "versions have published."
+        )
     )
     parser.add_argument("resource", choices=["graph"])
     parser.add_argument("command", choices=["rebuild"])
@@ -115,8 +124,13 @@ async def run(*, settings: TapperSettings, operation: GraphOperation) -> dict[st
             except ValueError:
                 skipped_count += 1
             await asyncio.sleep(operation.interval_seconds)
-        if requeued_count:
-            await MysqlProjectMergeQueue(sessions).request(scope, reason="rebuild", now=_now())
+        # No explicit merge request here: requesting one immediately after
+        # resetting every fragment to CANDIDATE would publish a near-empty
+        # graph version before any fragment re-extracts. Each fragment
+        # already requests its own merge when it republishes, so the merge
+        # worker replays progressively as fragments finish -- see the CLI
+        # help text and docs/architecture.md for the resulting degraded
+        # window.
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("graph operator settlement unexpectedly returned")

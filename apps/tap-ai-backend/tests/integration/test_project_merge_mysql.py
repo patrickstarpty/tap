@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from tap.entrypoints import graph_operator, tapper_runtime
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROFILE_DIGEST
 from tap.modules.graph.adapters.mysql import MysqlGraphStore, graph_fragment_batch, graph_node
@@ -39,6 +41,14 @@ from tap.modules.graph.domain.models import (
     GraphSnapshotDraft,
     RelationOrigin,
 )
+from tap.modules.knowledge.adapters.mysql_documents import (
+    knowledge_document,
+    knowledge_document_revision,
+    knowledge_source,
+)
+from tap.platform.db.project_scope import scope_values
+from tests.object_settings import S3_SETTINGS
+from tests.owned_mysql import owned_project_database_url
 from tap.modules.graph.domain.project import project_node_id
 from tap.platform.db.project_scope import scope_predicates
 
@@ -495,3 +505,139 @@ async def test_reset_for_profile_clears_fragment_and_requeues_job(sessions) -> N
     assert node_count == 0
     assert batch_count == 0
     assert snapshot_status == "CANDIDATE"
+
+    # The worker must be able to run this job back to READY after the reset:
+    # if `graph_snapshot_document_revision` wasn't cleared alongside the other
+    # fact tables, re-publishing the same snapshot_id/document_revision_id pair
+    # collides on its primary key instead of reaching READY.
+    reclaim = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-2",
+            now=NOW + timedelta(seconds=11),
+            lease_duration=timedelta(seconds=60),
+            limit=1,
+        )
+    )[0]
+    draft2 = _draft(request, [("n2", "Entity 2", "CONCEPT", "entity-2")])
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        reclaim,
+        GraphFragmentBatch(
+            reclaim.snapshot.snapshot_id, 0, ("chunk-0",), GraphBatchStatus.READY, draft=draft2
+        ),
+        now=NOW + timedelta(seconds=12),
+    )
+    remerged = assemble_fragment(reclaim.snapshot, [draft2])
+    recompleted = await jobs.complete(
+        VALIDATION_SCOPE, reclaim, remerged, now=NOW + timedelta(seconds=13)
+    )
+    assert recompleted.status == GraphJobStatus.READY
+    assert recompleted.snapshot.status == "READY"
+
+
+@pytest.mark.asyncio
+async def test_rebuild_cli_does_not_request_an_immediate_merge(owned_project_mysql, sessions):
+    """`graph rebuild` must not request a merge itself: requesting one right
+    after resetting every fragment to CANDIDATE would publish a near-empty
+    graph before any fragment re-extracts. Fragments already request their
+    own merge when they republish, so the queue must stay un-due here."""
+    document_id = "doc_rebuild_cli"
+    revision_id = "rev_rebuild_cli"
+    async with sessions() as session, session.begin():
+        await session.execute(
+            insert(knowledge_source).values(
+                **scope_values(VALIDATION_SCOPE),
+                source_id="src_" + "9" * 32,
+                name="rebuild-cli-source",
+                created_at=NOW,
+                updated_at=NOW,
+                deleted_at=None,
+            )
+        )
+        await session.execute(
+            insert(knowledge_document).values(
+                **scope_values(VALIDATION_SCOPE),
+                document_id=document_id,
+                source_id="src_" + "9" * 32,
+                filename="rebuild-cli.md",
+                media_type="text/markdown",
+                current_revision_id=None,
+                source_content_hash="sha256:" + "1" * 64,
+                dedupe_key="sha256:" + "2" * 64,
+                staging_blob_locator=None,
+                promoted_blob_locator=None,
+                reservation_owner_token=None,
+                reservation_expires_at=None,
+                reservation_parser_version="tapper-parser-v1",
+                reservation_chunker_version="tapper-chunker-v1",
+                reservation_pipeline_version="tapper-ingestion-v1",
+                status="ready",
+                stage="ready",
+                chunk_count=1,
+                error_code=None,
+                error_summary=None,
+                activated_at=NOW,
+                created_at=NOW,
+                updated_at=NOW,
+                deleted_at=None,
+            )
+        )
+        await session.execute(
+            insert(knowledge_document_revision).values(
+                **scope_values(VALIDATION_SCOPE),
+                revision_id=revision_id,
+                source_id="src_" + "9" * 32,
+                document_id=document_id,
+                source_content_hash="sha256:" + "1" * 64,
+                original_blob_locator="tapper-originals/rebuild-cli.md",
+                normalized_blob_locator="tapper-artifacts/rebuild-cli.normalized",
+                chunks_blob_locator="tapper-artifacts/rebuild-cli.chunks",
+                embeddings_blob_locator=None,
+                parser_version="tapper-parser-v1",
+                chunker_version="tapper-chunker-v1",
+                pipeline_version="tapper-ingestion-v1",
+                parse_inventory_attempt=1,
+                parser_config_digest="sha256:" + "3" * 64,
+                parse_inventory_digest="sha256:" + "4" * 64,
+                chunk_manifest_digest="sha256:" + "5" * 64,
+                projection_digest="sha256:" + "6" * 64,
+                created_at=NOW,
+            )
+        )
+        await session.execute(
+            update(knowledge_document)
+            .where(
+                *scope_predicates(knowledge_document, VALIDATION_SCOPE),
+                knowledge_document.c.document_id == document_id,
+            )
+            .values(current_revision_id=revision_id)
+        )
+    jobs = MysqlGraphJobStore(sessions)
+    await jobs.request(VALIDATION_SCOPE, _request(revision_id), now=NOW)
+
+    url = owned_project_database_url(owned_project_mysql)
+    settings = replace(tapper_runtime.TapperSettings.from_mapping(S3_SETTINGS), database_url=url)
+    operation = graph_operator.GraphOperation(
+        command="rebuild",
+        project_id=VALIDATION_SCOPE.project_id,
+        limit=100,
+        interval_seconds=0.01,
+    )
+
+    result = await graph_operator.run(settings=settings, operation=operation)
+    assert result["requeuedCount"] == 1
+
+    async with sessions() as session:
+        row = (
+            (
+                await session.execute(
+                    select(graph_project_merge_job).where(
+                        *scope_predicates(graph_project_merge_job, VALIDATION_SCOPE)
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+    assert row is None
