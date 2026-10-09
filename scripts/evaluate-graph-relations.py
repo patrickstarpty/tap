@@ -206,8 +206,9 @@ def validate_real(
     actual_model = model.get("actual") if isinstance(model, Mapping) else None
     _require(
         isinstance(actual_model, str)
+        and bool(actual_model)
         and not actual_model.startswith(_FAKE_MODEL_PREFIXES),
-        "observations model.actual to be a real model, not a placeholder",
+        "observations model.actual to be a nonblank real model, not a placeholder",
     )
 
     golden_map = _mapping(golden, "golden set")

@@ -360,9 +360,9 @@ class ConversationGroundingCheck:
         answer, or `None` when a cited source is not currently ready or the answer
         was invalid (any `AnswerUnavailable` other than `model-unavailable`, which
         means an outage and is re-raised instead). Shared by `is_grounded` (the
-        prompt-suggestion refresh gate) and the graph-relations observation script
-        (Task 4), which needs the full answer -- not just a grounded/ungrounded
-        bool -- to read its citations."""
+        prompt-suggestion refresh gate) and the graph-relations observation script,
+        which needs the full answer -- not just a grounded/ungrounded bool -- to
+        read its citations."""
         current = {
             item.source_id: item.revision_id
             for item in (await self._ready_sources.list_sources()).items

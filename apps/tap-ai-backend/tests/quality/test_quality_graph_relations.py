@@ -10,8 +10,22 @@ from types import ModuleType
 
 import pytest
 
+from tap.modules.knowledge.domain.models import (
+    AnswerResponse,
+    Citation,
+    Claim,
+    ContentRole,
+    DocumentAnchor,
+    EdgeCitation,
+    ModelCallProvenance,
+    RetrievalProfileId,
+    RevisionKind,
+    SourceFamily,
+    SourceRevisionRef,
+)
 from tap.quality.evidence import canonical_digest
 from tap.quality.graph_corpus import manifest_digest
+from tap.quality.graph_relations import ExpectedEdge, GoldenQuestion, match_question
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts" / "evaluate-graph-relations.py"
@@ -687,7 +701,7 @@ def test_missing_input_file_exits_2(tmp_path, monkeypatch, capsys):
 
 
 @pytest.mark.asyncio
-async def test_fake_pipeline_emits_edge_citations_for_the_fixture_pair(tmp_path):
+async def test_fake_pipeline_emits_edge_citations_for_the_fixture_pair():
     observations = await _runner().run_fake(golden=FIXTURE_GOLDEN, corpus_dir=FIXTURE_DIR)
 
     by_id = {item["questionId"]: item for item in observations["answers"]}
@@ -707,3 +721,174 @@ def test_real_mode_refuses_fake_extraction_mode(monkeypatch):
         asyncio.run(
             _runner().run_real(golden=FIXTURE_GOLDEN, regression=None, corpus=Path("missing.json"))
         )
+
+
+def _minimal_real_edge_answer() -> AnswerResponse:
+    """One non-abstained `AnswerResponse` carrying a single R-labeled edge
+    citation -- enough to exercise `_real_answer_dict`'s citation flattening
+    without any live service (no retrieval, no DB, no model call)."""
+    source = SourceRevisionRef(
+        source_id="src_" + "1" * 32,
+        source_type="doc",
+        revision_kind=RevisionKind.BLOB_VERSION,
+        revision="rev-1",
+        source_content_hash="sha256:" + "a" * 64,
+        anchor=DocumentAnchor(start_offset=0, end_offset=10),
+    )
+    edge_citation = Citation(
+        family=SourceFamily.DOC,
+        citation_id="citation-r1",
+        evidence_label="R1",
+        chunk_id="chunk-1",
+        logical_chunk_id="logical-1",
+        source=source,
+        chunk_content_hash="sha256:" + "c" * 64,
+        content_role=ContentRole.SOURCE,
+        kind="edge",
+        edge=EdgeCitation(
+            edge_id="e-1",
+            graph_version="7",
+            subject_node_id="n-subject",
+            subject_label="核保流程",
+            object_node_id="n-object",
+            object_label="健康告知",
+            relation_type="REQUIRES",
+            relation_label="REQUIRES",
+        ),
+    )
+    answer_text = "核保流程需要健康告知。"
+    return AnswerResponse(
+        trace_id="trace-1",
+        query_plan_id="plan-1",
+        context_snapshot_id="context-1",
+        corpus_version="tapper-demo-v1",
+        retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
+        answer=answer_text,
+        abstained=False,
+        claims=(
+            Claim(
+                claim_id="claim-1",
+                text=answer_text,
+                answer_start=0,
+                answer_end=len(answer_text),
+                citation_ids=("citation-r1",),
+            ),
+        ),
+        citations=(edge_citation,),
+        embedding_provenance=ModelCallProvenance("text-embedding-v4", "embed-request"),
+        answer_provenance=ModelCallProvenance(
+            "qwen-plus", "answer-request", provider_model_id="qwen-plus-2026"
+        ),
+    )
+
+
+def test_real_citation_is_flattened_and_scores_as_pass():
+    answer_dict = _runner()._real_answer_dict("q-01", "golden", _minimal_real_edge_answer(), "7")
+
+    citation = answer_dict["citations"][0]
+    assert citation["kind"] == "edge"
+    assert "edge" not in citation
+    assert citation["subject"]["label"] == "核保流程"
+    assert citation["object"]["label"] == "健康告知"
+    assert citation["relationType"] == "REQUIRES"
+    assert answer_dict["abstained"] is False
+    assert answer_dict["claims"] == [
+        {"text": "核保流程需要健康告知。", "citationIds": ["citation-r1"]}
+    ]
+
+    question = GoldenQuestion(
+        id="q-01",
+        question="核保流程和健康告知是什么关系",
+        locale="zh",
+        expected_entities=(("核保流程", ()), ("健康告知", ())),
+        expected_edges=(
+            ExpectedEdge(subject="核保流程", relation_type="REQUIRES", object="健康告知"),
+        ),
+        expected_sources=("underwriting-process",),
+    )
+    result = match_question(question, answer_dict["citations"])
+    assert result.status == "pass"
+
+
+def test_real_answer_dict_abstains_on_none_answer():
+    answer_dict = _runner()._real_answer_dict("q-01", "golden", None, "7")
+    assert answer_dict == {
+        "questionId": "q-01",
+        "group": "golden",
+        "abstained": True,
+        "graphContextStatus": "UNAVAILABLE",
+        "claims": [],
+        "citations": [],
+    }
+
+
+def test_run_real_observations_carry_golden_and_corpus_digests():
+    golden_json = {"schemaVersion": "graph-relation-golden-v1", "questions": []}
+    corpus_value = {"manifestDigest": "sha256:" + "d" * 64, "sources": []}
+
+    observations = _runner()._assemble_real_observations(
+        golden_json=golden_json,
+        corpus_value=corpus_value,
+        answers=[],
+        graph_version="3",
+        actual_model="qwen-plus-2026",
+        settings_default_chat_model="qwen-plus",
+        graph_extraction_mode="model",
+        graph_reasoning=True,
+        started_at="2026-10-09T00:00:00Z",
+        finished_at="2026-10-09T00:00:01Z",
+    )
+
+    assert observations["goldenDigest"] == canonical_digest(golden_json)
+    assert observations["corpusDigest"] == "sha256:" + "d" * 64
+    assert observations["model"] == {"alias": "qwen-plus", "actual": "qwen-plus-2026"}
+    assert observations["startedAt"] == "2026-10-09T00:00:00Z"
+    assert observations["finishedAt"] == "2026-10-09T00:00:01Z"
+
+
+@pytest.mark.asyncio
+async def test_fake_observations_include_timestamps_and_claim_shape():
+    observations = await _runner().run_fake(golden=FIXTURE_GOLDEN, corpus_dir=FIXTURE_DIR)
+
+    assert observations["startedAt"]
+    assert observations["finishedAt"]
+    assert observations["goldenDigest"] == canonical_digest(json.loads(FIXTURE_GOLDEN.read_text()))
+    for answer in observations["answers"]:
+        assert answer["graphContextStatus"] in {
+            "APPLIED",
+            "NOT_READY",
+            "STALE",
+            "FAILED",
+            "EMPTY",
+        }
+        assert isinstance(answer["claims"], list)
+        for claim in answer["claims"]:
+            assert set(claim) == {"text", "citationIds"}
+
+
+def test_real_mode_rejects_blank_model_actual(tmp_path, monkeypatch, capsys):
+    golden = _human_labeled_golden()
+    golden_path = _write(tmp_path / "golden.json", golden)
+
+    blank_model_observations = _observations(
+        [], execution_mode="real", extraction_mode="model", model_actual=""
+    )
+    observations_path = _write(tmp_path / "observations.json", blank_model_observations)
+    report_path = tmp_path / "report.json"
+
+    exit_code = _run_main(
+        monkeypatch,
+        [
+            "--golden",
+            str(golden_path),
+            "--observations",
+            str(observations_path),
+            "--report",
+            str(report_path),
+            "--real",
+        ],
+    )
+
+    assert exit_code == 2
+    assert "real" in capsys.readouterr().err
+    assert not report_path.exists()

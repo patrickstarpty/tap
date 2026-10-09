@@ -30,7 +30,10 @@ from tap.modules.knowledge.domain.models import (
     SourceRevisionRef,
 )
 
-_RELATION_CITATION_LABEL_PATTERN = re.compile(r"^R(?:[1-9]|1[0-9]|20)$")
+RELATION_CITATION_LABEL_PATTERN = re.compile(r"^R(?:[1-9]|1[0-9]|20)$")
+# Kept for existing in-module call sites; external callers should import the
+# public name above.
+_RELATION_CITATION_LABEL_PATTERN = RELATION_CITATION_LABEL_PATTERN
 
 
 class DocumentStateChanged(Exception):
