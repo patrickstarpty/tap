@@ -2041,11 +2041,21 @@
 }
 
 /* Wraps the canvas region and, when a cited-path highlight is active, the
-   "Highlighted path" list beside it — siblings, not nested regions. */
+   "Highlighted path" list beside it — siblings, not nested regions. This is
+   the sole child of `#tap-library-graph-panel` (a row-direction flex
+   container itself), so without an explicit `width: 100%` it only sizes to
+   its own content (flex-basis: auto, flex-grow: 0 by default on the main
+   axis) rather than stretching to fill the tab panel — previously masked
+   because the long pre-I4 overview caption happened to be wide enough to
+   force this wrapper's content width close to the panel's own width; the
+   shorter caption exposed the real (unset) width, collapsing the canvas to
+   a narrow strip. */
 .tap-graph-highlight-layout {
   display: flex;
   align-items: flex-start;
   gap: 16px;
+  width: 100%;
+  min-width: 0;
 }
 
 .tap-graph-canvas-region {
