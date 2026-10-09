@@ -59,6 +59,8 @@ class GraphContextStatus(StrEnum):
     FAILED = "FAILED"
     NOT_READY = "NOT_READY"
     NOT_SELECTED = "NOT_SELECTED"
+    STALE = "STALE"
+    EMPTY = "EMPTY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,6 +381,7 @@ class ConversationEvent:
             "stage.started",
             "stage.completed",
             "retrieval.hits_ready",
+            "graph.context_ready",
             "rerank.completed",
             "answer.delta",
             "citation.resolved",

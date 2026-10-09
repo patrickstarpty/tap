@@ -27,7 +27,21 @@ from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.chat.domain.conversations import FrozenResource, TurnInput
 from tap.modules.chat.domain.suggestions import RefreshReason, SuggestionKey
 from tap.modules.graph.adapters.mysql import MysqlGraphStore
-from tap.modules.graph.domain.models import Evidence, GraphNode, GraphSnapshot, GraphSnapshotDraft
+from tap.modules.graph.adapters.mysql_project import publish_project_version
+from tap.modules.graph.adapters.mysql_project_store import MysqlProjectGraphStore
+from tap.modules.graph.domain.models import (
+    Evidence,
+    GraphNode,
+    GraphSnapshot,
+    GraphSnapshotDraft,
+    RelationOrigin,
+)
+from tap.modules.graph.domain.project import (
+    EdgeEvidence,
+    ProjectEdge,
+    ProjectGraphDraft,
+    ProjectNode,
+)
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_chunk_manifest,
     knowledge_document,
@@ -453,6 +467,122 @@ def test_main_entities_rank_domain_entities_by_evidence(owned_project_mysql):
 
         limited = await knowledge.main_entities(VALIDATION_SCOPE.actor_id, limit=1)
         assert limited == ("Popular Entity",)
+
+    _run(owned_project_mysql, scenario)
+
+
+def test_main_relations_rank_by_degree_and_confidence_within_ready_sources(owned_project_mysql):
+    async def scenario(sessions, engine):
+        async with sessions() as session, session.begin():
+            await _seed_document(
+                session,
+                source_id=_src("relations"),
+                document_id="doc-relations",
+                revision_id="rev-ready",
+                name="Relations Guide",
+            )
+
+        anchor = {"kind": "text", "start": 0, "end": 5}
+
+        def node(node_id: str, label: str, degree: int) -> ProjectNode:
+            return ProjectNode(
+                node_id=node_id,
+                label=label,
+                node_type="ENTITY",
+                canonical_key=label.lower(),
+                degree=degree,
+            )
+
+        def edge(
+            edge_id: str,
+            source_node_id: str,
+            target_node_id: str,
+            relation_type: str,
+            confidence: float,
+        ) -> ProjectEdge:
+            return ProjectEdge(
+                edge_id=edge_id,
+                source_node_id=source_node_id,
+                target_node_id=target_node_id,
+                relation_type=relation_type,
+                relation_label=relation_type.lower(),
+                origin=RelationOrigin.EXTRACTED,
+                confidence=confidence,
+            )
+
+        def evidence(
+            edge_id: str, chunk_id: str, source_revision_id: str = "rev-ready"
+        ) -> EdgeEvidence:
+            return EdgeEvidence(
+                edge_id=edge_id,
+                source_revision_id=source_revision_id,
+                document_revision_id="doc-rev-relations",
+                chunk_id=chunk_id,
+                anchor=anchor,
+                content_digest=DIGEST_A,
+                fragment_snapshot_id="fragment-snapshot-1",
+                fragment_edge_id=f"fragment-{edge_id}",
+            )
+
+        draft = ProjectGraphDraft(
+            fragment_digest="sha256:" + "c" * 64,
+            nodes=(
+                node("node-a", "A", 2),
+                node("node-b", "B", 2),
+                node("node-c", "C", 1),
+                node("node-d", "D", 1),
+                node("node-e", "E", 3),
+                node("node-f", "F", 3),
+                node("node-g", "G", 10),
+                node("node-h", "H", 10),
+            ),
+            edges=(
+                # degree sum 4 * confidence 0.9 = 3.6 (highest)
+                edge("edge-ab", "node-a", "node-b", "REQUIRES", 0.9),
+                # degree sum 2 * confidence 0.95 = 1.9 (lowest)
+                edge("edge-cd", "node-c", "node-d", "PRECEDES", 0.95),
+                # degree sum 6 * confidence 0.5 = 3.0 (middle)
+                edge("edge-ef", "node-e", "node-f", "USES", 0.5),
+                # highest raw degree sum, but evidence sits only in an unready
+                # source revision, so it must never appear.
+                edge("edge-gh", "node-g", "node-h", "RELATED_TO", 1.0),
+            ),
+            node_sources=(),
+            edge_evidence=(
+                evidence("edge-ab", "chunk-ab"),
+                evidence("edge-cd", "chunk-cd"),
+                evidence("edge-ef", "chunk-ef"),
+                evidence("edge-gh", "chunk-gh", source_revision_id="rev-unready"),
+            ),
+            aliases=(),
+            communities=(),
+            merge_log=(),
+        )
+
+        async with sessions() as session, session.begin():
+            await publish_project_version(
+                session, VALIDATION_SCOPE, draft, version=1, now=NOW.replace(tzinfo=None)
+            )
+
+        knowledge = KnowledgeSuggestionSources(
+            sessions,
+            scope=VALIDATION_SCOPE,
+            project_graph=MysqlProjectGraphStore(sessions),
+        )
+
+        relations = await knowledge.main_relations(VALIDATION_SCOPE.actor_id, limit=20)
+
+        assert [(r.subject, r.relation_type, r.object) for r in relations] == [
+            ("A", "REQUIRES", "B"),
+            ("E", "USES", "F"),
+            ("C", "PRECEDES", "D"),
+        ]
+
+        limited = await knowledge.main_relations(VALIDATION_SCOPE.actor_id, limit=2)
+        assert [(r.subject, r.relation_type, r.object) for r in limited] == [
+            ("A", "REQUIRES", "B"),
+            ("E", "USES", "F"),
+        ]
 
     _run(owned_project_mysql, scenario)
 

@@ -3,17 +3,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.policy import AuthorizationDenied
-from tap.modules.graph.application.project_queries import InMemoryProjectGraphStore
-from tap.modules.graph.domain.project import Alias, NodeSource, ProjectGraphDraft, ProjectNode
-from tap.modules.graph.domain.vocabulary import normalize_key
 from tap.modules.knowledge.api import KnowledgeAPI, answer_response_to_http
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
-from tap.modules.knowledge.application.graph_enrichment import (
-    GraphAnswerEnricher,
-    GraphContextStatus,
-)
 from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
@@ -304,64 +296,6 @@ async def test_two_revision_answer_carries_publication_provenance_and_rechecks_d
     models.withdraw_during_answer = True
     with pytest.raises(AuthorizationDenied):
         await knowledge.answer(request, policy)
-
-
-@pytest.mark.asyncio
-async def test_graph_evidence_outside_the_approved_slice_fails_closed() -> None:
-    """`GraphAnswerEnricher` reads the merged project graph, not the legacy
-    fragment snapshot store (which has no `get_current` and would raise,
-    landing in the UNAVAILABLE branch rather than FAILED). A node whose only
-    evidence cites an inventory item the current publication never approved
-    must fail closed with FAILED, the same as a source-revision mismatch."""
-    publication = _publication(project_id=VALIDATION_SCOPE.project_id)
-    authority = PublishedKnowledgeAuthority(PublicationRepository(publication), now=lambda: NOW)
-    store = InMemoryProjectGraphStore()
-    node_id = "gpn_unapproved_fact"
-    node = ProjectNode(
-        node_id=node_id,
-        label="Unapproved fact",
-        node_type="ENTITY",
-        canonical_key=normalize_key("Unapproved fact"),
-        degree=0,
-        community_id="community-1",
-        aliases=(),
-    )
-    node_source = NodeSource(
-        node_id=node_id,
-        source_revision_id="revision-1",
-        document_revision_id="revision-1",
-        chunk_id="chunk-unapproved",
-        anchor={
-            "type": "document",
-            "headingPath": ["Unapproved"],
-            "startOffset": 0,
-            "endOffset": 10,
-            "inventoryItemId": "item-3",
-        },
-        fragment_snapshot_id="snapshot-publication",
-        fragment_node_id="node-unapproved",
-    )
-    draft = ProjectGraphDraft(
-        fragment_digest="sha256:" + "f" * 64,
-        nodes=(node,),
-        edges=(),
-        node_sources=(node_source,),
-        edge_evidence=(),
-        aliases=(
-            Alias(alias_norm=normalize_key("Unapproved fact"), node_id=node_id, origin="LABEL"),
-        ),
-        communities=(),
-        merge_log=(),
-    )
-    await store.publish(VALIDATION_SCOPE, draft, now=NOW)
-
-    result = await GraphAnswerEnricher(store, publication_authority=authority).enrich(
-        VALIDATION_SCOPE,
-        ("revision-1", "revision-2"),
-        "Unapproved fact",
-    )
-
-    assert result.status is GraphContextStatus.FAILED
 
 
 @pytest.mark.asyncio

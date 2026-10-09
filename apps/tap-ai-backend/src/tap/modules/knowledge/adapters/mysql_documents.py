@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import NoReturn, Protocol, cast
+from typing import Mapping, NoReturn, Protocol, cast
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -383,6 +383,13 @@ knowledge_citation_snapshot = Table(
     Column("anchor_json", JSON, nullable=False),
     Column("claim_text", Text),
     Column("origin", String(32)),
+    Column("citation_kind", String(8), server_default="chunk"),
+    Column("graph_version", String(64)),
+    Column("edge_id", String(128)),
+    Column("subject_node_id", String(128)),
+    Column("object_node_id", String(128)),
+    Column("relation_type", String(32)),
+    Column("relation_label", String(64)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     UniqueConstraint("trace_id", "citation_id", name="uq_knowledge_citation_trace_id"),
 )
@@ -1643,6 +1650,13 @@ class MysqlDocumentRepository:
                         "anchor_json": json.loads(item.anchor_json),
                         "claim_text": item.claim_text,
                         "origin": item.origin,
+                        "citation_kind": item.citation_kind,
+                        "graph_version": item.graph_version,
+                        "edge_id": item.edge_id,
+                        "subject_node_id": item.subject_node_id,
+                        "object_node_id": item.object_node_id,
+                        "relation_type": item.relation_type,
+                        "relation_label": item.relation_label,
                         "created_at": now,
                     }
                     for item in snapshot.citations
@@ -1676,6 +1690,45 @@ class MysqlDocumentRepository:
                         knowledge_answer_snapshot.c.trace_id.in_(expired),
                     )
                 )
+
+    async def load_chunk_locators(
+        self, revision_ids: tuple[str, ...]
+    ) -> Mapping[str, ArtifactLocator]:
+        """Scoped `chunks_blob_locator` lookup for relation-evidence snippet
+        reads; a revision with no chunk artifact yet (locator still NULL) is
+        simply absent from the result, not an error."""
+        if not revision_ids:
+            return {}
+        revision = knowledge_document_revision
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(revision.c.revision_id, revision.c.chunks_blob_locator).where(
+                        *scope_predicates(revision, self._scope),
+                        revision.c.revision_id.in_(revision_ids),
+                        revision.c.chunks_blob_locator.is_not(None),
+                    )
+                )
+            ).all()
+        return {row.revision_id: ArtifactLocator(row.chunks_blob_locator) for row in rows}
+
+    async def load_document_ids(self, revision_ids: tuple[str, ...]) -> Mapping[str, str]:
+        """Scoped `document_id` lookup for the same revisions `load_chunk_locators`
+        resolves -- lets a snippet-only relation support be traced back to its
+        document root identity without widening this ledger's own access."""
+        if not revision_ids:
+            return {}
+        revision = knowledge_document_revision
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(revision.c.revision_id, revision.c.document_id).where(
+                        *scope_predicates(revision, self._scope),
+                        revision.c.revision_id.in_(revision_ids),
+                    )
+                )
+            ).all()
+        return {row.revision_id: row.document_id for row in rows}
 
     async def load_citation(
         self, citation_id: str, *, historical: bool = False
@@ -1733,6 +1786,13 @@ class MysqlDocumentRepository:
                             citation.c.anchor_json.label("citation_anchor"),
                             citation.c.claim_text.label("citation_claim_text"),
                             citation.c.origin.label("citation_origin"),
+                            citation.c.citation_kind.label("citation_kind"),
+                            citation.c.graph_version.label("citation_graph_version"),
+                            citation.c.edge_id.label("citation_edge_id"),
+                            citation.c.subject_node_id.label("citation_subject_node_id"),
+                            citation.c.object_node_id.label("citation_object_node_id"),
+                            citation.c.relation_type.label("citation_relation_type"),
+                            citation.c.relation_label.label("citation_relation_label"),
                             answer.c.trace_id.label("answer_trace_id"),
                             answer.c.selected_revisions_json,
                             document.c.document_id.label("document_id"),
@@ -1815,6 +1875,13 @@ class MysqlDocumentRepository:
                 anchor_json=citation_anchor,
                 claim_text=cast(str | None, row["citation_claim_text"]),
                 origin=cast(str | None, row["citation_origin"]),
+                citation_kind=cast(str | None, row["citation_kind"]) or "chunk",
+                graph_version=cast(str | None, row["citation_graph_version"]),
+                edge_id=cast(str | None, row["citation_edge_id"]),
+                subject_node_id=cast(str | None, row["citation_subject_node_id"]),
+                object_node_id=cast(str | None, row["citation_object_node_id"]),
+                relation_type=cast(str | None, row["citation_relation_type"]),
+                relation_label=cast(str | None, row["citation_relation_label"]),
             )
             selected = tuple(
                 ReadyDocumentRevision(

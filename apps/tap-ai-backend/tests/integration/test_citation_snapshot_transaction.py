@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime
 
 import pytest
@@ -17,6 +18,8 @@ from sqlalchemy.sql.selectable import Select
 
 from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
+from tap.modules.chat.domain.conversations import citation_evidence_digest
 from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import (
     MysqlDocumentRepository,
@@ -40,21 +43,44 @@ from tap.modules.knowledge.ports.answers import (
     ReadyDocumentRevision,
 )
 from tap.modules.knowledge.ports.citations import CitationSnapshotCorrupt
+from tap.modules.knowledge.ports.documents import ArtifactLocator
 from tap.platform.db.session import create_engine_and_session_factory
+from tests.owned_mysql import owned_project_database_url
 
 pytestmark = pytest.mark.skipif(
     os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1",
     reason="set TAP_RUN_MYSQL_INTEGRATION=1 for real MySQL answer snapshot tests",
 )
 
+
+@pytest.fixture(autouse=True)
+def _isolated_database_url(
+    monkeypatch: pytest.MonkeyPatch,
+    owned_project_mysql,  # type: ignore[no-untyped-def]
+) -> None:
+    """Point every test in this module at its own Docker-isolated MySQL
+    container instead of an ambient `127.0.0.1:3306` instance. Most tests
+    below read the module-level `DATABASE_URL` global directly (a legacy
+    pattern that predates `owned_project_mysql`); patching the module
+    attribute here reaches those call sites without changing every test's
+    signature."""
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "DATABASE_URL",
+        owned_project_database_url(owned_project_mysql),
+    )
+
+
 ANSWER_SNAPSHOT_LOCK_NAME = MysqlDocumentRepository(
     async_sessionmaker(), scope=VALIDATION_SCOPE, audit_factory=create_project_audit
 )._answer_snapshot_lock_name
 
-DATABASE_URL = os.getenv(
-    "TAP_DATABASE_URL",
-    "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-)
+# Patched to this test's own Docker-isolated MySQL by `_isolated_database_url`
+# above (an autouse fixture) before every test runs. Most tests in this file
+# read this module global directly rather than taking `owned_project_mysql`
+# as a parameter; an empty default (instead of an ambient `127.0.0.1:3306`
+# fallback) fails loudly if that fixture is ever skipped.
+DATABASE_URL: str = ""
 SOURCE_HASH = "sha256:" + "a" * 64
 CHUNK_HASH = "sha256:" + "b" * 64
 ANCHOR_JSON = json.dumps(
@@ -163,6 +189,8 @@ async def clean(engine) -> None:  # type: ignore[no-untyped-def]
             "knowledge_answer_snapshot",
             "knowledge_chunk_manifest",
             "knowledge_ingestion_job",
+            "knowledge_parse_inventory",
+            "knowledge_projection_fence",
             "knowledge_document_revision",
             "knowledge_source_legacy_map",
             "knowledge_document",
@@ -1042,6 +1070,303 @@ def test_concurrent_retention_is_globally_serialized_and_cascades_old_citations(
             assert old_citation == 0
         finally:
             await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+_OTHER_SCOPE = ProjectScopeContext(
+    enterprise_id="local",
+    project_id="other-project",
+    actor_id="tapper-local-user",
+    identity_mode=IdentityMode.VALIDATION,
+)
+
+
+async def seed_ready_other_project(engine, suffix: str) -> ReadyDocumentRevision:  # type: ignore[no-untyped-def]
+    """Same shape as `seed_ready`, but scoped to a different `project_id` --
+    used to prove `load_chunk_locators` is scope-filtered, not just a bare
+    `revision_id IN (...)` lookup."""
+    document_id = f"doc_{suffix}"
+    source_id = legacy_source_id(_OTHER_SCOPE.project_id, document_id)
+    revision_id = f"rev_{suffix}"
+    now = datetime(2026, 8, 28, 9, 0)
+    async with engine.begin() as connection:
+        from tap.modules.knowledge.adapters.mysql_documents import knowledge_source
+        from tap.platform.db.project_scope import scope_values
+
+        await connection.execute(
+            text("INSERT INTO project (enterprise_id,project_id) VALUES ('local','other-project')")
+        )
+        await connection.execute(
+            knowledge_source.insert().values(
+                **scope_values(_OTHER_SCOPE),
+                source_id=source_id,
+                name="fixture",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO knowledge_document (source_id,enterprise_id,project_id,actor_id,iden"
+                "tity_mode,identity_origin,document_id,filename,media_type,current_revi"
+                "sion_id,source_content_hash,dedupe_key,reservation_parser_version,rese"
+                "rvation_chunker_version,reservation_pipeline_version,status,stage,chun"
+                "k_count,activated_at,created_at,updated_at) VALUES (:source_id,'local','other-pro"
+                "ject','tapper-local-user','validation','VALIDATION',:document_id,:filena"
+                "me,'text/markdown',NULL,:source_hash,:dedupe_key,'tapper-parser-v1','t"
+                "apper-structure-512-v1','tapper-ingestion-v1','ready','ready',1,:now,:"
+                "now,:now)"
+            ),
+            {
+                "source_id": source_id,
+                "document_id": document_id,
+                "filename": f"{suffix}.md",
+                "source_hash": SOURCE_HASH,
+                "dedupe_key": "sha256:" + suffix[0] * 64,
+                "now": now,
+            },
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO knowledge_document_revision (source_id,enterprise_id,project_id,acto"
+                "r_id,identity_mode,identity_origin,revision_id,document_id,source_cont"
+                "ent_hash,original_blob_locator,normalized_blob_locator,chunks_blob_loc"
+                "ator,parser_version,chunker_version,pipeline_version,created_at) VALUE"
+                "S (:source_id,'local','other-project','tapper-local-user','validation',"
+                "'VALIDATION',:revision_id,:document_id,:source_hash,'original',:normalized,:chunks"
+                ",'tapper-parser-v1','tapper-structure-512-v1','tapper-ingestion-v1',:n"
+                "ow)"
+            ),
+            {
+                "revision_id": revision_id,
+                "source_id": source_id,
+                "document_id": document_id,
+                "source_hash": SOURCE_HASH,
+                "normalized": f"tapper-artifacts/revisions/{revision_id}/normalized-v1.json",
+                "chunks": f"tapper-artifacts/revisions/{revision_id}/chunks-v1.jsonl.gz",
+                "now": now,
+            },
+        )
+        await connection.execute(
+            text(
+                "UPDATE knowledge_document SET current_revision_id=:revision_id "
+                "WHERE document_id=:document_id"
+            ),
+            {"revision_id": revision_id, "document_id": document_id},
+        )
+    return ReadyDocumentRevision(
+        document_id,
+        revision_id,
+        SOURCE_HASH,
+        source_id,
+        source_name="fixture",
+        filename=f"{suffix}.md",
+    )
+
+
+def test_load_chunk_locators_returns_only_scoped_revisions_with_a_locator(
+    owned_project_mysql,  # type: ignore[no-untyped-def]
+) -> None:
+    """`load_chunk_locators` filters on `scope_predicates` (excludes another
+    project's revision even when its id is requested and it has a locator)
+    and on a non-NULL `chunks_blob_locator` (excludes a revision whose chunk
+    artifact was never produced). It does not filter by document/source
+    "ready" status -- no such join is specified for it -- so the name says
+    only what it actually checks."""
+
+    async def scenario() -> None:
+        database_url = owned_project_database_url(owned_project_mysql)
+        engine, sessions = create_engine_and_session_factory(database_url)
+        await clean(engine)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        try:
+            with_locator = await seed_ready(engine, "a")
+            without_locator = await seed_ready(engine, "b")
+            other_project = await seed_ready_other_project(engine, "c")
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE knowledge_document_revision SET chunks_blob_locator=NULL "
+                        "WHERE revision_id=:revision_id"
+                    ),
+                    {"revision_id": without_locator.revision_id},
+                )
+
+            locators = await repository.load_chunk_locators(
+                (
+                    with_locator.revision_id,
+                    without_locator.revision_id,
+                    other_project.revision_id,
+                )
+            )
+
+            assert set(locators) == {with_locator.revision_id}
+            assert locators[with_locator.revision_id] == ArtifactLocator(
+                f"tapper-artifacts/revisions/{with_locator.revision_id}/chunks-v1.jsonl.gz"
+            )
+        finally:
+            await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_edge_citation_round_trips_and_historical_rows_default_to_chunk(
+    owned_project_mysql,  # type: ignore[no-untyped-def]
+) -> None:
+    """PR 3 Task 8: migration `0030_edge_citations` adds seven nullable
+    columns to `knowledge_citation_snapshot`. A citation saved with
+    `citation_kind="edge"` must read back with every edge column intact, and
+    a historical row (inserted before this migration, or any row whose
+    `citation_kind` is NULL) must default to `"chunk"` rather than raise or
+    silently drop the distinction."""
+
+    async def scenario() -> None:
+        database_url = owned_project_database_url(owned_project_mysql)
+        engine, sessions = create_engine_and_session_factory(database_url)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        try:
+            selected = await seed_ready(engine, "a")
+            chunk_citation = CitationSnapshot(
+                trace_id="trace-edge",
+                citation_id="citation-S1",
+                document_id=selected.document_id,
+                revision_id=selected.revision_id,
+                chunk_id="h_a",
+                source_content_hash=SOURCE_HASH,
+                chunk_content_hash=CHUNK_HASH,
+                anchor_json=ANCHOR_JSON,
+            )
+            edge_citation = CitationSnapshot(
+                trace_id="trace-edge",
+                citation_id="citation-R1",
+                document_id=selected.document_id,
+                revision_id=selected.revision_id,
+                chunk_id="h_a",
+                source_content_hash=SOURCE_HASH,
+                chunk_content_hash=CHUNK_HASH,
+                anchor_json=ANCHOR_JSON,
+                citation_kind="edge",
+                graph_version="7",
+                edge_id="edge-1",
+                subject_node_id="node-subject",
+                object_node_id="node-object",
+                relation_type="REQUIRES",
+                relation_label="requires",
+            )
+            committed = AnswerSnapshot(
+                trace_id="trace-edge",
+                query_hash="sha256:" + "c" * 64,
+                selected_revisions=(selected,),
+                citations=(chunk_citation, edge_citation),
+            )
+            await repository.save_answer_with_citations(committed)
+
+            edge_lookup = await repository.load_citation("citation-R1")
+            assert edge_lookup is not None
+            assert edge_lookup.citation.citation_kind == "edge"
+            assert edge_lookup.citation.graph_version == "7"
+            assert edge_lookup.citation.edge_id == "edge-1"
+            assert edge_lookup.citation.subject_node_id == "node-subject"
+            assert edge_lookup.citation.object_node_id == "node-object"
+            assert edge_lookup.citation.relation_type == "REQUIRES"
+            assert edge_lookup.citation.relation_label == "requires"
+
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE knowledge_citation_snapshot SET citation_kind=NULL "
+                        "WHERE citation_id='citation-S1'"
+                    )
+                )
+            historical_lookup = await repository.load_citation("citation-S1")
+            assert historical_lookup is not None
+            assert historical_lookup.citation.citation_kind == "chunk"
+            assert historical_lookup.citation.graph_version is None
+            assert historical_lookup.citation.edge_id is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_resolve_citations_digest_is_unchanged_by_edge_columns(
+    owned_project_mysql,  # type: ignore[no-untyped-def]
+) -> None:
+    """The edge columns added by migration `0030_edge_citations` must not
+    change `citation_evidence_digest`'s material: the same row's digest,
+    computed the way `MysqlConversationRepository.resolve_citations` and
+    `.complete()` compute it, is identical whether or not the edge columns
+    are populated. Otherwise every pre-migration digest bound into a Turn's
+    `turn_artifact_link` would stop verifying on reload."""
+
+    async def scenario() -> None:
+        database_url = owned_project_database_url(owned_project_mysql)
+        engine, sessions = create_engine_and_session_factory(database_url)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        try:
+            selected = await seed_ready(engine, "a")
+            committed = snapshot("trace-digest", selected, with_citation=True)
+            await repository.save_answer_with_citations(committed)
+            citation_id = committed.citations[0].citation_id
+
+            async def read_digest() -> str:
+                async with engine.connect() as connection:
+                    row = (
+                        (
+                            await connection.execute(
+                                text(
+                                    "SELECT citation_id,source_id,trace_id,document_id,"
+                                    "revision_id,chunk_id,source_content_hash,"
+                                    "chunk_content_hash,anchor_json,claim_text,origin "
+                                    "FROM knowledge_citation_snapshot "
+                                    "WHERE citation_id=:citation_id"
+                                ),
+                                {"citation_id": citation_id},
+                            )
+                        )
+                        .mappings()
+                        .one()
+                    )
+                return citation_evidence_digest(
+                    citation_id=row["citation_id"],
+                    trace_id=row["trace_id"],
+                    source_id=row["source_id"],
+                    document_id=row["document_id"],
+                    revision_id=row["revision_id"],
+                    chunk_id=row["chunk_id"],
+                    source_content_hash=row["source_content_hash"],
+                    chunk_content_hash=row["chunk_content_hash"],
+                    anchor=row["anchor_json"],
+                    claim_text=row["claim_text"],
+                    origin=row["origin"],
+                )
+
+            digest_without_edge_columns = await read_digest()
+
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE knowledge_citation_snapshot SET citation_kind='edge',"
+                        "graph_version='7',edge_id='edge-1',subject_node_id='node-subject',"
+                        "object_node_id='node-object',relation_type='REQUIRES',"
+                        "relation_label='requires' WHERE citation_id=:citation_id"
+                    ),
+                    {"citation_id": citation_id},
+                )
+
+            digest_with_edge_columns = await read_digest()
+
+            assert digest_without_edge_columns == digest_with_edge_columns
+        finally:
             await engine.dispose()
 
     asyncio.run(scenario())

@@ -56,12 +56,21 @@ class TopicSource:
 
 
 @dataclass(frozen=True, slots=True)
+class MainRelation:
+    subject: str
+    relation_type: str
+    relation_label: str
+    object: str
+
+
+@dataclass(frozen=True, slots=True)
 class SuggestionInputs:
     topics: tuple[TopicSource, ...]
     entities: tuple[str, ...]
     personal_questions: tuple[str, ...]
     personal_source_ids: tuple[str, ...]
     popular_sources: tuple[tuple[str, int], ...]
+    relations: tuple[MainRelation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

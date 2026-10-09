@@ -834,8 +834,27 @@ class MysqlConversationRepository:
                 raise ValueError(
                     "Answer evidence snapshot/event binding differs from accepted Turn"
                 )
-            if snapshot.value.graph_context_status is GraphContextStatus.APPLIED:
-                raise ValueError("graph snapshot persistence is unavailable")
+            # `graph_snapshot_id` is persisted as an opaque field inside the
+            # `snapshot` JSON blob below (see `raw["graph_snapshot_id"]` in
+            # `_load_turn`'s read path); it is not a foreign key into any
+            # graph table, so completing a Turn whose answer carries an
+            # APPLIED graph context needs no extra artifact linking here,
+            # unlike citations (which are frozen-resource- and ACL-checked
+            # below). An earlier revision of this method (commit a22c55e)
+            # carried an unconditional guard here that raised
+            # `"graph snapshot persistence is unavailable"` for any APPLIED
+            # graph context: at the time, a graph snapshot ID could not be
+            # validated as a durable fact, so the guard failed closed rather
+            # than trust an unverifiable ID. That guard is superseded by the
+            # spec rule that the graph never blocks an answer and by this
+            # plan's `graph_snapshot_id = graph_version` design: the ID is an
+            # audit label, not a row reference (old graph versions are
+            # pruned, so there is nothing durable left to check it against).
+            # Edge citation fidelity on reload — i.e. whether a cited edge's
+            # own `graph_version` still matches this Turn's `graph_snapshot_id`
+            # — is validated below, against the citation row's persisted
+            # columns, and depends on Task 8's `knowledge_citation_snapshot`
+            # edge columns existing.
             frozen_resources = {
                 (
                     item["source_id"],
@@ -856,7 +875,7 @@ class MysqlConversationRepository:
                             text(
                                 "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
                                 "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
-                                "claim_text,origin "
+                                "claim_text,origin,citation_kind,graph_version "
                                 "FROM knowledge_citation_snapshot "
                                 "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
                                 "AND citation_id=:citation_id AND trace_id=:trace_id"
@@ -896,6 +915,14 @@ class MysqlConversationRepository:
                     citation_row["source_content_hash"],
                 ) not in frozen_resources:
                     raise ValueError("citation is outside the frozen Turn resources")
+                if (
+                    snapshot.value.graph_context_status is GraphContextStatus.APPLIED
+                    and citation_row["citation_kind"] == "edge"
+                    and citation_row["graph_version"] != snapshot.value.graph_snapshot_id
+                ):
+                    raise ValueError(
+                        "edge citation graph version differs from the Turn's graph snapshot"
+                    )
                 await session.execute(
                     insert(turn_artifact_link).values(
                         **scope_values(self.scope),

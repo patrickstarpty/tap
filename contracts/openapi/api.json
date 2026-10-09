@@ -353,6 +353,7 @@
                 "context.assembled": "#/components/schemas/ContextAssembledEvent",
                 "conversation.turn.completed": "#/components/schemas/ConversationTurnCompletedEvent",
                 "conversation.turn.requested": "#/components/schemas/ConversationTurnRequestedEvent",
+                "graph.context_ready": "#/components/schemas/GraphContextReadyEvent",
                 "query.plan_ready": "#/components/schemas/QueryPlanReadyEvent",
                 "rerank.completed": "#/components/schemas/RerankCompletedEvent",
                 "retrieval.hits_ready": "#/components/schemas/RetrievalHitsReadyEvent",
@@ -389,6 +390,9 @@
               },
               {
                 "$ref": "#/components/schemas/RetrievalHitsReadyEvent"
+              },
+              {
+                "$ref": "#/components/schemas/GraphContextReadyEvent"
               },
               {
                 "$ref": "#/components/schemas/RerankCompletedEvent"
@@ -643,9 +647,28 @@
             ],
             "title": "Derivedfromchunkids"
           },
+          "edge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/tap__contracts__chat_stream__EdgeCitationView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "evidenceLabel": {
             "minLength": 1,
             "title": "Evidencelabel",
+            "type": "string"
+          },
+          "kind": {
+            "default": "chunk",
+            "enum": [
+              "chunk",
+              "edge"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "logicalChunkId": {
@@ -1095,6 +1118,7 @@
               "stage.started",
               "stage.completed",
               "retrieval.hits_ready",
+              "graph.context_ready",
               "rerank.completed",
               "answer.delta",
               "citation.resolved",
@@ -1513,9 +1537,11 @@
                 "enum": [
                   "APPLIED",
                   "NOT_READY",
+                  "STALE",
                   "FAILED",
                   "UNAVAILABLE",
-                  "NOT_SELECTED"
+                  "NOT_SELECTED",
+                  "EMPTY"
                 ],
                 "type": "string"
               },
@@ -2137,6 +2163,51 @@
         "title": "DocumentSummary",
         "type": "object"
       },
+      "EdgeCitationView": {
+        "additionalProperties": false,
+        "properties": {
+          "edgeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Edgeid",
+            "type": "string"
+          },
+          "graphVersion": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Graphversion",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/GraphEndpointView"
+          },
+          "relationLabel": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Relationlabel",
+            "type": "string"
+          },
+          "relationType": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Relationtype",
+            "type": "string"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/GraphEndpointView"
+          }
+        },
+        "required": [
+          "edgeId",
+          "graphVersion",
+          "subject",
+          "object",
+          "relationType",
+          "relationLabel"
+        ],
+        "title": "EdgeCitationView",
+        "type": "object"
+      },
       "FailureAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -2262,6 +2333,139 @@
         "title": "FailureAnchor",
         "type": "object"
       },
+      "GraphContextReadyEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/GraphContextReadyPayload"
+          },
+          "type": {
+            "const": "graph.context_ready",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "GraphContextReadyEvent",
+        "type": "object"
+      },
+      "GraphContextReadyPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "graphVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphversion"
+          },
+          "paths": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "maxItems": 3,
+            "title": "Paths",
+            "type": "array"
+          },
+          "relationCount": {
+            "maximum": 20.0,
+            "minimum": 0.0,
+            "title": "Relationcount",
+            "type": "integer"
+          },
+          "seedCount": {
+            "minimum": 0.0,
+            "title": "Seedcount",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "APPLIED",
+              "NOT_READY",
+              "STALE",
+              "FAILED",
+              "EMPTY",
+              "UNAVAILABLE",
+              "NOT_SELECTED"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "seedCount",
+          "paths",
+          "relationCount"
+        ],
+        "title": "GraphContextReadyPayload",
+        "type": "object"
+      },
+      "GraphContextSummaryView": {
+        "additionalProperties": false,
+        "properties": {
+          "graphVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Graphversion"
+          },
+          "paths": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "relationCount": {
+            "minimum": 0,
+            "title": "Relationcount",
+            "type": "integer"
+          },
+          "seedCount": {
+            "minimum": 0,
+            "title": "Seedcount",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "APPLIED",
+              "NOT_READY",
+              "STALE",
+              "FAILED",
+              "EMPTY"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "seedCount",
+          "relationCount"
+        ],
+        "title": "GraphContextSummaryView",
+        "type": "object"
+      },
       "GraphEdgeView": {
         "additionalProperties": false,
         "properties": {
@@ -2311,6 +2515,29 @@
           "confidence"
         ],
         "title": "GraphEdgeView",
+        "type": "object"
+      },
+      "GraphEndpointView": {
+        "additionalProperties": false,
+        "description": "One edge citation endpoint (subject or object); nested shape matches\nTask 7's `EdgeCitationView` ahead of time so Task 7 does not need to\nreshape this contract again.",
+        "properties": {
+          "label": {
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "nodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Nodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "label"
+        ],
+        "title": "GraphEndpointView",
         "type": "object"
       },
       "GraphEvidenceView": {
@@ -7403,14 +7630,27 @@
             "title": "Degradedmode",
             "type": "boolean"
           },
+          "graphContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphContextSummaryView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "graphContextStatus": {
             "default": "NOT_SELECTED",
             "enum": [
               "APPLIED",
               "NOT_READY",
+              "STALE",
               "FAILED",
               "UNAVAILABLE",
-              "NOT_SELECTED"
+              "NOT_SELECTED",
+              "EMPTY"
             ],
             "title": "Graphcontextstatus",
             "type": "string"
@@ -7525,9 +7765,29 @@
             "default": null,
             "title": "Derivedfromchunkids"
           },
+          "edge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EdgeCitationView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "evidenceLabel": {
             "minLength": 1,
             "title": "Evidencelabel",
+            "type": "string"
+          },
+          "kind": {
+            "default": "chunk",
+            "enum": [
+              "chunk",
+              "edge"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "logicalChunkId": {
@@ -10544,6 +10804,51 @@
         "title": "DocumentAnchor",
         "type": "object"
       },
+      "tap__contracts__chat_stream__EdgeCitationView": {
+        "additionalProperties": false,
+        "properties": {
+          "edgeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Edgeid",
+            "type": "string"
+          },
+          "graphVersion": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Graphversion",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__GraphEndpointView"
+          },
+          "relationLabel": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Relationlabel",
+            "type": "string"
+          },
+          "relationType": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Relationtype",
+            "type": "string"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__GraphEndpointView"
+          }
+        },
+        "required": [
+          "edgeId",
+          "graphVersion",
+          "subject",
+          "object",
+          "relationType",
+          "relationLabel"
+        ],
+        "title": "EdgeCitationView",
+        "type": "object"
+      },
       "tap__contracts__chat_stream__FailureAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -10596,6 +10901,29 @@
           "incidentId"
         ],
         "title": "FailureAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__GraphEndpointView": {
+        "additionalProperties": false,
+        "description": "One edge citation endpoint (subject or object).",
+        "properties": {
+          "label": {
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "nodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Nodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "label"
+        ],
+        "title": "GraphEndpointView",
         "type": "object"
       },
       "tap__contracts__chat_stream__OpenApiAnchor": {
@@ -10699,9 +11027,11 @@
             "enum": [
               "APPLIED",
               "NOT_READY",
+              "STALE",
               "FAILED",
               "UNAVAILABLE",
-              "NOT_SELECTED"
+              "NOT_SELECTED",
+              "EMPTY"
             ],
             "title": "Graphcontextstatus",
             "type": "string"
@@ -10983,6 +11313,51 @@
         "title": "DocumentAnchor",
         "type": "object"
       },
+      "tap__contracts__http__EdgeCitationView": {
+        "additionalProperties": false,
+        "properties": {
+          "edgeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Edgeid",
+            "type": "string"
+          },
+          "graphVersion": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Graphversion",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/tap__contracts__http__GraphEndpointView"
+          },
+          "relationLabel": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Relationlabel",
+            "type": "string"
+          },
+          "relationType": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Relationtype",
+            "type": "string"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/tap__contracts__http__GraphEndpointView"
+          }
+        },
+        "required": [
+          "edgeId",
+          "graphVersion",
+          "subject",
+          "object",
+          "relationType",
+          "relationLabel"
+        ],
+        "title": "EdgeCitationView",
+        "type": "object"
+      },
       "tap__contracts__http__FailureAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -11042,6 +11417,29 @@
           "incidentId"
         ],
         "title": "FailureAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__GraphEndpointView": {
+        "additionalProperties": false,
+        "description": "One edge citation endpoint (subject or object); nested shape matches\nTask 7's `EdgeCitationView` ahead of time so Task 7 does not need to\nreshape this contract again.",
+        "properties": {
+          "label": {
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "nodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Nodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "label"
+        ],
+        "title": "GraphEndpointView",
         "type": "object"
       },
       "tap__contracts__http__OpenApiAnchor": {
@@ -11144,14 +11542,26 @@
             "title": "Degradedmode",
             "type": "boolean"
           },
+          "graphContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphContextSummaryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "graphContextStatus": {
             "default": "NOT_SELECTED",
             "enum": [
               "APPLIED",
               "NOT_READY",
+              "STALE",
               "FAILED",
               "UNAVAILABLE",
-              "NOT_SELECTED"
+              "NOT_SELECTED",
+              "EMPTY"
             ],
             "title": "Graphcontextstatus",
             "type": "string"

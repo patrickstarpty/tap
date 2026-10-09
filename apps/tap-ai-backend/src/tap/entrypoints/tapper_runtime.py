@@ -111,6 +111,8 @@ class TapperSettings:
     graph_align_threshold: float
     graph_align_embedding_max_nodes: int
     graph_overview_limit: int
+    graph_retrieval_augment: bool
+    graph_reasoning: bool
     collection: str
     alias: str
     corpus_version: str
@@ -420,6 +422,20 @@ class TapperSettings:
                 minimum=10,
                 maximum=500,
             ),
+            graph_retrieval_augment=_fixed_choice(
+                values,
+                "TAPPER_GRAPH_RETRIEVAL_AUGMENT",
+                default="1",
+                choices=frozenset({"0", "1"}),
+            )
+            == "1",
+            graph_reasoning=_fixed_choice(
+                values,
+                "TAPPER_GRAPH_REASONING",
+                default="1",
+                choices=frozenset({"0", "1"}),
+            )
+            == "1",
             collection=collection,
             alias=alias,
             corpus_version=corpus,
@@ -782,6 +798,8 @@ async def create_api_runtime(
             parser_socket=settings.parser_socket,
             corpus_version=settings.corpus_version,
             graph_overview_limit=settings.graph_overview_limit,
+            graph_retrieval_augment=settings.graph_retrieval_augment,
+            graph_reasoning=settings.graph_reasoning,
         )
         services = replace(services, chunk_manager=chunk_manager)
         if settings.insights_base_url:
@@ -1599,6 +1617,8 @@ def _assemble_http_services(
     parser_socket: str | None = None,
     corpus_version: str = "tapper-demo-v1",
     graph_overview_limit: int = 150,
+    graph_retrieval_augment: bool = True,
+    graph_reasoning: bool = True,
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -1644,6 +1664,57 @@ def _assemble_http_services(
         # Chunks index directly; flowchart images still answer only after review.
         flowchart_gate = FlowchartPublicationGate(PublishedKnowledgeAuthority(review_repository))
 
+    graph = None
+    project_graph = None
+    graph_jobs = None
+    graph_node_enrichment = None
+    relation_analysis = None
+    if graph_sessions is not None:
+        from tap.modules.graph.adapters.mysql import MysqlGraphStore
+        from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
+        from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
+        from tap.modules.graph.adapters.mysql_node_enrichment import MysqlGraphNodeEnrichment
+        from tap.modules.graph.adapters.mysql_project_store import MysqlProjectGraphStore
+        from tap.modules.graph.application.project_queries import ProjectGraphCache
+
+        graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
+        project_graph_cache = ProjectGraphCache()
+        project_graph = MysqlProjectGraphStore(
+            graph_sessions,  # type: ignore[arg-type]
+            cache=project_graph_cache,
+        )
+        graph_jobs = MysqlGraphJobStore(
+            graph_sessions,  # type: ignore[arg-type]
+            merge_queue=MysqlProjectMergeQueue(
+                graph_sessions,  # type: ignore[arg-type]
+                cache=project_graph_cache,
+            ),
+        )
+        graph_node_enrichment = MysqlGraphNodeEnrichment(
+            graph_sessions,  # type: ignore[arg-type]
+            artifacts,
+        )
+        # The legacy keyword-matching graph enrichment is retired (PR 3);
+        # `relation_analysis` below is the answer flow's sole remaining
+        # graph-reasoning entry point.
+        if graph_reasoning:
+            from tap.modules.ai.application.agents.registry import AgentRegistry
+            from tap.modules.ai.application.agents.relation_analysis import (
+                RelationAnalysisAgent,
+            )
+            from tap.modules.knowledge.adapters.artifact_snippets import ArtifactChunkSnippets
+            from tap.modules.knowledge.application.retrieve import RegisteredRelationAnalysis
+
+            registry = AgentRegistry()
+            registry.register(
+                RelationAnalysisAgent(
+                    project_graph,
+                    ArtifactChunkSnippets(repository, cast(CitationArtifactStore, artifacts)),
+                    publication_authority=publication_authority,
+                )
+            )
+            relation_analysis = RegisteredRelationAnalysis(registry, scope=repository.scope)
+
     documents = DocumentService(repository=document_repository, artifacts=artifact_store)
     knowledge = KnowledgeAPI(
         search=search,
@@ -1657,6 +1728,8 @@ def _assemble_http_services(
         redactor=redactor,
         publication_authority=publication_authority,
         flowchart_gate=flowchart_gate,
+        relation_analysis=relation_analysis,
+        retrieval_augment=graph_retrieval_augment,
     )
     answer_service = AnswerService(
         repository=cast(AnswerSnapshotRepository, repository),
@@ -1687,40 +1760,6 @@ def _assemble_http_services(
         from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService
 
         traces = MysqlTraceHttpService(conversation_sessions)  # type: ignore[arg-type]
-    graph = None
-    graph_enricher = None
-    project_graph = None
-    graph_jobs = None
-    graph_node_enrichment = None
-    if graph_sessions is not None:
-        from tap.modules.graph.adapters.mysql import MysqlGraphStore
-        from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
-        from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
-        from tap.modules.graph.adapters.mysql_node_enrichment import MysqlGraphNodeEnrichment
-        from tap.modules.graph.adapters.mysql_project_store import MysqlProjectGraphStore
-        from tap.modules.graph.application.project_queries import ProjectGraphCache
-        from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
-
-        graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
-        project_graph_cache = ProjectGraphCache()
-        project_graph = MysqlProjectGraphStore(
-            graph_sessions,  # type: ignore[arg-type]
-            cache=project_graph_cache,
-        )
-        graph_enricher = GraphAnswerEnricher(
-            project_graph, publication_authority=publication_authority
-        )
-        graph_jobs = MysqlGraphJobStore(
-            graph_sessions,  # type: ignore[arg-type]
-            merge_queue=MysqlProjectMergeQueue(
-                graph_sessions,  # type: ignore[arg-type]
-                cache=project_graph_cache,
-            ),
-        )
-        graph_node_enrichment = MysqlGraphNodeEnrichment(
-            graph_sessions,  # type: ignore[arg-type]
-            artifacts,
-        )
     test_plans = None
     if test_plan_sessions is not None:
         from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
@@ -1773,7 +1812,6 @@ def _assemble_http_services(
         searches=search_service,
         sources=SourceService(cast(SourceRepository, repository), documents),
         corpus_version=corpus_version,
-        graph_enricher=graph_enricher,
         models=embeddings,
         answer_planner=_answer_planner(embeddings),
     )
@@ -1805,6 +1843,7 @@ def _assemble_http_services(
             knowledge=KnowledgeSuggestionSources(
                 conversation_sessions,  # type: ignore[arg-type]
                 scope=repository.scope,
+                project_graph=project_graph,
             ),
             usage=MysqlSuggestionUsage(
                 conversation_sessions,  # type: ignore[arg-type]
