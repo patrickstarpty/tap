@@ -132,7 +132,14 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 # silently dropping a citation for a chunk that *did* ground
                 # the answer. Folding every such S label directly onto the
                 # relation claim's `evidenceLabels` keeps the citation even
-                # when its own paragraph is suppressed as a duplicate.
+                # when its own paragraph is suppressed as a duplicate. Those
+                # S labels are also excluded from the evidence loop below by
+                # label, not just by sentence text -- a relation sentence
+                # that does *not* collide with its S label's own sentence
+                # would otherwise still get cited a second time as its own,
+                # separate claim, producing two distinct citations for the
+                # same (source, chunk) pair (`answer-citation-identity`).
+                claimed_labels: set[str] = set()
                 if relations:
                     first_relation = relations[0]
                     relation_label = (
@@ -150,6 +157,7 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                         for entry in first_relation.get("evidence", [])
                         if "label" in entry and entry["label"] in evidence_label_ids
                     )
+                    claimed_labels = set(relation_s_labels)
                     claims.append(
                         {
                             "text": sentence,
@@ -157,6 +165,8 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                         }
                     )
                 for item in evidence:
+                    if item["label"] in claimed_labels:
+                        continue
                     sentence = _first_evidence_sentence(item["content"])
                     if sentence and sentence not in used:
                         used.add(sentence)
