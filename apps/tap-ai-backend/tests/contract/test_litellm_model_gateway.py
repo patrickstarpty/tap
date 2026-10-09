@@ -569,50 +569,6 @@ async def test_fake_answer_cites_first_relation_when_present():
 
 
 @pytest.mark.asyncio
-async def test_fake_answer_never_cites_s1_twice_when_sentences_do_not_collide():
-    """Regression: when the relation sentence does *not* collide with S1's
-    own first sentence (the common case -- the relation sentence names the
-    edge's endpoints, not the chunk's own wording), S1's label must still be
-    merged onto the relation claim and not *also* produced as its own,
-    separate claim -- citing the same chunk from two different claims
-    produces two distinct citations for one (source, chunk) pair, which
-    `test_tapper_persistence_restart.py`'s `answer-citation-identity`
-    invariant (every citation_id, and every (source_id, chunk_id) pair, must
-    be unique) rejects whole-answer."""
-    from test_knowledge_api import _claim_resolution_evidence
-
-    from tap.modules.knowledge.application.relation_analysis import (
-        RelationContext,
-        RelationContextStatus,
-    )
-
-    relation = _relation_evidence_fixture()
-    context = RelationContext(
-        status=RelationContextStatus.APPLIED,
-        graph_version="v1",
-        relations=(relation,),
-    )
-    # `_claim_resolution_evidence()`'s content ("Authorization requires the
-    # verified project policy.") does not collide with the relation sentence
-    # ("Underwriting review REQUIRES health disclosure.").
-    evidence = _claim_resolution_evidence()
-
-    models = _relation_answer_gateway()
-
-    generation = await models.answer(
-        "What is the relationship between underwriting review and health disclosure?",
-        (evidence,),
-        "quick-hybrid-v1",
-        relation_context=context,
-        relation_first=True,
-    )
-
-    s1_claims = [claim for claim in generation.claims if "S1" in claim.evidence_labels]
-    assert len(s1_claims) == 1
-    assert s1_claims[0] is generation.claims[0]
-
-
-@pytest.mark.asyncio
 async def test_fake_answer_still_cites_s1_when_its_sentence_collides_with_the_relation_sentence():
     """Regression: the relation sentence `"{subject} {relationLabel}
     {object}."` can come out byte-identical to the first sentence of the S1

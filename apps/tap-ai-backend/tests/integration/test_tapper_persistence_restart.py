@@ -914,9 +914,31 @@ def _answer_contributors(
     _require(bool(claims), "answer-claims")
     citation_ids = [citation.citation_id for citation in citations]
     _require(len(citation_ids) == len(set(citation_ids)), "answer-citation-identity")
-    citation_chunks = [(citation.source.source_id, citation.chunk_id) for citation in citations]
+    # This check predates `kind="edge"` citations: it used to require every
+    # citation's (source_id, chunk_id) to be unique, which rejected the
+    # now-tested, shipped PR 3 design where an edge citation legitimately
+    # reuses its supporting chunk's own (source_id, chunk_id) verbatim
+    # (`_edge_citation_for_relation`'s primary case -- see
+    # `test_edge_citation_reuses_s_chunk_fields_and_gets_r_label` and
+    # `test_citations_cap_drops_lowest_ranked_r_when_no_s_is_droppable` in
+    # `test_answer_service.py`). Folding `kind` and the edge id into the
+    # identity key keeps the two invariants that key was actually meant to
+    # protect -- two *chunk* citations can never share a chunk, and the same
+    # *edge* can never be cited twice -- while allowing the one legitimate
+    # overlap: one chunk citation and one edge citation over that same chunk.
+    citation_identity_keys = [
+        (
+            citation.kind,
+            citation.source.source_id,
+            citation.chunk_id,
+            citation.edge.edge_id
+            if citation.kind == "edge" and citation.edge is not None
+            else None,
+        )
+        for citation in citations
+    ]
     _require(
-        len(citation_chunks) == len(set(citation_chunks)),
+        len(citation_identity_keys) == len(set(citation_identity_keys)),
         "answer-citation-identity",
     )
     source_by_citation = {citation.citation_id: citation.source.source_id for citation in citations}
@@ -928,6 +950,14 @@ def _answer_contributors(
         and referenced_citation_ids == set(citation_ids),
         "answer-citation-closure",
     )
+    # `_require_hit_provenance` only reads `source`/`chunk_id`/
+    # `chunk_content_hash`/`logical_chunk_id` -- fields every citation carries
+    # regardless of `kind`, and which `_edge_citation_for_relation` always
+    # populates verbatim from the real chunk it resolved to (copied from the
+    # matching evidence item, or reconstructed via the same chunk/logical-chunk
+    # id formulas the search index itself uses). No edge-specific handling is
+    # needed here: an edge citation is checked against the identical manifest
+    # entry a chunk citation for that same chunk would be.
     _require_hit_provenance(list(citations), documents, manifests, "answer-provenance")
     contributors = {
         source_by_citation[citation_id]
@@ -1293,12 +1323,16 @@ def test_verifier_rejects_unlinked_answer_citations() -> None:
                 chunk_id=manifest.chunk_id,
                 citation_id="citation-used",
                 source=source,
+                kind="chunk",
+                edge=None,
             ),
             SimpleNamespace(
                 chunk_content_hash=extra_manifest.chunk_content_hash,
                 chunk_id=extra_manifest.chunk_id,
                 citation_id="citation-unlinked",
                 source=source,
+                kind="chunk",
+                edge=None,
             ),
         ),
         claims=(SimpleNamespace(citation_ids=("citation-used",)),),
@@ -1314,6 +1348,137 @@ def test_verifier_rejects_unlinked_answer_citations() -> None:
                     extra_manifest.chunk_id: extra_manifest,
                 }
             },
+        )
+
+
+def _identity_citation(
+    citation_id: str,
+    chunk_id: str,
+    *,
+    source: object,
+    kind: str = "chunk",
+    edge_id: str | None = None,
+) -> SimpleNamespace:
+    """A minimal `RetrievalCitation`-shaped fixture (same fields
+    `_answer_contributors`/`_require_hit_provenance` read: `citation_id`,
+    `chunk_id`, `chunk_content_hash`, `logical_chunk_id`, `source`, `kind`,
+    `edge`) for the `answer-citation-identity` cases below -- real
+    `chunk_content_hash`/`logical_chunk_id` (matching `_identity_fixture`'s
+    manifests) so `_require_hit_provenance`'s manifest lookup resolves."""
+    logical_chunk_id = "lc_" + ("3" if chunk_id == "chunk-1" else "4") * 64
+    return SimpleNamespace(
+        citation_id=citation_id,
+        chunk_id=chunk_id,
+        chunk_content_hash="sha256:" + "2" * 64,
+        logical_chunk_id=logical_chunk_projection_id(LogicalChunkId(logical_chunk_id)),
+        source=source,
+        kind=kind,
+        edge=SimpleNamespace(edge_id=edge_id) if kind == "edge" else None,
+    )
+
+
+def _identity_fixture() -> tuple[
+    DocumentState, Mapping[str, Mapping[str, ManifestEvidence]], object
+]:
+    document = DocumentState(
+        document_id="doc-1",
+        job_id="job-1",
+        revision_id="rev-1",
+        source_id="src_" + "1" * 32,
+        source_content_hash="sha256:" + "1" * 64,
+    )
+    manifests = {
+        document.document_id: {
+            "chunk-1": ManifestEvidence(
+                anchor_json="{}",
+                chunk_content_hash="sha256:" + "2" * 64,
+                chunk_id="chunk-1",
+                logical_chunk_id="lc_" + "3" * 64,
+                ordinal=0,
+                parent_id=None,
+                root_id="doc-1",
+            ),
+            "chunk-2": ManifestEvidence(
+                anchor_json="{}",
+                chunk_content_hash="sha256:" + "2" * 64,
+                chunk_id="chunk-2",
+                logical_chunk_id="lc_" + "4" * 64,
+                ordinal=1,
+                parent_id=None,
+                root_id="doc-1",
+            ),
+        }
+    }
+    source = SimpleNamespace(
+        revision="rev-1",
+        source_content_hash=document.source_content_hash,
+        source_id="doc-1",
+    )
+    return document, manifests, source
+
+
+def test_answer_citation_identity_allows_one_chunk_and_one_edge_over_the_same_chunk() -> None:
+    """PR 3's shipped design: an edge citation legitimately reuses its
+    supporting chunk's own (source_id, chunk_id) verbatim
+    (`_edge_citation_for_relation`'s primary case), so a chunk citation and an
+    edge citation describing the same physical chunk must coexist."""
+    document, manifests, source = _identity_fixture()
+    response = SimpleNamespace(
+        citations=(
+            _identity_citation("citation-s1", "chunk-1", source=source, kind="chunk"),
+            _identity_citation(
+                "citation-r1", "chunk-1", source=source, kind="edge", edge_id="edge-1"
+            ),
+        ),
+        claims=(
+            SimpleNamespace(citation_ids=("citation-s1",)),
+            SimpleNamespace(citation_ids=("citation-r1",)),
+        ),
+    )
+
+    contributors = _answer_contributors(
+        cast(RetrievalAnswerResponse, response), {document.document_id: document}, manifests
+    )
+
+    assert contributors == {document.document_id}
+
+
+def test_answer_citation_identity_rejects_two_chunk_citations_on_the_same_chunk() -> None:
+    document, manifests, source = _identity_fixture()
+    response = SimpleNamespace(
+        citations=(
+            _identity_citation("citation-a", "chunk-1", source=source, kind="chunk"),
+            _identity_citation("citation-b", "chunk-1", source=source, kind="chunk"),
+        ),
+        claims=(SimpleNamespace(citation_ids=("citation-a", "citation-b")),),
+    )
+
+    with pytest.raises(VerificationFailure, match="answer-citation-identity"):
+        _answer_contributors(
+            cast(RetrievalAnswerResponse, response), {document.document_id: document}, manifests
+        )
+
+
+def test_answer_citation_identity_rejects_two_citations_for_the_same_edge() -> None:
+    # Same edge_id *and* chunk_id: an edge citation is deterministically
+    # rebuilt from one relation's one resolved support chunk, so two
+    # citations for the same edge always carry the same chunk too.
+    document, manifests, source = _identity_fixture()
+    response = SimpleNamespace(
+        citations=(
+            _identity_citation(
+                "citation-r1a", "chunk-1", source=source, kind="edge", edge_id="edge-1"
+            ),
+            _identity_citation(
+                "citation-r1b", "chunk-1", source=source, kind="edge", edge_id="edge-1"
+            ),
+        ),
+        claims=(SimpleNamespace(citation_ids=("citation-r1a", "citation-r1b")),),
+    )
+
+    with pytest.raises(VerificationFailure, match="answer-citation-identity"):
+        _answer_contributors(
+            cast(RetrievalAnswerResponse, response), {document.document_id: document}, manifests
         )
 
 
