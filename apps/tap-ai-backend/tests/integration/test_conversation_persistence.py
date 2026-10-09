@@ -259,6 +259,73 @@ def test_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
     asyncio.run(scenario())
 
 
+def test_graph_context_ready_stream_event_persists_and_reloads(owned_project_mysql):
+    """PR 3 Task 7 review fix: a `graph.context_ready` stream event must
+    persist end-to-end against real MySQL, not only against the in-memory
+    repository fakes the worker unit tests use."""
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            service = ConversationService(repository, scope=VALIDATION_SCOPE)
+            accepted = await service.create(
+                "graph-context-conversation", "graph-context-turn", "request-1", _input()
+            )
+            claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            assert claim.turn_id == accepted.turn_id
+            await service.complete_evidence(
+                "graph-context-conversation",
+                "graph-context-turn",
+                AnswerEvidence(
+                    "Grounded",
+                    "completed",
+                    RetrievalSummary("completed", trace_id="trace-1"),
+                    GraphContextStatus.APPLIED,
+                    graph_snapshot_id="snapshot-7",
+                ),
+                lease_token=claim.lease_token,
+                terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+                stream_events=(
+                    (
+                        "graph.context_ready",
+                        {
+                            "status": "APPLIED",
+                            "graphVersion": "7",
+                            "seedCount": 2,
+                            "paths": [["核保流程", "健康告知"]],
+                            "relationCount": 1,
+                        },
+                    ),
+                ),
+            )
+            detail = await service.load("graph-context-conversation")
+            graph_context_ready_events = [
+                event for event in detail.events if event.event_type == "graph.context_ready"
+            ]
+            assert len(graph_context_ready_events) == 1
+            assert graph_context_ready_events[0].payload["graphVersion"] == "7"
+            async with engine.connect() as connection:
+                stored_payload = json.loads(
+                    await connection.scalar(
+                        text(
+                            "SELECT payload FROM chat_event WHERE turn_id=:turn_id "
+                            "AND event_type='graph.context_ready'"
+                        ),
+                        {"turn_id": "graph-context-turn"},
+                    )
+                )
+                assert stored_payload["status"] == "APPLIED"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_claim_fails_snapshotless_queued_turn_and_keeps_claiming_others(owned_project_mysql):
     async def scenario():
         url = owned_project_database_url(owned_project_mysql).replace(

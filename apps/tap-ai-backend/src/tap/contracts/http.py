@@ -1206,6 +1206,7 @@ class ConversationEventItem(ContractModel):
         "stage.started",
         "stage.completed",
         "retrieval.hits_ready",
+        "graph.context_ready",
         "rerank.completed",
         "answer.delta",
         "citation.resolved",

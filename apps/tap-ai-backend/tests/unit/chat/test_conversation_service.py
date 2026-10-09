@@ -162,6 +162,48 @@ async def test_in_memory_completion_binds_terminal_event_and_cannot_reverse_canc
     assert after.events == before.events
 
 
+@pytest.mark.asyncio
+async def test_complete_evidence_persists_graph_context_ready_stream_event():
+    """PR 3 Task 7 review fix: `graph.context_ready` must be a recognized
+    stream event type, not just validated by the chat_stream/HTTP contracts
+    in isolation. `ConversationEvent.__post_init__` must accept it, or every
+    non-failed knowledge turn that streams it would crash at completion."""
+    service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    evidence = AnswerEvidence(
+        "Grounded",
+        "completed",
+        RetrievalSummary("completed"),
+        GraphContextStatus.APPLIED,
+        graph_snapshot_id="snapshot-7",
+    )
+    completed = await service.complete_evidence(
+        "conversation-1",
+        "turn-1",
+        evidence,
+        terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+        stream_events=(
+            (
+                "graph.context_ready",
+                {
+                    "status": "APPLIED",
+                    "graphVersion": "7",
+                    "seedCount": 2,
+                    "paths": [["核保流程", "健康告知"]],
+                    "relationCount": 1,
+                },
+            ),
+        ),
+    )
+    assert completed.state == "completed"
+    detail = await service.load("conversation-1")
+    graph_context_ready_events = [
+        event for event in detail.events if event.event_type == "graph.context_ready"
+    ]
+    assert len(graph_context_ready_events) == 1
+    assert graph_context_ready_events[0].payload["status"] == "APPLIED"
+
+
 def test_snapshot_digest_is_bound_to_project_turn_and_immutable_input():
     service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
     turn, _ = service._turn("conversation-1", "turn-1", "request-1", _input())
