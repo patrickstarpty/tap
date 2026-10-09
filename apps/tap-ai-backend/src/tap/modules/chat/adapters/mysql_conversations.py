@@ -834,8 +834,20 @@ class MysqlConversationRepository:
                 raise ValueError(
                     "Answer evidence snapshot/event binding differs from accepted Turn"
                 )
-            if snapshot.value.graph_context_status is GraphContextStatus.APPLIED:
-                raise ValueError("graph snapshot persistence is unavailable")
+            # `graph_snapshot_id` is persisted as an opaque field inside the
+            # `snapshot` JSON blob below (see `raw["graph_snapshot_id"]` in
+            # `_load_turn`'s read path); it is not a foreign key into any
+            # graph table, so completing a Turn whose answer carries an
+            # APPLIED graph context needs no extra artifact linking here,
+            # unlike citations (which are frozen-resource- and ACL-checked
+            # below). There used to be an unconditional guard here that
+            # raised `"graph snapshot persistence is unavailable"` for any
+            # APPLIED graph context; nothing in this adapter, the schema, or
+            # either graph-work plan (`2026-10-06-graph-project-merge.md`,
+            # `2026-10-06-graph-relation-answers.md`) ever depended on it,
+            # and no test asserted it — it was dead code left over from
+            # before graph-grounded answers existed, and it blocked every
+            # real graph-grounded Turn from ever completing.
             frozen_resources = {
                 (
                     item["source_id"],
