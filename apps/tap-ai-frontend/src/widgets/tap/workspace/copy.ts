@@ -58,6 +58,14 @@ export interface WorkspaceCopy {
     regenerate: string;
     retry: string;
     editQuestion: string;
+    answerSummary(
+      sourceCount: number,
+      chunkCitationCount: number,
+      relationCount: number,
+    ): string;
+    seedEntities(count: number): string;
+    relationPaths: string;
+    noRelationEvidence: string;
   };
   sources: {
     heading: string;
@@ -301,6 +309,16 @@ export const WORKSPACE_COPY = {
       regenerate: "Regenerate",
       retry: "Retry",
       editQuestion: "Edit question",
+      answerSummary: (
+        sourceCount: number,
+        chunkCitationCount: number,
+        relationCount: number,
+      ) =>
+        `Searched ${sourceCount} sources · ${chunkCitationCount} passages · ${relationCount} relations`,
+      seedEntities: (count: number) => `${count} seed entities`,
+      relationPaths: "Relation paths",
+      noRelationEvidence:
+        "No direct relation evidence was found; the answer below is grounded in source passages.",
     },
     sources: {
       heading: "Knowledge sources",
@@ -554,6 +572,15 @@ export const WORKSPACE_COPY = {
       regenerate: "重新生成",
       retry: "重试",
       editQuestion: "编辑问题",
+      answerSummary: (
+        sourceCount: number,
+        chunkCitationCount: number,
+        relationCount: number,
+      ) =>
+        `搜索 ${sourceCount} 个来源 · ${chunkCitationCount} 段原文 · ${relationCount} 条关系`,
+      seedEntities: (count: number) => `${count} 个种子实体`,
+      relationPaths: "关系路径",
+      noRelationEvidence: "未找到直接关系证据，以下为资料原文依据",
     },
     sources: {
       heading: "知识来源",

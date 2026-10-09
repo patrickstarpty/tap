@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createStreamState,
+  graphContextFromEvents,
   isTargetTurnActive,
   latestTurnState,
   reduceStreamEvent,
@@ -222,5 +223,111 @@ describe("conversation stream reducer", () => {
         targetTurnId: "turn-3",
       }),
     ).toBe(true);
+  });
+
+  it("keeps the latest valid graph context and ignores malformed payloads", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "graph.context_ready", {
+        status: "EMPTY",
+        seedCount: 2,
+        paths: [],
+        relationCount: 0,
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "graph.context_ready", {
+        status: "???",
+        seedCount: 5,
+        paths: [],
+        relationCount: 5,
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.graphContext).toEqual({
+      status: "EMPTY",
+      seedCount: 2,
+      paths: [],
+      relationCount: 0,
+    });
+  });
+
+  it("ignores a graph context event with a negative count or non-string path labels", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "graph.context_ready", {
+        status: "APPLIED",
+        seedCount: -1,
+        paths: [],
+        relationCount: 0,
+      }),
+    );
+    expect(state.turns["turn-1"]?.graphContext).toBeNull();
+
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "graph.context_ready", {
+        status: "APPLIED",
+        seedCount: 1,
+        paths: [[1, 2]],
+        relationCount: 1,
+      }),
+    );
+    expect(state.turns["turn-1"]?.graphContext).toBeNull();
+  });
+
+  it("caps graph context paths at three entries", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "graph.context_ready", {
+        status: "APPLIED",
+        seedCount: 2,
+        paths: [
+          ["A", "B"],
+          ["B", "C"],
+          ["C", "D"],
+          ["D", "E"],
+        ],
+        relationCount: 4,
+      }),
+    );
+    expect(state.turns["turn-1"]?.graphContext?.paths).toHaveLength(3);
+  });
+});
+
+describe("graphContextFromEvents", () => {
+  it("returns the last valid graph.context_ready payload from replayed history", () => {
+    const result = graphContextFromEvents([
+      { eventType: "turn.started", payload: {} },
+      {
+        eventType: "graph.context_ready",
+        payload: {
+          status: "EMPTY",
+          seedCount: 2,
+          paths: [["核保流程", "健康告知"]],
+          relationCount: 0,
+        },
+      },
+      {
+        eventType: "graph.context_ready",
+        payload: { status: "???", seedCount: 1, paths: [], relationCount: 1 },
+      },
+    ]);
+    expect(result).toEqual({
+      status: "EMPTY",
+      seedCount: 2,
+      paths: [["核保流程", "健康告知"]],
+      relationCount: 0,
+    });
+  });
+
+  it("returns null when no graph.context_ready event is present", () => {
+    expect(
+      graphContextFromEvents([{ eventType: "turn.started", payload: {} }]),
+    ).toBeNull();
   });
 });

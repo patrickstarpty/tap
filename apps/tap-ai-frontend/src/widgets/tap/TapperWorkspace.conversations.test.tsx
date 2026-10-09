@@ -195,7 +195,7 @@ it("shows trace panel for terminal turn with traceId", async () => {
   expect(
     await screen.findByRole("button", { name: /^Trace:/u }),
   ).toBeInTheDocument();
-  expect(screen.queryByText(/^Activity/u)).not.toBeInTheDocument();
+  expect(screen.queryByText(/^Searched/u)).not.toBeInTheDocument();
 });
 
 it("falls back to activity when traceId is null", async () => {
@@ -205,7 +205,7 @@ it("falls back to activity when traceId is null", async () => {
   expect(
     screen.queryByRole("button", { name: /^Trace:/u }),
   ).not.toBeInTheDocument();
-  expect(screen.getByText(/^Activity/u)).toBeInTheDocument();
+  expect(screen.getByText(/^Searched/u)).toBeInTheDocument();
 });
 
 it("does not crash when a citation resolves before a running turn completes", async () => {

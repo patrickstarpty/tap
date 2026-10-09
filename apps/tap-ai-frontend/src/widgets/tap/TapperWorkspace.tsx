@@ -1,4 +1,4 @@
-import { Button } from "antd";
+import { Alert, Button } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -60,6 +60,7 @@ import {
   isTargetTurnActive,
   latestTurnState,
   reduceStreamEvent,
+  type GraphContextSummary,
 } from "../../features/conversations/model/stream";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { useModelCatalog } from "../../features/knowledge/api/modelCatalog";
@@ -177,11 +178,17 @@ export function AnswerActivity({
   locale,
   sourceCount,
   shownCitationCount,
+  chunkCitationCount,
+  edgeCitationCount,
+  graphContext,
 }: {
   events: readonly ActivityEvent[];
   locale: "en" | "zh";
   sourceCount: number;
   shownCitationCount: number;
+  chunkCitationCount: number;
+  edgeCitationCount: number;
+  graphContext: GraphContextSummary | null;
 }) {
   const context = events.find(
     (event) => event.eventType === "context.assembled",
@@ -231,37 +238,28 @@ export function AnswerActivity({
         : `${citations} citation records resolved; ${shownCitationCount} used by displayed claims`
       : null,
   ].filter((row): row is string => row !== null);
-  if (rows.length === 0) return null;
-  const compact = [
-    assembledCount > 0
-      ? locale === "zh"
-        ? `${assembledCount} 份来源`
-        : `${assembledCount} source${assembledCount === 1 ? "" : "s"}`
-      : null,
-    stage
-      ? locale === "zh"
-        ? "Knowledge answer"
-        : "Knowledge answer"
-      : answerRecorded
-        ? locale === "zh"
-          ? "回答已记录"
-          : "Answer recorded"
-        : null,
-    shownCitationCount > 0
-      ? locale === "zh"
-        ? `${shownCitationCount} 处引用`
-        : `${shownCitationCount} citation${shownCitationCount === 1 ? "" : "s"}`
-      : null,
-  ].filter((item): item is string => item !== null);
+  const copy = WORKSPACE_COPY[locale].chat;
+  const graphRows =
+    graphContext === null
+      ? []
+      : [
+          copy.seedEntities(graphContext.seedCount),
+          ...graphContext.paths.map((path) => path.join(" → ")),
+        ];
+  const allRows = [...rows, ...graphRows];
+  if (allRows.length === 0) return null;
+  const relationCount = graphContext?.relationCount ?? edgeCitationCount;
+  const summaryText = copy.answerSummary(
+    sourceCount,
+    chunkCitationCount,
+    relationCount,
+  );
   return (
     <details className="tap-answer-activity">
-      <summary>
-        {locale === "zh" ? "执行记录" : "Activity"}
-        {compact.length > 0 ? ` · ${compact.join(" · ")}` : ""}
-      </summary>
+      <summary>{summaryText}</summary>
       <ol>
-        {rows.map((row) => (
-          <li key={row}>{row}</li>
+        {allRows.map((row, index) => (
+          <li key={`${index}-${row}`}>{row}</li>
         ))}
       </ol>
     </details>
@@ -599,6 +597,25 @@ function AssistantResponse({
       );
     }
     if (turn.response !== undefined && turn.response !== null) {
+      const shownCitationIds = new Set(
+        turn.response.claims.flatMap((claim) => claim.citationIds),
+      );
+      const citationsById = new Map(
+        turn.response.citations.map((citation) => [
+          citation.citationId,
+          citation,
+        ]),
+      );
+      let chunkCitationCount = 0;
+      let edgeCitationCount = 0;
+      for (const citationId of shownCitationIds) {
+        if (citationsById.get(citationId)?.kind === "edge") {
+          edgeCitationCount += 1;
+        } else {
+          chunkCitationCount += 1;
+        }
+      }
+      const graphContext = turn.graphContext ?? null;
       return (
         <>
           {turn.status !== undefined &&
@@ -617,13 +634,21 @@ function AssistantResponse({
               events={activityEvents}
               locale={turn.locale}
               sourceCount={turn.sourceReferences.length}
-              shownCitationCount={
-                new Set(
-                  turn.response.claims.flatMap((claim) => claim.citationIds),
-                ).size
-              }
+              shownCitationCount={shownCitationIds.size}
+              chunkCitationCount={chunkCitationCount}
+              edgeCitationCount={edgeCitationCount}
+              graphContext={graphContext}
             />
           )}
+          {graphContext !== null &&
+          graphContext.status === "EMPTY" &&
+          graphContext.seedCount >= 2 ? (
+            <Alert
+              type="info"
+              role="status"
+              message={contentCopy.chat.noRelationEvidence}
+            />
+          ) : null}
           <GroundedAnswer
             response={turn.response}
             locale={turn.locale}
@@ -1363,6 +1388,7 @@ export function TapperWorkspace() {
           origin: "knowledge-base" as const,
         })),
         response: streamed?.response ?? null,
+        graphContext: streamed?.graphContext ?? null,
         traceId: turn.traceId ?? null,
         attempt: turn.attempt,
         status: ["completed", "abstained", "canceled", "failed"].includes(
