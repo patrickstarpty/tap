@@ -49,6 +49,14 @@ describe("E2ERequestFailureAudit", () => {
     ],
     [
       "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/overview?sourceRevisionId=rev_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&nodeLimit=150&graphVersion=3",
+    ],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/nodes/node-1?graphVersion=3",
+    ],
+    [
+      "GET",
       "http://127.0.0.1:15173/api/v1/projects/project-e2e/conversations?limit=20",
     ],
     [
@@ -189,6 +197,40 @@ describe("E2ERequestFailureAudit", () => {
       expect(audit.unexpectedFailure({}, failure)).not.toBeNull();
   });
 
+  it.each([
+    "query",
+    "highlight",
+    "neighbors",
+    "path",
+  ])("ignores an aborted POST graph %s mutation", (segment) => {
+    const audit = new E2ERequestFailureAudit<object>("project-e2e");
+    const url = `http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/${segment}`;
+    expect(
+      audit.unexpectedFailure(
+        {},
+        { method: "POST", url, errorText: "net::ERR_ABORTED" },
+      ),
+    ).toBeNull();
+    expect(
+      audit.unexpectedFailure(
+        {},
+        { method: "POST", url, errorText: "net::ERR_FAILED" },
+      ),
+    ).not.toBeNull();
+  });
+
+  it("still reports an aborted POST to a different graph path", () => {
+    const audit = new E2ERequestFailureAudit<object>("project-e2e");
+    const url =
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/fragments/rev_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/retry";
+    expect(
+      audit.unexpectedFailure(
+        {},
+        { method: "POST", url, errorText: "net::ERR_ABORTED" },
+      ),
+    ).not.toBeNull();
+  });
+
   it("ignores an aborted DELETE only after the same request received 204", () => {
     const completedRequest = {};
     const differentRequest = {};
@@ -281,6 +323,36 @@ describe("E2ERequestFailureAudit", () => {
       errorText: "net::ERR_ABORTED",
       method: "GET",
       url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/overview?nodeLimit=secret",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/overview?nodeLimit=0",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/overview?nodeLimit=501",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/overview?sourceRevisionId=secret",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/nodes/bad%20node?graphVersion=3",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/project?secret=value",
       expected: "GET outside-allowlist net::ERR_ABORTED",
     },
     {

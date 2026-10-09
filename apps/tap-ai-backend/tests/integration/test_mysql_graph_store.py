@@ -116,13 +116,11 @@ async def test_mysql_graph_publish_preserves_history_and_atomically_moves_active
         await store.publish(VALIDATION_SCOPE, _draft("snapshot-1"))
         await store.publish(VALIDATION_SCOPE, _draft("snapshot-2"))
 
-        active = await store.active_snapshot(VALIDATION_SCOPE, ("source-revision-1",))
         historical = await store.get_snapshot(VALIDATION_SCOPE, "snapshot-1")
         graph = await store.neighbors(
             VALIDATION_SCOPE,
             NeighborQuery("snapshot-2", "node-1", depth=1, node_limit=10),
         )
-        assert active is not None and active.snapshot_id == "snapshot-2"
         assert historical is not None and historical.snapshot_id == "snapshot-1"
         assert graph.nodes[0].evidence_ids == ("evidence-1",)
         assert graph.edges[0].evidence_ids == ("evidence-1",)

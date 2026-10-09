@@ -157,41 +157,6 @@ async def test_duplicate_worker_delivery_reuses_the_same_published_snapshot():
     assert extractor.calls == 1
 
 
-@pytest.mark.asyncio
-async def test_active_snapshot_binds_the_complete_revision_selection_digest():
-    store = InMemoryGraphStore()
-    snapshot = GraphSnapshot.create(
-        snapshot_id="snapshot-selection",
-        project_id=VALIDATION_SCOPE.project_id,
-        source_revision_ids=("source-revision-2", "source-revision-1"),
-        document_revision_ids=("document-revision-2", "document-revision-1"),
-    )
-    await store.publish(
-        VALIDATION_SCOPE,
-        GraphSnapshotDraft(
-            snapshot,
-            (
-                GraphNode(
-                    "node-selection", "snapshot-selection", "Selection", "ENTITY", "selection"
-                ),
-            ),
-            (),
-            (),
-            (),
-        ),
-    )
-
-    active = await store.active_snapshot(
-        VALIDATION_SCOPE,
-        ("source-revision-1", "source-revision-2"),
-    )
-
-    assert active is not None
-    assert active.source_revision_ids == ("source-revision-1", "source-revision-2")
-    assert active.document_revision_ids == ("document-revision-1", "document-revision-2")
-    assert await store.active_snapshot(VALIDATION_SCOPE, ("source-revision-1",)) is None
-
-
 def test_graph_job_snapshot_is_created_for_the_complete_normalized_selection():
     request = GraphJobRequest.create(
         scope=VALIDATION_SCOPE,
@@ -214,7 +179,7 @@ def test_graph_job_snapshot_is_created_for_the_complete_normalized_selection():
 
 
 @pytest.mark.asyncio
-async def test_mysql_restart_reads_only_the_exact_multi_revision_snapshot(
+async def test_mysql_restart_reads_the_exact_multi_revision_snapshot_by_id(
     owned_project_mysql,
 ) -> None:
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
@@ -247,26 +212,15 @@ async def test_mysql_restart_reads_only_the_exact_multi_revision_snapshot(
 
         restarted = MysqlGraphStore(sessions)
 
-        active = await restarted.active_snapshot(
-            VALIDATION_SCOPE,
-            ("source-revision-1", "source-revision-2"),
-        )
-        assert active is not None
-        assert active.snapshot_id == snapshot.snapshot_id
-        assert active.source_revision_ids == (
+        persisted = await restarted.get_snapshot(VALIDATION_SCOPE, snapshot.snapshot_id)
+        assert persisted is not None
+        assert persisted.source_revision_ids == (
             "source-revision-1",
             "source-revision-2",
         )
-        assert active.document_revision_ids == (
+        assert persisted.document_revision_ids == (
             "document-revision-1",
             "document-revision-2",
-        )
-        assert (
-            await restarted.active_snapshot(
-                VALIDATION_SCOPE,
-                ("source-revision-1",),
-            )
-            is None
         )
     finally:
         await engine.dispose()

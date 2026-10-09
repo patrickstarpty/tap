@@ -26,6 +26,7 @@ type ClosedPathLabel =
 interface ClassifiedRequest {
   exactDocumentDetail: boolean;
   exactDocumentList: boolean;
+  exactGraphMutation: boolean;
   exactGraphRead: boolean;
   exactRuntimeDiscovery: boolean;
   exactTask9Read: boolean;
@@ -65,6 +66,7 @@ function classifyRequest(
     return {
       exactDocumentDetail: false,
       exactDocumentList: false,
+      exactGraphMutation: false,
       exactGraphRead: false,
       exactRuntimeDiscovery: false,
       exactTask9Read: false,
@@ -111,13 +113,15 @@ function classifyRequest(
   const graphOverviewPath = `${projectPath}/knowledge/graph/overview`;
   const overviewRevisionIds = parsed.searchParams.getAll("sourceRevisionId");
   const overviewNodeLimit = parsed.searchParams.get("nodeLimit");
+  const overviewGraphVersion = parsed.searchParams.get("graphVersion");
   const exactGraphOverviewRead =
     parsed.pathname === graphOverviewPath &&
     [...parsed.searchParams.keys()].every(
       (key) =>
         key === "sourceRevisionId" ||
         key === "communityId" ||
-        key === "nodeLimit",
+        key === "nodeLimit" ||
+        key === "graphVersion",
     ) &&
     overviewRevisionIds.every((revisionId) =>
       /^rev_[0-9a-f]{64}$/u.test(revisionId),
@@ -125,7 +129,9 @@ function classifyRequest(
     (overviewNodeLimit === null ||
       (/^[0-9]+$/u.test(overviewNodeLimit) &&
         Number(overviewNodeLimit) >= 1 &&
-        Number(overviewNodeLimit) <= 500));
+        Number(overviewNodeLimit) <= 500)) &&
+    (overviewGraphVersion === null ||
+      /^[1-9][0-9]*$/u.test(overviewGraphVersion));
   const graphNodesPath = `${projectPath}/knowledge/graph/nodes`;
   const graphNodeMatch =
     parsed.pathname.startsWith(`${graphNodesPath}/`) &&
@@ -137,10 +143,19 @@ function classifyRequest(
     [...parsed.searchParams.keys()].every((key) => key === "graphVersion");
   const exactGraphRead =
     exactGraphProjectRead || exactGraphOverviewRead || exactGraphNodeRead;
+  const exactGraphMutation =
+    parsed.search === "" &&
+    [
+      `${projectPath}/knowledge/graph/query`,
+      `${projectPath}/knowledge/graph/highlight`,
+      `${projectPath}/knowledge/graph/neighbors`,
+      `${projectPath}/knowledge/graph/path`,
+    ].includes(parsed.pathname);
   return {
     exactRuntimeDiscovery: runtimePath && parsed.search === "",
     exactDocumentDetail: detailPath && parsed.search === "",
     exactDocumentList: listPath && parsed.search === "?limit=50",
+    exactGraphMutation,
     exactGraphRead,
     exactTask9Read,
     label: listPath
@@ -200,9 +215,13 @@ export class E2ERequestFailureAudit<RequestIdentity extends object> {
       classified.method === "DELETE" &&
       classified.exactDocumentDetail &&
       this.#completedNoContentDeletes.delete(request);
+    const approvedPostCancellation =
+      classified.method === "POST" && classified.exactGraphMutation;
     if (
       failure.errorText === "net::ERR_ABORTED" &&
-      (approvedGetCancellation || approvedDeleteCancellation)
+      (approvedGetCancellation ||
+        approvedDeleteCancellation ||
+        approvedPostCancellation)
     ) {
       return null;
     }
