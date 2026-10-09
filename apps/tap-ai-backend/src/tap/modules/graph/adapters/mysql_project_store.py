@@ -85,6 +85,20 @@ class MysqlProjectGraphStore(ProjectGraphQueryDelegate, ProjectGraphStorePort):
 
     async def _loaded(self, scope: ProjectScopeContext, version: int | None) -> LoadedProjectGraph:
         scope = require_project_scope(scope)
+        # A pinned (non-None) version that is already cached can be returned
+        # without a `get_current` round-trip: a READY version's rows are
+        # immutable once merged (a new merge always produces a new version
+        # number), so a cache hit is never stale, and a caller pinning a
+        # version (e.g. the relation-analysis agent) already re-checks
+        # `get_current` itself at the end of its run to catch a version bump
+        # that happened mid-run. Skipping this call is what makes every
+        # `nodes`/`neighbors`/`path`/`match_aliases` call in one pinned run
+        # actually avoid a fresh MySQL `SELECT`, not just the in-process
+        # `LoadedProjectGraph` reuse `ProjectGraphCache` already gave it.
+        if version is not None:
+            cached = self._cache.get(scope.project_id, version)
+            if cached is not None:
+                return cached
         current = await self.get_current(scope)
         if current is None:
             raise ProjectGraphNotReady(f"project {scope.project_id!r} has no READY graph version")

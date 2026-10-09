@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tap.modules.chat.domain.suggestions import (
     Candidate,
+    MainRelation,
     PromptSuggestion,
     RefreshReason,
     SuggestionInputs,
@@ -89,6 +90,8 @@ class SuggestionKnowledge(Protocol):
         ...
 
     async def main_entities(self, actor_id: str, *, limit: int) -> tuple[str, ...]: ...
+
+    async def main_relations(self, actor_id: str, *, limit: int) -> tuple[MainRelation, ...]: ...
 
 
 class SuggestionUsage(Protocol):

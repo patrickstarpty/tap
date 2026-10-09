@@ -32,6 +32,13 @@ def citation_evidence_digest(
     anchor: object,
     claim_text: str | None = None,
     origin: str | None = None,
+    citation_kind: str | None = None,
+    graph_version: str | None = None,
+    edge_id: str | None = None,
+    subject_node_id: str | None = None,
+    object_node_id: str | None = None,
+    relation_type: str | None = None,
+    relation_label: str | None = None,
 ) -> str:
     material: dict[str, object] = {
         "citationId": citation_id,
@@ -48,6 +55,24 @@ def citation_evidence_digest(
     # legacy rows' material unchanged preserves historical snapshot verification.
     if claim_text is not None or origin is not None:
         material.update({"claimText": claim_text, "origin": origin})
+    # Edge (R-label) citations additionally bind their graph provenance so a
+    # relation citation cannot be replayed against a different edge, graph
+    # version, or endpoint pair. Chunk (and legacy, `citation_kind is None`)
+    # citations must keep their pre-migration-0030 material unchanged, or every
+    # digest already bound into a Turn's `turn_artifact_link` would stop
+    # verifying on reload.
+    if citation_kind == "edge":
+        material.update(
+            {
+                "citationKind": citation_kind,
+                "graphVersion": graph_version,
+                "edgeId": edge_id,
+                "subjectNodeId": subject_node_id,
+                "objectNodeId": object_node_id,
+                "relationType": relation_type,
+                "relationLabel": relation_label,
+            }
+        )
     return content_digest(material)
 
 
@@ -59,6 +84,8 @@ class GraphContextStatus(StrEnum):
     FAILED = "FAILED"
     NOT_READY = "NOT_READY"
     NOT_SELECTED = "NOT_SELECTED"
+    STALE = "STALE"
+    EMPTY = "EMPTY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,6 +406,7 @@ class ConversationEvent:
             "stage.started",
             "stage.completed",
             "retrieval.hits_ready",
+            "graph.context_ready",
             "rerank.completed",
             "answer.delta",
             "citation.resolved",

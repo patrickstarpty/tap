@@ -12,7 +12,10 @@ from tap.contracts.http import (
     ChatTurnRequest,
     CodeAnchor,
     DocumentAnchor,
+    EdgeCitationView,
     FailureAnchor,
+    GraphContextSummaryView,
+    GraphEndpointView,
     OpenApiAnchor,
     ResourceRef,
     RetrievalAnswerRequest,
@@ -178,9 +181,27 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "publicationId",
             "approvalDigest",
             "approvedItemId",
+            "kind",
+            "edge",
         },
     ),
     (RetrievalClaim, {"claimId", "text", "answerStart", "answerEnd", "citationIds"}),
+    (
+        EdgeCitationView,
+        {
+            "edgeId",
+            "graphVersion",
+            "subject",
+            "object",
+            "relationType",
+            "relationLabel",
+        },
+    ),
+    (GraphEndpointView, {"nodeId", "label"}),
+    (
+        GraphContextSummaryView,
+        {"status", "graphVersion", "seedCount", "paths", "relationCount"},
+    ),
     (
         RetrievalSearchResponse,
         {
@@ -211,6 +232,7 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "citations",
             "graphContextStatus",
             "graphSnapshotId",
+            "graphContext",
         },
     ),
 )

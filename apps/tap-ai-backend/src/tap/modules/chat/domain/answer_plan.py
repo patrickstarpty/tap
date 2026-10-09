@@ -18,9 +18,10 @@ INTENTS = frozenset(
         "comparison",
         "procedural",
         "clarification",
+        "relation",
     }
 )
-ROUTES = frozenset({"direct", "retrieve", "clarify", "insights", "file_analysis"})
+ROUTES = frozenset({"direct", "retrieve", "clarify", "insights", "file_analysis", "graph"})
 MISSING_FIELDS = frozenset(
     {"sources", "object-or-version", "object", "version", "time-range", "comparison-conditions"}
 )
@@ -145,7 +146,7 @@ class AnswerPlan:
             raise ValueError("invalid shared retrieval budget")
         if self.evidence_limit > self.candidate_limit or not 0 < self.remaining_seconds <= 300:
             raise ValueError("invalid answer budget")
-        if len(self.queries) > 3 or (self.route == "retrieve") != bool(self.queries):
+        if len(self.queries) > 3 or (self.route in {"retrieve", "graph"}) != bool(self.queries):
             raise ValueError("only retrieval plans have one to three queries")
         if self.route == "direct" and self.intent not in {"general_chat", "transform_text"}:
             raise ValueError("enterprise facts require evidence")

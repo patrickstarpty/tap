@@ -106,6 +106,22 @@ class SourceRevisionRef(StreamContractModel):
     anchor: StructuralAnchor
 
 
+class GraphEndpointView(StreamContractModel):
+    """One edge citation endpoint (subject or object)."""
+
+    node_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1)
+
+
+class EdgeCitationView(StreamContractModel):
+    edge_id: str = Field(min_length=1, max_length=128)
+    graph_version: str = Field(min_length=1, max_length=64)
+    subject: GraphEndpointView
+    object: GraphEndpointView
+    relation_type: str = Field(min_length=1, max_length=64)
+    relation_label: str = Field(min_length=1, max_length=64)
+
+
 class Citation(StreamContractModel):
     citation_id: str = Field(min_length=1)
     evidence_label: str = Field(min_length=1)
@@ -118,6 +134,14 @@ class Citation(StreamContractModel):
     publication_id: str | None = Field(default=None, min_length=1, max_length=256)
     approval_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     approved_item_id: str | None = Field(default=None, min_length=1, max_length=256)
+    kind: Literal["chunk", "edge"] = "chunk"
+    edge: EdgeCitationView | None = None
+
+    @model_validator(mode="after")
+    def validate_edge_kind(self):
+        if (self.kind == "edge") != (self.edge is not None):
+            raise ValueError("citation kind and edge payload must agree")
+        return self
 
 
 class AnswerClaim(StreamContractModel):
@@ -134,6 +158,14 @@ class AnswerClaim(StreamContractModel):
         return self
 
 
+class GraphContextSummaryView(StreamContractModel):
+    status: Literal["APPLIED", "NOT_READY", "STALE", "FAILED", "EMPTY"]
+    graph_version: str | None = None
+    seed_count: int = Field(ge=0)
+    paths: list[list[str]] = Field(default_factory=list)
+    relation_count: int = Field(ge=0)
+
+
 class RetrievalAnswerResponse(StreamContractModel):
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
@@ -148,9 +180,10 @@ class RetrievalAnswerResponse(StreamContractModel):
     claims: list[AnswerClaim]
     citations: list[Citation]
     graph_context_status: Literal[
-        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+        "APPLIED", "NOT_READY", "STALE", "FAILED", "UNAVAILABLE", "NOT_SELECTED", "EMPTY"
     ] = "NOT_SELECTED"
     graph_snapshot_id: str | None = None
+    graph_context: GraphContextSummaryView | None = None
 
 
 class TurnStartedPayload(StreamContractModel):
@@ -210,6 +243,21 @@ class RetrievalHitsReadyPayload(StreamContractModel):
 class RetrievalHitsReadyEvent(StreamContractModel):
     type: Literal["retrieval.hits_ready"]
     payload: RetrievalHitsReadyPayload
+
+
+class GraphContextReadyPayload(StreamContractModel):
+    status: Literal[
+        "APPLIED", "NOT_READY", "STALE", "FAILED", "EMPTY", "UNAVAILABLE", "NOT_SELECTED"
+    ]
+    graph_version: str | None = None
+    seed_count: int = Field(ge=0)
+    paths: list[list[str]] = Field(max_length=3)
+    relation_count: int = Field(ge=0, le=20)
+
+
+class GraphContextReadyEvent(StreamContractModel):
+    type: Literal["graph.context_ready"]
+    payload: GraphContextReadyPayload
 
 
 class RerankCompletedPayload(StreamContractModel):
@@ -365,6 +413,7 @@ ChatStreamEvent = Annotated[
     | StageStartedEvent
     | StageCompletedEvent
     | RetrievalHitsReadyEvent
+    | GraphContextReadyEvent
     | RerankCompletedEvent
     | AnswerDeltaEvent
     | CitationResolvedEvent
