@@ -565,3 +565,96 @@ def test_applied_graph_context_validates_edge_citation_graph_version(owned_proje
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_resolve_citations_then_complete_evidence_round_trips_an_edge_citation(
+    owned_project_mysql,
+):
+    """Fix round 2 CRITICAL 1 regression test: `resolve_citations()` (the
+    generation worker's own call, `tapper_generation_worker.py:204`) and
+    `complete()` must compute the exact same trusted digest for a persisted
+    edge citation -- this test never hand-computes the digest itself (unlike
+    `test_applied_graph_context_validates_edge_citation_graph_version`), it
+    only uses whatever `resolve_citations()` returns, so a drift between the
+    two call sites' SELECT columns or digest material fails here the same way
+    it fails in production."""
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            document_repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
+            selected = await seed_ready(engine, "roundtrip")
+            edge_citation = CitationSnapshot(
+                trace_id="trace-roundtrip",
+                citation_id="citation-roundtrip-edge",
+                document_id=selected.document_id,
+                revision_id=selected.revision_id,
+                chunk_id="h_roundtrip",
+                source_content_hash=SOURCE_HASH,
+                chunk_content_hash=CHUNK_HASH,
+                anchor_json=ANCHOR_JSON,
+                citation_kind="edge",
+                graph_version="7",
+                edge_id="edge-1",
+                subject_node_id="node-subject",
+                object_node_id="node-object",
+                relation_type="REQUIRES",
+                relation_label="requires",
+            )
+            await document_repository.save_answer_with_citations(
+                AnswerSnapshot(
+                    trace_id="trace-roundtrip",
+                    query_hash="sha256:" + "c" * 64,
+                    selected_revisions=(selected,),
+                    citations=(edge_citation,),
+                )
+            )
+
+            conversation_repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            resolved = await conversation_repository.resolve_citations(
+                "trace-roundtrip", ("citation-roundtrip-edge",)
+            )
+            assert len(resolved) == 1
+            assert resolved[0].citation_snapshot_id == "citation-roundtrip-edge"
+
+            resolved_resources = (
+                FrozenResource(
+                    source_id=selected.source_id,
+                    document_id=selected.document_id,
+                    revision_id=selected.revision_id,
+                    source_content_hash=SOURCE_HASH,
+                ),
+            )
+            service = ConversationService(conversation_repository, scope=VALIDATION_SCOPE)
+            await service.create(
+                "conversation-roundtrip",
+                "turn-roundtrip",
+                "request-roundtrip",
+                _input(resolved_resources=resolved_resources),
+            )
+            claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            completed = await service.complete_evidence(
+                "conversation-roundtrip",
+                "turn-roundtrip",
+                AnswerEvidence(
+                    "Grounded",
+                    "completed",
+                    RetrievalSummary("completed", trace_id="trace-roundtrip"),
+                    GraphContextStatus.APPLIED,
+                    graph_snapshot_id="7",
+                    citations=resolved,
+                ),
+                lease_token=claim.lease_token,
+                terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+            )
+            assert completed.state == "completed"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
