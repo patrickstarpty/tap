@@ -1,4 +1,4 @@
-import { Alert, Button, Skeleton } from "antd";
+import { Alert, Skeleton } from "antd";
 
 import { useCitationQuery, useKnowledgeClient } from "../api/queries";
 import { CITATION_EN, COPY, safeCitationProblem } from "../copy";
@@ -21,8 +21,12 @@ import type { HistoricalCitationQuery } from "./CitationViewer";
  * `features/conversations` directly), it is preferred over the
  * current-authority `useCitationQuery` fallback so a republished or deleted
  * source does not silently blank or error the snippet of an answer that was
- * already generated against an earlier revision. Loading/error/retry mirror
- * `CitationViewer.tsx:158-260`.
+ * already generated against an earlier revision. Loading/error mirror
+ * `CitationViewer.tsx:158-260`, minus its retry button: an antd `Popover`
+ * closes as soon as it loses focus, so a retry button inside this hover
+ * card can never be tabbed to or otherwise reached by keyboard. Retrying a
+ * failed edge citation snippet is only offered in `EvidencePanel`, which
+ * stays open and focusable.
  */
 export function RelationHoverCard({
   citation,
@@ -58,13 +62,6 @@ export function RelationHoverCard({
           type={problem.kind === "stale" ? "warning" : "error"}
           showIcon
           title={problem.message}
-          action={
-            problem.kind === "retryable" ? (
-              <Button size="small" onClick={() => void citationQuery.refetch()}>
-                {text.retryCitation}
-              </Button>
-            ) : undefined
-          }
         />
       ) : null}
       {!citationQuery.isFetching && problem === null ? (

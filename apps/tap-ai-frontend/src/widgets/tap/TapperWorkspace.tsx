@@ -645,11 +645,25 @@ function AssistantResponse({
         .map((citation) => citation.citationId) ?? [],
     [turn.response],
   );
+  // An answer can cite several edges, so none of their snippets are
+  // fetched just because the turn rendered — only once a citation's chip
+  // is actually hovered or focused (`EdgeCitationChip`'s `onPreview`,
+  // wired through `GroundedAnswer`) does its id join this set and its
+  // query (in `useConversationCitations` below) become enabled.
+  const [previewedCitationIds, setPreviewedCitationIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const onPreviewCitation = useCallback((citationId: string) => {
+    setPreviewedCitationIds((current) =>
+      current.has(citationId) ? current : new Set(current).add(citationId),
+    );
+  }, []);
   const edgeCitationQueries = useConversationCitations(
     projectId,
     conversationId ?? null,
     turn.id,
     edgeCitationIds,
+    previewedCitationIds,
   );
   const historicalCitationQueryFor = useCallback(
     (citationId: string) => edgeCitationQueries.get(citationId),
@@ -772,6 +786,7 @@ function AssistantResponse({
             citationNumbering="shown-order"
             onOpenCitation={onOpenCitation}
             historicalCitationQueryFor={historicalCitationQueryFor}
+            onPreviewCitation={onPreviewCitation}
           />
           <TurnContext copy={contentCopy} turn={turn} />
           {onResend === undefined ||
@@ -1342,7 +1357,17 @@ export function TapperWorkspace() {
     activeCitation?.conversationId ?? null,
     activeCitation?.turnId ?? null,
     activeCitation?.id ?? null,
-    activeCitation?.generation ?? 0,
+    // Fixed at 0 (never incremented) for an edge citation, rather than
+    // `activeCitation.generation`: an edge citation is an immutable
+    // historical snapshot (see `useConversationCitations`'s `staleTime:
+    // Infinity`), so opening the same one again should hit cache, not
+    // force a new query key — and a fixed generation of 0 is exactly the
+    // key `EdgeCitationChip`'s hover-triggered preview query already uses
+    // for the same citation id, so the two share one cache entry instead
+    // of each fetching it separately.
+    activeCitation !== null && isEdgeCitation(activeCitation.citation)
+      ? 0
+      : (activeCitation?.generation ?? 0),
   );
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [messageDraft, setMessageDraft] = useState("");

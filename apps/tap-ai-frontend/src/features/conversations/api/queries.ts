@@ -163,6 +163,11 @@ export function useConversationCitation(
     queryFn: ({ signal }) =>
       client!.citation(conversationId!, turnId!, citationId!, signal),
     retry: retryConversationRequest,
+    // A historical conversation citation is an immutable snapshot of the
+    // turn's own answer, so once fetched it never needs a silent
+    // background re-check — an explicit `refetch()` (the retry button)
+    // still always goes to the network regardless of this.
+    staleTime: Infinity,
   });
 }
 
@@ -175,12 +180,23 @@ export function useConversationCitation(
  * edge citation id the turn's response cites and passes the resulting
  * lookup down as a plain function, keeping the historical-vs-current
  * authority choice out of `features/knowledge` entirely.
+ *
+ * `enabledIds` gates the actual network request: a query object exists for
+ * every id in `citationIds` (so the returned map always has an entry, and
+ * hook call order/count never depends on hover state), but only ids in
+ * `enabledIds` are allowed to fetch — `TapperWorkspace` adds an id the
+ * first time its chip is hovered or focused, so an answer with several
+ * edge citations does not fire a GET per citation merely by rendering.
+ * `staleTime: Infinity` because a historical conversation citation is an
+ * immutable snapshot of the turn's own answer — once fetched, it never
+ * needs re-checking.
  */
 export function useConversationCitations(
   projectId: string | null,
   conversationId: string | null,
   turnId: string | null,
   citationIds: readonly string[],
+  enabledIds: ReadonlySet<string>,
 ): ReadonlyMap<
   string,
   {
@@ -192,7 +208,7 @@ export function useConversationCitations(
   }
 > {
   const client = useConversationClient(projectId);
-  return useQueries({
+  const results = useQueries({
     queries: citationIds.map((citationId) => ({
       queryKey: conversationKeys.citation(
         projectId,
@@ -201,16 +217,30 @@ export function useConversationCitations(
         citationId,
         0,
       ),
-      enabled: client !== null && conversationId !== null && turnId !== null,
+      enabled:
+        client !== null &&
+        conversationId !== null &&
+        turnId !== null &&
+        enabledIds.has(citationId),
       queryFn: ({ signal }: { signal?: AbortSignal }) =>
         client!.citation(conversationId!, turnId!, citationId, signal),
       retry: retryConversationRequest,
+      staleTime: Infinity,
     })),
-    combine: (results) =>
+  });
+  // Built with `useMemo` (rather than `useQueries`'s own `combine` option)
+  // over the `results` array so the returned `Map`'s identity only changes
+  // when a query result actually changes — `TapperWorkspace`'s
+  // `historicalCitationQueryFor` callback closes over this map, and an
+  // unstable identity here would make that callback (and everything
+  // downstream it's passed to) re-create every render regardless.
+  return useMemo(
+    () =>
       new Map(
         citationIds.map((citationId, index) => [citationId, results[index]]),
       ),
-  });
+    [citationIds, results],
+  );
 }
 
 export function useTurnTrace(

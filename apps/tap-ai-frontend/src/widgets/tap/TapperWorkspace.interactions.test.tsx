@@ -3700,14 +3700,19 @@ describe("Tap product workspace interactions", () => {
   // endpoint is irrelevant to citation rendering.
   function stubEdgeCitationConversation({
     citationResponse,
+    onCitationRequest,
   }: {
     // Overridable so the error-state test below can return a problem
-    // response instead. Every test using this fixture renders a turn with
-    // an edge citation, and both `AssistantResponse`'s per-chip hover-card
-    // lookup (`useConversationCitations`, fired as soon as the turn
-    // renders) and the evidence panel's own lookup hit this same endpoint,
-    // so it must always resolve to something.
+    // response instead. `AssistantResponse`'s per-chip hover-card lookup
+    // (`useConversationCitations`) only enables a citation's query once
+    // its chip is hovered or focused, and the evidence panel's own lookup
+    // only enables once a citation is opened — but both hit this same
+    // endpoint, so it must always resolve to something once either
+    // happens.
     citationResponse?: () => Response;
+    // Lets the laziness test below count requests without needing to spy
+    // on the stubbed global `fetch` itself.
+    onCitationRequest?: () => void;
   } = {}) {
     const jsonResponse = (value: unknown, status = 200) =>
       new Response(JSON.stringify(value), {
@@ -3816,6 +3821,7 @@ describe("Tap product workspace interactions", () => {
           "/conversations/conversation-a/turns/turn-1/citations/edge-1",
         )
       ) {
+        onCitationRequest?.();
         return (
           citationResponse?.() ??
           jsonResponse(
@@ -3936,6 +3942,40 @@ describe("Tap product workspace interactions", () => {
     }
   });
 
+  it("fetches an edge citation's snippet only after its chip is hovered or focused", async () => {
+    let citationRequests = 0;
+    stubEdgeCitationConversation({
+      onCitationRequest: () => {
+        citationRequests += 1;
+      },
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const chip = await screen.findByRole("button", {
+      name: "Open relation citation R1",
+    });
+    // The turn (and its edge citation chip) is fully rendered, but nothing
+    // has hovered or focused it yet.
+    expect(citationRequests).toBe(0);
+
+    await user.hover(chip);
+    await waitFor(() => expect(citationRequests).toBe(1));
+
+    // Unhovering and re-hovering reads from the now-enabled, `staleTime:
+    // Infinity` cache entry rather than firing a second request.
+    await user.unhover(chip);
+    await user.hover(chip);
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "Health disclosure is required before underwriting review.",
+        ),
+      ).toBeInTheDocument(),
+    );
+    expect(citationRequests).toBe(1);
+  });
+
   it("shows the historical supporting passage in the evidence panel", async () => {
     stubEdgeCitationConversation();
     const user = userEvent.setup();
@@ -3961,25 +4001,41 @@ describe("Tap product workspace interactions", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows a retryable error when the supporting passage fails to load", async () => {
+  it("shows a retryable error when the supporting passage fails to load, and recovers on retry", async () => {
+    let citationRequests = 0;
     stubEdgeCitationConversation({
+      onCitationRequest: () => {
+        citationRequests += 1;
+      },
       // `retryable: false` here only stops react-query's own automatic
       // retry-with-backoff (`retryConversationRequest`) from repeatedly
       // re-fetching and timing out this test — `safeCitationProblem`'s
       // retryable *UI* classification (which shows the "Retry
       // verification" button) comes from the 503 status + problem code
-      // below, not from this field.
+      // below, not from this field. The first request fails; a retry
+      // (manual `refetch()` from the button) succeeds.
       citationResponse: () =>
-        new Response(
-          JSON.stringify({
-            type: "https://tap.example/problems/citation-unavailable",
-            retryable: false,
-          }),
-          {
-            status: 503,
-            headers: { "content-type": "application/problem+json" },
-          },
-        ),
+        citationRequests > 1
+          ? new Response(
+              JSON.stringify(
+                citationPreview({
+                  citationId: "edge-1",
+                  quote:
+                    "Health disclosure is required before underwriting review.",
+                }),
+              ),
+              { status: 200, headers: { "content-type": "application/json" } },
+            )
+          : new Response(
+              JSON.stringify({
+                type: "https://tap.example/problems/citation-unavailable",
+                retryable: false,
+              }),
+              {
+                status: 503,
+                headers: { "content-type": "application/problem+json" },
+              },
+            ),
     });
     const user = userEvent.setup();
     renderWorkspace();
@@ -3998,8 +4054,19 @@ describe("Tap product workspace interactions", () => {
         "Cited content is temporarily unavailable. Try again.",
       ),
     ).toBeInTheDocument();
-    expect(
+    const requestsBeforeRetry = citationRequests;
+
+    await user.click(
       within(panel).getByRole("button", { name: "Retry verification" }),
+    );
+
+    await waitFor(() =>
+      expect(citationRequests).toBeGreaterThan(requestsBeforeRetry),
+    );
+    expect(
+      await within(panel).findByText(
+        "Health disclosure is required before underwriting review.",
+      ),
     ).toBeInTheDocument();
   });
 });

@@ -251,6 +251,7 @@ function CitedClaim({
   onOpenCitation,
   locale,
   historicalCitationQueryFor,
+  onPreviewCitation,
 }: {
   claim: RetrievalClaim;
   graph: ValidAnswerGraph;
@@ -259,6 +260,7 @@ function CitedClaim({
   historicalCitationQueryFor?: (
     citationId: string,
   ) => HistoricalCitationQuery | undefined;
+  onPreviewCitation?: (citationId: string) => void;
 }) {
   const text = locale === "zh" ? COPY : CITATION_EN;
   const citations = (
@@ -278,6 +280,7 @@ function CitedClaim({
               locale={locale}
               ariaLabel={text.edgeCitation(number)}
               historicalQuery={historicalCitationQueryFor?.(citationId)}
+              onPreview={onPreviewCitation}
               onOpen={onOpenCitation}
             />
           );
@@ -313,6 +316,7 @@ function groundedSegments(
   historicalCitationQueryFor?: (
     citationId: string,
   ) => HistoricalCitationQuery | undefined,
+  onPreviewCitation?: (citationId: string) => void,
 ): ReactNode[] {
   const segments: ReactNode[] = [];
   let cursor = 0;
@@ -331,6 +335,7 @@ function groundedSegments(
         onOpenCitation={onOpenCitation}
         locale={locale}
         historicalCitationQueryFor={historicalCitationQueryFor}
+        onPreviewCitation={onPreviewCitation}
       />,
     );
     cursor = claim.answerEnd;
@@ -348,6 +353,7 @@ export function GroundedAnswer({
   locale = "zh",
   citationNumbering = "source-order",
   historicalCitationQueryFor,
+  onPreviewCitation,
 }: {
   response: RetrievalAnswerResponse | null | undefined;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
@@ -362,6 +368,12 @@ export function GroundedAnswer({
   historicalCitationQueryFor?: (
     citationId: string,
   ) => HistoricalCitationQuery | undefined;
+  /** Reports the first time an edge citation's chip is hovered or
+   * focused, so `TapperWorkspace` can enable that citation's (otherwise
+   * disabled) historical query — an answer citing several edges should
+   * not fetch every one of their snippets just because the turn
+   * rendered. */
+  onPreviewCitation?: (citationId: string) => void;
 }) {
   if (
     typeof response !== "object" ||
@@ -435,6 +447,7 @@ export function GroundedAnswer({
         onOpenCitation,
         locale,
         historicalCitationQueryFor,
+        onPreviewCitation,
       )}
     </div>
   );
