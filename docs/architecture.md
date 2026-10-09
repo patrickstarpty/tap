@@ -54,7 +54,7 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 **问答**
 
 1. 用户在 Conversation 中提交问题，生成不可变 Turn。
-2. worker 在授权范围内经 Milvus 混合检索（RRF 融合）取回切片；`GraphAnswerEnricher` 按问题关键词附加最多 20 个图谱节点作为上下文。
+2. 检索 → 关系分析子图（种子/扩展/路径/排序，R1..R20）→ 检索增强 ≤ 5 条 → 生成 → R/S 校验：worker 在授权范围内经 Milvus 混合检索（RRF 融合）取回切片后，关系分析 Agent 子图（`modules/ai/application/agents/relation_analysis.py`）在固定图版本内做种子（问题 + 证据切片）、扩展（1–2 跳）、路径（种子两两之间 ≤3 跳）、排序（路径优先、按置信度 × 种子邻接度，截断为 R1..R20）；检索增强对候选集外的邻居节点证据切片最多补 5 条（同样的 ACL 与发布授权，`TAPPER_GRAPH_RETRIEVAL_AUGMENT` 控制）；生成后对 claim 的 R/S 标签做位置与端点标签校验，非法标签剥离或整条丢弃（`TAPPER_GRAPH_REASONING` 为 0 时整段跳过，回退为纯切片回答）。
 3. 经 LiteLLM 生成回答并校验引用，结果写回 MySQL；可选模型目录由 LiteLLM `GET /v1/model/info` 动态提供（60 秒缓存），新增模型只改 `deploy/local/litellm/config.yaml` 并重启 LiteLLM，后端无需改代码或重启。
 4. 前端经 SSE 获取 Turn 事件（服务端轮询数据库，支持 `Last-Event-ID` 续传）。
 
@@ -62,7 +62,7 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 
 1. graph worker 按文档修订分批（默认 10 个切片一批）用模型抽取实体与关系，关系限定为受控词表并带原文标签，批次结果持久化到 `graph_fragment_batch`，可重试与恢复；全部批次成功为 READY，部分失败为 PARTIAL（片段抽取）。
 2. 片段发布（READY/PARTIAL）、知识发布/撤销发布、来源删除、单文档删除均把项目加入 `graph_project_merge_job` 合并队列；graph worker 的 `pending_work` 钩子串行认领、租约执行合并（复用 `MysqlGraphJobStore` 的 `FOR UPDATE` 租约与幂等模式），对项目内全部满足档案摘要的 READY/PARTIAL 片段做全量重放（merge 输入上限 100 个已就绪来源，见第 5 节已知差距）：三级实体对齐（规范化 canonical key 精确匹配 → 别名表匹配 → embedding 相似度，默认关闭；三级都要求被对齐的节点类型相同）、边合并（按两端节点与关系类型合并，置信度取最大值、证据取并集）、标签传播社区划分，`fragment_digest` 不变则跳过，版本就绪后原子切换为 READY 并只保留一个旧版本（项目合并）。embedding 对齐在片段节点数（各片段 draft 节点数之和）超过 `TAPPER_GRAPH_ALIGN_EMBEDDING_MAX_NODES`（默认 2000）时跳过，退化为仅用一、二级对齐，避免这一步 O(N²) 纯 Python 计算阻塞事件循环。
-3. 项目图按（project_id、version）在进程内缓存邻接表，版本切换时失效；查询 API（总览、搜索、路径、节点详情、邻居、高亮）与 `GraphAnswerEnricher`（按检索到的切片种子 + 别名最长匹配，取代整句子串匹配，按切片反查——无对应 HTTP 路由，只在回答增强内部使用）都读这份缓存；响应带 `graphVersion`，请求携带的 `graphVersion` 与当前不符时返回 409。旧的按来源快照查询路由（`GET /snapshots` 等）原样保留给文档详情页的片段视图。`graph rebuild` CLI 可手动触发重建：它只把已发布修订重置为待重新抽取，不会自己请求合并（合并由片段重新发布时各自请求），因此存在一个退化窗口——重建期间，一旦第一个重新抽取的片段完成重新发布，合并即会发布一个只包含当时已 READY 片段的新当前版本，图谱随之收缩到重新抽取的子集，再随后续片段逐个完成而逐步恢复；旧版本会保留一个周期，但查询路由只对外提供当前版本。
+3. 项目图按（project_id、version）在进程内缓存邻接表，版本切换时失效；查询 API（总览、搜索、路径、节点详情、邻居、高亮）与回答侧关系分析 Agent 子图都读这份缓存；响应带 `graphVersion`，请求携带的 `graphVersion` 与当前不符时返回 409；关系分析子图在种子阶段与排序阶段之间检测到版本切换时返回 STALE，回答退化为纯切片且不带任何关系边引用。旧的按来源快照查询路由（`GET /snapshots` 等）原样保留给文档详情页的片段视图。`graph rebuild` CLI 可手动触发重建：它只把已发布修订重置为待重新抽取，不会自己请求合并（合并由片段重新发布时各自请求），因此存在一个退化窗口——重建期间，一旦第一个重新抽取的片段完成重新发布，合并即会发布一个只包含当时已 READY 片段的新当前版本，图谱随之收缩到重新抽取的子集，再随后续片段逐个完成而逐步恢复；旧版本会保留一个周期，但查询路由只对外提供当前版本。
 
 本地 CI/E2E 用规则式假抽取（`TAPPER_GRAPH_EXTRACTION_MODE=fake`），演示与真实环境用 `model`。
 
@@ -87,6 +87,6 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 | --- | --- |
 | [可靠问答](superpowers/plans/2026-09-29-v1-roadmap.md#1-可靠问答) | 仓库内质量用例为空；SSE 为数据库轮询，无 token 级流式；摄取任务租约回收不递增 `attempt`（Turn 回收递增但无上限）、摄取瞬时失败直接永久失败、worker loop 无异常保护 |
 | [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 抽取分批（PR 1）与项目级图合并、按（project_id、version）缓存邻接表（PR 2）已实现，"每次查询把整个快照载入内存"已解决；项目合并每次只读取最多 100 个已就绪来源（`MysqlReadySources` 的 `limit(100)`），超过此数的项目无法在一次合并中纳入全部来源；剩余缺口为真实资料业务验证，详见[知识图谱脉络分析设计](superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md) |
-| [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 项目级图合并与 `GraphAnswerEnricher` 按切片种子 + 别名最长匹配已实现（PR 2）；剩余缺口为 PR 3 接入关系引用（多跳扩展、路径推理、关系边引用与路径高亮），详见[知识图谱脉络分析设计](superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md) |
+| [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 项目级图合并（PR 2）与关系分析 Agent 子图（多跳扩展、路径推理、关系边引用，PR 3）已实现；剩余缺口为前端边引用渲染与高亮待 PR 4，详见[知识图谱脉络分析设计](superpowers/specs/2026-10-06-knowledge-graph-reasoning-design.md) |
 | [Skills/Agents](superpowers/plans/2026-09-29-v1-roadmap.md#4-skillsagents) | 工具白名单硬编码为 `knowledge.search` / `knowledge.answer`；无导入能力 |
 | [可观测性](superpowers/plans/2026-09-29-v1-roadmap.md#5-可观测性) | 追踪数据无保留期与清理任务，`model_call_content` 原文永久保留会持续增长；DashScope 部分模型算不出成本，需要手动在 `deploy/local/litellm/config.yaml` 配置 `input_cost_per_token`/`output_cost_per_token` |

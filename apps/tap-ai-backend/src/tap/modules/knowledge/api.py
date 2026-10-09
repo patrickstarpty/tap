@@ -75,7 +75,7 @@ from tap.modules.knowledge.application.publication import (
     FlowchartPublicationGate,
     PublishedKnowledgeAuthority,
 )
-from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
+from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval, RelationAnalysis
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
     AnswerRequest,
@@ -132,6 +132,8 @@ class KnowledgeAPI:
         id_factory: Callable[[], str] | None = None,
         publication_authority: PublishedKnowledgeAuthority | None = None,
         flowchart_gate: FlowchartPublicationGate | None = None,
+        relation_analysis: RelationAnalysis | None = None,
+        retrieval_augment: bool = True,
     ) -> None:
         self._retrieval = AuthorizedRetrieval(
             search=search,
@@ -143,6 +145,8 @@ class KnowledgeAPI:
             id_factory=id_factory or (lambda: str(uuid4())),
             publication_authority=publication_authority,
             flowchart_gate=flowchart_gate,
+            relation_analysis=relation_analysis,
+            retrieval_augment=retrieval_augment,
         )
 
     async def search(

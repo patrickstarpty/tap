@@ -127,6 +127,27 @@ def test_graph_alignment_settings_defaults_and_bounds() -> None:
         TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_THRESHOLD": "-0.1"})
 
 
+def test_graph_reasoning_flags_default_on_and_reject_other_values() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert settings.graph_retrieval_augment is True
+    assert settings.graph_reasoning is True
+
+    disabled = TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_REASONING": "0"})
+    assert disabled.graph_reasoning is False
+
+    disabled_augment = TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_GRAPH_RETRIEVAL_AUGMENT": "0"}
+    )
+    assert disabled_augment.graph_retrieval_augment is False
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_RETRIEVAL_AUGMENT": "yes"})
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_REASONING": "yes"})
+
+
 def test_graph_align_embedding_max_nodes_defaults_and_bounds() -> None:
     settings = TapperSettings.from_mapping(S3_SETTINGS)
     assert settings.graph_align_embedding_max_nodes == 2000
