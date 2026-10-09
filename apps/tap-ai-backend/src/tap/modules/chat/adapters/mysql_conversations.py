@@ -179,6 +179,44 @@ def _naive(value):
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
 
+# Shared between `resolve_citations` and `complete()` so both compute the
+# persisted citation's trusted digest the exact same way -- a row selected
+# with fewer columns than this, or passed to a differently-built digest call,
+# silently drifts out of agreement with the other site and every edge
+# citation stops verifying at completion (chunk citations are unaffected
+# since `citation_evidence_digest` only folds the edge fields in when
+# `citation_kind == "edge"`).
+_CITATION_DIGEST_COLUMNS = (
+    "citation_id,source_id,trace_id,document_id,revision_id,chunk_id,"
+    "source_content_hash,chunk_content_hash,anchor_json,claim_text,origin,"
+    "citation_kind,graph_version,edge_id,subject_node_id,object_node_id,"
+    "relation_type,relation_label"
+)
+
+
+def _citation_row_digest(row) -> str:
+    return citation_evidence_digest(
+        citation_id=row["citation_id"],
+        trace_id=row["trace_id"],
+        source_id=row["source_id"],
+        document_id=row["document_id"],
+        revision_id=row["revision_id"],
+        chunk_id=row["chunk_id"],
+        source_content_hash=row["source_content_hash"],
+        chunk_content_hash=row["chunk_content_hash"],
+        anchor=row["anchor_json"],
+        claim_text=row["claim_text"],
+        origin=row["origin"],
+        citation_kind=row["citation_kind"],
+        graph_version=row["graph_version"],
+        edge_id=row["edge_id"],
+        subject_node_id=row["subject_node_id"],
+        object_node_id=row["object_node_id"],
+        relation_type=row["relation_type"],
+        relation_label=row["relation_label"],
+    )
+
+
 def _input_json(value):
     return {
         **asdict(value),
@@ -215,9 +253,7 @@ class MysqlConversationRepository:
                     (
                         await session.execute(
                             text(
-                                "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
-                                "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
-                                "claim_text,origin "
+                                f"SELECT {_CITATION_DIGEST_COLUMNS} "
                                 "FROM knowledge_citation_snapshot WHERE "
                                 "enterprise_id=:enterprise_id "
                                 "AND project_id=:project_id AND trace_id=:trace_id "
@@ -242,19 +278,7 @@ class MysqlConversationRepository:
             by_id = {
                 row["citation_id"]: CitationEvidence(
                     row["citation_id"],
-                    citation_evidence_digest(
-                        citation_id=row["citation_id"],
-                        trace_id=row["trace_id"],
-                        source_id=row["source_id"],
-                        document_id=row["document_id"],
-                        revision_id=row["revision_id"],
-                        chunk_id=row["chunk_id"],
-                        source_content_hash=row["source_content_hash"],
-                        chunk_content_hash=row["chunk_content_hash"],
-                        anchor=row["anchor_json"],
-                        claim_text=row["claim_text"],
-                        origin=row["origin"],
-                    ),
+                    _citation_row_digest(row),
                 )
                 for row in rows
             }
@@ -853,8 +877,7 @@ class MysqlConversationRepository:
             # Edge citation fidelity on reload — i.e. whether a cited edge's
             # own `graph_version` still matches this Turn's `graph_snapshot_id`
             # — is validated below, against the citation row's persisted
-            # columns, and depends on Task 8's `knowledge_citation_snapshot`
-            # edge columns existing.
+            # `knowledge_citation_snapshot` edge columns.
             frozen_resources = {
                 (
                     item["source_id"],
@@ -873,9 +896,7 @@ class MysqlConversationRepository:
                     (
                         await session.execute(
                             text(
-                                "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
-                                "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
-                                "claim_text,origin,citation_kind,graph_version "
+                                f"SELECT {_CITATION_DIGEST_COLUMNS} "
                                 "FROM knowledge_citation_snapshot "
                                 "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
                                 "AND citation_id=:citation_id AND trace_id=:trace_id"
@@ -893,19 +914,7 @@ class MysqlConversationRepository:
                 )
                 if citation_row is None:
                     raise ValueError("citation snapshot is not a trusted persisted fact")
-                trusted_digest = citation_evidence_digest(
-                    citation_id=citation_row["citation_id"],
-                    trace_id=citation_row["trace_id"],
-                    source_id=citation_row["source_id"],
-                    document_id=citation_row["document_id"],
-                    revision_id=citation_row["revision_id"],
-                    chunk_id=citation_row["chunk_id"],
-                    source_content_hash=citation_row["source_content_hash"],
-                    chunk_content_hash=citation_row["chunk_content_hash"],
-                    anchor=citation_row["anchor_json"],
-                    claim_text=citation_row["claim_text"],
-                    origin=citation_row["origin"],
-                )
+                trusted_digest = _citation_row_digest(citation_row)
                 if trusted_digest != citation.citation_digest:
                     raise ValueError("citation snapshot digest differs from persisted fact")
                 if (
@@ -915,14 +924,15 @@ class MysqlConversationRepository:
                     citation_row["source_content_hash"],
                 ) not in frozen_resources:
                     raise ValueError("citation is outside the frozen Turn resources")
-                if (
-                    snapshot.value.graph_context_status is GraphContextStatus.APPLIED
-                    and citation_row["citation_kind"] == "edge"
-                    and citation_row["graph_version"] != snapshot.value.graph_snapshot_id
-                ):
-                    raise ValueError(
-                        "edge citation graph version differs from the Turn's graph snapshot"
-                    )
+                if citation_row["citation_kind"] == "edge":
+                    if snapshot.value.graph_context_status is not GraphContextStatus.APPLIED:
+                        raise ValueError(
+                            "edge citation requires an APPLIED graph context on this Turn"
+                        )
+                    if citation_row["graph_version"] != snapshot.value.graph_snapshot_id:
+                        raise ValueError(
+                            "edge citation graph version differs from the Turn's graph snapshot"
+                        )
                 await session.execute(
                     insert(turn_artifact_link).values(
                         **scope_values(self.scope),

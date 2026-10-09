@@ -1711,6 +1711,7 @@ def _assemble_http_services(
                     project_graph,
                     ArtifactChunkSnippets(repository, cast(CitationArtifactStore, artifacts)),
                     publication_authority=publication_authority,
+                    flowchart_gate=flowchart_gate,
                 )
             )
             relation_analysis = RegisteredRelationAnalysis(registry, scope=repository.scope)

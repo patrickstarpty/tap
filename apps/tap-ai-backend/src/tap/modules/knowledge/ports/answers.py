@@ -124,7 +124,7 @@ class CitationSnapshot:
             _bounded("edge citation edge ID", self.edge_id, maximum=128)
             _bounded("edge citation subject node ID", self.subject_node_id, maximum=128)
             _bounded("edge citation object node ID", self.object_node_id, maximum=128)
-            _bounded("edge citation relation type", self.relation_type, maximum=32)
+            _bounded("edge citation relation type", self.relation_type, maximum=64)
             if len(self.relation_label or "") > 64:
                 raise ValueError("edge citation relation label must be at most 64 characters")
         elif any(field is not None for field in edge_fields):

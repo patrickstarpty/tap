@@ -118,7 +118,7 @@ class EdgeCitationView(StreamContractModel):
     graph_version: str = Field(min_length=1, max_length=64)
     subject: GraphEndpointView
     object: GraphEndpointView
-    relation_type: str = Field(min_length=1, max_length=32)
+    relation_type: str = Field(min_length=1, max_length=64)
     relation_label: str = Field(min_length=1, max_length=64)
 
 

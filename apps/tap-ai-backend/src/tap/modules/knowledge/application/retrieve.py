@@ -100,6 +100,13 @@ from tap.modules.knowledge.ports.search import (
 from tap.platform.telemetry import span
 
 _MAX_EVIDENCE = 20
+# `_augment_from_relations` searches wider (recall) but only ever merges a few
+# of the results (precision/budget): the augmentation query is a synthetic
+# combination of the original question and relation seed labels, so casting a
+# wider net is more likely to surface the right chunk, but a single relation
+# answer should not crowd out other evidence with many augmented chunks.
+_MAX_AUGMENT_MERGE = 5
+_AUGMENT_TOP_K = 20
 
 
 class RelationAnalysis(Protocol):
@@ -159,7 +166,7 @@ def _evidence_ref(item: Evidence) -> EvidenceRef:
 def _document_anchor_from_mapping(anchor: Mapping[str, object]) -> DocumentAnchor | None:
     """Parse a relation support's raw anchor mapping into a `DocumentAnchor`,
     or `None` if it is not the `document` anchor shape -- the caller then
-    skips this support in favor of the next one (Task 5 review I2)."""
+    skips this support in favor of the next one."""
     if anchor.get("type") != "document":
         return None
     start_offset = anchor.get("startOffset")
@@ -588,7 +595,11 @@ class AuthorizedRetrieval:
             not flowchart_claim_is_consistent(claim.evidence_labels, flow_context)
             for claim in generation.claims
         ):
-            return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+            return self._abstain(
+                run.response,
+                AbstentionReason.INSUFFICIENT_EVIDENCE,
+                relation=self._baseline_relation_outcome(relation),
+            )
 
         relation_outcome: RelationOutcome | None = None
         stripped = 0
@@ -604,7 +615,11 @@ class AuthorizedRetrieval:
             )
             stripped = reconciled.stripped
             if reconciled.claims == () and generation.claims:
-                return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+                return self._abstain(
+                    run.response,
+                    AbstentionReason.INSUFFICIENT_EVIDENCE,
+                    relation=self._baseline_relation_outcome(relation),
+                )
             generation = replace(generation, text=reconciled.text, claims=reconciled.claims)
             if relation.status is RelationContextStatus.APPLIED:
                 # Resolve every ranked relation up front (not just the cited
@@ -702,7 +717,11 @@ class AuthorizedRetrieval:
                         claims=tuple(final_claims),
                     )
                     if not final_claims and reconciled.claims:
-                        return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+                        return self._abstain(
+                            run.response,
+                            AbstentionReason.INSUFFICIENT_EVIDENCE,
+                            relation=self._baseline_relation_outcome(relation),
+                        )
                 # Renumber the surviving edge citations sequentially R1..Rn in
                 # ascending original-rank order (not order of first appearance in
                 # claim text), so the closed R-position rule in `ports/answers.py`
@@ -735,9 +754,13 @@ class AuthorizedRetrieval:
             extra_citation_ids=extra_citation_ids,
         )
         if claims is None:
-            return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+            return self._abstain(
+                run.response, AbstentionReason.INSUFFICIENT_EVIDENCE, relation=relation_outcome
+            )
         if not generation.text and not claims:
-            return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+            return self._abstain(
+                run.response, AbstentionReason.INSUFFICIENT_EVIDENCE, relation=relation_outcome
+            )
 
         cited_citation_ids = {citation_id for claim in claims for citation_id in claim.citation_ids}
         used_edge_citations = tuple(
@@ -790,7 +813,7 @@ class AuthorizedRetrieval:
         """Re-authorize `relation.augment_chunks` and fuse the surviving candidates
         into `run.response.evidence` through a normal, fully-ACL'd retrieval call,
         exactly like the existing flowchart business-rule supplement above -- this
-        is what actually gates augmentation, not the agent (see Task 3 amendment)."""
+        is what actually gates augmentation, not the agent."""
         capacity = _MAX_EVIDENCE - len(run.response.evidence)
         if capacity <= 0:
             return run, relation
@@ -826,7 +849,7 @@ class AuthorizedRetrieval:
                 replace(
                     answer_request.as_search_request(),
                     query=augment_query,
-                    top_k=min(5, capacity),
+                    top_k=min(_AUGMENT_TOP_K, capacity),
                 ),
                 policy,
                 frozen_policy=frozen_policy,
@@ -844,7 +867,10 @@ class AuthorizedRetrieval:
             for item in run.response.evidence
         }
         merged = list(run.response.evidence)
+        added = 0
         for item in augmentation.response.evidence:
+            if added >= _MAX_AUGMENT_MERGE:
+                break
             identity = (item.source.source_id, item.source.revision, item.chunk_id)
             if (
                 item.chunk_id in candidate_chunk_ids
@@ -853,6 +879,7 @@ class AuthorizedRetrieval:
             ):
                 existing.add(identity)
                 merged.append(replace(item, evidence_label=f"S{len(merged) + 1}"))
+                added += 1
         if len(merged) == len(run.response.evidence):
             return run, relation
         publication = run.publication
@@ -879,7 +906,7 @@ class AuthorizedRetrieval:
         copied verbatim; a snippet-only support (never promoted to `S` by
         `_augment_from_relations`) is reconstructed from its own
         `RelationSupport` fields plus the matching selected revision's
-        `source_content_hash` (Task 5 review I2) -- real formulas
+        `source_content_hash` -- real formulas
         (`chunk_id_for`/`logical_chunk_id_for`), the same ones the search index
         itself uses, so the resulting identity is re-verifiable. A support
         whose anchor is not the `document` shape, or whose revision/document_id
@@ -1680,9 +1707,29 @@ class AuthorizedRetrieval:
         )
 
     @staticmethod
+    def _baseline_relation_outcome(relation: RelationContext | None) -> RelationOutcome | None:
+        """A `RelationOutcome` built straight from `RelationContext`, without
+        the edge-citation resolution `answer()`'s main path does -- used to
+        preserve the relation status (notably EMPTY's "no direct relation
+        found" hint) through an abstention that happens before, or without,
+        that resolution ever running."""
+        if relation is None:
+            return None
+        return RelationOutcome(
+            status=relation.status,
+            graph_version=relation.graph_version,
+            seed_count=len(relation.seeds),
+            paths=relation.path_summaries(),
+            relation_count=len(relation.relations),
+            diagnostics=dict(relation.diagnostics),
+        )
+
+    @staticmethod
     def _abstain(
         search_response: SearchResponse,
         reason: AbstentionReason,
+        *,
+        relation: RelationOutcome | None = None,
     ) -> AnswerResponse:
         return AnswerResponse(
             trace_id=search_response.trace_id,
@@ -1701,6 +1748,7 @@ class AuthorizedRetrieval:
             answer_provenance=None,
             degraded_mode=search_response.degraded_mode,
             degradation_reasons=search_response.degradation_reasons,
+            relation=relation,
         )
 
     @staticmethod

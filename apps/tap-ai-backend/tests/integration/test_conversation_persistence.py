@@ -272,7 +272,7 @@ def test_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
 
 
 def test_graph_context_ready_stream_event_persists_and_reloads(owned_project_mysql):
-    """PR 3 Task 7 review fix: a `graph.context_ready` stream event must
+    """A `graph.context_ready` stream event must
     persist end-to-end against real MySQL, not only against the in-memory
     repository fakes the worker unit tests use."""
 
@@ -445,7 +445,9 @@ def test_applied_graph_context_validates_edge_citation_graph_version(owned_proje
                             text(
                                 "SELECT citation_id,source_id,trace_id,document_id,"
                                 "revision_id,chunk_id,source_content_hash,chunk_content_"
-                                "hash,anchor_json,claim_text,origin FROM knowledge_citati"
+                                "hash,anchor_json,claim_text,origin,citation_kind,"
+                                "graph_version,edge_id,subject_node_id,object_node_id,"
+                                "relation_type,relation_label FROM knowledge_citati"
                                 "on_snapshot WHERE citation_id='citation-graph-edge'"
                             )
                         )
@@ -465,6 +467,13 @@ def test_applied_graph_context_validates_edge_citation_graph_version(owned_proje
                 anchor=row["anchor_json"],
                 claim_text=row["claim_text"],
                 origin=row["origin"],
+                citation_kind=row["citation_kind"],
+                graph_version=row["graph_version"],
+                edge_id=row["edge_id"],
+                subject_node_id=row["subject_node_id"],
+                object_node_id=row["object_node_id"],
+                relation_type=row["relation_type"],
+                relation_label=row["relation_label"],
             )
             resolved_resources = (
                 FrozenResource(
@@ -526,6 +535,125 @@ def test_applied_graph_context_validates_edge_citation_graph_version(owned_proje
                     lease_token=mismatch_claim.lease_token,
                     terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
                 )
+
+            # Non-APPLIED graph context (here EMPTY) citing an edge-kind
+            # citation row: rejected regardless of graph_version, since an
+            # edge citation requires an APPLIED graph context on this Turn.
+            await service.create(
+                "conversation-graph-not-applied",
+                "turn-graph-not-applied",
+                "request-graph-not-applied",
+                _input(resolved_resources=resolved_resources),
+            )
+            not_applied_claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            with pytest.raises(ValueError, match="APPLIED graph context"):
+                await service.complete_evidence(
+                    "conversation-graph-not-applied",
+                    "turn-graph-not-applied",
+                    AnswerEvidence(
+                        "Grounded",
+                        "completed",
+                        RetrievalSummary("completed", trace_id="trace-graph"),
+                        GraphContextStatus.EMPTY,
+                        graph_snapshot_id=None,
+                        citations=(CitationEvidence("citation-graph-edge", digest),),
+                    ),
+                    lease_token=not_applied_claim.lease_token,
+                    terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_resolve_citations_then_complete_evidence_round_trips_an_edge_citation(
+    owned_project_mysql,
+):
+    """`resolve_citations()` (the
+    generation worker's own call, `tapper_generation_worker.py:204`) and
+    `complete()` must compute the exact same trusted digest for a persisted
+    edge citation -- this test never hand-computes the digest itself (unlike
+    `test_applied_graph_context_validates_edge_citation_graph_version`), it
+    only uses whatever `resolve_citations()` returns, so a drift between the
+    two call sites' SELECT columns or digest material fails here the same way
+    it fails in production."""
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            document_repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
+            selected = await seed_ready(engine, "roundtrip")
+            edge_citation = CitationSnapshot(
+                trace_id="trace-roundtrip",
+                citation_id="citation-roundtrip-edge",
+                document_id=selected.document_id,
+                revision_id=selected.revision_id,
+                chunk_id="h_roundtrip",
+                source_content_hash=SOURCE_HASH,
+                chunk_content_hash=CHUNK_HASH,
+                anchor_json=ANCHOR_JSON,
+                citation_kind="edge",
+                graph_version="7",
+                edge_id="edge-1",
+                subject_node_id="node-subject",
+                object_node_id="node-object",
+                relation_type="REQUIRES",
+                relation_label="requires",
+            )
+            await document_repository.save_answer_with_citations(
+                AnswerSnapshot(
+                    trace_id="trace-roundtrip",
+                    query_hash="sha256:" + "c" * 64,
+                    selected_revisions=(selected,),
+                    citations=(edge_citation,),
+                )
+            )
+
+            conversation_repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            resolved = await conversation_repository.resolve_citations(
+                "trace-roundtrip", ("citation-roundtrip-edge",)
+            )
+            assert len(resolved) == 1
+            assert resolved[0].citation_snapshot_id == "citation-roundtrip-edge"
+
+            resolved_resources = (
+                FrozenResource(
+                    source_id=selected.source_id,
+                    document_id=selected.document_id,
+                    revision_id=selected.revision_id,
+                    source_content_hash=SOURCE_HASH,
+                ),
+            )
+            service = ConversationService(conversation_repository, scope=VALIDATION_SCOPE)
+            await service.create(
+                "conversation-roundtrip",
+                "turn-roundtrip",
+                "request-roundtrip",
+                _input(resolved_resources=resolved_resources),
+            )
+            claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            completed = await service.complete_evidence(
+                "conversation-roundtrip",
+                "turn-roundtrip",
+                AnswerEvidence(
+                    "Grounded",
+                    "completed",
+                    RetrievalSummary("completed", trace_id="trace-roundtrip"),
+                    GraphContextStatus.APPLIED,
+                    graph_snapshot_id="7",
+                    citations=resolved,
+                ),
+                lease_token=claim.lease_token,
+                terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+            )
+            assert completed.state == "completed"
         finally:
             await engine.dispose()
 

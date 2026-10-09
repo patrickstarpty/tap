@@ -164,7 +164,7 @@ async def test_in_memory_completion_binds_terminal_event_and_cannot_reverse_canc
 
 @pytest.mark.asyncio
 async def test_complete_evidence_persists_graph_context_ready_stream_event():
-    """PR 3 Task 7 review fix: `graph.context_ready` must be a recognized
+    """`graph.context_ready` must be a recognized
     stream event type, not just validated by the chat_stream/HTTP contracts
     in isolation. `ConversationEvent.__post_init__` must accept it, or every
     non-failed knowledge turn that streams it would crash at completion."""
