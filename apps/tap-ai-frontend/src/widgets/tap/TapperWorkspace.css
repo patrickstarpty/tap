@@ -2520,6 +2520,122 @@
   line-height: 1.55;
 }
 
+.tap-graph-inspector h4,
+.tap-graph-inspector h5 {
+  margin: 14px 0 6px;
+  color: var(--tap-ink);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+/* "Ask about this" — the one button rendered as a direct child of the
+   inspector itself (the header's own close button and the relation/source
+   group buttons below have their own, more specific rules). */
+.tap-graph-inspector > button {
+  justify-self: start;
+  margin: 2px 0 4px;
+  border: 1px solid var(--tap-accent);
+  border-radius: 999px;
+  background: var(--tap-accent-soft);
+  padding: 6px 12px;
+  color: var(--tap-accent-dark);
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.tap-graph-inspector > button:hover {
+  background: var(--tap-accent);
+  color: #fff;
+}
+
+.tap-graph-inspector > button:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 2px;
+}
+
+.tap-graph-inspector-relation-groups {
+  display: grid;
+  gap: 16px;
+  margin-top: 6px;
+}
+
+.tap-graph-inspector-relation-group {
+  display: grid;
+  gap: 6px;
+}
+
+.tap-graph-inspector-relation-group > h4 {
+  margin: 0;
+}
+
+.tap-graph-inspector-relation-group > p {
+  margin: 0;
+  color: var(--tap-muted);
+  font-size: 9px;
+}
+
+.tap-graph-inspector-relation-group > button {
+  justify-self: start;
+  border: 1px solid var(--tap-line);
+  border-radius: 999px;
+  background: var(--tap-surface);
+  padding: 5px 10px;
+  color: var(--tap-accent-dark);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tap-graph-inspector-relation-group > button:hover {
+  background: var(--tap-accent-soft);
+}
+
+.tap-graph-inspector-relation-group > button:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 2px;
+}
+
+.tap-graph-inspector-source-group {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--tap-soft);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.tap-graph-inspector-source-group > h5 {
+  margin: 0;
+}
+
+.tap-graph-inspector-source-group p {
+  margin: 0;
+  color: var(--tap-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.tap-graph-inspector-source-group button {
+  justify-self: start;
+  border: 1px solid var(--tap-line);
+  border-radius: 999px;
+  background: var(--tap-surface);
+  padding: 4px 9px;
+  color: var(--tap-accent-dark);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tap-graph-inspector-source-group button:hover {
+  background: var(--tap-accent-soft);
+}
+
+.tap-graph-inspector-source-group button:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 2px;
+}
+
 .tap-source-dialog input[type="file"] {
   width: 100%;
   border: 1px solid var(--tap-line);

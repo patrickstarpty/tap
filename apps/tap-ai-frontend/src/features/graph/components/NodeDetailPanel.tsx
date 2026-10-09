@@ -328,20 +328,6 @@ export function NodeDetailPanel({
             </div>
           </div>
         ) : null}
-        {sources.length > 0 ? (
-          <div>
-            <h4>{libraryCopy.evidenceSnippets}</h4>
-            {sources.map((source) => (
-              <SourceGroup
-                key={source.sourceRevisionId}
-                source={source}
-                copy={copy}
-                onOpenSource={onOpenSource}
-                canOpenSource={canOpenSource}
-              />
-            ))}
-          </div>
-        ) : null}
         {relations.length > 0 ? (
           <div className="tap-graph-inspector-relation-groups">
             {relations.map((group) => (
@@ -352,6 +338,20 @@ export function NodeDetailPanel({
                 neighborLabelById={neighborLabelById}
                 onSelectNode={onSelectNode}
                 copy={copy}
+              />
+            ))}
+          </div>
+        ) : null}
+        {sources.length > 0 ? (
+          <div>
+            <h4>{libraryCopy.evidenceSnippets}</h4>
+            {sources.map((source) => (
+              <SourceGroup
+                key={source.sourceRevisionId}
+                source={source}
+                copy={copy}
+                onOpenSource={onOpenSource}
+                canOpenSource={canOpenSource}
               />
             ))}
           </div>
