@@ -284,4 +284,56 @@ describe("graph version guard", () => {
     rerender();
     await waitFor(() => expect(projectRefetches).toBe(2));
   });
+
+  it("does not refetch again when a conflicting error simply drops out of a shrinking set", async () => {
+    let projectRefetches = 0;
+    const fetcher = vi.fn(async (input: Request) => {
+      const url = new URL(input.url);
+      if (url.pathname.endsWith("/knowledge/graph/project")) {
+        projectRefetches += 1;
+        return jsonResponse(projectView(2));
+      }
+      throw new Error(`Unexpected request to ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const queryClient = createTestQueryClient();
+    const projectId = "project-1";
+    queryClient.setQueryDefaults(["graph", projectId], {
+      staleTime: Number.POSITIVE_INFINITY,
+    });
+    queryClient.setQueryData(graphKeys.project(projectId), projectView(2));
+
+    let conflictErrors: unknown[] = [];
+    const { rerender } = renderHook(
+      () => {
+        useGraphProject(projectId);
+        useGraphVersionGuard(projectId, conflictErrors);
+      },
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            {children}
+          </QueryClientProvider>
+        ),
+      },
+    );
+
+    // Two queries 409 at the same time (e.g. the overview and the node
+    // detail panel both hit the stale version).
+    const overviewConflict = new GraphVersionConflictError();
+    const nodeConflict = new GraphVersionConflictError();
+    conflictErrors = [overviewConflict, nodeConflict];
+    rerender();
+    await waitFor(() => expect(projectRefetches).toBe(1));
+
+    // The node query's conflict resolves/clears (e.g. its panel closed)
+    // while the overview's conflict persists — the *set* shrinks, but no
+    // error reference is actually new, so this must not be read as a
+    // fresh conflict and must not refetch the project again.
+    conflictErrors = [overviewConflict];
+    rerender();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(projectRefetches).toBe(1);
+  });
 });

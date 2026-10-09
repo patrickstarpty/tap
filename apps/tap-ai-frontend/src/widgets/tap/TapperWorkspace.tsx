@@ -960,10 +960,15 @@ export function TapperWorkspace() {
   const publishedSourcesQuery = usePublishedSourcesQuery(projectId);
   const [locale, setLocale] = useState<Locale>("en");
   // Whether the very first render guessed "library" from *any* valid
-  // highlight in history state, before `projectId` (below) was known —
-  // read once, synchronously, so it reflects the actual state the
-  // `useState` initializer below saw, not a later value.
-  const optimisticLibraryGuessRef = useRef(readGraphHighlight() !== null);
+  // highlight in history state, before `projectId` (below) was known. A
+  // lazy-init ref (not `useRef(readGraphHighlight() !== null)`, which
+  // would re-parse `window.history.state` as a throwaway argument on
+  // *every* render, not just the first): the sentinel `null` means "not
+  // computed yet", so the read only ever happens once.
+  const optimisticLibraryGuessRef = useRef<boolean | null>(null);
+  if (optimisticLibraryGuessRef.current === null) {
+    optimisticLibraryGuessRef.current = readGraphHighlight() !== null;
+  }
   const [activeModule, setActiveModule] = useState<ProductModule>(() => {
     // `projectId` isn't resolved yet on this very first render (it comes
     // from an async runtime-mode query), so this can't filter by it the
@@ -980,30 +985,39 @@ export function TapperWorkspace() {
   // A highlight that resolves or arrives after mount (the async filter
   // above settling, a same-tab push, or a popstate/forward-back
   // navigation) must switch to the Library module too — mirrors
-  // `LibraryWorkspace`'s own effect that switches its internal tab. The
-  // `else` branch is the undo for the optimistic guess above: once
-  // `projectId` resolves, a highlight that turns out to belong to a
-  // different project reads as `null` here — if that's what sent us to
-  // "library" in the first place, fall back to the normal default module
-  // instead of leaving the user stranded there with nothing to show. This
-  // only ever fires once (the ref flips to `false` after handling it), so
-  // it never clobbers a module the user deliberately navigated to later.
+  // `LibraryWorkspace`'s own effect that switches its internal tab.
+  //
+  // The second block *settles* the optimistic guess above, exactly once,
+  // as soon as `projectId` is actually known (hence it's in this effect's
+  // deps) — before that, `graphHighlight` reading `null` could just mean
+  // "not resolved yet", not "this highlight is for a different project".
+  // `optimisticLibraryGuessRef` doubles as its own one-shot latch: it's
+  // reset to `false` here in *both* cases (matched or mismatched), not
+  // only the mismatch branch — the original bug was leaving it `true`
+  // forever on a match, so a later, legitimate `clearGraphHighlight()` (or
+  // navigating back past a matching highlight) re-read the still-`true`
+  // ref as "the guess was wrong" and kicked the user out of Library. The
+  // undo-the-guess fallback itself only applies when `graphHighlight` is
+  // `null` *at this first settle* (a genuine mismatch) — once settled, a
+  // highlight that matched is never revisited here again.
   useEffect(() => {
     if (graphHighlight !== null) {
       setActiveModule("library");
-      return;
     }
-    if (optimisticLibraryGuessRef.current) {
+    if (projectId !== null && optimisticLibraryGuessRef.current) {
+      const wasMismatch = graphHighlight === null;
       optimisticLibraryGuessRef.current = false;
-      setActiveModule((current) =>
-        current === "library"
-          ? durableTestPlanPath() !== null
-            ? "test-management"
-            : "tapper"
-          : current,
-      );
+      if (wasMismatch) {
+        setActiveModule((current) =>
+          current === "library"
+            ? durableTestPlanPath() !== null
+              ? "test-management"
+              : "tapper"
+            : current,
+        );
+      }
     }
-  }, [graphHighlight]);
+  }, [graphHighlight, projectId]);
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );

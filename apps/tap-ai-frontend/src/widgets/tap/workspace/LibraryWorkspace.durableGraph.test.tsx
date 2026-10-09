@@ -967,6 +967,41 @@ it("shows the loading state, not the stale error text, while a highlight retry i
   ).not.toBeInTheDocument();
 });
 
+it("keeps showing the highlighted path and canvas highlight during a background refetch of already-successful data", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: HIGHLIGHT_STATE,
+    highlightResponse: buildOverview(
+      HIGHLIGHT_GRAPH_NODES.slice(0, 3),
+      HIGHLIGHT_GRAPH_EDGES,
+    ),
+    // React query sets `isFetching: true` during an ordinary background
+    // refetch of data that already succeeded — `isError`/`isPending` stay
+    // `false` throughout. This must not flicker the canvas highlight away
+    // or flash a "Loading…" line over the still-valid, last-known-good
+    // path (unlike the retry-after-error case above, where `isFetching`
+    // alongside `isError` *does* mean "pending").
+    highlightFetching: true,
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(
+    screen.queryByText("Loading the highlighted path…"),
+  ).not.toBeInTheDocument();
+  const region = screen.getByRole("region", { name: "Highlighted path" });
+  expect(
+    within(region).getByText(
+      "Underwriting review —requires→ Health disclosure",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Underwriting review/ }),
+  ).toHaveAttribute("data-highlighted", "true");
+});
+
 it("defaults to the Knowledge Graph tab on mount when a highlight is already present", () => {
   const project = buildProject();
   renderLibrary({

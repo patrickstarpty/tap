@@ -208,17 +208,25 @@ export function GraphOverview({
   // yet (or failed for an unrelated reason, e.g. `graph-job-busy`). Both
   // derived values below are therefore only computed once the request has
   // actually succeeded; `highlightStatus` drives the loading/error/success
-  // branches in the "Highlighted path" region further down. `isFetching`
-  // (not just `isPending`) counts as "pending" too — clicking "Retry" on a
-  // query that's already settled into `error` keeps `isError` (and
-  // `isPending`) exactly as they were while the retry is in flight (react
-  // query only leaves `status: "error"` once the new attempt itself
-  // resolves), so without this the retry would otherwise keep showing the
-  // stale error text instead of a loading state while it's actually
-  // refetching.
+  // branches in the "Highlighted path" region further down.
+  //
+  // `isFetching` only counts towards "pending" when combined with
+  // `isError` — that's specifically clicking "Retry" on a query that's
+  // already settled into `error` (react query keeps `status: "error"`,
+  // and `isPending` false, for the whole duration of that retry; it only
+  // updates once the new attempt itself resolves), so without `isError &&
+  // isFetching` the retry would keep showing the stale error text instead
+  // of a loading state while it's actually refetching. A query that has
+  // already succeeded must *not* get the same treatment: react query also
+  // sets `isFetching` during an ordinary background refetch of
+  // already-good data, and reading that as "pending" would otherwise make
+  // the canvas highlight disappear and a "Loading…" line flash on every
+  // such background refetch, even though the last-known-good path is
+  // still perfectly valid to show.
   const highlightStatus: "idle" | "pending" | "error" | "success" = !highlight
     ? "idle"
-    : highlightQuery.isPending || highlightQuery.isFetching
+    : highlightQuery.isPending ||
+        (highlightQuery.isError && highlightQuery.isFetching)
       ? "pending"
       : highlightQuery.isError
         ? "error"

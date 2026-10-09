@@ -3086,6 +3086,91 @@ describe("Tap product workspace interactions", () => {
     }
   });
 
+  it("keeps Library active when a matching highlight is cleared", async () => {
+    const user = userEvent.setup();
+    // A non-empty project graph, so `GraphOverview` actually renders the
+    // canvas (and, with a highlight present, the "Back to overview"
+    // button) instead of its empty-graph message.
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "age",
+                nodeType: "CONCEPT",
+                label: "Age eligibility",
+                canonicalKey: "age",
+                degree: 1,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    // Matches `defaultKnowledgeClient()`'s project ("project-test") —
+    // unlike the mismatch case above, this highlight genuinely belongs to
+    // the project the user is in. Clearing it later must not be misread
+    // as "the optimistic guess was wrong" and kick the user back to
+    // Tapper.
+    pushGraphHighlight({
+      edgeIds: ["edge-1"],
+      graphVersion: "1",
+      turnId: null,
+      projectId: "project-test",
+    });
+
+    try {
+      renderWorkspace();
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Library" })).toHaveAttribute(
+          "aria-current",
+          "page",
+        ),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Back to overview" }),
+        ).toBeVisible(),
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "Back to overview" }),
+      );
+
+      expect(screen.getByRole("button", { name: "Library" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   it("returns focus to the 'Open original' button after closing the opened source", async () => {
     const user = userEvent.setup();
     vi.mocked(useGraphProject).mockReturnValue({

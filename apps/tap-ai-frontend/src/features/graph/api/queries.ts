@@ -226,12 +226,15 @@ export function useGraphVersionGuard(
     (error) => error instanceof GraphVersionConflictError,
   );
   const previousConflictErrors = previousConflictErrorsRef.current;
-  const isNewConflict =
-    conflictErrors.length > 0 &&
-    (conflictErrors.length !== previousConflictErrors.length ||
-      conflictErrors.some(
-        (error, index) => error !== previousConflictErrors[index],
-      ));
+  // Only an *addition* — a conflict error reference not present in the
+  // previous set — counts as new. A shrinking set (e.g. two queries 409
+  // simultaneously and one of them then resolves/clears while the other's
+  // conflict persists) must not be read as a new conflict just because the
+  // length changed; the surviving error is still the same one already
+  // being handled.
+  const isNewConflict = conflictErrors.some(
+    (error) => !previousConflictErrors.includes(error),
+  );
 
   // Bump the generation only when the set of conflict errors actually
   // changed (a brand-new conflict, or a retried one that 409'd again with
