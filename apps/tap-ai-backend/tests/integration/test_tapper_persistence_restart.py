@@ -924,8 +924,10 @@ def _answer_contributors(
     # `test_answer_service.py`). Folding `kind` and the edge id into the
     # identity key keeps the two invariants that key was actually meant to
     # protect -- two *chunk* citations can never share a chunk, and the same
-    # *edge* can never be cited twice -- while allowing the one legitimate
-    # overlap: one chunk citation and one edge citation over that same chunk.
+    # (edge, chunk) pair can never be cited twice (the key includes the chunk
+    # id, so the same edge *can* legitimately recur across two different
+    # supporting chunks) -- while allowing the one legitimate overlap: one
+    # chunk citation and one edge citation over that same chunk.
     citation_identity_keys = [
         (
             citation.kind,

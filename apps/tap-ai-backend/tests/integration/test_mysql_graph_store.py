@@ -129,6 +129,12 @@ async def test_mysql_graph_publish_preserves_history_and_atomically_moves_active
             assert (
                 await session.scalar(select(func.count()).select_from(graph_active_snapshot)) == 1
             )
+            # The pointer row is not just singular — it must actually target the
+            # second (most recent) publish, not the first.
+            assert (
+                await session.scalar(select(graph_active_snapshot.c.snapshot_id))
+                == "snapshot-2"
+            )
             assert (
                 await session.scalar(select(func.count()).select_from(graph_snapshot_revision)) == 2
             )

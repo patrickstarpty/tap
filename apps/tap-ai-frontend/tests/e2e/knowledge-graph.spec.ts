@@ -159,9 +159,8 @@ test("graph overview cites a cross-document relation and highlights it in Librar
     // comes from document A alone ("Underwriting review REQUIRES health
     // disclosure") -- document B only makes the "health disclosure" node
     // cross-document (checked above) and contributes no relation to this
-    // question. With both sources selected, the answer must still come back
-    // as an edge citation (R1) for document A's relation, not a plain chunk
-    // citation.
+    // question. With both sources selected, the answer must include an edge
+    // citation (R1) for document A's relation.
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await page
       .getByRole("checkbox", { name: new RegExp(filenameA, "u") })
