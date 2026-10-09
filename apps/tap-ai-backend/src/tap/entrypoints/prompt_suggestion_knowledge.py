@@ -303,6 +303,7 @@ class KnowledgeSuggestionSources:
                             ),
                         )
                         .order_by(degree_score.desc(), graph_project_edge.c.edge_id.asc())
+                        .limit(limit * 5)
                     )
                 )
                 .mappings()
