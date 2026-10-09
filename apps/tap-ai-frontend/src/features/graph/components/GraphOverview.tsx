@@ -208,10 +208,17 @@ export function GraphOverview({
   // yet (or failed for an unrelated reason, e.g. `graph-job-busy`). Both
   // derived values below are therefore only computed once the request has
   // actually succeeded; `highlightStatus` drives the loading/error/success
-  // branches in the "Highlighted path" region further down.
+  // branches in the "Highlighted path" region further down. `isFetching`
+  // (not just `isPending`) counts as "pending" too — clicking "Retry" on a
+  // query that's already settled into `error` keeps `isError` (and
+  // `isPending`) exactly as they were while the retry is in flight (react
+  // query only leaves `status: "error"` once the new attempt itself
+  // resolves), so without this the retry would otherwise keep showing the
+  // stale error text instead of a loading state while it's actually
+  // refetching.
   const highlightStatus: "idle" | "pending" | "error" | "success" = !highlight
     ? "idle"
-    : highlightQuery.isPending
+    : highlightQuery.isPending || highlightQuery.isFetching
       ? "pending"
       : highlightQuery.isError
         ? "error"

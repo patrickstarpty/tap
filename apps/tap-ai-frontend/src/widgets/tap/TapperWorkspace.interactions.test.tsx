@@ -28,6 +28,7 @@ import {
   useGraphProject,
   useGraphSearch,
 } from "../../features/graph/api/queries";
+import { pushGraphHighlight } from "../../features/graph/model/highlight";
 import { TapperWorkspace } from "./TapperWorkspace";
 
 const workspaceStyles = readFileSync(
@@ -3047,6 +3048,42 @@ describe("Tap product workspace interactions", () => {
 
     await user.click(screen.getByRole("tab", { name: "Documents" }));
     expect(screen.getByRole("list", { name: "Library sources" })).toBeVisible();
+  });
+
+  it("falls back to the default module when a reloaded highlight turns out to belong to a different project", async () => {
+    // `defaultKnowledgeClient()`'s project is "project-test" (see
+    // `fakeKnowledgeClient`'s default); this highlight is for a different
+    // project, simulating e.g. a bookmark or forward/back navigation
+    // landing on a highlight minted for a project the user isn't in
+    // anymore. The very first render optimistically guesses "library"
+    // from this (any valid highlight, `projectId` unknown yet) — once
+    // `projectId` resolves and the highlight is screened out as a
+    // mismatch, `activeModule` must fall back to the normal default
+    // ("Tapper") instead of leaving the user stranded on an empty Library.
+    pushGraphHighlight({
+      edgeIds: ["edge-1"],
+      graphVersion: "1",
+      turnId: null,
+      projectId: "a-different-project",
+    });
+
+    try {
+      renderWorkspace();
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Tapper" })).toHaveAttribute(
+          "aria-current",
+          "page",
+        ),
+      );
+      expect(
+        screen.queryByRole("button", { name: "Library" }),
+      ).not.toHaveAttribute("aria-current", "page");
+    } finally {
+      // This test file's jsdom `window` persists across its other tests —
+      // undo the navigation so it doesn't leak into them.
+      window.history.replaceState(null, "", "/");
+    }
   });
 
   it("returns focus to the 'Open original' button after closing the opened source", async () => {

@@ -959,15 +959,20 @@ export function TapperWorkspace() {
   const sourcesQuery = useSourceListQuery(projectId);
   const publishedSourcesQuery = usePublishedSourcesQuery(projectId);
   const [locale, setLocale] = useState<Locale>("en");
+  // Whether the very first render guessed "library" from *any* valid
+  // highlight in history state, before `projectId` (below) was known —
+  // read once, synchronously, so it reflects the actual state the
+  // `useState` initializer below saw, not a later value.
+  const optimisticLibraryGuessRef = useRef(readGraphHighlight() !== null);
   const [activeModule, setActiveModule] = useState<ProductModule>(() => {
     // `projectId` isn't resolved yet on this very first render (it comes
     // from an async runtime-mode query), so this can't filter by it the
     // way `useGraphHighlightState(projectId)` below does — it's an
     // optimistic read of *any* valid highlight, just to land on the right
-    // tab; a highlight for a different project is still screened out once
-    // `graphHighlight` (below) resolves, and the Library-mode sync effect
-    // further down corrects `activeModule` if this guess was wrong.
-    if (readGraphHighlight() !== null) return "library";
+    // tab a frame early. If that guess turns out wrong (the highlight was
+    // for a different project, so `graphHighlight` below resolves to
+    // `null`), the effect below undoes it.
+    if (optimisticLibraryGuessRef.current) return "library";
     return durableTestPlanPath() !== null ? "test-management" : "tapper";
   });
   const [graphHighlight, clearGraphHighlight] =
@@ -975,9 +980,29 @@ export function TapperWorkspace() {
   // A highlight that resolves or arrives after mount (the async filter
   // above settling, a same-tab push, or a popstate/forward-back
   // navigation) must switch to the Library module too — mirrors
-  // `LibraryWorkspace`'s own effect that switches its internal tab.
+  // `LibraryWorkspace`'s own effect that switches its internal tab. The
+  // `else` branch is the undo for the optimistic guess above: once
+  // `projectId` resolves, a highlight that turns out to belong to a
+  // different project reads as `null` here — if that's what sent us to
+  // "library" in the first place, fall back to the normal default module
+  // instead of leaving the user stranded there with nothing to show. This
+  // only ever fires once (the ref flips to `false` after handling it), so
+  // it never clobbers a module the user deliberately navigated to later.
   useEffect(() => {
-    if (graphHighlight !== null) setActiveModule("library");
+    if (graphHighlight !== null) {
+      setActiveModule("library");
+      return;
+    }
+    if (optimisticLibraryGuessRef.current) {
+      optimisticLibraryGuessRef.current = false;
+      setActiveModule((current) =>
+        current === "library"
+          ? durableTestPlanPath() !== null
+            ? "test-management"
+            : "tapper"
+          : current,
+      );
+    }
   }, [graphHighlight]);
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,

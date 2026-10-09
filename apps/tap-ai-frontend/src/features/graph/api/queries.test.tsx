@@ -232,4 +232,56 @@ describe("graph version guard", () => {
     rerender();
     await waitFor(() => expect(projectRefetches).toBe(2));
   });
+
+  it("refetches the project again when a retry 409s with a brand-new conflict, even though a conflict was already present", async () => {
+    let projectRefetches = 0;
+    const fetcher = vi.fn(async (input: Request) => {
+      const url = new URL(input.url);
+      if (url.pathname.endsWith("/knowledge/graph/project")) {
+        projectRefetches += 1;
+        return jsonResponse(projectView(2));
+      }
+      throw new Error(`Unexpected request to ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const queryClient = createTestQueryClient();
+    const projectId = "project-1";
+    queryClient.setQueryDefaults(["graph", projectId], {
+      staleTime: Number.POSITIVE_INFINITY,
+    });
+    queryClient.setQueryData(graphKeys.project(projectId), projectView(2));
+
+    let conflictErrors: unknown[] = [];
+    const { rerender } = renderHook(
+      () => {
+        useGraphProject(projectId);
+        useGraphVersionGuard(projectId, conflictErrors);
+      },
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            {children}
+          </QueryClientProvider>
+        ),
+      },
+    );
+
+    // First conflict (e.g. the node detail panel's own query 409ing).
+    conflictErrors = [new GraphVersionConflictError()];
+    rerender();
+    await waitFor(() => expect(projectRefetches).toBe(1));
+
+    // The user clicks "Retry" — the same query refetches and 409s again,
+    // producing a brand-new `GraphVersionConflictError` instance. Crucially
+    // `conflictErrors` never passes through an empty array in between (the
+    // query's `isError` stays `true` the whole time), so a plain
+    // true/false rising-edge check would never notice this second,
+    // distinct conflict. The guard must still refetch the project again —
+    // otherwise the UI is stuck believing the project refetch never
+    // happened and the conflict never settles.
+    conflictErrors = [new GraphVersionConflictError()];
+    rerender();
+    await waitFor(() => expect(projectRefetches).toBe(2));
+  });
 });

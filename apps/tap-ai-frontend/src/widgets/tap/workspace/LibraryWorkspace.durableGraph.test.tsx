@@ -136,6 +136,7 @@ function renderLibrary(overrides: {
   highlightResponse?: GraphSubgraph;
   highlightPending?: boolean;
   highlightError?: boolean;
+  highlightFetching?: boolean;
   highlightRefetch?: () => void;
 }) {
   vi.mocked(useGraphProject).mockReturnValue(
@@ -160,6 +161,7 @@ function renderLibrary(overrides: {
     queryResult(overrides.highlightResponse, {
       isPending: overrides.highlightPending ?? false,
       isError: overrides.highlightError ?? false,
+      isFetching: overrides.highlightFetching ?? false,
       refetch: overrides.highlightRefetch,
     }),
   );
@@ -691,6 +693,96 @@ it("refetches the project without showing an error when a node 409s on a stale v
   );
 });
 
+it("never leaves the panel stuck on loading when a retry 409s again after the first conflict settled", async () => {
+  const project = buildProject();
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const refetchSpy = vi.spyOn(queryClient, "refetchQueries");
+  const refetchNode = vi.fn();
+  // A stable instance per conflict "phase" — the mocked `useGraphNode`
+  // must keep returning the *same* error object reference across renders
+  // within a phase (exactly like a real cached react-query error would),
+  // not a fresh `new GraphVersionConflictError()` on every call, or the
+  // reference-based guard (round 2, item 1's fix) would misread every
+  // render as a brand-new conflict.
+  const firstConflictError = new GraphVersionConflictError();
+  const secondConflictError = new GraphVersionConflictError();
+
+  // Step 1: a first conflict, not yet settled.
+  const { rerenderSame } = renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    projectDataUpdatedAt: 0,
+    nodeImplementation: ((_projectId, _graphVersion, nodeId) =>
+      nodeId === null
+        ? queryResult(undefined)
+        : queryResult(undefined, {
+            isError: true,
+            error: firstConflictError,
+            errorUpdatedAt: 1000,
+            refetch: refetchNode,
+          })) as Parameters<typeof renderLibrary>[0]["nodeImplementation"],
+    queryClient,
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(screen.getByRole("button", { name: /n0/ }));
+  expect(screen.getByText("Loading node details…")).toBeVisible();
+
+  // Step 2: the guard's project refetch settles (still the stale version,
+  // so the conflict persists) — the panel must show error + a working
+  // Retry, not keep loading forever.
+  vi.mocked(useGraphProject).mockReturnValue(
+    queryResult(project, { dataUpdatedAt: 2000 }),
+  );
+  rerenderSame();
+  expect(
+    screen.getByText("Node details are unavailable. Try again."),
+  ).toBeVisible();
+
+  // Step 3: the user clicks Retry; the same query re-fetches and 409s
+  // again with a brand-new conflict error instance (a later
+  // `errorUpdatedAt`). The query's `isError` never passes through `false`
+  // in between, so this is exactly the scenario the `useGraphVersionGuard`
+  // fix (round 2, item 1) targets.
+  await userEvent.click(screen.getByRole("button", { name: "Retry loading" }));
+  expect(refetchNode).toHaveBeenCalled();
+  vi.mocked(useGraphNode).mockImplementation(
+    (_projectId, _graphVersion, nodeId) =>
+      nodeId === null
+        ? queryResult(undefined)
+        : queryResult(undefined, {
+            isError: true,
+            error: secondConflictError,
+            errorUpdatedAt: 3000,
+            refetch: refetchNode,
+          }),
+  );
+  rerenderSame();
+
+  // Immediately after the second, distinct conflict, the project hasn't
+  // refetched again yet — this is the same not-yet-settled "loading" state
+  // as step 1, not a stuck error.
+  expect(screen.getByText("Loading node details…")).toBeVisible();
+  // The guard fired again for this second, distinct conflict (not just
+  // once, ever) — this is the actual fix: without it, the panel would
+  // never leave this "loading" state because nothing would ever refetch
+  // the project to let the conflict re-settle.
+  expect(refetchSpy).toHaveBeenCalledTimes(2);
+
+  // Step 4: the project refetches again and settles after the second
+  // conflict — the panel must show error + retry again, never stuck.
+  vi.mocked(useGraphProject).mockReturnValue(
+    queryResult(project, { dataUpdatedAt: 4000 }),
+  );
+  rerenderSame();
+  expect(
+    screen.getByText("Node details are unavailable. Try again."),
+  ).toBeVisible();
+  expect(screen.queryByText("Loading node details…")).not.toBeInTheDocument();
+});
+
 function buildHighlightEdge(
   overrides: Partial<GraphSubgraph["edges"][number]> = {},
 ): GraphSubgraph["edges"][number] {
@@ -850,6 +942,86 @@ it("shows an error with a working retry, not the version-updated notice, when th
 
   await userEvent.click(screen.getByRole("button", { name: "Retry loading" }));
   expect(highlightRefetch).toHaveBeenCalled();
+});
+
+it("shows the loading state, not the stale error text, while a highlight retry is in flight", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: HIGHLIGHT_STATE,
+    // A query that previously settled into `error` keeps `isError: true`
+    // (and `isPending: false`) for the whole duration of a `refetch()` —
+    // react query only updates `status` once the new attempt itself
+    // resolves. `isFetching: true` is the only signal that a retry is
+    // actually in flight right now.
+    highlightError: true,
+    highlightFetching: true,
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(screen.getByText("Loading the highlighted path…")).toBeVisible();
+  expect(
+    screen.queryByText("The highlighted path is temporarily unavailable."),
+  ).not.toBeInTheDocument();
+});
+
+it("defaults to the Knowledge Graph tab on mount when a highlight is already present", () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: HIGHLIGHT_STATE,
+  });
+
+  // No click on either tab — a project is selected (which otherwise
+  // defaults the Library to the Documents tab), but a pending highlight
+  // must still land on Knowledge Graph.
+  expect(screen.getByRole("tab", { name: "Knowledge Graph" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tab", { name: "Documents" })).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
+});
+
+it("switches to the Knowledge Graph tab when a highlight arrives after mount, without clicking it", () => {
+  const project = buildProject();
+  const overrides: Parameters<typeof renderLibrary>[0] = {
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: null,
+  };
+  const { rerenderSame } = renderLibrary(overrides);
+
+  // No highlight yet — the Library defaults to Documents (a project is
+  // selected).
+  expect(screen.getByRole("tab", { name: "Documents" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tab", { name: "Knowledge Graph" })).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
+
+  // A highlight arrives (e.g. the `useGraphHighlightState` hook in
+  // `TapperWorkspace` resolving a same-tab push or a popstate navigation)
+  // — the Library must switch tabs on its own, not wait for a click.
+  overrides.highlight = HIGHLIGHT_STATE;
+  rerenderSame();
+
+  expect(screen.getByRole("tab", { name: "Knowledge Graph" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tab", { name: "Documents" })).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
 });
 
 it("fits the viewport to the highlighted nodes", async () => {

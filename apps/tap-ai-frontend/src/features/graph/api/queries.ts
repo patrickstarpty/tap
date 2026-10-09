@@ -187,11 +187,21 @@ export function useRetryFragmentMutation(projectId: string | null) {
  * `GraphVersionConflictError`. The `/graph-version-mismatch` problem body
  * carries the current version only in free-text `detail`, so there is no
  * structured version to dedupe on. Instead this guard tracks a local,
- * monotonically increasing "conflict generation" ref: every rising edge of
- * `hasConflict` (no conflict -> conflict) bumps the generation and is the
- * one that gets to act on it, so a conflict that is still being handled
- * (generation unchanged) never re-triggers, while a later, distinct
- * conflict (generation advances again) does.
+ * monotonically increasing "conflict generation" ref: every *new* conflict
+ * occurrence bumps the generation and is the one that gets to act on it, so
+ * a conflict that is still being handled (generation unchanged) never
+ * re-triggers, while a later, distinct conflict (generation advances
+ * again) does.
+ *
+ * "New occurrence" is decided by comparing the actual conflict error
+ * object references against the previous render's, not just a rising edge
+ * of "is there a conflict right now" — a retry whose request 409s again
+ * (e.g. the user clicking "Retry" in `NodeDetailPanel` while the graph is
+ * still mid-merge) produces a brand-new `GraphVersionConflictError`
+ * instance without `hasConflict` ever dropping back to `false` in between,
+ * so a plain rising-edge check would silently stop refetching the project
+ * after the very first conflict and leave the UI stuck. Comparing error
+ * references instead catches that retried-and-409'd-again case too.
  *
  * On each new generation, the entire `["graph", projectId]` prefix is
  * invalidated (satisfying the "409 invalidates every graph query" global
@@ -211,17 +221,26 @@ export function useGraphVersionGuard(
   const queryClient = useQueryClient();
   const generationRef = useRef(0);
   const handledGenerationRef = useRef(0);
-  const previousHasConflictRef = useRef(false);
-  const hasConflict = errors.some(
+  const previousConflictErrorsRef = useRef<readonly unknown[]>([]);
+  const conflictErrors = errors.filter(
     (error) => error instanceof GraphVersionConflictError,
   );
+  const previousConflictErrors = previousConflictErrorsRef.current;
+  const isNewConflict =
+    conflictErrors.length > 0 &&
+    (conflictErrors.length !== previousConflictErrors.length ||
+      conflictErrors.some(
+        (error, index) => error !== previousConflictErrors[index],
+      ));
 
-  // Bump the generation only on the rising edge (no conflict -> conflict),
-  // not on every render while a conflict is ongoing.
-  if (hasConflict && !previousHasConflictRef.current) {
+  // Bump the generation only when the set of conflict errors actually
+  // changed (a brand-new conflict, or a retried one that 409'd again with
+  // a new error instance) — not on every render while the same conflict
+  // object is still being handled.
+  if (isNewConflict) {
     generationRef.current += 1;
   }
-  previousHasConflictRef.current = hasConflict;
+  previousConflictErrorsRef.current = conflictErrors;
   const generation = generationRef.current;
 
   useEffect(() => {
