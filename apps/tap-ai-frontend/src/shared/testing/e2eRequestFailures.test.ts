@@ -197,27 +197,25 @@ describe("E2ERequestFailureAudit", () => {
       expect(audit.unexpectedFailure({}, failure)).not.toBeNull();
   });
 
-  it.each([
-    "query",
-    "highlight",
-    "neighbors",
-    "path",
-  ])("ignores an aborted POST graph %s mutation", (segment) => {
-    const audit = new E2ERequestFailureAudit<object>("project-e2e");
-    const url = `http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/${segment}`;
-    expect(
-      audit.unexpectedFailure(
-        {},
-        { method: "POST", url, errorText: "net::ERR_ABORTED" },
-      ),
-    ).toBeNull();
-    expect(
-      audit.unexpectedFailure(
-        {},
-        { method: "POST", url, errorText: "net::ERR_FAILED" },
-      ),
-    ).not.toBeNull();
-  });
+  it.each(["query", "highlight", "neighbors", "path"])(
+    "ignores an aborted POST graph %s mutation",
+    (segment) => {
+      const audit = new E2ERequestFailureAudit<object>("project-e2e");
+      const url = `http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/${segment}`;
+      expect(
+        audit.unexpectedFailure(
+          {},
+          { method: "POST", url, errorText: "net::ERR_ABORTED" },
+        ),
+      ).toBeNull();
+      expect(
+        audit.unexpectedFailure(
+          {},
+          { method: "POST", url, errorText: "net::ERR_FAILED" },
+        ),
+      ).not.toBeNull();
+    },
+  );
 
   it("still reports an aborted POST to a different graph path", () => {
     const audit = new E2ERequestFailureAudit<object>("project-e2e");

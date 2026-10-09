@@ -43,8 +43,7 @@ export function seedPositions(
   communityOrder: string[],
 ): LayoutPosition[] {
   const groups = groupByCommunity(nodes);
-  const order =
-    communityOrder.length > 0 ? communityOrder : [...groups.keys()];
+  const order = communityOrder.length > 0 ? communityOrder : [...groups.keys()];
   const centers = communityCenters(order);
 
   const positions: LayoutPosition[] = [];
