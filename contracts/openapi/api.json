@@ -11022,6 +11022,16 @@
             "title": "Degradedmode",
             "type": "boolean"
           },
+          "graphContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphContextSummaryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "graphContextStatus": {
             "default": "NOT_SELECTED",
             "enum": [
