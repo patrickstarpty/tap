@@ -21,6 +21,7 @@ import {
   type PublishedSourceRevision,
 } from "./workspace/LibraryWorkspace";
 import {
+  pushGraphHighlight,
   readGraphHighlight,
   useGraphHighlightState,
 } from "../../features/graph/model/highlight";
@@ -65,6 +66,8 @@ import {
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { useModelCatalog } from "../../features/knowledge/api/modelCatalog";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
+import { EvidencePanel } from "../../features/knowledge/components/EvidencePanel";
+import { isEdgeCitation } from "../../features/knowledge/model/edgeCitation";
 import { DocumentChunks } from "../../features/knowledge/components/DocumentChunks";
 import { KnowledgeReview } from "../../features/knowledge/components/KnowledgeReview";
 import {
@@ -2529,7 +2532,34 @@ export function TapperWorkspace() {
               data-collapsed={sourcesCollapsed}
               inert={sourcesCollapsed ? true : undefined}
             >
-              {activeCitation !== null ? (
+              {activeCitation !== null &&
+              isEdgeCitation(activeCitation.citation) ? (
+                <EvidencePanel
+                  active={{
+                    citation: activeCitation.citation,
+                    id: activeCitation.id,
+                  }}
+                  turnEdgeCitations={
+                    activeConversation.turns
+                      .find((turn) => turn.id === activeCitation.turnId)
+                      ?.response?.citations.filter(isEdgeCitation) ?? []
+                  }
+                  locale={locale}
+                  returnFocusTo={citationTrigger.current}
+                  onClose={() => setActiveCitation(null)}
+                  onViewInLibrary={(edgeIds, graphVersion) => {
+                    if (projectId === null) return;
+                    setActiveCitation(null);
+                    pushGraphHighlight({
+                      edgeIds,
+                      graphVersion,
+                      turnId: activeCitation.turnId,
+                      projectId,
+                    });
+                    selectModule("library");
+                  }}
+                />
+              ) : activeCitation !== null ? (
                 <CitationViewer
                   active={activeCitation}
                   locale={locale}

@@ -370,6 +370,53 @@ button:focus-visible,
   text-underline-offset: 3px;
 }
 
+.tapper-claim-citations .ant-btn[data-kind="edge"] {
+  color: #5b3ea6;
+}
+
+.tapper-claim-citations .ant-btn[data-kind="edge"]:hover,
+.tapper-claim-citations .ant-btn[data-kind="edge"]:focus-visible {
+  color: #3c2770;
+}
+
+.tapper-relation-hover {
+  display: grid;
+  gap: 6px;
+  max-width: 320px;
+}
+
+.tapper-relation-hover-relation {
+  margin: 0;
+  font-weight: 650;
+}
+
+.tapper-relation-hover-snippet {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--tap-muted);
+}
+
+.tapper-mini-path-graph {
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+  color: #5b3ea6;
+}
+
+.tapper-mini-path-graph circle {
+  fill: #5b3ea6;
+}
+
+.tapper-mini-path-graph text {
+  font-size: 9px;
+  fill: #2c2a26;
+}
+
+.tapper-mini-path-graph line[data-active="true"] {
+  stroke-width: 2.5;
+  color: #a34a12;
+}
+
 .tapper-markdown {
   min-width: 0;
   overflow-wrap: anywhere;

@@ -4,6 +4,8 @@ import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 
 import type { RetrievalAnswerResponse } from "../api/types";
+import { isEdgeCitation } from "../model/edgeCitation";
+import { EdgeCitationChip } from "./EdgeCitationChip";
 
 const ANSWER_TAGS = [
   "p",
@@ -65,6 +67,10 @@ type RetrievalCitation = RetrievalAnswerResponse["citations"][number];
 interface ValidAnswerGraph {
   citationById: ReadonlyMap<string, RetrievalCitation>;
   citationNumberById: ReadonlyMap<string, number>;
+  /** Edge citations number independently from chunk citations, each from 1,
+   * in the same order (`source-order` or `shown-order`) as
+   * `citationNumberById` — see `isEdgeCitation`. */
+  edgeNumberById: ReadonlyMap<string, number>;
   claims: readonly RetrievalClaim[];
   points: readonly string[];
 }
@@ -126,7 +132,8 @@ function validateAnswerGraph(
   const points = Array.from(response.answer);
   const citationById = new Map<string, RetrievalCitation>();
   const citationNumberById = new Map<string, number>();
-  for (const [index, citation] of response.citations.entries()) {
+  const edgeNumberById = new Map<string, number>();
+  for (const citation of response.citations) {
     if (
       typeof citation !== "object" ||
       citation === null ||
@@ -137,8 +144,16 @@ function validateAnswerGraph(
       return null;
     }
     citationById.set(citation.citationId, citation);
-    if (numbering === "source-order")
-      citationNumberById.set(citation.citationId, index + 1);
+    if (numbering === "source-order") {
+      if (isEdgeCitation(citation)) {
+        edgeNumberById.set(citation.citationId, edgeNumberById.size + 1);
+      } else {
+        citationNumberById.set(
+          citation.citationId,
+          citationNumberById.size + 1,
+        );
+      }
+    }
   }
 
   let previousEnd = 0;
@@ -180,7 +195,16 @@ function validateAnswerGraph(
   if (numbering === "shown-order") {
     for (const claim of response.claims) {
       for (const citationId of claim.citationIds) {
-        if (!citationNumberById.has(citationId)) {
+        if (
+          citationNumberById.has(citationId) ||
+          edgeNumberById.has(citationId)
+        ) {
+          continue;
+        }
+        const citation = citationById.get(citationId);
+        if (citation !== undefined && isEdgeCitation(citation)) {
+          edgeNumberById.set(citationId, edgeNumberById.size + 1);
+        } else {
           citationNumberById.set(citationId, citationNumberById.size + 1);
         }
       }
@@ -190,6 +214,7 @@ function validateAnswerGraph(
   return {
     citationById,
     citationNumberById,
+    edgeNumberById,
     claims: response.claims,
     points,
   };
@@ -234,19 +259,34 @@ function CitedClaim({
       className="tapper-claim-citations"
       aria-label={locale === "zh" ? "本段引用" : "Sources for this paragraph"}
     >
-      {claim.citationIds.map((citationId) => (
-        <Button
-          key={citationId}
-          type="text"
-          size="small"
-          aria-label={ANSWER_COPY[locale].citation(
-            graph.citationNumberById.get(citationId)!,
-          )}
-          onClick={(event) => onOpenCitation(citationId, event.currentTarget)}
-        >
-          {`[${String(graph.citationNumberById.get(citationId))}]`}
-        </Button>
-      ))}
+      {claim.citationIds.map((citationId) => {
+        const citation = graph.citationById.get(citationId);
+        if (citation !== undefined && isEdgeCitation(citation)) {
+          return (
+            <EdgeCitationChip
+              key={citationId}
+              number={graph.edgeNumberById.get(citationId)!}
+              citation={citation}
+              locale={locale}
+              onOpen={onOpenCitation}
+            />
+          );
+        }
+        return (
+          <Button
+            key={citationId}
+            type="text"
+            size="small"
+            data-kind="chunk"
+            aria-label={ANSWER_COPY[locale].citation(
+              graph.citationNumberById.get(citationId)!,
+            )}
+            onClick={(event) => onOpenCitation(citationId, event.currentTarget)}
+          >
+            {`[${String(graph.citationNumberById.get(citationId))}]`}
+          </Button>
+        );
+      })}
     </span>
   );
   return (

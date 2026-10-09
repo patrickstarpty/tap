@@ -15,6 +15,7 @@ import {
   document,
   documentDetail,
   fakeKnowledgeClient,
+  retrievalCitation,
 } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
 import {
@@ -3687,6 +3688,225 @@ describe("Tap product workspace interactions", () => {
     expect(
       screen.queryByRole("region", { name: "Knowledge graph summary" }),
     ).not.toBeInTheDocument();
+  });
+
+  // Stubs a completed durable conversation whose single turn cites one
+  // chunk and one edge, so the chip/evidence-panel wiring (`GroundedAnswer`
+  // -> `EdgeCitationChip` -> `EvidencePanel` -> `pushGraphHighlight`) can be
+  // exercised end to end the same way `completedConversation` does in
+  // `TapperWorkspace.conversations.test.tsx`. `turn.traceId` is left `null`
+  // (falls back to `AnswerActivity`, not the trace panel) since the trace
+  // endpoint is irrelevant to citation rendering.
+  function stubEdgeCitationConversation() {
+    const jsonResponse = (value: unknown) =>
+      new Response(JSON.stringify(value), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const answer = {
+      traceId: "trace-1",
+      queryPlanId: "plan-1",
+      contextSnapshotId: "context-1",
+      corpusVersion: "v1",
+      retrievalProfileId: "quick",
+      degradedMode: false,
+      answer: "Verified identity is required.",
+      abstained: false,
+      claims: [
+        {
+          claimId: "claim-1",
+          text: "Verified identity is required.",
+          answerStart: 0,
+          answerEnd: 30,
+          citationIds: ["citation-a", "edge-1"],
+        },
+      ],
+      citations: [
+        retrievalCitation("citation-a"),
+        {
+          ...retrievalCitation("edge-1"),
+          kind: "edge",
+          edge: {
+            edgeId: "e1",
+            graphVersion: "2",
+            subject: {
+              nodeId: "node-underwriting",
+              label: "Underwriting review",
+            },
+            object: { nodeId: "node-disclosure", label: "Health disclosure" },
+            relationType: "REQUIRES",
+            relationLabel: "requires",
+          },
+        },
+      ],
+    };
+    vi.stubGlobal("fetch", async (request: Request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/conversations") && request.method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              conversationId: "conversation-a",
+              title: "What is the rule?",
+              createdAt: "2026-09-29T08:00:00Z",
+              updatedAt: "2026-09-29T08:00:00Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (path.endsWith("/conversations/conversation-a")) {
+        return jsonResponse({
+          conversationId: "conversation-a",
+          title: "What is the rule?",
+          createdAt: "2026-09-29T08:00:00Z",
+          updatedAt: "2026-09-29T08:00:01Z",
+          turns: [
+            {
+              turnId: "turn-1",
+              state: "completed",
+              attempt: 1,
+              traceId: null,
+              inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
+              answerEvidenceSnapshotDigest: null,
+              input: {
+                message: "What is the rule?",
+                modelAlias: "qwen-plus",
+                sourceRevisionIds: [],
+                documentRevisionIds: [],
+                resolvedResources: [],
+                agentRevisionId: null,
+                agentLabel: null,
+                skillRevisionIds: [],
+                skillLabels: [],
+                insightsQueryId: null,
+              },
+            },
+          ],
+        });
+      }
+      if (path.endsWith("/conversations/conversation-a/events")) {
+        return jsonResponse({
+          items: [
+            {
+              eventId: "event-1",
+              sequence: 1,
+              turnId: "turn-1",
+              occurredAt: "2026-09-29T08:00:01Z",
+              eventType: "turn.completed",
+              payload: { answer },
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
+    });
+  }
+
+  it("keeps citation chips in reading order and returns focus after closing the evidence panel", async () => {
+    stubEdgeCitationConversation();
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const chunkChip = await screen.findByRole("button", {
+      name: "Open source citation 1",
+    });
+    const edgeChip = screen.getByRole("button", {
+      name: "Open relation citation R1",
+    });
+
+    chunkChip.focus();
+    expect(chunkChip).toHaveFocus();
+    await user.tab();
+    expect(edgeChip).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(
+      await screen.findByRole("heading", { name: "Relation evidence" }),
+    ).toHaveFocus();
+
+    await user.click(
+      screen.getByRole("button", { name: "Close relation evidence" }),
+    );
+    expect(edgeChip).toHaveFocus();
+  });
+
+  it("opens Library in highlight mode from an edge citation", async () => {
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "node-underwriting",
+                nodeType: "CONCEPT",
+                label: "Underwriting review",
+                canonicalKey: "underwriting",
+                degree: 1,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    stubEdgeCitationConversation();
+    const user = userEvent.setup();
+    try {
+      renderWorkspace();
+
+      await user.click(
+        await screen.findByRole("button", {
+          name: "Open relation citation R1",
+        }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "View in Library" }),
+      );
+
+      expect(
+        await screen.findByRole("button", { name: "Library" }),
+      ).toHaveAttribute("aria-current", "page");
+      expect(
+        screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
+      ).toBeVisible();
+      expect(
+        await screen.findByRole("region", { name: "Highlighted path" }),
+      ).toBeVisible();
+
+      const historyState = window.history.state as {
+        graphHighlight?: { edgeIds: string[] };
+      } | null;
+      expect(historyState?.graphHighlight?.edgeIds).toEqual(["e1"]);
+    } finally {
+      // This test file's jsdom `window` persists across its other tests —
+      // undo the navigation so it doesn't leak into them (same convention
+      // as the other `pushGraphHighlight` tests above).
+      window.history.replaceState(null, "", "/");
+    }
   });
 });
 

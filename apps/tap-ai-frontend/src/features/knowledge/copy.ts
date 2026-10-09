@@ -96,6 +96,12 @@ export const COPY = {
   page: "页码",
   offsets: "字符范围",
   imageRegion: "图中区域（像素）",
+  evidenceTitle: "关系依据",
+  pathGraph: "关系路径图",
+  pathAsText: "路径文字说明",
+  supportingPassage: "支撑原文",
+  viewInLibrary: "在 Library 中查看",
+  closeEvidence: "关闭关系依据",
 } as const;
 
 export const CITATION_EN = {
@@ -120,6 +126,12 @@ export const CITATION_EN = {
   page: "Page",
   offsets: "Character range",
   imageRegion: "Image region (pixels)",
+  evidenceTitle: "Relation evidence",
+  pathGraph: "Relation path",
+  pathAsText: "Path as text",
+  supportingPassage: "Supporting passage",
+  viewInLibrary: "View in Library",
+  closeEvidence: "Close relation evidence",
 } as const;
 
 /**
