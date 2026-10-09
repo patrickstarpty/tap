@@ -1510,7 +1510,7 @@ export interface components {
             /** Chatid */
             chatId: string;
             /** Event */
-            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
+            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["GraphContextReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
             /** Eventid */
             eventId: string;
             /** Occurredat */
@@ -1572,8 +1572,15 @@ export interface components {
             contentRole: components["schemas"]["ContentRole"];
             /** Derivedfromchunkids */
             derivedFromChunkIds?: string[] | null;
+            edge?: components["schemas"]["tap__contracts__chat_stream__EdgeCitationView"] | null;
             /** Evidencelabel */
             evidenceLabel: string;
+            /**
+             * Kind
+             * @default chunk
+             * @enum {string}
+             */
+            kind?: "chunk" | "edge";
             /** Logicalchunkid */
             logicalChunkId: string;
             /** Publicationid */
@@ -2111,6 +2118,31 @@ export interface components {
              * @enum {string}
              */
             type: "failure";
+        };
+        /** GraphContextReadyEvent */
+        GraphContextReadyEvent: {
+            payload: components["schemas"]["GraphContextReadyPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "graph.context_ready";
+        };
+        /** GraphContextReadyPayload */
+        GraphContextReadyPayload: {
+            /** Graphversion */
+            graphVersion?: string | null;
+            /** Paths */
+            paths: string[][];
+            /** Relationcount */
+            relationCount: number;
+            /** Seedcount */
+            seedCount: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "EMPTY" | "UNAVAILABLE" | "NOT_SELECTED";
         };
         /** GraphContextSummaryView */
         GraphContextSummaryView: {
@@ -5088,6 +5120,19 @@ export interface components {
              */
             type: "document";
         };
+        /** EdgeCitationView */
+        tap__contracts__chat_stream__EdgeCitationView: {
+            /** Edgeid */
+            edgeId: string;
+            /** Graphversion */
+            graphVersion: string;
+            object: components["schemas"]["tap__contracts__chat_stream__GraphEndpointView"];
+            /** Relationlabel */
+            relationLabel: string;
+            /** Relationtype */
+            relationType: string;
+            subject: components["schemas"]["tap__contracts__chat_stream__GraphEndpointView"];
+        };
         /** FailureAnchor */
         tap__contracts__chat_stream__FailureAnchor: {
             /** Incidentid */
@@ -5103,6 +5148,16 @@ export interface components {
              * @enum {string}
              */
             type: "failure";
+        };
+        /**
+         * GraphEndpointView
+         * @description One edge citation endpoint (subject or object).
+         */
+        tap__contracts__chat_stream__GraphEndpointView: {
+            /** Label */
+            label: string;
+            /** Nodeid */
+            nodeId: string;
         };
         /** OpenApiAnchor */
         tap__contracts__chat_stream__OpenApiAnchor: {
@@ -5209,6 +5264,19 @@ export interface components {
              */
             type: "document";
         };
+        /** EdgeCitationView */
+        tap__contracts__http__EdgeCitationView: {
+            /** Edgeid */
+            edgeId: string;
+            /** Graphversion */
+            graphVersion: string;
+            object: components["schemas"]["tap__contracts__http__GraphEndpointView"];
+            /** Relationlabel */
+            relationLabel: string;
+            /** Relationtype */
+            relationType: string;
+            subject: components["schemas"]["tap__contracts__http__GraphEndpointView"];
+        };
         /** FailureAnchor */
         tap__contracts__http__FailureAnchor: {
             /** Incidentid */
@@ -5224,6 +5292,18 @@ export interface components {
              * @enum {string}
              */
             type: "failure";
+        };
+        /**
+         * GraphEndpointView
+         * @description One edge citation endpoint (subject or object); nested shape matches
+         *     Task 7's `EdgeCitationView` ahead of time so Task 7 does not need to
+         *     reshape this contract again.
+         */
+        tap__contracts__http__GraphEndpointView: {
+            /** Label */
+            label: string;
+            /** Nodeid */
+            nodeId: string;
         };
         /** OpenApiAnchor */
         tap__contracts__http__OpenApiAnchor: {

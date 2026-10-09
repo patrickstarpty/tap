@@ -199,9 +199,29 @@
           "default": null,
           "title": "Derivedfromchunkids"
         },
+        "edge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EdgeCitationView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "evidenceLabel": {
           "minLength": 1,
           "title": "Evidencelabel",
+          "type": "string"
+        },
+        "kind": {
+          "default": "chunk",
+          "enum": [
+            "chunk",
+            "edge"
+          ],
+          "title": "Kind",
           "type": "string"
         },
         "logicalChunkId": {
@@ -568,6 +588,51 @@
       "title": "DocumentAnchor",
       "type": "object"
     },
+    "EdgeCitationView": {
+      "additionalProperties": false,
+      "properties": {
+        "edgeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Edgeid",
+          "type": "string"
+        },
+        "graphVersion": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Graphversion",
+          "type": "string"
+        },
+        "object": {
+          "$ref": "#/$defs/GraphEndpointView"
+        },
+        "relationLabel": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Relationlabel",
+          "type": "string"
+        },
+        "relationType": {
+          "maxLength": 32,
+          "minLength": 1,
+          "title": "Relationtype",
+          "type": "string"
+        },
+        "subject": {
+          "$ref": "#/$defs/GraphEndpointView"
+        }
+      },
+      "required": [
+        "edgeId",
+        "graphVersion",
+        "subject",
+        "object",
+        "relationType",
+        "relationLabel"
+      ],
+      "title": "EdgeCitationView",
+      "type": "object"
+    },
     "FailureAnchor": {
       "additionalProperties": false,
       "properties": {
@@ -623,6 +688,108 @@
         "incidentId"
       ],
       "title": "FailureAnchor",
+      "type": "object"
+    },
+    "GraphContextReadyEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/GraphContextReadyPayload"
+        },
+        "type": {
+          "const": "graph.context_ready",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "GraphContextReadyEvent",
+      "type": "object"
+    },
+    "GraphContextReadyPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "graphVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graphversion"
+        },
+        "paths": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "maxItems": 3,
+          "title": "Paths",
+          "type": "array"
+        },
+        "relationCount": {
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Relationcount",
+          "type": "integer"
+        },
+        "seedCount": {
+          "minimum": 0,
+          "title": "Seedcount",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "APPLIED",
+            "NOT_READY",
+            "STALE",
+            "FAILED",
+            "EMPTY",
+            "UNAVAILABLE",
+            "NOT_SELECTED"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "seedCount",
+        "paths",
+        "relationCount"
+      ],
+      "title": "GraphContextReadyPayload",
+      "type": "object"
+    },
+    "GraphEndpointView": {
+      "additionalProperties": false,
+      "description": "One edge citation endpoint (subject or object).",
+      "properties": {
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "nodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Nodeid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "nodeId",
+        "label"
+      ],
+      "title": "GraphEndpointView",
       "type": "object"
     },
     "OpenApiAnchor": {
@@ -2570,6 +2737,7 @@
           "context.assembled": "#/$defs/ContextAssembledEvent",
           "conversation.turn.completed": "#/$defs/ConversationTurnCompletedEvent",
           "conversation.turn.requested": "#/$defs/ConversationTurnRequestedEvent",
+          "graph.context_ready": "#/$defs/GraphContextReadyEvent",
           "query.plan_ready": "#/$defs/QueryPlanReadyEvent",
           "rerank.completed": "#/$defs/RerankCompletedEvent",
           "retrieval.hits_ready": "#/$defs/RetrievalHitsReadyEvent",
@@ -2606,6 +2774,9 @@
         },
         {
           "$ref": "#/$defs/RetrievalHitsReadyEvent"
+        },
+        {
+          "$ref": "#/$defs/GraphContextReadyEvent"
         },
         {
           "$ref": "#/$defs/RerankCompletedEvent"

@@ -142,7 +142,8 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
         "retrieval.hits_ready",
         {"traceId": "trace-1", "authorizedHitCount": 0},
     )
-    assert conversations.events[3] == (
+    assert conversations.events[3][:3] == ("conversation-1", "turn-1", "graph.context_ready")
+    assert conversations.events[4] == (
         "conversation-1",
         "turn-1",
         "answer.delta",
@@ -459,6 +460,7 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
         "context.assembled",
         "stage.completed",
         "retrieval.hits_ready",
+        "graph.context_ready",
         "answer.delta",
     ]
     assert conversations.terminal_event == (
@@ -655,6 +657,7 @@ async def test_generation_worker_recovers_after_one_transient_checkpoint_failure
         "context.assembled",
         "stage.completed",
         "retrieval.hits_ready",
+        "graph.context_ready",
         "answer.delta",
     ]
     assert conversations.completed[0][:2] == ("turn-1", "completed")

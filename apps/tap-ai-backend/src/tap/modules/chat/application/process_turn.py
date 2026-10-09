@@ -23,6 +23,7 @@ class ProviderResult:
     citations: tuple[CitationEvidence, ...] = ()
     abstained: bool = False
     answer_plan_id: str | None = None
+    graph_context: dict | None = None
 
     def __post_init__(self):
         if (self.graph_context_status is GraphContextStatus.APPLIED) != bool(

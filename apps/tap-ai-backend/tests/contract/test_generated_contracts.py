@@ -161,6 +161,7 @@ def test_exporter_emits_closed_retrieval_intent_and_complete_chat_event_union(
         "stage.started",
         "stage.completed",
         "retrieval.hits_ready",
+        "graph.context_ready",
         "rerank.completed",
         "answer.delta",
         "citation.resolved",

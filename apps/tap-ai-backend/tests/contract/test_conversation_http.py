@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from tap.contracts.http import ConversationTurnInputView, ConversationTurnSummary
 from tap.interfaces.http.app import create_app
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
@@ -574,3 +575,28 @@ def test_append_route_opens_turn_request_span(span_recorder):
     request_spans = [s for s in span_recorder.get_finished_spans() if s.name == "turn.request"]
     assert len(request_spans) == 1
     assert request_spans[0].attributes["tap.turn_id"] == turn_id
+
+
+@pytest.mark.parametrize("status", ["STALE", "EMPTY"])
+def test_conversation_turn_summary_accepts_stale_and_empty_graph_status(status: str) -> None:
+    """PR 3 Task 7: the relation analysis subgraph's `STALE`/`EMPTY` outcomes
+    must validate on the Conversation turn summary, not only the answer."""
+    summary = ConversationTurnSummary.model_validate(
+        {
+            "turnId": "turn-1",
+            "state": "completed",
+            "attempt": 1,
+            "inputSnapshotDigest": "sha256:" + "a" * 64,
+            "graphContextStatus": status,
+            "input": ConversationTurnInputView(
+                message="question",
+                model_alias="qwen-plus",
+                source_revision_ids=[],
+                document_revision_ids=[],
+                resolved_resources=[],
+                skill_revision_ids=[],
+                skill_labels=[],
+            ).model_dump(by_alias=True),
+        }
+    )
+    assert summary.graph_context_status == status

@@ -58,7 +58,9 @@ from tap.platform.telemetry import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def _evidence_checkpoint(evidence: AnswerEvidence) -> dict[str, object]:
+def _evidence_checkpoint(
+    evidence: AnswerEvidence, *, graph_context: dict[str, object] | None = None
+) -> dict[str, object]:
     result: dict[str, object] = {
         "answer": evidence.answer,
         "outcome": evidence.outcome,
@@ -69,6 +71,7 @@ def _evidence_checkpoint(evidence: AnswerEvidence) -> dict[str, object]:
         },
         "graphContextStatus": evidence.graph_context_status.value,
         "graphSnapshotId": evidence.graph_snapshot_id,
+        "graphContext": graph_context,
         "citations": [
             {
                 "citationSnapshotId": item.citation_snapshot_id,
@@ -151,13 +154,14 @@ class GenerationWorker:
 
     async def _process_claimed_turn(self, conversation_id: str, turn: Any, turn_span: Span) -> None:
         answer_response = None
+        graph_context_payload: dict[str, object] | None = None
         active_plan = None
         insights_query_id = getattr(turn.input_snapshot.value, "insights_query_id", None)
         planner = getattr(self.knowledge, "answer_planner", None)
         renew = getattr(self.conversations.repository, "renew_processing_lease", None)
 
         async def provider(_snapshot, value=turn.input_snapshot.value):
-            nonlocal answer_response
+            nonlocal answer_response, graph_context_payload
             request = RetrievalAnswerRequest(
                 query=value.message,
                 sources=[SourceFamily.DOC],
@@ -192,6 +196,12 @@ class GenerationWorker:
                 if answer.citations
                 else ()
             )
+            graph_context = getattr(answer, "graph_context", None)
+            graph_context_payload = (
+                None
+                if graph_context is None
+                else graph_context.model_dump(mode="json", by_alias=True)
+            )
             return ProviderResult(
                 answer=answer.answer,
                 graph_context_status=GraphContextStatus(
@@ -206,6 +216,7 @@ class GenerationWorker:
                 citations=citations,
                 abstained=answer.abstained,
                 answer_plan_id=None if active_plan is None else active_plan.plan_id,
+                graph_context=graph_context_payload,
             )
 
         def stream_events(evidence, duration_ms: int) -> list[dict[str, object]]:
@@ -234,6 +245,22 @@ class GenerationWorker:
                         },
                     }
                 )
+            events.append(
+                {
+                    "type": "graph.context_ready",
+                    "payload": (
+                        dict(graph_context_payload)
+                        if graph_context_payload is not None
+                        else {
+                            "status": evidence.graph_context_status.value,
+                            "graphVersion": None,
+                            "seedCount": 0,
+                            "paths": [],
+                            "relationCount": 0,
+                        }
+                    ),
+                }
+            )
             if evidence.answer:
                 events.append({"type": "answer.delta", "payload": {"text": evidence.answer}})
             if answer_response is not None:
@@ -442,7 +469,9 @@ class GenerationWorker:
                     }
                 return {
                     "result": {
-                        "evidence": _evidence_checkpoint(evidence),
+                        "evidence": _evidence_checkpoint(
+                            evidence, graph_context=graph_context_payload
+                        ),
                         "terminalEvent": terminal_event,
                         "streamEvents": stream_events(evidence, answer_duration_ms),
                     }
