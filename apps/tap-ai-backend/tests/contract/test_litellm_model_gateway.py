@@ -480,6 +480,80 @@ async def test_deterministic_gateway_answers_prompt_suggestion_schema():
 
 
 @pytest.mark.asyncio
+async def test_fake_answer_cites_first_relation_when_present():
+    """A relation question's fake answer must cite the edge (`R1`), not just
+    chunk evidence, or `relation_claims.reconcile_relation_claims` strips every
+    `R` label (the claim text fails `claim_mentions_both_endpoints`) and the
+    conversation never shows a relation citation chip (PR 4 Task 11 Step 2)."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+    from tap.modules.knowledge.application.relation_analysis import (
+        RelationContext,
+        RelationContextStatus,
+        RelationEvidence,
+        RelationSupport,
+    )
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    relation = RelationEvidence(
+        label="R1",
+        edge_id="e-1",
+        subject_node_id="A",
+        subject_label="Underwriting review",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="health disclosure",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(
+            RelationSupport(
+                chunk_id="chunk-1",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                content_digest="digest-chunk-1",
+                anchor={"page": 1},
+                evidence_label="S1",
+            ),
+        ),
+        on_path=True,
+    )
+    context = RelationContext(
+        status=RelationContextStatus.APPLIED,
+        graph_version="v1",
+        relations=(relation,),
+    )
+
+    gateway = DeterministicModelGateway(
+        configured_gateway(success)._config, scope=VALIDATION_SCOPE, redact=redact
+    )
+    models = KnowledgeModelGateway(
+        gateway,
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+    generation = await models.answer(
+        "What is the relationship between underwriting review and health disclosure?",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        relation_context=context,
+        relation_first=True,
+    )
+
+    assert generation.claims[0].evidence_labels == ("R1",)
+    assert "underwriting review" in generation.claims[0].text.lower()
+    assert "health disclosure" in generation.claims[0].text.lower()
+
+
+@pytest.mark.asyncio
 async def test_structured_output_cannot_escape_the_locked_schema():
     from tap.modules.ai.domain.models import ModelGatewayUnavailable
 

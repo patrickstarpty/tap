@@ -108,11 +108,32 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 content = json.dumps({"suggestions": suggestions})
             elif request.operation is ModelOperation.STRUCTURED:
                 try:
-                    evidence = json.loads(request.context).get("evidence", [])
+                    parsed_context = json.loads(request.context)
+                    evidence = parsed_context.get("evidence", [])
+                    relations = parsed_context.get("relations", [])
                 except (ValueError, AttributeError):
                     evidence = []
+                    relations = []
                 claims: list[dict[str, Any]] = []
                 used = set()
+                # A relation question's fake answer must still cite the edge
+                # (`R1`), not only chunk evidence, or the `R`-label reconciliation
+                # in `relation_claims.py` strips every edge citation and the
+                # conversation never shows a relation citation chip. The claim
+                # text names both endpoints verbatim -- the minimum
+                # `claim_mentions_both_endpoints` requires to keep the label.
+                if relations:
+                    first_relation = relations[0]
+                    relation_label = (
+                        first_relation.get("relationLabel")
+                        or first_relation.get("relationType")
+                        or "relates to"
+                    )
+                    sentence = (
+                        f"{first_relation['subject']} {relation_label} {first_relation['object']}."
+                    )
+                    used.add(sentence)
+                    claims.append({"text": sentence, "evidenceLabels": [first_relation["label"]]})
                 for item in evidence:
                     sentence = _first_evidence_sentence(item["content"])
                     if sentence and sentence not in used:
