@@ -191,6 +191,18 @@ export function useConversationCitation(
  * immutable snapshot of the turn's own answer — once fetched, it never
  * needs re-checking.
  */
+// Passed as `useQueries`'s own `combine` option below. `combine` must be a
+// stable, module-level function reference (not one created inline on every
+// render) for `useQueries` to apply its structural-sharing optimization —
+// only then does it return the *same* array reference across renders in
+// which none of the underlying query results actually changed. Without a
+// `combine` at all, `useQueries` still memoizes each individual result
+// object, but wraps them in a freshly constructed array on every call
+// regardless, which would make the `useMemo` below recompute every render.
+function keepQueryResults<T>(results: T): T {
+  return results;
+}
+
 export function useConversationCitations(
   projectId: string | null,
   conversationId: string | null,
@@ -227,10 +239,11 @@ export function useConversationCitations(
       retry: retryConversationRequest,
       staleTime: Infinity,
     })),
+    combine: keepQueryResults,
   });
-  // Built with `useMemo` (rather than `useQueries`'s own `combine` option)
-  // over the `results` array so the returned `Map`'s identity only changes
-  // when a query result actually changes — `TapperWorkspace`'s
+  // Built with `useMemo` over the `results` array (itself kept stable by
+  // the `combine` option above) so the returned `Map`'s identity only
+  // changes when a query result actually changes — `TapperWorkspace`'s
   // `historicalCitationQueryFor` callback closes over this map, and an
   // unstable identity here would make that callback (and everything
   // downstream it's passed to) re-create every render regardless.
