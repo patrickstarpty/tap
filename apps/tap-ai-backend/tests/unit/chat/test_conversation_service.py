@@ -175,7 +175,7 @@ async def test_complete_evidence_persists_graph_context_ready_stream_event():
         "completed",
         RetrievalSummary("completed"),
         GraphContextStatus.APPLIED,
-        graph_snapshot_id="snapshot-7",
+        graph_snapshot_id="7",
     )
     completed = await service.complete_evidence(
         "conversation-1",

@@ -380,7 +380,7 @@ async def test_graph_context_ready_event_precedes_answer_and_citation_kind_is_em
                 abstained=False,
                 trace_id="trace-1",
                 graph_context_status="APPLIED",
-                graph_snapshot_id="snapshot-7",
+                graph_snapshot_id="7",
                 graph_context=graph_context,
                 model_dump=lambda **_: {
                     "traceId": "trace-1",
@@ -395,7 +395,7 @@ async def test_graph_context_ready_event_precedes_answer_and_citation_kind_is_em
                     "claims": [],
                     "citations": [],
                     "graphContextStatus": "APPLIED",
-                    "graphSnapshotId": "snapshot-7",
+                    "graphSnapshotId": "7",
                 },
             )
 

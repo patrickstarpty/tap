@@ -840,14 +840,21 @@ class MysqlConversationRepository:
             # graph table, so completing a Turn whose answer carries an
             # APPLIED graph context needs no extra artifact linking here,
             # unlike citations (which are frozen-resource- and ACL-checked
-            # below). There used to be an unconditional guard here that
-            # raised `"graph snapshot persistence is unavailable"` for any
-            # APPLIED graph context; nothing in this adapter, the schema, or
-            # either graph-work plan (`2026-10-06-graph-project-merge.md`,
-            # `2026-10-06-graph-relation-answers.md`) ever depended on it,
-            # and no test asserted it — it was dead code left over from
-            # before graph-grounded answers existed, and it blocked every
-            # real graph-grounded Turn from ever completing.
+            # below). An earlier revision of this method (commit a22c55e)
+            # carried an unconditional guard here that raised
+            # `"graph snapshot persistence is unavailable"` for any APPLIED
+            # graph context: at the time, a graph snapshot ID could not be
+            # validated as a durable fact, so the guard failed closed rather
+            # than trust an unverifiable ID. That guard is superseded by the
+            # spec rule that the graph never blocks an answer and by this
+            # plan's `graph_snapshot_id = graph_version` design: the ID is an
+            # audit label, not a row reference (old graph versions are
+            # pruned, so there is nothing durable left to check it against).
+            # Edge citation fidelity on reload — i.e. whether a cited edge's
+            # own `graph_version` still matches this Turn's `graph_snapshot_id`
+            # — is validated below, against the citation row's persisted
+            # columns, and depends on Task 8's `knowledge_citation_snapshot`
+            # edge columns existing.
             frozen_resources = {
                 (
                     item["source_id"],

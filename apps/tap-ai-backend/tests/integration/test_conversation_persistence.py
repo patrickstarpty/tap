@@ -286,7 +286,7 @@ def test_graph_context_ready_stream_event_persists_and_reloads(owned_project_mys
                     "completed",
                     RetrievalSummary("completed", trace_id="trace-1"),
                     GraphContextStatus.APPLIED,
-                    graph_snapshot_id="snapshot-7",
+                    graph_snapshot_id="7",
                 ),
                 lease_token=claim.lease_token,
                 terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
