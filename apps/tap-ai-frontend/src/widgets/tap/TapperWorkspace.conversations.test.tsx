@@ -84,11 +84,21 @@ function completedConversation({
   extraSpans = [],
   api = fakeKnowledgeClient(),
   graphContextEvent,
+  resolvedResources = [
+    {
+      documentId: "document-1",
+      documentRevisionId: "document-rev-1",
+      label: "Underwriting policy",
+      sourceId: "source-1",
+      sourceRevisionId: "source-rev-1",
+    },
+  ],
 }: {
   traceId: string | null;
   extraSpans?: readonly Record<string, unknown>[];
   api?: ReturnType<typeof fakeKnowledgeClient>;
   graphContextEvent?: Record<string, unknown>;
+  resolvedResources?: readonly Record<string, unknown>[];
 }) {
   const events = [
     {
@@ -153,15 +163,7 @@ function completedConversation({
               modelAlias: "qwen-plus",
               sourceRevisionIds: [],
               documentRevisionIds: [],
-              resolvedResources: [
-                {
-                  documentId: "document-1",
-                  documentRevisionId: "document-rev-1",
-                  label: "Underwriting policy",
-                  sourceId: "source-1",
-                  sourceRevisionId: "source-rev-1",
-                },
-              ],
+              resolvedResources,
               agentRevisionId: null,
               agentLabel: null,
               skillRevisionIds: [],
@@ -275,6 +277,16 @@ it("replays a persisted graph.context_ready event and shows the summary line", a
   expect(
     screen.getByText("Searched 1 source · 0 passages · 3 relations"),
   ).toBeInTheDocument();
+});
+
+it("shows no summary line for a traced turn with zero sources, citations or relations", async () => {
+  completedConversation({ traceId: "trace-1", resolvedResources: [] });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    await screen.findByRole("button", { name: /^Trace:/u }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/^Searched/u)).not.toBeInTheDocument();
 });
 
 it("shows the no-relation-evidence banner as a static note when the turn is terminal and seedCount is at least 2", async () => {

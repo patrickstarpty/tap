@@ -47,3 +47,32 @@ export function relationText(citation: EdgeCitation): string {
   const { subject, object, relationType, relationLabel } = citation.edge;
   return `${subject.label} —${relationLabel || relationType}→ ${object.label}`;
 }
+
+/** Shared by `RelationHoverCard` and `EvidencePanel` so the two never drift
+ * apart on how much of a supporting passage is shown. Code-point aware
+ * (`Array.from`), so a 300-character cut never splits a surrogate pair. */
+export const MAX_SNIPPET_LENGTH = 300;
+
+export function truncateSnippet(text: string): string {
+  const points = Array.from(text);
+  if (points.length <= MAX_SNIPPET_LENGTH) return text;
+  return `${points.slice(0, MAX_SNIPPET_LENGTH).join("")}…`;
+}
+
+/**
+ * `EvidencePanel` draws every edge citation of the turn, but a turn can cite
+ * the same edge twice (once per claim paragraph) — deduped by `edge.edgeId`,
+ * keeping the first occurrence, so the mini path graph, the text path list
+ * and "View in Library" all agree on one entry per edge.
+ */
+export function dedupeEdgeCitations(
+  edges: readonly EdgeCitation[],
+): EdgeCitation[] {
+  const byId = new Map<string, EdgeCitation>();
+  for (const citation of edges) {
+    if (!byId.has(citation.edge.edgeId)) {
+      byId.set(citation.edge.edgeId, citation);
+    }
+  }
+  return [...byId.values()];
+}

@@ -4,7 +4,9 @@ import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 
 import type { RetrievalAnswerResponse } from "../api/types";
+import { CITATION_EN, COPY } from "../copy";
 import { isEdgeCitation } from "../model/edgeCitation";
+import type { HistoricalCitationQuery } from "./CitationViewer";
 import { EdgeCitationChip } from "./EdgeCitationChip";
 
 const ANSWER_TAGS = [
@@ -248,12 +250,17 @@ function CitedClaim({
   graph,
   onOpenCitation,
   locale,
+  historicalCitationQueryFor,
 }: {
   claim: RetrievalClaim;
   graph: ValidAnswerGraph;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
   locale: AnswerLocale;
+  historicalCitationQueryFor?: (
+    citationId: string,
+  ) => HistoricalCitationQuery | undefined;
 }) {
+  const text = locale === "zh" ? COPY : CITATION_EN;
   const citations = (
     <span
       className="tapper-claim-citations"
@@ -262,12 +269,15 @@ function CitedClaim({
       {claim.citationIds.map((citationId) => {
         const citation = graph.citationById.get(citationId);
         if (citation !== undefined && isEdgeCitation(citation)) {
+          const number = graph.edgeNumberById.get(citationId)!;
           return (
             <EdgeCitationChip
               key={citationId}
-              number={graph.edgeNumberById.get(citationId)!}
+              number={number}
               citation={citation}
               locale={locale}
+              ariaLabel={text.edgeCitation(number)}
+              historicalQuery={historicalCitationQueryFor?.(citationId)}
               onOpen={onOpenCitation}
             />
           );
@@ -300,6 +310,9 @@ function groundedSegments(
   graph: ValidAnswerGraph,
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void,
   locale: AnswerLocale,
+  historicalCitationQueryFor?: (
+    citationId: string,
+  ) => HistoricalCitationQuery | undefined,
 ): ReactNode[] {
   const segments: ReactNode[] = [];
   let cursor = 0;
@@ -317,6 +330,7 @@ function groundedSegments(
         graph={graph}
         onOpenCitation={onOpenCitation}
         locale={locale}
+        historicalCitationQueryFor={historicalCitationQueryFor}
       />,
     );
     cursor = claim.answerEnd;
@@ -333,11 +347,21 @@ export function GroundedAnswer({
   onOpenCitation,
   locale = "zh",
   citationNumbering = "source-order",
+  historicalCitationQueryFor,
 }: {
   response: RetrievalAnswerResponse | null | undefined;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
   locale?: AnswerLocale;
   citationNumbering?: "source-order" | "shown-order";
+  /** Resolves an edge citation's supporting-passage snippet against the
+   * turn's own historical answer instead of the chunk's current content
+   * (set by `TapperWorkspace`, which can import `useConversationCitations`
+   * from `features/conversations` — `features/knowledge` cannot). Omitted
+   * in tests that render `GroundedAnswer` standalone; `RelationHoverCard`
+   * falls back to the current-authority citation query in that case. */
+  historicalCitationQueryFor?: (
+    citationId: string,
+  ) => HistoricalCitationQuery | undefined;
 }) {
   if (
     typeof response !== "object" ||
@@ -406,7 +430,12 @@ export function GroundedAnswer({
           title={ANSWER_COPY[locale].degraded}
         />
       ) : null}
-      {groundedSegments(graph, onOpenCitation, locale)}
+      {groundedSegments(
+        graph,
+        onOpenCitation,
+        locale,
+        historicalCitationQueryFor,
+      )}
     </div>
   );
 }

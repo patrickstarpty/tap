@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  citationPreview,
   document,
   documentDetail,
   fakeKnowledgeClient,
@@ -3697,10 +3698,20 @@ describe("Tap product workspace interactions", () => {
   // `TapperWorkspace.conversations.test.tsx`. `turn.traceId` is left `null`
   // (falls back to `AnswerActivity`, not the trace panel) since the trace
   // endpoint is irrelevant to citation rendering.
-  function stubEdgeCitationConversation() {
-    const jsonResponse = (value: unknown) =>
+  function stubEdgeCitationConversation({
+    citationResponse,
+  }: {
+    // Overridable so the error-state test below can return a problem
+    // response instead. Every test using this fixture renders a turn with
+    // an edge citation, and both `AssistantResponse`'s per-chip hover-card
+    // lookup (`useConversationCitations`, fired as soon as the turn
+    // renders) and the evidence panel's own lookup hit this same endpoint,
+    // so it must always resolve to something.
+    citationResponse?: () => Response;
+  } = {}) {
+    const jsonResponse = (value: unknown, status = 200) =>
       new Response(JSON.stringify(value), {
-        status: 200,
+        status,
         headers: { "content-type": "application/json" },
       });
     const answer = {
@@ -3799,6 +3810,22 @@ describe("Tap product workspace interactions", () => {
           ],
           nextCursor: null,
         });
+      }
+      if (
+        path.endsWith(
+          "/conversations/conversation-a/turns/turn-1/citations/edge-1",
+        )
+      ) {
+        return (
+          citationResponse?.() ??
+          jsonResponse(
+            citationPreview({
+              citationId: "edge-1",
+              quote:
+                "Health disclosure is required before underwriting review.",
+            }),
+          )
+        );
       }
       throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
     });
@@ -3907,6 +3934,73 @@ describe("Tap product workspace interactions", () => {
       // as the other `pushGraphHighlight` tests above).
       window.history.replaceState(null, "", "/");
     }
+  });
+
+  it("shows the historical supporting passage in the evidence panel", async () => {
+    stubEdgeCitationConversation();
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Open relation citation R1",
+      }),
+    );
+
+    // Scoped to the evidence panel itself: the hover popover's own copy of
+    // this same snippet (`RelationHoverCard`) can still be in the DOM
+    // alongside it (the click that opened the panel also focuses the chip,
+    // and the popover triggers on focus too).
+    const panel = (
+      await screen.findByRole("heading", { name: "Relation evidence" })
+    ).closest("section")!;
+    expect(
+      await within(panel).findByText(
+        "Health disclosure is required before underwriting review.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a retryable error when the supporting passage fails to load", async () => {
+    stubEdgeCitationConversation({
+      // `retryable: false` here only stops react-query's own automatic
+      // retry-with-backoff (`retryConversationRequest`) from repeatedly
+      // re-fetching and timing out this test — `safeCitationProblem`'s
+      // retryable *UI* classification (which shows the "Retry
+      // verification" button) comes from the 503 status + problem code
+      // below, not from this field.
+      citationResponse: () =>
+        new Response(
+          JSON.stringify({
+            type: "https://tap.example/problems/citation-unavailable",
+            retryable: false,
+          }),
+          {
+            status: 503,
+            headers: { "content-type": "application/problem+json" },
+          },
+        ),
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Open relation citation R1",
+      }),
+    );
+
+    const panel = (
+      await screen.findByRole("heading", { name: "Relation evidence" })
+    ).closest("section")!;
+    expect(
+      await within(panel).findByText(
+        "Cited content is temporarily unavailable. Try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByRole("button", { name: "Retry verification" }),
+    ).toBeInTheDocument();
   });
 });
 

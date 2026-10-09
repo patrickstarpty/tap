@@ -102,6 +102,7 @@ export const COPY = {
   supportingPassage: "支撑原文",
   viewInLibrary: "在 Library 中查看",
   closeEvidence: "关闭关系依据",
+  edgeCitation: (number: number) => `打开关系引用 R${String(number)}`,
 } as const;
 
 export const CITATION_EN = {
@@ -132,6 +133,7 @@ export const CITATION_EN = {
   supportingPassage: "Supporting passage",
   viewInLibrary: "View in Library",
   closeEvidence: "Close relation evidence",
+  edgeCitation: (number: number) => `Open relation citation R${String(number)}`,
 } as const;
 
 /**

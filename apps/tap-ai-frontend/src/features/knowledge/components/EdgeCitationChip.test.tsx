@@ -1,6 +1,6 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   answerResponse,
@@ -126,6 +126,7 @@ describe("EdgeCitationChip (via GroundedAnswer)", () => {
   });
 
   it("still renders chips when the edge graph version is stale", async () => {
+    const onOpenCitation = vi.fn();
     renderKnowledgeApp(
       <GroundedAnswer
         locale="en"
@@ -142,7 +143,7 @@ describe("EdgeCitationChip (via GroundedAnswer)", () => {
           ],
           citations: [edgeCitation("edge-1", { graphVersion: "v1-stale" })],
         })}
-        onOpenCitation={() => undefined}
+        onOpenCitation={onOpenCitation}
       />,
       { api: fakeKnowledgeClient() },
     );
@@ -153,5 +154,6 @@ describe("EdgeCitationChip (via GroundedAnswer)", () => {
     expect(chip).toHaveTextContent("[R1]");
     const user = userEvent.setup();
     await user.click(chip);
+    expect(onOpenCitation).toHaveBeenCalledWith("edge-1", chip);
   });
 });

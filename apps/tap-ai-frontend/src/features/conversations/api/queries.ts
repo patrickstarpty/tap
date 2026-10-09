@@ -1,6 +1,7 @@
 import {
   useInfiniteQuery,
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -8,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createConversationClient,
+  type ConversationCitationPreview,
   type ConversationClient,
   type ConversationCreateRequest,
   ConversationClientError,
@@ -161,6 +163,53 @@ export function useConversationCitation(
     queryFn: ({ signal }) =>
       client!.citation(conversationId!, turnId!, citationId!, signal),
     retry: retryConversationRequest,
+  });
+}
+
+/**
+ * Resolves many edge citations' supporting passages against the turn's own
+ * historical answer in one go — every `EdgeCitationChip`/`RelationHoverCard`
+ * the turn's `GroundedAnswer` renders needs this (not just the one citation
+ * `useConversationCitation` handles for the active `CitationViewer`/
+ * `EvidencePanel`), so `TapperWorkspace` calls this once per turn with every
+ * edge citation id the turn's response cites and passes the resulting
+ * lookup down as a plain function, keeping the historical-vs-current
+ * authority choice out of `features/knowledge` entirely.
+ */
+export function useConversationCitations(
+  projectId: string | null,
+  conversationId: string | null,
+  turnId: string | null,
+  citationIds: readonly string[],
+): ReadonlyMap<
+  string,
+  {
+    data?: ConversationCitationPreview;
+    error: unknown;
+    isError: boolean;
+    isFetching: boolean;
+    refetch: () => Promise<unknown>;
+  }
+> {
+  const client = useConversationClient(projectId);
+  return useQueries({
+    queries: citationIds.map((citationId) => ({
+      queryKey: conversationKeys.citation(
+        projectId,
+        conversationId,
+        turnId,
+        citationId,
+        0,
+      ),
+      enabled: client !== null && conversationId !== null && turnId !== null,
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
+        client!.citation(conversationId!, turnId!, citationId, signal),
+      retry: retryConversationRequest,
+    })),
+    combine: (results) =>
+      new Map(
+        citationIds.map((citationId, index) => [citationId, results[index]]),
+      ),
   });
 }
 

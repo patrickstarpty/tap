@@ -40,6 +40,7 @@ import {
   useDeleteConversation,
   useRenameConversation,
   useConversationCitation,
+  useConversationCitations,
   useConversationDetail,
   useConversationEvents,
   useConversationList,
@@ -632,6 +633,29 @@ function AssistantResponse({
   onGenerateTestPlan?: () => void;
   activityEvents?: readonly ActivityEvent[];
 }) {
+  // Hooks run before any of this component's early returns below, so the
+  // edge citations' supporting-passage queries are always resolved in the
+  // same order regardless of `turn.intent`/`turn.status` — an empty
+  // `edgeCitationIds` array for turns with no response (or no edge
+  // citations) is simply a no-op `useQueries` call.
+  const edgeCitationIds = useMemo(
+    () =>
+      turn.response?.citations
+        .filter(isEdgeCitation)
+        .map((citation) => citation.citationId) ?? [],
+    [turn.response],
+  );
+  const edgeCitationQueries = useConversationCitations(
+    projectId,
+    conversationId ?? null,
+    turn.id,
+    edgeCitationIds,
+  );
+  const historicalCitationQueryFor = useCallback(
+    (citationId: string) => edgeCitationQueries.get(citationId),
+    [edgeCitationQueries],
+  );
+
   if (turn.intent === "answer") {
     if (
       turn.insightsQueryId !== undefined &&
@@ -690,7 +714,8 @@ function AssistantResponse({
       let chunkCitationCount = 0;
       let edgeCitationCount = 0;
       for (const citationId of shownCitationIds) {
-        if (citationsById.get(citationId)?.kind === "edge") {
+        const citation = citationsById.get(citationId);
+        if (citation !== undefined && isEdgeCitation(citation)) {
           edgeCitationCount += 1;
         } else {
           chunkCitationCount += 1;
@@ -746,6 +771,7 @@ function AssistantResponse({
             locale={turn.locale}
             citationNumbering="shown-order"
             onOpenCitation={onOpenCitation}
+            historicalCitationQueryFor={historicalCitationQueryFor}
           />
           <TurnContext copy={contentCopy} turn={turn} />
           {onResend === undefined ||
@@ -2545,6 +2571,7 @@ export function TapperWorkspace() {
                       ?.response?.citations.filter(isEdgeCitation) ?? []
                   }
                   locale={locale}
+                  historicalQuery={historicalCitationQuery}
                   returnFocusTo={citationTrigger.current}
                   onClose={() => setActiveCitation(null)}
                   onViewInLibrary={(edgeIds, graphVersion) => {

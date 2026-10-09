@@ -71,7 +71,9 @@ describe("EvidencePanel", () => {
     expect(pathList).toHaveTextContent(relationText(edge1));
     expect(pathList).toHaveTextContent(relationText(edge2));
 
-    expect(graph.querySelector('line[data-active="true"]')).not.toBeNull();
+    const activeLines = graph.querySelectorAll('line[data-active="true"]');
+    expect(activeLines).toHaveLength(1);
+    expect(activeLines[0]).toHaveAttribute("data-edge-id", "e2");
   });
 
   it("hands the turn's edge ids to the library", async () => {
@@ -100,5 +102,81 @@ describe("EvidencePanel", () => {
     );
 
     expect(onViewInLibrary).toHaveBeenCalledWith(["e1", "e2"], "2");
+  });
+
+  it("dedupes an edge cited twice by the same turn", async () => {
+    const edge1 = edgeCitationFixture("e1", "e1");
+    const edge1Again = edgeCitationFixture("e1-b", "e1");
+    const onViewInLibrary = vi.fn();
+
+    renderKnowledgeApp(
+      <EvidencePanel
+        active={{ citation: edge1, id: "e1" }}
+        turnEdgeCitations={[edge1, edge1Again]}
+        locale="en"
+        onClose={() => undefined}
+        onViewInLibrary={onViewInLibrary}
+      />,
+      { api: fakeKnowledgeClient() },
+    );
+
+    const graph = screen.getByRole("img");
+    expect(graph.querySelectorAll("line")).toHaveLength(1);
+    const pathList = screen.getByRole("list", { name: "Path as text" });
+    expect(pathList.querySelectorAll("li")).toHaveLength(1);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "View in Library" }),
+    );
+    expect(onViewInLibrary).toHaveBeenCalledWith(["e1"], "2");
+  });
+
+  it("closes on Escape and returns focus to the opening chip", async () => {
+    const edge1 = edgeCitationFixture("e1", "e1");
+    const chip = document.createElement("button");
+    document.body.appendChild(chip);
+    const onClose = vi.fn();
+
+    renderKnowledgeApp(
+      <EvidencePanel
+        active={{ citation: edge1, id: "e1" }}
+        turnEdgeCitations={[edge1]}
+        locale="en"
+        onClose={onClose}
+        returnFocusTo={chip}
+        onViewInLibrary={() => undefined}
+      />,
+      { api: fakeKnowledgeClient() },
+    );
+
+    screen.getByRole("heading", { name: "Relation evidence" }).focus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(onClose).toHaveBeenCalled();
+    await vi.waitFor(() => expect(chip).toHaveFocus());
+    document.body.removeChild(chip);
+  });
+
+  it("shows an error with no retry for a non-retryable snippet failure", async () => {
+    const edge1 = edgeCitationFixture("e1", "e1");
+    const api = fakeKnowledgeClient().withCitationProblem(new Error("boom"));
+
+    renderKnowledgeApp(
+      <EvidencePanel
+        active={{ citation: edge1, id: "e1" }}
+        turnEdgeCitations={[edge1]}
+        locale="en"
+        onClose={() => undefined}
+        onViewInLibrary={() => undefined}
+      />,
+      { api },
+    );
+
+    expect(
+      await screen.findByText("Cited content could not be checked. Try again."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry verification" }),
+    ).not.toBeInTheDocument();
   });
 });

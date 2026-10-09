@@ -83,7 +83,7 @@ export function MiniPathGraph({
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M0,0 L10,5 L0,10 z" />
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
         </marker>
       </defs>
       {edges.map((citation) => {
@@ -93,6 +93,7 @@ export function MiniPathGraph({
         return (
           <line
             key={citation.edge.edgeId}
+            data-edge-id={citation.edge.edgeId}
             x1={from.x}
             y1={from.y}
             x2={to.x}
@@ -108,13 +109,21 @@ export function MiniPathGraph({
       {nodes.map((node) => {
         const position = positions.get(node.nodeId);
         if (position === undefined) return null;
+        // A label to the right of its node (the default) clips against the
+        // 320×200 viewBox edge once the node sits past center — flip the
+        // anchor and offset so the text grows back toward the node instead.
+        const labelOnLeft = position.x > CENTER_X;
         return (
           <g
             key={node.nodeId}
             transform={`translate(${String(position.x)}, ${String(position.y)})`}
           >
             <circle r={5} />
-            <text x={8} y={4}>
+            <text
+              x={labelOnLeft ? -8 : 8}
+              y={4}
+              textAnchor={labelOnLeft ? "end" : "start"}
+            >
               {node.label}
             </text>
           </g>
