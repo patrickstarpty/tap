@@ -195,6 +195,55 @@ export function useSourceDetailQuery(
   });
 }
 
+/**
+ * Query key intentionally matches `graphKeys.project(projectId)` in
+ * `features/graph/api/queries.ts` ("graph", projectId, "project") so this
+ * hook and `useGraphProject` share one cached `GET /project` result when
+ * both `features/graph` and `features/knowledge` components are mounted
+ * together. `features/knowledge` cannot import from `features/graph`
+ * (`no-feature-to-feature`), so the key is duplicated here rather than
+ * imported.
+ */
+export function useGraphProjectQuery(projectId: string | null) {
+  const client = useContext(KnowledgeClientContext);
+  return useQuery({
+    queryKey: ["graph", projectId, "project"],
+    enabled:
+      projectId !== null && client !== null && client.projectId === projectId,
+    queryFn: ({ signal }) => {
+      if (
+        projectId === null ||
+        client === null ||
+        client.projectId !== projectId
+      )
+        throw new Error("A matching project client is required.");
+      return client.graphProject(signal);
+    },
+    retry: false,
+    staleTime: 0,
+  });
+}
+
+export function useRetryGraphFragmentMutation(projectId: string) {
+  const client = useProjectKnowledgeClient(projectId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["graph", projectId, "fragment-retry"],
+    retry: false,
+    mutationFn: ({
+      revisionId,
+      idempotencyKey,
+    }: {
+      revisionId: string;
+      idempotencyKey?: string;
+    }) => client.retryGraphFragment(revisionId, idempotencyKey),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ["graph", projectId, "project"],
+      }),
+  });
+}
+
 async function settleSourceReceipt(
   queryClient: QueryClient,
   projectId: string,

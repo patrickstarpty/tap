@@ -6,6 +6,7 @@ import type {
   DocumentPage,
   DocumentStageSnapshot,
   DocumentSummary,
+  GraphProjectView,
   KnowledgeClient,
   KnowledgeReviewDetail,
   KnowledgeReviewItemComparison,
@@ -249,6 +250,12 @@ export interface FakeKnowledgeClient extends KnowledgeClient {
   withAnswerProblem(problem: unknown): FakeKnowledgeClient;
   withCitation(preview: CitationPreview): FakeKnowledgeClient;
   withCitationProblem(problem: unknown): FakeKnowledgeClient;
+  readonly graphRetryCalls: ReadonlyArray<{
+    revisionId: string;
+    idempotencyKey: string;
+  }>;
+  withGraphProject(project: GraphProjectView): FakeKnowledgeClient;
+  withGraphRetryProblem(problem: unknown): FakeKnowledgeClient;
   deferAnswer(options?: { ignoreAbort?: boolean }): FakeKnowledgeClient;
   deferCitation(
     citationId: string,
@@ -301,6 +308,19 @@ export function fakeKnowledgeClient(
   let pendingList: PendingOperation | undefined;
   let pendingRetry: PendingOperation | undefined;
   let pendingUpload: PendingOperation | undefined;
+  let graphProjectResult: GraphProjectView = {
+    graphVersion: 1,
+    status: "READY",
+    nodeCount: 0,
+    edgeCount: 0,
+    mergedAt: null,
+    communities: [],
+    extractingRevisionIds: [],
+    partialRevisionIds: [],
+  };
+  let graphRetryProblem: unknown;
+  const graphRetryCalls: Array<{ revisionId: string; idempotencyKey: string }> =
+    [];
 
   const api: FakeKnowledgeClient = {
     projectId,
@@ -628,6 +648,15 @@ export function fakeKnowledgeClient(
       citationProblem = problem;
       return api;
     },
+    graphRetryCalls,
+    withGraphProject(project) {
+      graphProjectResult = project;
+      return api;
+    },
+    withGraphRetryProblem(problem) {
+      graphRetryProblem = problem;
+      return api;
+    },
     deferAnswer(options = {}) {
       pendingAnswerQueue.push(pendingOperation(options.ignoreAbort ?? false));
       return api;
@@ -813,6 +842,16 @@ export function fakeKnowledgeClient(
           pendingCitations.delete(citationId);
         }
       }
+    },
+    async graphProject(): Promise<GraphProjectView> {
+      return graphProjectResult;
+    },
+    async retryGraphFragment(
+      revisionId,
+      idempotencyKey = "key",
+    ): Promise<void> {
+      graphRetryCalls.push({ revisionId, idempotencyKey });
+      if (graphRetryProblem !== undefined) throw graphRetryProblem;
     },
   };
 

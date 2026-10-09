@@ -122,6 +122,34 @@ export const CITATION_EN = {
   imageRegion: "Image region (pixels)",
 } as const;
 
+/**
+ * `GraphFragmentStatus` copy for a document's own published revision.
+ * `ProjectGraphView` (backend) only exposes `extractingRevisionIds` /
+ * `partialRevisionIds` — there is no per-revision failed/total batch
+ * count — so `partial` is a plain label with no counts, unlike the
+ * `(f/t 批)` form used elsewhere for aggregate fragment counts.
+ */
+export const GRAPH_FRAGMENT_COPY = {
+  zh: {
+    title: "图谱抽取",
+    extracting: "抽取中",
+    ready: "就绪",
+    partial: "部分失败",
+    retry: "重试失败批次",
+    retryQueued: "已重新排队",
+    retryFailure: "重试未完成，请稍后重试。",
+  },
+  en: {
+    title: "Graph extraction",
+    extracting: "Extracting",
+    ready: "Ready",
+    partial: "Partially failed",
+    retry: "Retry failed batches",
+    retryQueued: "Retry queued",
+    retryFailure: "The retry did not complete. Try again.",
+  },
+} as const;
+
 export const STATUS_COPY: Readonly<Record<DocumentStatus, string>> = {
   queued: "等待处理",
   processing: "处理中",

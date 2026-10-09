@@ -19,6 +19,7 @@ import { COPY, STAGE_STATE_COPY, STAGE_TITLES, safeProblemCopy } from "../copy";
 import { useState } from "react";
 import { ChunkManager } from "./ChunkManager";
 import { DocumentChunkSettings } from "./ChunkSettings";
+import { GraphFragmentStatus } from "./GraphFragmentStatus";
 import { chunkPath, type ChunkSettings } from "../api/chunks";
 
 const INGESTION_STAGES: IngestionStage[] = [
@@ -140,6 +141,8 @@ export function DocumentDetail({
               })}
             />
           </section>
+
+          <GraphFragmentStatus revisionId={detailQuery.data.revisionId} />
 
           <section aria-labelledby="normalized-preview-heading">
             <Typography.Title level={5} id="normalized-preview-heading">
