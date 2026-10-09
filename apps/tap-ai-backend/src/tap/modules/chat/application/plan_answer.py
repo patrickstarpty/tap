@@ -21,29 +21,38 @@ from tap.modules.knowledge.api import latest_template_version as _latest_templat
 from tap.platform.telemetry import span
 
 PlannerCall = Callable[[PlanningInput, float], Awaitable[dict[str, Any]]]
-# Anchored relation-question cues, kept as small independent patterns rather
-# than one monolithic alternation so each one's false-positive risk can be
-# reasoned about on its own.
-_RELATION_WORD = re.compile(r"关系(?!型|户)")
-_DEPENDENCY_KEYWORD = re.compile(r"影响|依赖|前置条件|上游|下游|触发")
-_CHINESE_INTERROGATIVE = re.compile(r"什么|吗|哪些|哪个")
-_SEQUENCE_QUESTION = re.compile(r"之后是什么|下一步是什么")
+# Relation-question cues, kept as a small set of independently-reasoned
+# checks -- a literal phrase, a keyword paired with a question-form signal,
+# or a lookaround exclusion for a specific kind-of-relationship compound --
+# rather than one monolithic alternation, so each one's false-positive risk
+# can be reasoned about on its own. Only `_WHAT_FOLLOWS_QUESTION` and
+# `_ENGLISH_QUESTION_LEAD` are anchored to the start of the question; the
+# others are plain co-occurrence or exclusion checks over the whole text.
+_RELATION_WORD = re.compile(r"(?<!没)关系(?!型|户|证明|管理|人)")
+_DEPENDENCY_KEYWORD = re.compile(r"影响|依赖|前置条件|上游|下游|触发|联系|关联")
+_CHINESE_INTERROGATIVE = re.compile(r"什么|吗|哪些|哪个|怎么")
+_SEQUENCE_QUESTION = re.compile(r"之后是什么|下一步是什么|下一步做什么|接下来是什么")
 _WHAT_FOLLOWS_QUESTION = re.compile(
-    r"^\s*(?:what|which)\s+(?:follows|comes after)\b(?!\s+is\s+a\b)", re.I
+    r"^\s*(?:what|which)\s+(?:follows|comes after|happens after)\b(?!\s+(?:is|are)\b)", re.I
 )
 _ENGLISH_RELATION_KEYWORD = re.compile(
-    r"\b(?:relate|related|relationship|depend(?:s)?|affect|trigger)\b", re.I
+    r"\b(?:relat(?:e|es|ed|ionship)|depend(?:s|ent|ency|encies)?|affect(?:s|ed)?|"
+    r"trigger(?:s|ed)?|impact(?:s|ed)?|next step)\b",
+    re.I,
 )
 _ENGLISH_QUESTION_LEAD = re.compile(r"^\s*(?:what|which|how|does|do|is|are)\b", re.I)
 
 
 def _is_relation_question(original: str) -> bool:
     """A question asks how two things relate, what depends on or follows
-    something, or which rules affect an entity. Each cue below is anchored to
-    a concrete distinguishing feature instead of a bare keyword, so a mention
-    of a *kind* of relationship (`关系型`/`关系户`) or a declarative sentence
-    that merely contains a relation word (`What follows is a list of
-    rules`) does not qualify as a question about one."""
+    something, or which rules affect an entity. Each cue below pairs a
+    relation/dependency keyword with a positive question-form signal (a
+    Chinese interrogative, an English leading question word or trailing
+    `?`), matches a literal question phrase, or excludes a specific
+    kind-of-relationship compound (`关系型`/`关系户`/`关系证明`/`关系管理`/
+    `关系人`/`没关系`) -- instead of matching a bare keyword -- so a
+    declarative sentence that merely contains a relation word (`What
+    follows is a list of rules`) does not qualify as a question about one."""
     if _RELATION_WORD.search(original):
         return True
     if _DEPENDENCY_KEYWORD.search(original) and _CHINESE_INTERROGATIVE.search(original):
