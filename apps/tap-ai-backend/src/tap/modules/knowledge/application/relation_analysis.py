@@ -38,6 +38,7 @@ from tap.modules.knowledge.domain.models import RelationContextStatus
 
 __all__ = [
     "EvidenceRef",
+    "PathExpansion",
     "RelationAnalysisInput",
     "RelationContext",
     "RelationContextStatus",
@@ -59,6 +60,7 @@ __all__ = [
 _RELATION_LABEL_PATTERN = re.compile(r"^R(?:[1-9]|1[0-9]|20)$")
 _SNIPPET_MAX = 300
 _MAX_RELATIONS = 20
+_MAX_SNIPPET_SUPPORTS_PER_RELATION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +140,21 @@ class RelationEvidence:
             raise ValueError(f"relation evidence label must be R1..R20, got {self.label!r}")
         if not self.support:
             raise ValueError("relation evidence requires at least one support")
+
+
+@dataclass(frozen=True, slots=True)
+class PathExpansion:
+    """`find_paths`'s full result: the ordered paths themselves (unchanged
+    shape, still what callers primarily consume) plus every edge and edge
+    evidence row `store.path(...)` returned along the way -- already
+    selection-filtered and version-pinned by the same call -- so a caller can
+    merge path-only edges (ones outside the node-limited `expand()` subgraph)
+    into its own ranking pool instead of silently losing them."""
+
+    paths: tuple["RelationPath", ...]
+    edges: tuple[ProjectEdge, ...] = ()
+    evidence: tuple[EdgeEvidence, ...] = ()
+    nodes: tuple[ProjectNode, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -456,9 +473,10 @@ async def find_paths(
     allowed_source_revision_ids: frozenset[str],
     max_hops: int = 3,
     path_limit: int = 10,
-) -> tuple[RelationPath, ...]:
+    max_attempts: int = 20,
+) -> PathExpansion:
     if not allowed_source_revision_ids:
-        return ()
+        return PathExpansion(paths=())
     source_revision_ids = tuple(sorted(allowed_source_revision_ids))
 
     pairs: list[tuple[ProjectNode, ProjectNode]] = []
@@ -473,14 +491,30 @@ async def find_paths(
         seen_pairs.add(key)
         pairs.append((left, right))
 
-    for index, left in enumerate(query_seeds):
-        for right in query_seeds[index + 1 :]:
-            add_pair(left, right)
+    # Query x evidence pairs first: a question that names one entity and has
+    # retrieval evidence pointing at another is the common case this pipeline
+    # exists for, so those attempts must not be starved by query x query pairs
+    # when there are many query seeds (C(n, 2) grows quadratically -- 7 query
+    # seeds alone already produce 21 pairs, more than `max_attempts`'s
+    # default of 20).
     for left in query_seeds:
         for right in evidence_seeds:
             add_pair(left, right)
+    for index, left in enumerate(query_seeds):
+        for right in query_seeds[index + 1 :]:
+            add_pair(left, right)
+
+    # Bound the number of `store.path` round-trips attempted, independent of
+    # how many of them actually find a path: a poorly-connected graph could
+    # otherwise cost one store call per candidate pair before `path_limit`
+    # successes are ever reached (or ever concluded unreachable).
+    pairs = pairs[:max_attempts]
 
     paths: list[RelationPath] = []
+    edges_by_id: dict[str, ProjectEdge] = {}
+    nodes_by_id: dict[str, ProjectNode] = {}
+    evidence_seen: set[tuple[object, ...]] = set()
+    evidence: list[EdgeEvidence] = []
     for left, right in pairs:
         if len(paths) >= path_limit:
             break
@@ -495,9 +529,32 @@ async def find_paths(
         if not subgraph.nodes:
             continue
         path = path_from_subgraph(subgraph, left.node_id, right.node_id)
-        if path is not None:
-            paths.append(path)
-    return tuple(paths[:path_limit])
+        if path is None:
+            continue
+        paths.append(path)
+        for node in subgraph.nodes:
+            nodes_by_id.setdefault(node.node_id, node)
+        for edge in subgraph.edges:
+            edges_by_id.setdefault(edge.edge_id, edge)
+        for item in subgraph.evidence:
+            key = _evidence_key(item)
+            if key not in evidence_seen:
+                evidence_seen.add(key)
+                evidence.append(item)
+
+    # Restrict to exactly what the found paths reference: `store.path`'s own
+    # subgraph could in principle carry nodes/edges beyond the specific path
+    # it reported (its own traversal bookkeeping), and nothing outside a
+    # path's own node_ids/edge_ids should be exposed as "a path edge/node"
+    # the caller can merge into its ranking pool.
+    path_node_ids = {node_id for path in paths for node_id in path.node_ids}
+    path_edge_ids = {edge_id for path in paths for edge_id in path.edge_ids}
+    return PathExpansion(
+        paths=tuple(paths[:path_limit]),
+        edges=tuple(edge for edge in edges_by_id.values() if edge.edge_id in path_edge_ids),
+        evidence=tuple(evidence),
+        nodes=tuple(node for node in nodes_by_id.values() if node.node_id in path_node_ids),
+    )
 
 
 def rank_edges(
@@ -505,8 +562,18 @@ def rank_edges(
     paths: tuple[RelationPath, ...],
     seed_ids: frozenset[str],
     *,
+    extra_edges: tuple[ProjectEdge, ...] = (),
     limit: int = 20,
 ) -> tuple[tuple[ProjectEdge, bool], ...]:
+    """Rank `subgraph.edges` plus `extra_edges` (e.g. `PathExpansion.edges` --
+    path edges that `expand()`'s node/edge limits left outside the subgraph,
+    but which `find_paths` already fetched selection-filtered and
+    version-pinned), deduped by edge ID so a path edge is never ranked twice
+    just because both sources happened to return it."""
+    edges_by_id: dict[str, ProjectEdge] = {edge.edge_id: edge for edge in subgraph.edges}
+    for edge in extra_edges:
+        edges_by_id.setdefault(edge.edge_id, edge)
+
     path_positions: dict[str, int] = {}
     for path in paths:
         for position, edge_id in enumerate(path.edge_ids):
@@ -522,7 +589,7 @@ def rank_edges(
             edge.edge_id,
         )
 
-    ranked = sorted(subgraph.edges, key=sort_key)
+    ranked = sorted(edges_by_id.values(), key=sort_key)
     return tuple((edge, edge.edge_id in path_positions) for edge in ranked[:limit])
 
 
@@ -539,7 +606,14 @@ def _resolve_support(
     allowed_source_revision_ids: frozenset[str],
     document_ids: Mapping[str, str],
 ) -> tuple[RelationSupport, ...]:
-    supports: list[RelationSupport] = []
+    """S-labelled supports (already-cited chunks) are never bounded -- they
+    cost nothing new, the citation already exists. Snippet-only supports
+    (fresh, never-cited chunks) are capped at
+    `_MAX_SNIPPET_SUPPORTS_PER_RELATION` per relation so a single highly
+    evidenced edge cannot alone blow up the per-answer snippet-reading and
+    prompt-size budget; S-labelled supports are returned first either way."""
+    s_supports: list[RelationSupport] = []
+    snippet_supports: list[RelationSupport] = []
     seen_chunks: set[str] = set()
     for item in items:
         if item.source_revision_id not in allowed_source_revision_ids:
@@ -548,7 +622,7 @@ def _resolve_support(
             continue
         label = evidence_by_chunk.get(item.chunk_id)
         if label is not None:
-            supports.append(
+            s_supports.append(
                 RelationSupport(
                     chunk_id=item.chunk_id,
                     source_revision_id=item.source_revision_id,
@@ -561,9 +635,11 @@ def _resolve_support(
             )
             seen_chunks.add(item.chunk_id)
             continue
+        if len(snippet_supports) >= _MAX_SNIPPET_SUPPORTS_PER_RELATION:
+            continue
         snippet = snippets.get(item.chunk_id)
         if snippet is not None:
-            supports.append(
+            snippet_supports.append(
                 RelationSupport(
                     chunk_id=item.chunk_id,
                     source_revision_id=item.source_revision_id,
@@ -576,7 +652,7 @@ def _resolve_support(
                 )
             )
             seen_chunks.add(item.chunk_id)
-    return tuple(supports)
+    return tuple(s_supports + snippet_supports)
 
 
 def assemble(
@@ -633,13 +709,23 @@ def snippet_chunk_refs(
     *,
     allowed_source_revision_ids: frozenset[str],
 ) -> tuple[tuple[str, str], ...]:
+    """Collect at most `_MAX_SNIPPET_SUPPORTS_PER_RELATION` non-S chunk refs
+    per edge -- the same cap `_resolve_support` applies to the supports it
+    builds -- so a single highly evidenced edge cannot inflate the number of
+    chunks actually read for snippet text, not just the number ultimately
+    kept as support. Collecting every candidate here first and capping only
+    in `_resolve_support` would still pay the read cost for every discarded
+    one."""
     if not allowed_source_revision_ids:
         return ()
     evidence_chunk_ids = {ref.chunk_id for ref in evidence}
     seen: set[tuple[str, str]] = set()
     refs: list[tuple[str, str]] = []
     for _edge, _on_path, edge_evidence_items in ranked:
+        per_edge_count = 0
         for item in edge_evidence_items:
+            if per_edge_count >= _MAX_SNIPPET_SUPPORTS_PER_RELATION:
+                break
             if item.source_revision_id not in allowed_source_revision_ids:
                 continue
             if item.chunk_id in evidence_chunk_ids:
@@ -649,4 +735,5 @@ def snippet_chunk_refs(
                 continue
             seen.add(key)
             refs.append(key)
+            per_edge_count += 1
     return tuple(refs)

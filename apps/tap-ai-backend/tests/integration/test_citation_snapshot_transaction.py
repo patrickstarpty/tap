@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime
 
 import pytest
@@ -51,14 +52,35 @@ pytestmark = pytest.mark.skipif(
     reason="set TAP_RUN_MYSQL_INTEGRATION=1 for real MySQL answer snapshot tests",
 )
 
+
+@pytest.fixture(autouse=True)
+def _isolated_database_url(
+    monkeypatch: pytest.MonkeyPatch,
+    owned_project_mysql,  # type: ignore[no-untyped-def]
+) -> None:
+    """Point every test in this module at its own Docker-isolated MySQL
+    container instead of an ambient `127.0.0.1:3306` instance. Most tests
+    below read the module-level `DATABASE_URL` global directly (a legacy
+    pattern that predates `owned_project_mysql`); patching the module
+    attribute here reaches those call sites without changing every test's
+    signature."""
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "DATABASE_URL",
+        owned_project_database_url(owned_project_mysql),
+    )
+
+
 ANSWER_SNAPSHOT_LOCK_NAME = MysqlDocumentRepository(
     async_sessionmaker(), scope=VALIDATION_SCOPE, audit_factory=create_project_audit
 )._answer_snapshot_lock_name
 
-DATABASE_URL = os.getenv(
-    "TAP_DATABASE_URL",
-    "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-)
+# Patched to this test's own Docker-isolated MySQL by `_isolated_database_url`
+# above (an autouse fixture) before every test runs. Most tests in this file
+# read this module global directly rather than taking `owned_project_mysql`
+# as a parameter; an empty default (instead of an ambient `127.0.0.1:3306`
+# fallback) fails loudly if that fixture is ever skipped.
+DATABASE_URL: str = ""
 SOURCE_HASH = "sha256:" + "a" * 64
 CHUNK_HASH = "sha256:" + "b" * 64
 ANCHOR_JSON = json.dumps(
@@ -167,6 +189,8 @@ async def clean(engine) -> None:  # type: ignore[no-untyped-def]
             "knowledge_answer_snapshot",
             "knowledge_chunk_manifest",
             "knowledge_ingestion_job",
+            "knowledge_parse_inventory",
+            "knowledge_projection_fence",
             "knowledge_document_revision",
             "knowledge_source_legacy_map",
             "knowledge_document",
@@ -1272,15 +1296,18 @@ def test_edge_citation_round_trips_and_historical_rows_default_to_chunk(
     asyncio.run(scenario())
 
 
-def test_resolve_citations_digest_is_unchanged_by_edge_columns(
+def test_resolve_citations_digest_covers_edge_fields_only_for_edge_kind(
     owned_project_mysql,  # type: ignore[no-untyped-def]
 ) -> None:
-    """The edge columns added by migration `0030_edge_citations` must not
-    change `citation_evidence_digest`'s material: the same row's digest,
-    computed the way `MysqlConversationRepository.resolve_citations` and
-    `.complete()` compute it, is identical whether or not the edge columns
-    are populated. Otherwise every pre-migration digest bound into a Turn's
-    `turn_artifact_link` would stop verifying on reload."""
+    """The edge columns added by migration `0030_edge_citations` must only
+    enter `citation_evidence_digest`'s material when `citation_kind == "edge"`
+    (`MysqlConversationRepository.complete()`'s own call site now passes them
+    through): a chunk citation's digest must stay identical to its
+    pre-migration-0030 value even if the (always-NULL-for-chunk) edge columns
+    happen to carry leftover values, so every pre-migration digest bound into
+    a Turn's `turn_artifact_link` keeps verifying on reload; an edge
+    citation's digest must change when its edge fields change, so a relation
+    citation cannot be replayed against a different edge/graph version."""
 
     async def scenario() -> None:
         database_url = owned_project_database_url(owned_project_mysql)
@@ -1302,7 +1329,9 @@ def test_resolve_citations_digest_is_unchanged_by_edge_columns(
                                 text(
                                     "SELECT citation_id,source_id,trace_id,document_id,"
                                     "revision_id,chunk_id,source_content_hash,"
-                                    "chunk_content_hash,anchor_json,claim_text,origin "
+                                    "chunk_content_hash,anchor_json,claim_text,origin,"
+                                    "citation_kind,graph_version,edge_id,subject_node_id,"
+                                    "object_node_id,relation_type,relation_label "
                                     "FROM knowledge_citation_snapshot "
                                     "WHERE citation_id=:citation_id"
                                 ),
@@ -1324,24 +1353,55 @@ def test_resolve_citations_digest_is_unchanged_by_edge_columns(
                     anchor=row["anchor_json"],
                     claim_text=row["claim_text"],
                     origin=row["origin"],
+                    citation_kind=row["citation_kind"],
+                    graph_version=row["graph_version"],
+                    edge_id=row["edge_id"],
+                    subject_node_id=row["subject_node_id"],
+                    object_node_id=row["object_node_id"],
+                    relation_type=row["relation_type"],
+                    relation_label=row["relation_label"],
                 )
 
-            digest_without_edge_columns = await read_digest()
+            digest_as_chunk = await read_digest()
 
+            # Edge columns populated but `citation_kind` left as the default
+            # "chunk" -- the chunk digest must be unaffected by their mere
+            # presence; only `citation_kind == "edge"` pulls them into the
+            # material.
             async with engine.begin() as connection:
                 await connection.execute(
                     text(
-                        "UPDATE knowledge_citation_snapshot SET citation_kind='edge',"
+                        "UPDATE knowledge_citation_snapshot SET "
                         "graph_version='7',edge_id='edge-1',subject_node_id='node-subject',"
                         "object_node_id='node-object',relation_type='REQUIRES',"
                         "relation_label='requires' WHERE citation_id=:citation_id"
                     ),
                     {"citation_id": citation_id},
                 )
+            digest_as_chunk_with_leftover_edge_columns = await read_digest()
+            assert digest_as_chunk == digest_as_chunk_with_leftover_edge_columns
 
-            digest_with_edge_columns = await read_digest()
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE knowledge_citation_snapshot SET citation_kind='edge' "
+                        "WHERE citation_id=:citation_id"
+                    ),
+                    {"citation_id": citation_id},
+                )
+            digest_as_edge = await read_digest()
+            assert digest_as_edge != digest_as_chunk
 
-            assert digest_without_edge_columns == digest_with_edge_columns
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE knowledge_citation_snapshot SET edge_id='edge-2' "
+                        "WHERE citation_id=:citation_id"
+                    ),
+                    {"citation_id": citation_id},
+                )
+            digest_as_edge_with_different_edge_id = await read_digest()
+            assert digest_as_edge_with_different_edge_id != digest_as_edge
         finally:
             await engine.dispose()
 

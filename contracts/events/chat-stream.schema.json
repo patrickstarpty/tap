@@ -613,7 +613,7 @@
           "type": "string"
         },
         "relationType": {
-          "maxLength": 32,
+          "maxLength": 64,
           "minLength": 1,
           "title": "Relationtype",
           "type": "string"
@@ -767,6 +767,61 @@
         "relationCount"
       ],
       "title": "GraphContextReadyPayload",
+      "type": "object"
+    },
+    "GraphContextSummaryView": {
+      "additionalProperties": false,
+      "properties": {
+        "graphVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graphversion"
+        },
+        "paths": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "relationCount": {
+          "minimum": 0,
+          "title": "Relationcount",
+          "type": "integer"
+        },
+        "seedCount": {
+          "minimum": 0,
+          "title": "Seedcount",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "APPLIED",
+            "NOT_READY",
+            "STALE",
+            "FAILED",
+            "EMPTY"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "seedCount",
+        "relationCount"
+      ],
+      "title": "GraphContextSummaryView",
       "type": "object"
     },
     "GraphEndpointView": {
@@ -2061,6 +2116,17 @@
         "degradedMode": {
           "title": "Degradedmode",
           "type": "boolean"
+        },
+        "graphContext": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GraphContextSummaryView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "graphContextStatus": {
           "default": "NOT_SELECTED",

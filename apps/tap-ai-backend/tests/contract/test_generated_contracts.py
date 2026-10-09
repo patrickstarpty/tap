@@ -305,7 +305,7 @@ def _without_descriptions(node: object) -> object:
 
 
 def test_edge_citation_view_schema_matches_between_stream_and_http_contracts() -> None:
-    """PR 3 Task 7 review fix: `chat_stream.EdgeCitationView`/`GraphEndpointView`
+    """`chat_stream.EdgeCitationView`/`GraphEndpointView`
     are deliberately separate models from their HTTP-contract counterparts
     (chat_stream.py is kept apart from the HTTP DTO graph), but they must
     still describe the exact same wire shape so the two contracts cannot

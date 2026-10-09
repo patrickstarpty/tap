@@ -89,7 +89,7 @@ OpenTelemetry 埋点，属性遵循 OTel GenAI 语义约定；MySQL 为权威存
 | `turn.execute` | 生成 worker | turn_id、attempt、outcome |
 | `chat.plan` | AnswerPlanner | 计划类型 |
 | `retrieval.search` | `_retrieve`（含规划多路查询、流程图补充检索） | 命中切片 ID、分数、数量 |
-| `graph.enrich` | GraphAnswerEnricher | 快照 ID、节点/边数量 |
+| `graph.seed` / `graph.expand` / `graph.path` / `relation.rank` | 关系分析 Agent 子图（`RelationAnalysisAgent`，PR 3 替换 `graph.enrich`） | 种子/节点/边/路径数量与耗时 |
 | `tool.insights.query` | Insights 分支 | 查询参数、行数 |
 | `citations.resolve` | 引用解析 | 引用数 |
 | `chat {model}` / `embeddings {model}` | `LiteLLMModelGateway` 每次调用 | `gen_ai.operation.name`、`gen_ai.request.model`、`gen_ai.response.model`、`gen_ai.provider.name`、`gen_ai.usage.input_tokens`、`gen_ai.usage.output_tokens`、`tap.model_call_id` |

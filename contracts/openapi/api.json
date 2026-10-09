@@ -2188,7 +2188,7 @@
             "type": "string"
           },
           "relationType": {
-            "maxLength": 32,
+            "maxLength": 64,
             "minLength": 1,
             "title": "Relationtype",
             "type": "string"
@@ -2519,7 +2519,7 @@
       },
       "GraphEndpointView": {
         "additionalProperties": false,
-        "description": "One edge citation endpoint (subject or object); nested shape matches\nTask 7's `EdgeCitationView` ahead of time so Task 7 does not need to\nreshape this contract again.",
+        "description": "One edge citation endpoint (subject or object), nested under\n`EdgeCitationView`.",
         "properties": {
           "label": {
             "minLength": 1,
@@ -10763,7 +10763,7 @@
             "type": "string"
           },
           "relationType": {
-            "maxLength": 32,
+            "maxLength": 64,
             "minLength": 1,
             "title": "Relationtype",
             "type": "string"
@@ -10955,6 +10955,16 @@
           "degradedMode": {
             "title": "Degradedmode",
             "type": "boolean"
+          },
+          "graphContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphContextSummaryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "graphContextStatus": {
             "default": "NOT_SELECTED",
@@ -11272,7 +11282,7 @@
             "type": "string"
           },
           "relationType": {
-            "maxLength": 32,
+            "maxLength": 64,
             "minLength": 1,
             "title": "Relationtype",
             "type": "string"
@@ -11355,7 +11365,7 @@
       },
       "tap__contracts__http__GraphEndpointView": {
         "additionalProperties": false,
-        "description": "One edge citation endpoint (subject or object); nested shape matches\nTask 7's `EdgeCitationView` ahead of time so Task 7 does not need to\nreshape this contract again.",
+        "description": "One edge citation endpoint (subject or object), nested under\n`EdgeCitationView`.",
         "properties": {
           "label": {
             "minLength": 1,

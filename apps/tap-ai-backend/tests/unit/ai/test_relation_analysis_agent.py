@@ -20,7 +20,10 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.application.agents.protocol import AgentContext
 from tap.modules.ai.application.agents.relation_analysis import RelationAnalysisAgent
 from tap.modules.graph.domain.project import ProjectGraphVersion, ProjectNode
-from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+from tap.modules.knowledge.application.publication import (
+    FlowchartPublicationGate,
+    PublishedKnowledgeAuthority,
+)
 from tap.modules.knowledge.application.relation_analysis import (
     EvidenceRef,
     RelationAnalysisInput,
@@ -354,7 +357,10 @@ async def test_agent_caps_augment_chunks_at_five() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_fails_when_support_is_outside_the_current_publication() -> None:
+async def test_agent_empty_when_only_relation_is_outside_the_current_publication() -> None:
+    """Denial drops the relation whose only support failed authorization, not
+    the whole context: with no other relation left, the outcome is EMPTY, not
+    FAILED -- same as finding no relation evidence at all."""
     store = _single_edge_store(anchor={"inventoryItemId": "item-blocked"})
     authority = PublishedKnowledgeAuthority(
         _PublicationRepository(_publication()), now=lambda: _NOW
@@ -367,8 +373,7 @@ async def test_agent_fails_when_support_is_outside_the_current_publication() -> 
 
     result = await agent.run(_context(), _input(query="x", evidence=()))
 
-    assert result.status is RelationContextStatus.FAILED
-    assert result.diagnostics["failure"] == 1
+    assert result.status is RelationContextStatus.EMPTY
     assert result.relations == ()
 
 
@@ -426,3 +431,381 @@ async def test_seed_outside_the_selection_is_excluded_from_seeds() -> None:
     )
 
     assert result.seeds == ()
+
+
+@pytest.mark.asyncio
+async def test_agent_reserves_query_seed_slot_ahead_of_evidence_seeds_at_node_limit() -> None:
+    """With one evidence chunk alone fanning out to 61 evidence-seed nodes --
+    more than `expand()`'s default `node_limit=60` -- the query seed's own
+    slot must still survive the node-limit cut, so its edge is still ranked
+    (I1): combining seeds query-first, not evidence-first, is what protects
+    it."""
+    from tap.modules.graph.application.alias_index import AliasIndex
+    from tap.modules.graph.domain.models import RelationOrigin
+    from tap.modules.graph.domain.project import Alias, EdgeEvidence, ProjectEdge, ProjectNode
+
+    query_node = ProjectNode(node_id="q", label="节点 Q", node_type="ENTITY", canonical_key="q")
+    evidence_nodes = tuple(
+        ProjectNode(
+            node_id=f"e{index}",
+            label=f"节点 E{index}",
+            node_type="ENTITY",
+            canonical_key=f"e{index}",
+        )
+        for index in range(1, 62)
+    )
+    edge = ProjectEdge(
+        edge_id="e-q-e1",
+        source_node_id="q",
+        target_node_id="e1",
+        relation_type="RELATED_TO",
+        relation_label="RELATED_TO",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    edge_evidence = {
+        "e-q-e1": (
+            EdgeEvidence(
+                edge_id="e-q-e1",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                chunk_id="chunk-edge",
+                anchor={"page": 1},
+                content_digest="digest-edge",
+                fragment_snapshot_id="fragment-1",
+                fragment_edge_id="fe-edge",
+            ),
+        )
+    }
+    node_chunks = {"chunk-ev": tuple(f"e{index}" for index in range(1, 62))}
+    node_sources = {"q": ("rev-1",), **{f"e{index}": ("rev-1",) for index in range(1, 62)}}
+
+    store = VersionedStore(
+        version=7,
+        nodes=(query_node, *evidence_nodes),
+        edges=(edge,),
+        edge_evidence=edge_evidence,
+        node_chunks=node_chunks,
+        node_sources=node_sources,
+    )
+    store._alias_index = AliasIndex.build((Alias(alias_norm="q", node_id="q", origin="LABEL"),))
+    agent = RelationAnalysisAgent(store, FakeSnippets({"chunk-edge": "q 到 e1 的片段"}))
+
+    result = await agent.run(
+        _context(),
+        _input(
+            query="q",
+            evidence=(
+                EvidenceRef(
+                    label="S1",
+                    chunk_id="chunk-ev",
+                    source_revision_id="rev-1",
+                    document_revision_id="doc-1",
+                ),
+            ),
+        ),
+    )
+
+    assert result.status is RelationContextStatus.APPLIED
+    assert any(relation.edge_id == "e-q-e1" for relation in result.relations)
+
+
+@pytest.mark.asyncio
+async def test_agent_caps_evidence_refs_used_for_seeding_at_ten() -> None:
+    """Only the first 10 evidence refs (S order) ever seed a node lookup --
+    `seed_from_evidence` must not even be asked about chunks beyond that, so
+    a `nodes_for_chunks` lookup for an 11th-and-later chunk never happens."""
+
+    class _RecordingStore(VersionedStore):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.seen_chunk_ids: set[str] = set()
+
+        async def nodes_for_chunks(self, scope: object, chunk_ids: tuple[str, ...], **kwargs: Any):
+            self.seen_chunk_ids.update(chunk_ids)
+            return await super().nodes_for_chunks(scope, chunk_ids, **kwargs)
+
+    store = _RecordingStore(version=7, **_fixture_kwargs())
+    agent = RelationAnalysisAgent(store, FakeSnippets())
+    evidence = tuple(
+        EvidenceRef(
+            label=f"S{index}",
+            chunk_id=f"chunk-{index}",
+            source_revision_id="rev-1",
+            document_revision_id="doc-1",
+        )
+        for index in range(1, 16)
+    )
+
+    await agent.run(_context(), _input(query="不存在的问题", evidence=evidence))
+
+    assert store.seen_chunk_ids == {f"chunk-{index}" for index in range(1, 11)}
+
+
+@pytest.mark.asyncio
+async def test_agent_maps_project_graph_version_mismatch_to_stale() -> None:
+    """A pinned version evicted from the store's retention window mid-run
+    (`ProjectGraphVersionMismatch`) must be reported as STALE, not FAILED --
+    the answer can be retried against the new current version instead of
+    surfacing a bare failure."""
+    from tap.modules.graph.ports.project_store import ProjectGraphVersionMismatch
+
+    class _MismatchStore(VersionedStore):
+        async def neighbors(self, *args: object, **kwargs: object) -> Any:
+            raise ProjectGraphVersionMismatch(current=8)
+
+    store = _MismatchStore(version=7, **_fixture_kwargs())
+    agent = RelationAnalysisAgent(store, FakeSnippets())
+
+    result = await agent.run(_context(), _input())
+
+    assert result.status is RelationContextStatus.STALE
+
+
+@pytest.mark.asyncio
+async def test_agent_drops_paths_whose_edges_never_became_a_relation() -> None:
+    """A->B->C->D is found as a path (A from evidence, D from the query), but
+    C->D's only evidence chunk (chunk-3) has no snippet and is not an already
+    cited S label, so `assemble` can never resolve its support and no R
+    relation is produced for it. The path must then be dropped from
+    `RelationContext.paths` entirely (I1 part 3) -- it would otherwise point
+    at an edge the reader can never see cited."""
+    store = VersionedStore(version=7, **_fixture_kwargs())
+    agent = RelationAnalysisAgent(store, FakeSnippets({"chunk-2": "B 到 C 的片段"}))
+
+    result = await agent.run(
+        _context(),
+        _input(
+            query="健康告知",
+            evidence=(
+                EvidenceRef(
+                    label="S1",
+                    chunk_id="chunk-1",
+                    source_revision_id="rev-1",
+                    document_revision_id="doc-1",
+                ),
+            ),
+        ),
+    )
+
+    assert result.status is RelationContextStatus.APPLIED
+    assembled_edge_ids = {relation.edge_id for relation in result.relations}
+    assert "e-cd" not in assembled_edge_ids
+    assert result.paths == ()
+
+
+@pytest.mark.asyncio
+async def test_agent_drops_flowchart_image_support_that_is_not_approved() -> None:
+    """Image-region evidence (anchor carries a `bbox`) is model-proposed and
+    must answer only as an approved item of the current publication, same as
+    retrieval's `_flowchart_hit_is_approved` -- R evidence must not bypass
+    that review gate (I2)."""
+    store = _single_edge_store(anchor={"bbox": [1, 2, 3, 4], "inventoryItemId": "item-blocked"})
+    gate = FlowchartPublicationGate(
+        PublishedKnowledgeAuthority(_PublicationRepository(_publication()), now=lambda: _NOW)
+    )
+    agent = RelationAnalysisAgent(
+        store, FakeSnippets({"chunk-1": "x 到 y 的片段"}), flowchart_gate=gate
+    )
+
+    result = await agent.run(_context(), _input(query="x", evidence=()))
+
+    assert result.status is RelationContextStatus.EMPTY
+    assert result.relations == ()
+
+
+@pytest.mark.asyncio
+async def test_agent_keeps_flowchart_image_support_that_is_approved() -> None:
+    store = _single_edge_store(anchor={"bbox": [1, 2, 3, 4], "inventoryItemId": "item-allowed"})
+    gate = FlowchartPublicationGate(
+        PublishedKnowledgeAuthority(_PublicationRepository(_publication()), now=lambda: _NOW)
+    )
+    agent = RelationAnalysisAgent(
+        store, FakeSnippets({"chunk-1": "x 到 y 的片段"}), flowchart_gate=gate
+    )
+
+    result = await agent.run(_context(), _input(query="x", evidence=()))
+
+    assert result.status is RelationContextStatus.APPLIED
+    assert result.relations
+
+
+@pytest.mark.asyncio
+async def test_agent_keeps_a_path_edge_whose_intermediate_node_is_cut_by_node_limit() -> None:
+    """Query seed q, 59 isolated
+    evidence seeds (one evidence chunk fanning out to e1..e59), and a path
+    q -> m -> e1 where m is *not* itself a seed. With 60 total seeds and the
+    default `node_limit=60`, `expand()`'s own subgraph keeps every seed node
+    but has no room left for m, so its own candidate_edges filter (both
+    endpoints must be selected) drops both q-m and m-e1 entirely -- `m` only
+    re-enters through `PathExpansion.nodes` (found by `find_paths`, merged
+    into the agent's `nodes_by_id`). Without that merge, `assemble()` would
+    drop both edges (their object/subject node would resolve to `None`), and
+    the path would never be kept (its edges are never assembled)."""
+    from tap.modules.graph.application.alias_index import AliasIndex
+    from tap.modules.graph.domain.models import RelationOrigin
+    from tap.modules.graph.domain.project import Alias, EdgeEvidence, ProjectEdge, ProjectNode
+
+    query_node = ProjectNode(node_id="q", label="节点 Q", node_type="ENTITY", canonical_key="q")
+    intermediate_node = ProjectNode(
+        node_id="m", label="节点 M", node_type="ENTITY", canonical_key="m"
+    )
+    evidence_nodes = tuple(
+        ProjectNode(
+            node_id=f"e{index}",
+            label=f"节点 E{index}",
+            node_type="ENTITY",
+            canonical_key=f"e{index}",
+        )
+        for index in range(1, 60)
+    )
+    edge_q_m = ProjectEdge(
+        edge_id="e-q-m",
+        source_node_id="q",
+        target_node_id="m",
+        relation_type="RELATED_TO",
+        relation_label="RELATED_TO",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    edge_m_e1 = ProjectEdge(
+        edge_id="e-m-e1",
+        source_node_id="m",
+        target_node_id="e1",
+        relation_type="RELATED_TO",
+        relation_label="RELATED_TO",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    edge_evidence = {
+        "e-q-m": (
+            EdgeEvidence(
+                edge_id="e-q-m",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                chunk_id="chunk-qm",
+                anchor={"page": 1},
+                content_digest="digest-qm",
+                fragment_snapshot_id="fragment-1",
+                fragment_edge_id="fe-qm",
+            ),
+        ),
+        "e-m-e1": (
+            EdgeEvidence(
+                edge_id="e-m-e1",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                chunk_id="chunk-me1",
+                anchor={"page": 1},
+                content_digest="digest-me1",
+                fragment_snapshot_id="fragment-1",
+                fragment_edge_id="fe-me1",
+            ),
+        ),
+    }
+    node_chunks = {"chunk-ev": tuple(f"e{index}" for index in range(1, 60))}
+    node_sources = {
+        "q": ("rev-1",),
+        "m": ("rev-1",),
+        **{f"e{index}": ("rev-1",) for index in range(1, 60)},
+    }
+
+    store = VersionedStore(
+        version=7,
+        nodes=(query_node, intermediate_node, *evidence_nodes),
+        edges=(edge_q_m, edge_m_e1),
+        edge_evidence=edge_evidence,
+        node_chunks=node_chunks,
+        node_sources=node_sources,
+    )
+    store._alias_index = AliasIndex.build((Alias(alias_norm="q", node_id="q", origin="LABEL"),))
+    agent = RelationAnalysisAgent(
+        store, FakeSnippets({"chunk-qm": "q 到 m 的片段", "chunk-me1": "m 到 e1 的片段"})
+    )
+
+    result = await agent.run(
+        _context(),
+        _input(
+            query="q",
+            evidence=(
+                EvidenceRef(
+                    label="S1",
+                    chunk_id="chunk-ev",
+                    source_revision_id="rev-1",
+                    document_revision_id="doc-1",
+                ),
+            ),
+        ),
+    )
+
+    assert result.status is RelationContextStatus.APPLIED
+    assembled_edge_ids = {relation.edge_id for relation in result.relations}
+    assert {"e-q-m", "e-m-e1"} <= assembled_edge_ids
+    assert len(result.paths) == 1
+    assert result.paths[0].node_ids == ("q", "m", "e1")
+
+
+@pytest.mark.asyncio
+async def test_agent_caps_non_s_snippet_refs_fetched_per_edge_at_two() -> None:
+    """An edge with 5 fresh
+    (never-cited) evidence chunks must only ever have 2 of them actually
+    fetched for snippet text -- the cap must apply in `snippet_chunk_refs`
+    itself (which builds the refs `ChunkSnippetReader.snippets` is called
+    with), not only afterward in `_resolve_support`'s support-building."""
+    from tap.modules.graph.application.alias_index import AliasIndex
+    from tap.modules.graph.domain.models import RelationOrigin
+    from tap.modules.graph.domain.project import Alias, EdgeEvidence, ProjectEdge, ProjectNode
+
+    node_x = ProjectNode(node_id="x", label="节点 X", node_type="ENTITY", canonical_key="x")
+    node_y = ProjectNode(node_id="y", label="节点 Y", node_type="ENTITY", canonical_key="y")
+    edge = ProjectEdge(
+        edge_id="e-1",
+        source_node_id="x",
+        target_node_id="y",
+        relation_type="RELATED_TO",
+        relation_label="RELATED_TO",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    edge_evidence = {
+        "e-1": tuple(
+            EdgeEvidence(
+                edge_id="e-1",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                chunk_id=f"chunk-{index}",
+                anchor={"page": 1},
+                content_digest=f"digest-{index}",
+                fragment_snapshot_id="fragment-1",
+                fragment_edge_id=f"fe-{index}",
+            )
+            for index in range(5)
+        )
+    }
+    store = VersionedStore(
+        version=7,
+        nodes=(node_x, node_y),
+        edges=(edge,),
+        edge_evidence=edge_evidence,
+        node_chunks={"chunk-x": ("x",)},
+        node_sources={"x": ("rev-1",), "y": ("rev-1",)},
+    )
+    store._alias_index = AliasIndex.build((Alias(alias_norm="x", node_id="x", origin="LABEL"),))
+
+    class _RecordingSnippets(FakeSnippets):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.last_refs: tuple[tuple[str, str], ...] = ()
+
+        async def snippets(self, refs: tuple[tuple[str, str], ...]) -> Mapping[str, str]:
+            self.last_refs = refs
+            return await super().snippets(refs)
+
+    snippets = _RecordingSnippets({f"chunk-{index}": f"片段内容 {index}" for index in range(5)})
+    agent = RelationAnalysisAgent(store, snippets)
+
+    result = await agent.run(_context(), _input(query="x", evidence=()))
+
+    assert result.status is RelationContextStatus.APPLIED
+    assert len(snippets.last_refs) == 2
+    assert len(result.relations[0].support) == 2

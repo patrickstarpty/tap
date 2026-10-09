@@ -1,4 +1,4 @@
-"""Unit tests for `ArtifactChunkSnippets` (PR 3 task 3 review fix round 1).
+"""Unit tests for `ArtifactChunkSnippets`.
 
 Verifies the two guarantees `RelationAnalysisAgent` relies on: each
 revision's chunk artifact is read at most once per `snippets()` call

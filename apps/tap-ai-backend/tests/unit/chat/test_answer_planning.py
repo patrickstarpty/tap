@@ -555,7 +555,7 @@ async def test_model_injected_constraint_in_query_text_falls_back_on_every_route
 
 @pytest.mark.asyncio
 async def test_relation_word_compound_noun_keeps_procedural_intent():
-    """Review fix round 3/5: `劳动关系证明` is a document name (`关系证明`), not a
+    """`劳动关系证明` is a document name (`关系证明`), not a
     relation question -- the question must still resolve to the ordinary
     `procedural` intent `如何` would otherwise produce, not merely avoid
     `relation`/`graph`."""
@@ -603,7 +603,7 @@ async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_chang
 @pytest.mark.parametrize(
     "message,should_route_to_graph",
     [
-        # Fix round 2/5: recall -- natural phrasings that must reach relation/graph.
+        # recall -- natural phrasings that must reach relation/graph.
         ("A和B之间的关系", True),  # regression: bare 关系 after 之间 with no 什么/有/是
         ("A和B有什么关系", True),
         ("A与B是什么关系", True),
@@ -623,7 +623,7 @@ async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_chang
         ("which systems affect claims", True),
         ("What comes after underwriting?", True),
         ("what follows underwriting", True),  # regression: no "?"
-        # Fix round 3/5: recall -- English inflections (relates/related/depends/
+        # recall -- English inflections (relates/related/depends/
         # dependency/affected/impacted/triggers), still gated on question form.
         ("What triggers a policy lapse?", True),
         ("What affects the premium?", True),
@@ -632,7 +632,7 @@ async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_chang
         ("How does A relates to B?", True),
         ("Is there a dependency between A and B?", True),
         ("Which processes are impacted by underwriting?", True),
-        # Fix round 3/5: recall -- 联系/关联 and additional sequence phrasings.
+        # recall -- 联系/关联 and additional sequence phrasings.
         ("A和B有什么联系", True),
         ("A和B有联系吗", True),
         ("核保和理赔怎么关联", True),
@@ -640,9 +640,9 @@ async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_chang
         ("核保完成后接下来是什么", True),
         ("What happens after underwriting?", True),
         ("What is the next step after submission?", True),
-        # Fix round 3/5: precision retained -- bare 关系 stays positive.
+        # precision retained -- bare 关系 stays positive.
         ("投保人与被保险人是什么关系", True),
-        # Fix round 2/5: precision -- lookalikes that must not reach relation/graph.
+        # precision -- lookalikes that must not reach relation/graph.
         ("提交申请后下一步是否需要审批", False),
         ("两个系统之间的关系型数据库配置", False),
         ("这条规则与审批有什么关系型约束", False),
@@ -654,19 +654,19 @@ async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_chang
         ("比较核保流程和理赔流程的不同", False),
         ("哪些字段是必填的", False),
         ("which of these documents are PDFs", False),
-        # Fix round 3/5: precision -- 关系 compound nouns and 没关系.
+        # precision -- 关系 compound nouns and 没关系.
         ("亲属关系证明怎么开", False),
         ("如何办理劳动关系证明", False),
         ("客户关系管理系统怎么登录", False),
         ("关系人信息在哪里填写", False),
         ("没关系，继续", False),
-        # Fix round 3/5: precision -- "is|are" after "what follows", and bare 联系.
+        # precision -- "is|are" after "what follows", and bare 联系.
         ("What follows are the exclusions", False),
         ("What follows is an overview", False),
         ("What follows is the list of rules", False),
         ("联系电话是多少", False),
         ("联系方式在哪里", False),
-        # Fix round 4/5: precision -- 联系/关联/上游/下游 lookalikes without an
+        # precision -- 联系/关联/上游/下游 lookalikes without an
         # entity-pair link question, and "next step" without "after".
         ("怎么联系客服", False),
         ("怎么和客服联系", False),
@@ -677,13 +677,13 @@ async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_chang
         ("下游系统怎么配置", False),
         ("上游接口怎么调用", False),
         ("next step for my claim?", False),
-        # Fix round 4/5: recall -- entity-pair link questions.
+        # recall -- entity-pair link questions.
         ("A与B有什么关联", True),
         ("A和B有没有联系？", True),
     ],
 )
 async def test_relation_heuristic_precision_and_recall_table(message, should_route_to_graph):
-    """Review fix rounds 2/5 and 3/5: a demo-facing, table-driven check of the
+    """A demo-facing, table-driven check of the
     relation heuristic's recall (natural question phrasings in Chinese and
     English, including inflected English forms and 联系/关联 phrasings added
     in round 3) and precision (lookalikes, including 关系 compound nouns and

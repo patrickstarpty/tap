@@ -997,7 +997,7 @@ def test_edge_citation_snapshot_bounds_edge_field_widths() -> None:
     with pytest.raises(ValueError):
         _edge_snapshot(object_node_id="n" * 129)
     with pytest.raises(ValueError):
-        _edge_snapshot(relation_type="R" * 33)
+        _edge_snapshot(relation_type="R" * 65)
 
 
 @pytest.mark.asyncio
@@ -1292,6 +1292,38 @@ def test_empty_relation_context_yields_no_relation_claim_and_empty_event() -> No
     asyncio.run(scenario())
 
 
+def test_empty_relation_context_abstention_preserves_relation_outcome() -> None:
+    """When every claim cites only an invalid R label, reconciliation strips
+    them all and the answer abstains -- but the EMPTY relation hint (e.g. "no
+    direct relation found between A and B") must still reach the response,
+    not be lost to the abstention (minor 4)."""
+
+    async def scenario() -> None:
+        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="没有依据的关系。",
+                    claims=(GeneratedClaim(text="没有依据的关系。", evidence_labels=("R1",)),),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        relation = _FakeRelationAnalysis(
+            RelationContext(status=RelationContextStatus.EMPTY, graph_version="7")
+        )
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert response.abstained
+        assert response.relation is not None
+        assert response.relation.status is RelationContextStatus.EMPTY
+
+    asyncio.run(scenario())
+
+
 def test_stale_context_answers_chunk_only() -> None:
     async def scenario() -> None:
         search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
@@ -1530,6 +1562,90 @@ def test_augmentation_never_adds_unauthorized_chunks() -> None:
         merged_chunk = next(item for item in final_evidence if item.chunk_id == "chunk-aug-1")
         assert merged_chunk.evidence_label == "S2"
         assert len(final_evidence) <= 20
+
+    asyncio.run(scenario())
+
+
+def test_augmentation_merges_at_most_five_candidates_even_with_more_available() -> None:
+    """`_augment_from_relations` searches wider for recall (I3) but must still
+    only ever merge up to 5 augmented chunks into the response, even when
+    more than 5 authorized, selected candidates come back."""
+
+    async def scenario() -> None:
+        candidate_count = 6
+        search = _SequencedSearchPort(
+            (_relation_hit("chunk-s1", "rev-1", item_id="item-1"),),
+            tuple(
+                _relation_hit(
+                    f"chunk-aug-{index}", "rev-1", item_id=f"item-aug{index}", local_rank=index
+                )
+                for index in range(1, candidate_count + 1)
+            ),
+        )
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text="已验证的事实。",
+                    claims=(GeneratedClaim(text="已验证的事实。", evidence_labels=("S1",)),),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        augment_candidates = tuple(
+            RelationSupport(
+                chunk_id=f"chunk-aug-{index}",
+                source_revision_id="rev-1",
+                document_revision_id="rev-1",
+                content_digest="sha256:" + "e" * 64,
+                anchor={"page": 1},
+                snippet=f"candidate snippet {index}",
+            )
+            for index in range(1, candidate_count + 1)
+        )
+        relation_evidence = RelationEvidence(
+            label="R1",
+            edge_id="e-1",
+            subject_node_id="A",
+            subject_label="核保流程",
+            subject_aliases=(),
+            object_node_id="B",
+            object_label="健康告知",
+            object_aliases=(),
+            relation_type="REQUIRES",
+            relation_label="REQUIRES",
+            origin="EXTRACTED",
+            confidence=0.9,
+            support=(
+                RelationSupport(
+                    chunk_id="chunk-s1",
+                    source_revision_id="rev-1",
+                    document_revision_id="rev-1",
+                    content_digest="sha256:" + "f" * 64,
+                    anchor={"page": 1},
+                    evidence_label="S1",
+                ),
+            ),
+            on_path=False,
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(relation_evidence,),
+            augment_chunks=augment_candidates,
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_preferred_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        final_evidence = model.calls[-1]["evidence"]
+        # chunk-s1 plus at most 5 of the 6 augmented candidates.
+        assert len(final_evidence) == 6
+        augmented_merged = {item.chunk_id for item in final_evidence} - {"chunk-s1"}
+        assert len(augmented_merged) == 5
+        assert augmented_merged <= {f"chunk-aug-{index}" for index in range(1, candidate_count + 1)}
 
     asyncio.run(scenario())
 

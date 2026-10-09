@@ -2171,9 +2171,8 @@ export interface components {
         };
         /**
          * GraphEndpointView
-         * @description One edge citation endpoint (subject or object); nested shape matches
-         *     Task 7's `EdgeCitationView` ahead of time so Task 7 does not need to
-         *     reshape this contract again.
+         * @description One edge citation endpoint (subject or object), nested under
+         *     `EdgeCitationView`.
          */
         GraphEndpointView: {
             /** Label */
@@ -5154,6 +5153,7 @@ export interface components {
             degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
+            graphContext?: components["schemas"]["GraphContextSummaryView"] | null;
             /**
              * Graphcontextstatus
              * @default NOT_SELECTED
@@ -5257,9 +5257,8 @@ export interface components {
         };
         /**
          * GraphEndpointView
-         * @description One edge citation endpoint (subject or object); nested shape matches
-         *     Task 7's `EdgeCitationView` ahead of time so Task 7 does not need to
-         *     reshape this contract again.
+         * @description One edge citation endpoint (subject or object), nested under
+         *     `EdgeCitationView`.
          */
         tap__contracts__http__GraphEndpointView: {
             /** Label */

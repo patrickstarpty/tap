@@ -832,9 +832,8 @@ class RetrievalHit(ContractModel):
 
 
 class GraphEndpointView(ContractModel):
-    """One edge citation endpoint (subject or object); nested shape matches
-    Task 7's `EdgeCitationView` ahead of time so Task 7 does not need to
-    reshape this contract again."""
+    """One edge citation endpoint (subject or object), nested under
+    `EdgeCitationView`."""
 
     node_id: str = Field(min_length=1, max_length=128)
     label: str = Field(min_length=1)
@@ -845,7 +844,7 @@ class EdgeCitationView(ContractModel):
     graph_version: str = Field(min_length=1, max_length=64)
     subject: GraphEndpointView
     object: GraphEndpointView
-    relation_type: str = Field(min_length=1, max_length=32)
+    relation_type: str = Field(min_length=1, max_length=64)
     relation_label: str = Field(min_length=1, max_length=64)
 
 

@@ -118,7 +118,7 @@ class EdgeCitationView(StreamContractModel):
     graph_version: str = Field(min_length=1, max_length=64)
     subject: GraphEndpointView
     object: GraphEndpointView
-    relation_type: str = Field(min_length=1, max_length=32)
+    relation_type: str = Field(min_length=1, max_length=64)
     relation_label: str = Field(min_length=1, max_length=64)
 
 
@@ -158,6 +158,14 @@ class AnswerClaim(StreamContractModel):
         return self
 
 
+class GraphContextSummaryView(StreamContractModel):
+    status: Literal["APPLIED", "NOT_READY", "STALE", "FAILED", "EMPTY"]
+    graph_version: str | None = None
+    seed_count: int = Field(ge=0)
+    paths: list[list[str]] = Field(default_factory=list)
+    relation_count: int = Field(ge=0)
+
+
 class RetrievalAnswerResponse(StreamContractModel):
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
@@ -175,6 +183,7 @@ class RetrievalAnswerResponse(StreamContractModel):
         "APPLIED", "NOT_READY", "STALE", "FAILED", "UNAVAILABLE", "NOT_SELECTED", "EMPTY"
     ] = "NOT_SELECTED"
     graph_snapshot_id: str | None = None
+    graph_context: GraphContextSummaryView | None = None
 
 
 class TurnStartedPayload(StreamContractModel):

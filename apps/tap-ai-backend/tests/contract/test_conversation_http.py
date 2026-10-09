@@ -607,7 +607,7 @@ def test_conversation_turn_summary_accepts_stale_and_empty_graph_status(status: 
 
 
 def test_conversation_event_item_accepts_graph_context_ready() -> None:
-    """PR 3 Task 7 review fix: the Conversation history route must not
+    """The Conversation history route must not
     reject a stored `graph.context_ready` event."""
     item = ConversationEventItem.model_validate(
         {
