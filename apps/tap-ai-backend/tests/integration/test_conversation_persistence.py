@@ -272,7 +272,7 @@ def test_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
 
 
 def test_graph_context_ready_stream_event_persists_and_reloads(owned_project_mysql):
-    """PR 3 Task 7 review fix: a `graph.context_ready` stream event must
+    """A `graph.context_ready` stream event must
     persist end-to-end against real MySQL, not only against the in-memory
     repository fakes the worker unit tests use."""
 
@@ -570,7 +570,7 @@ def test_applied_graph_context_validates_edge_citation_graph_version(owned_proje
 def test_resolve_citations_then_complete_evidence_round_trips_an_edge_citation(
     owned_project_mysql,
 ):
-    """Fix round 2 CRITICAL 1 regression test: `resolve_citations()` (the
+    """`resolve_citations()` (the
     generation worker's own call, `tapper_generation_worker.py:204`) and
     `complete()` must compute the exact same trusted digest for a persisted
     edge citation -- this test never hand-computes the digest itself (unlike

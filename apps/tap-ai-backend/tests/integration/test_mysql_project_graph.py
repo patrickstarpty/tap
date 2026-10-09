@@ -350,7 +350,7 @@ async def test_mysql_queries_are_project_scoped(owned_project_mysql) -> None:
 
 @pytest.mark.asyncio
 async def test_pinned_cached_version_reads_skip_get_current(owned_project_mysql) -> None:
-    """Fix round 2 IMPORTANT 2 regression test: once a pinned, explicit
+    """Once a pinned, explicit
     `version` is already cached, `_loaded` must serve it straight from
     `ProjectGraphCache` without a `get_current` MySQL round-trip first -- a
     relation-analysis run that pins one version for its whole run (seed,

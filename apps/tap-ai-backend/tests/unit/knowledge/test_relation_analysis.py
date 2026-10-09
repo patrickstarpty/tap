@@ -478,7 +478,7 @@ async def test_find_paths_bounds_hops_and_count() -> None:
 
 @pytest.mark.asyncio
 async def test_find_paths_tries_query_x_evidence_pairs_before_query_x_query_pairs() -> None:
-    """Fix round 2 Minor 1 regression test: with 7 query seeds (C(7, 2) = 21
+    """With 7 query seeds (C(7, 2) = 21
     query x query pairs -- already more than the default `max_attempts=20`
     on its own) and 1 evidence seed connected to only one of them, the
     query x evidence pair must still be attempted. Under the old

@@ -632,7 +632,7 @@ async def test_agent_keeps_flowchart_image_support_that_is_approved() -> None:
 
 @pytest.mark.asyncio
 async def test_agent_keeps_a_path_edge_whose_intermediate_node_is_cut_by_node_limit() -> None:
-    """Fix round 2 IMPORTANT 1 regression test: query seed q, 59 isolated
+    """Query seed q, 59 isolated
     evidence seeds (one evidence chunk fanning out to e1..e59), and a path
     q -> m -> e1 where m is *not* itself a seed. With 60 total seeds and the
     default `node_limit=60`, `expand()`'s own subgraph keeps every seed node
@@ -747,7 +747,7 @@ async def test_agent_keeps_a_path_edge_whose_intermediate_node_is_cut_by_node_li
 
 @pytest.mark.asyncio
 async def test_agent_caps_non_s_snippet_refs_fetched_per_edge_at_two() -> None:
-    """Fix round 2 IMPORTANT 3 regression test: an edge with 5 fresh
+    """An edge with 5 fresh
     (never-cited) evidence chunks must only ever have 2 of them actually
     fetched for snippet text -- the cap must apply in `snippet_chunk_refs`
     itself (which builds the refs `ChunkSnippetReader.snippets` is called
