@@ -314,8 +314,9 @@ export const WORKSPACE_COPY = {
         chunkCitationCount: number,
         relationCount: number,
       ) =>
-        `Searched ${sourceCount} sources · ${chunkCitationCount} passages · ${relationCount} relations`,
-      seedEntities: (count: number) => `${count} seed entities`,
+        `Searched ${sourceCount} source${sourceCount === 1 ? "" : "s"} · ${chunkCitationCount} passage${chunkCitationCount === 1 ? "" : "s"} · ${relationCount} relation${relationCount === 1 ? "" : "s"}`,
+      seedEntities: (count: number) =>
+        `${count} seed entit${count === 1 ? "y" : "ies"}`,
       relationPaths: "Relation paths",
       noRelationEvidence:
         "No direct relation evidence was found; the answer below is grounded in source passages.",

@@ -173,6 +173,76 @@ type ActivityEvent = {
   payload: { [key: string]: unknown };
 };
 
+/**
+ * Shared by `AnswerActivity` (no trace yet) and `AnswerGraphSummary` (trace
+ * panel already covers the event log) so the answer summary line and the
+ * graph seeds/paths rows render identically regardless of which of the two
+ * is shown — see Task 7 review I1: the summary must not disappear just
+ * because a turn has a `traceId`.
+ */
+function buildAnswerGraphSummary({
+  locale,
+  sourceCount,
+  chunkCitationCount,
+  edgeCitationCount,
+  graphContext,
+}: {
+  locale: "en" | "zh";
+  sourceCount: number;
+  chunkCitationCount: number;
+  edgeCitationCount: number;
+  graphContext: GraphContextSummary | null;
+}): { summaryText: string; rows: string[] } {
+  const copy = WORKSPACE_COPY[locale].chat;
+  const relationCount = graphContext?.relationCount ?? edgeCitationCount;
+  const summaryText = copy.answerSummary(
+    sourceCount,
+    chunkCitationCount,
+    relationCount,
+  );
+  const hasGraphRows =
+    graphContext !== null &&
+    (graphContext.seedCount > 0 || graphContext.paths.length > 0);
+  const rows = !hasGraphRows
+    ? []
+    : [
+        copy.seedEntities(graphContext.seedCount),
+        ...graphContext.paths.map(
+          (path) => `${copy.relationPaths}: ${path.join(" → ")}`,
+        ),
+      ];
+  return { summaryText, rows };
+}
+
+/**
+ * Renders the answer summary line and expandable seeds/paths rows above the
+ * trace panel for a terminal turn with a `traceId` — `AnswerActivity` is not
+ * rendered in that case, so without this the graph summary never reaches
+ * users for the (common) case of a completed, traced turn.
+ */
+function AnswerGraphSummary(props: {
+  locale: "en" | "zh";
+  sourceCount: number;
+  chunkCitationCount: number;
+  edgeCitationCount: number;
+  graphContext: GraphContextSummary | null;
+}) {
+  const { summaryText, rows } = buildAnswerGraphSummary(props);
+  if (rows.length === 0) {
+    return <p className="tap-answer-summary">{summaryText}</p>;
+  }
+  return (
+    <details className="tap-answer-activity">
+      <summary>{summaryText}</summary>
+      <ol>
+        {rows.map((row, index) => (
+          <li key={`${index}-${row}`}>{row}</li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 export function AnswerActivity({
   events,
   locale,
@@ -238,22 +308,15 @@ export function AnswerActivity({
         : `${citations} citation records resolved; ${shownCitationCount} used by displayed claims`
       : null,
   ].filter((row): row is string => row !== null);
-  const copy = WORKSPACE_COPY[locale].chat;
-  const graphRows =
-    graphContext === null
-      ? []
-      : [
-          copy.seedEntities(graphContext.seedCount),
-          ...graphContext.paths.map((path) => path.join(" → ")),
-        ];
-  const allRows = [...rows, ...graphRows];
-  if (allRows.length === 0) return null;
-  const relationCount = graphContext?.relationCount ?? edgeCitationCount;
-  const summaryText = copy.answerSummary(
+  const { summaryText, rows: graphRows } = buildAnswerGraphSummary({
+    locale,
     sourceCount,
     chunkCitationCount,
-    relationCount,
-  );
+    edgeCitationCount,
+    graphContext,
+  });
+  const allRows = [...rows, ...graphRows];
+  if (allRows.length === 0) return null;
   return (
     <details className="tap-answer-activity">
       <summary>{summaryText}</summary>
@@ -616,19 +679,30 @@ function AssistantResponse({
         }
       }
       const graphContext = turn.graphContext ?? null;
+      const isTerminalTurn =
+        turn.status !== undefined &&
+        (TERMINAL_TURN_STATUSES as readonly string[]).includes(turn.status);
       return (
         <>
-          {turn.status !== undefined &&
-          (TERMINAL_TURN_STATUSES as readonly string[]).includes(turn.status) &&
+          {isTerminalTurn &&
           turn.traceId != null &&
           conversationId !== undefined ? (
-            <DurableTracePanel
-              projectId={projectId}
-              conversationId={conversationId}
-              turn={turn}
-              onOpenDocument={onOpenDocument ?? (() => undefined)}
-              documentName={documentName}
-            />
+            <>
+              <AnswerGraphSummary
+                locale={turn.locale}
+                sourceCount={turn.sourceReferences.length}
+                chunkCitationCount={chunkCitationCount}
+                edgeCitationCount={edgeCitationCount}
+                graphContext={graphContext}
+              />
+              <DurableTracePanel
+                projectId={projectId}
+                conversationId={conversationId}
+                turn={turn}
+                onOpenDocument={onOpenDocument ?? (() => undefined)}
+                documentName={documentName}
+              />
+            </>
           ) : (
             <AnswerActivity
               events={activityEvents}
@@ -645,8 +719,8 @@ function AssistantResponse({
           graphContext.seedCount >= 2 ? (
             <Alert
               type="info"
-              role="status"
-              message={contentCopy.chat.noRelationEvidence}
+              role={isTerminalTurn ? undefined : "status"}
+              title={contentCopy.chat.noRelationEvidence}
             />
           ) : null}
           <GroundedAnswer

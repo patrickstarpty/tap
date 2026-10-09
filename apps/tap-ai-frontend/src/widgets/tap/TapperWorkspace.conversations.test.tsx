@@ -83,11 +83,43 @@ function completedConversation({
   traceId,
   extraSpans = [],
   api = fakeKnowledgeClient(),
+  graphContextEvent,
 }: {
   traceId: string | null;
   extraSpans?: readonly Record<string, unknown>[];
   api?: ReturnType<typeof fakeKnowledgeClient>;
+  graphContextEvent?: Record<string, unknown>;
 }) {
+  const events = [
+    {
+      eventId: "event-1",
+      sequence: 1,
+      turnId: "turn-1",
+      occurredAt: "2026-09-29T08:00:00Z",
+      eventType: "stage.completed",
+      payload: { stage: "knowledge.answer" },
+    },
+    ...(graphContextEvent === undefined
+      ? []
+      : [
+          {
+            eventId: "event-graph",
+            sequence: 2,
+            turnId: "turn-1",
+            occurredAt: "2026-09-29T08:00:00Z",
+            eventType: "graph.context_ready",
+            payload: graphContextEvent,
+          },
+        ]),
+    {
+      eventId: "event-2",
+      sequence: graphContextEvent === undefined ? 2 : 3,
+      turnId: "turn-1",
+      occurredAt: "2026-09-29T08:00:01Z",
+      eventType: "turn.completed",
+      payload: { answer: ANSWER },
+    },
+  ];
   vi.stubGlobal("fetch", async (request: Request) => {
     const path = new URL(request.url).pathname;
     if (path.endsWith("/conversations") && request.method === "GET")
@@ -133,24 +165,7 @@ function completedConversation({
       });
     if (path.endsWith("/conversations/conversation-a/events"))
       return json({
-        items: [
-          {
-            eventId: "event-1",
-            sequence: 1,
-            turnId: "turn-1",
-            occurredAt: "2026-09-29T08:00:00Z",
-            eventType: "stage.completed",
-            payload: { stage: "knowledge.answer" },
-          },
-          {
-            eventId: "event-2",
-            sequence: 2,
-            turnId: "turn-1",
-            occurredAt: "2026-09-29T08:00:01Z",
-            eventType: "turn.completed",
-            payload: { answer: ANSWER },
-          },
-        ],
+        items: events,
         nextCursor: null,
       });
     if (path.endsWith("/conversations/conversation-a/turns/turn-1/trace"))
@@ -195,7 +210,31 @@ it("shows trace panel for terminal turn with traceId", async () => {
   expect(
     await screen.findByRole("button", { name: /^Trace:/u }),
   ).toBeInTheDocument();
-  expect(screen.queryByText(/^Searched/u)).not.toBeInTheDocument();
+  // I1 fix: the summary line must render alongside the trace panel, not
+  // only when the trace/activity branch falls back to `AnswerActivity`.
+  expect(screen.getByText(/^Searched/u)).toBeInTheDocument();
+});
+
+it("shows the summary line and the expandable seeds/paths rows for a terminal, traced turn with a graph context", async () => {
+  completedConversation({
+    traceId: "trace-1",
+    graphContextEvent: {
+      status: "APPLIED",
+      seedCount: 2,
+      paths: [["核保流程", "健康告知"]],
+      relationCount: 1,
+    },
+  });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    await screen.findByRole("button", { name: /^Trace:/u }),
+  ).toBeInTheDocument();
+  const summary = screen.getByText(/^Searched/u);
+  expect(summary).toBeInTheDocument();
+  await userEvent.click(summary);
+  expect(screen.getByText("2 seed entities")).toBeVisible();
+  expect(screen.getByText(/核保流程 → 健康告知/u)).toBeVisible();
 });
 
 it("falls back to activity when traceId is null", async () => {
@@ -206,6 +245,63 @@ it("falls back to activity when traceId is null", async () => {
     screen.queryByRole("button", { name: /^Trace:/u }),
   ).not.toBeInTheDocument();
   expect(screen.getByText(/^Searched/u)).toBeInTheDocument();
+});
+
+it("replays a persisted graph.context_ready event and shows the summary line", async () => {
+  completedConversation({
+    traceId: null,
+    graphContextEvent: {
+      status: "EMPTY",
+      seedCount: 0,
+      paths: [],
+      relationCount: 0,
+    },
+  });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    screen.getByText("Searched 0 sources · 0 passages · 0 relations"),
+  ).toBeInTheDocument();
+});
+
+it("shows the no-relation-evidence banner as a static note when the turn is terminal and seedCount is at least 2", async () => {
+  completedConversation({
+    traceId: null,
+    graphContextEvent: {
+      status: "EMPTY",
+      seedCount: 2,
+      paths: [],
+      relationCount: 0,
+    },
+  });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  const banner = await screen.findByText(
+    "No direct relation evidence was found; the answer below is grounded in source passages.",
+  );
+  expect(banner).toBeInTheDocument();
+  const alertContainer = banner.closest(".ant-alert");
+  expect(alertContainer).not.toBeNull();
+  expect(alertContainer?.getAttribute("role")).toBeNull();
+});
+
+it("hides the no-relation-evidence banner when seedCount is below 2", async () => {
+  completedConversation({
+    traceId: null,
+    graphContextEvent: {
+      status: "EMPTY",
+      seedCount: 1,
+      paths: [],
+      relationCount: 0,
+    },
+  });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    screen.queryByText(
+      "No direct relation evidence was found; the answer below is grounded in source passages.",
+    ),
+  ).not.toBeInTheDocument();
 });
 
 it("does not crash when a citation resolves before a running turn completes", async () => {
