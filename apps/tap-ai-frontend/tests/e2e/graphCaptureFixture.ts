@@ -20,6 +20,13 @@ export const CAPTURE_SOURCE_CLAIMS = {
   sourceName: "Claims handbook",
 };
 
+// A second, not-yet-published revision of the claims handbook, distinct
+// from `CAPTURE_SOURCE_CLAIMS.documentRevisionId` (the already-published
+// revision backing the node detail's evidence) -- this is the one still
+// being extracted, so `extractingRevisionIds` below never claims a
+// published revision is also mid-extraction.
+const CAPTURE_SOURCE_CLAIMS_PENDING_REVISION = "document-rev-claims-2";
+
 // `GET .../knowledge/sources` -- two ready sources so the Library source
 // filters and node detail "Open original" resolve to real source ids.
 export const CAPTURE_KNOWLEDGE_SOURCES = {
@@ -110,7 +117,7 @@ export const CAPTURE_GRAPH_PROJECT = {
       size: 6,
     },
   ],
-  extractingRevisionIds: [CAPTURE_SOURCE_CLAIMS.documentRevisionId],
+  extractingRevisionIds: [CAPTURE_SOURCE_CLAIMS_PENDING_REVISION],
   partialRevisionIds: [],
 };
 
@@ -136,7 +143,7 @@ export const CAPTURE_GRAPH_OVERVIEW = {
       nodeType: "REQUIREMENT",
       label: "Health disclosure",
       canonicalKey: "disclosure",
-      degree: 9,
+      degree: 8,
       communityId: "underwriting",
       aliases: ["Health declaration", "Medical disclosure"],
     },
@@ -271,7 +278,7 @@ export const CAPTURE_GRAPH_OVERVIEW = {
       nodeType: "PROCESS",
       label: "Claim denial",
       canonicalKey: "claim-denial",
-      degree: 2,
+      degree: 3,
       communityId: "claims",
       aliases: [],
     },
@@ -504,8 +511,8 @@ export const CAPTURE_GRAPH_OVERVIEW = {
     },
     {
       edgeId: "e16",
-      sourceNodeId: "node-disclosure",
-      targetNodeId: "node-exclusion-clause",
+      sourceNodeId: "node-exclusion-clause",
+      targetNodeId: "node-claim-denial",
       relationType: "RELATED_TO",
       relationLabel: "related to",
       confidence: 0.9,
@@ -691,7 +698,7 @@ export const CAPTURE_GRAPH_NODE = {
     nodeType: "REQUIREMENT",
     label: "Health disclosure",
     canonicalKey: "disclosure",
-    degree: 9,
+    degree: 8,
     communityId: "underwriting",
     aliases: ["Health declaration", "Medical disclosure"],
   },
@@ -919,7 +926,7 @@ export const CAPTURE_GRAPH_HIGHLIGHT = {
       nodeType: "REQUIREMENT",
       label: "Health disclosure",
       canonicalKey: "disclosure",
-      degree: 9,
+      degree: 8,
       communityId: "underwriting",
       aliases: ["Health declaration", "Medical disclosure"],
     },
@@ -988,9 +995,17 @@ export const CAPTURE_RELATION_CONVERSATION = {
           message:
             "What must be completed before underwriting review approves the policy?",
           modelAlias: "qwen-plus",
-          sourceRevisionIds: [],
-          documentRevisionIds: [],
-          resolvedResources: [],
+          sourceRevisionIds: [CAPTURE_SOURCE_GUIDE.documentRevisionId],
+          documentRevisionIds: [CAPTURE_SOURCE_GUIDE.documentRevisionId],
+          resolvedResources: [
+            {
+              sourceId: CAPTURE_SOURCE_GUIDE.sourceId,
+              documentId: CAPTURE_SOURCE_GUIDE.documentId,
+              documentRevisionId: CAPTURE_SOURCE_GUIDE.documentRevisionId,
+              sourceRevisionId: CAPTURE_SOURCE_GUIDE.documentRevisionId,
+              label: CAPTURE_SOURCE_GUIDE.sourceName,
+            },
+          ],
           agentRevisionId: null,
           agentLabel: null,
           skillRevisionIds: [],
@@ -1019,8 +1034,10 @@ export const CAPTURE_RELATION_CONVERSATION = {
         payload: {
           status: "APPLIED",
           seedCount: 2,
-          paths: [["Underwriting review", "Health disclosure"]],
-          relationCount: 1,
+          paths: [
+            ["Underwriting review", "Health disclosure", "Policy approval"],
+          ],
+          relationCount: 2,
         },
       },
       {
@@ -1053,7 +1070,7 @@ export const CAPTURE_RELATION_CONVERSATION = {
                 text: "Policy approval follows automatically once the disclosure is verified.",
                 answerStart: 59,
                 answerEnd: 129,
-                citationIds: ["c1"],
+                citationIds: ["e5"],
               },
             ],
             citations: [
@@ -1120,6 +1137,45 @@ export const CAPTURE_RELATION_CONVERSATION = {
                   relationLabel: "requires",
                 },
               },
+              {
+                citationId: "e5",
+                evidenceLabel: "R2",
+                chunkId: "chunk-guide-2",
+                logicalChunkId: "logical-guide-2",
+                source: {
+                  sourceId: CAPTURE_SOURCE_GUIDE.sourceId,
+                  sourceType: "document",
+                  revisionKind: "blob_version",
+                  revision: CAPTURE_SOURCE_GUIDE.documentRevisionId,
+                  sourceContentHash: `sha256:${"a".repeat(64)}`,
+                  anchor: {
+                    type: "document",
+                    headingPath: ["Policy approval"],
+                    page: 1,
+                    bbox: null,
+                    startOffset: 72,
+                    endOffset: 148,
+                  },
+                },
+                chunkContentHash: `sha256:${"c".repeat(64)}`,
+                contentRole: "source",
+                derivedFromChunkIds: null,
+                kind: "edge",
+                edge: {
+                  edgeId: "e5",
+                  graphVersion: "capture-v1",
+                  subject: {
+                    nodeId: "node-disclosure",
+                    label: "Health disclosure",
+                  },
+                  object: {
+                    nodeId: "node-approval",
+                    label: "Policy approval",
+                  },
+                  relationType: "PRECEDES",
+                  relationLabel: "precedes",
+                },
+              },
             ],
           },
         },
@@ -1128,27 +1184,50 @@ export const CAPTURE_RELATION_CONVERSATION = {
     nextCursor: null,
   },
   // `GET /conversations/{id}/turns/{turnId}/citations/{citationId}` --
-  // the historical citation preview for the edge citation `e1`, fetched
-  // lazily on the chip's first hover/focus (Task 8) and again when the
-  // evidence panel opens.
-  citation: {
-    citationId: "e1",
-    documentId: CAPTURE_SOURCE_GUIDE.documentId,
-    revisionId: CAPTURE_SOURCE_GUIDE.documentRevisionId,
-    filename: CAPTURE_SOURCE_GUIDE.filename,
-    sourceContentHash: `sha256:${"a".repeat(64)}`,
-    chunkContentHash: `sha256:${"b".repeat(64)}`,
-    anchor: {
-      type: "document",
-      headingPath: ["Health disclosure"],
-      page: 1,
-      bbox: null,
-      startOffset: 0,
-      endOffset: 72,
+  // the historical citation previews for the two edge citations (`e1`,
+  // `e5`), fetched lazily on each chip's first hover/focus (Task 8) and
+  // again when the evidence panel opens. Keyed by citationId so
+  // `ui-capture.spec.ts` can route `.../citations/{id}` to the right one.
+  citations: {
+    e1: {
+      citationId: "e1",
+      documentId: CAPTURE_SOURCE_GUIDE.documentId,
+      revisionId: CAPTURE_SOURCE_GUIDE.documentRevisionId,
+      filename: CAPTURE_SOURCE_GUIDE.filename,
+      sourceContentHash: `sha256:${"a".repeat(64)}`,
+      chunkContentHash: `sha256:${"b".repeat(64)}`,
+      anchor: {
+        type: "document",
+        headingPath: ["Health disclosure"],
+        page: 1,
+        bbox: null,
+        startOffset: 0,
+        endOffset: 72,
+      },
+      prefix: "",
+      quote:
+        "Health disclosure must be completed before underwriting review proceeds.",
+      suffix: "",
     },
-    prefix: "",
-    quote:
-      "Health disclosure must be completed before underwriting review proceeds.",
-    suffix: "",
+    e5: {
+      citationId: "e5",
+      documentId: CAPTURE_SOURCE_GUIDE.documentId,
+      revisionId: CAPTURE_SOURCE_GUIDE.documentRevisionId,
+      filename: CAPTURE_SOURCE_GUIDE.filename,
+      sourceContentHash: `sha256:${"a".repeat(64)}`,
+      chunkContentHash: `sha256:${"c".repeat(64)}`,
+      anchor: {
+        type: "document",
+        headingPath: ["Policy approval"],
+        page: 1,
+        bbox: null,
+        startOffset: 72,
+        endOffset: 148,
+      },
+      prefix: "",
+      quote:
+        "Policy approval follows once a disclosure is verified by underwriting review.",
+      suffix: "",
+    },
   },
 };

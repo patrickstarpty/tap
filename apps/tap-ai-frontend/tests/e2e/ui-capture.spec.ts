@@ -30,14 +30,23 @@ async function fulfillGraphRoutes(
   path: string,
 ): Promise<boolean> {
   if (path.endsWith("/knowledge/sources")) {
+    expect(route.request().method()).toBe("GET");
     await route.fulfill({ json: CAPTURE_KNOWLEDGE_SOURCES });
   } else if (path.endsWith("/knowledge/published-sources")) {
+    expect(route.request().method()).toBe("GET");
     await route.fulfill({ json: CAPTURE_PUBLISHED_SOURCES });
   } else if (path.endsWith("/knowledge/graph/project")) {
+    expect(route.request().method()).toBe("GET");
     await route.fulfill({ json: CAPTURE_GRAPH_PROJECT });
   } else if (path.endsWith("/knowledge/graph/overview")) {
+    expect(route.request().method()).toBe("GET");
     await route.fulfill({ json: CAPTURE_GRAPH_OVERVIEW });
-  } else if (/\/knowledge\/graph\/nodes\/[^/]+$/u.test(path)) {
+  } else if (/\/knowledge\/graph\/nodes\/node-disclosure$/u.test(path)) {
+    // Scoped to the one node this fixture actually backs -- any other node
+    // id falls through to the "Unexpected capture API request" throw below,
+    // so a test that accidentally selects the wrong node fails loudly
+    // instead of silently rendering "Health disclosure" detail for it.
+    expect(route.request().method()).toBe("GET");
     await route.fulfill({ json: CAPTURE_GRAPH_NODE });
   } else if (path.endsWith("/knowledge/graph/highlight")) {
     expect(route.request().method()).toBe("POST");
@@ -140,6 +149,42 @@ test.beforeEach(async ({ page }) => {
   ).toHaveCount(0);
 });
 
+/**
+ * The force-layout worker (`features/graph/model/layout.ts`) keeps refining
+ * node positions asynchronously after the canvas first renders (seeded
+ * fallback positions, then the worker's reply) -- there is no DOM
+ * signal/data-attribute exposed for "layout settled" (confirmed by reading
+ * `KnowledgeGraph.tsx`/`layout.ts`; not adding one here, since Task 10 may
+ * only touch `graphCaptureFixture.ts`/`ui-capture.spec.ts`, not product
+ * code). This polls each `.tap-graph-node-core` circle's `cx`/`cy` and
+ * waits until two consecutive samples agree, which is a reasonable
+ * test-only proxy for "the worker has stopped moving things" without
+ * touching `GraphOverview`/`KnowledgeGraph`.
+ */
+async function waitForGraphLayoutSettled(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const circles = document.querySelectorAll(
+        ".tap-graph-node-core",
+      ) as NodeListOf<SVGCircleElement>;
+      if (circles.length === 0) return false;
+      const snapshot = Array.from(circles)
+        .map(
+          (circle) =>
+            `${circle.getAttribute("cx")}:${circle.getAttribute("cy")}`,
+        )
+        .join(",");
+      const previous = (window as unknown as { __tapLayoutSnapshot?: string })
+        .__tapLayoutSnapshot;
+      (
+        window as unknown as { __tapLayoutSnapshot?: string }
+      ).__tapLayoutSnapshot = snapshot;
+      return previous === snapshot;
+    },
+    { timeout: 5_000, polling: 100 },
+  );
+}
+
 async function capture(page: Page, name: string) {
   await page.evaluate(() => document.fonts.ready);
   const bytes = await page.screenshot({
@@ -192,6 +237,7 @@ test("captures Library graph and document views", async ({ page }) => {
   await expect(
     page.getByRole("checkbox", { name: "Underwriting · 12 nodes" }),
   ).toBeVisible();
+  await waitForGraphLayoutSettled(page);
   const graph = await capture(page, "05-knowledge-graph");
   await page.getByRole("tab", { name: "Documents", exact: true }).click();
   await expect(page.getByRole("tabpanel", { name: "Documents" })).toBeVisible();
@@ -207,6 +253,7 @@ test("captures the graph overview, node detail, edge citations and highlight", a
   await expect(
     page.getByRole("checkbox", { name: "Underwriting · 12 nodes" }),
   ).toBeVisible();
+  await waitForGraphLayoutSettled(page);
   const overview = await capture(page, "10-graph-overview");
 
   // Step 2: node detail for "Health disclosure" (aliases, sources, grouped
@@ -214,6 +261,7 @@ test("captures the graph overview, node detail, edge citations and highlight", a
   await page.getByRole("button", { name: /Health disclosure/u }).click();
   const nodeDetails = page.getByRole("region", { name: "Node details" });
   await expect(nodeDetails).toContainText("Aliases");
+  await waitForGraphLayoutSettled(page);
   const nodeDetail = await capture(page, "11-graph-node-detail");
   expect(nodeDetail).not.toBe(overview);
 
@@ -254,11 +302,12 @@ test("captures the graph overview, node detail, edge citations and highlight", a
     } else if (path.endsWith("/conversations/conversation-relation/events")) {
       body = CAPTURE_RELATION_CONVERSATION.events;
     } else if (
-      path.endsWith(
-        "/conversations/conversation-relation/turns/turn-relation/citations/e1",
+      /\/conversations\/conversation-relation\/turns\/turn-relation\/citations\/(e1|e5)$/u.test(
+        path,
       )
     ) {
-      body = CAPTURE_RELATION_CONVERSATION.citation;
+      const citationId = path.slice(path.lastIndexOf("/") + 1) as "e1" | "e5";
+      body = CAPTURE_RELATION_CONVERSATION.citations[citationId];
     } else if (/\/ai\/(agents|skills)$/u.test(path)) {
       body = { items: [], nextCursor: null };
     } else {
@@ -287,15 +336,27 @@ test("captures the graph overview, node detail, edge citations and highlight", a
   expect(new Set([overview, nodeDetail, edgeCitations]).size).toBe(3);
 
   // Step 4: open the evidence panel and follow "View in Library" into the
-  // highlighted-path state.
+  // highlighted-path state. The turn cites both `e1` (claim 1) and `e5`
+  // (claim 2), so "View in Library" must highlight both -- asserted against
+  // the actual `POST .../highlight` request body, not just the rendered
+  // text list.
   await edgeChip.click();
   await expect(
     page.getByRole("heading", { name: "Relation evidence" }),
   ).toBeVisible();
+  const highlightRequest = page.waitForRequest(
+    (request) =>
+      request.url().includes("/knowledge/graph/highlight") &&
+      request.method() === "POST",
+  );
   await page.getByRole("button", { name: "View in Library" }).click();
+  expect((await highlightRequest).postDataJSON()).toEqual({
+    edgeIds: ["e1", "e5"],
+  });
   await expect(
     page.getByRole("region", { name: "Highlighted path" }),
   ).toBeVisible();
+  await waitForGraphLayoutSettled(page);
   const highlight = await capture(page, "13-graph-highlight");
 
   expect(new Set([overview, nodeDetail, edgeCitations, highlight]).size).toBe(
