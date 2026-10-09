@@ -39,7 +39,7 @@ def upgrade() -> None:
     )
     op.add_column(
         "knowledge_citation_snapshot",
-        sa.Column("relation_type", sa.String(32), nullable=True),
+        sa.Column("relation_type", sa.String(64), nullable=True),
     )
     op.add_column(
         "knowledge_citation_snapshot",

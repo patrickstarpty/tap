@@ -613,7 +613,7 @@
           "type": "string"
         },
         "relationType": {
-          "maxLength": 32,
+          "maxLength": 64,
           "minLength": 1,
           "title": "Relationtype",
           "type": "string"

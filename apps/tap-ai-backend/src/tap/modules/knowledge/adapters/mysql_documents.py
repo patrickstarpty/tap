@@ -388,7 +388,7 @@ knowledge_citation_snapshot = Table(
     Column("edge_id", String(128)),
     Column("subject_node_id", String(128)),
     Column("object_node_id", String(128)),
-    Column("relation_type", String(32)),
+    Column("relation_type", String(64)),
     Column("relation_label", String(64)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     UniqueConstraint("trace_id", "citation_id", name="uq_knowledge_citation_trace_id"),
