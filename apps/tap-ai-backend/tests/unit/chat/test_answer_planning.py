@@ -666,6 +666,20 @@ async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_chang
         ("What follows is the list of rules", False),
         ("联系电话是多少", False),
         ("联系方式在哪里", False),
+        # Fix round 4/5: precision -- 联系/关联/上游/下游 lookalikes without an
+        # entity-pair link question, and "next step" without "after".
+        ("怎么联系客服", False),
+        ("怎么和客服联系", False),
+        ("联系人怎么填写", False),
+        ("联系人电话是什么", False),
+        ("关联账户怎么解绑", False),
+        ("怎么关联银行卡", False),
+        ("下游系统怎么配置", False),
+        ("上游接口怎么调用", False),
+        ("next step for my claim?", False),
+        # Fix round 4/5: recall -- entity-pair link questions.
+        ("A与B有什么关联", True),
+        ("A和B有没有联系？", True),
     ],
 )
 async def test_relation_heuristic_precision_and_recall_table(message, should_route_to_graph):
