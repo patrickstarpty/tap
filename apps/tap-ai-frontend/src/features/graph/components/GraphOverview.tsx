@@ -353,18 +353,30 @@ export function GraphOverview({
   // sources is reported as `no-match` instead, never `ready`), so the
   // footer counts the project's own extracting/partial lists directly
   // rather than intersecting them with `sourceRevisionIds`, which would
-  // otherwise always read as zero.
+  // otherwise always read as zero. It still intersects against
+  // `publishedSources`, though: the project's extracting/partial lists can
+  // name a revision that was since unpublished or deleted (publishing is
+  // independent of the merge that produced this snapshot), and such a
+  // revision has no source left in the Library to report a count for.
+  const publishedRevisionIds = useMemo(
+    () => new Set(publishedSources.map((source) => source.revisionId)),
+    [publishedSources],
+  );
   const unfilteredSourceScope = sourceRevisionIds.length === 0;
-  const extractingCount = unfilteredSourceScope
-    ? (project?.extractingRevisionIds ?? []).length
-    : sourceRevisionIds.filter((id) =>
-        (project?.extractingRevisionIds ?? []).includes(id),
-      ).length;
-  const partialCount = unfilteredSourceScope
-    ? (project?.partialRevisionIds ?? []).length
-    : sourceRevisionIds.filter((id) =>
-        (project?.partialRevisionIds ?? []).includes(id),
-      ).length;
+  const extractingCount = (
+    unfilteredSourceScope
+      ? (project?.extractingRevisionIds ?? [])
+      : sourceRevisionIds.filter((id) =>
+          (project?.extractingRevisionIds ?? []).includes(id),
+        )
+  ).filter((id) => publishedRevisionIds.has(id)).length;
+  const partialCount = (
+    unfilteredSourceScope
+      ? (project?.partialRevisionIds ?? [])
+      : sourceRevisionIds.filter((id) =>
+          (project?.partialRevisionIds ?? []).includes(id),
+        )
+  ).filter((id) => publishedRevisionIds.has(id)).length;
   const communitiesFooter = {
     extracting: extractingCount,
     partial: partialCount,

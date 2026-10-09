@@ -389,6 +389,45 @@ it("uses the singular form of the extraction footer for exactly one source", asy
   ).toBeVisible();
 });
 
+it("excludes an unpublished/deleted revision from the extraction footer", async () => {
+  // The project's extracting/partial lists name revisions as of the last
+  // merge -- a revision can be unpublished or deleted afterward without a
+  // new merge happening yet, leaving it in those lists with no source left
+  // in the Library to report a count for. The footer must not count it.
+  const project = buildProject({
+    extractingRevisionIds: ["rev_src_a", "rev_src_gone"],
+    partialRevisionIds: ["rev_src_gone"],
+  });
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    sources: [
+      {
+        id: "src_a",
+        name: "A",
+        type: "Markdown",
+        status: "ready",
+        origin: "knowledge-base",
+        description: "",
+      },
+    ],
+    // Only "rev_src_a" is still published -- "rev_src_gone" has no entry.
+    publishedSources: [{ sourceId: "src_a", revisionId: "rev_src_a" }],
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  const communityRegion = screen.getByRole("complementary", {
+    name: "Topic groups",
+  });
+  expect(
+    within(communityRegion).getByText("1 source still extracting"),
+  ).toBeVisible();
+  expect(
+    within(communityRegion).queryByText(/partially failed/),
+  ).not.toBeInTheDocument();
+});
+
 it("renders Chinese overview copy", async () => {
   const project = buildProject();
   renderLibrary({
