@@ -690,23 +690,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/projects/{project_id}/knowledge/graph/snapshots": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Active Snapshots */
-        get: operations["graph_list_active_snapshots"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/projects/{project_id}/knowledge/publications/current": {
         parameters: {
             query?: never;
@@ -2226,27 +2209,6 @@ export interface components {
              * @default []
              */
             sourceRevisionIds?: string[];
-        };
-        /** GraphSnapshotPage */
-        GraphSnapshotPage: {
-            /** Items */
-            items: components["schemas"]["GraphSnapshotView"][];
-        };
-        /** GraphSnapshotView */
-        GraphSnapshotView: {
-            /** Documentrevisionids */
-            documentRevisionIds: string[];
-            /** Snapshotid */
-            snapshotId: string;
-            /** Sourcerevisionids */
-            sourceRevisionIds: string[];
-            /** Sourcesetdigest */
-            sourceSetDigest: string;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "CANDIDATE" | "READY" | "PARTIAL" | "FAILED";
         };
         /** GraphSubgraphView */
         GraphSubgraphView: {
@@ -7715,57 +7677,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    graph_list_active_snapshots: {
-        parameters: {
-            query: {
-                sourceRevisionId: string[];
-            };
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GraphSnapshotPage"];
-                };
-            };
-            /** @description Project scope or authorization denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ProblemDetails"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Graph unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };

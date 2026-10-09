@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 
 from tap.contracts.http import (
     GraphEdgeView,
@@ -16,8 +16,6 @@ from tap.contracts.http import (
     GraphNodeView,
     GraphPathRequest,
     GraphSearchRequest,
-    GraphSnapshotPage,
-    GraphSnapshotView,
     GraphSubgraphView,
     ProjectGraphCommunityView,
     ProjectGraphEdgeView,
@@ -39,7 +37,6 @@ from tap.interfaces.http.dependencies import (
     graph_service,
     project_graph_service,
 )
-from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.domain.models import (
@@ -61,35 +58,6 @@ from tap.modules.graph.ports.project_store import ProjectGraphNotReady, ProjectG
 router = APIRouter(prefix="/knowledge/graph", tags=["knowledge-graph"])
 
 _EMPTY_PROJECT_SUBGRAPH = ProjectGraphSubgraphView(graph_version=0, nodes=[], edges=[])
-
-
-@router.get(
-    "/snapshots",
-    operation_id="graph_list_active_snapshots",
-    response_model=GraphSnapshotPage,
-    dependencies=[Depends(project_authorization("knowledge.read"))],
-    responses={status.HTTP_503_SERVICE_UNAVAILABLE: problem_response_metadata("Graph unavailable")},
-)
-async def list_active_snapshots(
-    request: Request,
-    source_revision_ids: list[str] = Query(alias="sourceRevisionId", min_length=1, max_length=50),
-) -> GraphSnapshotPage:
-    snapshot = await graph_service(request).active_snapshot(
-        request.state.project_scope, tuple(source_revision_ids)
-    )
-    if snapshot is None:
-        return GraphSnapshotPage(items=[])
-    return GraphSnapshotPage(
-        items=[
-            GraphSnapshotView(
-                snapshot_id=snapshot.snapshot_id,
-                source_set_digest=snapshot.source_set_digest,
-                source_revision_ids=list(snapshot.source_revision_ids),
-                document_revision_ids=list(snapshot.document_revision_ids),
-                status=snapshot.status,
-            )
-        ]
-    )
 
 
 @router.get(

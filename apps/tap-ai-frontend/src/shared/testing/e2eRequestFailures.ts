@@ -18,7 +18,7 @@ export interface E2ERequestResponse {
 type ClosedPathLabel =
   | "document-detail"
   | "document-list"
-  | "graph-snapshots"
+  | "graph-read"
   | "runtime-discovery"
   | "source-detail"
   | "outside-allowlist";
@@ -105,18 +105,38 @@ function classifyRequest(
       parsed.search === "") ||
     (parsed.pathname === conversationPath && parsed.search === "?limit=20") ||
     exactConversationRead;
-  const graphSnapshotPath = `${projectPath}/knowledge/graph/snapshots`;
-  const graphRevisionIds = parsed.searchParams.getAll("sourceRevisionId");
-  const exactGraphRead =
-    parsed.pathname === graphSnapshotPath &&
-    graphRevisionIds.length > 0 &&
-    graphRevisionIds.length <= 50 &&
+  const graphProjectPath = `${projectPath}/knowledge/graph/project`;
+  const exactGraphProjectRead =
+    parsed.pathname === graphProjectPath && parsed.search === "";
+  const graphOverviewPath = `${projectPath}/knowledge/graph/overview`;
+  const overviewRevisionIds = parsed.searchParams.getAll("sourceRevisionId");
+  const overviewNodeLimit = parsed.searchParams.get("nodeLimit");
+  const exactGraphOverviewRead =
+    parsed.pathname === graphOverviewPath &&
     [...parsed.searchParams.keys()].every(
-      (key) => key === "sourceRevisionId",
+      (key) =>
+        key === "sourceRevisionId" ||
+        key === "communityId" ||
+        key === "nodeLimit",
     ) &&
-    graphRevisionIds.every((revisionId) =>
+    overviewRevisionIds.every((revisionId) =>
       /^rev_[0-9a-f]{64}$/u.test(revisionId),
+    ) &&
+    (overviewNodeLimit === null ||
+      (/^[0-9]+$/u.test(overviewNodeLimit) &&
+        Number(overviewNodeLimit) >= 1 &&
+        Number(overviewNodeLimit) <= 500));
+  const graphNodesPath = `${projectPath}/knowledge/graph/nodes`;
+  const graphNodeMatch =
+    parsed.pathname.startsWith(`${graphNodesPath}/`) &&
+    /^[A-Za-z0-9_:-]{1,128}$/u.test(
+      parsed.pathname.slice(graphNodesPath.length + 1),
     );
+  const exactGraphNodeRead =
+    graphNodeMatch &&
+    [...parsed.searchParams.keys()].every((key) => key === "graphVersion");
+  const exactGraphRead =
+    exactGraphProjectRead || exactGraphOverviewRead || exactGraphNodeRead;
   return {
     exactRuntimeDiscovery: runtimePath && parsed.search === "",
     exactDocumentDetail: detailPath && parsed.search === "",
@@ -130,7 +150,7 @@ function classifyRequest(
         : runtimePath
           ? "runtime-discovery"
           : exactGraphRead
-            ? "graph-snapshots"
+            ? "graph-read"
             : exactSourceRead
               ? "source-detail"
               : "outside-allowlist",

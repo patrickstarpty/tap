@@ -28,7 +28,10 @@ def test_graph_routes_are_project_scoped_and_bounded():
     services = replace(validation_http_services(), graph=InMemoryGraphStore())
     client = TestClient(create_app(services, validation_mode=True))
     paths = client.app.openapi()["paths"]
-    assert "/api/v1/projects/{project_id}/knowledge/graph/snapshots" in paths
+    assert "/api/v1/projects/{project_id}/knowledge/graph/snapshots" not in paths
+    assert "/api/v1/projects/{project_id}/knowledge/graph/project" in paths
+    assert "/api/v1/projects/{project_id}/knowledge/graph/overview" in paths
+    assert "/api/v1/projects/{project_id}/knowledge/graph/highlight" in paths
     assert "/api/v1/projects/{project_id}/knowledge/graph/query" in paths
     assert "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}" in paths
     assert "/api/v1/projects/{project_id}/knowledge/graph/evidence/{evidence_id}" in paths
@@ -41,10 +44,7 @@ def test_graph_routes_are_project_scoped_and_bounded():
 
 def test_graph_outage_is_503_not_an_empty_graph():
     client = TestClient(create_app(validation_http_services(), validation_mode=True))
-    response = client.get(
-        "/api/v1/projects/tapper-demo/knowledge/graph/snapshots",
-        params={"sourceRevisionId": "source-revision-1"},
-    )
+    response = client.get("/api/v1/projects/tapper-demo/knowledge/graph/project")
     assert response.status_code == 503
     assert response.json()["type"].endswith("/graph-unavailable")
 
@@ -52,11 +52,15 @@ def test_graph_outage_is_503_not_an_empty_graph():
 def test_graph_project_path_cannot_widen_the_trusted_scope():
     services = replace(validation_http_services(), graph=InMemoryGraphStore())
     client = TestClient(create_app(services, validation_mode=True))
-    response = client.get(
-        "/api/v1/projects/other-project/knowledge/graph/snapshots",
-        params={"sourceRevisionId": "source-revision-1"},
-    )
+    response = client.get("/api/v1/projects/other-project/knowledge/graph/project")
     assert response.status_code == 403
+
+
+def test_snapshot_contracts_are_retired():
+    client = TestClient(create_app(validation_http_services(), validation_mode=True))
+    schemas = client.app.openapi()["components"]["schemas"]
+    assert "GraphSnapshotPage" not in schemas
+    assert "GraphSnapshotView" not in schemas
 
 
 def test_graph_node_and_evidence_deep_links_are_snapshot_scoped():
@@ -175,10 +179,6 @@ def test_legacy_snapshot_routes_still_serve_fragment_graphs():
     )
     client = _client(replace(validation_http_services(), graph=store))
     base = "/api/v1/projects/tapper-demo/knowledge/graph"
-
-    snapshots = client.get(f"{base}/snapshots", params={"sourceRevisionId": "source-revision-1"})
-    assert snapshots.status_code == 200
-    assert snapshots.json()["items"][0]["snapshotId"] == "snapshot-1"
 
     query = client.post(f"{base}/query", json={"snapshotId": "snapshot-1", "query": "*"})
     assert query.status_code == 200

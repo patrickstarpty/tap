@@ -41,7 +41,11 @@ describe("E2ERequestFailureAudit", () => {
     ["GET", "http://127.0.0.1:15173/api/v1/projects/project-e2e/ai/skills"],
     [
       "GET",
-      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/snapshots?sourceRevisionId=rev_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/project",
+    ],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/overview?sourceRevisionId=rev_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&nodeLimit=150",
     ],
     [
       "GET",
@@ -276,7 +280,7 @@ describe("E2ERequestFailureAudit", () => {
     {
       errorText: "net::ERR_ABORTED",
       method: "GET",
-      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/snapshots?sourceRevisionId=secret",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/overview?nodeLimit=secret",
       expected: "GET outside-allowlist net::ERR_ABORTED",
     },
     {
