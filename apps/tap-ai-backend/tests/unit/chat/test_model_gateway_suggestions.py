@@ -10,7 +10,12 @@ from tap.modules.chat.adapters.model_gateway_suggestions import (
     SUGGESTION_SCHEMA,
     ModelGatewaySuggestionGenerator,
 )
-from tap.modules.chat.domain.suggestions import Candidate, SuggestionInputs, TopicSource
+from tap.modules.chat.domain.suggestions import (
+    Candidate,
+    MainRelation,
+    SuggestionInputs,
+    TopicSource,
+)
 
 
 def inputs(**changes) -> SuggestionInputs:
@@ -23,6 +28,7 @@ def inputs(**changes) -> SuggestionInputs:
         personal_questions=("How do I reset my password?",),
         personal_source_ids=("src_a",),
         popular_sources=(("src_b", 3),),
+        relations=(MainRelation("核保流程", "REQUIRES", "需要", "健康告知"),),
     )
     defaults.update(changes)
     return SuggestionInputs(**defaults)
@@ -76,6 +82,24 @@ async def test_prompt_contains_inputs_and_locale():
     assert payload["entities"] == ["Billing Engine"]
     assert payload["recentQuestions"] == ["How do I reset my password?"]
     assert payload["recentSourceIds"] == ["src_a"]
+
+
+@pytest.mark.asyncio
+async def test_generator_payload_serializes_relations():
+    gateway = FakeGateway({"suggestions": []})
+    await _generator(gateway).generate(inputs(), "en")
+
+    request = gateway.requests[0]
+    payload = json.loads(request.context)
+    assert payload["relations"] == [
+        {
+            "subject": "核保流程",
+            "relationType": "REQUIRES",
+            "relationLabel": "需要",
+            "object": "健康告知",
+        }
+    ]
+    assert payload["relations"][0]["relationType"] == "REQUIRES"
 
 
 @pytest.mark.asyncio

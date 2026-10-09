@@ -18,6 +18,7 @@ from tap.modules.chat.application.suggestions import (
 )
 from tap.modules.chat.domain.suggestions import (
     Candidate,
+    MainRelation,
     PromptSuggestion,
     RefreshReason,
     SuggestionInputs,
@@ -49,6 +50,7 @@ class FakeKnowledge:
     current_by_actor: dict[str, dict[str, CurrentSource]] = field(default_factory=dict)
     topics_result: tuple[TopicSource, ...] = ()
     entities_result: tuple[str, ...] = ()
+    relations_result: tuple[MainRelation, ...] = ()
 
     async def current_sources(self, actor_id: str) -> Mapping[str, CurrentSource]:
         return self.current_by_actor.get(actor_id, {})
@@ -58,6 +60,9 @@ class FakeKnowledge:
 
     async def main_entities(self, actor_id: str, *, limit: int) -> tuple[str, ...]:
         return self.entities_result[:limit]
+
+    async def main_relations(self, actor_id: str, *, limit: int) -> tuple[MainRelation, ...]:
+        return self.relations_result[:limit]
 
 
 @dataclass
@@ -362,6 +367,22 @@ async def test_generator_inputs_contain_only_counts_from_other_users():
     captured_inputs, _locale = generator.calls[0]
     assert captured_inputs.popular_sources == (("src-1", 3),)
     assert "OTHER-USER-SECRET" not in repr(captured_inputs)
+
+
+@pytest.mark.asyncio
+async def test_generator_inputs_include_main_relations():
+    store = InMemorySuggestionStore()
+    topics = (TopicSource(source_id="src-1", name="Doc 1", version="rev-1:1", headings=("A",)),)
+    relations = (MainRelation("核保流程", "REQUIRES", "需要", "健康告知"),)
+    knowledge = FakeKnowledge(topics_result=topics, relations_result=relations)
+    generator = FakeGenerator(candidates=())
+    service = _service(store=store, knowledge=knowledge, generator=generator)
+
+    await service.refresh(KEY)
+
+    assert len(generator.calls) == 1
+    captured_inputs, _locale = generator.calls[0]
+    assert captured_inputs.relations == relations
 
 
 @pytest.mark.asyncio

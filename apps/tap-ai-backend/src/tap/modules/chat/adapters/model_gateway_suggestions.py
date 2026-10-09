@@ -52,7 +52,9 @@ SUGGESTIONS_PROMPT = (
     "listed sources state directly. Never include source IDs, file names, revision identifiers "
     "or other internal identifiers in a question; refer to a document by its subject. Only "
     "reference source IDs given in sources in sourceIds. Prefer topics close to "
-    "recentQuestions and popularSources, but never restate an original question verbatim."
+    "recentQuestions and popularSources, but never restate an original question verbatim. "
+    "relations lists the knowledge base's main relationships; prefer questions about how two "
+    "listed things relate."
 )
 
 
@@ -84,6 +86,15 @@ class ModelGatewaySuggestionGenerator:
             "recentSourceIds": list(inputs.personal_source_ids),
             "popularSources": [
                 {"id": source_id, "count": count} for source_id, count in inputs.popular_sources
+            ],
+            "relations": [
+                {
+                    "subject": relation.subject,
+                    "relationType": relation.relation_type,
+                    "relationLabel": relation.relation_label,
+                    "object": relation.object,
+                }
+                for relation in inputs.relations
             ],
         }
         context = json.dumps(payload, ensure_ascii=False, sort_keys=True)

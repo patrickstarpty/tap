@@ -1802,6 +1802,7 @@ def _assemble_http_services(
             knowledge=KnowledgeSuggestionSources(
                 conversation_sessions,  # type: ignore[arg-type]
                 scope=repository.scope,
+                project_graph=project_graph,
             ),
             usage=MysqlSuggestionUsage(
                 conversation_sessions,  # type: ignore[arg-type]
