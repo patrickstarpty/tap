@@ -133,7 +133,7 @@ export const GRAPH_FRAGMENT_COPY = {
   zh: {
     title: "图谱抽取",
     extracting: "抽取中",
-    ready: "就绪",
+    idle: "无进行中的抽取",
     partial: "部分失败",
     retry: "重试失败批次",
     retryQueued: "已重新排队",
@@ -142,7 +142,7 @@ export const GRAPH_FRAGMENT_COPY = {
   en: {
     title: "Graph extraction",
     extracting: "Extracting",
-    ready: "Ready",
+    idle: "No extraction in progress",
     partial: "Partially failed",
     retry: "Retry failed batches",
     retryQueued: "Retry queued",

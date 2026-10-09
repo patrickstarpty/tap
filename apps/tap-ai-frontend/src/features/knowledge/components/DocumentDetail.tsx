@@ -142,7 +142,10 @@ export function DocumentDetail({
             />
           </section>
 
-          <GraphFragmentStatus revisionId={detailQuery.data.revisionId} />
+          <GraphFragmentStatus
+            key={detailQuery.data.revisionId}
+            revisionId={detailQuery.data.revisionId}
+          />
 
           <section aria-labelledby="normalized-preview-heading">
             <Typography.Title level={5} id="normalized-preview-heading">

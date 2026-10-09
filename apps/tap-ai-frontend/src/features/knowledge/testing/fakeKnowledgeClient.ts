@@ -254,7 +254,10 @@ export interface FakeKnowledgeClient extends KnowledgeClient {
     revisionId: string;
     idempotencyKey: string;
   }>;
+  graphProjectCalls: number;
   withGraphProject(project: GraphProjectView): FakeKnowledgeClient;
+  /** Enqueues a one-time `GET /project` result; consumed oldest-first. */
+  withGraphProjectOnce(project: GraphProjectView): FakeKnowledgeClient;
   withGraphRetryProblem(problem: unknown): FakeKnowledgeClient;
   deferAnswer(options?: { ignoreAbort?: boolean }): FakeKnowledgeClient;
   deferCitation(
@@ -321,6 +324,7 @@ export function fakeKnowledgeClient(
   let graphRetryProblem: unknown;
   const graphRetryCalls: Array<{ revisionId: string; idempotencyKey: string }> =
     [];
+  const graphProjectQueue: GraphProjectView[] = [];
 
   const api: FakeKnowledgeClient = {
     projectId,
@@ -649,8 +653,13 @@ export function fakeKnowledgeClient(
       return api;
     },
     graphRetryCalls,
+    graphProjectCalls: 0,
     withGraphProject(project) {
       graphProjectResult = project;
+      return api;
+    },
+    withGraphProjectOnce(project) {
+      graphProjectQueue.push(project);
       return api;
     },
     withGraphRetryProblem(problem) {
@@ -844,6 +853,11 @@ export function fakeKnowledgeClient(
       }
     },
     async graphProject(): Promise<GraphProjectView> {
+      api.graphProjectCalls += 1;
+      const queued = graphProjectQueue.shift();
+      if (queued !== undefined) {
+        graphProjectResult = queued;
+      }
       return graphProjectResult;
     },
     async retryGraphFragment(

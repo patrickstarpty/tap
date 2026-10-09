@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Space, Typography } from "antd";
 
 import {
@@ -18,11 +18,15 @@ export interface GraphFragmentStatusProps {
  * (for `PARTIAL`) offers a retry of its failed extraction batches.
  *
  * `ProjectGraphView` (backend) only exposes `extractingRevisionIds` /
- * `partialRevisionIds` — a revision missing from both is `READY`; there is
- * no per-revision failed/total batch count, so the `PARTIAL` label carries
- * no counts. A retry rejected with `graph-job-busy` (409) is a normal,
- * localized error — not the graph-version-conflict notice used elsewhere
- * for graph queries.
+ * `partialRevisionIds` — a revision missing from both is reported as
+ * `idle` ("no extraction in progress"), which also covers a job that
+ * failed outright or was never enqueued; there is no backend field to
+ * distinguish those from a genuinely ready revision yet (a dedicated
+ * `failedRevisionIds` is a tracked follow-up), so this view never claims
+ * "ready" without evidence. There is also no per-revision failed/total
+ * batch count, so the `PARTIAL` label carries no counts. A retry rejected
+ * with `graph-job-busy` (409) is a normal, localized error — not the
+ * graph-version-conflict notice used elsewhere for graph queries.
  */
 export function GraphFragmentStatus({
   revisionId,
@@ -30,9 +34,19 @@ export function GraphFragmentStatus({
 }: GraphFragmentStatusProps) {
   const { projectId } = useKnowledgeClient();
   const text = GRAPH_FRAGMENT_COPY[locale];
-  const projectQuery = useGraphProjectQuery(projectId);
+  const projectQuery = useGraphProjectQuery(projectId, {
+    pollRevisionId: revisionId,
+  });
   const retryMutation = useRetryGraphFragmentMutation(projectId);
   const [queued, setQueued] = useState(false);
+  const statusRegionRef = useRef<HTMLDivElement>(null);
+
+  // Once the retry button is replaced by the queued confirmation, move
+  // focus to the status region deliberately — otherwise focus would fall
+  // back to `<body>` when the button it was on is removed from the DOM.
+  useEffect(() => {
+    if (queued) statusRegionRef.current?.focus();
+  }, [queued]);
 
   const project = projectQuery.data;
   if (project === undefined) return null;
@@ -45,7 +59,7 @@ export function GraphFragmentStatus({
     ? text.partial
     : isExtracting
       ? text.extracting
-      : text.ready;
+      : text.idle;
 
   return (
     <section aria-labelledby="graph-fragment-status-heading">
@@ -53,24 +67,23 @@ export function GraphFragmentStatus({
         {text.title}
       </Typography.Title>
       <Space orientation="vertical" size="small">
-        <span>{statusLabel}</span>
-        {isPartial ? (
-          queued ? (
-            <span>{text.retryQueued}</span>
-          ) : (
-            <Button
-              size="small"
-              loading={retryMutation.isPending}
-              onClick={() => {
-                retryMutation.mutate(
-                  { revisionId, idempotencyKey: crypto.randomUUID() },
-                  { onSuccess: () => setQueued(true) },
-                );
-              }}
-            >
-              {text.retry}
-            </Button>
-          )
+        <div ref={statusRegionRef} role="status" tabIndex={-1}>
+          <span>{statusLabel}</span>
+          {isPartial && queued ? <span> {text.retryQueued}</span> : null}
+        </div>
+        {isPartial && !queued ? (
+          <Button
+            size="small"
+            loading={retryMutation.isPending}
+            onClick={() => {
+              retryMutation.mutate(
+                { revisionId, idempotencyKey: crypto.randomUUID() },
+                { onSuccess: () => setQueued(true) },
+              );
+            }}
+          >
+            {text.retry}
+          </Button>
         ) : null}
         {retryMutation.isError ? (
           <Typography.Text type="danger" role="alert">

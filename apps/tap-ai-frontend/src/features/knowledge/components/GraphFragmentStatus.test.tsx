@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -25,13 +25,14 @@ function graphProject(
 }
 
 describe("GraphFragmentStatus", () => {
-  it("shows ready when the revision is not listed as a fragment", async () => {
+  it("shows an idle, non-asserting state when the revision is not listed as a fragment", async () => {
     const api = fakeKnowledgeClient().withGraphProject(graphProject());
-    renderKnowledgeApp(<GraphFragmentStatus revisionId="rev_ready" />, {
+    renderKnowledgeApp(<GraphFragmentStatus revisionId="rev_idle" />, {
       api,
     });
 
-    expect(await screen.findByText("就绪")).toBeVisible();
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("无进行中的抽取");
     expect(
       screen.queryByRole("button", { name: "重试失败批次" }),
     ).not.toBeInTheDocument();
@@ -43,7 +44,8 @@ describe("GraphFragmentStatus", () => {
     );
     renderKnowledgeApp(<GraphFragmentStatus revisionId="rev_x" />, { api });
 
-    expect(await screen.findByText("抽取中")).toBeVisible();
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("抽取中");
     expect(
       screen.queryByRole("button", { name: "重试失败批次" }),
     ).not.toBeInTheDocument();
@@ -55,15 +57,20 @@ describe("GraphFragmentStatus", () => {
     );
     renderKnowledgeApp(<GraphFragmentStatus revisionId="rev_x" />, { api });
 
-    expect(await screen.findByText("部分失败")).toBeVisible();
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("部分失败");
     await userEvent.click(screen.getByRole("button", { name: "重试失败批次" }));
 
     expect(api.graphRetryCalls).toHaveLength(1);
     expect(api.graphRetryCalls[0]?.revisionId).toBe("rev_x");
-    expect(await screen.findByText("已重新排队")).toBeVisible();
+    await waitFor(() => expect(status).toHaveTextContent("已重新排队"));
     expect(
       screen.queryByRole("button", { name: "重试失败批次" }),
     ).not.toBeInTheDocument();
+    // The retry button it was on is removed from the DOM, so focus must be
+    // moved deliberately to the (now updated) status region rather than
+    // falling back to `<body>`.
+    expect(status).toHaveFocus();
   });
 
   it("shows a localized error (not a version notice) when a retry is rejected as busy", async () => {
@@ -91,5 +98,30 @@ describe("GraphFragmentStatus", () => {
     expect(alert).toHaveTextContent("重试未完成，请稍后重试。");
     expect(alert.textContent).not.toMatch(/graph-job-busy|409/u);
     expect(screen.getByRole("button", { name: "重试失败批次" })).toBeVisible();
+  });
+
+  it("resets the queued confirmation when DocumentDetail keys the component to a new revision", async () => {
+    const api = fakeKnowledgeClient().withGraphProject(
+      graphProject({ partialRevisionIds: ["rev_a", "rev_b"] }),
+    );
+    const { rerender } = renderKnowledgeApp(
+      <GraphFragmentStatus key="rev_a" revisionId="rev_a" />,
+      { api },
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "重试失败批次" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent("已重新排队");
+
+    // Mirrors `DocumentDetail`'s `<GraphFragmentStatus key={revisionId} …>`:
+    // switching to a different document revision remounts the component,
+    // so the previous revision's queued confirmation must not leak into
+    // the new one.
+    rerender(<GraphFragmentStatus key="rev_b" revisionId="rev_b" />);
+
+    expect(
+      await screen.findByRole("button", { name: "重试失败批次" }),
+    ).toBeVisible();
+    expect(screen.queryByText("已重新排队")).not.toBeInTheDocument();
   });
 });

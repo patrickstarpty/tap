@@ -204,7 +204,10 @@ export function useSourceDetailQuery(
  * (`no-feature-to-feature`), so the key is duplicated here rather than
  * imported.
  */
-export function useGraphProjectQuery(projectId: string | null) {
+export function useGraphProjectQuery(
+  projectId: string | null,
+  { pollRevisionId }: { pollRevisionId?: string } = {},
+) {
   const client = useContext(KnowledgeClientContext);
   return useQuery({
     queryKey: ["graph", projectId, "project"],
@@ -221,6 +224,16 @@ export function useGraphProjectQuery(projectId: string | null) {
     },
     retry: false,
     staleTime: 0,
+    // Keep polling only while the caller's watched revision is still
+    // listed as extracting; stop as soon as it settles (ready, partial or
+    // dropped from the list), same interval as the ingestion-stage polls
+    // above.
+    refetchInterval: (query) =>
+      pollRevisionId !== undefined &&
+      (query.state.data?.extractingRevisionIds?.includes(pollRevisionId) ??
+        false)
+        ? POLL_INTERVAL_MS
+        : false,
   });
 }
 
