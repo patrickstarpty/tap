@@ -347,7 +347,7 @@ async def test_find_paths_with_empty_selection_returns_empty_without_store_calls
         (),
         allowed_source_revision_ids=frozenset(),
     )
-    assert paths == ()
+    assert paths.paths == ()
 
 
 @pytest.mark.asyncio
@@ -461,7 +461,7 @@ async def test_find_paths_bounds_hops_and_count() -> None:
         max_hops=1,
         path_limit=10,
     )
-    assert no_paths == ()
+    assert no_paths.paths == ()
 
     limited_paths = await find_paths(
         store,
@@ -495,6 +495,77 @@ async def test_find_paths_dedupes_unordered_seed_pairs() -> None:
     assert len(paths) == 1
 
 
+@pytest.mark.asyncio
+async def test_find_paths_returns_edges_and_evidence_from_every_explored_path() -> None:
+    """`PathExpansion.edges`/`.evidence` must carry every edge/evidence row
+    `store.path` returned along a found path -- including a middle edge
+    (e-bc) neither endpoint of the A->C path is itself -- so a caller can
+    merge path-only edges into its own ranking pool."""
+    store = _build_store()
+    expansion = await find_paths(
+        store,
+        _SCOPE,
+        1,
+        (_NODE_A, _NODE_C),
+        (),
+        allowed_source_revision_ids=frozenset({"rev-1"}),
+        max_hops=3,
+        path_limit=10,
+    )
+    assert expansion.paths[0].edge_ids == ("e-ab", "e-bc")
+    assert {edge.edge_id for edge in expansion.edges} == {"e-ab", "e-bc"}
+    assert {item.chunk_id for item in expansion.evidence} == {"chunk-1", "chunk-2"}
+
+
+class _CountingStore(FakeProjectGraphStore):
+    """Counts `path` calls so `find_paths`'s `max_attempts` cap can be proven
+    to bound the number of `store.path` round-trips, not just the number of
+    successfully-found paths."""
+
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(**kwargs)
+        self.path_calls = 0
+
+    async def path(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self.path_calls += 1
+        return await super().path(*args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_find_paths_bounds_attempts_independent_of_successes() -> None:
+    # 6 query seeds with no edges between them at all -- every one of the 15
+    # unordered pairs is a guaranteed-failed `store.path` attempt. Without a
+    # attempt cap, `find_paths` would try every pair before giving up.
+    lonely_nodes = tuple(
+        ProjectNode(
+            node_id=f"lonely-{index}",
+            label=f"节点 Lonely{index}",
+            node_type="ENTITY",
+            canonical_key=f"lonely-{index}",
+        )
+        for index in range(6)
+    )
+    store = _CountingStore(
+        nodes=lonely_nodes,
+        edges=(),
+        edge_evidence={},
+        node_chunks={},
+    )
+    expansion = await find_paths(
+        store,
+        _SCOPE,
+        1,
+        lonely_nodes,
+        (),
+        allowed_source_revision_ids=frozenset({"rev-1"}),
+        max_hops=3,
+        path_limit=10,
+        max_attempts=5,
+    )
+    assert expansion.paths == ()
+    assert store.path_calls == 5
+
+
 def test_rank_edges_prefers_path_edges_then_confidence_times_adjacency() -> None:
     subgraph = ProjectSubgraph(
         version=1,
@@ -509,6 +580,27 @@ def test_rank_edges_prefers_path_edges_then_confidence_times_adjacency() -> None
     ranked = rank_edges(subgraph, (path,), frozenset({"A", "C"}))
     assert [edge.edge_id for edge, _on_path in ranked] == ["e-ab", "e-bc", "e-ad", "e-cd"]
     assert [on_path for _edge, on_path in ranked] == [True, True, False, False]
+
+
+def test_rank_edges_merges_extra_edges_deduped_by_edge_id() -> None:
+    """`extra_edges` (e.g. `PathExpansion.edges`, path edges `expand()`'s
+    node/edge limits left outside the subgraph) must still be ranked, on_path
+    first, and must not be double-counted when the same edge also already
+    appears in `subgraph.edges`."""
+    subgraph = ProjectSubgraph(
+        version=1,
+        nodes=(_NODE_A, _NODE_B),
+        edges=(_EDGE_AB,),
+    )
+    path = RelationPath(
+        node_ids=("A", "B", "C"),
+        node_labels=("节点 A", "节点 B", "节点 C"),
+        edge_ids=("e-ab", "e-bc"),
+    )
+    ranked = rank_edges(subgraph, (path,), frozenset({"A", "C"}), extra_edges=(_EDGE_AB, _EDGE_BC))
+    assert [edge.edge_id for edge, _on_path in ranked] == ["e-ab", "e-bc"]
+    assert [on_path for _edge, on_path in ranked] == [True, True]
+    assert len(ranked) == 2
 
 
 def test_assemble_reuses_s_label_without_snippet() -> None:
@@ -530,6 +622,47 @@ def test_assemble_reuses_s_label_without_snippet() -> None:
     assert relations[0].support[0].snippet is None
     assert relations[1].support[0].snippet == "chunk nine content"[:300]
     assert relations[1].support[0].evidence_label is None
+
+
+def test_assemble_caps_snippet_only_supports_at_two_but_keeps_every_s_label() -> None:
+    """A single highly-evidenced edge must not blow up the per-relation
+    support budget: every S-labelled support is kept (cheap, already cited),
+    but fresh snippet-only supports are capped at two, S-labelled first."""
+    nodes_by_id = {"A": _NODE_A, "B": _NODE_B}
+    evidence_items = tuple(
+        _evidence("e-ab", f"chunk-snip-{index}", "rev-1") for index in range(5)
+    ) + (
+        _evidence("e-ab", "chunk-s1", "rev-1"),
+        _evidence("e-ab", "chunk-s2", "rev-1"),
+    )
+    ranked = ((_EDGE_AB, True, evidence_items),)
+    evidence_refs = (
+        EvidenceRef(
+            label="S1",
+            chunk_id="chunk-s1",
+            source_revision_id="rev-1",
+            document_revision_id="doc-1",
+        ),
+        EvidenceRef(
+            label="S2",
+            chunk_id="chunk-s2",
+            source_revision_id="rev-1",
+            document_revision_id="doc-1",
+        ),
+    )
+    snippets = {f"chunk-snip-{index}": f"content {index}" for index in range(5)}
+    relations = assemble(
+        ranked,
+        nodes_by_id,
+        evidence_refs,
+        snippets,
+        allowed_source_revision_ids=frozenset({"rev-1"}),
+    )
+    support = relations[0].support
+    s_labelled = [item for item in support if item.evidence_label is not None]
+    snippet_only = [item for item in support if item.evidence_label is None]
+    assert {item.evidence_label for item in s_labelled} == {"S1", "S2"}
+    assert len(snippet_only) == 2
 
 
 def test_assemble_drops_edges_without_resolvable_support_and_numbers_r_labels() -> None:
