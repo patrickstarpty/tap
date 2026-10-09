@@ -447,9 +447,9 @@ async def test_find_paths_bounds_hops_and_count() -> None:
         max_hops=3,
         path_limit=10,
     )
-    assert len(paths) == 1
-    assert paths[0].node_ids == ("A", "B", "C")
-    assert paths[0].edge_ids == ("e-ab", "e-bc")
+    assert len(paths.paths) == 1
+    assert paths.paths[0].node_ids == ("A", "B", "C")
+    assert paths.paths[0].edge_ids == ("e-ab", "e-bc")
 
     no_paths = await find_paths(
         store,
@@ -473,7 +473,59 @@ async def test_find_paths_bounds_hops_and_count() -> None:
         max_hops=3,
         path_limit=1,
     )
-    assert len(limited_paths) == 1
+    assert len(limited_paths.paths) == 1
+
+
+@pytest.mark.asyncio
+async def test_find_paths_tries_query_x_evidence_pairs_before_query_x_query_pairs() -> None:
+    """Fix round 2 Minor 1 regression test: with 7 query seeds (C(7, 2) = 21
+    query x query pairs -- already more than the default `max_attempts=20`
+    on its own) and 1 evidence seed connected to only one of them, the
+    query x evidence pair must still be attempted. Under the old
+    query x query-first ordering, the 20-attempt budget would be entirely
+    consumed by query x query pairs before the query x evidence pair was ever
+    tried, and this path would never be found."""
+    query_nodes = tuple(
+        ProjectNode(
+            node_id=f"q{index}",
+            label=f"节点 Q{index}",
+            node_type="ENTITY",
+            canonical_key=f"q{index}",
+        )
+        for index in range(1, 8)
+    )
+    evidence_node = ProjectNode(
+        node_id="ev", label="节点 EV", node_type="ENTITY", canonical_key="ev"
+    )
+    edge = ProjectEdge(
+        edge_id="e-q1-ev",
+        source_node_id="q1",
+        target_node_id="ev",
+        relation_type="RELATED_TO",
+        relation_label="RELATED_TO",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    store = FakeProjectGraphStore(
+        nodes=(*query_nodes, evidence_node),
+        edges=(edge,),
+        edge_evidence={"e-q1-ev": (_evidence("e-q1-ev", "chunk-q1-ev", "rev-1"),)},
+        node_chunks={},
+    )
+
+    expansion = await find_paths(
+        store,
+        _SCOPE,
+        1,
+        query_nodes,
+        (evidence_node,),
+        allowed_source_revision_ids=frozenset({"rev-1"}),
+        max_hops=3,
+        path_limit=10,
+        max_attempts=20,
+    )
+
+    assert any(path.node_ids == ("q1", "ev") for path in expansion.paths)
 
 
 @pytest.mark.asyncio
@@ -492,7 +544,7 @@ async def test_find_paths_dedupes_unordered_seed_pairs() -> None:
         max_hops=3,
         path_limit=10,
     )
-    assert len(paths) == 1
+    assert len(paths.paths) == 1
 
 
 @pytest.mark.asyncio

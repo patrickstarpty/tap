@@ -628,3 +628,184 @@ async def test_agent_keeps_flowchart_image_support_that_is_approved() -> None:
 
     assert result.status is RelationContextStatus.APPLIED
     assert result.relations
+
+
+@pytest.mark.asyncio
+async def test_agent_keeps_a_path_edge_whose_intermediate_node_is_cut_by_node_limit() -> None:
+    """Fix round 2 IMPORTANT 1 regression test: query seed q, 59 isolated
+    evidence seeds (one evidence chunk fanning out to e1..e59), and a path
+    q -> m -> e1 where m is *not* itself a seed. With 60 total seeds and the
+    default `node_limit=60`, `expand()`'s own subgraph keeps every seed node
+    but has no room left for m, so its own candidate_edges filter (both
+    endpoints must be selected) drops both q-m and m-e1 entirely -- `m` only
+    re-enters through `PathExpansion.nodes` (found by `find_paths`, merged
+    into the agent's `nodes_by_id`). Without that merge, `assemble()` would
+    drop both edges (their object/subject node would resolve to `None`), and
+    the path would never be kept (its edges are never assembled)."""
+    from tap.modules.graph.application.alias_index import AliasIndex
+    from tap.modules.graph.domain.models import RelationOrigin
+    from tap.modules.graph.domain.project import Alias, EdgeEvidence, ProjectEdge, ProjectNode
+
+    query_node = ProjectNode(node_id="q", label="节点 Q", node_type="ENTITY", canonical_key="q")
+    intermediate_node = ProjectNode(
+        node_id="m", label="节点 M", node_type="ENTITY", canonical_key="m"
+    )
+    evidence_nodes = tuple(
+        ProjectNode(
+            node_id=f"e{index}",
+            label=f"节点 E{index}",
+            node_type="ENTITY",
+            canonical_key=f"e{index}",
+        )
+        for index in range(1, 60)
+    )
+    edge_q_m = ProjectEdge(
+        edge_id="e-q-m",
+        source_node_id="q",
+        target_node_id="m",
+        relation_type="RELATED_TO",
+        relation_label="RELATED_TO",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    edge_m_e1 = ProjectEdge(
+        edge_id="e-m-e1",
+        source_node_id="m",
+        target_node_id="e1",
+        relation_type="RELATED_TO",
+        relation_label="RELATED_TO",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    edge_evidence = {
+        "e-q-m": (
+            EdgeEvidence(
+                edge_id="e-q-m",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                chunk_id="chunk-qm",
+                anchor={"page": 1},
+                content_digest="digest-qm",
+                fragment_snapshot_id="fragment-1",
+                fragment_edge_id="fe-qm",
+            ),
+        ),
+        "e-m-e1": (
+            EdgeEvidence(
+                edge_id="e-m-e1",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                chunk_id="chunk-me1",
+                anchor={"page": 1},
+                content_digest="digest-me1",
+                fragment_snapshot_id="fragment-1",
+                fragment_edge_id="fe-me1",
+            ),
+        ),
+    }
+    node_chunks = {"chunk-ev": tuple(f"e{index}" for index in range(1, 60))}
+    node_sources = {
+        "q": ("rev-1",),
+        "m": ("rev-1",),
+        **{f"e{index}": ("rev-1",) for index in range(1, 60)},
+    }
+
+    store = VersionedStore(
+        version=7,
+        nodes=(query_node, intermediate_node, *evidence_nodes),
+        edges=(edge_q_m, edge_m_e1),
+        edge_evidence=edge_evidence,
+        node_chunks=node_chunks,
+        node_sources=node_sources,
+    )
+    store._alias_index = AliasIndex.build((Alias(alias_norm="q", node_id="q", origin="LABEL"),))
+    agent = RelationAnalysisAgent(
+        store, FakeSnippets({"chunk-qm": "q 到 m 的片段", "chunk-me1": "m 到 e1 的片段"})
+    )
+
+    result = await agent.run(
+        _context(),
+        _input(
+            query="q",
+            evidence=(
+                EvidenceRef(
+                    label="S1",
+                    chunk_id="chunk-ev",
+                    source_revision_id="rev-1",
+                    document_revision_id="doc-1",
+                ),
+            ),
+        ),
+    )
+
+    assert result.status is RelationContextStatus.APPLIED
+    assembled_edge_ids = {relation.edge_id for relation in result.relations}
+    assert {"e-q-m", "e-m-e1"} <= assembled_edge_ids
+    assert len(result.paths) == 1
+    assert result.paths[0].node_ids == ("q", "m", "e1")
+
+
+@pytest.mark.asyncio
+async def test_agent_caps_non_s_snippet_refs_fetched_per_edge_at_two() -> None:
+    """Fix round 2 IMPORTANT 3 regression test: an edge with 5 fresh
+    (never-cited) evidence chunks must only ever have 2 of them actually
+    fetched for snippet text -- the cap must apply in `snippet_chunk_refs`
+    itself (which builds the refs `ChunkSnippetReader.snippets` is called
+    with), not only afterward in `_resolve_support`'s support-building."""
+    from tap.modules.graph.application.alias_index import AliasIndex
+    from tap.modules.graph.domain.models import RelationOrigin
+    from tap.modules.graph.domain.project import Alias, EdgeEvidence, ProjectEdge, ProjectNode
+
+    node_x = ProjectNode(node_id="x", label="节点 X", node_type="ENTITY", canonical_key="x")
+    node_y = ProjectNode(node_id="y", label="节点 Y", node_type="ENTITY", canonical_key="y")
+    edge = ProjectEdge(
+        edge_id="e-1",
+        source_node_id="x",
+        target_node_id="y",
+        relation_type="RELATED_TO",
+        relation_label="RELATED_TO",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    edge_evidence = {
+        "e-1": tuple(
+            EdgeEvidence(
+                edge_id="e-1",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                chunk_id=f"chunk-{index}",
+                anchor={"page": 1},
+                content_digest=f"digest-{index}",
+                fragment_snapshot_id="fragment-1",
+                fragment_edge_id=f"fe-{index}",
+            )
+            for index in range(5)
+        )
+    }
+    store = VersionedStore(
+        version=7,
+        nodes=(node_x, node_y),
+        edges=(edge,),
+        edge_evidence=edge_evidence,
+        node_chunks={"chunk-x": ("x",)},
+        node_sources={"x": ("rev-1",), "y": ("rev-1",)},
+    )
+    store._alias_index = AliasIndex.build((Alias(alias_norm="x", node_id="x", origin="LABEL"),))
+
+    class _RecordingSnippets(FakeSnippets):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.last_refs: tuple[tuple[str, str], ...] = ()
+
+        async def snippets(self, refs: tuple[tuple[str, str], ...]) -> Mapping[str, str]:
+            self.last_refs = refs
+            return await super().snippets(refs)
+
+    snippets = _RecordingSnippets({f"chunk-{index}": f"片段内容 {index}" for index in range(5)})
+    agent = RelationAnalysisAgent(store, snippets)
+
+    result = await agent.run(_context(), _input(query="x", evidence=()))
+
+    assert result.status is RelationContextStatus.APPLIED
+    assert len(snippets.last_refs) == 2
+    assert len(result.relations[0].support) == 2

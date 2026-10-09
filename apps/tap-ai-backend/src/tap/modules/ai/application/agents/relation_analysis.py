@@ -12,12 +12,15 @@ never raises.
 Caps against unbounded per-answer graph work: see `_MAX_EVIDENCE_SEED_REFS`
 and `_MAX_PATH_ATTEMPTS` below, and `_resolve_support`'s per-relation support
 cap in the pipeline module. There is deliberately no additional "resolve the
-graph once per run" step here: `ProjectGraphStorePort`'s backing
-implementation (`MysqlProjectGraphStore`) already loads and caches the whole
-project graph once per `(project_id, version)` in `ProjectGraphCache`
-(invalidated only on a version switch), so every `nodes`/`neighbors`/`path`/
-`match_aliases` call this run makes already reads the same in-process copy
-without a fresh store round-trip.
+graph once per run" step here: this agent pins one explicit `version` (see
+above) for every store call it makes after its initial `get_current`, and
+`MysqlProjectGraphStore._loaded` (the `ProjectGraphStorePort` implementation
+backing every `nodes`/`neighbors`/`path`/`match_aliases` call) returns the
+cached `LoadedProjectGraph` for an already-cached, explicitly pinned version
+without issuing a `get_current` MySQL `SELECT` first -- a READY version's
+rows are immutable once merged, so a cache hit for a pinned version is never
+stale, and this agent's own post-ranking `get_current` recheck (below) is
+what catches a version bump that happened mid-run.
 """
 
 from __future__ import annotations
@@ -250,7 +253,15 @@ class RelationAnalysisAgent:
                     )
                     for edge, on_path in ranked_pairs
                 )
+                # `path_expansion.nodes` covers path endpoints/intermediates
+                # that `expand()`'s node_limit cut left outside `subgraph`
+                # (same reason `extra_edges` above exists): without them, a
+                # path edge merged into `ranked` would still get dropped by
+                # `assemble()`, which looks up each edge's endpoints in
+                # `nodes_by_id` and skips the edge if either is missing.
                 nodes_by_id = {node.node_id: node for node in subgraph.nodes}
+                for node in path_expansion.nodes:
+                    nodes_by_id.setdefault(node.node_id, node)
                 refs = snippet_chunk_refs(
                     ranked, value.evidence, allowed_source_revision_ids=allowed
                 )
