@@ -454,7 +454,7 @@ export const WORKSPACE_COPY = {
       openOriginal: "Open original",
       askAboutNode: "Ask about this",
       showAllRelations: (n: number) => `Show all (${n})`,
-      relationCount: (n: number) => `${n} relations`,
+      relationCount: (n: number) => `${n} relation${n === 1 ? "" : "s"}`,
       relationIncoming: "Incoming",
       relationOutgoing: "Outgoing",
       highlightedPath: "Highlighted path",
@@ -475,12 +475,13 @@ export const WORKSPACE_COPY = {
       graphNavigationHint:
         "Drag to pan, use the controls to zoom, and select a node to inspect its relationships.",
       canvasRegionLabel: "Knowledge graph canvas",
-      overviewCaption:
-        "Project knowledge overview · nodes and relationships come from the service.",
+      overviewCaption: "Project knowledge overview",
       loadMore: "Load more",
       extractingSources: (n: number) =>
         `${n} source${n === 1 ? "" : "s"} still extracting`,
       partialSources: (n: number) => `${n} partially failed`,
+      sourceCapNotice: (n: number) =>
+        `Showing the graph for the first 50 of ${n} matching sources.`,
       graphEmpty: "No knowledge graph yet.",
       graphEmptyHint:
         "The graph is built automatically after sources are published.",

@@ -3086,9 +3086,7 @@ describe("Tap product workspace interactions", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
     );
-    expect(
-      screen.getByText(/nodes and relationships come from the service/i),
-    ).toBeVisible();
+    expect(screen.getByText(/Project knowledge overview/i)).toBeVisible();
     expect(
       screen.getByRole("button", { name: /Age eligibility/ }),
     ).toBeVisible();
