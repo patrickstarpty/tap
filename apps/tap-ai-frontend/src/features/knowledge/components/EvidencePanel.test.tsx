@@ -131,6 +131,40 @@ describe("EvidencePanel", () => {
     expect(onViewInLibrary).toHaveBeenCalledWith(["e1"], "2");
   });
 
+  it("caps the edge ids handed to the library at 20, the highlight state's own limit", async () => {
+    // `readGraphHighlight` (features/graph/model/highlight.ts) rejects a
+    // highlight state with more than 20 edge ids -- a turn whose answer
+    // cites more than that must still cap its "View in Library" request
+    // rather than build a state `pushGraphHighlight` would write but the
+    // reader would then immediately discard as invalid.
+    const edges = Array.from({ length: 25 }, (_, index) =>
+      edgeCitationFixture(`e${index}`, `e${index}`),
+    );
+    const onViewInLibrary = vi.fn();
+
+    renderKnowledgeApp(
+      <EvidencePanel
+        active={{ citation: edges[0]!, id: "e0" }}
+        turnEdgeCitations={edges}
+        locale="en"
+        onClose={() => undefined}
+        onViewInLibrary={onViewInLibrary}
+      />,
+      { api: fakeKnowledgeClient() },
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "View in Library" }),
+    );
+
+    expect(onViewInLibrary).toHaveBeenCalledTimes(1);
+    const [edgeIds] = onViewInLibrary.mock.calls[0]!;
+    expect(edgeIds).toHaveLength(20);
+    expect(edgeIds).toEqual(
+      edges.slice(0, 20).map((edge) => edge.edge!.edgeId),
+    );
+  });
+
   it("closes on Escape and returns focus to the opening chip", async () => {
     const edge1 = edgeCitationFixture("e1", "e1");
     const chip = document.createElement("button");

@@ -138,7 +138,11 @@ export function EvidencePanel({
       <Button
         onClick={() =>
           onViewInLibrary(
-            edges.map((citation) => citation.edge.edgeId),
+            // `readGraphHighlight` (features/graph/model/highlight.ts) rejects
+            // a highlight state with more than 20 edge ids, so this must cap
+            // at the same limit — the dedup above can still exceed it when
+            // the turn's answer cites more than 20 distinct edges.
+            edges.slice(0, 20).map((citation) => citation.edge.edgeId),
             active.citation.edge.graphVersion,
           )
         }
