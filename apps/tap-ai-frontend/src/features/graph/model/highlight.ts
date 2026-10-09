@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 /**
  * Carries a cited-path highlight (set by "View in Library" on an answer's
@@ -74,47 +74,68 @@ export function clearGraphHighlight(): void {
  * `tap:graph-highlight` event `pushGraphHighlight` dispatches). When
  * `projectId` is given, a highlight whose own `projectId` doesn't match is
  * ignored (reported as `null`) rather than shown against the wrong
- * project's graph. The returned `clear` callback both replaces the history
- * entry (so forward/back no longer restores the highlight) and updates
- * local state immediately — a `popstate` event is not dispatched by
+ * project's graph. That filter is applied during render, so the value
+ * returned always reflects the `projectId` passed in the same render — a
+ * caller never sees an unfiltered highlight for a render in which
+ * `projectId` has just resolved. A matching highlight keeps its identity
+ * across a `projectId` change. The returned `clear` callback both replaces
+ * the history entry (so forward/back no longer restores the highlight) and
+ * updates local state immediately — a `popstate` event is not dispatched by
  * `replaceState` itself.
  */
 export function useGraphHighlightState(
   projectId?: string | null,
 ): [GraphHighlightState | null, () => void] {
-  const [state, setState] = useState<GraphHighlightState | null>(() => {
-    const highlight = readGraphHighlight();
-    if (highlight === null) return null;
-    if (projectId != null && highlight.projectId !== projectId) return null;
-    return highlight;
-  });
+  const [highlight, setHighlight] = useState<GraphHighlightState | null>(
+    readGraphHighlight,
+  );
 
   useEffect(() => {
-    const sync = () => {
-      const highlight = readGraphHighlight();
-      if (highlight === null) {
-        setState(null);
-        return;
-      }
-      setState(
-        projectId != null && highlight.projectId !== projectId
-          ? null
-          : highlight,
-      );
-    };
-    sync();
+    const sync = () => setHighlight(readGraphHighlight());
+    // Catch anything pushed between the initial read and subscribing, but
+    // keep the current object when the entry is unchanged so its identity
+    // only changes for a genuinely new highlight.
+    setHighlight((current) => {
+      const latest = readGraphHighlight();
+      return sameHighlight(current, latest) ? current : latest;
+    });
     window.addEventListener("popstate", sync);
     window.addEventListener(GRAPH_HIGHLIGHT_EVENT, sync);
     return () => {
       window.removeEventListener("popstate", sync);
       window.removeEventListener(GRAPH_HIGHLIGHT_EVENT, sync);
     };
-  }, [projectId]);
+  }, []);
+
+  const visible = useMemo(
+    () =>
+      highlight !== null &&
+      projectId != null &&
+      highlight.projectId !== projectId
+        ? null
+        : highlight,
+    [highlight, projectId],
+  );
 
   const clear = useCallback(() => {
     clearGraphHighlight();
-    setState(null);
+    setHighlight(null);
   }, []);
 
-  return [state, clear];
+  return [visible, clear];
+}
+
+function sameHighlight(
+  a: GraphHighlightState | null,
+  b: GraphHighlightState | null,
+): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  return (
+    a.projectId === b.projectId &&
+    a.graphVersion === b.graphVersion &&
+    a.turnId === b.turnId &&
+    a.edgeIds.length === b.edgeIds.length &&
+    a.edgeIds.every((id, index) => id === b.edgeIds[index])
+  );
 }

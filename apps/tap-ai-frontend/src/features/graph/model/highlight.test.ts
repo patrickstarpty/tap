@@ -174,3 +174,49 @@ it("returns the highlight regardless of project when no projectId filter is give
 
   expect(result.current[0]).not.toBeNull();
 });
+
+it("filters by a projectId that resolves later in the same render it arrives", () => {
+  pushGraphHighlight({
+    edgeIds: ["e1"],
+    graphVersion: "2",
+    turnId: null,
+    projectId: "proj_2",
+  });
+  const seen: (GraphHighlightState | null)[] = [];
+  const { rerender } = renderHook(
+    ({ projectId }: { projectId: string | null }) => {
+      const [highlight] = useGraphHighlightState(projectId);
+      seen.push(highlight);
+      return highlight;
+    },
+    { initialProps: { projectId: null as string | null } },
+  );
+  expect(seen.at(-1)).not.toBeNull();
+
+  const before = seen.length;
+  rerender({ projectId: "proj_1" });
+
+  // Every render after the projectId arrives already reports the mismatch.
+  expect(seen.slice(before)).not.toHaveLength(0);
+  expect(seen.slice(before).every((value) => value === null)).toBe(true);
+});
+
+it("keeps a matching highlight's identity when the projectId resolves", () => {
+  pushGraphHighlight({
+    edgeIds: ["e1"],
+    graphVersion: "2",
+    turnId: null,
+    projectId: "proj_1",
+  });
+  const { result, rerender } = renderHook(
+    ({ projectId }: { projectId: string | null }) =>
+      useGraphHighlightState(projectId),
+    { initialProps: { projectId: null as string | null } },
+  );
+  const initial = result.current[0];
+  expect(initial).not.toBeNull();
+
+  rerender({ projectId: "proj_1" });
+
+  expect(result.current[0]).toBe(initial);
+});

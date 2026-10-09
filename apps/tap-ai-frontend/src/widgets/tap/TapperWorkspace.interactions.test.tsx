@@ -177,6 +177,51 @@ function renderWorkspace() {
   });
 }
 
+// Like `renderWorkspace`, but `["runtime-mode"]` is *not* seeded: the
+// runtime-mode query stays pending until `resolveRuntimeMode()` is called, so
+// `projectId` arrives asynchronously after mount — the real runtime path.
+function renderWorkspaceWithDeferredRuntime() {
+  const api = defaultKnowledgeClient();
+  const queryClient = createTestQueryClient();
+  seedAgentSkillCatalog(queryClient, api.projectId);
+  queryClient.setQueryData(["test-plans", api.projectId], []);
+  let resolveMode: () => void = () => undefined;
+  const mode = new Promise<{
+    mode: "validation";
+    identityMode: "validation";
+    projectId: string;
+    actorId: string;
+  }>((resolve) => {
+    resolveMode = () =>
+      resolve({
+        mode: "validation",
+        identityMode: "validation",
+        projectId: api.projectId,
+        actorId: "actor-test",
+      });
+  });
+  const view = renderKnowledgeApp(
+    <RuntimeClientProvider client={{ getMode: () => mode }}>
+      <TapperWorkspace />
+    </RuntimeClientProvider>,
+    { api, queryClient, seedRuntimeMode: false },
+  );
+  return {
+    ...view,
+    resolveRuntimeMode: async () => {
+      await act(async () => {
+        resolveMode();
+        await mode;
+      });
+      await waitFor(() =>
+        expect(
+          view.container.querySelector(".tap-product-shell--runtime-ready"),
+        ).not.toBeNull(),
+      );
+    },
+  };
+}
+
 const CONVERSATION_NOW = "2026-09-29T08:00:00Z";
 const INPUT_DIGEST = `sha256:${"7".repeat(64)}`;
 const EVIDENCE_DIGEST = `sha256:${"8".repeat(64)}`;
@@ -3169,6 +3214,151 @@ describe("Tap product workspace interactions", () => {
     } finally {
       window.history.replaceState(null, "", "/");
     }
+  });
+
+  describe("when the runtime project resolves asynchronously", () => {
+    function mockNonEmptyGraph() {
+      vi.mocked(useGraphProject).mockReturnValue({
+        data: {
+          graphVersion: 1,
+          status: "READY",
+          nodeCount: 1,
+          edgeCount: 0,
+          mergedAt: "2026-01-01T00:00:00Z",
+          communities: [
+            { communityId: "underwriting", label: "Underwriting", size: 1 },
+          ],
+          extractingRevisionIds: [],
+          partialRevisionIds: [],
+        },
+        isPending: false,
+        isError: false,
+        isSuccess: true,
+      } as never);
+      vi.mocked(useGraphOverview).mockImplementation(
+        () =>
+          ({
+            data: {
+              graphVersion: 1,
+              nodes: [
+                {
+                  nodeId: "age",
+                  nodeType: "CONCEPT",
+                  label: "Age eligibility",
+                  canonicalKey: "age",
+                  degree: 1,
+                  communityId: "underwriting",
+                  aliases: [],
+                },
+              ],
+              edges: [],
+              evidence: [],
+            },
+            isPending: false,
+            isError: false,
+          }) as never,
+      );
+    }
+
+    function expectActiveModule(name: string) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    }
+
+    afterEach(() => {
+      window.history.replaceState(null, "", "/");
+    });
+
+    it("falls back to the default module once a mismatched highlight is screened out", async () => {
+      pushGraphHighlight({
+        edgeIds: ["edge-1"],
+        graphVersion: "1",
+        turnId: null,
+        projectId: "a-different-project",
+      });
+      const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+      // Optimistic guess before `projectId` is known.
+      expectActiveModule("Library");
+
+      await resolveRuntimeMode();
+
+      // "Tapper" stays current for any Tapper sub-module (Library included),
+      // so the default module is asserted through "New chat".
+      await waitFor(() => expectActiveModule("New chat"));
+      expect(
+        screen.getByRole("button", { name: "Library" }),
+      ).not.toHaveAttribute("aria-current");
+    });
+
+    it("stays on Library once a matching highlight is confirmed", async () => {
+      mockNonEmptyGraph();
+      pushGraphHighlight({
+        edgeIds: ["edge-1"],
+        graphVersion: "1",
+        turnId: null,
+        projectId: "project-test",
+      });
+      const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+      expectActiveModule("Library");
+
+      await resolveRuntimeMode();
+
+      expect(
+        await screen.findByRole("button", { name: "Back to overview" }),
+      ).toBeVisible();
+      expectActiveModule("Library");
+    });
+
+    it("stays on Library when a confirmed matching highlight is later cleared", async () => {
+      const user = userEvent.setup();
+      mockNonEmptyGraph();
+      pushGraphHighlight({
+        edgeIds: ["edge-1"],
+        graphVersion: "1",
+        turnId: null,
+        projectId: "project-test",
+      });
+      const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+      await resolveRuntimeMode();
+
+      await user.click(
+        await screen.findByRole("button", { name: "Back to overview" }),
+      );
+
+      expectActiveModule("Library");
+      expect(
+        screen.queryByRole("button", { name: "Back to overview" }),
+      ).toBeNull();
+    });
+
+    it.each([
+      ["a matching", "project-test"],
+      ["a mismatched", "a-different-project"],
+    ])(
+      "does not override a module the user chose before %s highlight resolves",
+      async (_label, highlightProjectId) => {
+        const user = userEvent.setup();
+        mockNonEmptyGraph();
+        pushGraphHighlight({
+          edgeIds: ["edge-1"],
+          graphVersion: "1",
+          turnId: null,
+          projectId: highlightProjectId,
+        });
+        const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+        expectActiveModule("Library");
+        await user.click(
+          screen.getByRole("button", { name: "Test Management" }),
+        );
+        expectActiveModule("Test Management");
+
+        await resolveRuntimeMode();
+
+        expectActiveModule("Test Management");
+      },
+    );
   });
 
   it("returns focus to the 'Open original' button after closing the opened source", async () => {

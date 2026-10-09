@@ -982,41 +982,34 @@ export function TapperWorkspace() {
   });
   const [graphHighlight, clearGraphHighlight] =
     useGraphHighlightState(projectId);
-  // A highlight that resolves or arrives after mount (the async filter
-  // above settling, a same-tab push, or a popstate/forward-back
-  // navigation) must switch to the Library module too — mirrors
-  // `LibraryWorkspace`'s own effect that switches its internal tab.
-  //
-  // The second block *settles* the optimistic guess above, exactly once,
-  // as soon as `projectId` is actually known (hence it's in this effect's
-  // deps) — before that, `graphHighlight` reading `null` could just mean
-  // "not resolved yet", not "this highlight is for a different project".
-  // `optimisticLibraryGuessRef` doubles as its own one-shot latch: it's
-  // reset to `false` here in *both* cases (matched or mismatched), not
-  // only the mismatch branch — the original bug was leaving it `true`
-  // forever on a match, so a later, legitimate `clearGraphHighlight()` (or
-  // navigating back past a matching highlight) re-read the still-`true`
-  // ref as "the guess was wrong" and kicked the user out of Library. The
-  // undo-the-guess fallback itself only applies when `graphHighlight` is
-  // `null` *at this first settle* (a genuine mismatch) — once settled, a
-  // highlight that matched is never revisited here again.
+  // A highlight that arrives after mount (a same-tab push or a
+  // popstate/forward-back navigation) switches to the Library module too —
+  // mirrors `LibraryWorkspace`'s own effect that switches its internal tab.
+  // Keyed on the highlight alone: `useGraphHighlightState` filters by
+  // `projectId` during render and keeps a matching highlight's identity, so
+  // `projectId` resolving never re-fires this and never overrides a module
+  // the user picked while it was pending.
   useEffect(() => {
-    if (graphHighlight !== null) {
-      setActiveModule("library");
-    }
-    if (projectId !== null && optimisticLibraryGuessRef.current) {
-      const wasMismatch = graphHighlight === null;
-      optimisticLibraryGuessRef.current = false;
-      if (wasMismatch) {
-        setActiveModule((current) =>
-          current === "library"
-            ? durableTestPlanPath() !== null
-              ? "test-management"
-              : "tapper"
-            : current,
-        );
-      }
-    }
+    if (graphHighlight !== null) setActiveModule("library");
+  }, [graphHighlight]);
+  // Settles the optimistic guess above exactly once, as soon as `projectId`
+  // is known. Because the hook's filter is synchronous, `graphHighlight`
+  // already reflects the resolved project in that render: `null` means the
+  // highlight was for another project (undo the guess, unless the user has
+  // since left Library), non-null means it matched (keep Library). Either
+  // way the ref is cleared, so a later `clearGraphHighlight()` or
+  // back/forward past the highlight is never misread as a wrong guess.
+  useEffect(() => {
+    if (projectId === null || !optimisticLibraryGuessRef.current) return;
+    optimisticLibraryGuessRef.current = false;
+    if (graphHighlight !== null) return;
+    setActiveModule((current) =>
+      current === "library"
+        ? durableTestPlanPath() !== null
+          ? "test-management"
+          : "tapper"
+        : current,
+    );
   }, [graphHighlight, projectId]);
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
