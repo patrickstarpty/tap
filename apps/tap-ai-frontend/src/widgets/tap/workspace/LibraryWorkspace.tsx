@@ -35,6 +35,10 @@ import { KnowledgeGraph } from "./KnowledgeGraph";
 import type { LibrarySource } from "./model";
 
 type LibraryMode = "list" | "graph";
+
+// Backend `knowledge_graph.py`'s `sourceRevisionId` query param is capped at
+// `max_length=50` on the overview/search/neighbors endpoints.
+const MAX_GRAPH_SOURCE_REVISIONS = 50;
 type LibraryStatusFilter = "all" | LibrarySource["status"];
 
 export interface PublishedSourceRevision {
@@ -149,6 +153,16 @@ export function LibraryWorkspace({
     () => publishedRevisionIdsOf(facetSources, publishedSources),
     [facetSources, publishedSources],
   );
+  // The backend's overview/search/neighbors endpoints reject more than 50
+  // `sourceRevisionId` query params (422) -- a facet that matches more than
+  // that is capped to the first 50 here, with a notice shown below so the
+  // graph's scope doesn't silently shrink without explanation.
+  const sourceRevisionIdsOverLimit =
+    sourceFilterActive &&
+    graphSourceRevisionIds.length > MAX_GRAPH_SOURCE_REVISIONS;
+  const cappedGraphSourceRevisionIds = sourceRevisionIdsOverLimit
+    ? graphSourceRevisionIds.slice(0, MAX_GRAPH_SOURCE_REVISIONS)
+    : graphSourceRevisionIds;
   const sourceScope: GraphSourceScope =
     publishedSourcesLoading || loadState === "loading"
       ? { status: "loading" }
@@ -156,7 +170,20 @@ export function LibraryWorkspace({
         ? { status: "unavailable" }
         : sourceFilterActive && graphSourceRevisionIds.length === 0
           ? { status: "no-match" }
-          : { status: "ready", sourceRevisionIds: graphSourceRevisionIds };
+          : {
+              status: "ready",
+              // No facet active: send an empty array, which the backend
+              // treats as "no filter" (the whole project graph) -- sending
+              // every published source id instead would 422 once a project
+              // has more than 50 published sources, even though the user
+              // narrowed nothing. `GraphOverview` relies on this same
+              // emptiness to tell "unfiltered" apart from "filtered, but the
+              // capped/matched set happens to be empty" (the latter is
+              // always routed to `no-match` above, never `ready`).
+              sourceRevisionIds: sourceFilterActive
+                ? cappedGraphSourceRevisionIds
+                : [],
+            };
 
   const selectMode = (nextMode: LibraryMode) => {
     setMode(nextMode);
@@ -447,19 +474,26 @@ export function LibraryWorkspace({
               {locale === "zh" ? "未选择项目。" : "No project is selected."}
             </p>
           ) : (
-            <GraphOverview
-              projectId={graphProjectId}
-              locale={locale}
-              copy={copy}
-              query={query}
-              sourceScope={sourceScope}
-              publishedSources={publishedSources}
-              onAskAboutNode={onAskAboutNode}
-              onOpenSource={onOpenSource}
-              highlight={graphHighlight}
-              onClearHighlight={onClearGraphHighlight}
-              Canvas={KnowledgeGraph}
-            />
+            <>
+              {sourceRevisionIdsOverLimit ? (
+                <p role="status">
+                  {copy.library.sourceCapNotice(graphSourceRevisionIds.length)}
+                </p>
+              ) : null}
+              <GraphOverview
+                projectId={graphProjectId}
+                locale={locale}
+                copy={copy}
+                query={query}
+                sourceScope={sourceScope}
+                publishedSources={publishedSources}
+                onAskAboutNode={onAskAboutNode}
+                onOpenSource={onOpenSource}
+                highlight={graphHighlight}
+                onClearHighlight={onClearGraphHighlight}
+                Canvas={KnowledgeGraph}
+              />
+            </>
           )}
         </div>
       )}

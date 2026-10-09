@@ -216,6 +216,7 @@ export interface WorkspaceCopy {
     loadMore: string;
     extractingSources(n: number): string;
     partialSources(n: number): string;
+    sourceCapNotice(n: number): string;
     graphEmpty: string;
     graphEmptyHint: string;
     graphMerging: string;
@@ -728,10 +729,12 @@ export const WORKSPACE_COPY = {
       inferred: "推断",
       graphNavigationHint: "拖动以平移画布，使用控件缩放，并选择节点查看关系。",
       canvasRegionLabel: "知识图谱画布",
-      overviewCaption: "项目知识总览 · 节点与关系来自服务。",
+      overviewCaption: "项目知识总览",
       loadMore: "加载更多",
       extractingSources: (n: number) => `${n} 个来源仍在抽取`,
       partialSources: (n: number) => `${n} 个部分失败`,
+      sourceCapNotice: (n: number) =>
+        `已匹配 ${n} 个来源，图谱仅显示前 50 个。`,
       graphEmpty: "暂无知识图谱。",
       graphEmptyHint: "来源发布后会自动建图。",
       graphMerging: "图谱正在重建…",

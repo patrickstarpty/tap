@@ -347,12 +347,24 @@ export function GraphOverview({
     );
   };
 
-  const extractingCount = sourceRevisionIds.filter((id) =>
-    (project?.extractingRevisionIds ?? []).includes(id),
-  ).length;
-  const partialCount = sourceRevisionIds.filter((id) =>
-    (project?.partialRevisionIds ?? []).includes(id),
-  ).length;
+  // An empty `sourceRevisionIds` always means "no source facet is active"
+  // here (`LibraryWorkspace`'s `sourceScope` only ever reaches `ready` with
+  // an empty array in that case — a facet that matches zero published
+  // sources is reported as `no-match` instead, never `ready`), so the
+  // footer counts the project's own extracting/partial lists directly
+  // rather than intersecting them with `sourceRevisionIds`, which would
+  // otherwise always read as zero.
+  const unfilteredSourceScope = sourceRevisionIds.length === 0;
+  const extractingCount = unfilteredSourceScope
+    ? (project?.extractingRevisionIds ?? []).length
+    : sourceRevisionIds.filter((id) =>
+        (project?.extractingRevisionIds ?? []).includes(id),
+      ).length;
+  const partialCount = unfilteredSourceScope
+    ? (project?.partialRevisionIds ?? []).length
+    : sourceRevisionIds.filter((id) =>
+        (project?.partialRevisionIds ?? []).includes(id),
+      ).length;
   const communitiesFooter = {
     extracting: extractingCount,
     partial: partialCount,

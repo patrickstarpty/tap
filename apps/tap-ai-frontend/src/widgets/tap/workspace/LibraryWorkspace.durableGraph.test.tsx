@@ -553,10 +553,67 @@ it("keeps the graph scoped to type/status facets, not the free-text search box",
   );
   await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
+  // No type/status facet is active, so the scope is unfiltered -- sent as
+  // an empty array (the backend's "no filter" / whole-project meaning),
+  // not every published source id (see `MAX_GRAPH_SOURCE_REVISIONS`: a
+  // project with more than 50 published sources would otherwise 422).
   const lastCall = vi.mocked(useGraphOverview).mock.calls.at(-1);
   expect(lastCall?.[2]).toMatchObject({
-    sourceRevisionIds: ["rev_src_a", "rev_src_b"],
+    sourceRevisionIds: [],
   });
+});
+
+it("sends an empty sourceRevisionIds (whole-project scope) when no source facet is active", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  const lastCall = vi.mocked(useGraphOverview).mock.calls.at(-1);
+  expect(lastCall?.[2]).toMatchObject({ sourceRevisionIds: [] });
+});
+
+it("caps a source facet matching more than 50 sources and shows a notice", async () => {
+  const project = buildProject();
+  const sources = Array.from({ length: 60 }, (_, index) => ({
+    id: `src_${index}`,
+    name: `Source ${index}`,
+    type: "Markdown",
+    status: "ready" as const,
+    origin: "knowledge-base" as const,
+    description: "",
+  }));
+  const publishedSources = sources.map((source) => ({
+    sourceId: source.id,
+    revisionId: `rev_${source.id}`,
+  }));
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    sources,
+    publishedSources,
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Documents" }));
+  await userEvent.selectOptions(
+    screen.getByRole("combobox", { name: "Status" }),
+    "ready",
+  );
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  const lastCall = vi.mocked(useGraphOverview).mock.calls.at(-1);
+  const sentIds = (
+    lastCall?.[2] as { sourceRevisionIds: readonly string[] } | undefined
+  )?.sourceRevisionIds;
+  expect(sentIds).toHaveLength(50);
+  expect(
+    screen.getByText(
+      "Showing the graph for the first 50 of 60 matching sources.",
+    ),
+  ).toBeVisible();
 });
 
 it("renders localized node type labels in the Chinese search results", async () => {
