@@ -185,24 +185,59 @@ export function KnowledgeGraph({
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
   const highlightActive = highlight != null;
 
-  // Fit the viewport to the highlighted path once per highlight (not on
-  // every render) — keyed off a content signature rather than the
-  // `highlight` object's own identity, since the caller recomputes a new
-  // `nodeIds`/`edgeIds` Set on most renders even when the highlighted set
-  // itself hasn't actually changed.
+  // Fit the viewport to the highlighted path — keyed off content
+  // signatures (not object identity, since the caller recomputes a new
+  // `nodeIds`/`edgeIds` Set and `nodes` array on most renders even when
+  // nothing relevant actually changed) for both *which* nodes are
+  // highlighted and *where* they currently sit: the seeded fallback layout
+  // (`useGraphLayout`'s `seededFallback`) is immediately available but
+  // provisional, and gets replaced by the force-layout worker's refined
+  // positions a little later for whichever nodes it has resolved — a fit
+  // computed from the provisional positions must be redone once the real
+  // ones land, or the "highlighted path" can end up off-center or cropped.
+  // That re-fit is skipped once the user has manually panned or zoomed
+  // since the current highlight was applied (`interactionRef`) — a later
+  // position update must not yank the view back out from under them.
   const highlightSignature = highlight
     ? [...highlight.nodeIds].sort().join(",")
     : null;
+  const highlightPositionsSignature = highlight
+    ? nodes
+        .filter((node) => highlight.nodeIds.has(node.id))
+        .map((node) => `${node.id}:${node.x.toFixed(1)}:${node.y.toFixed(1)}`)
+        .sort()
+        .join(",")
+    : null;
+  const interactionRef = useRef<{
+    signature: string | null;
+    interacted: boolean;
+  }>({ signature: null, interacted: false });
+  const markViewInteraction = () => {
+    if (interactionRef.current.signature === highlightSignature) {
+      interactionRef.current.interacted = true;
+    }
+  };
   useEffect(() => {
-    if (highlightSignature === null || highlight == null) return;
+    if (highlightSignature === null || highlight == null) {
+      interactionRef.current = { signature: null, interacted: false };
+      return;
+    }
+    if (interactionRef.current.signature !== highlightSignature) {
+      interactionRef.current = {
+        signature: highlightSignature,
+        interacted: false,
+      };
+    }
+    if (interactionRef.current.interacted) return;
     const fit = fitToNodes(nodes, highlight.nodeIds);
     if (fit === null) return;
     setZoom(fit.zoom);
     setPan(fit.pan);
     // `nodes`/`highlight` are intentionally excluded: this must run only
-    // when the highlighted set itself changes (`highlightSignature`), not
-    // on every re-render that passes a new-but-equal object/array.
-  }, [highlightSignature]);
+    // when the highlighted set or its resolved positions change
+    // (`highlightSignature`/`highlightPositionsSignature`), not on every
+    // re-render that passes a new-but-equal object/array.
+  }, [highlightSignature, highlightPositionsSignature]);
 
   const visibleNodes = useMemo(
     () => nodes.filter((node) => activeCommunities.has(node.community)),
@@ -262,6 +297,7 @@ export function KnowledgeGraph({
     if (event.button !== 0) return;
     const target = event.target as Element;
     if (target.closest('[role="button"]') !== null) return;
+    markViewInteraction();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     dragRef.current = {
       pointerId: event.pointerId,
@@ -287,6 +323,7 @@ export function KnowledgeGraph({
     setDragging(false);
   };
   const resetView = () => {
+    markViewInteraction();
     setZoom(1);
     setPan({ x: 0, y: 0 });
   };
@@ -381,9 +418,10 @@ export function KnowledgeGraph({
               type="button"
               aria-label={copy.library.zoomOut}
               disabled={zoom <= MIN_ZOOM}
-              onClick={() =>
-                setZoom((current) => Math.max(MIN_ZOOM, current - 0.25))
-              }
+              onClick={() => {
+                markViewInteraction();
+                setZoom((current) => Math.max(MIN_ZOOM, current - 0.25));
+              }}
             >
               <MinusOutlined aria-hidden="true" />
             </button>
@@ -394,9 +432,10 @@ export function KnowledgeGraph({
               type="button"
               aria-label={copy.library.zoomIn}
               disabled={zoom >= MAX_ZOOM}
-              onClick={() =>
-                setZoom((current) => Math.min(MAX_ZOOM, current + 0.25))
-              }
+              onClick={() => {
+                markViewInteraction();
+                setZoom((current) => Math.min(MAX_ZOOM, current + 0.25));
+              }}
             >
               <PlusOutlined aria-hidden="true" />
             </button>
@@ -435,17 +474,22 @@ export function KnowledgeGraph({
                   if (!source || !target) return null;
                   const middleX = (source.x + target.x) / 2;
                   const middleY = (source.y + target.y) / 2;
+                  const highlightedEdge =
+                    highlight?.edgeIds.has(edge.id) ?? false;
                   const active =
                     focusedNodeId === edge.source ||
                     focusedNodeId === edge.target ||
-                    (highlight?.edgeIds.has(edge.id) ?? false);
+                    highlightedEdge;
                   const showLabel = active || zoom >= EDGE_LABEL_ZOOM;
+                  const muted = highlightActive
+                    ? !highlightedEdge
+                    : Boolean(focusedNodeId) && !active;
                   return (
                     <g
                       key={edge.id}
                       className="tap-graph-edge"
                       data-active={active}
-                      data-muted={Boolean(focusedNodeId) && !active}
+                      data-muted={muted}
                       style={
                         { "--tap-edge-color": target.color } as CSSProperties
                       }

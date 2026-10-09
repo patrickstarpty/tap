@@ -46,6 +46,9 @@ function queryResult<T>(
     isSuccess: boolean;
     isFetching: boolean;
     error: unknown;
+    dataUpdatedAt: number;
+    errorUpdatedAt: number;
+    refetch: () => void;
   }> = {},
 ) {
   return {
@@ -55,6 +58,9 @@ function queryResult<T>(
     isSuccess: overrides.isSuccess ?? data !== undefined,
     isFetching: overrides.isFetching ?? false,
     error: overrides.error,
+    dataUpdatedAt: overrides.dataUpdatedAt ?? 0,
+    errorUpdatedAt: overrides.errorUpdatedAt ?? 0,
+    refetch: overrides.refetch ?? vi.fn(),
   } as never;
 }
 
@@ -102,12 +108,15 @@ function renderLibrary(overrides: {
   project?: GraphProject | null;
   projectPending?: boolean;
   projectError?: boolean;
-  // Mirrors `useGraphVersionGuard`'s `refetchQueries` call for `GET
-  // /project` still being in flight — `GraphOverview` reads this (as
-  // `!projectQuery.isFetching`) to decide whether a lingering version
-  // conflict on the node query is still "waiting for the fresh version" or
-  // has settled and should surface as an error instead of loading forever.
-  projectFetching?: boolean;
+  // `GraphOverview` reads this (`projectQuery.dataUpdatedAt`) against the
+  // node query's own `errorUpdatedAt` to decide whether a lingering
+  // version conflict is still "waiting for the project's refetch" or has
+  // settled (the project updated *after* the conflict, which persists
+  // anyway) and should surface as an error instead of loading forever.
+  // Defaults to `0`, i.e. "never updated" — older than any conflict a test
+  // gives an explicit `errorUpdatedAt` for, so the conflict reads as
+  // unsettled/loading unless a test raises this above that value.
+  projectDataUpdatedAt?: number;
   overview?: GraphSubgraph;
   search?: GraphSubgraph;
   locale?: "en" | "zh";
@@ -125,12 +134,15 @@ function renderLibrary(overrides: {
   highlight?: GraphHighlightState | null;
   onClearGraphHighlight?: () => void;
   highlightResponse?: GraphSubgraph;
+  highlightPending?: boolean;
+  highlightError?: boolean;
+  highlightRefetch?: () => void;
 }) {
   vi.mocked(useGraphProject).mockReturnValue(
     queryResult(overrides.project ?? undefined, {
       isPending: overrides.projectPending ?? false,
       isError: overrides.projectError ?? false,
-      isFetching: overrides.projectFetching ?? false,
+      dataUpdatedAt: overrides.projectDataUpdatedAt ?? 0,
     }),
   );
   vi.mocked(useGraphOverview).mockImplementation(() =>
@@ -145,7 +157,11 @@ function renderLibrary(overrides: {
     vi.mocked(useGraphNode).mockReturnValue(queryResult(undefined));
   }
   vi.mocked(useGraphHighlight).mockReturnValue(
-    queryResult(overrides.highlightResponse),
+    queryResult(overrides.highlightResponse, {
+      isPending: overrides.highlightPending ?? false,
+      isError: overrides.highlightError ?? false,
+      refetch: overrides.highlightRefetch,
+    }),
   );
 
   const copy = WORKSPACE_COPY[overrides.locale ?? "en"];
@@ -646,17 +662,18 @@ it("refetches the project without showing an error when a node 409s on a stale v
   renderLibrary({
     project,
     overview: buildOverview(buildNodes(1, "underwriting")),
-    // The guard's own `GET /project` refetch (asserted via `refetchSpy`
-    // below) is still in flight at this point — `projectFetching: true`
-    // mirrors that so the node query's conflict reads as "still loading",
-    // not a settled, stuck conflict.
-    projectFetching: true,
+    // The project's own last update (default `dataUpdatedAt: 0`, see
+    // `renderLibrary`) predates this conflict's `errorUpdatedAt: 1000` —
+    // i.e. the guard's `GET /project` refetch (asserted via `refetchSpy`
+    // below) has not resolved since the conflict began, so the node query
+    // reads as "still loading", not a settled, stuck conflict.
     nodeImplementation: ((_projectId, _graphVersion, nodeId) =>
       nodeId === null
         ? queryResult(undefined)
         : queryResult(undefined, {
             isError: true,
             error: new GraphVersionConflictError(),
+            errorUpdatedAt: 1000,
           })) as Parameters<typeof renderLibrary>[0]["nodeImplementation"],
     queryClient,
   });
@@ -724,6 +741,7 @@ const HIGHLIGHT_STATE: GraphHighlightState = {
   edgeIds: ["e1", "e2"],
   graphVersion: "1",
   turnId: "turn_1",
+  projectId: "tapper-demo",
 };
 
 it("highlights cited edges, dims the rest and lists the path as text", async () => {
@@ -784,6 +802,56 @@ it("renders a version-updated notice when highlight omits requested edges", asyn
   ).toHaveAttribute("data-highlighted", "true");
 });
 
+it("shows a loading state, not the version-updated notice, while the highlight request is pending", async () => {
+  const project = buildProject();
+  renderLibrary({
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: HIGHLIGHT_STATE,
+    highlightPending: true,
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(screen.getByText("Loading the highlighted path…")).toBeVisible();
+  expect(
+    screen.queryByText(
+      "The graph has been updated; some relations are no longer available.",
+    ),
+  ).not.toBeInTheDocument();
+  // No node is dimmed while the highlight is still pending — the canvas
+  // must not read "pending" as "no edges matched".
+  expect(
+    screen.queryByRole("button", { name: /Other node/ }),
+  ).not.toHaveAttribute("data-dimmed", "true");
+});
+
+it("shows an error with a working retry, not the version-updated notice, when the highlight request fails", async () => {
+  const project = buildProject();
+  const highlightRefetch = vi.fn();
+  renderLibrary({
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: HIGHLIGHT_STATE,
+    highlightError: true,
+    highlightRefetch,
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(
+    screen.getByText("The highlighted path is temporarily unavailable."),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(
+      "The graph has been updated; some relations are no longer available.",
+    ),
+  ).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Retry loading" }));
+  expect(highlightRefetch).toHaveBeenCalled();
+});
+
 it("fits the viewport to the highlighted nodes", async () => {
   const project = buildProject();
   renderLibrary({
@@ -825,37 +893,45 @@ it("calls back to clear the highlight from the Highlighted path region", async (
   expect(onClearGraphHighlight).toHaveBeenCalled();
 });
 
-it("returns focus to the canvas region, not the document body, when the node detail panel closes on a graph version change", async () => {
+function nodeDetailImplementation(): ReturnType<typeof queryResult> {
+  return queryResult({
+    graphVersion: 1,
+    node: {
+      nodeId: "n0",
+      label: "n0",
+      nodeType: "CONCEPT",
+      canonicalKey: "n0",
+      degree: 1,
+      communityId: "underwriting",
+      aliases: [],
+    },
+    community: {
+      communityId: "underwriting",
+      label: "Underwriting",
+      size: 5,
+    },
+    sources: [],
+    relations: [],
+    neighbors: [],
+  });
+}
+
+it("returns focus to the canvas region, not the document body, when the node detail panel closes on a graph version change and focus was inside it", async () => {
   const project = buildProject({ graphVersion: 1 });
   const { rerenderSame } = renderLibrary({
     project,
     overview: buildOverview(buildNodes(1, "underwriting")),
-    nodeImplementation: (() =>
-      queryResult({
-        graphVersion: 1,
-        node: {
-          nodeId: "n0",
-          label: "n0",
-          nodeType: "CONCEPT",
-          canonicalKey: "n0",
-          degree: 1,
-          communityId: "underwriting",
-          aliases: [],
-        },
-        community: {
-          communityId: "underwriting",
-          label: "Underwriting",
-          size: 5,
-        },
-        sources: [],
-        relations: [],
-        neighbors: [],
-      })) as Parameters<typeof renderLibrary>[0]["nodeImplementation"],
+    nodeImplementation: nodeDetailImplementation as Parameters<
+      typeof renderLibrary
+    >[0]["nodeImplementation"],
   });
 
   await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
   await userEvent.click(screen.getByRole("button", { name: /n0/ }));
   expect(screen.getByRole("heading", { name: "n0", level: 3 })).toBeVisible();
+  // Focus is inside the now-open panel (its own "Close node details"
+  // button), not on the canvas node button that was clicked to open it.
+  screen.getByRole("button", { name: "Close node details" }).focus();
 
   vi.mocked(useGraphProject).mockReturnValue(
     queryResult(buildProject({ graphVersion: 2 }), {}),
@@ -867,8 +943,37 @@ it("returns focus to the canvas region, not the document body, when the node det
   ).not.toBeInTheDocument();
   expect(document.body).not.toHaveFocus();
   expect(
-    screen.getByRole("region", {
-      name: "Drag to pan, use the controls to zoom, and select a node to inspect its relationships.",
-    }),
+    screen.getByRole("region", { name: "Knowledge graph canvas" }),
   ).toHaveFocus();
+});
+
+it("leaves focus in place on a graph version change when focus was outside the node detail panel (e.g. the search box)", async () => {
+  const project = buildProject({ graphVersion: 1 });
+  const { rerenderSame } = renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    nodeImplementation: nodeDetailImplementation as Parameters<
+      typeof renderLibrary
+    >[0]["nodeImplementation"],
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(screen.getByRole("button", { name: /n0/ }));
+  expect(screen.getByRole("heading", { name: "n0", level: 3 })).toBeVisible();
+  const searchBox = screen.getByRole("textbox", { name: "Search library" });
+  searchBox.focus();
+  expect(searchBox).toHaveFocus();
+
+  vi.mocked(useGraphProject).mockReturnValue(
+    queryResult(buildProject({ graphVersion: 2 }), {}),
+  );
+  rerenderSame();
+
+  expect(
+    screen.queryByRole("heading", { name: "n0", level: 3 }),
+  ).not.toBeInTheDocument();
+  expect(searchBox).toHaveFocus();
+  expect(
+    screen.queryByRole("region", { name: "Knowledge graph canvas" }),
+  ).not.toHaveFocus();
 });

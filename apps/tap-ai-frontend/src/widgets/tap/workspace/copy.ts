@@ -197,11 +197,14 @@ export interface WorkspaceCopy {
     extracted: string;
     inferred: string;
     graphNavigationHint: string;
+    canvasRegionLabel: string;
     overviewCaption: string;
     highlightedPath: string;
     highlightCaption: string;
     clearHighlight: string;
     versionUpdated: string;
+    highlightLoading: string;
+    highlightError: string;
     loadMore: string;
     extractingSources(n: number): string;
     partialSources(n: number): string;
@@ -439,6 +442,8 @@ export const WORKSPACE_COPY = {
       clearHighlight: "Back to overview",
       versionUpdated:
         "The graph has been updated; some relations are no longer available.",
+      highlightLoading: "Loading the highlighted path…",
+      highlightError: "The highlighted path is temporarily unavailable.",
       nodeDetailsLoading: "Loading node details…",
       nodeDetailsError: "Node details are unavailable. Try again.",
       enterFullscreen: "Enter fullscreen",
@@ -449,6 +454,7 @@ export const WORKSPACE_COPY = {
       inferred: "INFERRED",
       graphNavigationHint:
         "Drag to pan, use the controls to zoom, and select a node to inspect its relationships.",
+      canvasRegionLabel: "Knowledge graph canvas",
       overviewCaption:
         "Project knowledge overview · nodes and relationships come from the service.",
       loadMore: "Load more",
@@ -681,6 +687,8 @@ export const WORKSPACE_COPY = {
       highlightCaption: "回答引用的关系",
       clearHighlight: "返回总览",
       versionUpdated: "图谱版本已更新，部分关系不再可用。",
+      highlightLoading: "正在加载高亮路径…",
+      highlightError: "高亮路径暂时无法加载。",
       nodeDetailsLoading: "正在加载节点详情…",
       nodeDetailsError: "节点详情暂时无法加载，请重试。",
       enterFullscreen: "进入全屏",
@@ -690,6 +698,7 @@ export const WORKSPACE_COPY = {
       extracted: "已抽取",
       inferred: "推断",
       graphNavigationHint: "拖动以平移画布，使用控件缩放，并选择节点查看关系。",
+      canvasRegionLabel: "知识图谱画布",
       overviewCaption: "项目知识总览 · 节点与关系来自服务。",
       loadMore: "加载更多",
       extractingSources: (n: number) => `${n} 个来源仍在抽取`,

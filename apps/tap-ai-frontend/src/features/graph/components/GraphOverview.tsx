@@ -82,6 +82,10 @@ export function GraphOverview({
   // Wraps `<Canvas>` (see the returned JSX below) so a version-change panel
   // close can return focus there instead of <body>.
   const canvasRegionRef = useRef<HTMLDivElement>(null);
+  // The node detail panel's own container (`detailPanel` below) — read at
+  // the moment a version change closes the panel, to tell whether focus
+  // actually needs rescuing (see the `graphVersion` effect further down).
+  const detailPanelRef = useRef<HTMLElement>(null);
 
   const trimmedQuery = query.trim();
   const normalizedQuery = trimmedQuery.toLocaleLowerCase();
@@ -161,6 +165,24 @@ export function GraphOverview({
     nodeQuery.error,
   ]);
 
+  // Whether the project's `GET /project` has updated — successfully or
+  // with its own error — *since* the node query's current conflict began.
+  // `!projectQuery.isFetching` is not enough: it reads `true` ("settled")
+  // on the very first render after the node 409s, before the version
+  // guard's own refetch has even started, which would flash the error body
+  // for one render before the guard kicks in. Comparing timestamps instead
+  // means "settled" only becomes true once the project has actually
+  // produced a result timed after the conflict — whether that result is a
+  // genuine version bump (the panel closes anyway, see the `graphVersion`
+  // effect above) or the same version repeated (the conflict is real and
+  // stuck, so `NodeDetailPanel` should stop pretending to load).
+  const nodeConflictAt = nodeQuery.errorUpdatedAt ?? 0;
+  const projectUpdatedAt = Math.max(
+    projectQuery.dataUpdatedAt ?? 0,
+    projectQuery.errorUpdatedAt ?? 0,
+  );
+  const projectRefetchSettled = projectUpdatedAt > nodeConflictAt;
+
   // `POST /highlight` never pins a `graphVersion` (see `highlight.ts`'s
   // doc comment — an answer's cited edges can predate the project's
   // current graph version), so it never 409s on a stale version and is
@@ -180,15 +202,29 @@ export function GraphOverview({
       ),
     [highlightQuery.data],
   );
+  // A pending or failed `POST /highlight` must never be read as "every
+  // requested edge is missing" — that would dim the whole canvas and show
+  // the version-updated notice for a request that simply hasn't resolved
+  // yet (or failed for an unrelated reason, e.g. `graph-job-busy`). Both
+  // derived values below are therefore only computed once the request has
+  // actually succeeded; `highlightStatus` drives the loading/error/success
+  // branches in the "Highlighted path" region further down.
+  const highlightStatus: "idle" | "pending" | "error" | "success" = !highlight
+    ? "idle"
+    : highlightQuery.isPending
+      ? "pending"
+      : highlightQuery.isError
+        ? "error"
+        : "success";
   const missingHighlightEdgeIds = useMemo(() => {
-    if (!highlight) return [];
+    if (!highlight || highlightStatus !== "success") return [];
     const responseEdgeIds = new Set(
       highlightResponseEdges.map((edge) => edge.edgeId),
     );
     return highlight.edgeIds.filter((id) => !responseEdgeIds.has(id));
-  }, [highlight, highlightResponseEdges]);
+  }, [highlight, highlightStatus, highlightResponseEdges]);
   const canvasHighlight = useMemo(() => {
-    if (!highlight) return null;
+    if (!highlight || highlightStatus !== "success") return null;
     const nodeIds = new Set<string>();
     for (const edge of highlightResponseEdges) {
       nodeIds.add(edge.sourceNodeId);
@@ -198,7 +234,7 @@ export function GraphOverview({
       edgeIds: new Set(highlightResponseEdges.map((edge) => edge.edgeId)),
       nodeIds,
     };
-  }, [highlight, highlightResponseEdges]);
+  }, [highlight, highlightStatus, highlightResponseEdges]);
 
   // Same size-descending order as the palette assignment in
   // `toOverviewData` so the force layout seeds communities in the same
@@ -229,11 +265,15 @@ export function GraphOverview({
   // the *canvas* draws, not which node is actually selected. The selection
   // is only cleared when the node it points at could truly have
   // disappeared: the graph was re-merged to a new version. When that
-  // happens, focus would otherwise fall back to <body> once the panel's
-  // own focused element unmounts — move it to the canvas region instead
+  // happens *and* the user's focus was actually inside the now-closing
+  // panel, it would otherwise fall back to <body> once that focused
+  // element unmounts — move it to the canvas region instead
   // (`canvasRegionRef`, below) so keyboard/screen-reader users land
-  // somewhere sensible. The previous-version ref's initial `null` means
-  // the very first version resolving (mount) never triggers this.
+  // somewhere sensible. Focus is left alone when no panel was open, or
+  // when it was open but focus was elsewhere (e.g. the search box) — only
+  // the element that's about to disappear needs rescuing. The
+  // previous-version ref's initial `null` means the very first version
+  // resolving (mount) never triggers this.
   const previousGraphVersionRef = useRef<number | null>(null);
   useEffect(() => {
     const previousGraphVersion = previousGraphVersionRef.current;
@@ -244,8 +284,14 @@ export function GraphOverview({
     ) {
       return;
     }
+    const focusWasInPanel =
+      selectedNodeId !== null &&
+      detailPanelRef.current !== null &&
+      detailPanelRef.current.contains(document.activeElement);
     setSelectedNodeId(null);
-    canvasRegionRef.current?.focus();
+    if (focusWasInPanel) {
+      canvasRegionRef.current?.focus();
+    }
   }, [graphVersion]);
 
   const toggleCommunity = (communityId: string) => {
@@ -307,6 +353,7 @@ export function GraphOverview({
   // rather than rendering a button that silently no-ops on click.
   const detailPanel = (
     <aside
+      ref={detailPanelRef}
       className="tap-graph-inspector"
       hidden={selectedNodeId === null}
       role="region"
@@ -324,7 +371,7 @@ export function GraphOverview({
           locale={locale}
           onClose={() => setSelectedNodeId(null)}
           onSelectNode={setSelectedNodeId}
-          projectRefetchSettled={!projectQuery.isFetching}
+          projectRefetchSettled={projectRefetchSettled}
           onAskAboutNode={
             onAskAboutNode
               ? (label, sourceRevisionIds) => {
@@ -392,27 +439,48 @@ export function GraphOverview({
   const atCap = overview.nodes.length >= MAX_GRAPH_NODES;
   const truncated = overview.nodes.length === nodeLimit && !atCap;
 
+  // `highlightPathRegion` is a *sibling* of the canvas region below, not
+  // nested inside it — both are `role="region"`, and a region nested
+  // inside another region is confusing for assistive tech (which region is
+  // the user actually in?). The outer `tap-graph-highlight-layout` wrapper
+  // that holds both carries no role of its own, just the flex layout that
+  // places this list beside the canvas.
   const highlightPathRegion = highlight ? (
     <section
       className="tap-graph-highlight-path"
       role="region"
       aria-label={libraryCopy.highlightedPath}
     >
-      <p>{libraryCopy.highlightCaption}</p>
-      <ol>
-        {highlightResponseEdges.map((edge) => {
-          const sourceLabel =
-            highlightNodeLabelById.get(edge.sourceNodeId) ?? edge.sourceNodeId;
-          const targetLabel =
-            highlightNodeLabelById.get(edge.targetNodeId) ?? edge.targetNodeId;
-          const relationLabel = edge.relationLabel || edge.relationType;
-          return (
-            <li key={edge.edgeId}>
-              {sourceLabel} —{relationLabel}→ {targetLabel}
-            </li>
-          );
-        })}
-      </ol>
+      {highlightStatus === "pending" ? (
+        <p role="status">{libraryCopy.highlightLoading}</p>
+      ) : highlightStatus === "error" ? (
+        <>
+          <p role="alert">{libraryCopy.highlightError}</p>
+          <button type="button" onClick={() => void highlightQuery.refetch()}>
+            {copy.sources.retry}
+          </button>
+        </>
+      ) : (
+        <>
+          <p>{libraryCopy.highlightCaption}</p>
+          <ol>
+            {highlightResponseEdges.map((edge) => {
+              const sourceLabel =
+                highlightNodeLabelById.get(edge.sourceNodeId) ??
+                edge.sourceNodeId;
+              const targetLabel =
+                highlightNodeLabelById.get(edge.targetNodeId) ??
+                edge.targetNodeId;
+              const relationLabel = edge.relationLabel || edge.relationType;
+              return (
+                <li key={edge.edgeId}>
+                  {sourceLabel} —{relationLabel}→ {targetLabel}
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
       {onClearHighlight ? (
         <button type="button" onClick={onClearHighlight}>
           {libraryCopy.clearHighlight}
@@ -422,42 +490,44 @@ export function GraphOverview({
   ) : null;
 
   return (
-    <div
-      ref={canvasRegionRef}
-      tabIndex={-1}
-      role="region"
-      aria-label={libraryCopy.graphNavigationHint}
-      className="tap-graph-canvas-region"
-    >
-      {missingHighlightEdgeIds.length > 0 ? (
-        <p role="status">{libraryCopy.versionUpdated}</p>
-      ) : null}
-      <Canvas
-        copy={copy}
-        nodes={overview.nodes}
-        edges={overview.edges}
-        communities={overview.communityOrder}
-        activeCommunities={effectiveSelectedCommunities}
-        onToggleCommunity={toggleCommunity}
-        onSelectAllCommunities={selectAllCommunities}
-        communitiesFooter={communitiesFooter}
-        communitiesNotice={communitiesNotice}
-        searchQuery={query}
-        selectedNodeId={selectedNodeId}
-        onSelectNode={setSelectedNodeId}
-        highlight={canvasHighlight}
-        detailPanel={detailPanel}
-        caption={libraryCopy.overviewCaption}
-        onLoadMore={
-          truncated
-            ? () =>
-                setNodeLimit((current) =>
-                  Math.min(MAX_GRAPH_NODES, current + OVERVIEW_PAGE),
-                )
-            : undefined
-        }
-        loadMoreLabel={libraryCopy.loadMore}
-      />
+    <div className="tap-graph-highlight-layout">
+      <div
+        ref={canvasRegionRef}
+        tabIndex={-1}
+        role="region"
+        aria-label={libraryCopy.canvasRegionLabel}
+        className="tap-graph-canvas-region"
+      >
+        {highlightStatus === "success" && missingHighlightEdgeIds.length > 0 ? (
+          <p role="status">{libraryCopy.versionUpdated}</p>
+        ) : null}
+        <Canvas
+          copy={copy}
+          nodes={overview.nodes}
+          edges={overview.edges}
+          communities={overview.communityOrder}
+          activeCommunities={effectiveSelectedCommunities}
+          onToggleCommunity={toggleCommunity}
+          onSelectAllCommunities={selectAllCommunities}
+          communitiesFooter={communitiesFooter}
+          communitiesNotice={communitiesNotice}
+          searchQuery={query}
+          selectedNodeId={selectedNodeId}
+          onSelectNode={setSelectedNodeId}
+          highlight={canvasHighlight}
+          detailPanel={detailPanel}
+          caption={libraryCopy.overviewCaption}
+          onLoadMore={
+            truncated
+              ? () =>
+                  setNodeLimit((current) =>
+                    Math.min(MAX_GRAPH_NODES, current + OVERVIEW_PAGE),
+                  )
+              : undefined
+          }
+          loadMoreLabel={libraryCopy.loadMore}
+        />
+      </div>
       {highlightPathRegion}
     </div>
   );

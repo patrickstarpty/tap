@@ -960,10 +960,25 @@ export function TapperWorkspace() {
   const publishedSourcesQuery = usePublishedSourcesQuery(projectId);
   const [locale, setLocale] = useState<Locale>("en");
   const [activeModule, setActiveModule] = useState<ProductModule>(() => {
+    // `projectId` isn't resolved yet on this very first render (it comes
+    // from an async runtime-mode query), so this can't filter by it the
+    // way `useGraphHighlightState(projectId)` below does — it's an
+    // optimistic read of *any* valid highlight, just to land on the right
+    // tab; a highlight for a different project is still screened out once
+    // `graphHighlight` (below) resolves, and the Library-mode sync effect
+    // further down corrects `activeModule` if this guess was wrong.
     if (readGraphHighlight() !== null) return "library";
     return durableTestPlanPath() !== null ? "test-management" : "tapper";
   });
-  const [graphHighlight, clearGraphHighlight] = useGraphHighlightState();
+  const [graphHighlight, clearGraphHighlight] =
+    useGraphHighlightState(projectId);
+  // A highlight that resolves or arrives after mount (the async filter
+  // above settling, a same-tab push, or a popstate/forward-back
+  // navigation) must switch to the Library module too — mirrors
+  // `LibraryWorkspace`'s own effect that switches its internal tab.
+  useEffect(() => {
+    if (graphHighlight !== null) setActiveModule("library");
+  }, [graphHighlight]);
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );

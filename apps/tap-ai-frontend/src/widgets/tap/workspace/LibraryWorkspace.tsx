@@ -11,6 +11,7 @@ import {
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -95,6 +96,13 @@ export function LibraryWorkspace({
   const [mode, setMode] = useState<LibraryMode>(() =>
     graphProjectId === undefined || graphHighlight !== null ? "graph" : "list",
   );
+  // A highlight that arrives *after* mount (a same-tab "View in Library"
+  // push, or a popstate navigation while already on the Documents tab)
+  // must switch to the Knowledge Graph tab too, not just the initial-mount
+  // case above.
+  useEffect(() => {
+    if (graphHighlight !== null) setMode("graph");
+  }, [graphHighlight]);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<LibraryStatusFilter>("all");
