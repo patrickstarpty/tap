@@ -350,12 +350,25 @@ class ConversationGroundingCheck:
         self._model_alias = model_alias
 
     async def is_grounded(self, actor_id: str, question: str, source_ids: tuple[str, ...]) -> bool:
+        answer = cast(Any, await self.dry_run_answer(actor_id, question, source_ids))
+        return answer is not None and not answer.abstained and bool(answer.citations)
+
+    async def dry_run_answer(
+        self, actor_id: str, question: str, source_ids: tuple[str, ...]
+    ) -> object | None:
+        """Runs the candidate through the chat answer pipeline and returns the raw
+        answer, or `None` when a cited source is not currently ready or the answer
+        was invalid (any `AnswerUnavailable` other than `model-unavailable`, which
+        means an outage and is re-raised instead). Shared by `is_grounded` (the
+        prompt-suggestion refresh gate) and the graph-relations observation script
+        (Task 4), which needs the full answer -- not just a grounded/ungrounded
+        bool -- to read its citations."""
         current = {
             item.source_id: item.revision_id
             for item in (await self._ready_sources.list_sources()).items
         }
         if any(source_id not in current for source_id in source_ids):
-            return False
+            return None
         revision_ids = tuple(current[source_id] for source_id in source_ids)
         selection = await freeze_conversation_selection(
             self._knowledge, source_revision_ids=revision_ids
@@ -407,8 +420,8 @@ class ConversationGroundingCheck:
             # so the candidate is not grounded; an outage still fails the refresh.
             if str(error) == _MODEL_UNAVAILABLE:
                 raise
-            return False
-        return not answer.abstained and bool(answer.citations)
+            return None
+        return answer
 
 
 async def _always_authorized() -> None:

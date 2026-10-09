@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.util
 import json
@@ -7,15 +8,28 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 from tap.quality.evidence import canonical_digest
 from tap.quality.graph_corpus import manifest_digest
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts" / "evaluate-graph-relations.py"
+RUNNER_SCRIPT = ROOT / "scripts" / "run-graph-relations-candidate.py"
+FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "quality" / "graph-relations"
+FIXTURE_GOLDEN = FIXTURE_DIR / "golden-fixture-v1.json"
 
 
 def _evaluator() -> ModuleType:
     spec = importlib.util.spec_from_file_location("evaluate_graph_relations", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _runner() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("run_graph_relations_candidate", RUNNER_SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -670,3 +684,26 @@ def test_missing_input_file_exits_2(tmp_path, monkeypatch, capsys):
     assert exit_code == 2
     assert capsys.readouterr().err
     assert not report_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_fake_pipeline_emits_edge_citations_for_the_fixture_pair(tmp_path):
+    observations = await _runner().run_fake(golden=FIXTURE_GOLDEN, corpus_dir=FIXTURE_DIR)
+
+    by_id = {item["questionId"]: item for item in observations["answers"]}
+    assert any(c["kind"] == "edge" for c in by_id["q-01"]["citations"])
+
+    report = _evaluator().evaluate(json.loads(FIXTURE_GOLDEN.read_text()), observations)
+    assert report["passed"] is True and report["questions"][0]["status"] == "pass"
+    assert any(
+        c["kind"] == "edge" and c["subject"]["label"] == "保单签发"
+        for c in by_id["q-03"]["citations"]
+    )
+
+
+def test_real_mode_refuses_fake_extraction_mode(monkeypatch):
+    monkeypatch.setenv("TAPPER_GRAPH_EXTRACTION_MODE", "fake")
+    with pytest.raises(ValueError, match="TAPPER_GRAPH_EXTRACTION_MODE=model"):
+        asyncio.run(
+            _runner().run_real(golden=FIXTURE_GOLDEN, regression=None, corpus=Path("missing.json"))
+        )

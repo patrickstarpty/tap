@@ -114,6 +114,21 @@ async def test_abstained_or_uncited_answers_are_not_grounded(answer):
 
 
 @pytest.mark.asyncio
+async def test_dry_run_answer_returns_answer_and_none_for_unknown_source():
+    answer = SimpleNamespace(abstained=False, citations=[object()])
+    knowledge = _Knowledge(answer=answer)
+
+    result = await _check(knowledge).dry_run_answer("actor-1", "保单红利如何派发？", (_SOURCE,))
+
+    assert result is answer
+
+    unknown_source = "src_" + "9" * 32
+    assert (
+        await _check(_Knowledge(answer=answer)).dry_run_answer("a", "Q?", (unknown_source,)) is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_sources_without_a_current_revision_are_not_grounded():
     knowledge = _Knowledge(answer=SimpleNamespace(abstained=False, citations=[object()]))
 
