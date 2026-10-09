@@ -875,7 +875,7 @@ class MysqlConversationRepository:
                             text(
                                 "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
                                 "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
-                                "claim_text,origin "
+                                "claim_text,origin,citation_kind,graph_version "
                                 "FROM knowledge_citation_snapshot "
                                 "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
                                 "AND citation_id=:citation_id AND trace_id=:trace_id"
@@ -915,6 +915,14 @@ class MysqlConversationRepository:
                     citation_row["source_content_hash"],
                 ) not in frozen_resources:
                     raise ValueError("citation is outside the frozen Turn resources")
+                if (
+                    snapshot.value.graph_context_status is GraphContextStatus.APPLIED
+                    and citation_row["citation_kind"] == "edge"
+                    and citation_row["graph_version"] != snapshot.value.graph_snapshot_id
+                ):
+                    raise ValueError(
+                        "edge citation graph version differs from the Turn's graph snapshot"
+                    )
                 await session.execute(
                     insert(turn_artifact_link).values(
                         **scope_values(self.scope),

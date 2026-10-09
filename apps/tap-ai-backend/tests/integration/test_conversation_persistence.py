@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
 from tap.modules.chat.application.conversations import (
@@ -15,19 +16,30 @@ from tap.modules.chat.application.conversations import (
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     CitationEvidence,
+    FrozenResource,
     GraphContextStatus,
     RetrievalSummary,
     TurnInput,
+    citation_evidence_digest,
+)
+from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
+from tap.modules.knowledge.ports.answers import AnswerSnapshot, CitationSnapshot
+from tests.integration.test_citation_snapshot_transaction import (
+    ANCHOR_JSON,
+    CHUNK_HASH,
+    SOURCE_HASH,
+    seed_ready,
 )
 from tests.owned_mysql import owned_project_database_url
 
 
-def _input(message="Persist this"):
+def _input(message="Persist this", *, resolved_resources=()):
     return TurnInput(
         message=message,
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode="validation",
         model_alias="qwen-plus",
+        resolved_resources=resolved_resources,
         agent_revision_id="validation-knowledge-agent-v1",
         agent_revision_digest="sha256:" + "a" * 64,
         skill_revision_ids=("validation-citation-skill-v1",),
@@ -374,6 +386,146 @@ def test_claim_fails_snapshotless_queued_turn_and_keeps_claiming_others(owned_pr
             assert payload["problem"]["type"].endswith("/conversation-integrity")
             assert payload["problem"]["retryable"] is False
             assert "turn.started" not in [event_type for event_type, _ in events]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_applied_graph_context_validates_edge_citation_graph_version(owned_project_mysql):
+    """PR 3 Task 8 preflight ruling: when an answer's graph context is
+    APPLIED, every edge citation's persisted `graph_version` must equal the
+    Turn's `graph_snapshot_id` (which, per the plan's
+    `graph_snapshot_id = graph_version` design, is the same string) or
+    `complete()` must raise -- a stale or forged edge citation must not ride
+    along with a graph-grounded answer. This checks the persisted
+    `knowledge_citation_snapshot.graph_version` column, never
+    `graph_project_version` (pruned old versions must not block an answer)."""
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            document_repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
+            selected = await seed_ready(engine, "graph")
+            edge_citation = CitationSnapshot(
+                trace_id="trace-graph",
+                citation_id="citation-graph-edge",
+                document_id=selected.document_id,
+                revision_id=selected.revision_id,
+                chunk_id="h_graph",
+                source_content_hash=SOURCE_HASH,
+                chunk_content_hash=CHUNK_HASH,
+                anchor_json=ANCHOR_JSON,
+                citation_kind="edge",
+                graph_version="7",
+                edge_id="edge-1",
+                subject_node_id="node-subject",
+                object_node_id="node-object",
+                relation_type="REQUIRES",
+                relation_label="requires",
+            )
+            await document_repository.save_answer_with_citations(
+                AnswerSnapshot(
+                    trace_id="trace-graph",
+                    query_hash="sha256:" + "c" * 64,
+                    selected_revisions=(selected,),
+                    citations=(edge_citation,),
+                )
+            )
+            async with engine.connect() as connection:
+                row = (
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT citation_id,source_id,trace_id,document_id,"
+                                "revision_id,chunk_id,source_content_hash,chunk_content_"
+                                "hash,anchor_json,claim_text,origin FROM knowledge_citati"
+                                "on_snapshot WHERE citation_id='citation-graph-edge'"
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            digest = citation_evidence_digest(
+                citation_id=row["citation_id"],
+                trace_id=row["trace_id"],
+                source_id=row["source_id"],
+                document_id=row["document_id"],
+                revision_id=row["revision_id"],
+                chunk_id=row["chunk_id"],
+                source_content_hash=row["source_content_hash"],
+                chunk_content_hash=row["chunk_content_hash"],
+                anchor=row["anchor_json"],
+                claim_text=row["claim_text"],
+                origin=row["origin"],
+            )
+            resolved_resources = (
+                FrozenResource(
+                    source_id=selected.source_id,
+                    document_id=selected.document_id,
+                    revision_id=selected.revision_id,
+                    source_content_hash=SOURCE_HASH,
+                ),
+            )
+            service = ConversationService(
+                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+                scope=VALIDATION_SCOPE,
+            )
+
+            # Matching graph_snapshot_id ("7" == the citation row's graph_version): completes.
+            await service.create(
+                "conversation-graph-match",
+                "turn-graph-match",
+                "request-graph-match",
+                _input(resolved_resources=resolved_resources),
+            )
+            match_claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            completed = await service.complete_evidence(
+                "conversation-graph-match",
+                "turn-graph-match",
+                AnswerEvidence(
+                    "Grounded",
+                    "completed",
+                    RetrievalSummary("completed", trace_id="trace-graph"),
+                    GraphContextStatus.APPLIED,
+                    graph_snapshot_id="7",
+                    citations=(CitationEvidence("citation-graph-edge", digest),),
+                ),
+                lease_token=match_claim.lease_token,
+                terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+            )
+            assert completed.state == "completed"
+
+            # Mismatched graph_snapshot_id ("8" != the citation row's graph_version "7"): rejected.
+            await service.create(
+                "conversation-graph-mismatch",
+                "turn-graph-mismatch",
+                "request-graph-mismatch",
+                _input(resolved_resources=resolved_resources),
+            )
+            mismatch_claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            with pytest.raises(ValueError, match="graph version"):
+                await service.complete_evidence(
+                    "conversation-graph-mismatch",
+                    "turn-graph-mismatch",
+                    AnswerEvidence(
+                        "Grounded",
+                        "completed",
+                        RetrievalSummary("completed", trace_id="trace-graph"),
+                        GraphContextStatus.APPLIED,
+                        graph_snapshot_id="8",
+                        citations=(CitationEvidence("citation-graph-edge", digest),),
+                    ),
+                    lease_token=mismatch_claim.lease_token,
+                    terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+                )
         finally:
             await engine.dispose()
 

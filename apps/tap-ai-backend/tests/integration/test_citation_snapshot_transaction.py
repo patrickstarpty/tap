@@ -18,6 +18,7 @@ from sqlalchemy.sql.selectable import Select
 from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
+from tap.modules.chat.domain.conversations import citation_evidence_digest
 from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import (
     MysqlDocumentRepository,
@@ -1185,6 +1186,163 @@ def test_load_chunk_locators_returns_only_scoped_revisions_with_a_locator(
             )
         finally:
             await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_edge_citation_round_trips_and_historical_rows_default_to_chunk(
+    owned_project_mysql,  # type: ignore[no-untyped-def]
+) -> None:
+    """PR 3 Task 8: migration `0030_edge_citations` adds seven nullable
+    columns to `knowledge_citation_snapshot`. A citation saved with
+    `citation_kind="edge"` must read back with every edge column intact, and
+    a historical row (inserted before this migration, or any row whose
+    `citation_kind` is NULL) must default to `"chunk"` rather than raise or
+    silently drop the distinction."""
+
+    async def scenario() -> None:
+        database_url = owned_project_database_url(owned_project_mysql)
+        engine, sessions = create_engine_and_session_factory(database_url)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        try:
+            selected = await seed_ready(engine, "a")
+            chunk_citation = CitationSnapshot(
+                trace_id="trace-edge",
+                citation_id="citation-S1",
+                document_id=selected.document_id,
+                revision_id=selected.revision_id,
+                chunk_id="h_a",
+                source_content_hash=SOURCE_HASH,
+                chunk_content_hash=CHUNK_HASH,
+                anchor_json=ANCHOR_JSON,
+            )
+            edge_citation = CitationSnapshot(
+                trace_id="trace-edge",
+                citation_id="citation-R1",
+                document_id=selected.document_id,
+                revision_id=selected.revision_id,
+                chunk_id="h_a",
+                source_content_hash=SOURCE_HASH,
+                chunk_content_hash=CHUNK_HASH,
+                anchor_json=ANCHOR_JSON,
+                citation_kind="edge",
+                graph_version="7",
+                edge_id="edge-1",
+                subject_node_id="node-subject",
+                object_node_id="node-object",
+                relation_type="REQUIRES",
+                relation_label="requires",
+            )
+            committed = AnswerSnapshot(
+                trace_id="trace-edge",
+                query_hash="sha256:" + "c" * 64,
+                selected_revisions=(selected,),
+                citations=(chunk_citation, edge_citation),
+            )
+            await repository.save_answer_with_citations(committed)
+
+            edge_lookup = await repository.load_citation("citation-R1")
+            assert edge_lookup is not None
+            assert edge_lookup.citation.citation_kind == "edge"
+            assert edge_lookup.citation.graph_version == "7"
+            assert edge_lookup.citation.edge_id == "edge-1"
+            assert edge_lookup.citation.subject_node_id == "node-subject"
+            assert edge_lookup.citation.object_node_id == "node-object"
+            assert edge_lookup.citation.relation_type == "REQUIRES"
+            assert edge_lookup.citation.relation_label == "requires"
+
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE knowledge_citation_snapshot SET citation_kind=NULL "
+                        "WHERE citation_id='citation-S1'"
+                    )
+                )
+            historical_lookup = await repository.load_citation("citation-S1")
+            assert historical_lookup is not None
+            assert historical_lookup.citation.citation_kind == "chunk"
+            assert historical_lookup.citation.graph_version is None
+            assert historical_lookup.citation.edge_id is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_resolve_citations_digest_is_unchanged_by_edge_columns(
+    owned_project_mysql,  # type: ignore[no-untyped-def]
+) -> None:
+    """The edge columns added by migration `0030_edge_citations` must not
+    change `citation_evidence_digest`'s material: the same row's digest,
+    computed the way `MysqlConversationRepository.resolve_citations` and
+    `.complete()` compute it, is identical whether or not the edge columns
+    are populated. Otherwise every pre-migration digest bound into a Turn's
+    `turn_artifact_link` would stop verifying on reload."""
+
+    async def scenario() -> None:
+        database_url = owned_project_database_url(owned_project_mysql)
+        engine, sessions = create_engine_and_session_factory(database_url)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        try:
+            selected = await seed_ready(engine, "a")
+            committed = snapshot("trace-digest", selected, with_citation=True)
+            await repository.save_answer_with_citations(committed)
+            citation_id = committed.citations[0].citation_id
+
+            async def read_digest() -> str:
+                async with engine.connect() as connection:
+                    row = (
+                        (
+                            await connection.execute(
+                                text(
+                                    "SELECT citation_id,source_id,trace_id,document_id,"
+                                    "revision_id,chunk_id,source_content_hash,"
+                                    "chunk_content_hash,anchor_json,claim_text,origin "
+                                    "FROM knowledge_citation_snapshot "
+                                    "WHERE citation_id=:citation_id"
+                                ),
+                                {"citation_id": citation_id},
+                            )
+                        )
+                        .mappings()
+                        .one()
+                    )
+                return citation_evidence_digest(
+                    citation_id=row["citation_id"],
+                    trace_id=row["trace_id"],
+                    source_id=row["source_id"],
+                    document_id=row["document_id"],
+                    revision_id=row["revision_id"],
+                    chunk_id=row["chunk_id"],
+                    source_content_hash=row["source_content_hash"],
+                    chunk_content_hash=row["chunk_content_hash"],
+                    anchor=row["anchor_json"],
+                    claim_text=row["claim_text"],
+                    origin=row["origin"],
+                )
+
+            digest_without_edge_columns = await read_digest()
+
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE knowledge_citation_snapshot SET citation_kind='edge',"
+                        "graph_version='7',edge_id='edge-1',subject_node_id='node-subject',"
+                        "object_node_id='node-object',relation_type='REQUIRES',"
+                        "relation_label='requires' WHERE citation_id=:citation_id"
+                    ),
+                    {"citation_id": citation_id},
+                )
+
+            digest_with_edge_columns = await read_digest()
+
+            assert digest_without_edge_columns == digest_with_edge_columns
+        finally:
             await engine.dispose()
 
     asyncio.run(scenario())
