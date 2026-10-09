@@ -5191,6 +5191,7 @@ export interface components {
             degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
+            graphContext?: components["schemas"]["GraphContextSummaryView"] | null;
             /**
              * Graphcontextstatus
              * @default NOT_SELECTED
