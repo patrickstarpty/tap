@@ -358,6 +358,37 @@ it("shows extraction footer counts", async () => {
   expect(within(communityRegion).getByText("1 partially failed")).toBeVisible();
 });
 
+it("uses the singular form of the extraction footer for exactly one source", async () => {
+  const project = buildProject({
+    extractingRevisionIds: ["rev_src_a"],
+    partialRevisionIds: [],
+  });
+  renderLibrary({
+    project,
+    overview: buildOverview(buildNodes(1, "underwriting")),
+    sources: [
+      {
+        id: "src_a",
+        name: "A",
+        type: "Markdown",
+        status: "ready",
+        origin: "knowledge-base",
+        description: "",
+      },
+    ],
+    publishedSources: [{ sourceId: "src_a", revisionId: "rev_src_a" }],
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  const communityRegion = screen.getByRole("complementary", {
+    name: "Topic groups",
+  });
+  expect(
+    within(communityRegion).getByText("1 source still extracting"),
+  ).toBeVisible();
+});
+
 it("renders Chinese overview copy", async () => {
   const project = buildProject();
   renderLibrary({

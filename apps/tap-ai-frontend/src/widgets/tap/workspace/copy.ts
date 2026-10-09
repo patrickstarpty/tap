@@ -477,7 +477,8 @@ export const WORKSPACE_COPY = {
       overviewCaption:
         "Project knowledge overview · nodes and relationships come from the service.",
       loadMore: "Load more",
-      extractingSources: (n: number) => `${n} sources still extracting`,
+      extractingSources: (n: number) =>
+        `${n} source${n === 1 ? "" : "s"} still extracting`,
       partialSources: (n: number) => `${n} partially failed`,
       graphEmpty: "No knowledge graph yet.",
       graphEmptyHint:

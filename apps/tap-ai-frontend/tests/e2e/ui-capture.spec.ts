@@ -161,9 +161,23 @@ test.beforeEach(async ({ page }) => {
  * test-only proxy for "the worker has stopped moving things" without
  * touching `GraphOverview`/`KnowledgeGraph`.
  */
+const GRAPH_LAYOUT_SETTLE_STREAK = 3;
+
 async function waitForGraphLayoutSettled(page: Page): Promise<void> {
+  // Reset both the previous-sample snapshot and the equal-streak counter at
+  // the start of *every* call -- a leftover snapshot from an earlier call
+  // (e.g. the overview capture) could otherwise spuriously count as an
+  // immediate "match" against the very first sample taken for a different
+  // canvas state (after a node selection or a highlight-fit zoom), ending
+  // the wait before the new state has actually settled.
+  await page.evaluate(() => {
+    delete (window as unknown as { __tapLayoutSnapshot?: string })
+      .__tapLayoutSnapshot;
+    delete (window as unknown as { __tapLayoutSettleStreak?: number })
+      .__tapLayoutSettleStreak;
+  });
   await page.waitForFunction(
-    () => {
+    (requiredStreak) => {
       const circles = document.querySelectorAll(
         ".tap-graph-node-core",
       ) as NodeListOf<SVGCircleElement>;
@@ -174,13 +188,19 @@ async function waitForGraphLayoutSettled(page: Page): Promise<void> {
             `${circle.getAttribute("cx")}:${circle.getAttribute("cy")}`,
         )
         .join(",");
-      const previous = (window as unknown as { __tapLayoutSnapshot?: string })
-        .__tapLayoutSnapshot;
-      (
-        window as unknown as { __tapLayoutSnapshot?: string }
-      ).__tapLayoutSnapshot = snapshot;
-      return previous === snapshot;
+      const w = window as unknown as {
+        __tapLayoutSnapshot?: string;
+        __tapLayoutSettleStreak?: number;
+      };
+      const streak =
+        w.__tapLayoutSnapshot === snapshot
+          ? (w.__tapLayoutSettleStreak ?? 0) + 1
+          : 0;
+      w.__tapLayoutSnapshot = snapshot;
+      w.__tapLayoutSettleStreak = streak;
+      return streak >= requiredStreak;
     },
+    GRAPH_LAYOUT_SETTLE_STREAK,
     { timeout: 5_000, polling: 100 },
   );
 }

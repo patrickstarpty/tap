@@ -20,14 +20,22 @@ export const CAPTURE_SOURCE_CLAIMS = {
   sourceName: "Claims handbook",
 };
 
-// A second, not-yet-published revision of the claims handbook, distinct
-// from `CAPTURE_SOURCE_CLAIMS.documentRevisionId` (the already-published
-// revision backing the node detail's evidence) -- this is the one still
-// being extracted, so `extractingRevisionIds` below never claims a
-// published revision is also mid-extraction.
-const CAPTURE_SOURCE_CLAIMS_PENDING_REVISION = "document-rev-claims-2";
+// A third published source whose latest revision is still being extracted
+// (unlike `CAPTURE_SOURCE_GUIDE`/`CAPTURE_SOURCE_CLAIMS`, both fully ready).
+// Never referenced by any node evidence, citation or `resolvedResources` --
+// its only job is to back the community column's extraction footer with a
+// revision id that is genuinely published (so it is part of the Library's
+// current source scope -- see `extractingRevisionIds` below) yet distinct
+// from the two sources the node detail/citations actually cite.
+export const CAPTURE_SOURCE_SERVICING = {
+  sourceId: "source-servicing",
+  documentId: "document-servicing",
+  documentRevisionId: "document-rev-servicing",
+  filename: "policy-servicing-guide.md",
+  sourceName: "Policy servicing guide",
+};
 
-// `GET .../knowledge/sources` -- two ready sources so the Library source
+// `GET .../knowledge/sources` -- three ready sources so the Library source
 // filters and node detail "Open original" resolve to real source ids.
 export const CAPTURE_KNOWLEDGE_SOURCES = {
   items: [
@@ -47,11 +55,19 @@ export const CAPTURE_KNOWLEDGE_SOURCES = {
       failedCount: 0,
       createdAt: "2026-10-01T08:00:00Z",
     },
+    {
+      sourceId: CAPTURE_SOURCE_SERVICING.sourceId,
+      name: CAPTURE_SOURCE_SERVICING.filename,
+      documentCount: 1,
+      readyCount: 1,
+      failedCount: 0,
+      createdAt: "2026-10-01T08:00:00Z",
+    },
   ],
   nextCursor: null,
 };
 
-// `GET .../knowledge/published-sources` -- the corresponding two published
+// `GET .../knowledge/published-sources` -- the corresponding three published
 // revisions, resolving the graph's source filter and `sourceIdByRevisionId`.
 export const CAPTURE_PUBLISHED_SOURCES = {
   items: [
@@ -79,13 +95,28 @@ export const CAPTURE_PUBLISHED_SOURCES = {
       expiresAt: null,
       publicationId: "publication-claims",
     },
+    {
+      sourceId: CAPTURE_SOURCE_SERVICING.sourceId,
+      revisionId: CAPTURE_SOURCE_SERVICING.documentRevisionId,
+      documentId: CAPTURE_SOURCE_SERVICING.documentId,
+      filename: CAPTURE_SOURCE_SERVICING.filename,
+      sourceName: CAPTURE_SOURCE_SERVICING.sourceName,
+      partial: false,
+      approvedItemCount: 6,
+      inventoryItemCount: 6,
+      expiresAt: null,
+      publicationId: "publication-servicing",
+    },
   ],
 };
 
 // `GET .../knowledge/graph/project` -- 3 communities (Underwriting 12,
-// Claims 9, Servicing 6 = 27 nodes) and one source still being extracted
-// (the claims-handbook revision), so the community column's extraction
-// footer renders. Deviation from the task brief: `ProjectGraphView` has no
+// Claims 9, Servicing 6 = 27 nodes) and one published source
+// (`CAPTURE_SOURCE_SERVICING`) still being extracted, so the community
+// column's extraction footer renders truthfully: its revision id is
+// genuinely published (part of the Library's current source scope) but
+// not cited by any node evidence/citation. Deviation from the task brief:
+// `ProjectGraphView` has no
 // `fragments` array in the generated schema -- "one EXTRACTING fragment" is
 // modeled here via `extractingRevisionIds`, the field the UI actually reads
 // (`CommunityList`'s footer, driven by `GraphOverview`'s
@@ -117,7 +148,7 @@ export const CAPTURE_GRAPH_PROJECT = {
       size: 6,
     },
   ],
-  extractingRevisionIds: [CAPTURE_SOURCE_CLAIMS_PENDING_REVISION],
+  extractingRevisionIds: [CAPTURE_SOURCE_SERVICING.documentRevisionId],
   partialRevisionIds: [],
 };
 
