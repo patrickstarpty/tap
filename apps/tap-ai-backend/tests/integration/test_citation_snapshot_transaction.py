@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime
 
 import pytest
@@ -51,14 +52,35 @@ pytestmark = pytest.mark.skipif(
     reason="set TAP_RUN_MYSQL_INTEGRATION=1 for real MySQL answer snapshot tests",
 )
 
+
+@pytest.fixture(autouse=True)
+def _isolated_database_url(
+    monkeypatch: pytest.MonkeyPatch,
+    owned_project_mysql,  # type: ignore[no-untyped-def]
+) -> None:
+    """Point every test in this module at its own Docker-isolated MySQL
+    container instead of an ambient `127.0.0.1:3306` instance. Most tests
+    below read the module-level `DATABASE_URL` global directly (a legacy
+    pattern that predates `owned_project_mysql`); patching the module
+    attribute here reaches those call sites without changing every test's
+    signature."""
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "DATABASE_URL",
+        owned_project_database_url(owned_project_mysql),
+    )
+
+
 ANSWER_SNAPSHOT_LOCK_NAME = MysqlDocumentRepository(
     async_sessionmaker(), scope=VALIDATION_SCOPE, audit_factory=create_project_audit
 )._answer_snapshot_lock_name
 
-DATABASE_URL = os.getenv(
-    "TAP_DATABASE_URL",
-    "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-)
+# Patched to this test's own Docker-isolated MySQL by `_isolated_database_url`
+# above (an autouse fixture) before every test runs. Most tests in this file
+# read this module global directly rather than taking `owned_project_mysql`
+# as a parameter; an empty default (instead of an ambient `127.0.0.1:3306`
+# fallback) fails loudly if that fixture is ever skipped.
+DATABASE_URL: str = ""
 SOURCE_HASH = "sha256:" + "a" * 64
 CHUNK_HASH = "sha256:" + "b" * 64
 ANCHOR_JSON = json.dumps(
@@ -167,6 +189,8 @@ async def clean(engine) -> None:  # type: ignore[no-untyped-def]
             "knowledge_answer_snapshot",
             "knowledge_chunk_manifest",
             "knowledge_ingestion_job",
+            "knowledge_parse_inventory",
+            "knowledge_projection_fence",
             "knowledge_document_revision",
             "knowledge_source_legacy_map",
             "knowledge_document",

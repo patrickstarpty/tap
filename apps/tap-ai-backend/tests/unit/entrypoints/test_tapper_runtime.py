@@ -1222,6 +1222,33 @@ def test_review_graph_uses_configured_isolated_parser() -> None:
     assert parser.socket_path == "/tmp/tap-review-parser.sock"
 
 
+@pytest.mark.parametrize("graph_reasoning", [True, False])
+def test_graph_reasoning_flag_controls_whether_relation_analysis_is_wired(
+    graph_reasoning: bool,
+) -> None:
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+
+    services = module._assemble_http_services(
+        repository=SimpleNamespace(scope=VALIDATION_SCOPE),
+        artifacts=object(),
+        search=object(),
+        embeddings=module._create_embeddings(settings),
+        readiness=object(),
+        redactor=object(),
+        scope_provider=object(),
+        authorization_policy=object(),
+        graph_sessions=object(),
+        graph_reasoning=graph_reasoning,
+    )
+
+    retrieval = services.knowledge._answers._knowledge._retrieval
+    if graph_reasoning:
+        assert retrieval._relation_analysis is not None
+    else:
+        assert retrieval._relation_analysis is None
+
+
 def test_runtime_has_no_legacy_combined_model_factory() -> None:
     assert not hasattr(_runtime(), "_create_model")
 
