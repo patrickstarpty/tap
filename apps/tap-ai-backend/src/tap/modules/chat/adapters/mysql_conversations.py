@@ -853,8 +853,7 @@ class MysqlConversationRepository:
             # Edge citation fidelity on reload — i.e. whether a cited edge's
             # own `graph_version` still matches this Turn's `graph_snapshot_id`
             # — is validated below, against the citation row's persisted
-            # columns, and depends on Task 8's `knowledge_citation_snapshot`
-            # edge columns existing.
+            # `knowledge_citation_snapshot` edge columns.
             frozen_resources = {
                 (
                     item["source_id"],
@@ -875,7 +874,8 @@ class MysqlConversationRepository:
                             text(
                                 "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
                                 "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
-                                "claim_text,origin,citation_kind,graph_version "
+                                "claim_text,origin,citation_kind,graph_version,edge_id,"
+                                "subject_node_id,object_node_id,relation_type,relation_label "
                                 "FROM knowledge_citation_snapshot "
                                 "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
                                 "AND citation_id=:citation_id AND trace_id=:trace_id"
@@ -905,6 +905,13 @@ class MysqlConversationRepository:
                     anchor=citation_row["anchor_json"],
                     claim_text=citation_row["claim_text"],
                     origin=citation_row["origin"],
+                    citation_kind=citation_row["citation_kind"],
+                    graph_version=citation_row["graph_version"],
+                    edge_id=citation_row["edge_id"],
+                    subject_node_id=citation_row["subject_node_id"],
+                    object_node_id=citation_row["object_node_id"],
+                    relation_type=citation_row["relation_type"],
+                    relation_label=citation_row["relation_label"],
                 )
                 if trusted_digest != citation.citation_digest:
                     raise ValueError("citation snapshot digest differs from persisted fact")
@@ -915,14 +922,15 @@ class MysqlConversationRepository:
                     citation_row["source_content_hash"],
                 ) not in frozen_resources:
                     raise ValueError("citation is outside the frozen Turn resources")
-                if (
-                    snapshot.value.graph_context_status is GraphContextStatus.APPLIED
-                    and citation_row["citation_kind"] == "edge"
-                    and citation_row["graph_version"] != snapshot.value.graph_snapshot_id
-                ):
-                    raise ValueError(
-                        "edge citation graph version differs from the Turn's graph snapshot"
-                    )
+                if citation_row["citation_kind"] == "edge":
+                    if snapshot.value.graph_context_status is not GraphContextStatus.APPLIED:
+                        raise ValueError(
+                            "edge citation requires an APPLIED graph context on this Turn"
+                        )
+                    if citation_row["graph_version"] != snapshot.value.graph_snapshot_id:
+                        raise ValueError(
+                            "edge citation graph version differs from the Turn's graph snapshot"
+                        )
                 await session.execute(
                     insert(turn_artifact_link).values(
                         **scope_values(self.scope),

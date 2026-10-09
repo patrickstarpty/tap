@@ -445,7 +445,9 @@ def test_applied_graph_context_validates_edge_citation_graph_version(owned_proje
                             text(
                                 "SELECT citation_id,source_id,trace_id,document_id,"
                                 "revision_id,chunk_id,source_content_hash,chunk_content_"
-                                "hash,anchor_json,claim_text,origin FROM knowledge_citati"
+                                "hash,anchor_json,claim_text,origin,citation_kind,"
+                                "graph_version,edge_id,subject_node_id,object_node_id,"
+                                "relation_type,relation_label FROM knowledge_citati"
                                 "on_snapshot WHERE citation_id='citation-graph-edge'"
                             )
                         )
@@ -465,6 +467,13 @@ def test_applied_graph_context_validates_edge_citation_graph_version(owned_proje
                 anchor=row["anchor_json"],
                 claim_text=row["claim_text"],
                 origin=row["origin"],
+                citation_kind=row["citation_kind"],
+                graph_version=row["graph_version"],
+                edge_id=row["edge_id"],
+                subject_node_id=row["subject_node_id"],
+                object_node_id=row["object_node_id"],
+                relation_type=row["relation_type"],
+                relation_label=row["relation_label"],
             )
             resolved_resources = (
                 FrozenResource(
@@ -524,6 +533,32 @@ def test_applied_graph_context_validates_edge_citation_graph_version(owned_proje
                         citations=(CitationEvidence("citation-graph-edge", digest),),
                     ),
                     lease_token=mismatch_claim.lease_token,
+                    terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+                )
+
+            # Non-APPLIED graph context (here EMPTY) citing an edge-kind
+            # citation row: rejected regardless of graph_version, since an
+            # edge citation requires an APPLIED graph context on this Turn.
+            await service.create(
+                "conversation-graph-not-applied",
+                "turn-graph-not-applied",
+                "request-graph-not-applied",
+                _input(resolved_resources=resolved_resources),
+            )
+            not_applied_claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            with pytest.raises(ValueError, match="APPLIED graph context"):
+                await service.complete_evidence(
+                    "conversation-graph-not-applied",
+                    "turn-graph-not-applied",
+                    AnswerEvidence(
+                        "Grounded",
+                        "completed",
+                        RetrievalSummary("completed", trace_id="trace-graph"),
+                        GraphContextStatus.EMPTY,
+                        graph_snapshot_id=None,
+                        citations=(CitationEvidence("citation-graph-edge", digest),),
+                    ),
+                    lease_token=not_applied_claim.lease_token,
                     terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
                 )
         finally:
