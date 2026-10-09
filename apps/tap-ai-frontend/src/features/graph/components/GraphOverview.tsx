@@ -192,6 +192,26 @@ export function GraphOverview({
     highlight?.edgeIds ?? EMPTY_EDGE_IDS,
   );
   const highlightResponseEdges = highlightQuery.data?.edges ?? [];
+  // `POST /highlight` returns the requested edges *plus* their 1-hop graph
+  // context (so the canvas can draw the neighborhood around a cited path,
+  // not just the bare cited edges in isolation) — the context edges must
+  // never be data-highlighted or listed in "Relations cited by the
+  // answer", only the ones the answer actually cited. `citedHighlightEdges`
+  // filters the response down to exactly that subset, in `highlight.edgeIds`
+  // order (not the response's own order, which may interleave context
+  // edges); both the `<ol>` below and `canvasHighlight` are built from it.
+  const citedHighlightEdges = useMemo(() => {
+    if (!highlight) return [];
+    const edgeById = new Map(
+      highlightResponseEdges.map((edge) => [edge.edgeId, edge]),
+    );
+    return highlight.edgeIds
+      .map((edgeId) => edgeById.get(edgeId))
+      .filter(
+        (edge): edge is (typeof highlightResponseEdges)[number] =>
+          edge !== undefined,
+      );
+  }, [highlight, highlightResponseEdges]);
   const highlightNodeLabelById = useMemo(
     () =>
       new Map(
@@ -240,16 +260,19 @@ export function GraphOverview({
   }, [highlight, highlightStatus, highlightResponseEdges]);
   const canvasHighlight = useMemo(() => {
     if (!highlight || highlightStatus !== "success") return null;
+    // Only the cited edges themselves are data-highlighted — a context
+    // edge from the response's 1-hop neighborhood stays normal (dimmed)
+    // context, same as any other edge the overview wasn't asked about.
     const nodeIds = new Set<string>();
-    for (const edge of highlightResponseEdges) {
+    for (const edge of citedHighlightEdges) {
       nodeIds.add(edge.sourceNodeId);
       nodeIds.add(edge.targetNodeId);
     }
     return {
-      edgeIds: new Set(highlightResponseEdges.map((edge) => edge.edgeId)),
+      edgeIds: new Set(citedHighlightEdges.map((edge) => edge.edgeId)),
       nodeIds,
     };
-  }, [highlight, highlightStatus, highlightResponseEdges]);
+  }, [highlight, highlightStatus, citedHighlightEdges]);
 
   // Same size-descending order as the palette assignment in
   // `toOverviewData` so the force layout seeds communities in the same
@@ -479,7 +502,7 @@ export function GraphOverview({
         <>
           <p>{libraryCopy.highlightCaption}</p>
           <ol>
-            {highlightResponseEdges.map((edge) => {
+            {citedHighlightEdges.map((edge) => {
               const sourceLabel =
                 highlightNodeLabelById.get(edge.sourceNodeId) ??
                 edge.sourceNodeId;

@@ -900,6 +900,46 @@ it("highlights cited edges, dims the rest and lists the path as text", async () 
   ).toBeVisible();
 });
 
+it("excludes a 1-hop context edge the highlight response adds beyond what was requested", async () => {
+  // `POST /highlight` returns the requested edges plus their 1-hop graph
+  // context -- a context edge (here `hd1 -> ot1`, not in `HIGHLIGHT_STATE`'s
+  // requested `edgeIds`) must stay normal (dimmed) context: it is neither
+  // data-highlighted on the canvas nor listed in "Relations cited by the
+  // answer".
+  const project = buildProject();
+  const contextEdge = buildHighlightEdge({
+    edgeId: "ctx1",
+    sourceNodeId: "hd1",
+    targetNodeId: "ot1",
+    relationType: "PRECEDES",
+    relationLabel: "precedes",
+  });
+  renderLibrary({
+    project,
+    overview: buildOverview(HIGHLIGHT_GRAPH_NODES, HIGHLIGHT_GRAPH_EDGES),
+    highlight: HIGHLIGHT_STATE,
+    highlightResponse: buildOverview(HIGHLIGHT_GRAPH_NODES, [
+      ...HIGHLIGHT_GRAPH_EDGES,
+      contextEdge,
+    ]),
+  });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(screen.getByRole("button", { name: /Other node/ })).toHaveAttribute(
+    "data-dimmed",
+    "true",
+  );
+  expect(
+    screen.queryByRole("button", { name: /Other node/ }),
+  ).not.toHaveAttribute("data-highlighted", "true");
+
+  const region = screen.getByRole("region", { name: "Highlighted path" });
+  const items = within(region).getAllByRole("listitem");
+  expect(items).toHaveLength(2);
+  expect(within(region).queryByText(/Other node/)).not.toBeInTheDocument();
+});
+
 it("renders a version-updated notice when highlight omits requested edges", async () => {
   const project = buildProject();
   renderLibrary({
