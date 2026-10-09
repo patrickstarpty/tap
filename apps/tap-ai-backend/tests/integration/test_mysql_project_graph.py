@@ -346,3 +346,51 @@ async def test_mysql_queries_are_project_scoped(owned_project_mysql) -> None:
         assert await store.get_current(other) is None
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_pinned_cached_version_reads_skip_get_current(owned_project_mysql) -> None:
+    """Fix round 2 IMPORTANT 2 regression test: once a pinned, explicit
+    `version` is already cached, `_loaded` must serve it straight from
+    `ProjectGraphCache` without a `get_current` MySQL round-trip first -- a
+    relation-analysis run that pins one version for its whole run (seed,
+    expand, path, rank -- several store calls, all with the same explicit
+    `version=`) must not issue one `get_current` SELECT per call."""
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        now = datetime(2026, 10, 7, 9, 0, 0)
+        async with sessions() as session, session.begin():
+            await publish_project_version(
+                session,
+                VALIDATION_SCOPE,
+                _draft(fragment_digest="sha256:" + "4" * 64),
+                version=1,
+                now=now,
+            )
+
+        store = MysqlProjectGraphStore(sessions)
+        current = await store.get_current(VALIDATION_SCOPE)
+        assert current is not None and current.version == 1
+        # Warm the cache for the pinned version (mirrors the agent's own
+        # initial `get_current`, before it starts pinning `version=1`).
+        await store.overview(VALIDATION_SCOPE, version=1)
+
+        calls = 0
+        original_get_current = store.get_current
+
+        async def counting_get_current(scope: ProjectScopeContext):
+            nonlocal calls
+            calls += 1
+            return await original_get_current(scope)
+
+        store.get_current = counting_get_current  # type: ignore[method-assign]
+
+        await store.overview(VALIDATION_SCOPE, version=1)
+        await store.neighbors(VALIDATION_SCOPE, "node-1", version=1)
+        await store.nodes(VALIDATION_SCOPE, ("node-1",), version=1)
+        await store.path(VALIDATION_SCOPE, "node-1", "node-2", version=1)
+
+        assert calls == 0
+    finally:
+        await engine.dispose()
