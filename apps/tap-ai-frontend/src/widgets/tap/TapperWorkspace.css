@@ -1459,7 +1459,8 @@
   padding-inline-start: 17px;
 }
 
-.tap-answer-activity {
+.tap-answer-activity,
+.tap-answer-summary {
   max-width: 76ch;
   margin-bottom: 12px;
   color: var(--tap-muted);

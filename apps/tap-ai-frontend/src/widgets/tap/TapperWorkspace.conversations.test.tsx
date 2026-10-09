@@ -153,7 +153,15 @@ function completedConversation({
               modelAlias: "qwen-plus",
               sourceRevisionIds: [],
               documentRevisionIds: [],
-              resolvedResources: [],
+              resolvedResources: [
+                {
+                  documentId: "document-1",
+                  documentRevisionId: "document-rev-1",
+                  label: "Underwriting policy",
+                  sourceId: "source-1",
+                  sourceRevisionId: "source-rev-1",
+                },
+              ],
               agentRevisionId: null,
               agentLabel: null,
               skillRevisionIds: [],
@@ -248,19 +256,24 @@ it("falls back to activity when traceId is null", async () => {
 });
 
 it("replays a persisted graph.context_ready event and shows the summary line", async () => {
+  // `relationCount: 3` with no edge citations in `ANSWER.citations` (which
+  // is empty) is a value only the replayed `graph.context_ready` event can
+  // produce — `buildAnswerGraphSummary` would otherwise fall back to
+  // `edgeCitationCount` (0), so this fails if replay is broken even though
+  // the summary line still renders.
   completedConversation({
     traceId: null,
     graphContextEvent: {
       status: "EMPTY",
       seedCount: 0,
       paths: [],
-      relationCount: 0,
+      relationCount: 3,
     },
   });
 
   await screen.findByRole("button", { name: "Regenerate" });
   expect(
-    screen.getByText("Searched 0 sources · 0 passages · 0 relations"),
+    screen.getByText("Searched 1 source · 0 passages · 3 relations"),
   ).toBeInTheDocument();
 });
 

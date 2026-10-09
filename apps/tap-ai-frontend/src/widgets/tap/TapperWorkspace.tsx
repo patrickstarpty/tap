@@ -219,6 +219,13 @@ function buildAnswerGraphSummary({
  * trace panel for a terminal turn with a `traceId` — `AnswerActivity` is not
  * rendered in that case, so without this the graph summary never reaches
  * users for the (common) case of a completed, traced turn.
+ *
+ * Returns `null` under the same "nothing happened" condition `AnswerActivity`
+ * does (its `allRows.length === 0` gate): when there is no row to expand
+ * *and* every count the summary line would otherwise report is zero, so the
+ * line would read as pure noise ("Searched 0 sources · 0 passages · 0
+ * relations"). A turn that assembled at least one source, citation or
+ * relation still always shows the summary line, matching the I1 fix above.
  */
 function AnswerGraphSummary(props: {
   locale: "en" | "zh";
@@ -228,6 +235,14 @@ function AnswerGraphSummary(props: {
   graphContext: GraphContextSummary | null;
 }) {
   const { summaryText, rows } = buildAnswerGraphSummary(props);
+  const relationCount =
+    props.graphContext?.relationCount ?? props.edgeCitationCount;
+  const hasNothingToShow =
+    rows.length === 0 &&
+    props.sourceCount === 0 &&
+    props.chunkCitationCount === 0 &&
+    relationCount === 0;
+  if (hasNothingToShow) return null;
   if (rows.length === 0) {
     return <p className="tap-answer-summary">{summaryText}</p>;
   }
