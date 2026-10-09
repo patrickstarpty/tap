@@ -21,6 +21,66 @@ from tap.modules.knowledge.api import latest_template_version as _latest_templat
 from tap.platform.telemetry import span
 
 PlannerCall = Callable[[PlanningInput, float], Awaitable[dict[str, Any]]]
+# Relation-question cues, kept as a small set of independently-reasoned
+# checks -- a literal phrase, a keyword paired with a question-form signal,
+# or a lookaround exclusion for a specific kind-of-relationship compound --
+# rather than one monolithic alternation, so each one's false-positive risk
+# can be reasoned about on its own. Only `_WHAT_FOLLOWS_QUESTION` and
+# `_ENGLISH_QUESTION_LEAD` are anchored to the start of the question and
+# `_LINK_QUESTION` to its end; the others are plain co-occurrence or
+# exclusion checks over the whole text.
+_RELATION_WORD = re.compile(r"(?<!没)关系(?!型|户|证明|管理|人)")
+_DEPENDENCY_KEYWORD = re.compile(r"影响|依赖|前置条件|上游|下游|触发")
+_CHINESE_INTERROGATIVE = re.compile(r"什么|吗|哪些|哪个")
+# 联系/关联 only count as a relation cue in an entity-pair link question
+# (`A和B有什么联系`, `核保和理赔怎么关联`), never on their own, so
+# `怎么联系客服`/`联系人怎么填写`/`怎么关联银行卡` stay off the graph route.
+# Accepted recall losses (no test forces them): `A和B的联系是什么` (no link
+# verb phrase after the pair) and `怎么影响保费` (`怎么` is no longer an
+# interrogative signal, so `上游接口怎么调用` stays negative).
+_LINK_QUESTION = re.compile(
+    r"(?:和|与|跟|同)[^，。,；;？?]{1,20}?(?:之间)?"
+    r"(?:有什么|有啥|有何|有没有|是否有|有|怎么|如何)(?:联系|关联)(?:吗|呢)?\s*[？?]?\s*$"
+)
+_SEQUENCE_QUESTION = re.compile(r"之后是什么|下一步是什么|下一步做什么|接下来是什么")
+_WHAT_FOLLOWS_QUESTION = re.compile(
+    r"^\s*(?:what|which)\s+(?:follows|comes after|happens after)\b(?!\s+(?:is|are)\b)", re.I
+)
+_ENGLISH_RELATION_KEYWORD = re.compile(
+    r"\b(?:relat(?:e|es|ed|ionship)|depend(?:s|ent|ency|encies)?|affect(?:s|ed)?|"
+    r"trigger(?:s|ed)?|impact(?:s|ed)?|next step after)\b",
+    re.I,
+)
+_ENGLISH_QUESTION_LEAD = re.compile(r"^\s*(?:what|which|how|does|do|is|are)\b", re.I)
+
+
+def _is_relation_question(original: str) -> bool:
+    """A question asks how two things relate, what depends on or follows
+    something, or which rules affect an entity. Each cue below pairs a
+    relation/dependency keyword with a positive question-form signal (a
+    Chinese interrogative, an English leading question word or trailing
+    `?`), matches a literal question phrase, or excludes a specific
+    kind-of-relationship compound (`关系型`/`关系户`/`关系证明`/`关系管理`/
+    `关系人`/`没关系`) -- instead of matching a bare keyword -- so a
+    declarative sentence that merely contains a relation word (`What
+    follows is a list of rules`) does not qualify as a question about one."""
+    if _RELATION_WORD.search(original):
+        return True
+    if _DEPENDENCY_KEYWORD.search(original) and _CHINESE_INTERROGATIVE.search(original):
+        return True
+    if _LINK_QUESTION.search(original):
+        return True
+    if _SEQUENCE_QUESTION.search(original):
+        return True
+    if _WHAT_FOLLOWS_QUESTION.search(original):
+        return True
+    if _ENGLISH_RELATION_KEYWORD.search(original) and (
+        _ENGLISH_QUESTION_LEAD.search(original) or original.rstrip().endswith("?")
+    ):
+        return True
+    return False
+
+
 _TEMPLATE = {
     "general_chat": "general",
     "transform_text": "general",
@@ -29,11 +89,12 @@ _TEMPLATE = {
     "comparison": "comparison",
     "procedural": "procedural",
     "clarification": "clarification",
+    "relation": "explanation",
 }
 
 
 def authorized_execution(plan: AnswerPlan) -> _AuthorizedAnswerExecution:
-    if plan.route != "retrieve":
+    if plan.route not in {"retrieve", "graph"}:
         raise ValueError("only admitted retrieval plans may reach Knowledge")
     remaining = plan.deadline_at - time.time()
     if remaining <= 0:
@@ -58,6 +119,7 @@ def authorized_execution(plan: AnswerPlan) -> _AuthorizedAnswerExecution:
         plan.evidence_limit,
         remaining,
         plan.output_requirements,
+        intent=plan.intent,
     )
 
 
@@ -149,7 +211,9 @@ class AnswerPlanner:
             else:
                 if ambiguous:
                     standalone = value.authorized_referents[0] + "：" + original
-                if complex_query:
+                if _is_relation_question(original):
+                    intent, route = "relation", "graph"
+                elif complex_query:
                     intent = "comparison"
                 elif re.search(r"如何|步骤|how to", original, re.I):
                     intent = "procedural"
@@ -179,7 +243,7 @@ class AnswerPlanner:
                     if queries is not None
                     else (
                         (PlannedQuery("q1", standalone, (), standalone, value.source_ids),)
-                        if route == "retrieve"
+                        if route in {"retrieve", "graph"}
                         else ()
                     ),
                     source_ids=value.source_ids,
@@ -213,8 +277,10 @@ class AnswerPlanner:
                     "queries",
                 }:
                     raise ValueError("invalid planning schema")
-                if raw["route"] not in {"retrieve", "clarify"}:
+                if raw["route"] not in {"retrieve", "graph", "clarify"}:
                     raise ValueError("model cannot authorize direct or capability routes")
+                if (raw["intent"] == "relation") != (raw["route"] == "graph"):
+                    raise ValueError("relation intent and graph route must pair")
                 if (
                     type(raw["confidence"]) not in {int, float}
                     or not isinstance(raw["missing"], list)
@@ -244,11 +310,9 @@ class AnswerPlanner:
                     )
                 ):
                     raise ValueError("model changed constraint associations")
-                if (
-                    set(protected_constraints(" ".join(query["text"] for query in raw["queries"])))
-                    != set(protected_constraints(original))
-                    and raw["route"] == "retrieve"
-                ):
+                if set(
+                    protected_constraints(" ".join(query["text"] for query in raw["queries"]))
+                ) != set(protected_constraints(original)) and raw["route"] in {"retrieve", "graph"}:
                     raise ValueError("model queries changed exact constraints")
                 queries = tuple(
                     PlannedQuery(

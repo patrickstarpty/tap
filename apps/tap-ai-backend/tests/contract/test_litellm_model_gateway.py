@@ -673,6 +673,117 @@ async def test_flowchart_evidence_reaches_the_model_as_records_not_quotable_sent
     assert "Flowchart evidence items are structured records" not in captured[0].prompt
 
 
+def _capturing_model_gateway():
+    from tap.modules.ai.domain.models import ModelCallAudit, ModelResult, ModelUsage, text_digest
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    captured = []
+
+    class CapturingGateway:
+        async def generate_structured(self, request):
+            captured.append(request)
+            return ModelResult(
+                output={"answer": "", "claims": []},
+                actual_model="qwen-plus",
+                usage=ModelUsage(),
+                actual_provider="dashscope",
+                audit=ModelCallAudit(
+                    request.scope,
+                    request.alias,
+                    request.operation,
+                    request.prompt_digest,
+                    request.schema_digest,
+                    text_digest(request.context),
+                    request.idempotency_key,
+                    "dashscope",
+                    "qwen-plus",
+                    ModelUsage(),
+                ),
+            )
+
+    models = KnowledgeModelGateway(
+        CapturingGateway(),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+    return models, captured
+
+
+def _relation_context():
+    from tap.modules.knowledge.application.relation_analysis import (
+        RelationContext,
+        RelationContextStatus,
+        RelationEvidence,
+        RelationSupport,
+    )
+
+    support = RelationSupport(
+        chunk_id="chunk-1",
+        source_revision_id="rev-1",
+        document_revision_id="doc-1",
+        content_digest="digest-chunk-1",
+        anchor={"page": 1},
+        evidence_label="S1",
+    )
+    relation = RelationEvidence(
+        label="R1",
+        edge_id="e-1",
+        subject_node_id="A",
+        subject_label="核保流程",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="健康告知",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(support,),
+        on_path=False,
+    )
+    return RelationContext(
+        status=RelationContextStatus.APPLIED,
+        graph_version="7",
+        relations=(relation,),
+    )
+
+
+@pytest.mark.asyncio
+async def test_relation_records_precede_evidence_for_relation_intent():
+    """`relation_first` puts "relations" before "evidence" in the model context;
+    otherwise it comes after. Covers PR 3 Task 5 Step 1."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    context = _relation_context()
+
+    models, captured = _capturing_model_gateway()
+    await models.answer(
+        "query",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        relation_context=context,
+        relation_first=True,
+    )
+    keys = list(json.loads(captured[0].context).keys())
+    assert keys.index("relations") < keys.index("evidence")
+    assert "Relation evidence items are structured records" in captured[0].prompt
+
+    models, captured = _capturing_model_gateway()
+    await models.answer(
+        "query",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        relation_context=context,
+        relation_first=False,
+    )
+    keys = list(json.loads(captured[0].context).keys())
+    assert keys.index("relations") > keys.index("evidence")
+
+
 @pytest.mark.asyncio
 async def test_model_only_chat_always_receives_tapper_platform_identity():
     from tap.modules.ai.domain.models import ModelCallAudit, ModelResult, ModelUsage, text_digest

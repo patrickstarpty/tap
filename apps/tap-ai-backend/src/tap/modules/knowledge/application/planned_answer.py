@@ -28,6 +28,7 @@ class AuthorizedAnswerExecution:
     evidence_limit: int
     remaining_seconds: float
     output_requirements: str = ""
+    intent: str = "factual_lookup"
 
     def __post_init__(self):
         if not 1 <= len(self.queries) <= 3 or len({item.id for item in self.queries}) != len(

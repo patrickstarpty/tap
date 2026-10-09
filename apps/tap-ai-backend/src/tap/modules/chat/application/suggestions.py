@@ -28,6 +28,7 @@ from tap.modules.chat.domain.suggestions import (
 
 _PERSONAL_LIMIT = 20
 _ENTITY_LIMIT = 20
+_RELATION_LIMIT = 20
 _POPULAR_LIMIT = 10
 _MAX_QUESTION_LENGTH = 500
 
@@ -109,6 +110,7 @@ class PromptSuggestionService:
             return ()
 
         entities = await self._knowledge.main_entities(key.actor_id, limit=_ENTITY_LIMIT)
+        relations = await self._knowledge.main_relations(key.actor_id, limit=_RELATION_LIMIT)
         personal_questions, personal_source_ids = await self._usage.personal(
             key.actor_id, limit=_PERSONAL_LIMIT
         )
@@ -121,6 +123,7 @@ class PromptSuggestionService:
             personal_questions=personal_questions,
             personal_source_ids=personal_source_ids,
             popular_sources=popular_sources,
+            relations=relations,
         )
         candidates = await self._generator.generate(inputs, key.locale)
 

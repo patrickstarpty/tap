@@ -80,6 +80,34 @@ class _Knowledge:
         )
 
 
+@pytest.mark.parametrize("status", ["STALE", "EMPTY"])
+def test_turn_completed_accepts_stale_and_empty_graph_context_status(status: str) -> None:
+    """PR 3 Task 5 review I4: the relation analysis subgraph's `STALE`/`EMPTY`
+    outcomes must be streamable, not just the HTTP answer contract."""
+    envelope = _envelope(
+        sequence=1,
+        event_type="turn.completed",
+        payload={
+            "answer": {
+                "traceId": "trace-1",
+                "queryPlanId": "plan-1",
+                "contextSnapshotId": "context-1",
+                "corpusVersion": "tapper-demo-v1",
+                "retrievalProfileId": "quick-hybrid-v1",
+                "degradedMode": False,
+                "answer": "grounded",
+                "abstained": False,
+                "abstentionReason": None,
+                "claims": [],
+                "citations": [],
+                "graphContextStatus": status,
+                "graphSnapshotId": None,
+            }
+        },
+    )
+    ChatEventEnvelope.model_validate(envelope)
+
+
 @pytest.mark.asyncio
 async def test_knowledge_events_validate_against_contract() -> None:
     conversations = _KnowledgeConversations()
@@ -291,3 +319,115 @@ async def test_hits_ready_omitted_without_trace_id() -> None:
     assert not any(
         event_type == "retrieval.hits_ready" for event_type, _payload in conversations.events
     )
+
+
+_EDGE_CITATION_PAYLOAD = {
+    "citationId": "citation-r1",
+    "evidenceLabel": "R1",
+    "chunkId": "chunk-1",
+    "logicalChunkId": "chunk-1",
+    "source": {
+        "sourceId": "source-1",
+        "sourceType": "doc",
+        "revisionKind": "blob_version",
+        "revision": "rev-1",
+        "sourceContentHash": "sha256:" + "a" * 64,
+        "anchor": {"type": "document", "page": 1},
+    },
+    "chunkContentHash": "sha256:" + "b" * 64,
+    "contentRole": "source",
+    "derivedFromChunkIds": None,
+    "publicationId": None,
+    "approvalDigest": None,
+    "approvedItemId": None,
+    "kind": "edge",
+    "edge": {
+        "edgeId": "edge-1",
+        "graphVersion": "7",
+        "subject": {"nodeId": "node-1", "label": "核保流程"},
+        "object": {"nodeId": "node-2", "label": "健康告知"},
+        "relationType": "requires",
+        "relationLabel": "需要",
+    },
+}
+
+_GRAPH_CONTEXT_PAYLOAD = {
+    "status": "APPLIED",
+    "graphVersion": "7",
+    "seedCount": 2,
+    "paths": [["核保流程", "健康告知"]],
+    "relationCount": 1,
+}
+
+
+@pytest.mark.asyncio
+async def test_graph_context_ready_event_precedes_answer_and_citation_kind_is_emitted() -> None:
+    """PR 3 Task 7: the relation analysis subgraph's readiness must stream as
+    `graph.context_ready`, and an edge citation must carry `kind == "edge"`."""
+
+    class _KnowledgeWithGraphContext:
+        async def answer(self, request):
+            edge_citation = SimpleNamespace(
+                citation_id="citation-r1",
+                model_dump=lambda **_: dict(_EDGE_CITATION_PAYLOAD),
+            )
+            graph_context = SimpleNamespace(
+                model_dump=lambda **_: dict(_GRAPH_CONTEXT_PAYLOAD),
+            )
+            return SimpleNamespace(
+                answer="grounded",
+                citations=[edge_citation],
+                abstained=False,
+                trace_id="trace-1",
+                graph_context_status="APPLIED",
+                graph_snapshot_id="7",
+                graph_context=graph_context,
+                model_dump=lambda **_: {
+                    "traceId": "trace-1",
+                    "queryPlanId": "plan-1",
+                    "contextSnapshotId": "context-1",
+                    "corpusVersion": "v1",
+                    "retrievalProfileId": "quick",
+                    "degradedMode": False,
+                    "answer": "grounded",
+                    "abstained": False,
+                    "abstentionReason": None,
+                    "claims": [],
+                    "citations": [],
+                    "graphContextStatus": "APPLIED",
+                    "graphSnapshotId": "7",
+                },
+            )
+
+    conversations = _KnowledgeConversations()
+    worker = GenerationWorker(
+        conversations, _KnowledgeWithGraphContext(), checkpointer=InMemorySaver()
+    )
+    assert await worker.run_once(limit=1) == 1
+
+    event_types = [event_type for event_type, _payload in conversations.events]
+    assert event_types == [
+        "context.assembled",
+        "stage.completed",
+        "retrieval.hits_ready",
+        "graph.context_ready",
+        "answer.delta",
+        "citation.resolved",
+    ]
+
+    for index, (event_type, payload) in enumerate(conversations.events, start=1):
+        ChatEventEnvelope.model_validate(
+            _envelope(sequence=index, event_type=event_type, payload=payload)
+        )
+
+    graph_context_ready_payload = next(
+        payload
+        for event_type, payload in conversations.events
+        if event_type == "graph.context_ready"
+    )
+    assert graph_context_ready_payload == _GRAPH_CONTEXT_PAYLOAD
+
+    last_citation_resolved = [
+        payload for event_type, payload in conversations.events if event_type == "citation.resolved"
+    ][-1]
+    assert last_citation_resolved["citation"]["kind"] == "edge"

@@ -1688,7 +1688,6 @@ def _assemble_http_services(
 
         traces = MysqlTraceHttpService(conversation_sessions)  # type: ignore[arg-type]
     graph = None
-    graph_enricher = None
     project_graph = None
     graph_jobs = None
     graph_node_enrichment = None
@@ -1699,7 +1698,6 @@ def _assemble_http_services(
         from tap.modules.graph.adapters.mysql_node_enrichment import MysqlGraphNodeEnrichment
         from tap.modules.graph.adapters.mysql_project_store import MysqlProjectGraphStore
         from tap.modules.graph.application.project_queries import ProjectGraphCache
-        from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 
         graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
         project_graph_cache = ProjectGraphCache()
@@ -1707,9 +1705,9 @@ def _assemble_http_services(
             graph_sessions,  # type: ignore[arg-type]
             cache=project_graph_cache,
         )
-        graph_enricher = GraphAnswerEnricher(
-            project_graph, publication_authority=publication_authority
-        )
+        # `GraphAnswerEnricher` and `graph.enrich` are retired by the relation
+        # analysis agent subgraph (PR 3); the answer flow's `relation_analysis`
+        # stays unwired until a later task registers the agent here.
         graph_jobs = MysqlGraphJobStore(
             graph_sessions,  # type: ignore[arg-type]
             merge_queue=MysqlProjectMergeQueue(
@@ -1773,7 +1771,6 @@ def _assemble_http_services(
         searches=search_service,
         sources=SourceService(cast(SourceRepository, repository), documents),
         corpus_version=corpus_version,
-        graph_enricher=graph_enricher,
         models=embeddings,
         answer_planner=_answer_planner(embeddings),
     )
@@ -1805,6 +1802,7 @@ def _assemble_http_services(
             knowledge=KnowledgeSuggestionSources(
                 conversation_sessions,  # type: ignore[arg-type]
                 scope=repository.scope,
+                project_graph=project_graph,
             ),
             usage=MysqlSuggestionUsage(
                 conversation_sessions,  # type: ignore[arg-type]

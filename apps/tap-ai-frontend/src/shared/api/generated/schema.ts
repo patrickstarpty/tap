@@ -1493,7 +1493,7 @@ export interface components {
             /** Chatid */
             chatId: string;
             /** Event */
-            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
+            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["GraphContextReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
             /** Eventid */
             eventId: string;
             /** Occurredat */
@@ -1555,8 +1555,15 @@ export interface components {
             contentRole: components["schemas"]["ContentRole"];
             /** Derivedfromchunkids */
             derivedFromChunkIds?: string[] | null;
+            edge?: components["schemas"]["tap__contracts__chat_stream__EdgeCitationView"] | null;
             /** Evidencelabel */
             evidenceLabel: string;
+            /**
+             * Kind
+             * @default chunk
+             * @enum {string}
+             */
+            kind?: "chunk" | "edge";
             /** Logicalchunkid */
             logicalChunkId: string;
             /** Publicationid */
@@ -1721,7 +1728,7 @@ export interface components {
              * Eventtype
              * @enum {string}
              */
-            eventType: "turn.started" | "context.assembled" | "query.plan_ready" | "stage.started" | "stage.completed" | "retrieval.hits_ready" | "rerank.completed" | "answer.delta" | "citation.resolved" | "turn.completed" | "turn.abstained" | "turn.degraded" | "turn.canceled" | "turn.failed" | "conversation.turn.requested" | "conversation.turn.completed" | "test-plan.generation.waiting" | "test-plan.generation.result_ready" | "test-plan.generation.failed" | "test-plan.generation.canceled";
+            eventType: "turn.started" | "context.assembled" | "query.plan_ready" | "stage.started" | "stage.completed" | "retrieval.hits_ready" | "graph.context_ready" | "rerank.completed" | "answer.delta" | "citation.resolved" | "turn.completed" | "turn.abstained" | "turn.degraded" | "turn.canceled" | "turn.failed" | "conversation.turn.requested" | "conversation.turn.completed" | "test-plan.generation.waiting" | "test-plan.generation.result_ready" | "test-plan.generation.failed" | "test-plan.generation.canceled";
             /** Occurredat */
             occurredAt: string;
             /** Payload */
@@ -1853,7 +1860,7 @@ export interface components {
             /** Attempt */
             attempt: number;
             /** Graphcontextstatus */
-            graphContextStatus?: ("APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED") | null;
+            graphContextStatus?: ("APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY") | null;
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
             input: components["schemas"]["ConversationTurnInputView"];
@@ -2041,6 +2048,19 @@ export interface components {
             /** Updatedat */
             updatedAt: string;
         };
+        /** EdgeCitationView */
+        EdgeCitationView: {
+            /** Edgeid */
+            edgeId: string;
+            /** Graphversion */
+            graphVersion: string;
+            object: components["schemas"]["GraphEndpointView"];
+            /** Relationlabel */
+            relationLabel: string;
+            /** Relationtype */
+            relationType: string;
+            subject: components["schemas"]["GraphEndpointView"];
+        };
         /** FailureAnchor */
         FailureAnchor: {
             /** Incidentid */
@@ -2082,6 +2102,50 @@ export interface components {
              */
             type: "failure";
         };
+        /** GraphContextReadyEvent */
+        GraphContextReadyEvent: {
+            payload: components["schemas"]["GraphContextReadyPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "graph.context_ready";
+        };
+        /** GraphContextReadyPayload */
+        GraphContextReadyPayload: {
+            /** Graphversion */
+            graphVersion?: string | null;
+            /** Paths */
+            paths: string[][];
+            /** Relationcount */
+            relationCount: number;
+            /** Seedcount */
+            seedCount: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "EMPTY" | "UNAVAILABLE" | "NOT_SELECTED";
+        };
+        /** GraphContextSummaryView */
+        GraphContextSummaryView: {
+            /**
+             * Graphversion
+             * @default null
+             */
+            graphVersion?: string | null;
+            /** Paths */
+            paths?: string[][];
+            /** Relationcount */
+            relationCount: number;
+            /** Seedcount */
+            seedCount: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "EMPTY";
+        };
         /** GraphEdgeView */
         GraphEdgeView: {
             /** Confidence */
@@ -2104,6 +2168,18 @@ export interface components {
             sourceNodeId: string;
             /** Targetnodeid */
             targetNodeId: string;
+        };
+        /**
+         * GraphEndpointView
+         * @description One edge citation endpoint (subject or object); nested shape matches
+         *     Task 7's `EdgeCitationView` ahead of time so Task 7 does not need to
+         *     reshape this contract again.
+         */
+        GraphEndpointView: {
+            /** Label */
+            label: string;
+            /** Nodeid */
+            nodeId: string;
         };
         /** GraphEvidenceView */
         GraphEvidenceView: {
@@ -3935,12 +4011,14 @@ export interface components {
             degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
+            /** @default null */
+            graphContext?: components["schemas"]["GraphContextSummaryView"] | null;
             /**
              * Graphcontextstatus
              * @default NOT_SELECTED
              * @enum {string}
              */
-            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY";
             /**
              * Graphsnapshotid
              * @default null
@@ -3977,8 +4055,16 @@ export interface components {
              * @default null
              */
             derivedFromChunkIds?: string[] | null;
+            /** @default null */
+            edge?: components["schemas"]["EdgeCitationView"] | null;
             /** Evidencelabel */
             evidenceLabel: string;
+            /**
+             * Kind
+             * @default chunk
+             * @enum {string}
+             */
+            kind?: "chunk" | "edge";
             /** Logicalchunkid */
             logicalChunkId: string;
             /**
@@ -4996,6 +5082,19 @@ export interface components {
              */
             type: "document";
         };
+        /** EdgeCitationView */
+        tap__contracts__chat_stream__EdgeCitationView: {
+            /** Edgeid */
+            edgeId: string;
+            /** Graphversion */
+            graphVersion: string;
+            object: components["schemas"]["tap__contracts__chat_stream__GraphEndpointView"];
+            /** Relationlabel */
+            relationLabel: string;
+            /** Relationtype */
+            relationType: string;
+            subject: components["schemas"]["tap__contracts__chat_stream__GraphEndpointView"];
+        };
         /** FailureAnchor */
         tap__contracts__chat_stream__FailureAnchor: {
             /** Incidentid */
@@ -5011,6 +5110,16 @@ export interface components {
              * @enum {string}
              */
             type: "failure";
+        };
+        /**
+         * GraphEndpointView
+         * @description One edge citation endpoint (subject or object).
+         */
+        tap__contracts__chat_stream__GraphEndpointView: {
+            /** Label */
+            label: string;
+            /** Nodeid */
+            nodeId: string;
         };
         /** OpenApiAnchor */
         tap__contracts__chat_stream__OpenApiAnchor: {
@@ -5050,7 +5159,7 @@ export interface components {
              * @default NOT_SELECTED
              * @enum {string}
              */
-            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY";
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
             /** Queryplanid */
@@ -5117,6 +5226,19 @@ export interface components {
              */
             type: "document";
         };
+        /** EdgeCitationView */
+        tap__contracts__http__EdgeCitationView: {
+            /** Edgeid */
+            edgeId: string;
+            /** Graphversion */
+            graphVersion: string;
+            object: components["schemas"]["tap__contracts__http__GraphEndpointView"];
+            /** Relationlabel */
+            relationLabel: string;
+            /** Relationtype */
+            relationType: string;
+            subject: components["schemas"]["tap__contracts__http__GraphEndpointView"];
+        };
         /** FailureAnchor */
         tap__contracts__http__FailureAnchor: {
             /** Incidentid */
@@ -5132,6 +5254,18 @@ export interface components {
              * @enum {string}
              */
             type: "failure";
+        };
+        /**
+         * GraphEndpointView
+         * @description One edge citation endpoint (subject or object); nested shape matches
+         *     Task 7's `EdgeCitationView` ahead of time so Task 7 does not need to
+         *     reshape this contract again.
+         */
+        tap__contracts__http__GraphEndpointView: {
+            /** Label */
+            label: string;
+            /** Nodeid */
+            nodeId: string;
         };
         /** OpenApiAnchor */
         tap__contracts__http__OpenApiAnchor: {
@@ -5166,12 +5300,13 @@ export interface components {
             degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
+            graphContext?: components["schemas"]["GraphContextSummaryView"] | null;
             /**
              * Graphcontextstatus
              * @default NOT_SELECTED
              * @enum {string}
              */
-            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY";
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
             /** Queryplanid */

@@ -306,3 +306,33 @@ def test_grounded_output_rejects_malformed_unknown_partial_or_duplicate_payloads
             max_claim_chars=4_000,
             max_labels_per_claim=16,
         )
+
+
+def test_grounded_output_accepts_relation_labels_only_when_supplied() -> None:
+    payload = {
+        "answer": "退款审批需要两名审批人。",
+        "claims": [{"text": "退款审批需要两名审批人。", "evidenceLabels": ["S1", "R1"]}],
+    }
+
+    answer, claims = parse_grounded_answer_payload(
+        payload,
+        (evidence(label="S1"),),
+        max_answer_chars=16_000,
+        max_claims=64,
+        max_claim_chars=4_000,
+        max_labels_per_claim=16,
+        extra_labels=frozenset({"R1"}),
+    )
+
+    assert answer == "退款审批需要两名审批人。"
+    assert claims[0].evidence_labels == ("S1", "R1")
+
+    with pytest.raises(ValueError, match="unknown evidence label"):
+        parse_grounded_answer_payload(
+            payload,
+            (evidence(label="S1"),),
+            max_answer_chars=16_000,
+            max_claims=64,
+            max_claim_chars=4_000,
+            max_labels_per_claim=16,
+        )

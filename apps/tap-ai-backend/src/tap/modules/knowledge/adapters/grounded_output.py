@@ -14,6 +14,7 @@ def parse_grounded_answer_payload(
     max_claims: int,
     max_claim_chars: int,
     max_labels_per_claim: int,
+    extra_labels: frozenset[str] = frozenset(),
 ) -> tuple[str, tuple[GeneratedClaim, ...]]:
     """Validate one closed grounded payload without provider-specific behavior."""
 
@@ -30,7 +31,7 @@ def parse_grounded_answer_payload(
     if not isinstance(raw_claims, list) or not 1 <= len(raw_claims) <= max_claims:
         raise ValueError("claim count is outside the closed bound")
 
-    allowed_labels = {item.evidence_label for item in evidence}
+    allowed_labels = {item.evidence_label for item in evidence} | extra_labels
     answer_paragraphs = answer.split("\n\n")
     claims: list[GeneratedClaim] = []
     seen_claims: set[str] = set()

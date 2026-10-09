@@ -23,6 +23,10 @@ class ProviderResult:
     citations: tuple[CitationEvidence, ...] = ()
     abstained: bool = False
     answer_plan_id: str | None = None
+    # Carries the richer graph context summary (status/version/seed/paths/
+    # relation counts) past `AnswerEvidence`'s fixed shape; consumed by the
+    # caller via `TurnProcessor.last_result`, not through `AnswerEvidence`.
+    graph_context: dict[str, object] | None = None
 
     def __post_init__(self):
         if (self.graph_context_status is GraphContextStatus.APPLIED) != bool(
@@ -42,6 +46,10 @@ class TurnProcessor:
     ):
         self.provider = provider
         self.complete = complete
+        # The most recent provider `ProviderResult`, including fields (such
+        # as `graph_context`) that do not fit `AnswerEvidence`'s fixed
+        # shape. `None` until a successful `process()` call.
+        self.last_result: ProviderResult | None = None
 
     async def process(
         self, snapshot: object, *, provider_events: Iterable[object] = ()
@@ -53,6 +61,7 @@ class TurnProcessor:
         )
         try:
             result = await self.provider(snapshot)
+            self.last_result = result
             if result.answer_plan_id is not None:
                 diagnostics += (f"answer-plan:{result.answer_plan_id}",)
             outcome = "abstained" if result.abstained else "completed"

@@ -28,8 +28,14 @@ from tap.modules.chat.adapters.mysql_suggestions import MysqlSuggestionStore
 from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.suggestion_ports import CurrentSource
 from tap.modules.chat.domain.conversations import TurnInput, TurnInputSnapshot, content_digest
-from tap.modules.chat.domain.suggestions import RefreshReason, TopicSource
+from tap.modules.chat.domain.suggestions import MainRelation, RefreshReason, TopicSource
 from tap.modules.graph.adapters.mysql import graph_node, graph_node_evidence
+from tap.modules.graph.adapters.mysql_project import (
+    graph_project_edge,
+    graph_project_edge_evidence,
+    graph_project_node,
+)
+from tap.modules.graph.ports.project_store import ProjectGraphStorePort
 from tap.modules.knowledge.adapters.mysql_documents import (
     ReadyRevisionProjection,
     knowledge_chunk_manifest,
@@ -62,11 +68,16 @@ class KnowledgeSuggestionSources:
     accepted for port symmetry but does not change which rows are read."""
 
     def __init__(
-        self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        scope: ProjectScopeContext,
+        project_graph: ProjectGraphStorePort | None = None,
     ) -> None:
         self._sessions = sessions
         self._scope = require_project_scope(scope)
         self._ready_sources = MysqlReadySources(sessions, self._scope)
+        self._project_graph = project_graph
 
     async def _ready_items(self) -> Sequence[PublishedKnowledgeSource]:
         """All currently-ready sources, uncapped (bounded only by
@@ -218,6 +229,106 @@ class KnowledgeSuggestionSources:
             if len(entities) >= limit:
                 break
         return tuple(entities)
+
+    async def main_relations(self, actor_id: str, *, limit: int) -> tuple[MainRelation, ...]:
+        """Main relations for the prompt-suggestion generator, read from the merged
+        Project graph (not the per-fragment graph main_entities() reads). None or
+        non-READY current version yields no relations; otherwise edges are ranked
+        by (subject.degree + object.degree) * confidence, ties broken by edge_id,
+        restricted to edges with at least one evidence row in a currently-ready
+        source revision, and deduped by (subject, relation_type, object)."""
+        del actor_id
+        if self._project_graph is None:
+            return ()
+        current = await self._project_graph.get_current(self._scope)
+        if current is None or current.status != "READY":
+            return ()
+        items = await self._ready_items()
+        revision_ids = [item.revision_id for item in items]
+        if not revision_ids:
+            return ()
+        version = current.version
+        subject_node = graph_project_node.alias("prompt_suggestion_relation_subject")
+        object_node = graph_project_node.alias("prompt_suggestion_relation_object")
+        has_ready_evidence = (
+            select(graph_project_edge_evidence.c.edge_id)
+            .where(
+                *scope_predicates(graph_project_edge_evidence, self._scope),
+                graph_project_edge_evidence.c.version == version,
+                graph_project_edge_evidence.c.edge_id == graph_project_edge.c.edge_id,
+                graph_project_edge_evidence.c.source_revision_id.in_(revision_ids),
+            )
+            .exists()
+        )
+        degree_score = (
+            subject_node.c.degree + object_node.c.degree
+        ) * graph_project_edge.c.confidence
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            graph_project_edge.c.edge_id,
+                            subject_node.c.label.label("subject_label"),
+                            graph_project_edge.c.relation_type,
+                            graph_project_edge.c.relation_label,
+                            object_node.c.label.label("object_label"),
+                        )
+                        .select_from(
+                            graph_project_edge.join(
+                                subject_node,
+                                (subject_node.c.version == graph_project_edge.c.version)
+                                & (subject_node.c.node_id == graph_project_edge.c.source_node_id),
+                            ).join(
+                                object_node,
+                                (object_node.c.version == graph_project_edge.c.version)
+                                & (object_node.c.node_id == graph_project_edge.c.target_node_id),
+                            )
+                        )
+                        .where(
+                            *scope_predicates(graph_project_edge, self._scope),
+                            *scope_predicates(subject_node, self._scope),
+                            *scope_predicates(object_node, self._scope),
+                            graph_project_edge.c.version == version,
+                            subject_node.c.version == version,
+                            object_node.c.version == version,
+                            has_ready_evidence,
+                            *(
+                                ~subject_node.c.canonical_key.startswith(prefix)
+                                for prefix in _STRUCTURAL_NODE_KEY_PREFIXES
+                            ),
+                            *(
+                                ~object_node.c.canonical_key.startswith(prefix)
+                                for prefix in _STRUCTURAL_NODE_KEY_PREFIXES
+                            ),
+                        )
+                        .order_by(degree_score.desc(), graph_project_edge.c.edge_id.asc())
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        seen: set[tuple[str, str, str]] = set()
+        relations: list[MainRelation] = []
+        for row in rows:
+            subject_label = cast(str, row["subject_label"])
+            object_label = cast(str, row["object_label"])
+            relation_type = cast(str, row["relation_type"])
+            key = (subject_label, relation_type, object_label)
+            if key in seen:
+                continue
+            seen.add(key)
+            relations.append(
+                MainRelation(
+                    subject=subject_label,
+                    relation_type=relation_type,
+                    relation_label=cast(str, row["relation_label"]),
+                    object=object_label,
+                )
+            )
+            if len(relations) >= limit:
+                break
+        return tuple(relations)
 
 
 class ConversationGroundingCheck:

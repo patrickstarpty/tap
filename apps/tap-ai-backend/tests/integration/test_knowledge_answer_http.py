@@ -22,13 +22,23 @@ from tap.modules.knowledge.application.citations import (
     CitationUnavailable,
 )
 from tap.modules.knowledge.application.documents import DocumentService
+from tap.modules.knowledge.application.relation_analysis import RelationContextStatus
 from tap.modules.knowledge.application.sources import SourceService
 from tap.modules.knowledge.domain.documents import DocumentParseRejected
 from tap.modules.knowledge.domain.models import (
     AbstentionReason,
     AnswerResponse,
+    Citation,
+    Claim,
+    ContentRole,
+    DocumentAnchor,
+    EdgeCitation,
     ModelCallProvenance,
+    RelationOutcome,
     RetrievalProfileId,
+    RevisionKind,
+    SourceFamily,
+    SourceRevisionRef,
 )
 from tap.modules.knowledge.domain.sources import SourceCommand
 from tap.modules.knowledge.ports.documents import (
@@ -232,6 +242,103 @@ def test_http_normalizes_selection_and_maps_answer_and_citation_dtos() -> None:
         "prefix": "",
         "suffix": "",
     }
+
+
+def test_http_answer_exposes_graph_context_summary_and_edge_citation_kind() -> None:
+    """PR 3 Task 5: `response.relation` drives `graphContextStatus`/`graphContext`
+    and an edge citation is exposed with `kind == "edge"` and its `edge` facts."""
+    app = harness()
+    anchor = DocumentAnchor(heading_path=("Policy",), start_offset=0, end_offset=18)
+    source = SourceRevisionRef(
+        source_id="src_" + "b" * 32,
+        source_type="doc",
+        revision_kind=RevisionKind.BLOB_VERSION,
+        revision="rev-a",
+        source_content_hash="sha256:" + "a" * 64,
+        anchor=anchor,
+    )
+    chunk_citation = Citation(
+        family=SourceFamily.DOC,
+        citation_id="citation-chunk-1",
+        evidence_label="S1",
+        chunk_id="chunk-1",
+        logical_chunk_id="h_" + "1" * 64,
+        source=source,
+        chunk_content_hash="sha256:" + "c" * 64,
+        content_role=ContentRole.SOURCE,
+    )
+    edge_citation = Citation(
+        family=SourceFamily.DOC,
+        citation_id="citation-edge-1",
+        evidence_label="R1",
+        chunk_id="chunk-1",
+        logical_chunk_id="h_" + "1" * 64,
+        source=source,
+        chunk_content_hash="sha256:" + "c" * 64,
+        content_role=ContentRole.SOURCE,
+        kind="edge",
+        edge=EdgeCitation(
+            edge_id="e-1",
+            graph_version="7",
+            subject_node_id="A",
+            subject_label="核保流程",
+            object_node_id="B",
+            object_label="健康告知",
+            relation_type="REQUIRES",
+            relation_label="REQUIRES",
+        ),
+    )
+    answer_text = "核保流程需要健康告知。"
+    app.answers.error = None
+
+    async def answer(request):  # type: ignore[no-untyped-def]
+        app.answers.requests.append(request)
+        return AnswerResponse(
+            trace_id="trace-a",
+            query_plan_id="plan-a",
+            context_snapshot_id="context-a",
+            corpus_version="tapper-demo-v1",
+            retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
+            answer=answer_text,
+            abstained=False,
+            claims=(
+                Claim(
+                    claim_id="claim-1",
+                    text=answer_text,
+                    answer_start=0,
+                    answer_end=len(answer_text),
+                    citation_ids=("citation-chunk-1", "citation-edge-1"),
+                ),
+            ),
+            citations=(chunk_citation, edge_citation),
+            embedding_provenance=ModelCallProvenance("text-embedding-v4", "embed-a"),
+            answer_provenance=ModelCallProvenance("qwen-plus", "answer-a"),
+            relation=RelationOutcome(
+                status=RelationContextStatus.APPLIED,
+                graph_version="7",
+                seed_count=1,
+                paths=(("核保流程", "健康告知"),),
+                relation_count=1,
+                diagnostics={},
+            ),
+        )
+
+    app.answers.answer = answer  # type: ignore[method-assign]
+
+    response = app.client.post(
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["graphContextStatus"] == "APPLIED"
+    assert body["graphSnapshotId"] == "7"
+    assert body["graphContext"]["relationCount"] == 1
+    assert body["graphContext"]["seedCount"] == 1
+    assert body["graphContext"]["paths"] == [["核保流程", "健康告知"]]
+    assert body["citations"][-1]["kind"] == "edge"
+    assert body["citations"][-1]["edge"]["relationType"] == "REQUIRES"
+    assert body["citations"][0]["kind"] == "chunk"
 
 
 def test_empty_duplicate_and_hidden_controls_are_stable_400_problems() -> None:

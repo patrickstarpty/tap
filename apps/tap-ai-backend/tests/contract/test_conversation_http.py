@@ -6,6 +6,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from tap.contracts.http import (
+    ConversationEventItem,
+    ConversationTurnInputView,
+    ConversationTurnSummary,
+)
 from tap.interfaces.http.app import create_app
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
@@ -574,3 +579,50 @@ def test_append_route_opens_turn_request_span(span_recorder):
     request_spans = [s for s in span_recorder.get_finished_spans() if s.name == "turn.request"]
     assert len(request_spans) == 1
     assert request_spans[0].attributes["tap.turn_id"] == turn_id
+
+
+@pytest.mark.parametrize("status", ["STALE", "EMPTY"])
+def test_conversation_turn_summary_accepts_stale_and_empty_graph_status(status: str) -> None:
+    """PR 3 Task 7: the relation analysis subgraph's `STALE`/`EMPTY` outcomes
+    must validate on the Conversation turn summary, not only the answer."""
+    summary = ConversationTurnSummary.model_validate(
+        {
+            "turnId": "turn-1",
+            "state": "completed",
+            "attempt": 1,
+            "inputSnapshotDigest": "sha256:" + "a" * 64,
+            "graphContextStatus": status,
+            "input": ConversationTurnInputView(
+                message="question",
+                model_alias="qwen-plus",
+                source_revision_ids=[],
+                document_revision_ids=[],
+                resolved_resources=[],
+                skill_revision_ids=[],
+                skill_labels=[],
+            ).model_dump(by_alias=True),
+        }
+    )
+    assert summary.graph_context_status == status
+
+
+def test_conversation_event_item_accepts_graph_context_ready() -> None:
+    """PR 3 Task 7 review fix: the Conversation history route must not
+    reject a stored `graph.context_ready` event."""
+    item = ConversationEventItem.model_validate(
+        {
+            "eventId": "event-1",
+            "sequence": 1,
+            "turnId": "turn-1",
+            "eventType": "graph.context_ready",
+            "payload": {
+                "status": "APPLIED",
+                "graphVersion": "7",
+                "seedCount": 2,
+                "paths": [["核保流程", "健康告知"]],
+                "relationCount": 1,
+            },
+            "occurredAt": "2026-10-09T00:00:00Z",
+        }
+    )
+    assert item.event_type == "graph.context_ready"
