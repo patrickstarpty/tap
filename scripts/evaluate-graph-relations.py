@@ -348,6 +348,20 @@ def validate_real(
         baseline_alias == observations_alias,
         "baseline model.alias to match the observations model.alias",
     )
+    # The same alias can route to a different upstream model between runs; the
+    # regression comparison is only meaningful when both runs resolved to the same
+    # actual model, so the baseline must record it and it must match.
+    baseline_actual = (
+        baseline_model.get("actual") if isinstance(baseline_model, Mapping) else None
+    )
+    _require(
+        isinstance(baseline_actual, str) and bool(baseline_actual.strip()),
+        "baseline model.actual to be nonblank",
+    )
+    _require(
+        baseline_actual == actual_model,
+        "baseline model.actual to match the observations model.actual",
+    )
     _require(
         baseline_map.get("goldenDigest") == observations_map.get("goldenDigest"),
         "baseline goldenDigest to match the observations goldenDigest",

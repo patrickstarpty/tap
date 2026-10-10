@@ -860,6 +860,44 @@ def test_real_mode_rejects_baseline_model_alias_mismatch(tmp_path, monkeypatch, 
     assert "model.alias" in capsys.readouterr().err
 
 
+def test_real_mode_rejects_baseline_without_model_actual(tmp_path, monkeypatch, capsys):
+    """Same alias is not enough: without the baseline's resolved upstream model the
+    regression comparison cannot prove both runs used the same model."""
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    baseline["model"] = {**baseline["model"], "actual": ""}
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    assert "baseline model.actual to be nonblank" in capsys.readouterr().err
+
+
+def test_real_mode_rejects_baseline_model_actual_mismatch(tmp_path, monkeypatch, capsys):
+    """A switched upstream model behind the same alias would make the regression
+    comparison measure the model change, not the graph change."""
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    baseline["model"] = {**baseline["model"], "actual": "litellm/gpt-4o-mini"}
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    assert "baseline model.actual to match the observations model.actual" in capsys.readouterr().err
+
+
 def test_real_mode_rejects_baseline_golden_digest_mismatch(tmp_path, monkeypatch, capsys):
     golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
     baseline["goldenDigest"] = "sha256:" + "9" * 64
