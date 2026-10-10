@@ -6,6 +6,7 @@ import { KnowledgeClientError } from "../api/client";
 import type { GraphProjectView } from "../api/types";
 import { fakeKnowledgeClient } from "../testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../testing/renderKnowledgeApp";
+import { DocumentDetail } from "./DocumentDetail";
 import { GraphFragmentStatus } from "./GraphFragmentStatus";
 
 function graphProject(
@@ -123,5 +124,29 @@ describe("GraphFragmentStatus", () => {
       await screen.findByRole("button", { name: "重试失败批次" }),
     ).toBeVisible();
     expect(screen.queryByText("已重新排队")).not.toBeInTheDocument();
+  });
+
+  it("follows the English locale when DocumentDetail renders it", async () => {
+    const api = fakeKnowledgeClient().withGraphProject(
+      graphProject({ partialRevisionIds: ["rev_01JABCDEF"] }),
+    );
+    renderKnowledgeApp(
+      <DocumentDetail
+        documentId="doc_01JABCDEF"
+        filename="policy.md"
+        locale="en"
+        onClose={() => undefined}
+        onAfterClose={() => undefined}
+      />,
+      { api },
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Graph extraction" }),
+    ).toBeVisible();
+    expect(await screen.findByText("Partially failed")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Retry failed batches" }),
+    ).toBeVisible();
   });
 });
