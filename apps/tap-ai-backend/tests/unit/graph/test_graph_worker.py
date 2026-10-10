@@ -736,6 +736,39 @@ async def test_record_batch_rejects_a_mismatched_snapshot_id() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_every_chunk_of_a_long_document_is_extracted_in_bounded_batches(
+    monkeypatch,
+) -> None:
+    # A document longer than any former per-document read cap: every chunk must reach
+    # the extractor, and no single extraction call may carry more than batch_size.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-long.chunks")
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(locator="art-long.chunks", count=1_234),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=100,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert [request.batch_index for request in extractor.requests] == list(range(13))
+    assert max(len(request.chunks) for request in extractor.requests) == 100
+    requested_chunk_ids = [
+        str(item["chunkId"]) for request in extractor.requests for item in request.chunks
+    ]
+    assert requested_chunk_ids == [f"chunk-{index}" for index in range(1_234)]
+    batches = await jobs.load_batches(VALIDATION_SCOPE, job)
+    assert len(batches) == 13
+    assert all(batch.status is GraphBatchStatus.READY for batch in batches)
+
+
 class ManyNodesExtractor:
     def __init__(self, *, nodes_per_batch: int) -> None:
         self._nodes_per_batch = nodes_per_batch

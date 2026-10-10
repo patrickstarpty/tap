@@ -29,8 +29,6 @@ from tap.modules.knowledge.ports.documents import ArtifactLocator, ArtifactStore
 from tap.platform.db.project_scope import require_project_scope
 from tap.platform.telemetry import bind_trace, flush_traces, span
 
-_CHUNK_READ_LIMIT = 500
-
 
 @dataclass(frozen=True, slots=True)
 class GraphWorkerRun:
@@ -216,9 +214,10 @@ class GraphWorker:
             return "FAILED"
 
     async def _run_claim_body(self, claim: ClaimedGraphJob) -> str:
-        chunks = (await self._artifacts.read_chunks(ArtifactLocator(claim.chunks_locator)))[
-            :_CHUNK_READ_LIMIT
-        ]
+        # Every chunk is extracted: each model call carries at most ``batch_size``
+        # chunks, and ingestion already bounds a document's chunk count
+        # (``MAX_CHUNKS_PER_DOCUMENT``), so no per-document read cap is needed.
+        chunks = await self._artifacts.read_chunks(ArtifactLocator(claim.chunks_locator))
         batches = split_batches(chunks, batch_size=self._batch_size)
         existing = {
             batch.batch_index: batch for batch in await self._jobs.load_batches(self._scope, claim)
