@@ -470,8 +470,9 @@ def edge_citations(citations: Sequence[Mapping[str, object]]) -> tuple[EdgeCitat
 def _expected_keys(question: GoldenQuestion, label: str) -> frozenset[str]:
     """Keys a citation's label may use to refer to `label`: itself plus any aliases."""
     keys = {normalize_key(label)}
+    normalized_label = normalize_key(label)
     for entity_label, aliases in question.expected_entities:
-        if entity_label == label:
+        if normalize_key(entity_label) == normalized_label:
             keys.add(normalize_key(entity_label))
             keys.update(normalize_key(alias) for alias in aliases)
     return frozenset(keys)
