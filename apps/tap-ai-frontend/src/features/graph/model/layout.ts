@@ -82,7 +82,8 @@ export function useGraphLayout(
 
   // Read the latest inputs from a ref inside the effect, so the effect's own
   // dependency array can stay on content signatures instead of array
-  // identities (fixes the respawn loop described in review I1).
+  // identities — otherwise a caller passing freshly derived arrays would
+  // tear down and respawn the worker on every render.
   const latestInputs = useRef({ seeds, edges, communityOrder });
   latestInputs.current = { seeds, edges, communityOrder };
 

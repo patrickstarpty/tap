@@ -154,9 +154,8 @@ test.beforeEach(async ({ page }) => {
  * node positions asynchronously after the canvas first renders (seeded
  * fallback positions, then the worker's reply) -- there is no DOM
  * signal/data-attribute exposed for "layout settled" (confirmed by reading
- * `KnowledgeGraph.tsx`/`layout.ts`; not adding one here, since Task 10 may
- * only touch `graphCaptureFixture.ts`/`ui-capture.spec.ts`, not product
- * code). This polls each `.tap-graph-node-core` circle's `cx`/`cy` and
+ * `KnowledgeGraph.tsx`/`layout.ts`; the capture harness deliberately does
+ * not add a test-only hook to product code). This polls each `.tap-graph-node-core` circle's `cx`/`cy` and
  * waits until two consecutive samples agree, which is a reasonable
  * test-only proxy for "the worker has stopped moving things" without
  * touching `GraphOverview`/`KnowledgeGraph`.

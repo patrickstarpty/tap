@@ -1,5 +1,5 @@
 // Isolated, route-mocked fixture data for the graph-overview/node-detail/
-// edge-citation/highlight `ui:capture` screenshots (Task 10). Pure data, no
+// edge-citation/highlight `ui:capture` screenshots. Pure data, no
 // network or React imports -- `ui-capture.spec.ts` feeds this straight into
 // `page.route` handlers. No real customer/company names: all document and
 // node labels describe a generic insurance underwriting/claims domain.
@@ -1216,7 +1216,7 @@ export const CAPTURE_RELATION_CONVERSATION = {
   },
   // `GET /conversations/{id}/turns/{turnId}/citations/{citationId}` --
   // the historical citation previews for the two edge citations (`e1`,
-  // `e5`), fetched lazily on each chip's first hover/focus (Task 8) and
+  // `e5`), fetched lazily on each chip's first hover/focus and
   // again when the evidence panel opens. Keyed by citationId so
   // `ui-capture.spec.ts` can route `.../citations/{id}` to the right one.
   citations: {
