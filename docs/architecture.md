@@ -66,6 +66,8 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 
 本地 CI/E2E 用规则式假抽取（`TAPPER_GRAPH_EXTRACTION_MODE=fake`），演示与真实环境用 `model`。
 
+验收门禁：golden set 评测（`make quality-graph-relations`，CI 常驻，假抽取 + 确定性模型，只验证链路接线、R 边引用形状与评测脚本本身的正确性，不代表真实关系抽取准确率）、抽样导出（`make graph-sample-export`，人工核对边与跨来源合并的准确率）、`graph-bench`（合成 1 万节点/5 万边基准，不进默认 CI）；真实语料上的关系 golden set 评测（`make quality-graph-relations-real`，opt-in）需要人工标注且题目覆盖须包含若干 `expectedSources` 跨 2+ 份文档的问题，否则无法暴露"命中本题期望边的同时误引用另一份无关文档邻域边"这类离题引用。
+
 LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为固定的 `classify → admit → execute` 三步。
 
 **推荐问题**
