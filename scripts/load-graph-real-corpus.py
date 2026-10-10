@@ -38,10 +38,14 @@ def _load_manifest(path: Path) -> object:
 def _print_entry_counts(raw: object) -> None:
     entries_raw = raw.get("entries", []) if isinstance(raw, dict) else []
     policy_count = sum(
-        1 for item in entries_raw if isinstance(item, dict) and item.get("kind") == "policy"
+        1
+        for item in entries_raw
+        if isinstance(item, dict) and item.get("kind") == "policy"
     )
     process_count = sum(
-        1 for item in entries_raw if isinstance(item, dict) and item.get("kind") == "process"
+        1
+        for item in entries_raw
+        if isinstance(item, dict) and item.get("kind") == "process"
     )
     print(f"policy entries: {policy_count}/8")
     print(f"process entries: {process_count}/2-3")
@@ -108,7 +112,9 @@ def cmd_download(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def _multipart_body(field_name: str, filename: str, content: bytes) -> tuple[bytes, str]:
+def _multipart_body(
+    field_name: str, filename: str, content: bytes
+) -> tuple[bytes, str]:
     boundary = f"graph-real-{uuid.uuid4().hex}"
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     body = (
@@ -131,7 +137,9 @@ def _runtime_project_id(api: str) -> str:
 def _upload_source(api: str, project_id: str, entry: CorpusEntry, target: Path) -> str:
     filename = f"{entry.id}.pdf" if entry.kind == "policy" else target.name
     body, content_type = _multipart_body("upload", filename, target.read_bytes())
-    idempotency_key = f"graph-real-{entry.id}-{entry.sha256.removeprefix('sha256:')[:12]}"
+    idempotency_key = (
+        f"graph-real-{entry.id}-{entry.sha256.removeprefix('sha256:')[:12]}"
+    )
     url = f"{api}/api/v1/projects/{project_id}/knowledge/sources"
     request = urllib.request.Request(
         url,
@@ -144,7 +152,9 @@ def _upload_source(api: str, project_id: str, entry: CorpusEntry, target: Path) 
     return str(accepted["source"]["sourceId"])
 
 
-def _source_documents(api: str, project_id: str, source_id: str) -> list[dict[str, Any]]:
+def _source_documents(
+    api: str, project_id: str, source_id: str
+) -> list[dict[str, Any]]:
     # `limit` is bounded to <=50 by this backend's route (`Query(..., le=50)`); a source's
     # own document history never needs more than that to find its latest ready revision.
     url = f"{api}/api/v1/projects/{project_id}/knowledge/sources/{source_id}?limit=50"
@@ -182,7 +192,9 @@ def _poll_source_revisions(
         if not pending:
             return revisions
         if time.monotonic() > deadline:
-            raise TimeoutError("knowledge documents did not become ready before the deadline")
+            raise TimeoutError(
+                "knowledge documents did not become ready before the deadline"
+            )
         time.sleep(_POLL_INTERVAL_SECONDS)
     return revisions
 
@@ -244,7 +256,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    validate_parser = subparsers.add_parser("validate", help="validate the manifest shape only")
+    validate_parser = subparsers.add_parser(
+        "validate", help="validate the manifest shape only"
+    )
     validate_parser.add_argument("--manifest", type=Path, required=True)
     validate_parser.set_defaults(handler=cmd_validate)
 
@@ -261,7 +275,9 @@ def main() -> int:
     upload_parser.add_argument("--api", required=True)
     upload_parser.add_argument("--project-id", default=None)
     upload_parser.add_argument("--output", type=Path, required=True)
-    upload_parser.add_argument("--timeout-seconds", type=int, default=_DEFAULT_TIMEOUT_SECONDS)
+    upload_parser.add_argument(
+        "--timeout-seconds", type=int, default=_DEFAULT_TIMEOUT_SECONDS
+    )
     upload_parser.set_defaults(handler=cmd_upload)
 
     arguments = parser.parse_args()

@@ -890,5 +890,10 @@ def test_real_mode_rejects_blank_model_actual(tmp_path, monkeypatch, capsys):
     )
 
     assert exit_code == 2
-    assert "real" in capsys.readouterr().err
+    # Isolates the blank-model gate: this assertion only passes if the
+    # failure is the model.actual check itself, not some other real-mode
+    # gate (e.g. a goldenDigest/corpusDigest mismatch) that happens to also
+    # raise before the model check runs. Would fail against the pre-fix
+    # evaluator (no model.actual validation at all).
+    assert "nonblank real model" in capsys.readouterr().err
     assert not report_path.exists()
