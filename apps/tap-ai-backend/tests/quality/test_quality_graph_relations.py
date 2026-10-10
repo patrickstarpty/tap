@@ -32,6 +32,8 @@ SCRIPT = ROOT / "scripts" / "evaluate-graph-relations.py"
 RUNNER_SCRIPT = ROOT / "scripts" / "run-graph-relations-candidate.py"
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "quality" / "graph-relations"
 FIXTURE_GOLDEN = FIXTURE_DIR / "golden-fixture-v1.json"
+REAL_FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "quality" / "graph-real"
+REAL_GOLDEN = REAL_FIXTURE_DIR / "golden-v1.json"
 
 
 def _evaluator() -> ModuleType:
@@ -820,6 +822,27 @@ def test_real_answer_dict_abstains_on_none_answer():
         "claims": [],
         "citations": [],
     }
+
+
+def test_committed_real_golden_corpus_manifest_resolves_to_the_sibling_manifest():
+    """I4 regression: `corpus.manifest` in the committed golden-v1.json must be
+    resolvable relative to the golden file's own directory (the convention
+    `validate_real`'s `golden_path.parent / manifest_relative` relies on, and
+    that `test_real_mode_rejects_incomplete_regression_set` already exercises
+    with a synthetic tmp_path golden+manifest pair). A full repo-relative path
+    like `apps/tap-ai-backend/tests/fixtures/quality/graph-real/manifest.json`
+    resolves to a nonexistent nested path instead and would always raise
+    "real mode requires a valid corpus manifest" in `make quality-graph-relations-real`.
+    """
+    golden = json.loads(REAL_GOLDEN.read_text(encoding="utf-8"))
+    manifest_relative = golden["corpus"]["manifest"]
+
+    manifest_path = (REAL_GOLDEN.parent / manifest_relative).resolve()
+
+    assert manifest_path == (REAL_FIXTURE_DIR / "manifest.json").resolve()
+    assert manifest_path.is_file()
+    manifest_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest_raw["schemaVersion"] == "graph-real-corpus-manifest-v1"
 
 
 def test_run_real_observations_carry_golden_and_corpus_digests():

@@ -190,20 +190,22 @@ TAP_GRAPH_RELATIONS_BASELINE ?= .local/graph-relations/baseline-observations.jso
 TAP_GRAPH_RELATIONS_REPORT ?= .local/graph-relations/report.json
 
 quality-graph-relations: ## run the relation golden set end to end with the rule-based fake extractor and fake model
-	uv run --project apps/tap-ai-backend python scripts/run-graph-relations-candidate.py --mode fake --golden apps/tap-ai-backend/tests/fixtures/quality/graph-relations/golden-fixture-v1.json --corpus-dir apps/tap-ai-backend/tests/fixtures/quality/graph-relations --observations .local/graph-relations/fixture-observations.json
-	uv run --project apps/tap-ai-backend python scripts/evaluate-graph-relations.py --golden apps/tap-ai-backend/tests/fixtures/quality/graph-relations/golden-fixture-v1.json --observations .local/graph-relations/fixture-observations.json --report .local/graph-relations/fixture-report.json
+	uv run --project apps/tap-ai-backend python scripts/run-graph-relations-candidate.py --mode fake --golden apps/tap-ai-backend/tests/fixtures/quality/graph-relations/golden-fixture-v1.json --corpus-dir apps/tap-ai-backend/tests/fixtures/quality/graph-relations --observations .local/graph-relations/fixture/fixture-observations.json
+	uv run --project apps/tap-ai-backend python scripts/evaluate-graph-relations.py --golden apps/tap-ai-backend/tests/fixtures/quality/graph-relations/golden-fixture-v1.json --observations .local/graph-relations/fixture/fixture-observations.json --report .local/graph-relations/fixture/fixture-report.json
 
-quality-graph-relations-real: ## evaluate the human-labeled relation golden set against the real model (opt-in)
+quality-graph-relations-real: ## evaluate the human-labeled relation golden set against the real model (opt-in; requires corpus.json from `load-graph-real-corpus.py upload` and baseline observations from a TAPPER_GRAPH_REASONING=0 `run-graph-relations-candidate.py --mode real` run)
 	@if [ "$${TAP_RUN_QUALITY_GRAPH_RELATIONS:-}" != "1" ]; then echo "quality-graph-relations-real requires TAP_RUN_QUALITY_GRAPH_RELATIONS=1" >&2; exit 2; fi
 	@case "$${TAP_QUALITY_GRAPH_RELATIONS_DATASET_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-graph-relations-real requires explicit dataset authorization" >&2; exit 2;; esac
 	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-graph-relations-real requires explicit model execution authorization" >&2; exit 2;; esac
 	@if [ "$${TAPPER_GRAPH_EXTRACTION_MODE:-}" != "model" ]; then echo "quality-graph-relations-real requires TAPPER_GRAPH_EXTRACTION_MODE=model" >&2; exit 2; fi
 	@if [ -z "$${TAP_DATABASE_URL:-}" ] || [ -z "$${MILVUS_URI:-}" ]; then echo "quality-graph-relations-real requires explicit MySQL and Milvus endpoints" >&2; exit 2; fi
+	@echo "quality-graph-relations-real: requires .local/graph-real/corpus.json (scripts/load-graph-real-corpus.py upload) and $(TAP_GRAPH_RELATIONS_BASELINE) (a prior TAPPER_GRAPH_REASONING=0 run-graph-relations-candidate.py --mode real run)" >&2
 	uv run --project apps/tap-ai-backend python scripts/load-graph-real-corpus.py validate --manifest "$(TAP_GRAPH_REAL_MANIFEST)"
 	uv run --project apps/tap-ai-backend python scripts/run-graph-relations-candidate.py --mode real --golden "$(TAP_GRAPH_RELATIONS_GOLDEN)" --regression "$(TAP_GRAPH_RELATIONS_REGRESSION)" --corpus .local/graph-real/corpus.json --observations "$(TAP_GRAPH_RELATIONS_OBSERVATIONS)"
 	uv run --project apps/tap-ai-backend python scripts/evaluate-graph-relations.py --golden "$(TAP_GRAPH_RELATIONS_GOLDEN)" --observations "$(TAP_GRAPH_RELATIONS_OBSERVATIONS)" --regression "$(TAP_GRAPH_RELATIONS_REGRESSION)" --baseline-observations "$(TAP_GRAPH_RELATIONS_BASELINE)" --report "$(TAP_GRAPH_RELATIONS_REPORT)" --real
 
-graph-sample-export: ## export 50 edges and 30 cross-source merged entities for human review
+graph-sample-export: ## export 50 edges and 30 cross-source merged entities for human review (opt-in)
+	@if [ "$${TAP_RUN_GRAPH_SAMPLE_EXPORT:-}" != "1" ]; then echo "graph-sample-export requires TAP_RUN_GRAPH_SAMPLE_EXPORT=1" >&2; exit 2; fi
 	@[ -n "$${TAP_DATABASE_URL:-}" ] || { echo "graph-sample-export requires TAP_DATABASE_URL" >&2; exit 2; }
 	uv run --project apps/tap-ai-backend python scripts/export-graph-samples.py edges --count 50 --seed "$${TAP_GRAPH_SAMPLE_SEED:-20261006}" --output .local/graph-real/edge-sample.csv
 	uv run --project apps/tap-ai-backend python scripts/export-graph-samples.py merges --count 30 --seed "$${TAP_GRAPH_SAMPLE_SEED:-20261006}" --output .local/graph-real/merge-sample.csv

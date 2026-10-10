@@ -483,7 +483,7 @@ Expected: exit 0；`.local/graph-real/` 下 10–11 个文件，`git status` 不
 Run: `uv run --project apps/tap-ai-backend python scripts/evaluate-graph-relations.py --golden $G --observations /dev/null --report /dev/null --real; test $? -eq 2`
 Expected: 因观测缺失退出 2，stderr 不含 golden 校验错误
 
-- [ ] **Step 3: 生成基线观测（`TAPPER_GRAPH_REASONING=0` 运行 `run-graph-relations-candidate.py --mode real ... --observations .local/graph-relations/baseline-observations.json`），再运行 `TAP_RUN_QUALITY_GRAPH_RELATIONS=1 TAP_QUALITY_GRAPH_RELATIONS_DATASET_AUTHORIZATION=approved:<name> TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION=approved:<name> make quality-graph-relations-real`、`make graph-sample-export`、`TAP_RUN_GRAPH_BENCH=1 make graph-bench`；人工填写两份 CSV 的 `verdict/reviewer/reviewedAt` 后运行 `evaluate-graph-samples.py`**
+- [ ] **Step 3: 生成基线观测（`TAPPER_GRAPH_REASONING=0` 运行 `run-graph-relations-candidate.py --mode real ... --observations .local/graph-relations/baseline-observations.json`），再运行 `TAP_RUN_QUALITY_GRAPH_RELATIONS=1 TAP_QUALITY_GRAPH_RELATIONS_DATASET_AUTHORIZATION=approved:<name> TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION=approved:<name> make quality-graph-relations-real`、`TAP_RUN_GRAPH_SAMPLE_EXPORT=1 make graph-sample-export`、`TAP_RUN_GRAPH_BENCH=1 make graph-bench`；人工填写两份 CSV 的 `verdict/reviewer/reviewedAt` 后运行 `evaluate-graph-samples.py`**
 
 Expected: `.local/graph-relations/report.json`、`.local/graph-real/sample-report.json`、`.local/graph-bench/report.json` 各带 `passed` 字段
 

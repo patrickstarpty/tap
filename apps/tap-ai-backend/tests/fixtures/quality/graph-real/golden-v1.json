@@ -3,7 +3,7 @@
   "labeledBy": "pending-human-labeling",
   "labeledAt": "2026-10-06",
   "corpus": {
-    "manifest": "apps/tap-ai-backend/tests/fixtures/quality/graph-real/manifest.json",
+    "manifest": "manifest.json",
     "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
   "questions": []
