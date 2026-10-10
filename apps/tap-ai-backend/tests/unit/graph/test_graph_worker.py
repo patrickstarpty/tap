@@ -769,6 +769,50 @@ async def test_every_chunk_of_a_long_document_is_extracted_in_bounded_batches(
     assert all(batch.status is GraphBatchStatus.READY for batch in batches)
 
 
+@pytest.mark.asyncio
+async def test_extraction_requests_carry_the_document_filename_as_title(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore(document_titles={"revision-1": "claims-handbook.pdf"})
+    await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert len(extractor.requests) == 3
+    assert {request.document_title for request in extractor.requests} == {"claims-handbook.pdf"}
+
+
+@pytest.mark.asyncio
+async def test_extraction_title_falls_back_to_the_revision_id_without_a_filename(
+    monkeypatch,
+) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    await worker.run_once(limit=1)
+
+    assert {request.document_title for request in extractor.requests} == {"revision-1"}
+
+
 class ManyNodesExtractor:
     def __init__(self, *, nodes_per_batch: int) -> None:
         self._nodes_per_batch = nodes_per_batch
@@ -1014,3 +1058,56 @@ async def test_batches_a_relation_less_document_into_one_document_node(monkeypat
     assert {item.chunk_id for item in published.evidence} == {
         f"chunk-{index}" for index in range(12)
     }
+
+
+@pytest.mark.asyncio
+async def test_relation_less_document_node_is_labelled_with_the_filename(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore(document_titles={"revision-1": "weather-notes.md"})
+    job = await _requested_job(jobs, locator="art-relationless.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=RepeatedContentArtifacts(
+            locator="art-relationless.chunks", content="今天天气很好。"
+        ),
+        extractor=DeterministicGraphExtraction(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    published = await jobs._graph.search(
+        VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
+    )
+    assert [node.label for node in published.nodes] == ["weather-notes.md"]
+    assert published.nodes[0].canonical_key == "document:revision-1"
+
+
+@pytest.mark.asyncio
+async def test_empty_model_batches_publish_a_fallback_labelled_with_the_filename(
+    monkeypatch,
+) -> None:
+    jobs = InMemoryGraphJobStore(document_titles={"revision-1": "weather-notes.md"})
+    job = await _requested_job(jobs)
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(count=3),
+        extractor=EmptyBatchExtractor(empty_batch_indices=frozenset({0})),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    published = await jobs._graph.search(
+        VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
+    )
+    assert [node.label for node in published.nodes] == ["weather-notes.md"]

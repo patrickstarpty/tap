@@ -238,6 +238,15 @@ def test_assemble_fragment_falls_back_to_a_document_node_when_every_batch_is_emp
     assert fragment.provenance == ()
 
 
+def test_assemble_fragment_labels_a_synthesized_fallback_with_the_document_title() -> None:
+    titled = assemble_fragment(SNAPSHOT, (), document_title="claims-handbook.pdf")
+    untitled = assemble_fragment(SNAPSHOT, ())
+
+    assert titled.nodes[0].label == "claims-handbook.pdf"
+    assert titled.nodes[0].canonical_key == "document:revision-1"
+    assert untitled.nodes[0].label == "revision-1"
+
+
 def test_assemble_fragment_merges_duplicate_canonical_keys_across_batches() -> None:
     # Repro #1 from the F1 review finding: the same raw entity ("核保流程") is
     # grounded independently in two batches. The rule-based extractor mints the

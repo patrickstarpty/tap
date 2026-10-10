@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import Literal, Protocol
+from typing import Literal, Mapping, Protocol
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -95,8 +95,15 @@ class GraphJobStore(Protocol):
 
 
 class InMemoryGraphJobStore:
-    def __init__(self, *, merge_queue: InMemoryProjectMergeQueue | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        merge_queue: InMemoryProjectMergeQueue | None = None,
+        document_titles: Mapping[str, str] | None = None,
+    ) -> None:
         self._jobs: dict[tuple[str, str], GraphJob] = {}
+        # Stands in for the document records the MySQL store reads at claim time.
+        self._document_titles = dict(document_titles or {})
         self._requests: dict[tuple[str, str], str] = {}
         self._batches: dict[tuple[str, str], dict[int, GraphFragmentBatch]] = {}
         self._graph = InMemoryGraphStore()
@@ -167,6 +174,7 @@ class InMemoryGraphJobStore:
                 worker_id,
                 uuid4().hex,
                 now + lease_duration,
+                self._document_titles.get(job.revision_id, ""),
             )
             self._jobs[key] = claim
             claimed.append(claim)

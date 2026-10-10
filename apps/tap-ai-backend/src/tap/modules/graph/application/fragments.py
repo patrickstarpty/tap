@@ -37,7 +37,10 @@ def split_batches(
 
 
 def assemble_fragment(
-    snapshot: GraphSnapshot, drafts: Sequence[GraphSnapshotDraft]
+    snapshot: GraphSnapshot,
+    drafts: Sequence[GraphSnapshotDraft],
+    *,
+    document_title: str = "",
 ) -> GraphSnapshotDraft:
     """Merge every batch draft into one snapshot draft bound to ``snapshot``.
 
@@ -84,7 +87,8 @@ def assemble_fragment(
     extractor already minted, if any survived the merge, since its canonical
     key -- exactly ``f"document:{revision_id}"`` for one of this snapshot's own
     revisions -- already collapsed every batch's copy into one via the
-    canonical-key merge above; otherwise a fresh one is synthesized here)
+    canonical-key merge above; otherwise a fresh one is synthesized here,
+    labelled with ``document_title`` or, when that is blank, the revision id)
     carrying every evidence id collected so far and zero edges. A per-batch
     extractor is free to mint its own such fallback node when it grounds
     nothing (see ``rule_based_draft``); when the document *does* end up with
@@ -345,7 +349,7 @@ def assemble_fragment(
             fallback_node = GraphNode(
                 fallback_node_id,
                 snapshot.snapshot_id,
-                snapshot.document_revision_ids[0],
+                document_title.strip() or snapshot.document_revision_ids[0],
                 "ENTITY",
                 f"document:{snapshot.document_revision_ids[0]}",
                 tuple(evidence_order),

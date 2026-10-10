@@ -59,6 +59,10 @@ from tap.modules.graph.domain.models import (
     RelationOrigin,
 )
 from tap.modules.graph.ports.store import GraphFactNotFound
+from tap.modules.knowledge.adapters.mysql_documents import (
+    knowledge_document,
+    knowledge_document_revision,
+)
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
 
@@ -339,7 +343,40 @@ class MysqlGraphJobStore:
                         lease_expires_at=expires,
                     )
                 )
-        return tuple(claims)
+            titles = await self._document_titles(
+                session, scope, {claim.revision_id for claim in claims}
+            )
+        return tuple(
+            replace(claim, document_title=titles.get(claim.revision_id, "")) for claim in claims
+        )
+
+    @staticmethod
+    async def _document_titles(
+        session: AsyncSession, scope: ProjectScopeContext, revision_ids: set[str]
+    ) -> dict[str, str]:
+        """Resolve each revision's document filename for the extraction context.
+
+        Read at claim time from the Knowledge document record, so jobs queued before
+        this lookup existed get a title too; a revision without a document record is
+        simply absent and the worker falls back to its revision id.
+        """
+        if not revision_ids:
+            return {}
+        rows = await session.execute(
+            select(knowledge_document_revision.c.revision_id, knowledge_document.c.filename)
+            .select_from(
+                knowledge_document_revision.join(
+                    knowledge_document,
+                    knowledge_document.c.document_id == knowledge_document_revision.c.document_id,
+                )
+            )
+            .where(
+                *scope_predicates(knowledge_document_revision, scope),
+                *scope_predicates(knowledge_document, scope),
+                knowledge_document_revision.c.revision_id.in_(sorted(revision_ids)),
+            )
+        )
+        return {str(revision_id): str(filename) for revision_id, filename in rows.all()}
 
     async def renew(
         self,
