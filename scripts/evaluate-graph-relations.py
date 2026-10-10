@@ -176,6 +176,38 @@ def _require(condition: bool, message: str) -> None:
         raise ValueError(f"real mode requires {message}")
 
 
+def _answered_question_ids(answers: object, group_id: str) -> set[str]:
+    """Question ids an observations/baseline document's `answers` actually names
+    for `group_id`, regardless of whether those answers are well-formed -- used
+    only to check *presence*, not to score anything."""
+    ids: set[str] = set()
+    if not isinstance(answers, Sequence) or isinstance(answers, (str, bytes)):
+        return ids
+    for answer in answers:
+        if not isinstance(answer, Mapping) or answer.get("group") != group_id:
+            continue
+        question_id = answer.get("questionId")
+        if isinstance(question_id, str):
+            ids.add(question_id)
+    return ids
+
+
+def _require_group_answered(
+    answers: object, group_id: str, declared: Sequence[str], *, document_name: str
+) -> None:
+    """I1: a partial baseline (or observations) silently shrinks `_group_rate`'s
+    denominator to only the answers actually present, making the regression check
+    vacuous -- a baseline missing every answer for a group always "passes" no matter
+    what the candidate observations do. Require every question the regression
+    document declares for this group to have an answer on file instead."""
+    missing = sorted(set(declared) - _answered_question_ids(answers, group_id))
+    if missing:
+        raise ValueError(
+            f"real mode requires {document_name} to contain an answer for every "
+            f"declared question in regression group {group_id}: missing {missing}"
+        )
+
+
 def validate_real(
     golden_path: Path,
     golden: object,
@@ -217,6 +249,18 @@ def validate_real(
         "observations goldenDigest to match the current golden set",
     )
 
+    # M2: a baseline accidentally passed as --observations (e.g. a copy-paste mistake)
+    # must be rejected, not silently scored as the candidate run.
+    _require(
+        observations_map.get("graphVersion") is not None,
+        "observations graphVersion to be non-null",
+    )
+    _require(
+        observations_map.get("graphReasoning") is True,
+        "observations graphReasoning to be True (reject a baseline passed as "
+        "--observations)",
+    )
+
     corpus = _mapping(golden_map.get("corpus"), "golden corpus")
     manifest_relative = corpus.get("manifest")
     if not isinstance(manifest_relative, str) or not manifest_relative:
@@ -226,11 +270,28 @@ def validate_real(
     manifest_path = (golden_path.parent / manifest_relative).resolve()
     try:
         manifest_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-        validate_manifest(manifest_raw)
+        manifest_entries = validate_manifest(manifest_raw)
     except (OSError, ValueError) as error:
         raise ValueError(
             f"real mode requires a valid corpus manifest: {error}"
         ) from error
+
+    # I2: bind the golden set to this exact manifest content, and re-validate it with
+    # the manifest's entry ids so an expectedSources typo (or a stale, unrelated
+    # manifest) cannot slip past the digest match above.
+    _require(
+        corpus.get("digest") == manifest_digest(manifest_raw),
+        "golden corpus.digest to match the corpus manifest",
+    )
+    corpus_ids = frozenset(entry.id for entry in manifest_entries)
+    try:
+        validate_golden(golden, require_human=True, corpus_ids=corpus_ids)
+    except ValueError as error:
+        raise ValueError(
+            f"real mode requires golden expectedSources to be manifest entry ids: "
+            f"{error}"
+        ) from error
+
     _require(
         observations_map.get("corpusDigest") == manifest_digest(manifest_raw),
         "observations corpusDigest to match the corpus manifest",
@@ -250,6 +311,10 @@ def validate_real(
     )
     baseline_map = _mapping(baseline, "baseline observations")
     _require(
+        baseline_map.get("graphVersion") is not None,
+        "baseline graphVersion to be non-null",
+    )
+    _require(
         baseline_map.get("graphVersion") == observations_map.get("graphVersion"),
         "baseline graphVersion to match the observations graphVersion",
     )
@@ -261,6 +326,48 @@ def validate_real(
         baseline_map.get("graphReasoning") is False,
         "baseline graphReasoning to be False",
     )
+    _require(
+        baseline_map.get("executionMode") == "real",
+        "baseline executionMode 'real'",
+    )
+    _require(
+        baseline_map.get("extractionMode") == "model",
+        "baseline extractionMode 'model'",
+    )
+    baseline_model = baseline_map.get("model")
+    baseline_alias = (
+        baseline_model.get("alias") if isinstance(baseline_model, Mapping) else None
+    )
+    observations_model = observations_map.get("model")
+    observations_alias = (
+        observations_model.get("alias")
+        if isinstance(observations_model, Mapping)
+        else None
+    )
+    _require(
+        baseline_alias == observations_alias,
+        "baseline model.alias to match the observations model.alias",
+    )
+    _require(
+        baseline_map.get("goldenDigest") == observations_map.get("goldenDigest"),
+        "baseline goldenDigest to match the observations goldenDigest",
+    )
+
+    # I1: fail closed on a partial baseline (or partial observations) instead of
+    # letting `_group_rate`'s declared-question denominator quietly shrink.
+    for group in regression_set.groups:
+        _require_group_answered(
+            baseline_map.get("answers"),
+            group.id,
+            group.questions,
+            document_name="baseline observations",
+        )
+        _require_group_answered(
+            observations_map.get("answers"),
+            group.id,
+            group.questions,
+            document_name="observations",
+        )
 
 
 def _load_json(path: Path) -> object:

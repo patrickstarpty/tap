@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
@@ -566,21 +567,28 @@ def main() -> int:
     parser.add_argument("--actor-id", default=VALIDATION_SCOPE.actor_id)
     arguments = parser.parse_args()
 
-    if arguments.mode == "fake":
-        if arguments.corpus_dir is None:
-            parser.error("--mode fake requires --corpus-dir")
-        observations = asyncio.run(
-            run_fake(golden=arguments.golden, corpus_dir=arguments.corpus_dir)
-        )
-    else:
-        observations = asyncio.run(
-            run_real(
-                golden=arguments.golden,
-                regression=arguments.regression,
-                corpus=arguments.corpus,
-                actor_id=arguments.actor_id,
+    try:
+        if arguments.mode == "fake":
+            if arguments.corpus_dir is None:
+                parser.error("--mode fake requires --corpus-dir")
+            observations = asyncio.run(
+                run_fake(golden=arguments.golden, corpus_dir=arguments.corpus_dir)
             )
-        )
+        else:
+            observations = asyncio.run(
+                run_real(
+                    golden=arguments.golden,
+                    regression=arguments.regression,
+                    corpus=arguments.corpus,
+                    actor_id=arguments.actor_id,
+                )
+            )
+    except (ValueError, OSError) as error:
+        # M3: a real-mode refusal (TAPPER_GRAPH_EXTRACTION_MODE != "model", a missing
+        # corpus.json, an unreadable golden/regression file, ...) must print a clean,
+        # actionable message and exit 2 -- not an uncaught traceback.
+        print(f"error: {error}", file=sys.stderr)
+        return 2
 
     arguments.observations.parent.mkdir(parents=True, exist_ok=True)
     arguments.observations.write_text(

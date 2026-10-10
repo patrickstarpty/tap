@@ -375,9 +375,18 @@ def test_regression_group_must_not_drop_below_baseline(tmp_path, monkeypatch):
     assert failing_report["passed"] is False
 
 
-def _human_labeled_golden(*, labeled_by: str = "qa-reviewer") -> dict[str, object]:
-    questions = [_question(index, subject=f"S{index}", obj=f"O{index}") for index in range(1, 21)]
-    return _golden(questions, labeled_by=labeled_by)
+def _human_labeled_golden(
+    *,
+    labeled_by: str = "qa-reviewer",
+    manifest: str = "fixture",
+    digest: str = "sha256:" + "a" * 64,
+    source: str = "source-a",
+) -> dict[str, object]:
+    questions = [
+        _question(index, subject=f"S{index}", obj=f"O{index}", source=source)
+        for index in range(1, 21)
+    ]
+    return _golden(questions, labeled_by=labeled_by, manifest=manifest, digest=digest)
 
 
 def test_real_mode_rejects_fake_observations_and_placeholder_labeler(tmp_path, monkeypatch, capsys):
@@ -578,13 +587,16 @@ def _valid_manifest() -> dict[str, object]:
 
 
 def test_real_mode_rejects_incomplete_regression_set(tmp_path, monkeypatch, capsys):
-    golden = _human_labeled_golden()
     manifest = _valid_manifest()
     corpus_digest = manifest_digest(manifest)
     _write(tmp_path / "manifest.json", manifest)
-    golden["corpus"]["manifest"] = "manifest.json"
-    # goldenDigest must match the document as written to disk, including the manifest
-    # pointer above -- compute it only after corpus.manifest is set.
+    # `_human_labeled_golden`'s corpus.manifest/digest and expectedSources must bind to
+    # this exact manifest (I2): the manifest entry ids are "policy-01".."policy-08" /
+    # "process-01"/"process-02", not the generic "source-a" default.
+    golden = _human_labeled_golden(
+        manifest="manifest.json", digest=corpus_digest, source="policy-01"
+    )
+    # goldenDigest must match the document as written to disk.
     golden_digest = canonical_digest(golden)
     golden_path = _write(tmp_path / "golden.json", golden)
 
@@ -599,10 +611,15 @@ def test_real_mode_rejects_incomplete_regression_set(tmp_path, monkeypatch, caps
         golden_digest=golden_digest,
         corpus_digest=corpus_digest,
         graph_version="graph-v1",
+        graph_reasoning=True,
     )
     observations_path = _write(tmp_path / "observations.json", real_observations)
     baseline_observations = _observations(
         [],
+        execution_mode="real",
+        extraction_mode="model",
+        model_actual="litellm/gpt-4o",
+        golden_digest=golden_digest,
         corpus_digest=corpus_digest,
         graph_version="graph-v1",
         graph_reasoning=False,
@@ -631,6 +648,394 @@ def test_real_mode_rejects_incomplete_regression_set(tmp_path, monkeypatch, caps
     stderr = capsys.readouterr().err
     assert "real" in stderr
     assert "regression" in stderr or "complete" in stderr
+    assert not report_path.exists()
+
+
+def _complete_regression_document(
+    *, group_id: str = "demo-group", questions: tuple[str, ...] = ("r-00", "r-01")
+) -> dict[str, object]:
+    return {
+        "schemaVersion": "graph-regression-questions-v1",
+        "groups": [{"id": group_id, "requiredCount": len(questions), "questions": list(questions)}],
+    }
+
+
+def _real_mode_fixtures(
+    tmp_path,
+) -> tuple[Path, Path, dict[str, object], dict[str, object]]:
+    """A fully valid real-mode golden + manifest + observations + baseline fixture
+    set (passes every `validate_real` gate as-is). Each new-check test below writes
+    `observations`/`baseline` back out after mutating exactly the one field it means
+    to break, so a failure can only be attributed to that field's own gate."""
+    manifest = _valid_manifest()
+    corpus_digest = manifest_digest(manifest)
+    _write(tmp_path / "manifest.json", manifest)
+    golden = _human_labeled_golden(
+        manifest="manifest.json", digest=corpus_digest, source="policy-01"
+    )
+    golden_digest = canonical_digest(golden)
+    golden_path = _write(tmp_path / "golden.json", golden)
+    regression_path = _write(tmp_path / "regression.json", _complete_regression_document())
+
+    group_answers = [
+        _answer("r-00", group="demo-group", citations=[_chunk_citation("c-r-00")]),
+        _answer("r-01", group="demo-group", citations=[_chunk_citation("c-r-01")]),
+    ]
+    observations = _observations(
+        list(group_answers),
+        execution_mode="real",
+        extraction_mode="model",
+        model_actual="litellm/gpt-4o",
+        golden_digest=golden_digest,
+        corpus_digest=corpus_digest,
+        graph_version="graph-v1",
+        graph_reasoning=True,
+    )
+    baseline = _observations(
+        list(group_answers),
+        execution_mode="real",
+        extraction_mode="model",
+        model_actual="litellm/gpt-4o",
+        golden_digest=golden_digest,
+        corpus_digest=corpus_digest,
+        graph_version="graph-v1",
+        graph_reasoning=False,
+    )
+    return golden_path, regression_path, observations, baseline
+
+
+def _run_real_mode(
+    tmp_path,
+    monkeypatch,
+    *,
+    golden_path: Path,
+    regression_path: Path,
+    observations: dict[str, object],
+    baseline: dict[str, object],
+) -> int:
+    observations_path = _write(tmp_path / "observations.json", observations)
+    baseline_path = _write(tmp_path / "baseline.json", baseline)
+    report_path = tmp_path / "report.json"
+    exit_code = _run_main(
+        monkeypatch,
+        [
+            "--golden",
+            str(golden_path),
+            "--observations",
+            str(observations_path),
+            "--report",
+            str(report_path),
+            "--regression",
+            str(regression_path),
+            "--baseline-observations",
+            str(baseline_path),
+            "--real",
+        ],
+    )
+    assert not report_path.exists()
+    return exit_code
+
+
+def test_real_mode_accepts_the_fully_valid_fixture_set(tmp_path, monkeypatch):
+    """Control case: confirms `_real_mode_fixtures` itself passes every `validate_real`
+    gate (exit code 2 is reserved for a gating failure), so every failing test below
+    is attributable to its one deliberate mutation. The fixture's golden questions have
+    no citations, so the *score* still fails (0/20) -- only the gate is under test here."""
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    observations_path = _write(tmp_path / "observations.json", observations)
+    baseline_path = _write(tmp_path / "baseline.json", baseline)
+    report_path = tmp_path / "report.json"
+
+    exit_code = _run_main(
+        monkeypatch,
+        [
+            "--golden",
+            str(golden_path),
+            "--observations",
+            str(observations_path),
+            "--report",
+            str(report_path),
+            "--regression",
+            str(regression_path),
+            "--baseline-observations",
+            str(baseline_path),
+            "--real",
+        ],
+    )
+
+    assert exit_code != 2
+    assert report_path.exists()
+
+
+def test_real_mode_rejects_baseline_missing_regression_answers(tmp_path, monkeypatch, capsys):
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    baseline["answers"] = [
+        answer for answer in baseline["answers"] if answer["questionId"] != "r-01"
+    ]
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    stderr = capsys.readouterr().err
+    assert "baseline" in stderr
+    assert "demo-group" in stderr
+
+
+def test_real_mode_rejects_observations_missing_regression_answers(tmp_path, monkeypatch, capsys):
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    observations["answers"] = [
+        answer for answer in observations["answers"] if answer["questionId"] != "r-01"
+    ]
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    stderr = capsys.readouterr().err
+    assert "observations" in stderr
+    assert "demo-group" in stderr
+
+
+def test_real_mode_rejects_baseline_wrong_execution_mode(tmp_path, monkeypatch, capsys):
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    baseline["executionMode"] = "fake"
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    assert "executionMode" in capsys.readouterr().err
+
+
+def test_real_mode_rejects_baseline_wrong_extraction_mode(tmp_path, monkeypatch, capsys):
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    baseline["extractionMode"] = "fake"
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    assert "extractionMode" in capsys.readouterr().err
+
+
+def test_real_mode_rejects_baseline_model_alias_mismatch(tmp_path, monkeypatch, capsys):
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    baseline["model"] = {**baseline["model"], "alias": "some-other-alias"}
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    assert "model.alias" in capsys.readouterr().err
+
+
+def test_real_mode_rejects_baseline_golden_digest_mismatch(tmp_path, monkeypatch, capsys):
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    baseline["goldenDigest"] = "sha256:" + "9" * 64
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    assert "goldenDigest" in capsys.readouterr().err
+
+
+def test_real_mode_rejects_null_graph_version(tmp_path, monkeypatch, capsys):
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    observations["graphVersion"] = None
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    assert "graphVersion" in capsys.readouterr().err
+
+
+def test_real_mode_rejects_a_baseline_passed_as_observations(tmp_path, monkeypatch, capsys):
+    # M2: `graphReasoning` distinguishes the candidate run (True) from the
+    # TAPPER_GRAPH_REASONING=0 baseline run (False) -- a baseline file passed by
+    # mistake as --observations must be rejected, not silently scored as the candidate.
+    golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
+    observations["graphReasoning"] = False
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    assert "graphReasoning" in capsys.readouterr().err
+
+
+def test_real_mode_rejects_golden_digest_not_matching_manifest(tmp_path, monkeypatch, capsys):
+    manifest = _valid_manifest()
+    _write(tmp_path / "manifest.json", manifest)
+    # I2: `corpus.digest` left at the default fixture value instead of the real
+    # manifest's digest -- the golden set is not actually bound to this manifest.
+    golden = _human_labeled_golden(manifest="manifest.json", source="policy-01")
+    golden_digest = canonical_digest(golden)
+    golden_path = _write(tmp_path / "golden.json", golden)
+    regression_path = _write(tmp_path / "regression.json", _complete_regression_document())
+
+    observations = _observations(
+        [],
+        execution_mode="real",
+        extraction_mode="model",
+        model_actual="litellm/gpt-4o",
+        golden_digest=golden_digest,
+        graph_version="graph-v1",
+        graph_reasoning=True,
+    )
+    baseline = _observations(
+        [],
+        execution_mode="real",
+        extraction_mode="model",
+        model_actual="litellm/gpt-4o",
+        golden_digest=golden_digest,
+        graph_version="graph-v1",
+        graph_reasoning=False,
+    )
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    assert "corpus.digest" in capsys.readouterr().err
+
+
+def test_real_mode_rejects_expected_source_not_in_manifest(tmp_path, monkeypatch, capsys):
+    manifest = _valid_manifest()
+    corpus_digest = manifest_digest(manifest)
+    _write(tmp_path / "manifest.json", manifest)
+    # I2: "not-a-manifest-id" is not one of this manifest's entry ids.
+    golden = _human_labeled_golden(
+        manifest="manifest.json", digest=corpus_digest, source="not-a-manifest-id"
+    )
+    golden_digest = canonical_digest(golden)
+    golden_path = _write(tmp_path / "golden.json", golden)
+    regression_path = _write(tmp_path / "regression.json", _complete_regression_document())
+
+    observations = _observations(
+        [],
+        execution_mode="real",
+        extraction_mode="model",
+        model_actual="litellm/gpt-4o",
+        golden_digest=golden_digest,
+        corpus_digest=corpus_digest,
+        graph_version="graph-v1",
+        graph_reasoning=True,
+    )
+    baseline = _observations(
+        [],
+        execution_mode="real",
+        extraction_mode="model",
+        model_actual="litellm/gpt-4o",
+        golden_digest=golden_digest,
+        corpus_digest=corpus_digest,
+        graph_version="graph-v1",
+        graph_reasoning=False,
+    )
+
+    exit_code = _run_real_mode(
+        tmp_path,
+        monkeypatch,
+        golden_path=golden_path,
+        regression_path=regression_path,
+        observations=observations,
+        baseline=baseline,
+    )
+
+    assert exit_code == 2
+    assert "expectedSources" in capsys.readouterr().err
+
+
+REAL_REGRESSION = REAL_FIXTURE_DIR / "regression-questions.json"
+
+
+def test_committed_placeholder_golden_fails_for_a_meaningful_reason(tmp_path, monkeypatch, capsys):
+    """I3: the committed `golden-v1.json` (pending labeler, 0 questions) must fail
+    real-mode validation for its own reason -- unlabeled and empty -- not for an
+    unrelated, accidental reason like a missing/unparsable observations file."""
+    observations_path = _write(tmp_path / "observations.json", {})
+    baseline_path = _write(tmp_path / "baseline.json", {})
+    report_path = tmp_path / "report.json"
+
+    exit_code = _run_main(
+        monkeypatch,
+        [
+            "--golden",
+            str(REAL_GOLDEN),
+            "--observations",
+            str(observations_path),
+            "--report",
+            str(report_path),
+            "--regression",
+            str(REAL_REGRESSION),
+            "--baseline-observations",
+            str(baseline_path),
+            "--real",
+        ],
+    )
+
+    assert exit_code == 2
+    stderr = capsys.readouterr().err
+    assert "human-labeled" in stderr
+    assert "questions" in stderr
+    assert "manifest" not in stderr
+    assert "corpusDigest" not in stderr
     assert not report_path.exists()
 
 
@@ -723,6 +1128,38 @@ def test_real_mode_refuses_fake_extraction_mode(monkeypatch):
         asyncio.run(
             _runner().run_real(golden=FIXTURE_GOLDEN, regression=None, corpus=Path("missing.json"))
         )
+
+
+def test_main_prints_a_clean_message_and_exits_2_on_real_mode_refusal(
+    tmp_path, monkeypatch, capsys
+):
+    """M3: `main()` must catch the real-mode refusal `run_real` raises (here,
+    `TAPPER_GRAPH_EXTRACTION_MODE` left at its "fake" default) and exit 2 with a clean
+    `error: ...` message, instead of letting it propagate as an uncaught traceback."""
+    monkeypatch.delenv("TAPPER_GRAPH_EXTRACTION_MODE", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-graph-relations-candidate.py",
+            "--mode",
+            "real",
+            "--golden",
+            str(FIXTURE_GOLDEN),
+            "--observations",
+            str(tmp_path / "observations.json"),
+            "--corpus",
+            str(tmp_path / "missing-corpus.json"),
+        ],
+    )
+
+    exit_code = _runner().main()
+
+    assert exit_code == 2
+    stderr = capsys.readouterr().err
+    assert "error:" in stderr
+    assert "TAPPER_GRAPH_EXTRACTION_MODE=model" in stderr
+    assert not (tmp_path / "observations.json").exists()
 
 
 def _minimal_real_edge_answer() -> AnswerResponse:
