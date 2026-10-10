@@ -1,6 +1,7 @@
 import {
   useInfiniteQuery,
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -8,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createConversationClient,
+  type ConversationCitationPreview,
   type ConversationClient,
   type ConversationCreateRequest,
   ConversationClientError,
@@ -161,7 +163,97 @@ export function useConversationCitation(
     queryFn: ({ signal }) =>
       client!.citation(conversationId!, turnId!, citationId!, signal),
     retry: retryConversationRequest,
+    // A historical conversation citation is an immutable snapshot of the
+    // turn's own answer, so once fetched it never needs a silent
+    // background re-check — an explicit `refetch()` (the retry button)
+    // still always goes to the network regardless of this.
+    staleTime: Infinity,
   });
+}
+
+/**
+ * Resolves many edge citations' supporting passages against the turn's own
+ * historical answer in one go — every `EdgeCitationChip`/`RelationHoverCard`
+ * the turn's `GroundedAnswer` renders needs this (not just the one citation
+ * `useConversationCitation` handles for the active `CitationViewer`/
+ * `EvidencePanel`), so `TapperWorkspace` calls this once per turn with every
+ * edge citation id the turn's response cites and passes the resulting
+ * lookup down as a plain function, keeping the historical-vs-current
+ * authority choice out of `features/knowledge` entirely.
+ *
+ * `enabledIds` gates the actual network request: a query object exists for
+ * every id in `citationIds` (so the returned map always has an entry, and
+ * hook call order/count never depends on hover state), but only ids in
+ * `enabledIds` are allowed to fetch — `TapperWorkspace` adds an id the
+ * first time its chip is hovered or focused, so an answer with several
+ * edge citations does not fire a GET per citation merely by rendering.
+ * `staleTime: Infinity` because a historical conversation citation is an
+ * immutable snapshot of the turn's own answer — once fetched, it never
+ * needs re-checking.
+ */
+// Passed as `useQueries`'s own `combine` option below. `combine` must be a
+// stable, module-level function reference (not one created inline on every
+// render) for `useQueries` to apply its structural-sharing optimization —
+// only then does it return the *same* array reference across renders in
+// which none of the underlying query results actually changed. Without a
+// `combine` at all, `useQueries` still memoizes each individual result
+// object, but wraps them in a freshly constructed array on every call
+// regardless, which would make the `useMemo` below recompute every render.
+function keepQueryResults<T>(results: T): T {
+  return results;
+}
+
+export function useConversationCitations(
+  projectId: string | null,
+  conversationId: string | null,
+  turnId: string | null,
+  citationIds: readonly string[],
+  enabledIds: ReadonlySet<string>,
+): ReadonlyMap<
+  string,
+  {
+    data?: ConversationCitationPreview;
+    error: unknown;
+    isError: boolean;
+    isFetching: boolean;
+    refetch: () => Promise<unknown>;
+  }
+> {
+  const client = useConversationClient(projectId);
+  const results = useQueries({
+    queries: citationIds.map((citationId) => ({
+      queryKey: conversationKeys.citation(
+        projectId,
+        conversationId,
+        turnId,
+        citationId,
+        0,
+      ),
+      enabled:
+        client !== null &&
+        conversationId !== null &&
+        turnId !== null &&
+        enabledIds.has(citationId),
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
+        client!.citation(conversationId!, turnId!, citationId, signal),
+      retry: retryConversationRequest,
+      staleTime: Infinity,
+    })),
+    combine: keepQueryResults,
+  });
+  // Built with `useMemo` over the `results` array (itself kept stable by
+  // the `combine` option above) so the returned `Map`'s identity only
+  // changes when a query result actually changes — `TapperWorkspace`'s
+  // `historicalCitationQueryFor` callback closes over this map, and an
+  // unstable identity here would make that callback (and everything
+  // downstream it's passed to) re-create every render regardless.
+  return useMemo(
+    () =>
+      new Map(
+        citationIds.map((citationId, index) => [citationId, results[index]]),
+      ),
+    [citationIds, results],
+  );
 }
 
 export function useTurnTrace(

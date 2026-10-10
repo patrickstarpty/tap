@@ -108,11 +108,54 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 content = json.dumps({"suggestions": suggestions})
             elif request.operation is ModelOperation.STRUCTURED:
                 try:
-                    evidence = json.loads(request.context).get("evidence", [])
+                    parsed_context = json.loads(request.context)
+                    evidence = parsed_context.get("evidence", [])
+                    relations = parsed_context.get("relations", [])
                 except (ValueError, AttributeError):
                     evidence = []
+                    relations = []
                 claims: list[dict[str, Any]] = []
                 used = set()
+                # A relation question's fake answer must still cite the edge
+                # (`R1`), not only chunk evidence, or the `R`-label reconciliation
+                # in `relation_claims.py` strips every edge citation and the
+                # conversation never shows a relation citation chip. The claim
+                # text names both endpoints verbatim -- the minimum
+                # `claim_mentions_both_endpoints` requires to keep the label.
+                #
+                # The relation sentence built below can come out byte-identical
+                # to the first sentence of the S-labeled chunk the relation's
+                # own evidence resolved to in this turn (rule extraction keeps
+                # case and articles, so e.g. "Underwriting review requires
+                # health disclosure." matches verbatim) -- `used` then makes
+                # the evidence loop below skip that S label's claim entirely,
+                # silently dropping a citation for a chunk that *did* ground
+                # the answer. Folding every such S label directly onto the
+                # relation claim's `evidenceLabels` keeps the citation even
+                # when its own paragraph is suppressed as a duplicate.
+                if relations:
+                    first_relation = relations[0]
+                    relation_label = (
+                        first_relation.get("relationLabel")
+                        or first_relation.get("relationType")
+                        or "relates to"
+                    )
+                    sentence = (
+                        f"{first_relation['subject']} {relation_label} {first_relation['object']}."
+                    )
+                    used.add(sentence)
+                    evidence_label_ids = {item["label"] for item in evidence}
+                    relation_s_labels = dict.fromkeys(
+                        entry["label"]
+                        for entry in first_relation.get("evidence", [])
+                        if "label" in entry and entry["label"] in evidence_label_ids
+                    )
+                    claims.append(
+                        {
+                            "text": sentence,
+                            "evidenceLabels": [first_relation["label"], *relation_s_labels],
+                        }
+                    )
                 for item in evidence:
                     sentence = _first_evidence_sentence(item["content"])
                     if sentence and sentence not in used:

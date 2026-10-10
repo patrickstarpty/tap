@@ -688,5 +688,40 @@ export function createKnowledgeClient(
       }
       return result.data;
     },
+
+    async graphProject(signal) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/graph/project",
+        {
+          params: { path: { project_id: projectId } },
+          signal,
+        },
+      );
+      if (result.error !== undefined) {
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
+        );
+      }
+      return result.data;
+    },
+
+    async retryGraphFragment(revisionId, idempotencyKey = crypto.randomUUID()) {
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/graph/fragments/{revision_id}/retry",
+        {
+          params: { path: { project_id: projectId, revision_id: revisionId } },
+          headers: { "Idempotency-Key": idempotencyKey },
+        },
+      );
+      if (result.error !== undefined) {
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
+        );
+      }
+    },
   };
 }

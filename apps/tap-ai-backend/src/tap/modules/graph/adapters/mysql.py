@@ -35,7 +35,6 @@ from tap.modules.graph.domain.models import (
     GraphSubgraph,
     NeighborQuery,
     PathQuery,
-    source_set_digest,
 )
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
@@ -455,35 +454,6 @@ class MysqlGraphStore:
                 draft,
                 now=datetime.now(timezone.utc).replace(tzinfo=None),
             )
-
-    async def active_snapshot(
-        self, scope: ProjectScopeContext, source_ids: tuple[str, ...]
-    ) -> GraphSnapshot | None:
-        scope = require_project_scope(scope)
-        async with self._sessions() as session:
-            row = (
-                (
-                    await session.execute(
-                        select(graph_snapshot)
-                        .join(
-                            graph_active_snapshot,
-                            (graph_active_snapshot.c.project_id == graph_snapshot.c.project_id)
-                            & (graph_active_snapshot.c.snapshot_id == graph_snapshot.c.snapshot_id),
-                        )
-                        .where(
-                            *scope_predicates(graph_snapshot, scope),
-                            graph_active_snapshot.c.source_set_digest
-                            == source_set_digest(source_ids),
-                        )
-                    )
-                )
-                .mappings()
-                .one_or_none()
-            )
-        if row is None:
-            return None
-        snapshot = _snapshot(row)
-        return snapshot if snapshot.source_revision_ids == tuple(sorted(source_ids)) else None
 
     async def get_snapshot(
         self, scope: ProjectScopeContext, snapshot_id: str

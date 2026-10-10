@@ -3,9 +3,66 @@ import type { RetrievalAnswerResponse } from "../../knowledge/api/types";
 
 export type ChatEventEnvelope = components["schemas"]["ChatEventEnvelope"];
 
+/**
+ * Mirrors the HTTP `GraphContextSummaryView` status enum (not the broader
+ * `graph.context_ready` stream payload enum, which also allows
+ * `"UNAVAILABLE"` and `"NOT_SELECTED"` for turns that never attempted graph
+ * retrieval) — those two statuses carry nothing worth summarizing in the
+ * answer activity line, so `reduceStreamEvent` treats them like any other
+ * invalid status and leaves `graphContext` unchanged.
+ */
+export interface GraphContextSummary {
+  status: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "EMPTY";
+  seedCount: number;
+  paths: string[][];
+  relationCount: number;
+}
+
+const GRAPH_CONTEXT_STATUSES: ReadonlySet<GraphContextSummary["status"]> =
+  new Set(["APPLIED", "NOT_READY", "STALE", "FAILED", "EMPTY"]);
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function parseGraphContextPayload(
+  payload: Record<string, unknown>,
+): GraphContextSummary | null {
+  const status = payload.status;
+  if (
+    typeof status !== "string" ||
+    !GRAPH_CONTEXT_STATUSES.has(status as GraphContextSummary["status"])
+  ) {
+    return null;
+  }
+  if (
+    !isNonNegativeInteger(payload.seedCount) ||
+    !isNonNegativeInteger(payload.relationCount)
+  ) {
+    return null;
+  }
+  const rawPaths = payload.paths;
+  if (
+    !Array.isArray(rawPaths) ||
+    !rawPaths.every(
+      (path) =>
+        Array.isArray(path) && path.every((label) => typeof label === "string"),
+    )
+  ) {
+    return null;
+  }
+  return {
+    status: status as GraphContextSummary["status"],
+    seedCount: payload.seedCount as number,
+    paths: (rawPaths as string[][]).slice(0, 3),
+    relationCount: payload.relationCount as number,
+  };
+}
+
 export interface StreamTurnState {
   answer: string;
   error: string | null;
+  graphContext: GraphContextSummary | null;
   lastSequence: number;
   /**
    * Citations resolved incrementally via `citation.resolved` events, before
@@ -28,6 +85,7 @@ export interface ConversationStreamState {
 const emptyTurn = (): StreamTurnState => ({
   answer: "",
   error: null,
+  graphContext: null,
   lastSequence: 0,
   pendingCitations: [],
   response: null,
@@ -155,6 +213,11 @@ export function reduceStreamEvent(
         status: event.type === "turn.abstained" ? "abstained" : "completed",
       };
     }
+  } else if (event.type === "graph.context_ready") {
+    const graphContext = parseGraphContextPayload(payload);
+    if (graphContext !== null) {
+      next = { ...current, graphContext };
+    }
   } else if (event.type === "turn.canceled") {
     next = { ...current, status: "canceled" };
   } else if (event.type === "conversation.turn.completed") {
@@ -178,4 +241,22 @@ export function reduceStreamEvent(
       [turnId]: { ...next, lastSequence: sequence },
     },
   };
+}
+
+/**
+ * Derives the latest valid `graph.context_ready` summary from a turn's
+ * replayed history events (`GET /conversations/{id}/events`), mirroring the
+ * live reduction in `reduceStreamEvent` so a reloaded page shows the same
+ * answer summary line as a live stream would have produced.
+ */
+export function graphContextFromEvents(
+  events: readonly { eventType: string; payload: Record<string, unknown> }[],
+): GraphContextSummary | null {
+  let latest: GraphContextSummary | null = null;
+  for (const event of events) {
+    if (event.eventType !== "graph.context_ready") continue;
+    const graphContext = parseGraphContextPayload(event.payload);
+    if (graphContext !== null) latest = graphContext;
+  }
+  return latest;
 }

@@ -1459,7 +1459,8 @@
   padding-inline-start: 17px;
 }
 
-.tap-answer-activity {
+.tap-answer-activity,
+.tap-answer-summary {
   max-width: 76ch;
   margin-bottom: 12px;
   color: var(--tap-muted);
@@ -1659,72 +1660,6 @@
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.tap-project-graph-source {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 0 12px;
-  color: var(--tap-muted);
-  font-size: 12px;
-}
-
-.tap-project-graph-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.tap-project-graph {
-  flex: 1;
-  min-width: 0;
-  width: 100%;
-}
-
-.tap-graph-live-workspace > .tap-graph-explorer {
-  grid-column: 1;
-  min-width: 0;
-}
-
-.tap-graph-live-workspace .tap-graph-toolbar {
-  position: static;
-}
-
-.tap-graph-live-workspace > .tap-graph-inspector {
-  grid-column: 2;
-  grid-row: 1;
-  position: static;
-  width: auto;
-  min-height: 0;
-  max-height: none;
-  margin: 0;
-  border: 0;
-  border-left: 1px solid var(--tap-line);
-  border-radius: 0;
-  contain: none;
-}
-
-@media (max-width: 700px) {
-  .tap-graph-live-workspace > .tap-graph-inspector {
-    grid-column: 1;
-    grid-row: 2;
-    border-left: 0;
-    border-top: 1px solid var(--tap-line);
-  }
-}
-
-.tap-project-graph-source select {
-  width: min(100%, 380px);
-  min-height: 36px;
-  padding: 6px 9px;
-  border: 1px solid var(--tap-workbench-line);
-  border-radius: 9px;
-  background: var(--tap-surface);
-  color: var(--tap-ink);
 }
 
 .tap-citation-reference {
@@ -2103,6 +2038,77 @@
   grid-template-columns: 176px minmax(420px, 1fr) 238px;
   align-items: stretch;
   gap: 12px;
+}
+
+/* Wraps the canvas region and, when a cited-path highlight is active, the
+   "Highlighted path" list beside it — siblings, not nested regions. This is
+   the sole child of `#tap-library-graph-panel` (a row-direction flex
+   container itself), so without an explicit `width: 100%` it only sizes to
+   its own content (flex-basis: auto, flex-grow: 0 by default on the main
+   axis) rather than stretching to fill the tab panel — previously masked
+   because the long pre-I4 overview caption happened to be wide enough to
+   force this wrapper's content width close to the panel's own width; the
+   shorter caption exposed the real (unset) width, collapsing the canvas to
+   a narrow strip. */
+.tap-graph-highlight-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+.tap-graph-canvas-region {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: 14px;
+}
+
+.tap-graph-canvas-region:focus-visible {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 2px;
+}
+
+.tap-graph-highlight-path {
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--tap-line);
+  border-radius: 14px;
+  background: #fff;
+  padding: 16px;
+  font-size: 13px;
+}
+
+.tap-graph-highlight-path ol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.tap-graph-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 32px 16px;
+  color: var(--tap-muted);
+  text-align: center;
+}
+
+.tap-graph-extraction-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: var(--tap-surface);
+  color: var(--tap-muted);
+  font-size: 12px;
 }
 
 .tap-graph-communities,
@@ -2524,6 +2530,122 @@
   line-height: 1.55;
 }
 
+.tap-graph-inspector h4,
+.tap-graph-inspector h5 {
+  margin: 14px 0 6px;
+  color: var(--tap-ink);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+/* "Ask about this" — the one button rendered as a direct child of the
+   inspector itself (the header's own close button and the relation/source
+   group buttons below have their own, more specific rules). */
+.tap-graph-inspector > button {
+  justify-self: start;
+  margin: 2px 0 4px;
+  border: 1px solid var(--tap-accent);
+  border-radius: 999px;
+  background: var(--tap-accent-soft);
+  padding: 6px 12px;
+  color: var(--tap-accent-dark);
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.tap-graph-inspector > button:hover {
+  background: var(--tap-accent);
+  color: #fff;
+}
+
+.tap-graph-inspector > button:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 2px;
+}
+
+.tap-graph-inspector-relation-groups {
+  display: grid;
+  gap: 16px;
+  margin-top: 6px;
+}
+
+.tap-graph-inspector-relation-group {
+  display: grid;
+  gap: 6px;
+}
+
+.tap-graph-inspector-relation-group > h4 {
+  margin: 0;
+}
+
+.tap-graph-inspector-relation-group > p {
+  margin: 0;
+  color: var(--tap-muted);
+  font-size: 9px;
+}
+
+.tap-graph-inspector-relation-group > button {
+  justify-self: start;
+  border: 1px solid var(--tap-line);
+  border-radius: 999px;
+  background: var(--tap-surface);
+  padding: 5px 10px;
+  color: var(--tap-accent-dark);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tap-graph-inspector-relation-group > button:hover {
+  background: var(--tap-accent-soft);
+}
+
+.tap-graph-inspector-relation-group > button:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 2px;
+}
+
+.tap-graph-inspector-source-group {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--tap-soft);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.tap-graph-inspector-source-group > h5 {
+  margin: 0;
+}
+
+.tap-graph-inspector-source-group p {
+  margin: 0;
+  color: var(--tap-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.tap-graph-inspector-source-group button {
+  justify-self: start;
+  border: 1px solid var(--tap-line);
+  border-radius: 999px;
+  background: var(--tap-surface);
+  padding: 4px 9px;
+  color: var(--tap-accent-dark);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tap-graph-inspector-source-group button:hover {
+  background: var(--tap-accent-soft);
+}
+
+.tap-graph-inspector-source-group button:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 2px;
+}
+
 .tap-source-dialog input[type="file"] {
   width: 100%;
   border: 1px solid var(--tap-line);
@@ -2836,6 +2958,14 @@
 
   .tap-graph-workspace {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tap-graph-highlight-layout {
+    flex-direction: column;
+  }
+
+  .tap-graph-highlight-path {
+    flex: 1 1 auto;
   }
 
   .tap-graph-communities,

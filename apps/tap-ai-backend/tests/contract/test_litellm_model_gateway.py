@@ -479,6 +479,188 @@ async def test_deterministic_gateway_answers_prompt_suggestion_schema():
     }
 
 
+def _relation_evidence_fixture(
+    *, subject_label: str = "Underwriting review", object_label: str = "health disclosure"
+):
+    from tap.modules.knowledge.application.relation_analysis import (
+        RelationEvidence,
+        RelationSupport,
+    )
+
+    return RelationEvidence(
+        label="R1",
+        edge_id="e-1",
+        subject_node_id="A",
+        subject_label=subject_label,
+        subject_aliases=(),
+        object_node_id="B",
+        object_label=object_label,
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(
+            RelationSupport(
+                chunk_id="chunk-1",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                content_digest="digest-chunk-1",
+                anchor={"page": 1},
+                evidence_label="S1",
+            ),
+        ),
+        on_path=True,
+    )
+
+
+def _relation_answer_gateway():
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    gateway = DeterministicModelGateway(
+        configured_gateway(success)._config, scope=VALIDATION_SCOPE, redact=redact
+    )
+    return KnowledgeModelGateway(
+        gateway,
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fake_answer_cites_first_relation_when_present():
+    """A relation question's fake answer must cite the edge (`R1`) *and* the
+    chunk(s) that relation's own evidence resolved to in this turn (`S1`), not
+    just the edge -- or the chunk citation that `S1` also grounds silently
+    disappears from the rendered answer (reconciled by the S1-collision
+    regression test below)."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.application.relation_analysis import (
+        RelationContext,
+        RelationContextStatus,
+    )
+
+    relation = _relation_evidence_fixture()
+    context = RelationContext(
+        status=RelationContextStatus.APPLIED,
+        graph_version="v1",
+        relations=(relation,),
+    )
+
+    models = _relation_answer_gateway()
+
+    generation = await models.answer(
+        "What is the relationship between underwriting review and health disclosure?",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        relation_context=context,
+        relation_first=True,
+    )
+
+    assert generation.claims[0].evidence_labels == ("R1", "S1")
+    assert "underwriting review" in generation.claims[0].text.lower()
+    assert "health disclosure" in generation.claims[0].text.lower()
+
+
+@pytest.mark.asyncio
+async def test_fake_answer_still_cites_s1_when_its_sentence_collides_with_the_relation_sentence():
+    """Regression: the relation sentence `"{subject} {relationLabel}
+    {object}."` can come out byte-identical to the first sentence of the S1
+    evidence it was built from (rule extraction keeps case and articles), so
+    the old code's `sentence not in used` guard silently dropped the S1
+    citation entirely -- the chunk was grounds for the answer but never cited
+    anywhere. S1 must still appear in a claim's `evidenceLabels` even when its
+    sentence collides and produces no separate paragraph."""
+    from dataclasses import replace
+
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.application.relation_analysis import (
+        RelationContext,
+        RelationContextStatus,
+    )
+
+    colliding_sentence = "Underwriting review requires health disclosure."
+    relation = replace(
+        _relation_evidence_fixture(
+            subject_label="Underwriting review", object_label="health disclosure"
+        ),
+        relation_label="requires",
+    )
+    context = RelationContext(
+        status=RelationContextStatus.APPLIED,
+        graph_version="v1",
+        relations=(relation,),
+    )
+    evidence = replace(_claim_resolution_evidence(), content=colliding_sentence)
+
+    models = _relation_answer_gateway()
+
+    generation = await models.answer(
+        "What is the relationship between underwriting review and health disclosure?",
+        (evidence,),
+        "quick-hybrid-v1",
+        relation_context=context,
+        relation_first=True,
+    )
+
+    assert generation.claims[0].text == colliding_sentence
+    cited_labels = {label for claim in generation.claims for label in claim.evidence_labels}
+    assert cited_labels == {"R1", "S1"}
+    # No duplicate paragraph for the colliding sentence.
+    texts = [claim.text for claim in generation.claims]
+    assert texts.count(colliding_sentence) == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_answer_unchanged_when_relations_is_absent_or_empty():
+    """Guards the fix's scope: a plain (non-relation) question must produce
+    exactly the same claims as before the relation-citation fix -- the
+    `relations` handling must be a no-op whenever that key is missing or
+    empty, so it cannot regress a plain chunk-evidence answer."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.ports.models import GeneratedClaim
+
+    models = _relation_answer_gateway()
+
+    without_relation_context = await models.answer(
+        "What identity evidence is required?",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+    )
+    assert without_relation_context.claims == (
+        GeneratedClaim(
+            text="Authorization requires the verified project policy.",
+            evidence_labels=("S1",),
+        ),
+    )
+
+    from tap.modules.knowledge.application.relation_analysis import (
+        RelationContext,
+        RelationContextStatus,
+    )
+
+    empty_relation_context = RelationContext(
+        status=RelationContextStatus.EMPTY,
+        graph_version="v1",
+    )
+    with_empty_relations = await models.answer(
+        "What identity evidence is required?",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        relation_context=empty_relation_context,
+        relation_first=True,
+    )
+    assert with_empty_relations.claims == without_relation_context.claims
+
+
 @pytest.mark.asyncio
 async def test_structured_output_cannot_escape_the_locked_schema():
     from tap.modules.ai.domain.models import ModelGatewayUnavailable

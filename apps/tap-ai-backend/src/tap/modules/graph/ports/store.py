@@ -22,9 +22,6 @@ class GraphStorePort(Protocol):
     async def publish(
         self, scope: ProjectScopeContext, draft: GraphSnapshotDraft
     ) -> GraphSnapshot: ...
-    async def active_snapshot(
-        self, scope: ProjectScopeContext, source_ids: tuple[str, ...]
-    ) -> GraphSnapshot | None: ...
     async def get_snapshot(
         self, scope: ProjectScopeContext, snapshot_id: str
     ) -> GraphSnapshot | None: ...

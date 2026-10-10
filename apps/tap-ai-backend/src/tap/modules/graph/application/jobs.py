@@ -20,7 +20,7 @@ from tap.modules.graph.domain.jobs import (
     GraphJobRequest,
     GraphJobStatus,
 )
-from tap.modules.graph.domain.models import GraphSnapshot, GraphSnapshotDraft
+from tap.modules.graph.domain.models import GraphSnapshotDraft
 from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.platform.db.project_scope import require_project_scope
 
@@ -287,11 +287,6 @@ class InMemoryGraphJobStore:
     async def get_job(self, scope: ProjectScopeContext, job_id: str) -> GraphJob:
         scope = require_project_scope(scope)
         return self._jobs[(scope.project_id, job_id)]
-
-    async def active_snapshot(
-        self, scope: ProjectScopeContext, source_ids: tuple[str, ...]
-    ) -> GraphSnapshot | None:
-        return await self._graph.active_snapshot(scope, source_ids)
 
     async def list_fragment_states(
         self, scope: ProjectScopeContext

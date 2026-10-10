@@ -45,6 +45,14 @@ export type PromptSuggestionItem =
   components["schemas"]["PromptSuggestionItem"];
 export type PromptSuggestionSource =
   components["schemas"]["PromptSuggestionSource"];
+/**
+ * `features/` cannot import from `features/graph` (`no-feature-to-feature`),
+ * so this project-graph view is aliased here directly from the generated
+ * schema rather than reused from `features/graph/model/graph.ts`'s
+ * `GraphProject`. It only exposes `extractingRevisionIds` /
+ * `partialRevisionIds` — no per-revision failed/total batch counts.
+ */
+export type GraphProjectView = components["schemas"]["ProjectGraphView"];
 
 /**
  * Mirrors `src/widgets/tap/workspace/model.ts`'s `Locale` ("en" | "zh").
@@ -183,4 +191,9 @@ export interface KnowledgeClient {
     citationId: string,
     signal?: AbortSignal,
   ): Promise<CitationPreview>;
+  graphProject(signal?: AbortSignal): Promise<GraphProjectView>;
+  retryGraphFragment(
+    revisionId: string,
+    idempotencyKey?: string,
+  ): Promise<void>;
 }

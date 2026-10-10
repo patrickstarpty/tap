@@ -4,7 +4,11 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestQueryClient } from "../../../shared/testing/renderApp";
-import { useConversationStream, useTurnTrace } from "./queries";
+import {
+  useConversationCitations,
+  useConversationStream,
+  useTurnTrace,
+} from "./queries";
 
 const event = (
   sequence: number,
@@ -205,6 +209,37 @@ describe("useConversationStream", () => {
     expect(result.current.state.turns["turn-2"]?.answer).toBe("second answer");
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("useConversationCitations", () => {
+  it("returns a stable results Map identity across a re-render in which nothing changed", () => {
+    // `useQueries` only returns the *same* underlying results array across
+    // renders when given its own `combine` option (a module-level, stable
+    // function reference — see `keepQueryResults` in `./queries`); without
+    // it, `useQueries` reconstructs a fresh array every call even when no
+    // query result actually changed, which would make the `useMemo` that
+    // builds this hook's returned `Map` recompute (and hand callers a new
+    // object) on every unrelated render.
+    const queryClient = createTestQueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    // Kept outside the render so the array/set identity itself is stable
+    // across rerenders -- this test isolates `useQueries`'s own `combine`
+    // behavior, not whether the caller also memoizes its own inputs.
+    const citationIds = ["c1", "c2"];
+    const enabledIds = new Set<string>();
+
+    const { result, rerender } = renderHook(
+      () => useConversationCitations(null, null, null, citationIds, enabledIds),
+      { wrapper },
+    );
+    const first = result.current;
+
+    rerender();
+
+    expect(result.current).toBe(first);
   });
 });
 

@@ -219,7 +219,6 @@ async def test_expired_owner_is_fenced_after_worker_restart() -> None:
         now=NOW + timedelta(seconds=12),
     )
     assert ready.status is GraphJobStatus.READY
-    assert (await jobs.active_snapshot(VALIDATION_SCOPE, ("revision-1",))).status == "READY"
 
 
 @pytest.mark.asyncio

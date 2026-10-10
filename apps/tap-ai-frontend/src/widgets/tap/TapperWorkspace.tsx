@@ -1,4 +1,4 @@
-import { Button } from "antd";
+import { Alert, Button } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -16,7 +16,15 @@ import { TapperChat, type ChatAttachment } from "./workspace/TapperChat";
 import { CatalogWorkspace } from "./workspace/CatalogWorkspace";
 import { WORKSPACE_COPY, type WorkspaceCopy } from "./workspace/copy";
 import { KnowledgeSourcesPanel } from "./workspace/KnowledgeSourcesPanel";
-import { LibraryWorkspace } from "./workspace/LibraryWorkspace";
+import {
+  LibraryWorkspace,
+  type PublishedSourceRevision,
+} from "./workspace/LibraryWorkspace";
+import {
+  pushGraphHighlight,
+  readGraphHighlight,
+  useGraphHighlightState,
+} from "../../features/graph/model/highlight";
 import { AccessibleDialog } from "./workspace/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
@@ -32,6 +40,7 @@ import {
   useDeleteConversation,
   useRenameConversation,
   useConversationCitation,
+  useConversationCitations,
   useConversationDetail,
   useConversationEvents,
   useConversationList,
@@ -53,10 +62,13 @@ import {
   isTargetTurnActive,
   latestTurnState,
   reduceStreamEvent,
+  type GraphContextSummary,
 } from "../../features/conversations/model/stream";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { useModelCatalog } from "../../features/knowledge/api/modelCatalog";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
+import { EvidencePanel } from "../../features/knowledge/components/EvidencePanel";
+import { isEdgeCitation } from "../../features/knowledge/model/edgeCitation";
 import { DocumentChunks } from "../../features/knowledge/components/DocumentChunks";
 import { KnowledgeReview } from "../../features/knowledge/components/KnowledgeReview";
 import {
@@ -165,16 +177,107 @@ type ActivityEvent = {
   payload: { [key: string]: unknown };
 };
 
+/**
+ * Shared by `AnswerActivity` (no trace yet) and `AnswerGraphSummary` (trace
+ * panel already covers the event log) so the answer summary line and the
+ * graph seeds/paths rows render identically regardless of which of the two
+ * is shown — see Task 7 review I1: the summary must not disappear just
+ * because a turn has a `traceId`.
+ */
+function buildAnswerGraphSummary({
+  locale,
+  sourceCount,
+  chunkCitationCount,
+  edgeCitationCount,
+  graphContext,
+}: {
+  locale: "en" | "zh";
+  sourceCount: number;
+  chunkCitationCount: number;
+  edgeCitationCount: number;
+  graphContext: GraphContextSummary | null;
+}): { summaryText: string; rows: string[] } {
+  const copy = WORKSPACE_COPY[locale].chat;
+  const relationCount = graphContext?.relationCount ?? edgeCitationCount;
+  const summaryText = copy.answerSummary(
+    sourceCount,
+    chunkCitationCount,
+    relationCount,
+  );
+  const hasGraphRows =
+    graphContext !== null &&
+    (graphContext.seedCount > 0 || graphContext.paths.length > 0);
+  const rows = !hasGraphRows
+    ? []
+    : [
+        copy.seedEntities(graphContext.seedCount),
+        ...graphContext.paths.map(
+          (path) => `${copy.relationPaths}: ${path.join(" → ")}`,
+        ),
+      ];
+  return { summaryText, rows };
+}
+
+/**
+ * Renders the answer summary line and expandable seeds/paths rows above the
+ * trace panel for a terminal turn with a `traceId` — `AnswerActivity` is not
+ * rendered in that case, so without this the graph summary never reaches
+ * users for the (common) case of a completed, traced turn.
+ *
+ * Returns `null` under the same "nothing happened" condition `AnswerActivity`
+ * does (its `allRows.length === 0` gate): when there is no row to expand
+ * *and* every count the summary line would otherwise report is zero, so the
+ * line would read as pure noise ("Searched 0 sources · 0 passages · 0
+ * relations"). A turn that assembled at least one source, citation or
+ * relation still always shows the summary line, matching the I1 fix above.
+ */
+function AnswerGraphSummary(props: {
+  locale: "en" | "zh";
+  sourceCount: number;
+  chunkCitationCount: number;
+  edgeCitationCount: number;
+  graphContext: GraphContextSummary | null;
+}) {
+  const { summaryText, rows } = buildAnswerGraphSummary(props);
+  const relationCount =
+    props.graphContext?.relationCount ?? props.edgeCitationCount;
+  const hasNothingToShow =
+    rows.length === 0 &&
+    props.sourceCount === 0 &&
+    props.chunkCitationCount === 0 &&
+    relationCount === 0;
+  if (hasNothingToShow) return null;
+  if (rows.length === 0) {
+    return <p className="tap-answer-summary">{summaryText}</p>;
+  }
+  return (
+    <details className="tap-answer-activity">
+      <summary>{summaryText}</summary>
+      <ol>
+        {rows.map((row, index) => (
+          <li key={`${index}-${row}`}>{row}</li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 export function AnswerActivity({
   events,
   locale,
   sourceCount,
   shownCitationCount,
+  chunkCitationCount,
+  edgeCitationCount,
+  graphContext,
 }: {
   events: readonly ActivityEvent[];
   locale: "en" | "zh";
   sourceCount: number;
   shownCitationCount: number;
+  chunkCitationCount: number;
+  edgeCitationCount: number;
+  graphContext: GraphContextSummary | null;
 }) {
   const context = events.find(
     (event) => event.eventType === "context.assembled",
@@ -224,37 +327,21 @@ export function AnswerActivity({
         : `${citations} citation records resolved; ${shownCitationCount} used by displayed claims`
       : null,
   ].filter((row): row is string => row !== null);
-  if (rows.length === 0) return null;
-  const compact = [
-    assembledCount > 0
-      ? locale === "zh"
-        ? `${assembledCount} 份来源`
-        : `${assembledCount} source${assembledCount === 1 ? "" : "s"}`
-      : null,
-    stage
-      ? locale === "zh"
-        ? "Knowledge answer"
-        : "Knowledge answer"
-      : answerRecorded
-        ? locale === "zh"
-          ? "回答已记录"
-          : "Answer recorded"
-        : null,
-    shownCitationCount > 0
-      ? locale === "zh"
-        ? `${shownCitationCount} 处引用`
-        : `${shownCitationCount} citation${shownCitationCount === 1 ? "" : "s"}`
-      : null,
-  ].filter((item): item is string => item !== null);
+  const { summaryText, rows: graphRows } = buildAnswerGraphSummary({
+    locale,
+    sourceCount,
+    chunkCitationCount,
+    edgeCitationCount,
+    graphContext,
+  });
+  const allRows = [...rows, ...graphRows];
+  if (allRows.length === 0) return null;
   return (
     <details className="tap-answer-activity">
-      <summary>
-        {locale === "zh" ? "执行记录" : "Activity"}
-        {compact.length > 0 ? ` · ${compact.join(" · ")}` : ""}
-      </summary>
+      <summary>{summaryText}</summary>
       <ol>
-        {rows.map((row) => (
-          <li key={row}>{row}</li>
+        {allRows.map((row, index) => (
+          <li key={`${index}-${row}`}>{row}</li>
         ))}
       </ol>
     </details>
@@ -546,6 +633,43 @@ function AssistantResponse({
   onGenerateTestPlan?: () => void;
   activityEvents?: readonly ActivityEvent[];
 }) {
+  // Hooks run before any of this component's early returns below, so the
+  // edge citations' supporting-passage queries are always resolved in the
+  // same order regardless of `turn.intent`/`turn.status` — an empty
+  // `edgeCitationIds` array for turns with no response (or no edge
+  // citations) is simply a no-op `useQueries` call.
+  const edgeCitationIds = useMemo(
+    () =>
+      turn.response?.citations
+        .filter(isEdgeCitation)
+        .map((citation) => citation.citationId) ?? [],
+    [turn.response],
+  );
+  // An answer can cite several edges, so none of their snippets are
+  // fetched just because the turn rendered — only once a citation's chip
+  // is actually hovered or focused (`EdgeCitationChip`'s `onPreview`,
+  // wired through `GroundedAnswer`) does its id join this set and its
+  // query (in `useConversationCitations` below) become enabled.
+  const [previewedCitationIds, setPreviewedCitationIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const onPreviewCitation = useCallback((citationId: string) => {
+    setPreviewedCitationIds((current) =>
+      current.has(citationId) ? current : new Set(current).add(citationId),
+    );
+  }, []);
+  const edgeCitationQueries = useConversationCitations(
+    projectId,
+    conversationId ?? null,
+    turn.id,
+    edgeCitationIds,
+    previewedCitationIds,
+  );
+  const historicalCitationQueryFor = useCallback(
+    (citationId: string) => edgeCitationQueries.get(citationId),
+    [edgeCitationQueries],
+  );
+
   if (turn.intent === "answer") {
     if (
       turn.insightsQueryId !== undefined &&
@@ -592,36 +716,77 @@ function AssistantResponse({
       );
     }
     if (turn.response !== undefined && turn.response !== null) {
+      const shownCitationIds = new Set(
+        turn.response.claims.flatMap((claim) => claim.citationIds),
+      );
+      const citationsById = new Map(
+        turn.response.citations.map((citation) => [
+          citation.citationId,
+          citation,
+        ]),
+      );
+      let chunkCitationCount = 0;
+      let edgeCitationCount = 0;
+      for (const citationId of shownCitationIds) {
+        const citation = citationsById.get(citationId);
+        if (citation !== undefined && isEdgeCitation(citation)) {
+          edgeCitationCount += 1;
+        } else {
+          chunkCitationCount += 1;
+        }
+      }
+      const graphContext = turn.graphContext ?? null;
+      const isTerminalTurn =
+        turn.status !== undefined &&
+        (TERMINAL_TURN_STATUSES as readonly string[]).includes(turn.status);
       return (
         <>
-          {turn.status !== undefined &&
-          (TERMINAL_TURN_STATUSES as readonly string[]).includes(turn.status) &&
+          {isTerminalTurn &&
           turn.traceId != null &&
           conversationId !== undefined ? (
-            <DurableTracePanel
-              projectId={projectId}
-              conversationId={conversationId}
-              turn={turn}
-              onOpenDocument={onOpenDocument ?? (() => undefined)}
-              documentName={documentName}
-            />
+            <>
+              <AnswerGraphSummary
+                locale={turn.locale}
+                sourceCount={turn.sourceReferences.length}
+                chunkCitationCount={chunkCitationCount}
+                edgeCitationCount={edgeCitationCount}
+                graphContext={graphContext}
+              />
+              <DurableTracePanel
+                projectId={projectId}
+                conversationId={conversationId}
+                turn={turn}
+                onOpenDocument={onOpenDocument ?? (() => undefined)}
+                documentName={documentName}
+              />
+            </>
           ) : (
             <AnswerActivity
               events={activityEvents}
               locale={turn.locale}
               sourceCount={turn.sourceReferences.length}
-              shownCitationCount={
-                new Set(
-                  turn.response.claims.flatMap((claim) => claim.citationIds),
-                ).size
-              }
+              shownCitationCount={shownCitationIds.size}
+              chunkCitationCount={chunkCitationCount}
+              edgeCitationCount={edgeCitationCount}
+              graphContext={graphContext}
             />
           )}
+          {graphContext !== null &&
+          graphContext.status === "EMPTY" &&
+          graphContext.seedCount >= 2 ? (
+            <Alert
+              type="info"
+              role={isTerminalTurn ? undefined : "status"}
+              title={contentCopy.chat.noRelationEvidence}
+            />
+          ) : null}
           <GroundedAnswer
             response={turn.response}
             locale={turn.locale}
             citationNumbering="shown-order"
             onOpenCitation={onOpenCitation}
+            historicalCitationQueryFor={historicalCitationQueryFor}
+            onPreviewCitation={onPreviewCitation}
           />
           <TurnContext copy={contentCopy} turn={turn} />
           {onResend === undefined ||
@@ -707,6 +872,11 @@ function ProjectLibraryWorkspace({
   sources,
   loadState,
   onReload,
+  publishedSources = [],
+  publishedSourcesLoading = false,
+  onAskAboutNode,
+  graphHighlight = null,
+  onClearGraphHighlight,
 }: {
   projectId: string;
   graphProjectId?: string;
@@ -715,6 +885,11 @@ function ProjectLibraryWorkspace({
   sources: readonly LibrarySource[];
   loadState: "loading" | "loaded" | "error";
   onReload: () => void;
+  publishedSources?: readonly PublishedSourceRevision[];
+  publishedSourcesLoading?: boolean;
+  onAskAboutNode?: (label: string, sourceIds: string[]) => void;
+  graphHighlight?: ReturnType<typeof useGraphHighlightState>[0];
+  onClearGraphHighlight?: () => void;
 }) {
   const upload = useUploadSourceMutation(projectId);
   const uploadIntents = useRef(new WeakMap<File, string>());
@@ -751,6 +926,21 @@ function ProjectLibraryWorkspace({
         sources={sources}
         loadState={loadState}
         onReload={onReload}
+        publishedSources={publishedSources}
+        publishedSourcesLoading={publishedSourcesLoading}
+        onAskAboutNode={onAskAboutNode}
+        graphHighlight={graphHighlight}
+        onClearGraphHighlight={onClearGraphHighlight}
+        onOpenSource={(sourceId, trigger) => {
+          // The graph node detail panel's "Open original" button passes
+          // its own trigger element explicitly (rather than relying on
+          // `document.activeElement`, which Safari does not set on a
+          // button click), so this reuses the same `onInspectSource` path
+          // the Library list rows use — focus returns to that button when
+          // the dialog closes in every browser, not just Chromium.
+          opener.current = trigger;
+          setInspected(sourceId);
+        }}
         onInspectSource={(sourceId, trigger) => {
           opener.current = trigger;
           setInspected(sourceId);
@@ -927,9 +1117,58 @@ export function TapperWorkspace() {
   const sourcesQuery = useSourceListQuery(projectId);
   const publishedSourcesQuery = usePublishedSourcesQuery(projectId);
   const [locale, setLocale] = useState<Locale>("en");
-  const [activeModule, setActiveModule] = useState<ProductModule>(() =>
-    durableTestPlanPath() !== null ? "test-management" : "tapper",
-  );
+  // Whether the very first render guessed "library" from *any* valid
+  // highlight in history state, before `projectId` (below) was known. A
+  // lazy-init ref (not `useRef(readGraphHighlight() !== null)`, which
+  // would re-parse `window.history.state` as a throwaway argument on
+  // *every* render, not just the first): the sentinel `null` means "not
+  // computed yet", so the read only ever happens once.
+  const optimisticLibraryGuessRef = useRef<boolean | null>(null);
+  if (optimisticLibraryGuessRef.current === null) {
+    optimisticLibraryGuessRef.current = readGraphHighlight() !== null;
+  }
+  const [activeModule, setActiveModule] = useState<ProductModule>(() => {
+    // `projectId` isn't resolved yet on this very first render (it comes
+    // from an async runtime-mode query), so this can't filter by it the
+    // way `useGraphHighlightState(projectId)` below does — it's an
+    // optimistic read of *any* valid highlight, just to land on the right
+    // tab a frame early. If that guess turns out wrong (the highlight was
+    // for a different project, so `graphHighlight` below resolves to
+    // `null`), the effect below undoes it.
+    if (optimisticLibraryGuessRef.current) return "library";
+    return durableTestPlanPath() !== null ? "test-management" : "tapper";
+  });
+  const [graphHighlight, clearGraphHighlight] =
+    useGraphHighlightState(projectId);
+  // A highlight that arrives after mount (a same-tab push or a
+  // popstate/forward-back navigation) switches to the Library module too —
+  // mirrors `LibraryWorkspace`'s own effect that switches its internal tab.
+  // Keyed on the highlight alone: `useGraphHighlightState` filters by
+  // `projectId` during render and keeps a matching highlight's identity, so
+  // `projectId` resolving never re-fires this and never overrides a module
+  // the user picked while it was pending.
+  useEffect(() => {
+    if (graphHighlight !== null) setActiveModule("library");
+  }, [graphHighlight]);
+  // Settles the optimistic guess above exactly once, as soon as `projectId`
+  // is known. Because the hook's filter is synchronous, `graphHighlight`
+  // already reflects the resolved project in that render: `null` means the
+  // highlight was for another project (undo the guess, unless the user has
+  // since left Library), non-null means it matched (keep Library). Either
+  // way the ref is cleared, so a later `clearGraphHighlight()` or
+  // back/forward past the highlight is never misread as a wrong guess.
+  useEffect(() => {
+    if (projectId === null || !optimisticLibraryGuessRef.current) return;
+    optimisticLibraryGuessRef.current = false;
+    if (graphHighlight !== null) return;
+    setActiveModule((current) =>
+      current === "library"
+        ? durableTestPlanPath() !== null
+          ? "test-management"
+          : "tapper"
+        : current,
+    );
+  }, [graphHighlight, projectId]);
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );
@@ -1118,7 +1357,17 @@ export function TapperWorkspace() {
     activeCitation?.conversationId ?? null,
     activeCitation?.turnId ?? null,
     activeCitation?.id ?? null,
-    activeCitation?.generation ?? 0,
+    // Fixed at 0 (never incremented) for an edge citation, rather than
+    // `activeCitation.generation`: an edge citation is an immutable
+    // historical snapshot (see `useConversationCitations`'s `staleTime:
+    // Infinity`), so opening the same one again should hit cache, not
+    // force a new query key — and a fixed generation of 0 is exactly the
+    // key `EdgeCitationChip`'s hover-triggered preview query already uses
+    // for the same citation id, so the two share one cache entry instead
+    // of each fetching it separately.
+    activeCitation !== null && isEdgeCitation(activeCitation.citation)
+      ? 0
+      : (activeCitation?.generation ?? 0),
   );
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [messageDraft, setMessageDraft] = useState("");
@@ -1282,6 +1531,7 @@ export function TapperWorkspace() {
           origin: "knowledge-base" as const,
         })),
         response: streamed?.response ?? null,
+        graphContext: streamed?.graphContext ?? null,
         traceId: turn.traceId ?? null,
         attempt: turn.attempt,
         status: ["completed", "abstained", "canceled", "failed"].includes(
@@ -1539,6 +1789,14 @@ export function TapperWorkspace() {
     }
     return [...grouped.values()];
   }, [publishedSourcesQuery.data?.items]);
+  const publishedSourceRevisions = useMemo(
+    () =>
+      (publishedSourcesQuery.data?.items ?? []).map((item) => ({
+        sourceId: item.sourceId,
+        revisionId: item.revisionId,
+      })),
+    [publishedSourcesQuery.data?.items],
+  );
   const [pendingAttachments, setPendingAttachments] = useState<
     readonly {
       id: string;
@@ -1709,6 +1967,23 @@ export function TapperWorkspace() {
           : conversation,
       ),
     );
+  };
+
+  // `GraphOverview` already resolves published-source revision ids to real
+  // source ids (via the `publishedSources` it is given), so `sourceIds`
+  // here are real source ids — no reverse mapping needed.
+  const askAboutGraphNode = (label: string, sourceIds: string[]) => {
+    if (sourceIds.length > 0) {
+      updateActiveConversation((conversation) => ({
+        ...conversation,
+        selectedSourceIds: [
+          ...new Set([...conversation.selectedSourceIds, ...sourceIds]),
+        ],
+      }));
+    }
+    setMessageDraft(label);
+    setActiveModule("tapper");
+    setSourcesCollapsed(false);
   };
 
   const pickSuggestion = (item: PromptSuggestionItem) => {
@@ -2308,7 +2583,35 @@ export function TapperWorkspace() {
               data-collapsed={sourcesCollapsed}
               inert={sourcesCollapsed ? true : undefined}
             >
-              {activeCitation !== null ? (
+              {activeCitation !== null &&
+              isEdgeCitation(activeCitation.citation) ? (
+                <EvidencePanel
+                  active={{
+                    citation: activeCitation.citation,
+                    id: activeCitation.id,
+                  }}
+                  turnEdgeCitations={
+                    activeConversation.turns
+                      .find((turn) => turn.id === activeCitation.turnId)
+                      ?.response?.citations.filter(isEdgeCitation) ?? []
+                  }
+                  locale={locale}
+                  historicalQuery={historicalCitationQuery}
+                  returnFocusTo={citationTrigger.current}
+                  onClose={() => setActiveCitation(null)}
+                  onViewInLibrary={(edgeIds, graphVersion) => {
+                    if (projectId === null) return;
+                    setActiveCitation(null);
+                    pushGraphHighlight({
+                      edgeIds,
+                      graphVersion,
+                      turnId: activeCitation.turnId,
+                      projectId,
+                    });
+                    selectModule("library");
+                  }}
+                />
+              ) : activeCitation !== null ? (
                 <CitationViewer
                   active={activeCitation}
                   locale={locale}
@@ -2399,6 +2702,11 @@ export function TapperWorkspace() {
               onReload={() => {
                 void sourcesQuery.refetch();
               }}
+              publishedSources={publishedSourceRevisions}
+              publishedSourcesLoading={publishedSourcesQuery.isPending}
+              onAskAboutNode={askAboutGraphNode}
+              graphHighlight={graphHighlight}
+              onClearGraphHighlight={clearGraphHighlight}
             />
           ) : (
             <LibraryWorkspace copy={copy} sources={sourceItems} />

@@ -96,6 +96,13 @@ export const COPY = {
   page: "页码",
   offsets: "字符范围",
   imageRegion: "图中区域（像素）",
+  evidenceTitle: "关系依据",
+  pathGraph: "关系路径图",
+  pathAsText: "路径文字说明",
+  supportingPassage: "支撑原文",
+  viewInLibrary: "在 Library 中查看",
+  closeEvidence: "关闭关系依据",
+  edgeCitation: (number: number) => `打开关系引用 R${String(number)}`,
 } as const;
 
 export const CITATION_EN = {
@@ -120,6 +127,41 @@ export const CITATION_EN = {
   page: "Page",
   offsets: "Character range",
   imageRegion: "Image region (pixels)",
+  evidenceTitle: "Relation evidence",
+  pathGraph: "Relation path",
+  pathAsText: "Path as text",
+  supportingPassage: "Supporting passage",
+  viewInLibrary: "View in Library",
+  closeEvidence: "Close relation evidence",
+  edgeCitation: (number: number) => `Open relation citation R${String(number)}`,
+} as const;
+
+/**
+ * `GraphFragmentStatus` copy for a document's own published revision.
+ * `ProjectGraphView` (backend) only exposes `extractingRevisionIds` /
+ * `partialRevisionIds` — there is no per-revision failed/total batch
+ * count — so `partial` is a plain label with no counts, unlike the
+ * `(f/t 批)` form used elsewhere for aggregate fragment counts.
+ */
+export const GRAPH_FRAGMENT_COPY = {
+  zh: {
+    title: "图谱抽取",
+    extracting: "抽取中",
+    idle: "无进行中的抽取",
+    partial: "部分失败",
+    retry: "重试失败批次",
+    retryQueued: "已重新排队",
+    retryFailure: "重试未完成，请稍后重试。",
+  },
+  en: {
+    title: "Graph extraction",
+    extracting: "Extracting",
+    idle: "No extraction in progress",
+    partial: "Partially failed",
+    retry: "Retry failed batches",
+    retryQueued: "Retry queued",
+    retryFailure: "The retry did not complete. Try again.",
+  },
 } as const;
 
 export const STATUS_COPY: Readonly<Record<DocumentStatus, string>> = {

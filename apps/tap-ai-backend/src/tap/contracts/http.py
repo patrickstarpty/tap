@@ -1229,18 +1229,6 @@ class ConversationEventPage(ContractModel):
     items: list[ConversationEventItem]
 
 
-class GraphSnapshotView(ContractModel):
-    snapshot_id: str
-    source_set_digest: CanonicalSha256
-    source_revision_ids: list[str]
-    document_revision_ids: list[str]
-    status: Literal["CANDIDATE", "READY", "PARTIAL", "FAILED"]
-
-
-class GraphSnapshotPage(ContractModel):
-    items: list[GraphSnapshotView]
-
-
 class GraphNodeView(ContractModel):
     node_id: str
     label: str
