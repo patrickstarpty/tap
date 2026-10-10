@@ -476,14 +476,23 @@ git commit -m "build: wire graph relation quality, sample export and bench targe
 Run: `uv run --project apps/tap-ai-backend python scripts/load-graph-real-corpus.py validate --manifest $M && uv run --project apps/tap-ai-backend python scripts/load-graph-real-corpus.py download --manifest $M`（`M=apps/tap-ai-backend/tests/fixtures/quality/graph-real/manifest.json`）
 Expected: exit 0；`.local/graph-real/` 下 10–11 个文件，`git status` 不出现任何 PDF
 
-- [ ] **Step 2: 启动本地栈（`make demo-up && make tap-ai-dev`，`TAPPER_GRAPH_EXTRACTION_MODE=model`），`upload` 语料并在 Library 完成审核发布；确认 `GET /knowledge/graph/project` 为 READY。人工标注 golden set（20–30 题，`labeledBy` 实名、`labeledAt` 当日，`corpus.digest` 填 manifest 摘要）**
+- [ ] **Step 2: 启动本地栈（`make demo-up && make tap-ai-dev`，`TAPPER_GRAPH_EXTRACTION_MODE=model`），上传语料并在 Library 完成审核发布；确认 `GET /knowledge/graph/project` 为 READY。人工标注 golden set（20–30 题，`labeledBy` 实名、`labeledAt` 当日，`corpus.digest` 填 manifest 摘要）**
+
+  上传命令：`uv run --project apps/tap-ai-backend python scripts/load-graph-real-corpus.py upload --manifest $M --api http://127.0.0.1:<port> --output .local/graph-real/corpus.json`（`<port>` 为本地 TAP AI API 端口；可选 `--project-id`、`--timeout-seconds`，默认 1800）
 
   golden set 标注规则：其中至少数题的 `expectedSources` 须跨 2 份及以上文档——真实项目图把多份条款/流程文档合并为一张共享图，若每题 `expectedSources` 都只含单一文档，门禁永远测不出"答对本题期望边之外，还如实引用了另一份无关文档的邻域边"这类离题引用；跨文档题正是暴露这类错误的唯一途径。
 
-Run: `uv run --project apps/tap-ai-backend python scripts/evaluate-graph-relations.py --golden $G --observations /dev/null --report /dev/null --real; test $? -eq 2`
-Expected: 因观测缺失退出 2，stderr 不含 golden 校验错误
+Run: `uv run --project apps/tap-ai-backend python scripts/evaluate-graph-relations.py --golden $G --observations <(echo '{}') --report /dev/null --real; test $? -eq 2`
+Expected: 因 golden set 仍是占位（`labeledBy: pending-human-labeling`、0 题）而退出 2；stderr 含 `human-labeled`/`questions` 等 golden 校验原因，而非证书、网络等无关原因——这正是本步骤要验证的：门禁在人工标注完成前必须拒绝任何真实门禁运行
 
-- [ ] **Step 3: 生成基线观测（`TAPPER_GRAPH_REASONING=0` 运行 `run-graph-relations-candidate.py --mode real ... --observations .local/graph-relations/baseline-observations.json`），再运行 `TAP_RUN_QUALITY_GRAPH_RELATIONS=1 TAP_QUALITY_GRAPH_RELATIONS_DATASET_AUTHORIZATION=approved:<name> TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION=approved:<name> make quality-graph-relations-real`、`TAP_RUN_GRAPH_SAMPLE_EXPORT=1 make graph-sample-export`、`TAP_RUN_GRAPH_BENCH=1 make graph-bench`；人工填写两份 CSV 的 `verdict/reviewer/reviewedAt` 后运行 `evaluate-graph-samples.py`**
+- [ ] **Step 3: 生成基线观测与运行真实门禁**
+
+  基线观测（`TAPPER_GRAPH_REASONING=0`，其余环境变量同下）：
+  `TAPPER_GRAPH_REASONING=0 uv run --project apps/tap-ai-backend python scripts/run-graph-relations-candidate.py --mode real --golden apps/tap-ai-backend/tests/fixtures/quality/graph-real/golden-v1.json --regression apps/tap-ai-backend/tests/fixtures/quality/graph-real/regression-questions.json --corpus .local/graph-real/corpus.json --observations .local/graph-relations/baseline-observations.json`（与 Makefile 的 `TAP_GRAPH_RELATIONS_BASELINE` 路径一致）
+
+  `create_api_runtime` 所需环境变量（对照 `TapperSettings.from_mapping`；具体取值来自本地环境，不得写入文档或提交）：`TAP_DATABASE_URL`、`TAP_ALEMBIC_DATABASE_URL`、`MILVUS_URI`、`MILVUS_DATABASE`（可选，默认 `default`）、`MILVUS_READER_USERNAME`/`MILVUS_READER_PASSWORD`、`MILVUS_WRITER_USERNAME`/`MILVUS_WRITER_PASSWORD`、`MILVUS_PROVISIONER_USERNAME`/`MILVUS_PROVISIONER_PASSWORD`、`LITELLM_BASE_URL`、`LITELLM_MASTER_KEY`、`TAPPER_GRAPH_EXTRACTION_MODE=model`、`TAPPER_DEFAULT_CHAT_MODEL`（模型别名），均指向同一套已启动的本地栈。
+
+  再运行 `TAP_RUN_QUALITY_GRAPH_RELATIONS=1 TAP_QUALITY_GRAPH_RELATIONS_DATASET_AUTHORIZATION=approved:<name> TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION=approved:<name> make quality-graph-relations-real`、`TAP_RUN_GRAPH_SAMPLE_EXPORT=1 make graph-sample-export`、`TAP_RUN_GRAPH_BENCH=1 make graph-bench`；人工填写两份 CSV 的 `verdict/reviewer/reviewedAt` 后运行 `evaluate-graph-samples.py`
 
 Expected: `.local/graph-relations/report.json`、`.local/graph-real/sample-report.json`、`.local/graph-bench/report.json` 各带 `passed` 字段
 
