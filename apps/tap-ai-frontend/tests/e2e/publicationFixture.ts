@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
-import { expect } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 interface PublicationFixture {
   publicationId: string;
@@ -43,6 +43,51 @@ export function preparePublishedFixture(
   expect(publication.reviewerActorId).toBe("tapper-e2e-fixture-reviewer");
   expect(publication.publishedBy).toBe("tapper-e2e-fixture-publisher");
   return publication;
+}
+
+interface ProjectGraphView {
+  graphVersion?: number | null;
+  status: "EMPTY" | "MERGING" | "READY" | "FAILED";
+  extractingRevisionIds?: string[];
+  partialRevisionIds?: string[];
+}
+
+/**
+ * Polls `GET {root}/knowledge/graph/project` until the project graph is
+ * `READY` and none of `revisionIds` are still `EXTRACTING` or `PARTIAL`
+ * (the response's `extractingRevisionIds` / `partialRevisionIds`), then
+ * returns the resulting `graphVersion` as a string. Replaces polling the
+ * retired fragment-scoped `GET /knowledge/graph/snapshots` route.
+ */
+export async function waitForProjectGraph(
+  page: Page,
+  root: string,
+  revisionIds: string[],
+  timeout = 60_000,
+): Promise<string> {
+  let graphVersion: string = "";
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/knowledge/graph/project`,
+        );
+        if (response.status() !== 200) return false;
+        const body = (await response.json()) as ProjectGraphView;
+        const pending = new Set([
+          ...(body.extractingRevisionIds ?? []),
+          ...(body.partialRevisionIds ?? []),
+        ]);
+        const ready =
+          body.status === "READY" &&
+          revisionIds.every((revisionId) => !pending.has(revisionId));
+        if (ready) graphVersion = String(body.graphVersion ?? "");
+        return ready;
+      },
+      { timeout },
+    )
+    .toBe(true);
+  return graphVersion;
 }
 
 export function approveExistingReviewFixture(

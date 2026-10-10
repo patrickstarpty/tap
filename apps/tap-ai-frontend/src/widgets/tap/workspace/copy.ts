@@ -58,6 +58,14 @@ export interface WorkspaceCopy {
     regenerate: string;
     retry: string;
     editQuestion: string;
+    answerSummary(
+      sourceCount: number,
+      chunkCitationCount: number,
+      relationCount: number,
+    ): string;
+    seedEntities(count: number): string;
+    relationPaths: string;
+    noRelationEvidence: string;
   };
   sources: {
     heading: string;
@@ -134,8 +142,6 @@ export interface WorkspaceCopy {
     skillCatalog: string;
   };
   library: {
-    testingCommunity: string;
-
     listView: string;
     cardView: string;
     preview: string;
@@ -156,7 +162,6 @@ export interface WorkspaceCopy {
     clearFilters: string;
     knowledgeGraphImage: string;
     graphSummary: string;
-    visibleDocuments: string;
     concepts: string;
     labeledRelationships: string;
     search: string;
@@ -168,32 +173,31 @@ export interface WorkspaceCopy {
     noResults: string;
     communities: string;
     selectAllTopics: string;
-    sourceCommunity: string;
-    newBusinessCommunity: string;
-    servicingCommunity: string;
-    claimsCommunity: string;
-    codebaseCommunity: string;
-    applicationCommunity: string;
-    underwritingCommunity: string;
-    partiesCommunity: string;
     nodes: string;
     nodeDetails: string;
     searchResults: string;
     noMatchingNodes: string;
-    viewSource: string;
     selectNode: string;
     community: string;
     relationships: string;
     provenance: string;
-    documentNode: string;
-    conceptNode: string;
-    entityNode: string;
     connections: string;
     zoomIn: string;
     zoomOut: string;
     resetView: string;
     toggleCommunities: string;
     closeNodeDetails: string;
+    aliases: string;
+    nodeSources: string;
+    evidenceSnippets: string;
+    openOriginal: string;
+    askAboutNode: string;
+    showAllRelations(n: number): string;
+    relationCount(n: number): string;
+    relationIncoming: string;
+    relationOutgoing: string;
+    nodeDetailsLoading: string;
+    nodeDetailsError: string;
     enterFullscreen: string;
     exitFullscreen: string;
     fullscreenUnavailable: string;
@@ -201,6 +205,44 @@ export interface WorkspaceCopy {
     extracted: string;
     inferred: string;
     graphNavigationHint: string;
+    canvasRegionLabel: string;
+    overviewCaption: string;
+    highlightedPath: string;
+    highlightCaption: string;
+    clearHighlight: string;
+    versionUpdated: string;
+    highlightLoading: string;
+    highlightError: string;
+    loadMore: string;
+    extractingSources(n: number): string;
+    partialSources(n: number): string;
+    sourceCapNotice(n: number): string;
+    graphEmpty: string;
+    graphEmptyHint: string;
+    graphMerging: string;
+    graphLoading: string;
+    graphUnavailable: string;
+    otherCommunity: string;
+    nodeTypes: Record<
+      "ENTITY" | "CONCEPT" | "REQUIREMENT" | "SYSTEM" | "ACTOR" | "PROCESS",
+      string
+    >;
+    relationTypes: Record<
+      | "REQUIRES"
+      | "APPLIES_TO"
+      | "PART_OF"
+      | "EXCEPTION_OF"
+      | "SUPERSEDES"
+      | "TRIGGERS"
+      | "PRECEDES"
+      | "VALIDATED_BY"
+      | "RESPONSIBLE_FOR"
+      | "USES"
+      | "DEFINES"
+      | "CONFLICTS_WITH"
+      | "RELATED_TO",
+      string
+    >;
   };
 }
 
@@ -268,6 +310,17 @@ export const WORKSPACE_COPY = {
       regenerate: "Regenerate",
       retry: "Retry",
       editQuestion: "Edit question",
+      answerSummary: (
+        sourceCount: number,
+        chunkCitationCount: number,
+        relationCount: number,
+      ) =>
+        `Searched ${sourceCount} source${sourceCount === 1 ? "" : "s"} · ${chunkCitationCount} passage${chunkCitationCount === 1 ? "" : "s"} · ${relationCount} relation${relationCount === 1 ? "" : "s"}`,
+      seedEntities: (count: number) =>
+        `${count} seed entit${count === 1 ? "y" : "ies"}`,
+      relationPaths: "Relation paths",
+      noRelationEvidence:
+        "No direct relation evidence was found; the answer below is grounded in source passages.",
     },
     sources: {
       heading: "Knowledge sources",
@@ -354,7 +407,6 @@ export const WORKSPACE_COPY = {
       preview: "Preview",
       download: "Download file",
       noPreview: "No preview available for this source.",
-      testingCommunity: "Testing",
       heading: "Library",
       description:
         "Browse source material and explore its curated domain context.",
@@ -368,9 +420,8 @@ export const WORKSPACE_COPY = {
       allTypes: "All types",
       allStatuses: "All statuses",
       clearFilters: "Clear filters",
-      knowledgeGraphImage: "Life insurance knowledge graph",
+      knowledgeGraphImage: "Project knowledge graph",
       graphSummary: "Knowledge graph summary",
-      visibleDocuments: "Visible documents",
       concepts: "Concepts",
       labeledRelationships: "Labeled relationships",
       search: "Search library",
@@ -382,33 +433,39 @@ export const WORKSPACE_COPY = {
       noResults: "No matching sources",
       communities: "Topic groups",
       selectAllTopics: "Select all",
-      sourceCommunity: "Sources",
-      newBusinessCommunity: "New business",
-      servicingCommunity: "Policy servicing",
-      claimsCommunity: "Claims",
-      codebaseCommunity: "Codebase",
-      applicationCommunity: "Application",
-      underwritingCommunity: "Underwriting",
-      partiesCommunity: "Parties",
       nodes: "nodes",
       nodeDetails: "Node details",
       searchResults: "Search results",
       noMatchingNodes:
         "No matching documents, concepts or entities. Try another keyword or clear the filters.",
-      viewSource: "View source in document list",
       selectNode: "Select a node to inspect its relationships.",
       community: "Topic group",
       relationships: "Relationships",
       provenance: "Provenance",
-      documentNode: "Document",
-      conceptNode: "Concept",
-      entityNode: "Entity",
       connections: "connections",
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
       resetView: "Reset view",
       toggleCommunities: "Toggle topic groups",
       closeNodeDetails: "Close node details",
+      aliases: "Aliases",
+      nodeSources: "Sources",
+      evidenceSnippets: "Evidence",
+      openOriginal: "Open original",
+      askAboutNode: "Ask about this",
+      showAllRelations: (n: number) => `Show all (${n})`,
+      relationCount: (n: number) => `${n} relation${n === 1 ? "" : "s"}`,
+      relationIncoming: "Incoming",
+      relationOutgoing: "Outgoing",
+      highlightedPath: "Highlighted path",
+      highlightCaption: "Relations cited by the answer",
+      clearHighlight: "Back to overview",
+      versionUpdated:
+        "The graph has been updated; some relations are no longer available.",
+      highlightLoading: "Loading the highlighted path…",
+      highlightError: "The highlighted path is temporarily unavailable.",
+      nodeDetailsLoading: "Loading node details…",
+      nodeDetailsError: "Node details are unavailable. Try again.",
       enterFullscreen: "Enter fullscreen",
       exitFullscreen: "Exit fullscreen",
       fullscreenUnavailable: "Fullscreen is unavailable in this browser.",
@@ -417,6 +474,45 @@ export const WORKSPACE_COPY = {
       inferred: "INFERRED",
       graphNavigationHint:
         "Drag to pan, use the controls to zoom, and select a node to inspect its relationships.",
+      canvasRegionLabel: "Knowledge graph canvas",
+      overviewCaption: "Project knowledge overview",
+      loadMore: "Load more",
+      extractingSources: (n: number) =>
+        `${n} source${n === 1 ? "" : "s"} still extracting`,
+      partialSources: (n: number) => `${n} partially failed`,
+      sourceCapNotice: (n: number) =>
+        `Showing the graph for the first 50 of ${n} matching sources.`,
+      graphEmpty: "No knowledge graph yet.",
+      graphEmptyHint:
+        "The graph is built automatically after sources are published.",
+      graphMerging: "The graph is being rebuilt…",
+      graphLoading: "Loading the knowledge graph…",
+      graphUnavailable:
+        "The knowledge graph is temporarily unavailable. Try again.",
+      otherCommunity: "Other",
+      nodeTypes: {
+        ENTITY: "Entity",
+        CONCEPT: "Concept",
+        REQUIREMENT: "Requirement",
+        SYSTEM: "System",
+        ACTOR: "Actor",
+        PROCESS: "Process",
+      },
+      relationTypes: {
+        REQUIRES: "Requires",
+        APPLIES_TO: "Applies to",
+        PART_OF: "Part of",
+        EXCEPTION_OF: "Exception of",
+        SUPERSEDES: "Supersedes",
+        TRIGGERS: "Triggers",
+        PRECEDES: "Precedes",
+        VALIDATED_BY: "Validated by",
+        RESPONSIBLE_FOR: "Responsible for",
+        USES: "Uses",
+        DEFINES: "Defines",
+        CONFLICTS_WITH: "Conflicts with",
+        RELATED_TO: "Related to",
+      },
     },
   },
   zh: {
@@ -480,6 +576,15 @@ export const WORKSPACE_COPY = {
       regenerate: "重新生成",
       retry: "重试",
       editQuestion: "编辑问题",
+      answerSummary: (
+        sourceCount: number,
+        chunkCitationCount: number,
+        relationCount: number,
+      ) =>
+        `搜索 ${sourceCount} 个来源 · ${chunkCitationCount} 段原文 · ${relationCount} 条关系`,
+      seedEntities: (count: number) => `${count} 个种子实体`,
+      relationPaths: "关系路径",
+      noRelationEvidence: "未找到直接关系证据，以下为资料原文依据",
     },
     sources: {
       heading: "知识来源",
@@ -561,7 +666,6 @@ export const WORKSPACE_COPY = {
       preview: "预览",
       download: "下载文件",
       noPreview: "此来源暂无可用预览。",
-      testingCommunity: "测试验证",
       heading: "知识库",
       description: "浏览知识来源，并探索经过编排的领域上下文。",
       addSource: "添加来源",
@@ -574,9 +678,8 @@ export const WORKSPACE_COPY = {
       allTypes: "全部类型",
       allStatuses: "全部状态",
       clearFilters: "清除筛选",
-      knowledgeGraphImage: "寿险知识图谱",
+      knowledgeGraphImage: "项目知识图谱",
       graphSummary: "知识图谱摘要",
-      visibleDocuments: "可见文档",
       concepts: "概念",
       labeledRelationships: "已标注关系",
       search: "搜索知识库",
@@ -588,32 +691,37 @@ export const WORKSPACE_COPY = {
       noResults: "没有匹配的来源",
       communities: "主题分组",
       selectAllTopics: "全选",
-      sourceCommunity: "来源",
-      newBusinessCommunity: "新单",
-      servicingCommunity: "保全",
-      claimsCommunity: "理赔",
-      codebaseCommunity: "代码库",
-      applicationCommunity: "投保申请",
-      underwritingCommunity: "核保",
-      partiesCommunity: "参与方",
       nodes: "个节点",
       nodeDetails: "节点详情",
       searchResults: "搜索结果",
       noMatchingNodes: "没有匹配的文档、概念或实体，请更换关键词或清除筛选。",
-      viewSource: "在文档列表中查看来源",
       selectNode: "选择节点以查看其关系。",
       community: "主题分组",
       relationships: "关系",
       provenance: "来源依据",
-      documentNode: "文档",
-      conceptNode: "概念",
-      entityNode: "实体",
       connections: "个关联",
       zoomIn: "放大",
       zoomOut: "缩小",
       resetView: "重置视图",
       toggleCommunities: "显示或收起主题分组",
       closeNodeDetails: "关闭节点详情",
+      aliases: "别名",
+      nodeSources: "来源",
+      evidenceSnippets: "证据片段",
+      openOriginal: "打开原件",
+      askAboutNode: "就此提问",
+      showAllRelations: (n: number) => `显示全部 (${n})`,
+      relationCount: (n: number) => `${n} 条关系`,
+      relationIncoming: "被指向",
+      relationOutgoing: "指向",
+      highlightedPath: "高亮路径",
+      highlightCaption: "回答引用的关系",
+      clearHighlight: "返回总览",
+      versionUpdated: "图谱版本已更新，部分关系不再可用。",
+      highlightLoading: "正在加载高亮路径…",
+      highlightError: "高亮路径暂时无法加载。",
+      nodeDetailsLoading: "正在加载节点详情…",
+      nodeDetailsError: "节点详情暂时无法加载，请重试。",
       enterFullscreen: "进入全屏",
       exitFullscreen: "退出全屏",
       fullscreenUnavailable: "当前浏览器不支持全屏。",
@@ -621,6 +729,42 @@ export const WORKSPACE_COPY = {
       extracted: "已抽取",
       inferred: "推断",
       graphNavigationHint: "拖动以平移画布，使用控件缩放，并选择节点查看关系。",
+      canvasRegionLabel: "知识图谱画布",
+      overviewCaption: "项目知识总览",
+      loadMore: "加载更多",
+      extractingSources: (n: number) => `${n} 个来源仍在抽取`,
+      partialSources: (n: number) => `${n} 个部分失败`,
+      sourceCapNotice: (n: number) =>
+        `已匹配 ${n} 个来源，图谱仅显示前 50 个。`,
+      graphEmpty: "暂无知识图谱。",
+      graphEmptyHint: "来源发布后会自动建图。",
+      graphMerging: "图谱正在重建…",
+      graphLoading: "正在加载知识图谱…",
+      graphUnavailable: "知识图谱暂时无法加载，请重试。",
+      otherCommunity: "其他",
+      nodeTypes: {
+        ENTITY: "实体",
+        CONCEPT: "概念",
+        REQUIREMENT: "需求",
+        SYSTEM: "系统",
+        ACTOR: "角色",
+        PROCESS: "流程",
+      },
+      relationTypes: {
+        REQUIRES: "需要",
+        APPLIES_TO: "适用于",
+        PART_OF: "属于",
+        EXCEPTION_OF: "例外于",
+        SUPERSEDES: "取代",
+        TRIGGERS: "触发",
+        PRECEDES: "先于",
+        VALIDATED_BY: "由其验证",
+        RESPONSIBLE_FOR: "负责",
+        USES: "使用",
+        DEFINES: "定义",
+        CONFLICTS_WITH: "与其冲突",
+        RELATED_TO: "与其相关",
+      },
     },
   },
 } as const satisfies Record<Locale, WorkspaceCopy>;

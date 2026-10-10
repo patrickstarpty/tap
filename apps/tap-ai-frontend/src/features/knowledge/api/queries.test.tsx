@@ -20,6 +20,7 @@ import {
   useDocumentListQuery,
   useDocumentDetailQuery,
   useDeleteDocumentMutation,
+  useGraphProjectQuery,
   usePromptSuggestionsQuery,
   useRetryDocumentMutation,
   useUploadDocumentMutation,
@@ -146,6 +147,56 @@ describe("knowledge query mutations", () => {
 
     await act(async () => vi.advanceTimersByTimeAsync(4_000));
     expect(api.listCalls).toBe(2);
+  });
+  it("polls the project graph only while the watched revision is still extracting", async () => {
+    vi.useFakeTimers();
+    const api = fakeKnowledgeClient()
+      .withGraphProjectOnce({
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 0,
+        edgeCount: 0,
+        mergedAt: null,
+        communities: [],
+        extractingRevisionIds: ["rev_x"],
+        partialRevisionIds: [],
+      })
+      .withGraphProjectOnce({
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 0,
+        edgeCount: 0,
+        mergedAt: null,
+        communities: [],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      });
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(
+      () => useGraphProjectQuery("project-test", { pollRevisionId: "rev_x" }),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <KnowledgeClientProvider client={api}>
+              {children}
+            </KnowledgeClientProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(result.current.data?.extractingRevisionIds).toEqual(["rev_x"]);
+    expect(api.graphProjectCalls).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.runOnlyPendingTimersAsync();
+    });
+    expect(api.graphProjectCalls).toBe(2);
+    expect(result.current.data?.extractingRevisionIds).toEqual([]);
+
+    await act(async () => vi.advanceTimersByTimeAsync(4_000));
+    expect(api.graphProjectCalls).toBe(2);
   });
 
   it("passes TanStack cancellation through to an in-flight list request", async () => {

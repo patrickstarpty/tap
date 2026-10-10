@@ -13,6 +13,7 @@ import {
   readState,
   type SafeDocumentState,
 } from "./fixtureBuilder";
+import { waitForProjectGraph } from "./publicationFixture";
 
 interface AnswerResponse {
   abstained: boolean;
@@ -94,27 +95,16 @@ test("Tapper durable state survives the selected restart boundary", async ({
   expect(originalDocument.status()).toBe(200);
   expect(await originalDocument.text()).not.toContain("signed passport record");
 
-  const graphSnapshots = await page.request.get(
-    `${knowledgePath}/graph/snapshots`,
-    { params: { sourceRevisionId: state.policy.revisionId } },
-  );
-  expect(graphSnapshots.status()).toBe(200);
-  const graphSnapshot = (await graphSnapshots.json()) as {
-    items: Array<{ snapshotId: string; status: string }>;
-  };
-  expect(graphSnapshot.items[0]?.status).toBe("READY");
+  const root = knowledgePath.replace(/\/knowledge$/u, "");
+  await waitForProjectGraph(page, root, [state.policy.revisionId]);
   const graphQuery = await page.request.post(`${knowledgePath}/graph/query`, {
     headers: { Origin: ORIGIN },
-    data: {
-      snapshotId: graphSnapshot.items[0]!.snapshotId,
-      query: "*",
-      nodeLimit: 500,
-    },
+    data: { query: "*", nodeLimit: 500 },
   });
   expect(graphQuery.status()).toBe(200);
   const persistedGraph = (await graphQuery.json()) as {
     nodes: Array<{ nodeId: string }>;
-    evidence: Array<{ evidenceId: string }>;
+    evidence: Array<{ chunkId: string }>;
   };
   expect(persistedGraph.nodes.length).toBeGreaterThan(0);
   expect(persistedGraph.evidence.length).toBeGreaterThan(0);

@@ -237,6 +237,36 @@ describe("KnowledgeClient", () => {
       expectedAttempt: 1,
     });
   });
+  it("fetches the project graph and retries a fragment with an idempotency key", async () => {
+    const requests: Request[] = [];
+    const client = createKnowledgeClient({
+      projectId: "project-a",
+      fetch: async (request) => {
+        requests.push(request);
+        if (new URL(request.url).pathname.endsWith("/project")) {
+          return Response.json({
+            graphVersion: 1,
+            status: "READY",
+            nodeCount: 0,
+            edgeCount: 0,
+            mergedAt: null,
+            communities: [],
+            extractingRevisionIds: [],
+            partialRevisionIds: ["rev_a"],
+          });
+        }
+        return new Response(null, { status: 200 });
+      },
+    });
+    const project = await client.graphProject();
+    await client.retryGraphFragment("rev_a", "retry-intent");
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      "/api/v1/projects/project-a/knowledge/graph/project",
+      "/api/v1/projects/project-a/knowledge/graph/fragments/rev_a/retry",
+    ]);
+    expect(requests[1]!.headers.get("Idempotency-Key")).toBe("retry-intent");
+    expect(project.partialRevisionIds).toEqual(["rev_a"]);
+  });
   it("uses the generated list route and returns its typed document page", async () => {
     const requests: Request[] = [];
     const fetch = async (request: Request): Promise<Response> => {

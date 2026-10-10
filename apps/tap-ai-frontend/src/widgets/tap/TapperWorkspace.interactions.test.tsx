@@ -12,9 +12,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  citationPreview,
   document,
   documentDetail,
   fakeKnowledgeClient,
+  retrievalCitation,
 } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
 import {
@@ -22,11 +24,13 @@ import {
   renderApp,
 } from "../../shared/testing/renderApp";
 import { RuntimeClientProvider } from "../../features/runtime/api/queries";
-import { createKnowledgeClient } from "../../features/knowledge/api/client";
 import {
-  useActiveGraph,
+  useGraphNode,
+  useGraphOverview,
+  useGraphProject,
   useGraphSearch,
 } from "../../features/graph/api/queries";
+import { pushGraphHighlight } from "../../features/graph/model/highlight";
 import { TapperWorkspace } from "./TapperWorkspace";
 
 const workspaceStyles = readFileSync(
@@ -34,24 +38,21 @@ const workspaceStyles = readFileSync(
   "utf8",
 );
 
-// This module's LibraryWorkspace/ProjectKnowledgeGraph calls the real
-// createKnowledgeClient() directly (not the injected fakeKnowledgeClient
-// context) to fetch a source's graph detail, and calls the real graph query
-// hooks unconditionally on every render. Mock both so tests that switch to
-// the Knowledge Graph tab in durable/api mode exercise a deterministic
-// published graph instead of an unmocked network call. Tests that never
-// reach a ready source (selectedId stays null) are unaffected by these
-// defaults since that branch short-circuits before either is consulted.
+// `LibraryWorkspace`'s graph panel (`GraphOverview`) calls the real graph
+// query hooks unconditionally on every render. Mock them so tests that
+// switch to the Knowledge Graph tab exercise a deterministic project graph
+// instead of an unmocked network call.
 function defaultGraphQueryResult() {
   return { data: undefined, isPending: false, isError: false } as never;
 }
 
-vi.mock("../../features/knowledge/api/client", () => ({
-  createKnowledgeClient: vi.fn(),
-}));
 vi.mock("../../features/graph/api/queries", () => ({
-  useActiveGraph: vi.fn(() => defaultGraphQueryResult()),
+  useGraphProject: vi.fn(() => defaultGraphQueryResult()),
+  useGraphOverview: vi.fn(() => defaultGraphQueryResult()),
   useGraphSearch: vi.fn(() => defaultGraphQueryResult()),
+  useGraphNode: vi.fn(() => defaultGraphQueryResult()),
+  useGraphHighlight: vi.fn(() => defaultGraphQueryResult()),
+  useGraphVersionGuard: vi.fn(),
 }));
 
 const DEFAULT_SOURCES = [
@@ -176,6 +177,51 @@ function renderWorkspace() {
     api,
     queryClient,
   });
+}
+
+// Like `renderWorkspace`, but `["runtime-mode"]` is *not* seeded: the
+// runtime-mode query stays pending until `resolveRuntimeMode()` is called, so
+// `projectId` arrives asynchronously after mount — the real runtime path.
+function renderWorkspaceWithDeferredRuntime() {
+  const api = defaultKnowledgeClient();
+  const queryClient = createTestQueryClient();
+  seedAgentSkillCatalog(queryClient, api.projectId);
+  queryClient.setQueryData(["test-plans", api.projectId], []);
+  let resolveMode: () => void = () => undefined;
+  const mode = new Promise<{
+    mode: "validation";
+    identityMode: "validation";
+    projectId: string;
+    actorId: string;
+  }>((resolve) => {
+    resolveMode = () =>
+      resolve({
+        mode: "validation",
+        identityMode: "validation",
+        projectId: api.projectId,
+        actorId: "actor-test",
+      });
+  });
+  const view = renderKnowledgeApp(
+    <RuntimeClientProvider client={{ getMode: () => mode }}>
+      <TapperWorkspace />
+    </RuntimeClientProvider>,
+    { api, queryClient, seedRuntimeMode: false },
+  );
+  return {
+    ...view,
+    resolveRuntimeMode: async () => {
+      await act(async () => {
+        resolveMode();
+        await mode;
+      });
+      await waitFor(() =>
+        expect(
+          view.container.querySelector(".tap-product-shell--runtime-ready"),
+        ).not.toBeNull(),
+      );
+    },
+  };
 }
 
 const CONVERSATION_NOW = "2026-09-29T08:00:00Z";
@@ -874,11 +920,16 @@ describe("Tap product workspace interactions", () => {
   });
 
   afterEach(() => {
-    vi.mocked(createKnowledgeClient).mockReset();
-    vi.mocked(useActiveGraph)
+    vi.mocked(useGraphProject)
+      .mockReset()
+      .mockImplementation(() => defaultGraphQueryResult());
+    vi.mocked(useGraphOverview)
       .mockReset()
       .mockImplementation(() => defaultGraphQueryResult());
     vi.mocked(useGraphSearch)
+      .mockReset()
+      .mockImplementation(() => defaultGraphQueryResult());
+    vi.mocked(useGraphNode)
       .mockReset()
       .mockImplementation(() => defaultGraphQueryResult());
     vi.unstubAllGlobals();
@@ -2959,46 +3010,43 @@ describe("Tap product workspace interactions", () => {
 
   it("switches the Library between All sources and an interactive Knowledge Graph", async () => {
     const user = userEvent.setup();
-    const getSource = vi.fn(async (sourceId: string) => ({
-      documents: {
-        items: [{ status: "ready", revisionId: `rev_${sourceId}` }],
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 2,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 2 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
       },
-    }));
-    vi.mocked(createKnowledgeClient).mockReturnValue({ getSource } as never);
-    vi.mocked(useActiveGraph).mockImplementation(
-      (_projectId, revisionIds) =>
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
         ({
-          data: revisionIds.length
-            ? { items: [{ snapshotId: `snap_${revisionIds[0]}` }] }
-            : undefined,
-          isPending: revisionIds.length === 0,
-          isError: false,
-        }) as never,
-    );
-    vi.mocked(useGraphSearch).mockImplementation(
-      (_projectId, snapshotId) =>
-        ({
-          data: snapshotId
-            ? {
-                snapshotId,
-                nodes: [
-                  {
-                    nodeId: "doc",
-                    nodeType: "DOCUMENT",
-                    label: "rev_source",
-                    canonicalKey: "doc",
-                  },
-                  {
-                    nodeId: "age",
-                    nodeType: "CONCEPT",
-                    label: "Age eligibility",
-                    canonicalKey: "age",
-                  },
-                ],
-                edges: [],
-              }
-            : undefined,
-          isPending: snapshotId === null,
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "age",
+                nodeType: "CONCEPT",
+                label: "Age eligibility",
+                canonicalKey: "age",
+                degree: 1,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
           isError: false,
         }) as never,
     );
@@ -3021,6 +3069,10 @@ describe("Tap product workspace interactions", () => {
       within(filteredSources).queryByText("life-underwriting-rules.md"),
     ).toBeNull();
 
+    // The Knowledge Graph overview switches to a project-wide search once
+    // the shared query is non-empty (see `GraphOverview`), so clear it
+    // before switching tabs to see the default overview instead.
+    await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
     expect(
       screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
@@ -3029,21 +3081,510 @@ describe("Tap product workspace interactions", () => {
       screen.getByRole("tabpanel", { name: "Knowledge Graph" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("combobox", { name: "Graph source" }),
-    ).toBeVisible();
+      screen.queryByRole("combobox", { name: "Graph source" }),
+    ).not.toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
     );
-    expect(
-      screen.getByText(/nodes and relationships come from the service/i),
-    ).toBeVisible();
+    expect(screen.getByText(/Project knowledge overview/i)).toBeVisible();
     expect(
       screen.getByRole("button", { name: /Age eligibility/ }),
     ).toBeVisible();
 
-    await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Documents" }));
     expect(screen.getByRole("list", { name: "Library sources" })).toBeVisible();
+  });
+
+  it("falls back to the default module when a reloaded highlight turns out to belong to a different project", async () => {
+    // `defaultKnowledgeClient()`'s project is "project-test" (see
+    // `fakeKnowledgeClient`'s default); this highlight is for a different
+    // project, simulating e.g. a bookmark or forward/back navigation
+    // landing on a highlight minted for a project the user isn't in
+    // anymore. The very first render optimistically guesses "library"
+    // from this (any valid highlight, `projectId` unknown yet) — once
+    // `projectId` resolves and the highlight is screened out as a
+    // mismatch, `activeModule` must fall back to the normal default
+    // ("Tapper") instead of leaving the user stranded on an empty Library.
+    pushGraphHighlight({
+      edgeIds: ["edge-1"],
+      graphVersion: "1",
+      turnId: null,
+      projectId: "a-different-project",
+    });
+
+    try {
+      renderWorkspace();
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Tapper" })).toHaveAttribute(
+          "aria-current",
+          "page",
+        ),
+      );
+      expect(
+        screen.queryByRole("button", { name: "Library" }),
+      ).not.toHaveAttribute("aria-current", "page");
+    } finally {
+      // This test file's jsdom `window` persists across its other tests —
+      // undo the navigation so it doesn't leak into them.
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("keeps Library active when a matching highlight is cleared", async () => {
+    const user = userEvent.setup();
+    // A non-empty project graph, so `GraphOverview` actually renders the
+    // canvas (and, with a highlight present, the "Back to overview"
+    // button) instead of its empty-graph message.
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "age",
+                nodeType: "CONCEPT",
+                label: "Age eligibility",
+                canonicalKey: "age",
+                degree: 1,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    // Matches `defaultKnowledgeClient()`'s project ("project-test") —
+    // unlike the mismatch case above, this highlight genuinely belongs to
+    // the project the user is in. Clearing it later must not be misread
+    // as "the optimistic guess was wrong" and kick the user back to
+    // Tapper.
+    pushGraphHighlight({
+      edgeIds: ["edge-1"],
+      graphVersion: "1",
+      turnId: null,
+      projectId: "project-test",
+    });
+
+    try {
+      renderWorkspace();
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Library" })).toHaveAttribute(
+          "aria-current",
+          "page",
+        ),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Back to overview" }),
+        ).toBeVisible(),
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "Back to overview" }),
+      );
+
+      expect(screen.getByRole("button", { name: "Library" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  describe("when the runtime project resolves asynchronously", () => {
+    function mockNonEmptyGraph() {
+      vi.mocked(useGraphProject).mockReturnValue({
+        data: {
+          graphVersion: 1,
+          status: "READY",
+          nodeCount: 1,
+          edgeCount: 0,
+          mergedAt: "2026-01-01T00:00:00Z",
+          communities: [
+            { communityId: "underwriting", label: "Underwriting", size: 1 },
+          ],
+          extractingRevisionIds: [],
+          partialRevisionIds: [],
+        },
+        isPending: false,
+        isError: false,
+        isSuccess: true,
+      } as never);
+      vi.mocked(useGraphOverview).mockImplementation(
+        () =>
+          ({
+            data: {
+              graphVersion: 1,
+              nodes: [
+                {
+                  nodeId: "age",
+                  nodeType: "CONCEPT",
+                  label: "Age eligibility",
+                  canonicalKey: "age",
+                  degree: 1,
+                  communityId: "underwriting",
+                  aliases: [],
+                },
+              ],
+              edges: [],
+              evidence: [],
+            },
+            isPending: false,
+            isError: false,
+          }) as never,
+      );
+    }
+
+    function expectActiveModule(name: string) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    }
+
+    afterEach(() => {
+      window.history.replaceState(null, "", "/");
+    });
+
+    it("falls back to the default module once a mismatched highlight is screened out", async () => {
+      pushGraphHighlight({
+        edgeIds: ["edge-1"],
+        graphVersion: "1",
+        turnId: null,
+        projectId: "a-different-project",
+      });
+      const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+      // Optimistic guess before `projectId` is known.
+      expectActiveModule("Library");
+
+      await resolveRuntimeMode();
+
+      // "Tapper" stays current for any Tapper sub-module (Library included),
+      // so the default module is asserted through "New chat".
+      await waitFor(() => expectActiveModule("New chat"));
+      expect(
+        screen.getByRole("button", { name: "Library" }),
+      ).not.toHaveAttribute("aria-current");
+    });
+
+    it("stays on Library once a matching highlight is confirmed", async () => {
+      mockNonEmptyGraph();
+      pushGraphHighlight({
+        edgeIds: ["edge-1"],
+        graphVersion: "1",
+        turnId: null,
+        projectId: "project-test",
+      });
+      const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+      expectActiveModule("Library");
+
+      await resolveRuntimeMode();
+
+      expect(
+        await screen.findByRole("button", { name: "Back to overview" }),
+      ).toBeVisible();
+      expectActiveModule("Library");
+    });
+
+    it("stays on Library when a confirmed matching highlight is later cleared", async () => {
+      const user = userEvent.setup();
+      mockNonEmptyGraph();
+      pushGraphHighlight({
+        edgeIds: ["edge-1"],
+        graphVersion: "1",
+        turnId: null,
+        projectId: "project-test",
+      });
+      const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+      await resolveRuntimeMode();
+
+      await user.click(
+        await screen.findByRole("button", { name: "Back to overview" }),
+      );
+
+      expectActiveModule("Library");
+      expect(
+        screen.queryByRole("button", { name: "Back to overview" }),
+      ).toBeNull();
+    });
+
+    it.each([
+      ["a matching", "project-test"],
+      ["a mismatched", "a-different-project"],
+    ])(
+      "does not override a module the user chose before %s highlight resolves",
+      async (_label, highlightProjectId) => {
+        const user = userEvent.setup();
+        mockNonEmptyGraph();
+        pushGraphHighlight({
+          edgeIds: ["edge-1"],
+          graphVersion: "1",
+          turnId: null,
+          projectId: highlightProjectId,
+        });
+        const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+        expectActiveModule("Library");
+        await user.click(
+          screen.getByRole("button", { name: "Test Management" }),
+        );
+        expectActiveModule("Test Management");
+
+        await resolveRuntimeMode();
+
+        expectActiveModule("Test Management");
+      },
+    );
+  });
+
+  it("returns focus to the 'Open original' button after closing the opened source", async () => {
+    const user = userEvent.setup();
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "age",
+                nodeType: "CONCEPT",
+                label: "Age eligibility",
+                canonicalKey: "age",
+                degree: 0,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    vi.mocked(useGraphNode).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            node: {
+              nodeId: "age",
+              nodeType: "CONCEPT",
+              label: "Age eligibility",
+              canonicalKey: "age",
+              degree: 0,
+              communityId: "underwriting",
+              aliases: [],
+            },
+            community: {
+              communityId: "underwriting",
+              label: "Underwriting",
+              size: 1,
+            },
+            sources: [
+              {
+                sourceRevisionId: "rev_life_underwriting_rules",
+                documentRevisionId: "rev_life_underwriting_rules",
+                sourceName: "life-underwriting-rules.md",
+                evidence: [],
+              },
+            ],
+            relations: [],
+            neighbors: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    // The graph's node-detail "Open original" button opens the sourceId
+    // resolved from `publishedSources` (DEFAULT_SOURCES), but the fake
+    // knowledge client's `getSource` looks a source up by the *document*
+    // fixture's own deterministic `sourceId` (derived from `documentId`).
+    // Point the published source's id at that same value so opening it
+    // resolves instead of erroring.
+    const matchingSourceId = document({
+      documentId: "life-underwriting-rules",
+      filename: "life-underwriting-rules.md",
+      stage: "ready",
+      status: "ready",
+    }).sourceId;
+    const api = defaultKnowledgeClient().withPublishedSources({
+      items: [{ ...DEFAULT_SOURCES[0], sourceId: matchingSourceId }],
+    });
+    const queryClient = createTestQueryClient();
+    seedAgentSkillCatalog(queryClient, api.projectId);
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
+    );
+    await user.click(screen.getByRole("button", { name: /Age eligibility/ }));
+    const openOriginalButton = await screen.findByRole("button", {
+      name: "Open original",
+    });
+    await user.click(openOriginalButton);
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Close Knowledge sources" }),
+    );
+
+    expect(openOriginalButton).toHaveFocus();
+  });
+
+  it("fills the composer and source chips when asking about a graph node", async () => {
+    const user = userEvent.setup();
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "disclosure",
+                nodeType: "CONCEPT",
+                label: "Health disclosure",
+                canonicalKey: "disclosure",
+                degree: 0,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    vi.mocked(useGraphNode).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            node: {
+              nodeId: "disclosure",
+              nodeType: "CONCEPT",
+              label: "Health disclosure",
+              canonicalKey: "disclosure",
+              degree: 0,
+              communityId: "underwriting",
+              aliases: [],
+            },
+            community: {
+              communityId: "underwriting",
+              label: "Underwriting",
+              size: 1,
+            },
+            // Both revision ids resolve to a published source id in
+            // `DEFAULT_SOURCES` (the fixture `defaultKnowledgeClient` seeds
+            // below), so `GraphOverview` can map them to real source ids
+            // before `askAboutGraphNode` ever sees them.
+            sources: [
+              {
+                sourceRevisionId: "rev_life_underwriting_rules",
+                documentRevisionId: "rev_life_underwriting_rules",
+                sourceName: "life-underwriting-rules.md",
+                evidence: [],
+              },
+              {
+                sourceRevisionId: "rev_health_disclosure_guide",
+                documentRevisionId: "rev_health_disclosure_guide",
+                sourceName: "health-disclosure-guide.pdf",
+                evidence: [],
+              },
+            ],
+            relations: [],
+            neighbors: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    const api = defaultKnowledgeClient();
+    const queryClient = createTestQueryClient();
+    seedAgentSkillCatalog(queryClient, api.projectId);
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
+    );
+    await user.click(screen.getByRole("button", { name: /Health disclosure/ }));
+    await user.click(screen.getByRole("button", { name: "Ask about this" }));
+
+    expect(screen.getByRole("textbox", { name: "Message Tapper" })).toHaveValue(
+      "Health disclosure",
+    );
+    expect(
+      screen.getByRole("checkbox", { name: /life-underwriting-rules\.md/ }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: /health-disclosure-guide\.pdf/ }),
+    ).toBeChecked();
   });
 
   it("combines Library type and status filters and clears them together", async () => {
@@ -3120,7 +3661,7 @@ describe("Tap product workspace interactions", () => {
     expect(input).toHaveValue("Keep this draft");
   });
 
-  it("does not substitute the illustrative graph without a published revision", async () => {
+  it("does not substitute an illustrative graph before the project graph loads", async () => {
     const user = userEvent.setup();
     renderKnowledgeApp(<TapperWorkspace />, {
       api: fakeKnowledgeClient(),
@@ -3129,9 +3670,7 @@ describe("Tap product workspace interactions", () => {
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
-    expect(
-      await screen.findByText("Select a ready source to view its graph."),
-    ).toBeVisible();
+    expect(await screen.findByText("No knowledge graph yet.")).toBeVisible();
     expect(screen.queryByText("Illustrative view")).not.toBeInTheDocument();
   });
 
@@ -3144,12 +3683,389 @@ describe("Tap product workspace interactions", () => {
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
-    expect(
-      await screen.findByText("Select a ready source to view its graph."),
-    ).toBeVisible();
+    expect(await screen.findByText("No knowledge graph yet.")).toBeVisible();
     expect(
       screen.queryByRole("region", { name: "Knowledge graph summary" }),
     ).not.toBeInTheDocument();
+  });
+
+  // Stubs a completed durable conversation whose single turn cites one
+  // chunk and one edge, so the chip/evidence-panel wiring (`GroundedAnswer`
+  // -> `EdgeCitationChip` -> `EvidencePanel` -> `pushGraphHighlight`) can be
+  // exercised end to end the same way `completedConversation` does in
+  // `TapperWorkspace.conversations.test.tsx`. `turn.traceId` is left `null`
+  // (falls back to `AnswerActivity`, not the trace panel) since the trace
+  // endpoint is irrelevant to citation rendering.
+  function stubEdgeCitationConversation({
+    citationResponse,
+    onCitationRequest,
+  }: {
+    // Overridable so the error-state test below can return a problem
+    // response instead. `AssistantResponse`'s per-chip hover-card lookup
+    // (`useConversationCitations`) only enables a citation's query once
+    // its chip is hovered or focused, and the evidence panel's own lookup
+    // only enables once a citation is opened — but both hit this same
+    // endpoint, so it must always resolve to something once either
+    // happens.
+    citationResponse?: () => Response;
+    // Lets the laziness test below count requests without needing to spy
+    // on the stubbed global `fetch` itself.
+    onCitationRequest?: () => void;
+  } = {}) {
+    const jsonResponse = (value: unknown, status = 200) =>
+      new Response(JSON.stringify(value), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    const answer = {
+      traceId: "trace-1",
+      queryPlanId: "plan-1",
+      contextSnapshotId: "context-1",
+      corpusVersion: "v1",
+      retrievalProfileId: "quick",
+      degradedMode: false,
+      answer: "Verified identity is required.",
+      abstained: false,
+      claims: [
+        {
+          claimId: "claim-1",
+          text: "Verified identity is required.",
+          answerStart: 0,
+          answerEnd: 30,
+          citationIds: ["citation-a", "edge-1"],
+        },
+      ],
+      citations: [
+        retrievalCitation("citation-a"),
+        {
+          ...retrievalCitation("edge-1"),
+          kind: "edge",
+          edge: {
+            edgeId: "e1",
+            graphVersion: "2",
+            subject: {
+              nodeId: "node-underwriting",
+              label: "Underwriting review",
+            },
+            object: { nodeId: "node-disclosure", label: "Health disclosure" },
+            relationType: "REQUIRES",
+            relationLabel: "requires",
+          },
+        },
+      ],
+    };
+    vi.stubGlobal("fetch", async (request: Request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/conversations") && request.method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              conversationId: "conversation-a",
+              title: "What is the rule?",
+              createdAt: "2026-09-29T08:00:00Z",
+              updatedAt: "2026-09-29T08:00:00Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (path.endsWith("/conversations/conversation-a")) {
+        return jsonResponse({
+          conversationId: "conversation-a",
+          title: "What is the rule?",
+          createdAt: "2026-09-29T08:00:00Z",
+          updatedAt: "2026-09-29T08:00:01Z",
+          turns: [
+            {
+              turnId: "turn-1",
+              state: "completed",
+              attempt: 1,
+              traceId: null,
+              inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
+              answerEvidenceSnapshotDigest: null,
+              input: {
+                message: "What is the rule?",
+                modelAlias: "qwen-plus",
+                sourceRevisionIds: [],
+                documentRevisionIds: [],
+                resolvedResources: [],
+                agentRevisionId: null,
+                agentLabel: null,
+                skillRevisionIds: [],
+                skillLabels: [],
+                insightsQueryId: null,
+              },
+            },
+          ],
+        });
+      }
+      if (path.endsWith("/conversations/conversation-a/events")) {
+        return jsonResponse({
+          items: [
+            {
+              eventId: "event-1",
+              sequence: 1,
+              turnId: "turn-1",
+              occurredAt: "2026-09-29T08:00:01Z",
+              eventType: "turn.completed",
+              payload: { answer },
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (
+        path.endsWith(
+          "/conversations/conversation-a/turns/turn-1/citations/edge-1",
+        )
+      ) {
+        onCitationRequest?.();
+        return (
+          citationResponse?.() ??
+          jsonResponse(
+            citationPreview({
+              citationId: "edge-1",
+              quote:
+                "Health disclosure is required before underwriting review.",
+            }),
+          )
+        );
+      }
+      throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
+    });
+  }
+
+  it("keeps citation chips in reading order and returns focus after closing the evidence panel", async () => {
+    stubEdgeCitationConversation();
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const chunkChip = await screen.findByRole("button", {
+      name: "Open source citation 1",
+    });
+    const edgeChip = screen.getByRole("button", {
+      name: "Open relation citation R1",
+    });
+
+    chunkChip.focus();
+    expect(chunkChip).toHaveFocus();
+    await user.tab();
+    expect(edgeChip).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(
+      await screen.findByRole("heading", { name: "Relation evidence" }),
+    ).toHaveFocus();
+
+    await user.click(
+      screen.getByRole("button", { name: "Close relation evidence" }),
+    );
+    expect(edgeChip).toHaveFocus();
+  });
+
+  it("opens Library in highlight mode from an edge citation", async () => {
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "node-underwriting",
+                nodeType: "CONCEPT",
+                label: "Underwriting review",
+                canonicalKey: "underwriting",
+                degree: 1,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    stubEdgeCitationConversation();
+    const user = userEvent.setup();
+    try {
+      renderWorkspace();
+
+      await user.click(
+        await screen.findByRole("button", {
+          name: "Open relation citation R1",
+        }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "View in Library" }),
+      );
+
+      expect(
+        await screen.findByRole("button", { name: "Library" }),
+      ).toHaveAttribute("aria-current", "page");
+      expect(
+        screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
+      ).toBeVisible();
+      expect(
+        await screen.findByRole("region", { name: "Highlighted path" }),
+      ).toBeVisible();
+
+      const historyState = window.history.state as {
+        graphHighlight?: { edgeIds: string[] };
+      } | null;
+      expect(historyState?.graphHighlight?.edgeIds).toEqual(["e1"]);
+    } finally {
+      // This test file's jsdom `window` persists across its other tests —
+      // undo the navigation so it doesn't leak into them (same convention
+      // as the other `pushGraphHighlight` tests above).
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("fetches an edge citation's snippet only after its chip is hovered or focused", async () => {
+    let citationRequests = 0;
+    stubEdgeCitationConversation({
+      onCitationRequest: () => {
+        citationRequests += 1;
+      },
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const chip = await screen.findByRole("button", {
+      name: "Open relation citation R1",
+    });
+    // The turn (and its edge citation chip) is fully rendered, but nothing
+    // has hovered or focused it yet.
+    expect(citationRequests).toBe(0);
+
+    await user.hover(chip);
+    await waitFor(() => expect(citationRequests).toBe(1));
+
+    // Unhovering and re-hovering reads from the now-enabled, `staleTime:
+    // Infinity` cache entry rather than firing a second request.
+    await user.unhover(chip);
+    await user.hover(chip);
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "Health disclosure is required before underwriting review.",
+        ),
+      ).toBeInTheDocument(),
+    );
+    expect(citationRequests).toBe(1);
+  });
+
+  it("shows the historical supporting passage in the evidence panel", async () => {
+    stubEdgeCitationConversation();
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Open relation citation R1",
+      }),
+    );
+
+    // Scoped to the evidence panel itself: the hover popover's own copy of
+    // this same snippet (`RelationHoverCard`) can still be in the DOM
+    // alongside it (the click that opened the panel also focuses the chip,
+    // and the popover triggers on focus too).
+    const panel = (
+      await screen.findByRole("heading", { name: "Relation evidence" })
+    ).closest("section")!;
+    expect(
+      await within(panel).findByText(
+        "Health disclosure is required before underwriting review.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a retryable error when the supporting passage fails to load, and recovers on retry", async () => {
+    let citationRequests = 0;
+    stubEdgeCitationConversation({
+      onCitationRequest: () => {
+        citationRequests += 1;
+      },
+      // `retryable: false` here only stops react-query's own automatic
+      // retry-with-backoff (`retryConversationRequest`) from repeatedly
+      // re-fetching and timing out this test — `safeCitationProblem`'s
+      // retryable *UI* classification (which shows the "Retry
+      // verification" button) comes from the 503 status + problem code
+      // below, not from this field. The first request fails; a retry
+      // (manual `refetch()` from the button) succeeds.
+      citationResponse: () =>
+        citationRequests > 1
+          ? new Response(
+              JSON.stringify(
+                citationPreview({
+                  citationId: "edge-1",
+                  quote:
+                    "Health disclosure is required before underwriting review.",
+                }),
+              ),
+              { status: 200, headers: { "content-type": "application/json" } },
+            )
+          : new Response(
+              JSON.stringify({
+                type: "https://tap.example/problems/citation-unavailable",
+                retryable: false,
+              }),
+              {
+                status: 503,
+                headers: { "content-type": "application/problem+json" },
+              },
+            ),
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Open relation citation R1",
+      }),
+    );
+
+    const panel = (
+      await screen.findByRole("heading", { name: "Relation evidence" })
+    ).closest("section")!;
+    expect(
+      await within(panel).findByText(
+        "Cited content is temporarily unavailable. Try again.",
+      ),
+    ).toBeInTheDocument();
+    const requestsBeforeRetry = citationRequests;
+
+    await user.click(
+      within(panel).getByRole("button", { name: "Retry verification" }),
+    );
+
+    await waitFor(() =>
+      expect(citationRequests).toBeGreaterThan(requestsBeforeRetry),
+    );
+    expect(
+      await within(panel).findByText(
+        "Health disclosure is required before underwriting review.",
+      ),
+    ).toBeInTheDocument();
   });
 });
 

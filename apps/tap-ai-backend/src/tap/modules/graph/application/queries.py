@@ -15,7 +15,6 @@ from tap.modules.graph.domain.models import (
     GraphSubgraph,
     NeighborQuery,
     PathQuery,
-    source_set_digest,
 )
 from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.platform.db.project_scope import require_project_scope
@@ -24,7 +23,6 @@ from tap.platform.db.project_scope import require_project_scope
 class InMemoryGraphStore:
     def __init__(self) -> None:
         self._drafts: dict[tuple[str, str], GraphSnapshotDraft] = {}
-        self._active: dict[tuple[str, str], str] = {}
 
     async def publish(
         self,
@@ -44,7 +42,6 @@ class InMemoryGraphStore:
         ready = replace(draft.snapshot, status=status)
         persisted = replace(draft, snapshot=ready)
         self._drafts[key] = persisted
-        self._active[(scope.project_id, ready.source_set_digest)] = ready.snapshot_id
         return ready
 
     def reset(self, scope: ProjectScopeContext, snapshot_id: str) -> None:
@@ -56,16 +53,6 @@ class InMemoryGraphStore:
 
         scope = require_project_scope(scope)
         self._drafts.pop((scope.project_id, snapshot_id), None)
-
-    async def active_snapshot(
-        self, scope: ProjectScopeContext, source_ids: tuple[str, ...]
-    ) -> GraphSnapshot | None:
-        scope = require_project_scope(scope)
-        identity = self._active.get((scope.project_id, source_set_digest(source_ids)))
-        if identity is None:
-            return None
-        snapshot = self._drafts[(scope.project_id, identity)].snapshot
-        return snapshot if snapshot.source_revision_ids == tuple(sorted(source_ids)) else None
 
     async def get_snapshot(
         self, scope: ProjectScopeContext, snapshot_id: str
