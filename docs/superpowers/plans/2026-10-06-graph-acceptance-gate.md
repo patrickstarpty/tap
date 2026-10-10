@@ -490,7 +490,7 @@ Expected: 因 golden set 仍是占位（`labeledBy: pending-human-labeling`、0 
   基线观测（`TAPPER_GRAPH_REASONING=0`，其余环境变量同下）：
   `TAPPER_GRAPH_REASONING=0 uv run --project apps/tap-ai-backend python scripts/run-graph-relations-candidate.py --mode real --golden apps/tap-ai-backend/tests/fixtures/quality/graph-real/golden-v1.json --regression apps/tap-ai-backend/tests/fixtures/quality/graph-real/regression-questions.json --corpus .local/graph-real/corpus.json --observations .local/graph-relations/baseline-observations.json`（与 Makefile 的 `TAP_GRAPH_RELATIONS_BASELINE` 路径一致）
 
-  `create_api_runtime` 所需环境变量（对照 `TapperSettings.from_mapping`；具体取值来自本地环境，不得写入文档或提交）：`TAP_DATABASE_URL`、`TAP_ALEMBIC_DATABASE_URL`、`MILVUS_URI`、`MILVUS_DATABASE`（可选，默认 `default`）、`MILVUS_READER_USERNAME`/`MILVUS_READER_PASSWORD`、`MILVUS_WRITER_USERNAME`/`MILVUS_WRITER_PASSWORD`、`MILVUS_PROVISIONER_USERNAME`/`MILVUS_PROVISIONER_PASSWORD`、`LITELLM_BASE_URL`、`LITELLM_MASTER_KEY`、`TAPPER_GRAPH_EXTRACTION_MODE=model`、`TAPPER_DEFAULT_CHAT_MODEL`（模型别名），均指向同一套已启动的本地栈。
+  `create_api_runtime` 所需环境变量：在已加载仓库 `.env` 的 shell 中运行上述两条命令（`set -a; . ./.env; set +a`），使数据库、Redis、Milvus、对象存储（`TAPPER_S3_*`）与 LiteLLM 配置都指向同一套已启动的本地栈；再覆盖 `TAPPER_GRAPH_EXTRACTION_MODE=model`（基线运行另加 `TAPPER_GRAPH_REASONING=0`）。各变量以 `TapperSettings.from_mapping` 为准，具体取值不得写入文档或提交。
 
   再运行 `TAP_RUN_QUALITY_GRAPH_RELATIONS=1 TAP_QUALITY_GRAPH_RELATIONS_DATASET_AUTHORIZATION=approved:<name> TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION=approved:<name> make quality-graph-relations-real`、`TAP_RUN_GRAPH_SAMPLE_EXPORT=1 make graph-sample-export`、`TAP_RUN_GRAPH_BENCH=1 make graph-bench`；人工填写两份 CSV 的 `verdict/reviewer/reviewedAt` 后运行 `evaluate-graph-samples.py`
 
