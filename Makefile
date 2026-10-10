@@ -6,7 +6,7 @@ TAP_INSIGHTS_COMPOSE_PROJECT ?= tap-insights-local
 export TAP_INSIGHTS_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset
+.PHONY: schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset quality-graph-relations quality-graph-relations-real graph-sample-export graph-bench
 .PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check
 
 bootstrap: ## install frozen Python and Node dependencies
@@ -18,9 +18,9 @@ check: ## lint, format-check, typecheck, architecture checks
 	uv run --project apps/tap-ai-backend ruff check scripts/check_backend_boundary.py
 	uv run --project apps/tap-ai-backend ruff format --check scripts/check_backend_boundary.py
 	uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/architecture/test_product_boundary.py -q
-	uv run --project apps/tap-ai-backend ruff check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
-	uv run --project apps/tap-ai-backend ruff format --check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
-	uv run --project apps/tap-ai-backend mypy apps/tap-ai-backend/src/tap scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/tap-ai-backend ruff check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py scripts/evaluate-graph-relations.py scripts/run-graph-relations-candidate.py scripts/load-graph-real-corpus.py scripts/export-graph-samples.py scripts/evaluate-graph-samples.py scripts/graph-bench.py
+	uv run --project apps/tap-ai-backend ruff format --check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py scripts/evaluate-graph-relations.py scripts/run-graph-relations-candidate.py scripts/load-graph-real-corpus.py scripts/export-graph-samples.py scripts/evaluate-graph-samples.py scripts/graph-bench.py
+	uv run --project apps/tap-ai-backend mypy apps/tap-ai-backend/src/tap scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-kb-trusted.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py scripts/evaluate-graph-relations.py scripts/run-graph-relations-candidate.py scripts/load-graph-real-corpus.py scripts/export-graph-samples.py scripts/evaluate-graph-samples.py scripts/graph-bench.py
 	bash -n scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/run-tap-insights-e2e.sh scripts/run-task14-acceptance.sh scripts/build-tapper-object-store.sh
 	uv run --project apps/tap-ai-backend python scripts/export_contracts.py --check
 	uv run --project apps/backend python scripts/export_tap_contracts.py --check
@@ -30,6 +30,7 @@ check: ## lint, format-check, typecheck, architecture checks
 	$(MAKE) tap-backend-check
 	corepack pnpm --filter @tap/web run check
 	$(MAKE) brand-check
+	$(MAKE) quality-graph-relations
 
 brand-check:
 	uv run --project apps/tap-ai-backend python scripts/check_brand_namespace.py
@@ -180,6 +181,43 @@ quality-graph-real: ## evaluate existing real Graph outputs after authorized hum
 	@case "$${TAP_QUALITY_GRAPH_JOURNEY_PRODUCER_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-graph-real requires explicit journey producer authorization" >&2; exit 2;; esac
 	@[ -f "$(TAP_QUALITY_GRAPH_OBSERVATIONS)" ] || { echo "quality-graph-real requires existing reviewed observations" >&2; exit 2; }
 	uv run --project apps/tap-ai-backend python scripts/evaluate-quality-graph.py "$(TAP_QUALITY_GRAPH_OBSERVATIONS)" --report "$(TAP_QUALITY_GRAPH_REPORT)" --real
+
+TAP_GRAPH_RELATIONS_GOLDEN ?= apps/tap-ai-backend/tests/fixtures/quality/graph-real/golden-v1.json
+TAP_GRAPH_RELATIONS_REGRESSION ?= apps/tap-ai-backend/tests/fixtures/quality/graph-real/regression-questions.json
+TAP_GRAPH_REAL_MANIFEST ?= apps/tap-ai-backend/tests/fixtures/quality/graph-real/manifest.json
+TAP_GRAPH_RELATIONS_OBSERVATIONS ?= .local/graph-relations/observations.json
+TAP_GRAPH_RELATIONS_BASELINE ?= .local/graph-relations/baseline-observations.json
+TAP_GRAPH_RELATIONS_REPORT ?= .local/graph-relations/report.json
+
+quality-graph-relations: ## run the relation golden set end to end with the rule-based fake extractor and fake model
+	uv run --project apps/tap-ai-backend python scripts/run-graph-relations-candidate.py --mode fake --golden apps/tap-ai-backend/tests/fixtures/quality/graph-relations/golden-fixture-v1.json --corpus-dir apps/tap-ai-backend/tests/fixtures/quality/graph-relations --observations .local/graph-relations/fixture/fixture-observations.json
+	uv run --project apps/tap-ai-backend python scripts/evaluate-graph-relations.py --golden apps/tap-ai-backend/tests/fixtures/quality/graph-relations/golden-fixture-v1.json --observations .local/graph-relations/fixture/fixture-observations.json --report .local/graph-relations/fixture/fixture-report.json
+
+quality-graph-relations-real: ## evaluate the human-labeled relation golden set against the real model (opt-in; requires corpus.json from `load-graph-real-corpus.py upload` and baseline observations from a TAPPER_GRAPH_REASONING=0 `run-graph-relations-candidate.py --mode real` run)
+	@if [ "$${TAP_RUN_QUALITY_GRAPH_RELATIONS:-}" != "1" ]; then echo "quality-graph-relations-real requires TAP_RUN_QUALITY_GRAPH_RELATIONS=1" >&2; exit 2; fi
+	@case "$${TAP_QUALITY_GRAPH_RELATIONS_DATASET_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-graph-relations-real requires explicit dataset authorization" >&2; exit 2;; esac
+	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-graph-relations-real requires explicit model execution authorization" >&2; exit 2;; esac
+	@if [ "$${TAPPER_GRAPH_EXTRACTION_MODE:-}" != "model" ]; then echo "quality-graph-relations-real requires TAPPER_GRAPH_EXTRACTION_MODE=model" >&2; exit 2; fi
+	@if [ -z "$${TAP_DATABASE_URL:-}" ] || [ -z "$${MILVUS_URI:-}" ]; then echo "quality-graph-relations-real requires explicit MySQL and Milvus endpoints" >&2; exit 2; fi
+	@echo "quality-graph-relations-real: requires .local/graph-real/corpus.json (scripts/load-graph-real-corpus.py upload) and $(TAP_GRAPH_RELATIONS_BASELINE) (a prior TAPPER_GRAPH_REASONING=0 run-graph-relations-candidate.py --mode real run)" >&2
+	uv run --project apps/tap-ai-backend python scripts/load-graph-real-corpus.py validate --manifest "$(TAP_GRAPH_REAL_MANIFEST)"
+	uv run --project apps/tap-ai-backend python scripts/run-graph-relations-candidate.py --mode real --golden "$(TAP_GRAPH_RELATIONS_GOLDEN)" --regression "$(TAP_GRAPH_RELATIONS_REGRESSION)" --corpus .local/graph-real/corpus.json --observations "$(TAP_GRAPH_RELATIONS_OBSERVATIONS)"
+	uv run --project apps/tap-ai-backend python scripts/evaluate-graph-relations.py --golden "$(TAP_GRAPH_RELATIONS_GOLDEN)" --observations "$(TAP_GRAPH_RELATIONS_OBSERVATIONS)" --regression "$(TAP_GRAPH_RELATIONS_REGRESSION)" --baseline-observations "$(TAP_GRAPH_RELATIONS_BASELINE)" --report "$(TAP_GRAPH_RELATIONS_REPORT)" --real
+
+graph-sample-export: ## export 50 edges and 30 cross-source merged entities for human review (opt-in)
+	@if [ "$${TAP_RUN_GRAPH_SAMPLE_EXPORT:-}" != "1" ]; then echo "graph-sample-export requires TAP_RUN_GRAPH_SAMPLE_EXPORT=1" >&2; exit 2; fi
+	@[ -n "$${TAP_DATABASE_URL:-}" ] || { echo "graph-sample-export requires TAP_DATABASE_URL" >&2; exit 2; }
+	uv run --project apps/tap-ai-backend python scripts/export-graph-samples.py edges --count 50 --seed "$${TAP_GRAPH_SAMPLE_SEED:-20261006}" --output .local/graph-real/edge-sample.csv
+	uv run --project apps/tap-ai-backend python scripts/export-graph-samples.py merges --count 30 --seed "$${TAP_GRAPH_SAMPLE_SEED:-20261006}" --output .local/graph-real/merge-sample.csv
+
+graph-bench: ## synthesize 10k nodes / 50k edges and measure neighbors, path and overview p95 (not in CI)
+	@if [ "$${TAP_RUN_GRAPH_BENCH:-}" != "1" ]; then echo "graph-bench requires TAP_RUN_GRAPH_BENCH=1" >&2; exit 2; fi
+	@[ -n "$${TAP_DATABASE_URL:-}" ] || { echo "graph-bench requires TAP_DATABASE_URL" >&2; exit 2; }
+	uv run --project apps/tap-ai-backend python scripts/graph-bench.py generate --seed "$${TAP_GRAPH_BENCH_SEED:-20261006}"
+	uv run --project apps/tap-ai-backend python scripts/graph-bench.py run --seed "$${TAP_GRAPH_BENCH_SEED:-20261006}" --samples 200 --warmup 20 --report .local/graph-bench/report.json; \
+	status=$$?; \
+	uv run --project apps/tap-ai-backend python scripts/graph-bench.py cleanup || status=$$?; \
+	exit $$status
 
 TAP_QUALITY_TEST_PROFILE ?= apps/tap-ai-backend/tests/fixtures/quality/test-design/profile-v1.json
 TAP_QUALITY_TEST_OBSERVATIONS ?= .local/quality-test-design/observations.json

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "graph-relation-golden-v1",
+  "labeledBy": "pending-human-labeling",
+  "labeledAt": "2026-10-06",
+  "corpus": {
+    "manifest": "manifest.json",
+    "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "questions": []
+}

@@ -8,6 +8,9 @@
 .local/milvus-ci/
 .local/milvus-research/
 .local/quality-kb/
+.local/graph-real/
+.local/graph-relations/
+.local/graph-bench/
 .venv/
 .mypy_cache/
 node_modules/

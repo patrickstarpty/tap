@@ -30,7 +30,7 @@ from tap.modules.knowledge.domain.models import (
     SourceRevisionRef,
 )
 
-_RELATION_CITATION_LABEL_PATTERN = re.compile(r"^R(?:[1-9]|1[0-9]|20)$")
+RELATION_CITATION_LABEL_PATTERN = re.compile(r"^R(?:[1-9]|1[0-9]|20)$")
 
 
 class DocumentStateChanged(Exception):
@@ -375,7 +375,7 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
             edge_position += 1
             if (
                 citation.evidence_label != f"R{edge_position}"
-                or _RELATION_CITATION_LABEL_PATTERN.fullmatch(citation.evidence_label) is None
+                or RELATION_CITATION_LABEL_PATTERN.fullmatch(citation.evidence_label) is None
             ):
                 raise ValueError("gateway citation evidence labels are malformed")
             if citation.edge is None:
