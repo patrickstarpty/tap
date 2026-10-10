@@ -2,9 +2,9 @@
 
 TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能平台：Tapper 用企业知识回答问题并生成测试设计，Test Management 保存可审查的测试资产，Low Code Automation 把 BDD 映射成可录制、可执行、可追溯的 Web 自动化。V1 聚焦 TAP AI 的 5 项能力（可靠问答、知识图谱展示、图谱脉络分析、自定义与导入 Skills/Agents、对话可观测性），范围与验收见 [V1 总纲](docs/superpowers/plans/2026-09-29-v1-roadmap.md)。
 
-## 最新产品原型：以 main 为准
+## 最新版本：develop 最新，main 最稳定
 
-**`main` 主分支始终承载最新已确认的完整产品原型，是唯一权威入口。** 原型变更确认后必须连同源码、资源和本节说明一起合入 `main`；不能只留在功能分支、worktree、临时目录或截图中。查看最新设计时直接使用最新 `main`，无需寻找历史分支或另一个原型项目。
+**`develop` 分支是集成分支，始终承载最新已合并的产品原型功能；`main` 分支承载最稳定、已通过验收的版本。** 原型变更确认后合入 `develop`；经验收后由 `develop` 合入 `main`，连同源码、资源和本节说明一起流转，不能只留在功能分支、worktree、临时目录或截图中。查看最新功能直接使用 `develop`；需要稳定版本时使用 `main`。
 
 完整组合原型是持续演进的唯一设计基准，固定在 `apps/web` 的 `/prototype`，入口组件为 `apps/web/src/widgets/tap/TapProductPrototype.tsx`。从仓库根目录启动：
 
@@ -18,7 +18,7 @@ corepack pnpm --dir apps/web dev --port 15176
 
 Tapper 品牌形象自 2026-09-28 起为猫头鹰，替换原 Listening/Aha 啄木鸟；素材包见 [Tapper Owl](apps/tap-ai-frontend/assets/brand/tapper/owl/README.md)。
 
-当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [知识切片维护](docs/assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png)。实际交互以 `main` 上运行的 `/prototype` 为准。
+当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [知识切片维护](docs/assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png)。实际交互以 `develop` 上运行的 `/prototype` 为准。
 
 ## 文档
 
