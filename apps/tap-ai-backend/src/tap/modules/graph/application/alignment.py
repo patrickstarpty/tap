@@ -47,6 +47,7 @@ class ResolvedEntity:
 
 @dataclass(slots=True)
 class _Cluster:
+    position: int
     node_type: str
     canonical_key: str
     level1_keys: set[str]
@@ -85,6 +86,15 @@ def resolve_entities(
     """Merge Fragment nodes into Project entities across EXACT/ALIAS/EMBEDDING levels."""
     ordered_fragments = sorted(fragments, key=lambda fragment: fragment.snapshot.snapshot_id)
     clusters: list[_Cluster] = []
+    # A level-1 key joins a cluster only when no same-type cluster already holds it
+    # (otherwise the EXACT match below would have picked that cluster), so each
+    # ``(node_type, key)`` names at most one cluster and a dict lookup returns the
+    # same cluster a scan in creation order would.
+    exact_index: dict[tuple[str, str], _Cluster] = {}
+    # Level-2 keys can be shared by several clusters, and the ALIAS match is the
+    # earliest-created one, so the index keeps the smallest creation position per
+    # ``(node_type, key)``; the minimum over a node's keys is that same cluster.
+    alias_index: dict[tuple[str, str], int] = {}
 
     for fragment in ordered_fragments:
         snapshot_id = fragment.snapshot.snapshot_id
@@ -95,16 +105,18 @@ def resolve_entities(
             target: _Cluster | None = None
             rule_used: Literal["EXACT", "ALIAS", "EMBEDDING"] | None = None
 
-            for cluster in clusters:
-                if cluster.node_type == node.node_type and key1 in cluster.level1_keys:
-                    target, rule_used = cluster, "EXACT"
-                    break
+            exact_match = exact_index.get((node.node_type, key1))
+            if exact_match is not None:
+                target, rule_used = exact_match, "EXACT"
 
             if target is None:
-                for cluster in clusters:
-                    if cluster.node_type == node.node_type and cluster.level2_keys & keys2:
-                        target, rule_used = cluster, "ALIAS"
-                        break
+                alias_positions = [
+                    position
+                    for key in keys2
+                    if (position := alias_index.get((node.node_type, key))) is not None
+                ]
+                if alias_positions:
+                    target, rule_used = clusters[min(alias_positions)], "ALIAS"
 
             if target is None and embeddings:
                 vector = embeddings.get((snapshot_id, node.node_id))
@@ -126,6 +138,7 @@ def resolve_entities(
 
             if target is None:
                 target = _Cluster(
+                    position=len(clusters),
                     node_type=node.node_type,
                     canonical_key=node.canonical_key,
                     level1_keys=set(),
@@ -136,7 +149,12 @@ def resolve_entities(
 
             target.members.append((snapshot_id, node.node_id))
             target.level1_keys.add(key1)
+            exact_index.setdefault((node.node_type, key1), target)
             target.level2_keys |= keys2
+            for key in keys2:
+                known_position = alias_index.get((node.node_type, key))
+                if known_position is None or target.position < known_position:
+                    alias_index[(node.node_type, key)] = target.position
             target.labels.append(node.label)
             target.model_aliases.extend(node.aliases)
             target.rule = rule_used if rule_used is not None else target.rule
