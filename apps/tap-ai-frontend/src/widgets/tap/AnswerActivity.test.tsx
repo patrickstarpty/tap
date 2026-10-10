@@ -109,6 +109,7 @@ it("renders the Chinese answer summary line with seed entities and relation path
       graphContext={{
         status: "APPLIED",
         seedCount: 2,
+        querySeedCount: 0,
         paths: [["核保流程", "健康告知"]],
         relationCount: 1,
       }}
@@ -150,6 +151,7 @@ it("uses singular English units for counts of one", async () => {
       graphContext={{
         status: "APPLIED",
         seedCount: 1,
+        querySeedCount: 0,
         paths: [["A", "B"]],
         relationCount: 1,
       }}
@@ -175,6 +177,7 @@ it("hides the seed/path rows when there is no seed count and no paths", () => {
       graphContext={{
         status: "APPLIED",
         seedCount: 0,
+        querySeedCount: 0,
         paths: [],
         relationCount: 0,
       }}

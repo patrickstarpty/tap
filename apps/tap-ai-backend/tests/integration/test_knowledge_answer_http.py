@@ -317,6 +317,7 @@ def test_http_answer_exposes_graph_context_summary_and_edge_citation_kind() -> N
                 status=RelationContextStatus.APPLIED,
                 graph_version="7",
                 seed_count=1,
+                query_seed_count=1,
                 paths=(("核保流程", "健康告知"),),
                 relation_count=1,
                 diagnostics={},
@@ -335,6 +336,7 @@ def test_http_answer_exposes_graph_context_summary_and_edge_citation_kind() -> N
     assert body["graphSnapshotId"] == "7"
     assert body["graphContext"]["relationCount"] == 1
     assert body["graphContext"]["seedCount"] == 1
+    assert body["graphContext"]["querySeedCount"] == 1
     assert body["graphContext"]["paths"] == [["核保流程", "健康告知"]]
     assert body["citations"][-1]["kind"] == "edge"
     assert body["citations"][-1]["edge"]["relationType"] == "REQUIRES"

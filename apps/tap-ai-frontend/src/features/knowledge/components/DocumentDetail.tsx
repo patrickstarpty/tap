@@ -57,6 +57,7 @@ interface DocumentDetailProps {
   filename: string;
   onClose: () => void;
   onAfterClose: () => void;
+  locale?: "en" | "zh";
 }
 
 export function DocumentDetail({
@@ -64,6 +65,7 @@ export function DocumentDetail({
   filename,
   onClose,
   onAfterClose,
+  locale,
 }: DocumentDetailProps) {
   const { projectId } = useKnowledgeClient();
   const [settings, setSettings] = useState<ChunkSettings | null>(null);
@@ -145,6 +147,7 @@ export function DocumentDetail({
           <GraphFragmentStatus
             key={detailQuery.data.revisionId}
             revisionId={detailQuery.data.revisionId}
+            locale={locale}
           />
 
           <section aria-labelledby="normalized-preview-heading">

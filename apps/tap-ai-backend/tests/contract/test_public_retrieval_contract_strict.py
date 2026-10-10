@@ -200,7 +200,7 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
     (GraphEndpointView, {"nodeId", "label"}),
     (
         GraphContextSummaryView,
-        {"status", "graphVersion", "seedCount", "paths", "relationCount"},
+        {"status", "graphVersion", "seedCount", "querySeedCount", "paths", "relationCount"},
     ),
     (
         RetrievalSearchResponse,

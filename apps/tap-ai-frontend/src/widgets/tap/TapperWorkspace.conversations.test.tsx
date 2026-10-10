@@ -289,12 +289,13 @@ it("shows no summary line for a traced turn with zero sources, citations or rela
   expect(screen.queryByText(/^Searched/u)).not.toBeInTheDocument();
 });
 
-it("shows the no-relation-evidence banner as a static note when the turn is terminal and seedCount is at least 2", async () => {
+it("shows the no-relation-evidence banner as a static note when the turn is terminal and the question named at least 2 entities", async () => {
   completedConversation({
     traceId: null,
     graphContextEvent: {
       status: "EMPTY",
       seedCount: 2,
+      querySeedCount: 2,
       paths: [],
       relationCount: 0,
     },
@@ -310,12 +311,13 @@ it("shows the no-relation-evidence banner as a static note when the turn is term
   expect(alertContainer?.getAttribute("role")).toBeNull();
 });
 
-it("hides the no-relation-evidence banner when seedCount is below 2", async () => {
+it("hides the no-relation-evidence banner when the question named fewer than 2 entities", async () => {
   completedConversation({
     traceId: null,
     graphContextEvent: {
       status: "EMPTY",
       seedCount: 1,
+      querySeedCount: 1,
       paths: [],
       relationCount: 0,
     },
@@ -328,6 +330,32 @@ it("hides the no-relation-evidence banner when seedCount is below 2", async () =
     ),
   ).not.toBeInTheDocument();
 });
+
+it.each([
+  { label: "reports none", querySeedCount: 0 },
+  { label: "is omitted", querySeedCount: undefined },
+])(
+  "hides the no-relation-evidence banner when only evidence seeds were found and the question's own seed count $label",
+  async ({ querySeedCount }) => {
+    completedConversation({
+      traceId: null,
+      graphContextEvent: {
+        status: "EMPTY",
+        seedCount: 2,
+        ...(querySeedCount === undefined ? {} : { querySeedCount }),
+        paths: [],
+        relationCount: 0,
+      },
+    });
+
+    await screen.findByRole("button", { name: "Regenerate" });
+    expect(
+      screen.queryByText(
+        "No direct relation evidence was found; the answer below is grounded in source passages.",
+      ),
+    ).not.toBeInTheDocument();
+  },
+);
 
 it("does not crash when a citation resolves before a running turn completes", async () => {
   vi.stubGlobal("fetch", async (request: Request) => {

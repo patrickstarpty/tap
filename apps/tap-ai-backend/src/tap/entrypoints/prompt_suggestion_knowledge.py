@@ -35,6 +35,7 @@ from tap.modules.graph.adapters.mysql_project import (
     graph_project_edge_evidence,
     graph_project_node,
 )
+from tap.modules.graph.domain.project import STRUCTURAL_NODE_KEY_PREFIXES
 from tap.modules.graph.ports.project_store import ProjectGraphStorePort
 from tap.modules.knowledge.adapters.mysql_documents import (
     ReadyRevisionProjection,
@@ -44,10 +45,6 @@ from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_document
 from tap.modules.knowledge.adapters.mysql_ready_sources import MysqlReadySources
 from tap.modules.knowledge.ports.errors import AnswerUnavailable
 from tap.platform.db.project_scope import require_project_scope, scope_predicates
-
-# Placeholder graph extraction emits one node per document and per chunk; they name
-# revisions and sections, not domain entities, so they never reach suggestion prompts.
-_STRUCTURAL_NODE_KEY_PREFIXES = ("document:", "chunk:")
 
 # The answer adapter reports an unreachable model with this exact message; every
 # other AnswerUnavailable means the model answered but the answer failed validation.
@@ -206,7 +203,7 @@ class KnowledgeSuggestionSources:
                             graph_node_evidence.c.source_revision_id.in_(revision_ids),
                             *(
                                 ~graph_node.c.canonical_key.startswith(prefix)
-                                for prefix in _STRUCTURAL_NODE_KEY_PREFIXES
+                                for prefix in STRUCTURAL_NODE_KEY_PREFIXES
                             ),
                         )
                         .group_by(
@@ -295,11 +292,11 @@ class KnowledgeSuggestionSources:
                             has_ready_evidence,
                             *(
                                 ~subject_node.c.canonical_key.startswith(prefix)
-                                for prefix in _STRUCTURAL_NODE_KEY_PREFIXES
+                                for prefix in STRUCTURAL_NODE_KEY_PREFIXES
                             ),
                             *(
                                 ~object_node.c.canonical_key.startswith(prefix)
-                                for prefix in _STRUCTURAL_NODE_KEY_PREFIXES
+                                for prefix in STRUCTURAL_NODE_KEY_PREFIXES
                             ),
                         )
                         .order_by(degree_score.desc(), graph_project_edge.c.edge_id.asc())

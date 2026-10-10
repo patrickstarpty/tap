@@ -250,6 +250,7 @@ def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
             status=cast(Any, relation.status.value),
             graph_version=relation.graph_version,
             seed_count=relation.seed_count,
+            query_seed_count=relation.query_seed_count,
             paths=[list(path) for path in relation.paths],
             relation_count=relation.relation_count,
         )

@@ -249,9 +249,40 @@ describe("conversation stream reducer", () => {
     expect(state.turns["turn-1"]?.graphContext).toEqual({
       status: "EMPTY",
       seedCount: 2,
+      querySeedCount: 0,
       paths: [],
       relationCount: 0,
     });
+  });
+
+  it("keeps the question's own seed count apart from the total seed count", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "graph.context_ready", {
+        status: "EMPTY",
+        seedCount: 4,
+        querySeedCount: 2,
+        paths: [],
+        relationCount: 0,
+      }),
+    );
+    expect(state.turns["turn-1"]?.graphContext).toMatchObject({
+      seedCount: 4,
+      querySeedCount: 2,
+    });
+
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "graph.context_ready", {
+        status: "EMPTY",
+        seedCount: 4,
+        querySeedCount: -1,
+        paths: [],
+        relationCount: 0,
+      }),
+    );
+    expect(state.turns["turn-1"]?.graphContext?.querySeedCount).toBe(2);
   });
 
   it("ignores a graph context event with a negative count or non-string path labels", () => {
@@ -320,6 +351,7 @@ describe("graphContextFromEvents", () => {
     expect(result).toEqual({
       status: "EMPTY",
       seedCount: 2,
+      querySeedCount: 0,
       paths: [["核保流程", "健康告知"]],
       relationCount: 0,
     });

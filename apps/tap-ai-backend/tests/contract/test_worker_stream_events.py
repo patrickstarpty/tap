@@ -102,6 +102,14 @@ def test_turn_completed_accepts_stale_and_empty_graph_context_status(status: str
                 "citations": [],
                 "graphContextStatus": status,
                 "graphSnapshotId": None,
+                "graphContext": {
+                    "status": status,
+                    "graphVersion": "7",
+                    "seedCount": 2,
+                    "querySeedCount": 0,
+                    "paths": [],
+                    "relationCount": 0,
+                },
             }
         },
     )
@@ -128,6 +136,14 @@ async def test_knowledge_events_validate_against_contract() -> None:
     ]
     assert isinstance(stage_events[0]["durationMs"], int)
     assert stage_events[0]["durationMs"] >= 0
+
+    graph_context_payload = next(
+        payload
+        for event_type, payload in conversations.events
+        if event_type == "graph.context_ready"
+    )
+    assert graph_context_payload["seedCount"] == 0
+    assert graph_context_payload["querySeedCount"] == 0
 
 
 class _InsightsRepository:
@@ -355,6 +371,7 @@ _GRAPH_CONTEXT_PAYLOAD = {
     "status": "APPLIED",
     "graphVersion": "7",
     "seedCount": 2,
+    "querySeedCount": 2,
     "paths": [["核保流程", "健康告知"]],
     "relationCount": 1,
 }
