@@ -204,6 +204,38 @@ async function waitForGraphLayoutSettled(page: Page): Promise<void> {
   );
 }
 
+/**
+ * Asserts that no two rendered node labels on the graph canvas overlap, using
+ * the browser's real text geometry (labels the canvas hides to avoid a
+ * collision are not rendered at all).
+ */
+async function expectNodeLabelsDisjoint(page: Page): Promise<void> {
+  const overlaps = await page.evaluate(() => {
+    const labels = [
+      ...document.querySelectorAll<SVGTextElement>(".tap-graph-node-label"),
+    ].map((element) => ({
+      text: element.textContent ?? "",
+      box: element.getBoundingClientRect(),
+    }));
+    const pairs: string[] = [];
+    labels.forEach((a, i) => {
+      labels.slice(i + 1).forEach((b) => {
+        if (
+          a.box.left < b.box.right &&
+          b.box.left < a.box.right &&
+          a.box.top < b.box.bottom &&
+          b.box.top < a.box.bottom
+        ) {
+          pairs.push(`${a.text} / ${b.text}`);
+        }
+      });
+    });
+    return { count: labels.length, pairs };
+  });
+  expect(overlaps.count).toBeGreaterThan(0);
+  expect(overlaps.pairs).toEqual([]);
+}
+
 async function capture(page: Page, name: string) {
   await page.evaluate(() => document.fonts.ready);
   const bytes = await page.screenshot({
@@ -257,6 +289,7 @@ test("captures Library graph and document views", async ({ page }) => {
     page.getByRole("checkbox", { name: "Underwriting · 12 nodes" }),
   ).toBeVisible();
   await waitForGraphLayoutSettled(page);
+  await expectNodeLabelsDisjoint(page);
   const graph = await capture(page, "05-knowledge-graph");
   await page.getByRole("tab", { name: "Documents", exact: true }).click();
   await expect(page.getByRole("tabpanel", { name: "Documents" })).toBeVisible();
@@ -273,6 +306,7 @@ test("captures the graph overview, node detail, edge citations and highlight", a
     page.getByRole("checkbox", { name: "Underwriting · 12 nodes" }),
   ).toBeVisible();
   await waitForGraphLayoutSettled(page);
+  await expectNodeLabelsDisjoint(page);
   const overview = await capture(page, "10-graph-overview");
 
   // Step 2: node detail for "Health disclosure" (aliases, sources, grouped
@@ -281,6 +315,7 @@ test("captures the graph overview, node detail, edge citations and highlight", a
   const nodeDetails = page.getByRole("region", { name: "Node details" });
   await expect(nodeDetails).toContainText("Aliases");
   await waitForGraphLayoutSettled(page);
+  await expectNodeLabelsDisjoint(page);
   const nodeDetail = await capture(page, "11-graph-node-detail");
   expect(nodeDetail).not.toBe(overview);
 
@@ -376,6 +411,7 @@ test("captures the graph overview, node detail, edge citations and highlight", a
     page.getByRole("region", { name: "Highlighted path" }),
   ).toBeVisible();
   await waitForGraphLayoutSettled(page);
+  await expectNodeLabelsDisjoint(page);
   const highlight = await capture(page, "13-graph-highlight");
 
   expect(new Set([overview, nodeDetail, edgeCitations, highlight]).size).toBe(

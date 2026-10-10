@@ -15,6 +15,10 @@ import type {
 } from "react";
 
 import { CommunityList } from "../../../features/graph/components/CommunityList";
+import {
+  labelBaseline,
+  placeNodeLabels,
+} from "../../../features/graph/model/labelPlacement";
 import type { WorkspaceCopy } from "./copy";
 import {
   GRAPH_WIDTH,
@@ -31,9 +35,47 @@ export const EDGE_LABEL_ZOOM = 1.25;
 // before computing the fit-to-viewport zoom, so the fitted nodes are never
 // flush against the canvas edge.
 const FIT_TO_NODES_PADDING = 240;
+// Must match the `.tap-graph-node-label` font size and weight in
+// `TapperWorkspace.css`: label collision avoidance sizes each label's box
+// from them.
+const NODE_LABEL_FONT_SIZE = 18;
+const NODE_LABEL_FONT_WEIGHT = 600;
+
+/**
+ * Measures node label widths with the browser's own text metrics for the
+ * canvas font, so collision avoidance neither hides labels that would fit
+ * nor lets wide (e.g. CJK) labels overlap. `undefined` where no 2D text
+ * measurement is available (label placement then falls back to an
+ * estimate).
+ */
+function createLabelTextMeasure(
+  fontFamily: string,
+): ((text: string) => number) | undefined {
+  if (typeof OffscreenCanvas === "undefined") return undefined;
+  const context = new OffscreenCanvas(1, 1).getContext("2d");
+  if (!context) return undefined;
+  context.font = `${String(NODE_LABEL_FONT_WEIGHT)} ${String(NODE_LABEL_FONT_SIZE)}px ${fontFamily}`;
+  // An unparseable font string is ignored and leaves the 10px default.
+  if (!context.font.includes(`${String(NODE_LABEL_FONT_SIZE)}px`)) {
+    return undefined;
+  }
+  const widths = new Map<string, number>();
+  return (text) => {
+    let width = widths.get(text);
+    if (width === undefined) {
+      width = context.measureText(text).width;
+      widths.set(text, width);
+    }
+    return width;
+  };
+}
 
 function displayLabel(label: string): string {
   return label.length > 27 ? `${label.slice(0, 25)}…` : label;
+}
+
+function nodeRadius(node: GraphNode): number {
+  return 12 + Math.min(node.degree, 20) * 0.9;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -148,6 +190,18 @@ export function KnowledgeGraph({
   loadMoreLabel,
 }: KnowledgeGraphProps) {
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  // The labels inherit the canvas font family, only known once rendered.
+  const [labelFontFamily, setLabelFontFamily] = useState<string | null>(null);
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (svg) setLabelFontFamily(window.getComputedStyle(svg).fontFamily);
+  }, []);
+  const measureLabelText = useMemo(
+    () =>
+      labelFontFamily ? createLabelTextMeasure(labelFontFamily) : undefined,
+    [labelFontFamily],
+  );
   const [communitiesOpen, setCommunitiesOpen] = useState(
     () =>
       typeof window === "undefined" ||
@@ -273,6 +327,54 @@ export function KnowledgeGraph({
     if (edge.source === focusedNodeId) neighborhood.add(edge.target);
     if (edge.target === focusedNodeId) neighborhood.add(edge.source);
   }
+  const isHighlighted = (node: GraphNode) =>
+    normalizedQuery.length > 0
+      ? matchesQuery(node)
+      : (highlight?.nodeIds.has(node.id) ?? false);
+
+  // Labels never overlap: each is placed below its node, above it, or
+  // hidden (node positions are left untouched). The hovered/focused and
+  // selected nodes are always labeled; highlighted or search-matching nodes
+  // and the focused node's neighbors are labeled ahead of the rest, which
+  // then go by degree. Keyed on content (the emphasis set is rebuilt every
+  // render) so panning does not redo the placement.
+  const labelEmphasis = new Set(
+    visibleNodes
+      .filter((node) => isHighlighted(node) || neighborhood.has(node.id))
+      .map((node) => node.id),
+  );
+  const labelEmphasisKey = [...labelEmphasis].join("|");
+  const labelPlacements = useMemo(
+    () =>
+      placeNodeLabels(
+        visibleNodes.map((node) => ({
+          id: node.id,
+          x: node.x,
+          y: node.y,
+          radius: nodeRadius(node),
+          text: displayLabel(node.label),
+          degree: node.degree,
+        })),
+        {
+          pinned: new Set(
+            [hoveredNodeId, selectedNodeId].filter(
+              (id): id is string => id !== null,
+            ),
+          ),
+          emphasized: labelEmphasis,
+          fontSize: NODE_LABEL_FONT_SIZE,
+          measureText: measureLabelText,
+        },
+      ),
+    // `labelEmphasis` is tracked through `labelEmphasisKey`.
+    [
+      visibleNodes,
+      hoveredNodeId,
+      selectedNodeId,
+      labelEmphasisKey,
+      measureLabelText,
+    ],
+  );
 
   const nodeTypeGroups = useMemo(() => {
     const groups = new Map<string, string[]>();
@@ -454,6 +556,7 @@ export function KnowledgeGraph({
         ) : null}
         <div className="tap-graph-canvas" data-dragging={dragging}>
           <svg
+            ref={svgRef}
             role="group"
             aria-label={copy.library.knowledgeGraphImage}
             aria-describedby="tap-library-graph-caption tap-library-graph-summary"
@@ -522,16 +625,14 @@ export function KnowledgeGraph({
 
               <g className="tap-graph-nodes">
                 {visibleNodes.map((node) => {
-                  const highlighted =
-                    normalizedQuery.length > 0
-                      ? matchesQuery(node)
-                      : (highlight?.nodeIds.has(node.id) ?? false);
+                  const highlighted = isHighlighted(node);
                   const dimmed =
                     normalizedQuery.length > 0 || highlightActive
                       ? !highlighted
                       : Boolean(focusedNodeId) && !neighborhood.has(node.id);
                   const selected = node.id === selectedNodeId;
-                  const radius = 12 + Math.min(node.degree, 20) * 0.9;
+                  const radius = nodeRadius(node);
+                  const labelPlacement = labelPlacements.get(node.id);
                   return (
                     <g
                       key={node.id}
@@ -575,14 +676,19 @@ export function KnowledgeGraph({
                           } as CSSProperties
                         }
                       />
-                      <text
-                        className="tap-graph-node-label"
-                        x={node.x}
-                        y={node.y + radius + 16}
-                        textAnchor="middle"
-                      >
-                        {displayLabel(node.label)}
-                      </text>
+                      {labelPlacement ? (
+                        <text
+                          className="tap-graph-node-label"
+                          x={node.x}
+                          y={labelBaseline(
+                            { y: node.y, radius },
+                            labelPlacement,
+                          )}
+                          textAnchor="middle"
+                        >
+                          {displayLabel(node.label)}
+                        </text>
+                      ) : null}
                     </g>
                   );
                 })}
