@@ -27,6 +27,7 @@ from typing import Literal, Mapping
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.domain.project import (
+    STRUCTURAL_NODE_KEY_PREFIXES,
     EdgeEvidence,
     NodeSource,
     ProjectEdge,
@@ -190,6 +191,12 @@ class RelationContext:
                 raise ValueError("applied relation context requires a graph_version")
         object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
 
+    @property
+    def query_seed_count(self) -> int:
+        """Seeds the question itself named (alias matches), as opposed to
+        seeds reached only through retrieval evidence."""
+        return sum(1 for seed in self.seeds if seed.origin == "query")
+
     def by_label(self) -> Mapping[str, RelationEvidence]:
         return MappingProxyType({relation.label: relation for relation in self.relations})
 
@@ -262,6 +269,10 @@ def _source_key(item: NodeSource) -> tuple[object, ...]:
     )
 
 
+def _is_structural(node: ProjectNode) -> bool:
+    return node.canonical_key.startswith(STRUCTURAL_NODE_KEY_PREFIXES)
+
+
 def _evidence_key(item: EdgeEvidence) -> tuple[object, ...]:
     return (
         item.edge_id,
@@ -288,7 +299,11 @@ async def seed_from_evidence(
     nodes_by_id = {
         node.node_id: node for node in await store.nodes(scope, node_ids, version=version)
     }
-    return tuple(nodes_by_id[node_id] for node_id in node_ids if node_id in nodes_by_id)
+    return tuple(
+        nodes_by_id[node_id]
+        for node_id in node_ids
+        if node_id in nodes_by_id and not _is_structural(nodes_by_id[node_id])
+    )
 
 
 async def seed_from_query(
@@ -320,7 +335,7 @@ async def seed_from_query(
     }
     visible_node_ids: list[str] = []
     for node_id in node_ids:
-        if node_id not in nodes_by_id:
+        if node_id not in nodes_by_id or _is_structural(nodes_by_id[node_id]):
             continue
         visible = await store.neighbors(
             scope,

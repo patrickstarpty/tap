@@ -2117,6 +2117,11 @@ export interface components {
             graphVersion?: string | null;
             /** Paths */
             paths: string[][];
+            /**
+             * Queryseedcount
+             * @default 0
+             */
+            querySeedCount?: number;
             /** Relationcount */
             relationCount: number;
             /** Seedcount */
@@ -2136,6 +2141,11 @@ export interface components {
             graphVersion?: string | null;
             /** Paths */
             paths?: string[][];
+            /**
+             * Queryseedcount
+             * @default 0
+             */
+            querySeedCount?: number;
             /** Relationcount */
             relationCount: number;
             /** Seedcount */

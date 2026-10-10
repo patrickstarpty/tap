@@ -809,3 +809,84 @@ async def test_agent_caps_non_s_snippet_refs_fetched_per_edge_at_two() -> None:
     assert result.status is RelationContextStatus.APPLIED
     assert len(snippets.last_refs) == 2
     assert len(result.relations[0].support) == 2
+
+
+async def _fallback_only_project_graph() -> Any:
+    """Two documents whose text matches no relation trigger, run through the
+    fake extractor and the real merger: each publishes only its
+    ``document:<revision>`` fallback node, carrying every chunk's evidence."""
+    from tap.modules.graph.adapters.fake_extraction import rule_based_draft
+    from tap.modules.graph.application.merger import ProjectGraphMerger
+    from tap.modules.graph.application.project_queries import InMemoryProjectGraphStore
+    from tap.modules.graph.domain.models import GraphSnapshot
+    from tap.modules.graph.domain.project import FragmentRecord
+
+    records = []
+    for revision_id, content in (
+        ("rev-a", "The waiting period is 90 days for every new policy."),
+        ("rev-b", "Premiums are payable monthly by direct debit."),
+    ):
+        snapshot = GraphSnapshot.create(
+            snapshot_id=f"snapshot-{revision_id}",
+            project_id=_SCOPE.project_id,
+            source_revision_ids=(revision_id,),
+            document_revision_ids=(revision_id,),
+        )
+        chunk = {
+            "chunkId": f"chunk-{revision_id}",
+            "sourceRevisionId": revision_id,
+            "documentRevisionId": revision_id,
+            "anchor": {"kind": "text", "start": 0, "end": len(content)},
+            "contentDigest": "sha256:" + "b" * 64,
+            "content": content,
+        }
+        draft = rule_based_draft(snapshot, (chunk,), filename=f"{revision_id}.md")
+        assert draft is not None
+        records.append(
+            FragmentRecord(
+                snapshot_id=snapshot.snapshot_id,
+                revision_id=revision_id,
+                status="READY",
+                content_digest="sha256:" + "c" * 64,
+                draft=draft,
+            )
+        )
+    store = InMemoryProjectGraphStore()
+    project_draft = ProjectGraphMerger().merge(_SCOPE, records)
+    assert {node.canonical_key for node in project_draft.nodes} == {
+        "document:rev-a",
+        "document:rev-b",
+    }
+    await store.publish(_SCOPE, project_draft, now=_NOW)
+    return store
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query",
+    [
+        "How long is the waiting period?",
+        "What does rev-a.md say about premiums in rev-b.md?",
+    ],
+    ids=("ordinary-question", "question-naming-document-labels"),
+)
+async def test_document_fallback_nodes_never_seed_relation_analysis(query: str) -> None:
+    store = await _fallback_only_project_graph()
+    agent = RelationAnalysisAgent(store, FakeSnippets())
+    sources = frozenset({"rev-a", "rev-b"})
+
+    result = await agent.run(
+        _context(source_revision_ids=sources),
+        _input(
+            query=query,
+            source_revision_ids=sources,
+            evidence=(
+                EvidenceRef("S1", "chunk-rev-a", "rev-a", "rev-a"),
+                EvidenceRef("S2", "chunk-rev-b", "rev-b", "rev-b"),
+            ),
+        ),
+    )
+
+    assert result.status is RelationContextStatus.EMPTY
+    assert result.seeds == ()
+    assert result.query_seed_count == 0

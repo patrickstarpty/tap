@@ -54,7 +54,7 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 **问答**
 
 1. 用户在 Conversation 中提交问题，生成不可变 Turn。
-2. 检索 → 关系分析子图（种子/扩展/路径/排序，R1..R20）→ 检索增强 ≤ 5 条 → 生成 → R/S 校验：worker 在授权范围内经 Milvus 混合检索（RRF 融合）取回切片后，关系分析 Agent 子图（`modules/ai/application/agents/relation_analysis.py`）在固定图版本内做种子（问题 + 证据切片）、扩展（1–2 跳）、路径（种子两两之间 ≤3 跳）、排序（路径优先、按置信度 × 种子邻接度，截断为 R1..R20）；检索增强对候选集外的邻居节点证据切片最多补 5 条（同样的 ACL 与发布授权，`TAPPER_GRAPH_RETRIEVAL_AUGMENT` 控制）；生成后对 claim 的 R/S 标签做位置与端点标签校验，非法标签剥离或整条丢弃（`TAPPER_GRAPH_REASONING` 为 0 时整段跳过，回退为纯切片回答）。
+2. 检索 → 关系分析子图（种子/扩展/路径/排序，R1..R20）→ 检索增强 ≤ 5 条 → 生成 → R/S 校验：worker 在授权范围内经 Milvus 混合检索（RRF 融合）取回切片后，关系分析 Agent 子图（`modules/ai/application/agents/relation_analysis.py`）在固定图版本内做种子（问题 + 证据切片；canonical key 以 `document:`/`chunk:` 开头的结构性节点不作种子）、扩展（1–2 跳）、路径（种子两两之间 ≤3 跳）、排序（路径优先、按置信度 × 种子邻接度，截断为 R1..R20）；检索增强对候选集外的邻居节点证据切片最多补 5 条（同样的 ACL 与发布授权，`TAPPER_GRAPH_RETRIEVAL_AUGMENT` 控制）；生成后对 claim 的 R/S 标签做位置与端点标签校验，非法标签剥离或整条丢弃（`TAPPER_GRAPH_REASONING` 为 0 时整段跳过，回退为纯切片回答）。子图结果经 `graph.context_ready` 事件与回答的 `graphContext` 下发：`seedCount` 为全部种子数，`querySeedCount` 为问题本身识别到的实体数；状态为 EMPTY 且 `querySeedCount` ≥ 2 时，前端在回答上方提示未找到直接关系证据。
 3. 经 LiteLLM 生成回答并校验引用，结果写回 MySQL；可选模型目录由 LiteLLM `GET /v1/model/info` 动态提供（60 秒缓存），新增模型只改 `deploy/local/litellm/config.yaml` 并重启 LiteLLM，后端无需改代码或重启。
 4. 前端经 SSE 获取 Turn 事件（服务端轮询数据库，支持 `Last-Event-ID` 续传）。
 

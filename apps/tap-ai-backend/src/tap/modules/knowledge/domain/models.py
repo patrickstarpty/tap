@@ -627,6 +627,7 @@ class RelationOutcome:
     seed_count: int
     paths: tuple[tuple[str, ...], ...]
     relation_count: int
+    query_seed_count: int = 0
     diagnostics: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:

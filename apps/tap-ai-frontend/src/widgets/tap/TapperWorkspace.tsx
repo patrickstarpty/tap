@@ -773,7 +773,7 @@ function AssistantResponse({
           )}
           {graphContext !== null &&
           graphContext.status === "EMPTY" &&
-          graphContext.seedCount >= 2 ? (
+          graphContext.querySeedCount >= 2 ? (
             <Alert
               type="info"
               role={isTerminalTurn ? undefined : "status"}

@@ -162,6 +162,7 @@ class GraphContextSummaryView(StreamContractModel):
     status: Literal["APPLIED", "NOT_READY", "STALE", "FAILED", "EMPTY"]
     graph_version: str | None = None
     seed_count: int = Field(ge=0)
+    query_seed_count: int = Field(default=0, ge=0)
     paths: list[list[str]] = Field(default_factory=list)
     relation_count: int = Field(ge=0)
 
@@ -251,6 +252,7 @@ class GraphContextReadyPayload(StreamContractModel):
     ]
     graph_version: str | None = None
     seed_count: int = Field(ge=0)
+    query_seed_count: int = Field(default=0, ge=0)
     paths: list[list[str]] = Field(max_length=3)
     relation_count: int = Field(ge=0, le=20)
 

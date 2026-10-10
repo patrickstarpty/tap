@@ -10,10 +10,15 @@ export type ChatEventEnvelope = components["schemas"]["ChatEventEnvelope"];
  * retrieval) — those two statuses carry nothing worth summarizing in the
  * answer activity line, so `reduceStreamEvent` treats them like any other
  * invalid status and leaves `graphContext` unchanged.
+ *
+ * `seedCount` counts every seed entity (question aliases plus retrieval
+ * evidence); `querySeedCount` counts only the entities the question itself
+ * named, and is 0 for events persisted before the field existed.
  */
 export interface GraphContextSummary {
   status: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "EMPTY";
   seedCount: number;
+  querySeedCount: number;
   paths: string[][];
   relationCount: number;
 }
@@ -35,8 +40,10 @@ function parseGraphContextPayload(
   ) {
     return null;
   }
+  const querySeedCount = payload.querySeedCount ?? 0;
   if (
     !isNonNegativeInteger(payload.seedCount) ||
+    !isNonNegativeInteger(querySeedCount) ||
     !isNonNegativeInteger(payload.relationCount)
   ) {
     return null;
@@ -54,6 +61,7 @@ function parseGraphContextPayload(
   return {
     status: status as GraphContextSummary["status"],
     seedCount: payload.seedCount as number,
+    querySeedCount,
     paths: (rawPaths as string[][]).slice(0, 3),
     relationCount: payload.relationCount as number,
   };

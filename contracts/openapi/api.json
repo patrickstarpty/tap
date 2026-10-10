@@ -2377,6 +2377,12 @@
             "title": "Paths",
             "type": "array"
           },
+          "querySeedCount": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Queryseedcount",
+            "type": "integer"
+          },
           "relationCount": {
             "maximum": 20.0,
             "minimum": 0.0,
@@ -2435,6 +2441,12 @@
             },
             "title": "Paths",
             "type": "array"
+          },
+          "querySeedCount": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Queryseedcount",
+            "type": "integer"
           },
           "relationCount": {
             "minimum": 0,

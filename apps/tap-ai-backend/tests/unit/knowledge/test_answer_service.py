@@ -1259,6 +1259,13 @@ def _single_revision_policy() -> RetrievalPolicyContext:
     )
 
 
+_MIXED_SEEDS = (
+    SeedNode(node_id="A", label="核保流程", origin="query"),
+    SeedNode(node_id="B", label="健康告知", origin="query"),
+    SeedNode(node_id="C", label="保单", origin="evidence"),
+)
+
+
 def test_empty_relation_context_yields_no_relation_claim_and_empty_event() -> None:
     async def scenario() -> None:
         search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
@@ -1277,7 +1284,9 @@ def test_empty_relation_context_yields_no_relation_claim_and_empty_event() -> No
             ]
         )
         relation = _FakeRelationAnalysis(
-            RelationContext(status=RelationContextStatus.EMPTY, graph_version="7")
+            RelationContext(
+                status=RelationContextStatus.EMPTY, graph_version="7", seeds=_MIXED_SEEDS
+            )
         )
         knowledge = _relation_retrieval(search, model, relation_analysis=relation)
         response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
@@ -1286,6 +1295,8 @@ def test_empty_relation_context_yields_no_relation_claim_and_empty_event() -> No
         assert response.answer == "已验证的事实。"
         assert response.relation is not None
         assert response.relation.status is RelationContextStatus.EMPTY
+        assert response.relation.seed_count == 3
+        assert response.relation.query_seed_count == 2
         assert all(citation.kind == "chunk" for citation in response.citations)
         assert "invalid-relation-citation" in response.degradation_reasons
 
@@ -1312,7 +1323,9 @@ def test_empty_relation_context_abstention_preserves_relation_outcome() -> None:
             ]
         )
         relation = _FakeRelationAnalysis(
-            RelationContext(status=RelationContextStatus.EMPTY, graph_version="7")
+            RelationContext(
+                status=RelationContextStatus.EMPTY, graph_version="7", seeds=_MIXED_SEEDS
+            )
         )
         knowledge = _relation_retrieval(search, model, relation_analysis=relation)
         response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
@@ -1320,6 +1333,8 @@ def test_empty_relation_context_abstention_preserves_relation_outcome() -> None:
         assert response.abstained
         assert response.relation is not None
         assert response.relation.status is RelationContextStatus.EMPTY
+        assert response.relation.seed_count == 3
+        assert response.relation.query_seed_count == 2
 
     asyncio.run(scenario())
 

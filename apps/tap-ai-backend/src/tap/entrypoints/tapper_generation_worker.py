@@ -265,6 +265,7 @@ class GenerationWorker:
                             "status": evidence.graph_context_status.value,
                             "graphVersion": None,
                             "seedCount": 0,
+                            "querySeedCount": 0,
                             "paths": [],
                             "relationCount": 0,
                         }

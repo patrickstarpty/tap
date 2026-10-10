@@ -619,6 +619,7 @@ def test_conversation_event_item_accepts_graph_context_ready() -> None:
                 "status": "APPLIED",
                 "graphVersion": "7",
                 "seedCount": 2,
+                "querySeedCount": 2,
                 "paths": [["核保流程", "健康告知"]],
                 "relationCount": 1,
             },
