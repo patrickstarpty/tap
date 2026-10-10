@@ -12,9 +12,10 @@ from typing import Iterable, Literal, Mapping
 
 from tap.modules.graph.domain.models import GraphSnapshotDraft, RelationOrigin
 
-# Placeholder graph extraction emits one node per document and per chunk; they name
-# revisions and sections, not domain entities, so they never seed relation analysis
-# or reach suggestion prompts.
+# A document with no relations is published by the fragment assembler as a single
+# `document:<revision>` fallback node (in every extraction mode); `chunk:` is a
+# legacy prefix. Such nodes name revisions, not domain entities, so they never seed
+# relation analysis or reach suggestion prompts.
 STRUCTURAL_NODE_KEY_PREFIXES = ("document:", "chunk:")
 
 

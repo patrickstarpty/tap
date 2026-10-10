@@ -31,7 +31,7 @@
 - 边标签显示条件：悬停或选中节点的邻接边（现有逻辑 `KnowledgeGraph.tsx:500-505`）**或** 画布缩放 `zoom >= EDGE_LABEL_ZOOM = 1.25`（现有缩放范围 0.75–1.75，步长 0.25，`KnowledgeGraph.tsx:33-35`）。
 - 社区列表来自 `GET /project` 的 `communities`，替换 `publishedGraphData.ts:11-21` 的文件名正则分组；去掉"Published source graph"说明与"图谱来源"下拉（`LibraryWorkspace.tsx:98-113,149-153`）；来源过滤复用 Library 顶部筛选后的 `visibleSources`（`LibraryWorkspace.tsx:204-214`），传入已发布修订 id。
 - 节点详情面板必含：类型、别名、来源、按关系类型分组的关系（每组默认显示 10 条，超出显示"显示全部 (n)"）、证据片段与"打开原件"、"就此提问"。
-- 对话：边引用句内渲染为 `[R2]`，与 `[1]` 并列且各自独立编号（展示顺序）；悬停卡片"A —关系→ B"加片段；点击打开右侧证据面板：上半部分迷你路径图（本回答全部边引用），下半部分切片原文；"在 Library 中查看"跳转并进入高亮态；摘要行"搜索 N 个来源 · M 段原文 · K 条关系"，展开可见种子数与路径；`graph.context_ready.status === "EMPTY"` 且 `seedCount >= 2` 时回答上方提示"未找到直接关系证据，以下为资料原文依据"（payload 不含意图字段，以"识别到两个以上问题实体却无关系"作为关系问题的判定）。
+- 对话：边引用句内渲染为 `[R2]`，与 `[1]` 并列且各自独立编号（展示顺序）；悬停卡片"A —关系→ B"加片段；点击打开右侧证据面板：上半部分迷你路径图（本回答全部边引用），下半部分切片原文；"在 Library 中查看"跳转并进入高亮态；摘要行"搜索 N 个来源 · M 段原文 · K 条关系"，展开可见种子数与路径；`graph.context_ready.status === "EMPTY"` 且 `querySeedCount >= 2` 时回答上方提示"未找到直接关系证据，以下为资料原文依据"（`querySeedCount` 为问题本身识别到的实体数，以"问题点名两个以上实体却无关系"作为关系问题的判定；`seedCount` 含证据种子，保留兼容）。
 - 高亮不只靠颜色：画布旁以文字列出路径（`role="region"`，名称"高亮路径 / Highlighted path"）。
 - 任一图谱请求返回 409 时使 `["graph", projectId]` 前缀的查询失效并重新获取，不弹错误。
 - 文案全部放 `WORKSPACE_COPY`（`widgets/tap/workspace/copy.ts`）、`features/knowledge/copy.ts` 或 `GroundedAnswer.tsx` 的 `ANSWER_COPY`，EN 与中文成对；`copy.test.ts` 禁止"prototype/demo/原型/演示/示例"字样；文档、代码、夹具中不得出现客户企业名称。
@@ -351,7 +351,7 @@ git commit -m "feat: show graph fragment status with retry in document detail"
 **Interfaces:**
 - Produces（`stream.ts`）：`export interface GraphContextSummary { status: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "EMPTY"; seedCount: number; paths: string[][]; relationCount: number }`；`StreamTurnState.graphContext: GraphContextSummary | null`（`emptyTurn()` 为 `null`）；`reduceStreamEvent` 对 `event.type === "graph.context_ready"` 校验 `status` 在枚举内、`seedCount`/`relationCount` 为非负整数、`paths` 为字符串数组的数组（最多取 3 条），不合法则忽略；`export function graphContextFromEvents(events: readonly { eventType: string; payload: Record<string, unknown> }[]): GraphContextSummary | null`（取最后一条 `graph.context_ready`，同样校验）。
 - Produces（`AnswerActivity` 新 props）：`graphContext: GraphContextSummary | null`、`chunkCitationCount: number`（claims 引用的 `kind !== "edge"` 去重数）、`edgeCitationCount: number`；`<summary>` 改为 `copy.chat.answerSummary(sourceCount, chunkCitationCount, graphContext?.relationCount ?? edgeCitationCount)`；展开列表追加 `copy.chat.seedEntities(seedCount)` 与每条路径 `labels.join(" → ")`；原有行保留。
-- Produces（`AssistantResponse`）：`graphContext.status === "EMPTY" && graphContext.seedCount >= 2` 时在 `GroundedAnswer` 之上渲染 `<Alert type="info" role="status">copy.chat.noRelationEvidence</Alert>`。
+- Produces（`AssistantResponse`）：`graphContext.status === "EMPTY" && graphContext.querySeedCount >= 2` 时（`seedCount` 保留兼容）在 `GroundedAnswer` 之上渲染 `<Alert type="info" role="status">copy.chat.noRelationEvidence</Alert>`。
 - Produces（copy 新键）：`chat.answerSummary(n, m, k)`（"Searched {n} sources · {m} passages · {k} relations" / "搜索 {n} 个来源 · {m} 段原文 · {k} 条关系"）、`seedEntities(n)`（"{n} seed entities" / "{n} 个种子实体"）、`relationPaths`（"Relation paths" / "关系路径"）、`noRelationEvidence`（"No direct relation evidence was found; the answer below is grounded in source passages." / "未找到直接关系证据，以下为资料原文依据"）。
 
 - [ ] **Step 1: 写失败的测试**
