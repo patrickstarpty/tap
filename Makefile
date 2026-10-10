@@ -215,6 +215,7 @@ graph-bench: ## synthesize 10k nodes / 50k edges and measure neighbors, path and
 	@[ -n "$${TAP_DATABASE_URL:-}" ] || { echo "graph-bench requires TAP_DATABASE_URL" >&2; exit 2; }
 	uv run --project apps/tap-ai-backend python scripts/graph-bench.py generate --seed "$${TAP_GRAPH_BENCH_SEED:-20261006}"
 	uv run --project apps/tap-ai-backend python scripts/graph-bench.py run --seed "$${TAP_GRAPH_BENCH_SEED:-20261006}" --samples 200 --warmup 20 --report .local/graph-bench/report.json
+	uv run --project apps/tap-ai-backend python scripts/graph-bench.py cleanup
 
 TAP_QUALITY_TEST_PROFILE ?= apps/tap-ai-backend/tests/fixtures/quality/test-design/profile-v1.json
 TAP_QUALITY_TEST_OBSERVATIONS ?= .local/quality-test-design/observations.json
