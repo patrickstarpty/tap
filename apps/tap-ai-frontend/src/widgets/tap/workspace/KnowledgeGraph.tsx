@@ -38,7 +38,8 @@ export const EDGE_LABEL_ZOOM = 1.25;
 const FIT_TO_NODES_PADDING = 240;
 // Must match the `.tap-graph-node-label` font size and weight in
 // `TapperWorkspace.css`: label collision avoidance sizes each label's box
-// from them.
+// from them. The CSS draws document-kind node labels smaller (14px); 18px
+// is the conservative upper bound, so their boxes are only ever too large.
 const NODE_LABEL_FONT_SIZE = 18;
 const NODE_LABEL_FONT_WEIGHT = 600;
 
