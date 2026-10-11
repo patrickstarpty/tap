@@ -118,7 +118,8 @@ class GraphWorker:
         extractor: GraphExtractionPort,
         scope: ProjectScopeContext,
         worker_id: str,
-        batch_size: int = 10,
+        batch_size: int = 100,
+        batch_chars: int | None = 6000,
         batch_retries: int = 3,
         backoff_seconds: float = 1.0,
         lease_duration: timedelta = timedelta(seconds=60),
@@ -133,9 +134,12 @@ class GraphWorker:
         self._worker_id = worker_id
         if batch_size < 1:
             raise ValueError("graph worker batch size must be positive")
+        if batch_chars is not None and batch_chars < 1:
+            raise ValueError("graph worker batch character budget must be positive")
         if batch_retries < 1:
             raise ValueError("graph worker batch retries must be positive")
         self._batch_size = batch_size
+        self._batch_chars = batch_chars
         self._batch_retries = batch_retries
         self._backoff_seconds = backoff_seconds
         self._lease_duration = lease_duration
@@ -214,11 +218,12 @@ class GraphWorker:
             return "FAILED"
 
     async def _run_claim_body(self, claim: ClaimedGraphJob) -> str:
-        # Every chunk is extracted: each model call carries at most ``batch_size``
-        # chunks, and ingestion already bounds a document's chunk count
+        # Every chunk is extracted: each model call carries at most ``batch_chars``
+        # characters (or one oversized chunk) and at most ``batch_size`` chunks, and
+        # ingestion already bounds a document's chunk count
         # (``MAX_CHUNKS_PER_DOCUMENT``), so no per-document read cap is needed.
         chunks = await self._artifacts.read_chunks(ArtifactLocator(claim.chunks_locator))
-        batches = split_batches(chunks, batch_size=self._batch_size)
+        batches = split_batches(chunks, batch_size=self._batch_size, max_chars=self._batch_chars)
         # Jobs claimed without a resolvable document record keep the revision id as
         # their title, which is what every job carried before filenames were resolved.
         document_title = claim.document_title.strip() or claim.revision_id

@@ -769,6 +769,48 @@ async def test_every_chunk_of_a_long_document_is_extracted_in_bounded_batches(
     assert all(batch.status is GraphBatchStatus.READY for batch in batches)
 
 
+class SizedArtifacts:
+    def __init__(self, sizes: tuple[int, ...]) -> None:
+        self._chunks = tuple(
+            ChunkDraft(
+                chunk_id=f"chunk-{index}",
+                logical_chunk_id=f"logical-{index}",
+                root_id="document-1",
+                parent_id=None,
+                content="字" * size,
+                anchor_json='{"endOffset":1,"headingPath":[],"startOffset":0,"type":"document"}',
+                source_content_hash="sha256:" + "b" * 64,
+                chunk_content_hash="sha256:" + "a" * 64,
+            )
+            for index, size in enumerate(sizes)
+        )
+
+    async def read_chunks(self, locator):
+        return self._chunks
+
+
+@pytest.mark.asyncio
+async def test_worker_batches_by_character_budget(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=SizedArtifacts((2_500,) * 5),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=100,
+        batch_chars=6_000,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert [len(request.chunks) for request in extractor.requests] == [2, 2, 1]
+
+
 @pytest.mark.asyncio
 async def test_extraction_requests_carry_the_document_filename_as_title(monkeypatch) -> None:
     jobs = InMemoryGraphJobStore(document_titles={"revision-1": "claims-handbook.pdf"})

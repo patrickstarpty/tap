@@ -106,6 +106,7 @@ class TapperSettings:
     poll_seconds: float
     job_batch_size: int
     graph_batch_size: int
+    graph_batch_chars: int
     graph_batch_retries: int
     graph_align_embedding: bool
     graph_align_threshold: float
@@ -391,9 +392,16 @@ class TapperSettings:
             graph_batch_size=_integer(
                 values,
                 "TAPPER_GRAPH_BATCH_SIZE",
-                10,
+                100,
                 minimum=1,
-                maximum=50,
+                maximum=200,
+            ),
+            graph_batch_chars=_integer(
+                values,
+                "TAPPER_GRAPH_BATCH_CHARS",
+                6000,
+                minimum=500,
+                maximum=50000,
             ),
             graph_batch_retries=_integer(
                 values,
@@ -1094,6 +1102,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             scope=scope,
             worker_id=settings.worker_id + "-graph",
             batch_size=settings.graph_batch_size,
+            batch_chars=settings.graph_batch_chars,
             batch_retries=settings.graph_batch_retries,
             lease_duration=_graph_worker_lease(settings),
         )

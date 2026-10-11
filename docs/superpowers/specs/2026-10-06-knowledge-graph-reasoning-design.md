@@ -35,7 +35,7 @@
 ### 1.1 抽取（按文档修订）
 
 - graph job 仍由 `MysqlGraphReadyProjection` 在文档 READY 事务内创建，每个修订一个 job。
-- worker 把修订的切片按顺序切成批次，每批 `TAPPER_GRAPH_BATCH_SIZE`（默认 10）个切片，每批一次 `generate_structured` 调用。调用上下文包含：文档标题、本批切片、**本修订此前批次已抽出的实体清单**（id、label、type、canonicalKey），要求模型复用已有实体 id，保证同一文档内 canonical key 稳定。
+- worker 把修订的切片按顺序切成批次，每批以字符预算 `TAPPER_GRAPH_BATCH_CHARS`（默认 6000 字，超长的单个切片单独成批）为主、块数上限 `TAPPER_GRAPH_BATCH_SIZE`（默认 100）为辅，每批一次 `generate_structured` 调用。调用上下文包含：文档标题、本批切片、**本修订此前批次已抽出的实体清单**（id、label、type、canonicalKey），要求模型复用已有实体 id，保证同一文档内 canonical key 稳定。
 - 批次幂等键为（修订 id、批次号、抽取档案摘要）。批次失败按退避重试，`TAPPER_GRAPH_BATCH_RETRIES`（默认 3）次后标记该批失败并继续后续批次。全部批次成功时片段状态 READY；有失败批次时 PARTIAL，仍可合并；全部失败时 FAILED。
 - 批次结果合入同一修订的片段图（现有单文档快照表继续承载，称为**片段图**）；片段图的 `snapshot_id` 不变，批次表记录每批的状态、失败码、重试次数。
 - 节点类型：现有 ACTOR、SYSTEM、REQUIREMENT、CONCEPT、ENTITY 之外增加 PROCESS（流程、步骤、环节）。
@@ -218,7 +218,8 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `TAPPER_GRAPH_EXTRACTION_MODE` | `.env.example` 改为 `model`；CI 与 E2E 为 `fake` | 抽取方式 |
-| `TAPPER_GRAPH_BATCH_SIZE` | 10 | 每批切片数 |
+| `TAPPER_GRAPH_BATCH_CHARS` | 6000 | 每批字符预算（主约束） |
+| `TAPPER_GRAPH_BATCH_SIZE` | 100 | 每批切片数上限（辅约束） |
 | `TAPPER_GRAPH_BATCH_RETRIES` | 3 | 批次重试次数 |
 | `TAPPER_GRAPH_ALIGN_EMBEDDING` | 0 | 第三级 embedding 对齐开关 |
 | `TAPPER_GRAPH_ALIGN_THRESHOLD` | 0.92 | 对齐相似度阈值 |

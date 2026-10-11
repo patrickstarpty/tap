@@ -104,10 +104,19 @@ def test_settings_defaults() -> None:
 def test_graph_batch_settings_defaults_and_bounds() -> None:
     settings = TapperSettings.from_mapping(S3_SETTINGS)
 
-    assert settings.graph_batch_size == 10 and settings.graph_batch_retries == 3
+    # The character budget is the primary batch bound; the chunk count only caps
+    # documents split into very many tiny chunks.
+    assert settings.graph_batch_chars == 6000
+    assert settings.graph_batch_size == 100 and settings.graph_batch_retries == 3
 
-    with pytest.raises(ValueError):
-        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_BATCH_SIZE": "0"})
+    for name, value in (
+        ("TAPPER_GRAPH_BATCH_SIZE", "0"),
+        ("TAPPER_GRAPH_BATCH_SIZE", "201"),
+        ("TAPPER_GRAPH_BATCH_CHARS", "499"),
+        ("TAPPER_GRAPH_BATCH_CHARS", "50001"),
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(S3_SETTINGS | {name: value})
 
 
 def test_graph_extraction_budget_settings_are_separate_from_the_model_timeout() -> None:
