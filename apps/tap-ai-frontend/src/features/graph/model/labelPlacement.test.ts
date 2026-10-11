@@ -241,6 +241,109 @@ describe("placeNodeLabels", () => {
     expect(placed.get("a")).toMatchObject({ placement: "left", halo: false });
   });
 
+  describe("within the visible viewport", () => {
+    const metrics = { fontSize: FONT_SIZE, zoom: 1 };
+    const sides = ["below", "above", "right", "left"] as const;
+    const viewport = { left: 0, top: 0, right: 1000, bottom: 800 };
+    const outside = (box: LabelBox) =>
+      (box.right - box.left) * (box.bottom - box.top) -
+      overlapArea(box, viewport);
+
+    it("keeps labels out of a blocked area such as a floating toolbar", () => {
+      const node = candidate({ id: "a", x: 900, y: 40, text: "Corner" });
+      const toolbar = { left: 885, top: 10, right: 990, bottom: 70 };
+      const placed = placeNodeLabels(
+        [node],
+        options({ bounds: viewport, blocked: [toolbar] }),
+      );
+      const label = placed.get("a")!;
+      const box = labelBox(node, label.placement, metrics);
+      expect(overlapArea(box, toolbar)).toBe(0);
+      expect(outside(box)).toBe(0);
+      expect(label).toMatchObject({ placement: "left", halo: false });
+    });
+
+    it("takes an overlapping spot inside the viewport over a clear one cut off by its edge", () => {
+      // Right is free but runs off the viewport; left is covered by a
+      // neighbor's label, by more area than right would lose.
+      const node = candidate({ id: "a", x: 960, y: 400, text: "Edge node" });
+      const obstacles = [
+        labelBox(node, "below", metrics),
+        labelBox(node, "above", metrics),
+        labelBox(node, "left", metrics),
+      ];
+      expect(outside(labelBox(node, "right", metrics))).toBeLessThan(
+        overlapArea(
+          labelBox(node, "left", metrics),
+          labelBox(node, "left", metrics),
+        ),
+      );
+      const placed = placeNodeLabels(
+        [node],
+        options({ bounds: viewport, obstacles }),
+      );
+      expect(placed.get("a")).toMatchObject({ placement: "left", halo: true });
+    });
+
+    it("takes the spot least outside the viewport when every one is cut off", () => {
+      // A node in the viewport's corner: every spot runs off it somewhat.
+      const node = candidate({
+        id: "a",
+        x: 985,
+        y: 790,
+        text: "Corner label",
+      });
+      const areas = sides.map((side) => outside(labelBox(node, side, metrics)));
+      expect(Math.min(...areas)).toBeGreaterThan(0);
+      const least = sides[areas.indexOf(Math.min(...areas))]!;
+      // An obstacle over the least-cut-off spot does not push the label
+      // further out of view.
+      const placed = placeNodeLabels(
+        [node],
+        options({
+          bounds: viewport,
+          obstacles: [labelBox(node, least, metrics)],
+        }),
+      );
+      expect(placed.get("a")?.placement).toBe(least);
+    });
+
+    it("still keeps the labels of nodes out of view clear of others", () => {
+      // Every spot is equally out of view, so overlap decides as usual,
+      // whatever rounding the box arithmetic leaves (here, the side spots
+      // come out a hair smaller than below and above).
+      const zoom = Math.sqrt(1.75);
+      const node = candidate({
+        id: "a",
+        x: 1500,
+        y: 900,
+        text: "Policy renewal",
+      });
+      const sideMetrics = { fontSize: FONT_SIZE, zoom };
+      const placed = placeNodeLabels(
+        [node],
+        options({
+          bounds: viewport,
+          zoom,
+          obstacles: [
+            labelBox(node, "right", sideMetrics),
+            labelBox(node, "left", sideMetrics),
+          ],
+        }),
+      );
+      expect(placed.get("a")).toMatchObject({
+        placement: "below",
+        halo: false,
+      });
+    });
+
+    it("does not back a label with a halo just because the viewport cuts it off", () => {
+      const node = candidate({ id: "a", x: 995, y: 795, text: "Corner" });
+      const placed = placeNodeLabels([node], options({ bounds: viewport }));
+      expect(placed.get("a")?.halo).toBe(false);
+    });
+  });
+
   it("places priority labels (hovered, selected, cited) first, ahead of higher-degree ones", () => {
     const nodes = [
       candidate({ id: "hub", x: 100, y: 100, text: "Hub label", degree: 9 }),

@@ -213,16 +213,15 @@ const HALO_OVERLAP_TOLERANCE = 0.1;
 
 /**
  * Asserts, from the browser's real text geometry, that every drawn node has
- * a label that the canvas does not cut off, that node labels overlap
- * neither each other nor the visible edge labels -- except slightly, over a
- * halo -- and that edge labels do not overlap each other.
+ * a label; that a node in view has its label in view too (neither cut off
+ * by the canvas edge nor under the floating toolbar); that node labels
+ * overlap neither each other nor the visible edge labels -- except
+ * slightly, over a halo -- and that edge labels do not overlap each other.
+ * Labels are re-placed shortly after the view settles, so this polls.
  */
-async function expectNodeLabelsReadable(
-  page: Page,
-  { wholeCanvasInView = true } = {},
-): Promise<void> {
-  const report = await page.evaluate(
-    ([tolerance, checkCutOff]) => {
+async function expectNodeLabelsReadable(page: Page): Promise<void> {
+  const measure = () =>
+    page.evaluate((tolerance) => {
       type Box = { left: number; right: number; top: number; bottom: number };
       const area = (box: Box) =>
         (box.right - box.left) * (box.bottom - box.top);
@@ -253,11 +252,13 @@ async function expectNodeLabelsReadable(
       }));
       const problems: string[] = [];
       const halos: string[] = [];
-      // With the whole canvas in view (default zoom and pan), a label must
-      // not be cut off by the canvas edge. A zoomed or panned view may cut off
-      // labels of nodes at its edge, like the nodes themselves.
+      // A node fully in view (inside the canvas, clear of the toolbar)
+      // keeps its label in view, at any zoom and pan.
       const canvas = document
         .querySelector(".tap-graph-canvas")!
+        .getBoundingClientRect();
+      const toolbar = document
+        .querySelector(".tap-graph-toolbar")!
         .getBoundingClientRect();
       const inside = (box: Box, slack = 1) =>
         box.left >= canvas.left - slack &&
@@ -265,13 +266,17 @@ async function expectNodeLabelsReadable(
         box.top >= canvas.top - slack &&
         box.bottom <= canvas.bottom + slack;
       nodes.forEach((node) => {
-        if (!checkCutOff) return;
         const core = node.querySelector(".tap-graph-node-core");
         const text = node.querySelector(".tap-graph-node-label");
         if (!core || !text) return;
-        if (!inside(core.getBoundingClientRect() as Box, 0)) return;
-        if (!inside(text.getBoundingClientRect() as Box)) {
+        const coreBox = core.getBoundingClientRect() as Box;
+        if (!inside(coreBox, 0) || overlap(coreBox, toolbar) > 0) return;
+        const textBox = text.getBoundingClientRect() as Box;
+        if (!inside(textBox)) {
           problems.push(`${text.textContent ?? ""} is cut off by the canvas`);
+        }
+        if (overlap(textBox, toolbar) > 1) {
+          problems.push(`${text.textContent ?? ""} is under the toolbar`);
         }
       });
       // Edge labels never overlap each other (beyond rounding where two
@@ -299,9 +304,11 @@ async function expectNodeLabelsReadable(
         problems,
         halos,
       };
-    },
-    [HALO_OVERLAP_TOLERANCE, wholeCanvasInView] as const,
-  );
+    }, HALO_OVERLAP_TOLERANCE);
+  await expect
+    .poll(async () => (await measure()).problems, { timeout: 3_000 })
+    .toEqual([]);
+  const report = await measure();
   expect(report.nodes).toBeGreaterThan(0);
   expect(report.labeled).toBe(report.nodes);
   expect(report.problems).toEqual([]);
@@ -486,7 +493,7 @@ test("captures the graph overview, node detail, edge citations and highlight", a
     page.getByRole("region", { name: "Highlighted path" }),
   ).toBeVisible();
   await waitForGraphLayoutSettled(page);
-  await expectNodeLabelsReadable(page, { wholeCanvasInView: false });
+  await expectNodeLabelsReadable(page);
   const highlight = await capture(page, "13-graph-highlight");
 
   expect(new Set([overview, nodeDetail, edgeCitations, highlight]).size).toBe(

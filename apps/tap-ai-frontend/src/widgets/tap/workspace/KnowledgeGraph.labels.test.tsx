@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 
 import { WORKSPACE_COPY } from "./copy";
@@ -212,4 +212,82 @@ it("keeps a cited edge's label over the hovered node's edge", () => {
   fireEvent.mouseEnter(nodeGroup("Alpha"));
 
   expect(shownEdgeLabels(container)).toEqual(["precedes"]);
+});
+
+// A canvas laid out at the SVG's own aspect ratio (one screen pixel per
+// view-box unit) with the floating toolbar over its top-right corner.
+function mockCanvasLayout() {
+  const rect = (left: number, top: number, right: number, bottom: number) =>
+    DOMRect.fromRect({
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+    });
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: Element) {
+      if (this.classList.contains("tap-graph-toolbar")) {
+        return rect(1300, 12, 1596, 60);
+      }
+      if (
+        this.classList.contains("tap-graph-canvas") ||
+        this.tagName.toLowerCase() === "svg"
+      ) {
+        return rect(0, 0, 1608, 1120);
+      }
+      return rect(0, 0, 0, 0);
+    },
+  );
+}
+
+it("keeps labels out from under the floating toolbar", async () => {
+  mockCanvasLayout();
+  render(
+    <KnowledgeGraph
+      {...props({
+        nodes: [
+          buildNode({ id: "t", label: "Node", degree: 0, x: 1262, y: 20 }),
+        ],
+      })}
+    />,
+  );
+
+  // Below would run under the toolbar; above leaves the canvas.
+  await waitFor(() => expect(placementOf("Node")).toBe("left"));
+});
+
+it("re-places labels at the viewport edge once panning settles", async () => {
+  mockCanvasLayout();
+  render(
+    <KnowledgeGraph
+      {...props({
+        nodes: [
+          buildNode({
+            id: "far",
+            label: "Far right label",
+            degree: 0,
+            x: 1400,
+            y: 600,
+          }),
+        ],
+      })}
+    />,
+  );
+  await waitFor(() => expect(placementOf("Far right label")).toBe("below"));
+
+  // Drag the view right, bringing the node to the canvas's right edge.
+  const svg = screen.getByRole("group", {
+    name: WORKSPACE_COPY.en.library.knowledgeGraphImage,
+  });
+  fireEvent.pointerDown(svg, { button: 0, pointerId: 1, clientX: 500 });
+  fireEvent.pointerMove(svg, { pointerId: 1, clientX: 670 });
+  fireEvent.pointerUp(svg, { pointerId: 1, clientX: 670 });
+  expect(svg.querySelector("g")?.getAttribute("transform")).toBe(
+    "translate(170 0) scale(1)",
+  );
+  // Placement waits for the view to settle rather than following the drag.
+  expect(placementOf("Far right label")).toBe("below");
+
+  // Centered below, the label would run off the right edge.
+  await waitFor(() => expect(placementOf("Far right label")).toBe("left"));
 });
