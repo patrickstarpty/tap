@@ -1694,7 +1694,7 @@ def _assemble_http_services(
             graph_sessions,  # type: ignore[arg-type]
             artifacts,
         )
-        # The legacy keyword-matching graph enrichment is retired (PR 3);
+        # The legacy keyword-matching graph enrichment is retired;
         # `relation_analysis` below is the answer flow's sole remaining
         # graph-reasoning entry point.
         if graph_reasoning:

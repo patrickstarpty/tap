@@ -74,7 +74,8 @@ def test_matches_after_normalization_and_alias():
 
 
 def test_alias_lookup_matches_width_and_whitespace_variant_of_the_entity_label():
-    # M6 regression: `expectedEdges` subject text is a half-width "A", while the
+    # Width/whitespace-insensitive alias lookup: `expectedEdges` subject text is a
+    # half-width "A", while the
     # `expectedEntities` label it must be looked up against is a full-width "Ａ" with
     # trailing whitespace. Before the fix, `_expected_keys` compared `entity_label ==
     # label` literally, so this entity was never matched and its alias ("Alpha") was

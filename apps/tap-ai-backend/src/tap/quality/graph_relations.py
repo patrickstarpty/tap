@@ -379,7 +379,7 @@ def validate_regression(value: object) -> RegressionSet:
     return RegressionSet(groups=tuple(groups), complete=complete)
 
 
-# --- R-citation matching and report aggregation (Task 2) -----------------------------
+# --- R-citation matching and report aggregation ------------------------------------
 
 SYMMETRIC_RELATIONS: frozenset[str] = frozenset({"CONFLICTS_WITH", "RELATED_TO"})
 

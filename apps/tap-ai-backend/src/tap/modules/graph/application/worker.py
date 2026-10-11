@@ -29,8 +29,6 @@ from tap.modules.knowledge.ports.documents import ArtifactLocator, ArtifactStore
 from tap.platform.db.project_scope import require_project_scope
 from tap.platform.telemetry import bind_trace, flush_traces, span
 
-_CHUNK_READ_LIMIT = 500
-
 
 @dataclass(frozen=True, slots=True)
 class GraphWorkerRun:
@@ -216,10 +214,14 @@ class GraphWorker:
             return "FAILED"
 
     async def _run_claim_body(self, claim: ClaimedGraphJob) -> str:
-        chunks = (await self._artifacts.read_chunks(ArtifactLocator(claim.chunks_locator)))[
-            :_CHUNK_READ_LIMIT
-        ]
+        # Every chunk is extracted: each model call carries at most ``batch_size``
+        # chunks, and ingestion already bounds a document's chunk count
+        # (``MAX_CHUNKS_PER_DOCUMENT``), so no per-document read cap is needed.
+        chunks = await self._artifacts.read_chunks(ArtifactLocator(claim.chunks_locator))
         batches = split_batches(chunks, batch_size=self._batch_size)
+        # Jobs claimed without a resolvable document record keep the revision id as
+        # their title, which is what every job carried before filenames were resolved.
+        document_title = claim.document_title.strip() or claim.revision_id
         existing = {
             batch.batch_index: batch for batch in await self._jobs.load_batches(self._scope, claim)
         }
@@ -250,6 +252,7 @@ class GraphWorker:
                     chunk_ids,
                     attempt=existing_batch.attempt if existing_batch is not None else 0,
                     drafts_so_far=drafts,
+                    document_title=document_title,
                 )
                 if succeeded:
                     if draft is not None:
@@ -266,7 +269,7 @@ class GraphWorker:
                 self._scope, claim, failure_code="graph-extraction-failed", now=self._now()
             )
             return "FAILED"
-        fragment = assemble_fragment(claim.snapshot, drafts)
+        fragment = assemble_fragment(claim.snapshot, drafts, document_title=document_title)
         if batch_failed > 0:
             await self._jobs.complete(
                 self._scope, claim, fragment, now=self._now(), status="PARTIAL"
@@ -284,6 +287,7 @@ class GraphWorker:
         *,
         attempt: int,
         drafts_so_far: list[GraphSnapshotDraft],
+        document_title: str,
     ) -> tuple[GraphSnapshotDraft | None, bool, int, ClaimedGraphJob]:
         request_chunks = tuple(
             _chunk_request_mapping(chunk, revision_id=claim.revision_id) for chunk in batch_chunks
@@ -298,7 +302,7 @@ class GraphWorker:
                     model_alias=claim.model_alias,
                     idempotency_key=f"{claim.request_digest}:batch:{index}",
                     batch_index=index,
-                    document_title=claim.revision_id,
+                    document_title=document_title,
                     known_entities=known_entities_from(drafts_so_far),
                 )
                 raw_draft = await self._extractor.extract(request)

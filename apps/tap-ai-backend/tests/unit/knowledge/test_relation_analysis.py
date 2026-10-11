@@ -1,4 +1,4 @@
-"""Unit tests for the deterministic relation analysis pipeline (PR 3 task 2).
+"""Unit tests for the deterministic relation analysis pipeline.
 
 `FakeProjectGraphStore` implements only the five `ProjectGraphStorePort`
 methods the pipeline calls (`nodes_for_chunks`, `nodes`, `match_aliases`,

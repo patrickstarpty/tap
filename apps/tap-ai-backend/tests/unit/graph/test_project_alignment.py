@@ -217,3 +217,109 @@ def test_merge_edges_falls_back_to_relation_type_when_all_labels_blank():
     edge, _ = merged[0]
     assert edge.relation_label == "REQUIRES"
     assert edge.relation_label != ""
+
+
+def _linear_scan_clusters(
+    fragments: Sequence[GraphSnapshotDraft],
+    embeddings: dict[tuple[str, str], tuple[float, ...]] | None,
+    threshold: float,
+) -> list[tuple[str, tuple[tuple[str, str], ...], str]]:
+    """Reference resolver that scans every cluster for every node, in creation order.
+
+    It states the alignment semantics directly (first cluster of the same type whose
+    level-1 keys contain the node's key, else first whose level-2 keys intersect,
+    else the best embedding match) so the indexed resolver can be checked against it.
+    """
+    clusters: list[dict[str, object]] = []
+    for fragment in sorted(fragments, key=lambda item: item.snapshot.snapshot_id):
+        snapshot_id = fragment.snapshot.snapshot_id
+        for node in fragment.nodes:
+            key1 = alignment_key(node.canonical_key)
+            keys2 = {alignment_key(node.label)} | {alignment_key(a) for a in node.aliases}
+            target = None
+            rule = None
+            for cluster in clusters:
+                if cluster["type"] == node.node_type and key1 in cluster["l1"]:
+                    target, rule = cluster, "EXACT"
+                    break
+            if target is None:
+                for cluster in clusters:
+                    if cluster["type"] == node.node_type and cluster["l2"] & keys2:
+                        target, rule = cluster, "ALIAS"
+                        break
+            if target is None and embeddings:
+                vector = embeddings.get((snapshot_id, node.node_id))
+                if vector is not None:
+                    best, best_score = None, -1.0
+                    for cluster in clusters:
+                        if cluster["type"] != node.node_type:
+                            continue
+                        for member in cluster["members"]:
+                            other = embeddings.get(member)
+                            if other is None:
+                                continue
+                            dot = sum(x * y for x, y in zip(vector, other))
+                            norm = (
+                                sum(x * x for x in vector) ** 0.5 * sum(y * y for y in other) ** 0.5
+                            )
+                            score = 0.0 if norm == 0.0 else dot / norm
+                            if score >= threshold and score > best_score:
+                                best, best_score = cluster, score
+                    if best is not None:
+                        target, rule = best, "EMBEDDING"
+            if target is None:
+                target = {
+                    "type": node.node_type,
+                    "l1": set(),
+                    "l2": set(),
+                    "members": [],
+                    "rule": "EXACT",
+                }
+                clusters.append(target)
+                rule = "EXACT"
+            target["members"].append((snapshot_id, node.node_id))
+            target["l1"].add(key1)
+            target["l2"] |= keys2
+            target["rule"] = rule
+    return [
+        (str(cluster["type"]), tuple(cluster["members"]), str(cluster["rule"]))
+        for cluster in clusters
+    ]
+
+
+def test_indexed_alignment_matches_a_full_cluster_scan_on_overlapping_fragments():
+    import random
+
+    words = ["核保", "理赔", "保单", "退保", "refund", "claim", "policy holder", "agent"]
+    suffixes = ["", "", "规则", "流程", " policy", " rule"]
+    node_types = ["CONCEPT", "ENTITY", "PROCESS"]
+    directions = [(1.0, 0.0), (0.0, 1.0), (0.96, 0.28), (0.7, 0.7)]
+
+    for seed in range(40):
+        rng = random.Random(seed)
+        fragments = []
+        embeddings: dict[tuple[str, str], tuple[float, ...]] = {}
+        for fragment_index in range(rng.randint(2, 6)):
+            snapshot_id = f"frag-{rng.randint(0, 99):02d}-{fragment_index}"
+            specs = []
+            for node_index in range(rng.randint(1, 12)):
+                key = rng.choice(words) + rng.choice(suffixes)
+                label = rng.choice(words) + rng.choice(suffixes)
+                aliases = tuple(
+                    dict.fromkeys(
+                        rng.choice(words) + rng.choice(suffixes) for _ in range(rng.randint(0, 2))
+                    )
+                )
+                node_id = f"n{node_index}"
+                specs.append((node_id, label, rng.choice(node_types), key, aliases))
+                if rng.random() < 0.5:
+                    embeddings[(snapshot_id, node_id)] = rng.choice(directions)
+            fragments.append(_fragment(snapshot_id, specs))
+
+        for supplied in (None, embeddings):
+            expected = _linear_scan_clusters(fragments, supplied, 0.92)
+            actual = [
+                (entity.node_type, entity.members, entity.rule)
+                for entity in resolve_entities(fragments, embeddings=supplied, threshold=0.92)
+            ]
+            assert actual == expected, f"seed {seed} embeddings={supplied is not None}"

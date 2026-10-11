@@ -3644,7 +3644,7 @@ def test_task14_acceptance_runner_rejects_artifacts_outside_owned_roots(
     )
 
     assert completed.returncode == 2
-    assert "refusing unsafe Task 14 artifact path" in completed.stderr
+    assert "refusing unsafe joint acceptance artifact path" in completed.stderr
     assert not calls.exists()
 
 
@@ -3664,7 +3664,7 @@ def test_task14_acceptance_runner_never_cleans_preexisting_matrix_resources(
     )
 
     assert completed.returncode != 0
-    assert "refusing to reuse existing Task 14 Insights resources" in completed.stdout
+    assert "refusing to reuse existing joint acceptance Insights resources" in completed.stdout
     assert " down " not in calls.read_text()
 
 

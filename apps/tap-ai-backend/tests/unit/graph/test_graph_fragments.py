@@ -223,6 +223,125 @@ def test_assemble_fragment_caps_merged_edges_at_two_thousand() -> None:
     assert kept_ids[1001:] == [f"b-edge-{i}" for i in range(999)]
 
 
+def _truncation_records(caplog) -> list:
+    return [
+        record
+        for record in caplog.records
+        if record.name == "tap.modules.graph.application.fragments"
+        and "truncated" in record.getMessage()
+    ]
+
+
+def test_assemble_fragment_logs_how_many_nodes_and_edges_the_node_cap_dropped(caplog) -> None:
+    first_nodes = tuple(
+        GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
+        for i in range(500)
+    )
+    extra_nodes = tuple(
+        GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
+        for i in range(500, 520)
+    )
+    evidence_1 = _evidence("evidence-1", "chunk-0")
+    evidence_2 = _evidence("evidence-2", "chunk-1")
+
+    def _edge(edge_id: str, source: str, target: str, evidence_id: str) -> GraphEdge:
+        return GraphEdge(
+            edge_id,
+            SNAPSHOT.snapshot_id,
+            source,
+            target,
+            "GOVERNS",
+            RelationOrigin.EXTRACTED,
+            1.0,
+            (evidence_id,),
+        )
+
+    draft_1 = GraphSnapshotDraft(
+        SNAPSHOT,
+        first_nodes,
+        (_edge("edge-kept", "node-0", "node-1", "evidence-1"),),
+        (evidence_1,),
+        (),
+    )
+    draft_2 = GraphSnapshotDraft(
+        SNAPSHOT,
+        extra_nodes,
+        (_edge("edge-dropped", "node-500", "node-510", "evidence-2"),),
+        (evidence_2,),
+        (),
+    )
+
+    with caplog.at_level("WARNING", logger="tap.modules.graph.application.fragments"):
+        assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    records = _truncation_records(caplog)
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert f"snapshot_id={SNAPSHOT.snapshot_id}" in message
+    assert "dropped_nodes=20" in message
+    assert "dropped_edges=1" in message
+
+
+def test_assemble_fragment_logs_edges_dropped_by_the_edge_cap(caplog) -> None:
+    nodes = tuple(
+        GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
+        for i in range(50)
+    )
+
+    def _edges(prefix: str, evidence_id: str) -> tuple[GraphEdge, ...]:
+        return tuple(
+            GraphEdge(
+                f"{prefix}-edge-{i}",
+                SNAPSHOT.snapshot_id,
+                f"node-{i % 50}",
+                f"node-{(i + 1) % 50}",
+                "GOVERNS",
+                RelationOrigin.EXTRACTED,
+                1.0,
+                (evidence_id,),
+            )
+            for i in range(1001)
+        )
+
+    draft_1 = GraphSnapshotDraft(
+        SNAPSHOT, nodes, _edges("a", "evidence-1"), (_evidence("evidence-1", "chunk-0"),), ()
+    )
+    draft_2 = GraphSnapshotDraft(
+        SNAPSHOT, nodes, _edges("b", "evidence-2"), (_evidence("evidence-2", "chunk-1"),), ()
+    )
+
+    with caplog.at_level("WARNING", logger="tap.modules.graph.application.fragments"):
+        fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    assert len(fragment.edges) == 2000
+    records = _truncation_records(caplog)
+    assert len(records) == 1
+    assert "dropped_nodes=0" in records[0].getMessage()
+    assert "dropped_edges=2" in records[0].getMessage()
+
+
+def test_assemble_fragment_within_the_caps_logs_no_truncation(caplog) -> None:
+    node_a = GraphNode("node-a", SNAPSHOT.snapshot_id, "A", "CONCEPT", "a")
+    node_b = GraphNode("node-b", SNAPSHOT.snapshot_id, "B", "CONCEPT", "b")
+    evidence = _evidence("evidence-1", "chunk-0")
+    edge = GraphEdge(
+        "edge-1",
+        SNAPSHOT.snapshot_id,
+        "node-a",
+        "node-b",
+        "GOVERNS",
+        RelationOrigin.EXTRACTED,
+        1.0,
+        ("evidence-1",),
+    )
+    draft = GraphSnapshotDraft(SNAPSHOT, (node_a, node_b), (edge,), (evidence,), ())
+
+    with caplog.at_level("WARNING", logger="tap.modules.graph.application.fragments"):
+        assemble_fragment(SNAPSHOT, (draft,))
+
+    assert _truncation_records(caplog) == []
+
+
 def test_assemble_fragment_falls_back_to_a_document_node_when_every_batch_is_empty() -> None:
     # Every batch of a relation-less document returns ``None`` (nothing
     # grounded, e.g. the model extractor's empty-batch signal) and the worker
@@ -238,8 +357,17 @@ def test_assemble_fragment_falls_back_to_a_document_node_when_every_batch_is_emp
     assert fragment.provenance == ()
 
 
+def test_assemble_fragment_labels_a_synthesized_fallback_with_the_document_title() -> None:
+    titled = assemble_fragment(SNAPSHOT, (), document_title="claims-handbook.pdf")
+    untitled = assemble_fragment(SNAPSHOT, ())
+
+    assert titled.nodes[0].label == "claims-handbook.pdf"
+    assert titled.nodes[0].canonical_key == "document:revision-1"
+    assert untitled.nodes[0].label == "revision-1"
+
+
 def test_assemble_fragment_merges_duplicate_canonical_keys_across_batches() -> None:
-    # Repro #1 from the F1 review finding: the same raw entity ("核保流程") is
+    # Cross-batch duplicate entity: the same raw entity ("核保流程") is
     # grounded independently in two batches. The rule-based extractor mints the
     # same *raw* id for it in both batches (deterministic by content hash), but
     # the worker's per-batch namespacing (b{i}-) gives those raw ids different
@@ -344,7 +472,7 @@ def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() 
     )
     # An unrelated EXTRACTED edge between two other kept early nodes, so the
     # document still has a real relation overall once edge-inferred cascades
-    # away -- otherwise the zero-kept-edges document-node fallback (see R2)
+    # away -- otherwise the zero-kept-edges document-node fallback
     # would replace everything, which is not what this test is about.
     evidence = _evidence("evidence-unrelated", "chunk-0")
     unrelated_edge = GraphEdge(
@@ -374,7 +502,7 @@ def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() 
 
 
 def test_assemble_fragment_keeps_one_provenance_when_two_batches_infer_the_same_edge() -> None:
-    # R1(a): two batches each independently infer the same real-world relation
+    # Two batches each independently infer the same real-world relation
     # (e.g. the same rule fired once per batch) with their own provenance. Once
     # the duplicate edge merges (shape dedupe), both provenances would cite the
     # same surviving edge_id -- InferenceProvenance uniqueness forbids that.
@@ -421,7 +549,7 @@ def test_assemble_fragment_keeps_one_provenance_when_two_batches_infer_the_same_
 
 
 def test_assemble_fragment_dedupes_provenance_inputs_that_collapse_to_one_node() -> None:
-    # R1(b): a provenance originally cites two *distinct* input facts
+    # A provenance originally cites two *distinct* input facts
     # ("b0-node-a" and "b1-node-a") that each name the same real-world entity
     # mentioned in a different batch -- so the canonical-key merge collapses
     # them onto the same surviving node. After remapping, both input facts
@@ -495,7 +623,7 @@ def test_assemble_fragment_drops_provenance_that_cites_only_its_own_edge() -> No
 
 
 def test_assemble_fragment_prefers_extracted_edge_over_inferred_of_the_same_shape() -> None:
-    # R1(c): one batch infers a relation (no evidence, carries provenance);
+    # One batch infers a relation (no evidence, carries provenance);
     # another batch directly extracts the same relation (real evidence). Once
     # the duplicate shape merges, naively unioning "evidence" onto the INFERRED
     # edge would violate GraphEdge's "inferred relation cannot claim direct
@@ -542,7 +670,7 @@ def test_assemble_fragment_prefers_extracted_edge_over_inferred_of_the_same_shap
 
 
 def test_assemble_fragment_merges_normalize_key_through_accent_folding() -> None:
-    # R4: MySQL's server default collation for canonical_key
+    # MySQL's server default collation for canonical_key
     # (utf8mb4_0900_ai_ci) is accent-insensitive, not just case-insensitive --
     # "café" and "cafe" collide there. normalize_key (used for the merge above)
     # must fold accents too, or such a pair would survive assembly as two nodes
@@ -555,7 +683,7 @@ def test_assemble_fragment_merges_normalize_key_through_accent_folding() -> None
     )
     # An unrelated other node and edge, purely so the merged document has a
     # real relation overall and does not instead trigger the zero-kept-edges
-    # document-node fallback (see R2), which is not what this test is about.
+    # document-node fallback, which is not what this test is about.
     other_node = GraphNode("node-other", SNAPSHOT.snapshot_id, "Other", "CONCEPT", "other")
     evidence_1 = _evidence("evidence-1", "chunk-0")
     evidence_2 = _evidence("evidence-2", "chunk-1")

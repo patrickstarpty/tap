@@ -1,8 +1,9 @@
-"""Unit tests for `RelationAnalysisAgent` (PR 3 task 3): the deterministic
+"""Unit tests for `RelationAnalysisAgent`: the deterministic
 relation analysis pipeline run as a contract agent subgraph, with span
 coverage and fail-closed status handling.
 
-Reuses Task 2's `FakeProjectGraphStore`/fixture graph (nodes A/B/C/D/E; see
+Reuses the relation analysis pipeline tests' `FakeProjectGraphStore`/fixture
+graph (nodes A/B/C/D/E; see
 `tests.unit.knowledge.test_relation_analysis` for the fixture docstring),
 extended here with `get_current`/`set_version` and an optional `neighbors`
 failure hook.
@@ -76,7 +77,7 @@ def _fixture_kwargs(store: FakeProjectGraphStore | None = None) -> dict[str, Any
 
 class VersionedStore(FakeProjectGraphStore):
     """Adds `get_current`/`set_version` and an optional `neighbors` failure
-    hook to Task 2's fixture-only `FakeProjectGraphStore`."""
+    hook to the pipeline tests' fixture-only `FakeProjectGraphStore`."""
 
     def __init__(self, *, version: int = 7, status: str = "READY", **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -437,8 +438,8 @@ async def test_seed_outside_the_selection_is_excluded_from_seeds() -> None:
 async def test_agent_reserves_query_seed_slot_ahead_of_evidence_seeds_at_node_limit() -> None:
     """With one evidence chunk alone fanning out to 61 evidence-seed nodes --
     more than `expand()`'s default `node_limit=60` -- the query seed's own
-    slot must still survive the node-limit cut, so its edge is still ranked
-    (I1): combining seeds query-first, not evidence-first, is what protects
+    slot must still survive the node-limit cut, so its edge is still ranked:
+    combining seeds query-first, not evidence-first, is what protects
     it."""
     from tap.modules.graph.application.alias_index import AliasIndex
     from tap.modules.graph.domain.models import RelationOrigin
@@ -568,7 +569,7 @@ async def test_agent_drops_paths_whose_edges_never_became_a_relation() -> None:
     C->D's only evidence chunk (chunk-3) has no snippet and is not an already
     cited S label, so `assemble` can never resolve its support and no R
     relation is produced for it. The path must then be dropped from
-    `RelationContext.paths` entirely (I1 part 3) -- it would otherwise point
+    `RelationContext.paths` entirely -- it would otherwise point
     at an edge the reader can never see cited."""
     store = VersionedStore(version=7, **_fixture_kwargs())
     agent = RelationAnalysisAgent(store, FakeSnippets({"chunk-2": "B 到 C 的片段"}))
@@ -599,7 +600,7 @@ async def test_agent_drops_flowchart_image_support_that_is_not_approved() -> Non
     """Image-region evidence (anchor carries a `bbox`) is model-proposed and
     must answer only as an approved item of the current publication, same as
     retrieval's `_flowchart_hit_is_approved` -- R evidence must not bypass
-    that review gate (I2)."""
+    that flowchart approval check."""
     store = _single_edge_store(anchor={"bbox": [1, 2, 3, 4], "inventoryItemId": "item-blocked"})
     gate = FlowchartPublicationGate(
         PublishedKnowledgeAuthority(_PublicationRepository(_publication()), now=lambda: _NOW)

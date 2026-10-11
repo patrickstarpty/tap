@@ -1,4 +1,4 @@
-"""Unit tests for `reconcile_relation_claims` (PR 3 task 4): per-claim R-label
+"""Unit tests for `reconcile_relation_claims`: per-claim R-label
 validation against the standalone-named `RelationContext`.
 
 Fixture context carries a single relation R1 (核保流程 —REQUIRES→ 健康告知) at

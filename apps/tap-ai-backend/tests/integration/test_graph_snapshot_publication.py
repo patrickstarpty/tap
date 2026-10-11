@@ -324,7 +324,7 @@ async def test_mysql_batches_survive_reclaim_and_partial_publish(sessions) -> No
 
 @pytest.mark.asyncio
 async def test_mysql_publish_merges_a_shared_entity_across_batches(sessions) -> None:
-    # F1: two batches independently ground the same real-world entity
+    # Two batches independently ground the same real-world entity
     # ("Policy"/"policy") under different (worker-namespaced) node ids, the way
     # the rule-based extractor's raw ids collide across batches without a shared
     # known-entities cache. Publishing the merged fragment must not raise MySQL's

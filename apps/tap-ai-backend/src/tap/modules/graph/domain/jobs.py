@@ -123,6 +123,9 @@ class ClaimedGraphJob(GraphJob):
     lease_owner: str = ""
     lease_token: str = ""
     lease_expires_at: datetime | None = None
+    # The source document's filename, resolved when the job is claimed; blank when
+    # the document record cannot be found (the worker then uses the revision id).
+    document_title: str = ""
 
 
 @dataclass(frozen=True, slots=True)

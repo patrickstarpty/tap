@@ -27,7 +27,7 @@ if [ "$#" -ne 0 ]; then
 fi
 
 if [ "${TAP_RUN_TASK14_ACCEPTANCE:-}" != "1" ]; then
-  echo "Task 14 joint acceptance requires TAP_RUN_TASK14_ACCEPTANCE=1" >&2
+  echo "Joint acceptance requires TAP_RUN_TASK14_ACCEPTANCE=1" >&2
   exit 2
 fi
 
@@ -36,7 +36,7 @@ case "$task14_artifact_root" in
   "$task14_repo_root"/.superpowers/artifacts/task-14/* | \
   "${TMPDIR:-/tmp}"/tap-task14.*) ;;
   *)
-    echo "refusing unsafe Task 14 artifact path" >&2
+    echo "refusing unsafe joint acceptance artifact path" >&2
     exit 2
     ;;
 esac
@@ -48,7 +48,7 @@ case "$task14_artifact_root" in
   "$task14_repo_root"/.superpowers/artifacts/task-14/* | \
   "${TMPDIR:-/tmp}"/tap-task14.*) ;;
   *)
-    echo "refusing unsafe Task 14 artifact path" >&2
+    echo "refusing unsafe joint acceptance artifact path" >&2
     exit 2
     ;;
 esac
@@ -60,7 +60,7 @@ task14_random_hex() {
 task14_run_nonce="$(task14_random_hex)"
 task14_project="tap-insights-task14-${task14_run_nonce:0:12}"
 if [[ ! "$task14_project" =~ ^tap-insights-task14-[0-9a-f]{12}$ ]]; then
-  echo "refusing unsafe Task 14 Compose project" >&2
+  echo "refusing unsafe joint acceptance Compose project" >&2
   exit 2
 fi
 
@@ -117,20 +117,20 @@ task14_run_phase() {
   shift
   local started finished elapsed digest
   started="$(date +%s)"
-  printf 'Task 14 phase %s started.\n' "$phase"
+  printf 'Joint acceptance phase %s started.\n' "$phase"
   if "$@" 2>&1 | task14_redact | tee "$task14_artifact_root/$phase.log"; then
     finished="$(date +%s)"
     elapsed=$((finished - started))
     digest="$(task14_digest "$task14_artifact_root/$phase.log")"
     printf 'phase\t%s\tpass\t%s\t%s\n' "$phase" "$elapsed" "$digest" >>"$task14_receipt"
-    printf 'Task 14 phase %s passed in %ss.\n' "$phase" "$elapsed"
+    printf 'Joint acceptance phase %s passed in %ss.\n' "$phase" "$elapsed"
     return 0
   fi
   finished="$(date +%s)"
   elapsed=$((finished - started))
   digest="$(task14_digest "$task14_artifact_root/$phase.log")"
   printf 'phase\t%s\tfail\t%s\t%s\n' "$phase" "$elapsed" "$digest" >>"$task14_receipt"
-  printf 'Task 14 phase %s failed in %ss.\n' "$phase" "$elapsed" >&2
+  printf 'Joint acceptance phase %s failed in %ss.\n' "$phase" "$elapsed" >&2
   return 1
 }
 
@@ -138,7 +138,7 @@ task14_record_preserved_volumes() {
   local project="$1" volume
   case "$project" in
     "$task14_project" | "$task14_insights_journey_project") ;;
-    *) echo "refusing to record unowned Task 14 volumes" >&2; return 2 ;;
+    *) echo "refusing to record unowned joint acceptance volumes" >&2; return 2 ;;
   esac
   while IFS= read -r volume; do
     if [ -n "$volume" ]; then
@@ -200,7 +200,7 @@ task14_insights_matrix() {
   existing="$existing$(docker volume ls -q --filter "label=com.docker.compose.project=$task14_project")" || return
   existing="$existing$(docker network ls -q --filter "label=com.docker.compose.project=$task14_project")" || return
   if [ -n "$existing" ]; then
-    echo "refusing to reuse existing Task 14 Insights resources" >&2
+    echo "refusing to reuse existing joint acceptance Insights resources" >&2
     return 2
   fi
   : >"$task14_matrix_owned_marker"
@@ -254,4 +254,4 @@ task14_run_phase tap-ai-fault-retention-matrix task14_tap_ai_matrix
 task14_run_phase tap-insights-fault-recovery-matrix task14_insights_matrix
 task14_run_phase prototype-and-safe-handoff task14_product_and_handoff
 
-printf 'Task 14 isolated joint acceptance passed; receipt: %s\n' "$task14_receipt"
+printf 'Isolated joint acceptance passed; receipt: %s\n' "$task14_receipt"

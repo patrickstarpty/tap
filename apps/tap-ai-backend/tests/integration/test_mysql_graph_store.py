@@ -292,3 +292,97 @@ async def test_publish_round_trips_aliases_relation_label_and_partial_status(
         assert graph.edges[0].relation_label == "需要"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mysql_graph_job_claim_resolves_the_document_filename(owned_project_mysql) -> None:
+    from sqlalchemy import insert
+
+    from tap.modules.knowledge.adapters.mysql_documents import (
+        knowledge_document,
+        knowledge_document_revision,
+        knowledge_source,
+    )
+    from tap.platform.db.project_scope import scope_values
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    jobs = MysqlGraphJobStore(sessions)
+    now = datetime(2026, 10, 11, 9, 0, 0)
+    source_id = "src_" + "7" * 32
+    document_id = "doc_" + "7" * 32
+    try:
+        async with sessions() as session, session.begin():
+            await session.execute(
+                insert(knowledge_source).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    source_id=source_id,
+                    name="claims-handbook.pdf",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.execute(
+                insert(knowledge_document).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    document_id=document_id,
+                    source_id=source_id,
+                    filename="claims-handbook.pdf",
+                    media_type="application/pdf",
+                    source_content_hash="sha256:" + "1" * 64,
+                    reservation_parser_version="tapper-parser-v1",
+                    reservation_chunker_version="tapper-chunker-v1",
+                    reservation_pipeline_version="tapper-ingestion-v1",
+                    status="ready",
+                    stage="ready",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.execute(
+                insert(knowledge_document_revision).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    revision_id="revision-titled",
+                    source_id=source_id,
+                    document_id=document_id,
+                    source_content_hash="sha256:" + "1" * 64,
+                    original_blob_locator="tapper-originals/claims-handbook.pdf",
+                    chunks_blob_locator="tapper-artifacts/claims-handbook.chunks",
+                    parser_version="tapper-parser-v1",
+                    chunker_version="tapper-chunker-v1",
+                    pipeline_version="tapper-ingestion-v1",
+                    created_at=now,
+                )
+            )
+        for revision_id in ("revision-titled", "revision-without-document"):
+            await jobs.request(
+                VALIDATION_SCOPE,
+                GraphJobRequest.create(
+                    scope=VALIDATION_SCOPE,
+                    revision_id=revision_id,
+                    chunks_locator=f"{revision_id}.chunks",
+                    extraction_profile_digest="sha256:" + "1" * 64,
+                    model_alias="qwen-plus",
+                ),
+                now=now,
+            )
+
+        claims = await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-1",
+            now=now,
+            lease_duration=timedelta(seconds=30),
+            limit=2,
+        )
+
+        titles = {claim.revision_id: claim.document_title for claim in claims}
+        assert titles == {"revision-titled": "claims-handbook.pdf", "revision-without-document": ""}
+        renewed = await jobs.renew(
+            VALIDATION_SCOPE,
+            next(claim for claim in claims if claim.revision_id == "revision-titled"),
+            now=now + timedelta(seconds=1),
+            lease_duration=timedelta(seconds=30),
+        )
+        assert renewed.document_title == "claims-handbook.pdf"
+    finally:
+        await engine.dispose()

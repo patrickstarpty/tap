@@ -82,8 +82,8 @@ async def test_same_digest_republish_returns_existing_version() -> None:
 @pytest.mark.asyncio
 async def test_republish_after_digest_reverts_creates_a_new_version() -> None:
     """A source set changing A -> B -> A must publish v3, not silently return
-    the stale v1 (dedup only compares against the *current* version's digest,
-    per the controller ruling fixing `_digests`-keyed dedup)."""
+    the stale v1 (dedup only compares against the *current* version's digest, not
+    against every digest ever published)."""
 
     store = InMemoryProjectGraphStore()
     now = datetime(2026, 10, 7, 9, 0, 0)

@@ -528,7 +528,7 @@ def test_planner_schema_lists_relation_intent_and_graph_route():
     [("retrieve", "comparison"), ("graph", "relation")],
 )
 async def test_model_injected_constraint_in_query_text_falls_back_on_every_route(route, intent):
-    """Review I1: the query-constraint equality check must not be skipped for
+    """The query-constraint equality check must not be skipped for
     the graph route -- a model-returned plan that injects a negation/version
     into a query's text (absent from the original question entirely) must
     fall back to `invalid-plan` on every admitted route, not just retrieve."""
@@ -588,7 +588,7 @@ async def test_ordinary_comparison_question_does_not_route_to_graph():
     ],
 )
 async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_changes):
-    """Review M2: intent=relation and route=graph must be admitted together or
+    """Intent=relation and route=graph must be admitted together or
     not at all; a mismatched model plan falls back the same way other invalid
     model plans do."""
 
@@ -649,7 +649,7 @@ async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_chang
         ("他们是什么关系户", False),
         ("What follows is a list of rules", False),
         ("What follows is a list of rules?", False),
-        ("What follows is a list of rules.", False),  # merged from the round-1 M1 test
+        ("What follows is a list of rules.", False),  # trailing punctuation variant
         ("如何提交理赔申请", False),
         ("比较核保流程和理赔流程的不同", False),
         ("哪些字段是必填的", False),

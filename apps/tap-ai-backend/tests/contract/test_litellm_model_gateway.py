@@ -937,7 +937,7 @@ def _relation_context():
 @pytest.mark.asyncio
 async def test_relation_records_precede_evidence_for_relation_intent():
     """`relation_first` puts "relations" before "evidence" in the model context;
-    otherwise it comes after. Covers PR 3 Task 5 Step 1."""
+    otherwise it comes after."""
     from test_knowledge_api import _claim_resolution_evidence
 
     context = _relation_context()

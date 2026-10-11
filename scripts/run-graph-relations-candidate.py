@@ -4,13 +4,13 @@ relation-answer golden set, in two modes:
 
 - `fake` (default CI path, no external services): rule-based extraction
   (`DeterministicGraphExtraction`) over `*.md` documents under `--corpus-dir`,
-  merged with PR 2's pure `ProjectGraphMerger`, published into the reference
+  merged with the pure project-level `ProjectGraphMerger`, published into the reference
   `InMemoryProjectGraphStore`, queried by the registered `"relation-analysis"`
   agent subgraph (`RelationAnalysisAgent`), and answered by the deterministic
   `DeterministicTapperModel` so every answer carries real R-labeled edge
   citations. Fake mode exists to check wiring, citation shape and evaluator
   plumbing end to end in CI -- it says nothing about real extraction or
-  real-model relation precision; that is what Task 8's `--mode real` run
+  real-model relation precision; that is what the `--mode real` run
   against a real corpus and model is for.
 - `real` (opt-in, requires `TAPPER_GRAPH_EXTRACTION_MODE=model` and a running
   Tapper API stack): dry-runs each question through the real chat answer
@@ -256,7 +256,7 @@ async def run_fake(*, golden: Path, corpus_dir: Path) -> dict[str, Any]:
     This checks wiring, citation shape and evaluator plumbing in CI -- not
     relation precision (rule-based extraction plus a deterministic model
     stand in for the real extractor and model, so a passing fake run says
-    nothing about real-model relation accuracy; that is Task 8's job)."""
+    nothing about real-model relation accuracy; that is the real run's job)."""
     started_at = _now_iso()
     golden_json = json.loads(golden.read_text(encoding="utf-8"))
     golden_set = validate_golden(golden_json)
@@ -439,7 +439,7 @@ def _assemble_real_observations(
     finished_at: str,
 ) -> dict[str, Any]:
     """Pure (no I/O, no live service) assembly of the real-mode observation
-    document, factored out of `run_real` so its digest/field wiring (C2) is
+    document, factored out of `run_real` so its digest and field wiring is
     unit-testable without `create_api_runtime`."""
     return {
         "schemaVersion": OBSERVATIONS_SCHEMA_VERSION,
@@ -584,7 +584,7 @@ def main() -> int:
                 )
             )
     except (ValueError, OSError) as error:
-        # M3: a real-mode refusal (TAPPER_GRAPH_EXTRACTION_MODE != "model", a missing
+        # A real-mode refusal (TAPPER_GRAPH_EXTRACTION_MODE != "model", a missing
         # corpus.json, an unreadable golden/regression file, ...) must print a clean,
         # actionable message and exit 2 -- not an uncaught traceback.
         print(f"error: {error}", file=sys.stderr)

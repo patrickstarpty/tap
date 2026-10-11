@@ -195,7 +195,7 @@ def _answered_question_ids(answers: object, group_id: str) -> set[str]:
 def _require_group_answered(
     answers: object, group_id: str, declared: Sequence[str], *, document_name: str
 ) -> None:
-    """I1: a partial baseline (or observations) silently shrinks `_group_rate`'s
+    """A partial baseline (or observations) silently shrinks `_group_rate`'s
     denominator to only the answers actually present, making the regression check
     vacuous -- a baseline missing every answer for a group always "passes" no matter
     what the candidate observations do. Require every question the regression
@@ -249,7 +249,7 @@ def validate_real(
         "observations goldenDigest to match the current golden set",
     )
 
-    # M2: a baseline accidentally passed as --observations (e.g. a copy-paste mistake)
+    # A baseline accidentally passed as --observations (e.g. a copy-paste mistake)
     # must be rejected, not silently scored as the candidate run.
     _require(
         observations_map.get("graphVersion") is not None,
@@ -276,7 +276,7 @@ def validate_real(
             f"real mode requires a valid corpus manifest: {error}"
         ) from error
 
-    # I2: bind the golden set to this exact manifest content, and re-validate it with
+    # Bind the golden set to this exact manifest content, and re-validate it with
     # the manifest's entry ids so an expectedSources typo (or a stale, unrelated
     # manifest) cannot slip past the digest match above.
     _require(
@@ -348,12 +348,26 @@ def validate_real(
         baseline_alias == observations_alias,
         "baseline model.alias to match the observations model.alias",
     )
+    # The same alias can route to a different upstream model between runs; the
+    # regression comparison is only meaningful when both runs resolved to the same
+    # actual model, so the baseline must record it and it must match.
+    baseline_actual = (
+        baseline_model.get("actual") if isinstance(baseline_model, Mapping) else None
+    )
+    _require(
+        isinstance(baseline_actual, str) and bool(baseline_actual.strip()),
+        "baseline model.actual to be nonblank",
+    )
+    _require(
+        baseline_actual == actual_model,
+        "baseline model.actual to match the observations model.actual",
+    )
     _require(
         baseline_map.get("goldenDigest") == observations_map.get("goldenDigest"),
         "baseline goldenDigest to match the observations goldenDigest",
     )
 
-    # I1: fail closed on a partial baseline (or partial observations) instead of
+    # Fail closed on a partial baseline (or partial observations) instead of
     # letting `_group_rate`'s declared-question denominator quietly shrink.
     for group in regression_set.groups:
         _require_group_answered(

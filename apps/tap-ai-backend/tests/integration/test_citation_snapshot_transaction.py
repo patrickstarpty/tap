@@ -1218,7 +1218,7 @@ def test_load_chunk_locators_returns_only_scoped_revisions_with_a_locator(
 def test_edge_citation_round_trips_and_historical_rows_default_to_chunk(
     owned_project_mysql,  # type: ignore[no-untyped-def]
 ) -> None:
-    """PR 3 Task 8: migration `0030_edge_citations` adds seven nullable
+    """Migration `0030_edge_citations` adds seven nullable
     columns to `knowledge_citation_snapshot`. A citation saved with
     `citation_kind="edge"` must read back with every edge column intact, and
     a historical row (inserted before this migration, or any row whose

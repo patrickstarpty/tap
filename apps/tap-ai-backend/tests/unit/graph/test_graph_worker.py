@@ -440,7 +440,7 @@ class EmptyBatchExtractor:
 
 @pytest.mark.asyncio
 async def test_empty_batch_succeeds_without_retries_and_job_stays_ready(monkeypatch) -> None:
-    # F3: a batch that grounds nothing (all boilerplate chunks) must be recorded
+    # A batch that grounds nothing (all boilerplate chunks) must be recorded
     # READY with no draft and must not burn the retry budget or turn a healthy
     # document PARTIAL.
     jobs = InMemoryGraphJobStore()
@@ -580,7 +580,7 @@ class FailOnFailJobs(InMemoryGraphJobStore):
 
 @pytest.mark.asyncio
 async def test_fail_itself_raising_counts_as_lease_lost_instead_of_crashing(monkeypatch) -> None:
-    # F4 regression: a non-GraphJobLeaseLost exception from jobs.fail() (e.g. a
+    # A non-GraphJobLeaseLost exception from jobs.fail() (e.g. a
     # database error while recording the failure) must not escape run_once and
     # crash the worker process.
     jobs = FailOnFailJobs()
@@ -613,7 +613,7 @@ class RecordingSleepExtractor:
 
 @pytest.mark.asyncio
 async def test_backoff_sleep_never_exceeds_the_lease_duration(monkeypatch) -> None:
-    # M6: with a large configured backoff, the sleep before the next attempt must
+    # With a large configured backoff, the sleep before the next attempt must
     # stay below the lease duration that was just renewed, instead of risking the
     # lease expiring while still asleep.
     jobs = InMemoryGraphJobStore()
@@ -672,7 +672,7 @@ class EventExtractor:
 
 @pytest.mark.asyncio
 async def test_renews_the_lease_again_after_the_backoff_sleep(monkeypatch) -> None:
-    # R4: capping the backoff sleep below the lease duration (M6) is not
+    # Capping the backoff sleep below the lease duration is not
     # enough on its own -- the sleep plus the next attempt's own extract() call
     # can still together outlive the lease that was renewed only *before* the
     # sleep. Renew again right after waking up too, so the event right after
@@ -734,6 +734,83 @@ async def test_record_batch_rejects_a_mismatched_snapshot_id() -> None:
             ),
             now=NOW,
         )
+
+
+@pytest.mark.asyncio
+async def test_every_chunk_of_a_long_document_is_extracted_in_bounded_batches(
+    monkeypatch,
+) -> None:
+    # A document longer than any former per-document read cap: every chunk must reach
+    # the extractor, and no single extraction call may carry more than batch_size.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-long.chunks")
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(locator="art-long.chunks", count=1_234),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=100,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert [request.batch_index for request in extractor.requests] == list(range(13))
+    assert max(len(request.chunks) for request in extractor.requests) == 100
+    requested_chunk_ids = [
+        str(item["chunkId"]) for request in extractor.requests for item in request.chunks
+    ]
+    assert requested_chunk_ids == [f"chunk-{index}" for index in range(1_234)]
+    batches = await jobs.load_batches(VALIDATION_SCOPE, job)
+    assert len(batches) == 13
+    assert all(batch.status is GraphBatchStatus.READY for batch in batches)
+
+
+@pytest.mark.asyncio
+async def test_extraction_requests_carry_the_document_filename_as_title(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore(document_titles={"revision-1": "claims-handbook.pdf"})
+    await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert len(extractor.requests) == 3
+    assert {request.document_title for request in extractor.requests} == {"claims-handbook.pdf"}
+
+
+@pytest.mark.asyncio
+async def test_extraction_title_falls_back_to_the_revision_id_without_a_filename(
+    monkeypatch,
+) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    await worker.run_once(limit=1)
+
+    assert {request.document_title for request in extractor.requests} == {"revision-1"}
 
 
 class ManyNodesExtractor:
@@ -902,10 +979,10 @@ class RepeatedContentArtifacts:
 async def test_batches_a_related_document_through_the_real_rule_based_extractor(
     monkeypatch,
 ) -> None:
-    # R3 repro #1: the real DeterministicGraphExtraction, batch_size 10, 12
+    # Related document: the real DeterministicGraphExtraction, batch_size 10, 12
     # chunks all containing the same relation sentence -- each batch
     # independently grounds the same two real-world entities under its own
-    # batch-namespaced ids, exercising the real canonical-key merge (F1) end to
+    # batch-namespaced ids, exercising the real canonical-key merge end to
     # end rather than hand-built drafts.
     jobs = InMemoryGraphJobStore()
     job = await _requested_job(jobs, locator="art-related.chunks")
@@ -941,9 +1018,9 @@ async def test_batches_a_related_document_through_the_real_rule_based_extractor(
 
 @pytest.mark.asyncio
 async def test_batches_a_relation_less_document_into_one_document_node(monkeypatch) -> None:
-    # R3 repro #2: the real DeterministicGraphExtraction, batch_size 10, 12
+    # Relation-less document: the real DeterministicGraphExtraction, batch_size 10, 12
     # relation-less chunks -- each batch independently mints its own
-    # "document:<revision>" fallback node; the real canonical-key merge (F1)
+    # "document:<revision>" fallback node; the real canonical-key merge
     # must collapse them into exactly one, with zero edges, READY rather than
     # failing MySQL's uq_graph_node_canonical constraint.
     jobs = InMemoryGraphJobStore()
@@ -981,3 +1058,56 @@ async def test_batches_a_relation_less_document_into_one_document_node(monkeypat
     assert {item.chunk_id for item in published.evidence} == {
         f"chunk-{index}" for index in range(12)
     }
+
+
+@pytest.mark.asyncio
+async def test_relation_less_document_node_is_labelled_with_the_filename(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore(document_titles={"revision-1": "weather-notes.md"})
+    job = await _requested_job(jobs, locator="art-relationless.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=RepeatedContentArtifacts(
+            locator="art-relationless.chunks", content="今天天气很好。"
+        ),
+        extractor=DeterministicGraphExtraction(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    published = await jobs._graph.search(
+        VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
+    )
+    assert [node.label for node in published.nodes] == ["weather-notes.md"]
+    assert published.nodes[0].canonical_key == "document:revision-1"
+
+
+@pytest.mark.asyncio
+async def test_empty_model_batches_publish_a_fallback_labelled_with_the_filename(
+    monkeypatch,
+) -> None:
+    jobs = InMemoryGraphJobStore(document_titles={"revision-1": "weather-notes.md"})
+    job = await _requested_job(jobs)
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(count=3),
+        extractor=EmptyBatchExtractor(empty_batch_indices=frozenset({0})),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    published = await jobs._graph.search(
+        VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
+    )
+    assert [node.label for node in published.nodes] == ["weather-notes.md"]
