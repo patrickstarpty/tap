@@ -214,7 +214,8 @@ const HALO_OVERLAP_TOLERANCE = 0.1;
 /**
  * Asserts, from the browser's real text geometry, that every drawn node has
  * a label; that a node in view has its label in view too (neither cut off
- * by the canvas edge nor under the floating toolbar); that node labels
+ * by the canvas edge nor under the floating toolbar), and a node out of
+ * view its label out of view; that node labels
  * overlap neither each other nor the visible edge labels -- except
  * slightly, over a halo -- and that edge labels do not overlap each other.
  * Labels are re-placed shortly after the view settles, so this polls.
@@ -270,6 +271,14 @@ async function expectNodeLabelsReadable(page: Page): Promise<void> {
         const text = node.querySelector(".tap-graph-node-label");
         if (!core || !text) return;
         const coreBox = core.getBoundingClientRect() as Box;
+        // A node wholly out of view keeps its label out of view too, so no
+        // stray label shows without its node.
+        if (overlap(coreBox, canvas) === 0) {
+          if (overlap(text.getBoundingClientRect() as Box, canvas) > 0) {
+            problems.push(`${text.textContent ?? ""} shows without its node`);
+          }
+          return;
+        }
         if (!inside(coreBox, 0) || overlap(coreBox, toolbar) > 0) return;
         const textBox = text.getBoundingClientRect() as Box;
         if (!inside(textBox)) {

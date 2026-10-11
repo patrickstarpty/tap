@@ -70,6 +70,13 @@ export interface LabelPlacementOptions {
   /** Areas inside `bounds` that labels must not use either, in label
    * space: e.g. the space under a floating toolbar. */
   blocked?: readonly LabelBox[];
+  /**
+   * The whole drawable canvas, in label space. A node whose circle lies
+   * wholly outside `bounds` keeps its label out of view with it: the label
+   * ignores `bounds` and `blocked`, and only counts area outside this box
+   * like an overlap.
+   */
+  canvasBounds?: LabelBox;
 }
 
 // Gap between the node's edge and the label baseline below it (the line
@@ -437,8 +444,10 @@ function isBetter(
  * circle and no edge label (or other obstacle). A spot that leaves the view
  * counts as unusable: when none of the four is clear, the label takes, of
  * those in view, the one with the least overlap area and is flagged for a
- * halo; when all four leave the view, the one least out of view. No label
- * is ever left out.
+ * halo; when all four leave the view, the one least out of view. A node
+ * wholly out of view is the exception: its label stays out of view with
+ * it, placed against `canvasBounds` as if that were an obstacle's edge. No
+ * label is ever left out.
  *
  * Priority labels (hovered, selected, cited) come first and may claim a
  * spot that is only blocked by an edge label at its midpoint: that edge
@@ -505,6 +514,21 @@ export function placeGraphLabels(
   const nodes = new Map<string, PlacedLabel>();
   const leadingBoxes = new Map<string, LabelBox>();
 
+  // Whether a node's circle lies wholly outside the visible bounds.
+  const isOutOfView = (candidate: LabelCandidate) => {
+    const { bounds } = options;
+    if (!bounds) return false;
+    const circle = {
+      x: candidate.x * zoom,
+      y: candidate.y * zoom,
+      r: candidate.radius * zoom,
+    };
+    const nearestX = Math.min(Math.max(circle.x, bounds.left), bounds.right);
+    const nearestY = Math.min(Math.max(circle.y, bounds.top), bounds.bottom);
+    return (
+      (nearestX - circle.x) ** 2 + (nearestY - circle.y) ** 2 >= circle.r ** 2
+    );
+  };
   const costOf = (
     candidate: LabelCandidate,
     placement: LabelPlacement,
@@ -522,6 +546,16 @@ export function placeGraphLabels(
       circleGrid.sum(box, (_, circle) =>
         circle.id === candidate.id ? 0 : circleOverlapArea(circle, box),
       );
+    if (isOutOfView(candidate)) {
+      return {
+        label,
+        box,
+        outside: 0,
+        labels,
+        obstacles:
+          obstacleGrid.sum(box) + outsideArea(box, options.canvasBounds, []),
+      };
+    }
     return {
       label,
       box,

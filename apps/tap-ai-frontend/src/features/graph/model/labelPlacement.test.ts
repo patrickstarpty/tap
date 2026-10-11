@@ -337,6 +337,38 @@ describe("placeNodeLabels", () => {
       });
     });
 
+    it("leaves the label of a node wholly out of view out of view too", () => {
+      // Pulled toward the viewport, the label would show in it with no
+      // node beside it; it is placed against the whole canvas instead.
+      const node = candidate({ id: "a", x: 1030, y: 400, text: "Doc" });
+      const placed = placeNodeLabels(
+        [node],
+        options({
+          bounds: viewport,
+          canvasBounds: { left: -24, top: 0, right: 1584, bottom: 1120 },
+        }),
+      );
+      const label = placed.get("a")!;
+      expect(
+        overlapArea(labelBox(node, label.placement, metrics), viewport),
+      ).toBe(0);
+      expect(label).toMatchObject({ placement: "below", halo: false });
+    });
+
+    it("keeps the label of a partly visible node inside the viewport", () => {
+      const node = candidate({ id: "a", x: 1005, y: 400, text: "Doc" });
+      const placed = placeNodeLabels(
+        [node],
+        options({
+          bounds: viewport,
+          canvasBounds: { left: -24, top: 0, right: 1584, bottom: 1120 },
+        }),
+      );
+      const label = placed.get("a")!;
+      expect(outside(labelBox(node, label.placement, metrics))).toBe(0);
+      expect(label.placement).toBe("left");
+    });
+
     it("does not back a label with a halo just because the viewport cuts it off", () => {
       const node = candidate({ id: "a", x: 995, y: 795, text: "Corner" });
       const placed = placeNodeLabels([node], options({ bounds: viewport }));

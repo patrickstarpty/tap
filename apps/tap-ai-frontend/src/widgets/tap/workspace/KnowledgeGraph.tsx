@@ -43,6 +43,13 @@ const FIT_TO_NODES_PADDING = 240;
 // is the conservative upper bound, so their boxes are only ever too large.
 const NODE_LABEL_FONT_SIZE = 18;
 const NODE_LABEL_FONT_WEIGHT = 600;
+// The whole drawable canvas, in canvas units.
+const WHOLE_CANVAS: LabelBox = {
+  left: -GRAPH_HORIZONTAL_MARGIN,
+  top: 0,
+  right: GRAPH_WIDTH + GRAPH_HORIZONTAL_MARGIN,
+  bottom: GRAPH_HEIGHT,
+};
 // How long the view must stay still after a pan, zoom or resize before
 // labels are re-placed against the newly visible area.
 const VIEW_SETTLE_MS = 150;
@@ -548,15 +555,8 @@ export function KnowledgeGraph({
           zoom: labelZoom,
           measureText: measureLabelText,
           // Until the visible area is measured, the whole canvas.
-          bounds: scaleBox(
-            visibleArea?.bounds ?? {
-              left: -GRAPH_HORIZONTAL_MARGIN,
-              top: 0,
-              right: GRAPH_WIDTH + GRAPH_HORIZONTAL_MARGIN,
-              bottom: GRAPH_HEIGHT,
-            },
-            labelZoom,
-          ),
+          bounds: scaleBox(visibleArea?.bounds ?? WHOLE_CANVAS, labelZoom),
+          canvasBounds: scaleBox(WHOLE_CANVAS, labelZoom),
           blocked: (visibleArea?.blocked ?? []).map((box) =>
             scaleBox(box, labelZoom),
           ),
