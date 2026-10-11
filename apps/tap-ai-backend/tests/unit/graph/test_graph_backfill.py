@@ -33,8 +33,11 @@ class FakeJobs:
         self.requested.append(request.revision_id)
 
     async def reset_for_profile(
-        self, scope, revision_id, *, extraction_profile_digest, model_alias, now
+        self, scope, revision_id, *, extraction_profile_digest, model_alias, now, only_if_stale
     ):
+        # Backfill must never force a rebuild of an already-current fragment
+        # that another worker reset between the read and this call.
+        assert only_if_stale is True
         assert extraction_profile_digest == self.expected_digest and model_alias == "qwen-plus"
         if revision_id in self.busy:
             raise ValueError("graph job is running")

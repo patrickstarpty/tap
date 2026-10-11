@@ -58,6 +58,7 @@ class GraphBackfillJobs(Protocol):
         extraction_profile_digest: str,
         model_alias: str,
         now: datetime,
+        only_if_stale: bool,
     ) -> object: ...
 
 
@@ -122,6 +123,7 @@ async def backfill_graph_jobs(
                 extraction_profile_digest=extraction_profile_digest,
                 model_alias=model_alias,
                 now=now,
+                only_if_stale=True,
             )
         except ValueError:
             # Claimed between the read above and the reset, or gone: skip it.

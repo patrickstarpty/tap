@@ -617,14 +617,17 @@ class MysqlGraphJobStore:
         extraction_profile_digest: str,
         model_alias: str,
         now: datetime,
+        only_if_stale: bool = False,
     ) -> GraphJob:
         """Requeue extraction for one currently-published revision under a
         (possibly changed) extraction profile/model: drop every fact the
         prior snapshot derived, put the snapshot back to CANDIDATE, and
-        rewrite the job row as a fresh PENDING request. Used only by the
-        `graph rebuild` operator CLI; never deletes a project-graph version
-        itself -- the merge worker replays a version once extraction
-        finishes."""
+        rewrite the job row as a fresh PENDING request. Used by the
+        `graph rebuild` operator CLI (always resets) and the graph worker's
+        startup backfill (``only_if_stale``: a job already under this profile,
+        e.g. reset by a concurrent worker start, is returned untouched); never
+        deletes a project-graph version itself -- the merge worker replays a
+        version once extraction finishes."""
 
         scope = require_project_scope(scope)
         async with self._sessions() as session, session.begin():
@@ -644,6 +647,9 @@ class MysqlGraphJobStore:
             )
             if row is None:
                 raise ValueError("graph job not found for revision")
+            if only_if_stale and row["extraction_profile_digest"] == extraction_profile_digest:
+                current = await self._locked_row(session, scope, cast(str, row["job_id"]))
+                return await self._job(session, scope, current)
             if (
                 row["status"] == GraphJobStatus.RUNNING.value
                 and row["lease_expires_at"] is not None

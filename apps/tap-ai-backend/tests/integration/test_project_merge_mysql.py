@@ -745,3 +745,31 @@ async def test_startup_backfill_against_mysql(sessions) -> None:
         now=NOW + timedelta(seconds=2),
     )
     assert (again.requested, again.requeued) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_reset_only_if_stale_leaves_a_current_fragment_alone(sessions) -> None:
+    jobs = MysqlGraphJobStore(sessions)
+    request = await _seed_fragment(
+        sessions, revision_id="rev-current", nodes=[("c1", "健康告知", "ENTITY", "健康告知")]
+    )
+    before = {s.revision_id: s for s in await jobs.revision_job_states(VALIDATION_SCOPE)}
+
+    job = await jobs.reset_for_profile(
+        VALIDATION_SCOPE,
+        request.revision_id,
+        extraction_profile_digest=_PROFILE_DIGEST,
+        model_alias="qwen-plus",
+        now=NOW + timedelta(seconds=5),
+        only_if_stale=True,
+    )
+
+    assert job.request_digest == request.request_digest
+    assert job.status == before["rev-current"].status
+    async with sessions() as session:
+        node_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_node)
+            .where(graph_node.c.snapshot_id == request.snapshot.snapshot_id)
+        )
+    assert node_count == 1
