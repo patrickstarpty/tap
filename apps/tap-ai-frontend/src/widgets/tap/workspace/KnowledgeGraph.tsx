@@ -19,6 +19,7 @@ import {
   EDGE_LABEL_HEIGHT,
   edgeLabelWidth,
   placeGraphLabels,
+  type LabelBox,
 } from "../../../features/graph/model/labelPlacement";
 import type { WorkspaceCopy } from "./copy";
 import {
@@ -42,6 +43,96 @@ const FIT_TO_NODES_PADDING = 240;
 // is the conservative upper bound, so their boxes are only ever too large.
 const NODE_LABEL_FONT_SIZE = 18;
 const NODE_LABEL_FONT_WEIGHT = 600;
+// The whole drawable canvas, in canvas units.
+const WHOLE_CANVAS: LabelBox = {
+  left: -GRAPH_HORIZONTAL_MARGIN,
+  top: 0,
+  right: GRAPH_WIDTH + GRAPH_HORIZONTAL_MARGIN,
+  bottom: GRAPH_HEIGHT,
+};
+// How long the view must stay still after a pan, zoom or resize before
+// labels are re-placed against the newly visible area.
+const VIEW_SETTLE_MS = 150;
+// Screen pixels kept clear around the floating toolbar.
+const TOOLBAR_LABEL_CLEARANCE = 6;
+
+interface VisibleArea {
+  /** The visible part of the canvas, in canvas units. */
+  bounds: LabelBox;
+  /** Visible areas covered by floating controls, in canvas units. */
+  blocked: LabelBox[];
+}
+
+/**
+ * Measures, in canvas units (before pan and zoom), what part of the canvas
+ * is visible on screen and which of it the floating toolbar covers.
+ * `null` until the canvas has a size (e.g. in a test DOM without layout).
+ */
+function measureVisibleArea(
+  canvas: HTMLElement,
+  svg: SVGSVGElement,
+  toolbar: HTMLElement | null,
+  zoom: number,
+  pan: { x: number; y: number },
+): VisibleArea | null {
+  const svgRect = svg.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  if (svgRect.width <= 0 || svgRect.height <= 0) return null;
+  if (canvasRect.width <= 0 || canvasRect.height <= 0) return null;
+  // The SVG scales its view box to fit ("meet") and centers it.
+  const viewWidth = GRAPH_WIDTH + GRAPH_HORIZONTAL_MARGIN * 2;
+  const scale = Math.min(
+    svgRect.width / viewWidth,
+    svgRect.height / GRAPH_HEIGHT,
+  );
+  const originX = svgRect.left + (svgRect.width - viewWidth * scale) / 2;
+  const originY = svgRect.top + (svgRect.height - GRAPH_HEIGHT * scale) / 2;
+  const toCanvas = (rect: LabelBox): LabelBox => ({
+    left:
+      ((rect.left - originX) / scale - GRAPH_HORIZONTAL_MARGIN - pan.x) / zoom,
+    right:
+      ((rect.right - originX) / scale - GRAPH_HORIZONTAL_MARGIN - pan.x) / zoom,
+    top: ((rect.top - originY) / scale - pan.y) / zoom,
+    bottom: ((rect.bottom - originY) / scale - pan.y) / zoom,
+  });
+  const toolbarRect = toolbar?.getBoundingClientRect();
+  return {
+    // The canvas clips whatever the SVG draws outside it.
+    bounds: toCanvas(canvasRect),
+    blocked:
+      toolbarRect && toolbarRect.width > 0 && toolbarRect.height > 0
+        ? [
+            toCanvas({
+              left: toolbarRect.left - TOOLBAR_LABEL_CLEARANCE,
+              right: toolbarRect.right + TOOLBAR_LABEL_CLEARANCE,
+              top: toolbarRect.top - TOOLBAR_LABEL_CLEARANCE,
+              bottom: toolbarRect.bottom + TOOLBAR_LABEL_CLEARANCE,
+            }),
+          ]
+        : [],
+  };
+}
+
+function visibleAreaKey(area: VisibleArea | null): string {
+  return area
+    ? [area.bounds, ...area.blocked].map((box) => boxKey(box)).join("|")
+    : "";
+}
+
+function scaleBox(box: LabelBox, factor: number): LabelBox {
+  return {
+    left: box.left * factor,
+    right: box.right * factor,
+    top: box.top * factor,
+    bottom: box.bottom * factor,
+  };
+}
+
+function boxKey(box: LabelBox): string {
+  return [box.left, box.top, box.right, box.bottom]
+    .map((value) => value.toFixed(1))
+    .join(",");
+}
 
 /**
  * Measures node label widths with the browser's own text metrics for the
@@ -192,6 +283,8 @@ export function KnowledgeGraph({
   loadMoreLabel,
 }: KnowledgeGraphProps) {
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   // The labels inherit the canvas font family, only known once rendered.
   const [labelFontFamily, setLabelFontFamily] = useState<string | null>(null);
@@ -240,6 +333,42 @@ export function KnowledgeGraph({
   } | null>(null);
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
   const highlightActive = highlight != null;
+
+  // The visible part of the canvas, re-measured once the view settles after
+  // a pan, zoom or resize (not on every frame of a drag), so labels at the
+  // viewport's edges and under the toolbar can be moved into view.
+  const [visibleArea, setVisibleArea] = useState<VisibleArea | null>(null);
+  const [canvasResizes, setCanvasResizes] = useState(0);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() =>
+      setCanvasResizes((count) => count + 1),
+    );
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const canvas = canvasRef.current;
+      const svg = svgRef.current;
+      if (!canvas || !svg) return;
+      const measured = measureVisibleArea(
+        canvas,
+        svg,
+        toolbarRef.current,
+        zoom,
+        pan,
+      );
+      setVisibleArea((current) =>
+        visibleAreaKey(current) === visibleAreaKey(measured)
+          ? current
+          : measured,
+      );
+    }, VIEW_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+    // `pan` is tracked through its coordinates.
+  }, [zoom, pan.x, pan.y, canvasResizes]);
 
   // Fit the viewport to the highlighted path — keyed off content
   // signatures (not object identity, since the caller recomputes a new
@@ -350,11 +479,15 @@ export function KnowledgeGraph({
   // Node positions are left untouched. Hovered, selected and cited-path
   // nodes are placed first, then search matches and the focused node's
   // neighbors (edge labels slide along or beside their edges out of these
-  // labels' way), then the rest by degree. Placement runs in screen space and
-  // is redone on zoom: labels (node and edge) grow only with the square
-  // root of the zoom while distances grow with the zoom itself, so zooming
-  // in still enlarges text but separates crowded labels. Keyed on content
-  // (these id sets are rebuilt every render), so panning does not redo it.
+  // labels' way), then the rest by degree. Edge labels never overlap each
+  // other: of two that collide wherever they slide, the lower-priority one
+  // (see `edgeLabelTier`) is hidden at this zoom. Placement runs in screen
+  // space and is redone on zoom: labels (node and edge) grow only with the
+  // square root of the zoom while distances grow with the zoom itself, so
+  // zooming in still enlarges text but separates crowded labels. Labels
+  // stay inside the visible part of the canvas and out from under the
+  // toolbar, re-checked once a pan or zoom settles. Keyed on content (these
+  // id sets are rebuilt every render), so a pan in progress does not redo it.
   const labelZoom = Math.sqrt(zoom);
   const labelPriority = new Set(
     [hoveredNodeId, selectedNodeId, ...(highlight?.nodeIds ?? [])].filter(
@@ -371,10 +504,22 @@ export function KnowledgeGraph({
       .map((node) => node.id),
   );
   const shownEdgeLabels = visibleEdges.filter(isEdgeLabelShown);
+  // Where two edge labels cannot both be shown, cited edges keep theirs
+  // first, then edges at the hovered or selected node, then the rest.
+  const edgeLabelTier = (edge: GraphEdge) =>
+    (highlight?.edgeIds.has(edge.id) ?? false)
+      ? 0
+      : [hoveredNodeId, selectedNodeId].some(
+            (id) => id != null && (edge.source === id || edge.target === id),
+          )
+        ? 1
+        : 2;
   const labelInputsKey = [
     [...labelPriority].join("|"),
     [...labelEmphasis].join("|"),
-    shownEdgeLabels.map((edge) => edge.id).join("|"),
+    shownEdgeLabels
+      .map((edge) => `${edge.id}:${String(edgeLabelTier(edge))}`)
+      .join("|"),
   ].join("#");
   const labelPlacements = useMemo(
     () =>
@@ -399,6 +544,7 @@ export function KnowledgeGraph({
               x2: target.x,
               y2: target.y,
               text: edge.label,
+              tier: edgeLabelTier(edge),
             },
           ];
         }),
@@ -408,17 +554,24 @@ export function KnowledgeGraph({
           fontSize: NODE_LABEL_FONT_SIZE,
           zoom: labelZoom,
           measureText: measureLabelText,
-          bounds: {
-            left: -GRAPH_HORIZONTAL_MARGIN * labelZoom,
-            top: 0,
-            right: (GRAPH_WIDTH + GRAPH_HORIZONTAL_MARGIN) * labelZoom,
-            bottom: GRAPH_HEIGHT * labelZoom,
-          },
+          // Until the visible area is measured, the whole canvas.
+          bounds: scaleBox(visibleArea?.bounds ?? WHOLE_CANVAS, labelZoom),
+          canvasBounds: scaleBox(WHOLE_CANVAS, labelZoom),
+          blocked: (visibleArea?.blocked ?? []).map((box) =>
+            scaleBox(box, labelZoom),
+          ),
         },
       ),
     // The id sets and shown edge labels are tracked through
     // `labelInputsKey`; positions through `visibleNodes`/`nodeById`.
-    [visibleNodes, nodeById, labelZoom, labelInputsKey, measureLabelText],
+    [
+      visibleNodes,
+      nodeById,
+      labelZoom,
+      labelInputsKey,
+      measureLabelText,
+      visibleArea,
+    ],
   );
 
   const nodeTypeGroups = useMemo(() => {
@@ -529,7 +682,7 @@ export function KnowledgeGraph({
       ) : null}
 
       <figure className="tap-knowledge-graph">
-        <div className="tap-graph-toolbar">
+        <div ref={toolbarRef} className="tap-graph-toolbar">
           <div className="tap-graph-zoom-controls">
             <button
               type="button"
@@ -599,7 +752,11 @@ export function KnowledgeGraph({
         {fullscreenError ? (
           <p role="status">{copy.library.fullscreenUnavailable}</p>
         ) : null}
-        <div className="tap-graph-canvas" data-dragging={dragging}>
+        <div
+          ref={canvasRef}
+          className="tap-graph-canvas"
+          data-dragging={dragging}
+        >
           <svg
             ref={svgRef}
             role="group"
