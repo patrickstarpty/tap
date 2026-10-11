@@ -124,6 +124,7 @@ class GraphWorker:
         backoff_seconds: float = 1.0,
         lease_duration: timedelta = timedelta(seconds=60),
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        concurrency: int = 1,
     ) -> None:
         self._jobs = jobs
         self._artifacts = artifacts
@@ -138,8 +139,11 @@ class GraphWorker:
             raise ValueError("graph worker batch character budget must be positive")
         if batch_retries < 1:
             raise ValueError("graph worker batch retries must be positive")
+        if type(concurrency) is not int or concurrency < 1:
+            raise ValueError("graph worker concurrency must be positive")
         self._batch_size = batch_size
         self._batch_chars = batch_chars
+        self._concurrency = concurrency
         self._batch_retries = batch_retries
         self._backoff_seconds = backoff_seconds
         self._lease_duration = lease_duration
@@ -150,33 +154,76 @@ class GraphWorker:
         return datetime.now(timezone.utc).replace(tzinfo=None)
 
     async def run_once(self, limit: int) -> GraphWorkerRun:
-        claims = await self._jobs.claim(
-            self._scope,
-            worker_id=self._worker_id,
-            now=self._now(),
-            lease_duration=self._lease_duration,
-            limit=limit,
+        """Claim and process up to ``limit`` jobs, at most ``concurrency`` at a time.
+
+        A job is claimed only when a slot is free, so no claimed job waits idle
+        while its lease runs down. Claiming goes through the job store's lease
+        (``FOR UPDATE SKIP LOCKED`` in MySQL), so concurrent slots and concurrent
+        worker processes never hold the same job, and a job's batches run
+        sequentially inside its one slot (later batches reuse the entities earlier
+        batches minted) -- no batch is ever extracted twice at once.
+        """
+
+        outcomes: dict[str, int] = {}
+        claimed_total = 0
+        running: set[asyncio.Task[str]] = set()
+        exhausted = False
+        claim_error: BaseException | None = None
+        try:
+            while True:
+                free = min(self._concurrency - len(running), limit - claimed_total)
+                if free > 0 and not exhausted and claim_error is None:
+                    try:
+                        claims = await self._jobs.claim(
+                            self._scope,
+                            worker_id=self._worker_id,
+                            now=self._now(),
+                            lease_duration=self._lease_duration,
+                            limit=free,
+                        )
+                    except Exception as error:
+                        # Let the jobs already running finish (their leases are
+                        # live and their batches are being recorded), then surface
+                        # the claim failure to the caller as before.
+                        claim_error = error
+                        claims = ()
+                    claimed_total += len(claims)
+                    exhausted = len(claims) < free
+                    running.update(
+                        asyncio.create_task(self._process_claim(claim)) for claim in claims
+                    )
+                if not running:
+                    break
+                done, running = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    outcome = task.result()
+                    outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        finally:
+            for task in running:
+                task.cancel()
+            if running:
+                await asyncio.gather(*running, return_exceptions=True)
+            if claimed_total:
+                await flush_traces()
+        if claim_error is not None:
+            raise claim_error
+        return GraphWorkerRun(
+            claimed_total,
+            outcomes.get("READY", 0),
+            outcomes.get("FAILED", 0),
+            outcomes.get("LEASE_LOST", 0),
+            outcomes.get("PARTIAL", 0),
         )
-        ready = partial = failed = lease_lost = 0
-        for claim in claims:
-            with (
-                bind_trace(scope=self._scope, job_id=claim.job_id, job_kind="graph_extraction"),
-                span("job.graph_extraction", {"tap.job_id": claim.job_id}),
-            ):
-                try:
-                    outcome = await self._run_claim(claim)
-                except GraphJobLeaseLost:
-                    lease_lost += 1
-                    continue
-                if outcome == "READY":
-                    ready += 1
-                elif outcome == "PARTIAL":
-                    partial += 1
-                else:
-                    failed += 1
-        if claims:
-            await flush_traces()
-        return GraphWorkerRun(len(claims), ready, failed, lease_lost, partial)
+
+    async def _process_claim(self, claim: ClaimedGraphJob) -> str:
+        with (
+            bind_trace(scope=self._scope, job_id=claim.job_id, job_kind="graph_extraction"),
+            span("job.graph_extraction", {"tap.job_id": claim.job_id}),
+        ):
+            try:
+                return await self._run_claim(claim)
+            except GraphJobLeaseLost:
+                return "LEASE_LOST"
 
     async def _run_claim(self, claim: ClaimedGraphJob) -> str:
         """Process one claimed job end to end, never letting a non-lease error escape.

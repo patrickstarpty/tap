@@ -137,6 +137,25 @@ def test_graph_extraction_budget_settings_are_separate_from_the_model_timeout() 
             TapperSettings.from_mapping(S3_SETTINGS | {name: value})
 
 
+def test_graph_worker_concurrency_defaults_to_four_and_widens_gateway_slots() -> None:
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert settings.graph_worker_concurrency == 4
+    for value in ("0", "17"):
+        with pytest.raises(ValueError):
+            module.TapperSettings.from_mapping(
+                S3_SETTINGS | {"TAPPER_GRAPH_WORKER_CONCURRENCY": value}
+            )
+
+    wide = module.TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_GRAPH_WORKER_CONCURRENCY": "8"}
+    )
+    assert module._create_embeddings(settings).gateway._config.max_concurrency == 4
+    models = module._create_embeddings(wide, max_concurrency=wide.graph_worker_concurrency)
+    assert models.gateway._config.max_concurrency == 8
+
+
 def test_graph_worker_gateway_and_lease_cover_the_extraction_deadline() -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(

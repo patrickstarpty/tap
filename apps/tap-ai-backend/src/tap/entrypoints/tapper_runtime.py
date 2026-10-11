@@ -148,6 +148,7 @@ class TapperSettings:
     vision_timeout_seconds: float = 60.0
     graph_extraction_timeout_seconds: float = 120.0
     graph_extraction_max_tokens: int = 8192
+    graph_worker_concurrency: int = 4
     s3_endpoint: str = ""
     s3_bucket: str = ""
     s3_region: str = ""
@@ -492,6 +493,13 @@ class TapperSettings:
                 8192,
                 minimum=1024,
                 maximum=32768,
+            ),
+            graph_worker_concurrency=_integer(
+                values,
+                "TAPPER_GRAPH_WORKER_CONCURRENCY",
+                4,
+                minimum=1,
+                maximum=16,
             ),
             milvus_uri=milvus_uri,
             milvus_database=_identity(values, "MILVUS_DATABASE", "default"),
@@ -1070,6 +1078,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
                     if settings.graph_extraction_mode == "model"
                     else None
                 ),
+                max_concurrency=settings.graph_worker_concurrency,
             )
             _push_if_owned(resources, model_embeddings)
         if settings.graph_extraction_mode == "model":
@@ -1105,6 +1114,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             batch_chars=settings.graph_batch_chars,
             batch_retries=settings.graph_batch_retries,
             lease_duration=_graph_worker_lease(settings),
+            concurrency=settings.graph_worker_concurrency,
         )
         wakeups = RedisWakeupConsumer(
             scope=scope,
@@ -1311,6 +1321,7 @@ def _create_embeddings(
     catalog: LiteLLMCatalog | None = None,
     recorder: ModelCallRecorder | None = None,
     timeout_ceiling_seconds: float | None = None,
+    max_concurrency: int | None = None,
 ) -> KnowledgeModelGateway:
     # The gateway rejects any call whose own deadline exceeds this ceiling; long
     # batch callers (graph extraction) raise it without changing interactive
@@ -1331,6 +1342,9 @@ def _create_embeddings(
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=ceiling,
         max_retries=max_retries,
+        # Never below the default 4 slots; a wider graph worker needs one slot per
+        # concurrent extraction or its calls would queue against their deadlines.
+        max_concurrency=max(4, max_concurrency or 4),
     )
     gateway: LiteLLMModelGateway
     if settings.e2e_mode:

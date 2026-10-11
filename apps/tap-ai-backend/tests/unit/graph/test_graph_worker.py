@@ -127,12 +127,13 @@ class BatchArtifacts:
 
 
 def _draft_for_batch(snapshot, batch_index: int, chunk_ids: tuple[str, ...]) -> GraphSnapshotDraft:
+    revision_id = snapshot.source_revision_ids[0]
     evidence = tuple(
         Evidence(
             f"evidence-{batch_index}-{chunk_id}",
             snapshot.snapshot_id,
-            "revision-1",
-            "revision-1",
+            revision_id,
+            revision_id,
             chunk_id,
             {"kind": "text", "start": 0, "end": 5},
             "sha256:" + "a" * 64,
@@ -1153,3 +1154,132 @@ async def test_empty_model_batches_publish_a_fallback_labelled_with_the_filename
         VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
     )
     assert [node.label for node in published.nodes] == ["weather-notes.md"]
+
+
+class AnyLocatorArtifacts:
+    def __init__(self, *, count: int) -> None:
+        self._chunks = _batch_chunks(count)
+
+    async def read_chunks(self, locator):
+        return self._chunks
+
+
+class OverlapTrackingExtractor:
+    """Counts concurrent extract calls and every (snapshot, batch) it extracts."""
+
+    def __init__(self) -> None:
+        import asyncio
+
+        self._asyncio = asyncio
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.in_flight_by_snapshot: dict[str, int] = {}
+        self.max_in_flight_per_snapshot = 0
+        self.extracted: list[tuple[str, int]] = []
+
+    async def extract(self, request):
+        snapshot_id = request.snapshot.snapshot_id
+        self.in_flight += 1
+        self.in_flight_by_snapshot[snapshot_id] = self.in_flight_by_snapshot.get(snapshot_id, 0) + 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        self.max_in_flight_per_snapshot = max(
+            self.max_in_flight_per_snapshot, self.in_flight_by_snapshot[snapshot_id]
+        )
+        self.extracted.append((snapshot_id, request.batch_index))
+        for _ in range(3):
+            await self._asyncio.sleep(0)
+        self.in_flight -= 1
+        self.in_flight_by_snapshot[snapshot_id] -= 1
+        chunk_ids = tuple(str(item["chunkId"]) for item in request.chunks)
+        return _draft_for_batch(request.snapshot, request.batch_index, chunk_ids)
+
+
+async def _request_jobs(jobs: InMemoryGraphJobStore, count: int) -> None:
+    for index in range(count):
+        await jobs.request(
+            VALIDATION_SCOPE,
+            GraphJobRequest.create(
+                scope=VALIDATION_SCOPE,
+                revision_id=f"revision-{index}",
+                chunks_locator=f"art-{index}.chunks",
+                extraction_profile_digest="sha256:" + "1" * 64,
+                model_alias="qwen-plus",
+            ),
+            now=NOW,
+        )
+
+
+def _concurrent_worker(jobs, extractor, *, worker_id: str, concurrency: int) -> GraphWorker:
+    return GraphWorker(
+        jobs=jobs,
+        artifacts=AnyLocatorArtifacts(count=25),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id=worker_id,
+        batch_size=10,
+        concurrency=concurrency,
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_extracts_up_to_its_concurrency_jobs_at_once(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 6)
+    extractor = OverlapTrackingExtractor()
+    worker = _concurrent_worker(jobs, extractor, worker_id="graph-worker-1", concurrency=4)
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=10)
+
+    assert (result.claimed, result.ready, result.failed) == (6, 6, 0)
+    assert extractor.max_in_flight == 4
+    # Batches of one job stay sequential: later batches reuse earlier entities.
+    assert extractor.max_in_flight_per_snapshot == 1
+    assert len(extractor.extracted) == 6 * 3
+    assert len(set(extractor.extracted)) == len(extractor.extracted)
+    for job in await jobs.list_jobs(VALIDATION_SCOPE):
+        assert job.status is GraphJobStatus.READY
+
+
+@pytest.mark.asyncio
+async def test_concurrent_workers_never_extract_the_same_batch_twice(monkeypatch) -> None:
+    import asyncio
+
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 7)
+    extractor = OverlapTrackingExtractor()
+    first = _concurrent_worker(jobs, extractor, worker_id="graph-worker-1", concurrency=2)
+    second = _concurrent_worker(jobs, extractor, worker_id="graph-worker-2", concurrency=3)
+    for worker in (first, second):
+        monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    results = await asyncio.gather(first.run_once(limit=10), second.run_once(limit=10))
+
+    assert sum(result.claimed for result in results) == 7
+    assert sum(result.ready for result in results) == 7
+    assert len(extractor.extracted) == 7 * 3
+    assert len(set(extractor.extracted)) == len(extractor.extracted)
+    assert extractor.max_in_flight <= 5
+
+
+@pytest.mark.asyncio
+async def test_concurrent_worker_claims_no_more_than_its_limit(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 6)
+    extractor = OverlapTrackingExtractor()
+    worker = _concurrent_worker(jobs, extractor, worker_id="graph-worker-1", concurrency=4)
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=3)
+
+    assert (result.claimed, result.ready) == (3, 3)
+    statuses = [job.status for job in await jobs.list_jobs(VALIDATION_SCOPE)]
+    pending = [status for status in statuses if status is GraphJobStatus.PENDING]
+    assert len(pending) == 3
+
+
+def test_worker_concurrency_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        _concurrent_worker(
+            InMemoryGraphJobStore(), OverlapTrackingExtractor(), worker_id="w", concurrency=0
+        )

@@ -108,6 +108,9 @@ class LiteLLMModelGatewayConfig:
     embedding_dimension: int
     timeout_seconds: float = 15.0
     max_retries: int = 1
+    # In-flight calls (and pooled connections) per gateway instance; a call queued
+    # behind full slots still spends its own deadline waiting.
+    max_concurrency: int = 4
 
     def __post_init__(self) -> None:
         validate_litellm_base_url(self.base_url)
@@ -119,6 +122,8 @@ class LiteLLMModelGatewayConfig:
             raise ValueError("model gateway dimension is invalid")
         if type(self.max_retries) is not int or not 0 <= self.max_retries <= 2:
             raise ValueError("model gateway retry budget is invalid")
+        if type(self.max_concurrency) is not int or not 1 <= self.max_concurrency <= 16:
+            raise ValueError("model gateway concurrency is invalid")
         if (
             isinstance(self.timeout_seconds, bool)
             or not math.isfinite(self.timeout_seconds)
@@ -157,7 +162,7 @@ class LiteLLMModelGateway:
         self._catalog = catalog
         self._owns_client = client is None
         self._client = client
-        self._slots = asyncio.Semaphore(4)
+        self._slots = asyncio.Semaphore(config.max_concurrency)
         self._recorder = recorder
 
     async def catalog(self, scope: ProjectScopeContext) -> tuple[ModelDescriptor, ...]:
@@ -545,7 +550,10 @@ class LiteLLMModelGateway:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self._config.timeout_seconds,
-                limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
+                limits=httpx.Limits(
+                    max_connections=self._config.max_concurrency,
+                    max_keepalive_connections=self._config.max_concurrency,
+                ),
                 transport=httpx.AsyncHTTPTransport(retries=0),
             )
         encoded = json.dumps(
