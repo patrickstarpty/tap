@@ -181,8 +181,8 @@ type ActivityEvent = {
  * Shared by `AnswerActivity` (no trace yet) and `AnswerGraphSummary` (trace
  * panel already covers the event log) so the answer summary line and the
  * graph seeds/paths rows render identically regardless of which of the two
- * is shown — see Task 7 review I1: the summary must not disappear just
- * because a turn has a `traceId`.
+ * is shown — the summary must not disappear just because a turn has a
+ * `traceId`.
  */
 function buildAnswerGraphSummary({
   locale,
