@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 import ipaddress
+import logging
 import math
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 from urllib.parse import urlsplit
@@ -90,6 +91,11 @@ _FIXED_PROJECT = "tapper-demo"
 _FIXED_GROUP = "tapper-local"
 _FIXED_ENVIRONMENT = "global"
 
+logger = logging.getLogger(__name__)
+# Conservative hosted-model output rate used to reject a graph extraction deadline
+# that cannot fit its own output budget.
+GRAPH_EXTRACTION_TOKENS_PER_SECOND = 40
+
 
 @dataclass(frozen=True, slots=True)
 class TapperSettings:
@@ -106,6 +112,7 @@ class TapperSettings:
     poll_seconds: float
     job_batch_size: int
     graph_batch_size: int
+    graph_batch_chars: int
     graph_batch_retries: int
     graph_align_embedding: bool
     graph_align_threshold: float
@@ -145,6 +152,9 @@ class TapperSettings:
     e2e_mode: bool
     vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
+    graph_extraction_timeout_seconds: float = 240.0
+    graph_extraction_max_tokens: int = 8192
+    graph_worker_concurrency: int = 4
     s3_endpoint: str = ""
     s3_bucket: str = ""
     s3_region: str = ""
@@ -162,6 +172,19 @@ class TapperSettings:
     insights_expires_at: str = ""
     insights_max_micros_per_token: int = 0
     otel_exporter_otlp_endpoint: str | None = None
+
+    def __post_init__(self) -> None:
+        # A deadline too short for the output budget turns a detectable truncation
+        # into a timeout (then retried): require at least one second per
+        # GRAPH_EXTRACTION_TOKENS_PER_SECOND output tokens.
+        if (
+            self.graph_extraction_timeout_seconds * GRAPH_EXTRACTION_TOKENS_PER_SECOND
+            < self.graph_extraction_max_tokens
+        ):
+            raise ValueError(
+                "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS is too short for "
+                "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS"
+            )
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, str]) -> TapperSettings:
@@ -389,9 +412,16 @@ class TapperSettings:
             graph_batch_size=_integer(
                 values,
                 "TAPPER_GRAPH_BATCH_SIZE",
-                10,
+                100,
                 minimum=1,
-                maximum=50,
+                maximum=200,
+            ),
+            graph_batch_chars=_integer(
+                values,
+                "TAPPER_GRAPH_BATCH_CHARS",
+                6000,
+                minimum=500,
+                maximum=50000,
             ),
             graph_batch_retries=_integer(
                 values,
@@ -472,6 +502,23 @@ class TapperSettings:
             vision_model=vision_model,
             vision_timeout_seconds=_duration(
                 values, "TAPPER_VISION_TIMEOUT_SECONDS", 60.0, maximum=60
+            ),
+            graph_extraction_timeout_seconds=_duration(
+                values, "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS", 240.0, maximum=300
+            ),
+            graph_extraction_max_tokens=_integer(
+                values,
+                "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS",
+                8192,
+                minimum=1024,
+                maximum=32768,
+            ),
+            graph_worker_concurrency=_integer(
+                values,
+                "TAPPER_GRAPH_WORKER_CONCURRENCY",
+                4,
+                minimum=1,
+                maximum=16,
             ),
             milvus_uri=milvus_uri,
             milvus_database=_identity(values, "MILVUS_DATABASE", "default"),
@@ -957,7 +1004,10 @@ async def _create_database(
     try:
         scope = await ValidationScopeProvider().current(RequestFacts())
         repository = _build_document_repository(
-            sessions, scope=scope, default_chat_model=settings.default_chat_model
+            sessions,
+            scope=scope,
+            default_chat_model=settings.default_chat_model,
+            graph_extraction_profile_digest=_graph_extraction_profile(settings),
         )
     except BaseException as error:
         local = OwnedResources()
@@ -980,6 +1030,7 @@ def _build_document_repository(
     *,
     scope: ProjectScopeContext,
     default_chat_model: str,
+    graph_extraction_profile_digest: str,
 ) -> MysqlDocumentRepository:
     from tap.entrypoints.prompt_suggestion_knowledge import (
         CompositeReadyProjection,
@@ -1005,7 +1056,11 @@ def _build_document_repository(
         audit_factory=create_project_audit,
         source_deleted_projection=GraphMergeOnSourceChange(MysqlProjectMergeQueue(sessions)),
         ready_projection=CompositeReadyProjection(
-            MysqlGraphReadyProjection(graph_jobs, model_alias=default_chat_model),
+            MysqlGraphReadyProjection(
+                graph_jobs,
+                model_alias=default_chat_model,
+                extraction_profile_digest=graph_extraction_profile_digest,
+            ),
             SuggestionReadyProjection(suggestion_store),
         ),
     )
@@ -1026,12 +1081,16 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
         redis = _create_redis(settings)
         resources.push(redis)
 
-        from tap.entrypoints.graph_project_knowledge import MysqlCurrentRevisions
+        from tap.entrypoints.graph_project_knowledge import (
+            MysqlCurrentRevisions,
+            MysqlPublishedChunkLocators,
+        )
         from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
         from tap.modules.graph.adapters.fake_extraction import DeterministicGraphExtraction
         from tap.modules.graph.adapters.model_gateway_extraction import ModelGatewayGraphExtraction
         from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
         from tap.modules.graph.adapters.mysql_merge import MysqlMergeInputs, MysqlProjectMergeQueue
+        from tap.modules.graph.application.backfill import backfill_graph_jobs
         from tap.modules.graph.application.merge_worker import ProjectGraphMergeWorker
         from tap.modules.graph.application.merger import ProjectGraphMerger
         from tap.modules.graph.application.worker import GraphWorker
@@ -1043,13 +1102,22 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
         model_embeddings: KnowledgeModelGateway | None = None
         if settings.graph_extraction_mode == "model" or settings.graph_align_embedding:
             model_embeddings = _create_embeddings(
-                settings, recorder=MysqlModelCallRecorder(sessions)
+                settings,
+                recorder=MysqlModelCallRecorder(sessions),
+                timeout_ceiling_seconds=(
+                    settings.graph_extraction_timeout_seconds
+                    if settings.graph_extraction_mode == "model"
+                    else None
+                ),
+                max_concurrency=settings.graph_worker_concurrency,
             )
             _push_if_owned(resources, model_embeddings)
         if settings.graph_extraction_mode == "model":
             assert model_embeddings is not None
             extractor: GraphExtractionPort = ModelGatewayGraphExtraction(
-                model_embeddings.gateway, timeout_seconds=settings.model_timeout_seconds
+                model_embeddings.gateway,
+                timeout_seconds=settings.graph_extraction_timeout_seconds,
+                max_output_tokens=settings.graph_extraction_max_tokens,
             )
         else:
             extractor = DeterministicGraphExtraction()
@@ -1060,21 +1128,49 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             label_embeddings = _label_embedder(model_embeddings)
         merge_worker = ProjectGraphMergeWorker(
             queue=merge_queue,
-            inputs=MysqlMergeInputs(sessions, MysqlCurrentRevisions(sessions, scope=scope)),
+            inputs=MysqlMergeInputs(
+                sessions,
+                MysqlCurrentRevisions(sessions, scope=scope),
+                extraction_profile_digest=_graph_extraction_profile(settings),
+            ),
             merger=ProjectGraphMerger(align_threshold=settings.graph_align_threshold),
             scope=scope,
             worker_id=settings.worker_id + "-graph-merge",
             embeddings=label_embeddings,
             embedding_max_nodes=settings.graph_align_embedding_max_nodes,
         )
+        graph_jobs = MysqlGraphJobStore(sessions, merge_queue=merge_queue)
+        published_locators = MysqlPublishedChunkLocators(sessions, scope=scope)
+
+        async def backfill() -> None:
+            result = await backfill_graph_jobs(
+                scope=scope,
+                published=await published_locators.published(),
+                jobs=graph_jobs,
+                merge_queue=merge_queue,
+                extraction_profile_digest=_graph_extraction_profile(settings),
+                model_alias=settings.default_chat_model,
+                now=datetime.now(UTC).replace(tzinfo=None),
+            )
+            logger.info(
+                "graph backfill: requested=%d requeued=%d skipped=%d merge_requested=%s",
+                result.requested,
+                result.requeued,
+                result.skipped,
+                result.merge_requested,
+            )
+
         worker = GraphWorker(
-            jobs=MysqlGraphJobStore(sessions, merge_queue=merge_queue),
+            jobs=graph_jobs,
             artifacts=cast(ArtifactStore, artifacts),
             extractor=extractor,
             scope=scope,
             worker_id=settings.worker_id + "-graph",
             batch_size=settings.graph_batch_size,
+            batch_chars=settings.graph_batch_chars,
             batch_retries=settings.graph_batch_retries,
+            lease_duration=_graph_worker_lease(settings),
+            concurrency=settings.graph_worker_concurrency,
         )
         wakeups = RedisWakeupConsumer(
             scope=scope,
@@ -1089,10 +1185,30 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             wakeups=wakeups,
             resources=(resources,),
             pending_work=merge_worker.run_once,
+            startup=backfill,
         )
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("graph worker resource settlement unexpectedly returned")
+
+
+def _graph_extraction_profile(settings: TapperSettings) -> str:
+    """The one extraction profile digest this process requests, backfills and merges."""
+
+    from tap.modules.graph.adapters.extraction_profiles import extraction_profile_digest
+
+    return extraction_profile_digest(settings.graph_extraction_mode)
+
+
+def _graph_worker_lease(settings: TapperSettings) -> timedelta:
+    """A graph job lease that outlives one full extraction call plus bookkeeping.
+
+    The worker renews its lease between batches and around retries, never during a
+    model call, so the lease must cover the whole extraction deadline; otherwise a
+    long batch would lose its lease mid-call and the job would be reclaimed.
+    """
+
+    return timedelta(seconds=max(60.0, settings.graph_extraction_timeout_seconds + 60.0))
 
 
 async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
@@ -1269,7 +1385,19 @@ def _create_embeddings(
     max_retries: int = 1,
     catalog: LiteLLMCatalog | None = None,
     recorder: ModelCallRecorder | None = None,
+    timeout_ceiling_seconds: float | None = None,
+    max_concurrency: int | None = None,
 ) -> KnowledgeModelGateway:
+    # The gateway rejects any call whose own deadline exceeds this ceiling; long
+    # batch callers (graph extraction) raise it without changing interactive
+    # deadlines, which each call still sets for itself.
+    ceiling = (
+        max(settings.model_timeout_seconds, settings.vision_timeout_seconds)
+        if settings.vision_model
+        else settings.model_timeout_seconds
+    )
+    if timeout_ceiling_seconds is not None:
+        ceiling = max(ceiling, timeout_ceiling_seconds)
     config = LiteLLMModelGatewayConfig(
         base_url=settings.litellm_base_url,
         api_key=settings.litellm_api_key,
@@ -1277,12 +1405,11 @@ def _create_embeddings(
             settings.default_chat_model, settings.embedding_model, settings.vision_model
         ),
         embedding_dimension=settings.embedding_dimension,
-        timeout_seconds=(
-            max(settings.model_timeout_seconds, settings.vision_timeout_seconds)
-            if settings.vision_model
-            else settings.model_timeout_seconds
-        ),
+        timeout_seconds=ceiling,
         max_retries=max_retries,
+        # Never below the default 4 slots; a wider graph worker needs one slot per
+        # concurrent extraction or its calls would queue against their deadlines.
+        max_concurrency=max(4, max_concurrency or 4),
     )
     gateway: LiteLLMModelGateway
     if settings.e2e_mode:

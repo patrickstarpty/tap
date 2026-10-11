@@ -47,6 +47,63 @@ def test_split_batches_respects_size_and_order() -> None:
     assert batches[2][-1].chunk_id == "chunk-24"
 
 
+def _sized_chunk(index: int, size: int) -> ChunkDraft:
+    return ChunkDraft(
+        chunk_id=f"chunk-{index}",
+        logical_chunk_id=f"logical-{index}",
+        root_id="document-1",
+        parent_id=None,
+        content="字" * size,
+        anchor_json='{"endOffset":1,"headingPath":[],"startOffset":0,"type":"document"}',
+        source_content_hash="sha256:" + "b" * 64,
+        chunk_content_hash="sha256:" + "a" * 64,
+    )
+
+
+def test_split_batches_fills_a_character_budget_before_the_chunk_cap() -> None:
+    chunks = tuple(_sized_chunk(index, 2_000) for index in range(7))
+
+    batches = split_batches(chunks, batch_size=100, max_chars=6_000)
+
+    assert [len(batch) for batch in batches] == [3, 3, 1]
+    assert [chunk.chunk_id for batch in batches for chunk in batch] == [
+        f"chunk-{index}" for index in range(7)
+    ]
+
+
+def test_split_batches_caps_many_tiny_chunks_by_count() -> None:
+    chunks = tuple(_sized_chunk(index, 30) for index in range(250))
+
+    batches = split_batches(chunks, batch_size=100, max_chars=6_000)
+
+    assert [len(batch) for batch in batches] == [100, 100, 50]
+
+
+def test_an_oversized_chunk_is_extracted_alone() -> None:
+    sizes = (1_000, 9_000, 1_000, 5_500)
+    chunks = tuple(_sized_chunk(index, size) for index, size in enumerate(sizes))
+
+    batches = split_batches(chunks, batch_size=100, max_chars=6_000)
+
+    assert [[chunk.chunk_id for chunk in batch] for batch in batches] == [
+        ["chunk-0"],
+        ["chunk-1"],
+        ["chunk-2"],
+        ["chunk-3"],
+    ]
+    assert all(
+        sum(len(chunk.content) for chunk in batch) <= 6_000 or len(batch) == 1 for batch in batches
+    )
+
+
+def test_split_batches_rejects_nonpositive_budgets() -> None:
+    import pytest
+
+    for kwargs in ({"batch_size": 0}, {"batch_size": 10, "max_chars": 0}):
+        with pytest.raises(ValueError):
+            split_batches((_sized_chunk(0, 1),), **kwargs)
+
+
 def _evidence(evidence_id: str, chunk_id: str) -> Evidence:
     return Evidence(
         evidence_id,

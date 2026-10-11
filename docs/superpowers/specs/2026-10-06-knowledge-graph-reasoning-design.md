@@ -35,13 +35,13 @@
 ### 1.1 抽取（按文档修订）
 
 - graph job 仍由 `MysqlGraphReadyProjection` 在文档 READY 事务内创建，每个修订一个 job。
-- worker 把修订的切片按顺序切成批次，每批 `TAPPER_GRAPH_BATCH_SIZE`（默认 10）个切片，每批一次 `generate_structured` 调用。调用上下文包含：文档标题、本批切片、**本修订此前批次已抽出的实体清单**（id、label、type、canonicalKey），要求模型复用已有实体 id，保证同一文档内 canonical key 稳定。
+- worker 把修订的切片按顺序切成批次，每批以字符预算 `TAPPER_GRAPH_BATCH_CHARS`（默认 6000 字，超长的单个切片单独成批）为主、块数上限 `TAPPER_GRAPH_BATCH_SIZE`（默认 100）为辅，每批一次 `generate_structured` 调用。调用上下文包含：文档标题、本批切片、**本修订此前批次已抽出的实体清单**（id、label、type、canonicalKey），要求模型复用已有实体 id，保证同一文档内 canonical key 稳定。
 - 批次幂等键为（修订 id、批次号、抽取档案摘要）。批次失败按退避重试，`TAPPER_GRAPH_BATCH_RETRIES`（默认 3）次后标记该批失败并继续后续批次。全部批次成功时片段状态 READY；有失败批次时 PARTIAL，仍可合并；全部失败时 FAILED。
 - 批次结果合入同一修订的片段图（现有单文档快照表继续承载，称为**片段图**）；片段图的 `snapshot_id` 不变，批次表记录每批的状态、失败码、重试次数。
 - 节点类型：现有 ACTOR、SYSTEM、REQUIREMENT、CONCEPT、ENTITY 之外增加 PROCESS（流程、步骤、环节）。
 - 关系类型受控词表：REQUIRES、APPLIES_TO、PART_OF、EXCEPTION_OF、SUPERSEDES、TRIGGERS、PRECEDES、VALIDATED_BY、RESPONSIBLE_FOR、USES、DEFINES、CONFLICTS_WITH，兜底 RELATED_TO。模型同时输出自由文本 `relationLabel`（原文表述，≤64 字）供展示；`relation_type` 不在词表内的输出整条边作废并计入批次诊断。
 - 抽取 schema 在现有基础上增加 `relationLabel`、节点 `aliases`（模型从本批文本中识别的别名，≤5 个）。推理边（INFERRED）与推理来源机制保留，不扩展。
-- 抽取提示词与 schema 摘要更新后，`GRAPH_EXTRACTION_PROFILE_DIGEST` 随之变化，旧片段视为过期（见第 5 节重建）。
+- 抽取提示词与 schema 摘要更新后，`GRAPH_EXTRACTION_PROFILE_DIGEST` 随之变化，旧片段视为过期（见第 5 节重建）。规则式假抽取使用独立的确定性档案摘要；进程按 `TAPPER_GRAPH_EXTRACTION_MODE` 选用摘要，另一模式的片段同样视为过期。
 
 ### 1.2 项目级图与合并
 
@@ -211,15 +211,19 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 ### 5.1 迁移
 
 - `0028_graph_fragment_batch`（PR 1：批次表、`graph_node.aliases`、`graph_edge.relation_label`）、`0029_project_graph`（PR 2：项目图八张表与合并队列表）、`0030_edge_citations`（PR 3：`knowledge_citation_snapshot` 的引用种类与边字段列）。旧快照表保留为片段存储。
-- 升级后已有片段均为旧档案摘要，不参与合并。操作命令 `graph rebuild --project <id>`（挂在现有 `knowledge-recover` 风格 CLI 下）按项目重新排队全部已发布修订的抽取，限速执行。
+- 升级后已有片段均为旧档案摘要，不参与合并。操作命令 `graph rebuild --project <id>`（挂在现有 `knowledge-recover` 风格 CLI 下）按项目重新排队全部已发布修订的抽取，限速执行。graph worker 启动时会自动回填：为没有作业的已发布修订建作业、把旧档案片段按当前档案重新排队；无需抽取但已有当前档案片段时请求一次合并。
 
 ### 5.2 配置
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `TAPPER_GRAPH_EXTRACTION_MODE` | `.env.example` 改为 `model`；CI 与 E2E 为 `fake` | 抽取方式 |
-| `TAPPER_GRAPH_BATCH_SIZE` | 10 | 每批切片数 |
+| `TAPPER_GRAPH_BATCH_CHARS` | 6000 | 每批字符预算（主约束） |
+| `TAPPER_GRAPH_BATCH_SIZE` | 100 | 每批切片数上限（辅约束） |
 | `TAPPER_GRAPH_BATCH_RETRIES` | 3 | 批次重试次数 |
+| `TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS` | 240 | 单次抽取调用截止时间（≤300 秒，须不短于输出预算按每秒 40 token 所需时间；作业租约为其加 60 秒） |
+| `TAPPER_GRAPH_EXTRACTION_MAX_TOKENS` | 8192 | 单次抽取调用输出 token 预算 |
+| `TAPPER_GRAPH_WORKER_CONCURRENCY` | 4 | graph worker 同时处理的作业数（作业内批次仍串行） |
 | `TAPPER_GRAPH_ALIGN_EMBEDDING` | 0 | 第三级 embedding 对齐开关 |
 | `TAPPER_GRAPH_ALIGN_THRESHOLD` | 0.92 | 对齐相似度阈值 |
 | `TAPPER_GRAPH_OVERVIEW_LIMIT` | 150 | 总览节点上限 |

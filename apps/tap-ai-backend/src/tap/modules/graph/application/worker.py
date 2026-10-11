@@ -118,11 +118,13 @@ class GraphWorker:
         extractor: GraphExtractionPort,
         scope: ProjectScopeContext,
         worker_id: str,
-        batch_size: int = 10,
+        batch_size: int = 100,
+        batch_chars: int | None = 6000,
         batch_retries: int = 3,
         backoff_seconds: float = 1.0,
         lease_duration: timedelta = timedelta(seconds=60),
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        concurrency: int = 1,
     ) -> None:
         self._jobs = jobs
         self._artifacts = artifacts
@@ -133,9 +135,15 @@ class GraphWorker:
         self._worker_id = worker_id
         if batch_size < 1:
             raise ValueError("graph worker batch size must be positive")
+        if batch_chars is not None and batch_chars < 1:
+            raise ValueError("graph worker batch character budget must be positive")
         if batch_retries < 1:
             raise ValueError("graph worker batch retries must be positive")
+        if type(concurrency) is not int or concurrency < 1:
+            raise ValueError("graph worker concurrency must be positive")
         self._batch_size = batch_size
+        self._batch_chars = batch_chars
+        self._concurrency = concurrency
         self._batch_retries = batch_retries
         self._backoff_seconds = backoff_seconds
         self._lease_duration = lease_duration
@@ -146,33 +154,76 @@ class GraphWorker:
         return datetime.now(timezone.utc).replace(tzinfo=None)
 
     async def run_once(self, limit: int) -> GraphWorkerRun:
-        claims = await self._jobs.claim(
-            self._scope,
-            worker_id=self._worker_id,
-            now=self._now(),
-            lease_duration=self._lease_duration,
-            limit=limit,
+        """Claim and process up to ``limit`` jobs, at most ``concurrency`` at a time.
+
+        A job is claimed only when a slot is free, so no claimed job waits idle
+        while its lease runs down. Claiming goes through the job store's lease
+        (``FOR UPDATE SKIP LOCKED`` in MySQL), so concurrent slots and concurrent
+        worker processes never hold the same job, and a job's batches run
+        sequentially inside its one slot (later batches reuse the entities earlier
+        batches minted) -- no batch is ever extracted twice at once.
+        """
+
+        outcomes: dict[str, int] = {}
+        claimed_total = 0
+        running: set[asyncio.Task[str]] = set()
+        exhausted = False
+        claim_error: BaseException | None = None
+        try:
+            while True:
+                free = min(self._concurrency - len(running), limit - claimed_total)
+                if free > 0 and not exhausted and claim_error is None:
+                    try:
+                        claims = await self._jobs.claim(
+                            self._scope,
+                            worker_id=self._worker_id,
+                            now=self._now(),
+                            lease_duration=self._lease_duration,
+                            limit=free,
+                        )
+                    except Exception as error:
+                        # Let the jobs already running finish (their leases are
+                        # live and their batches are being recorded), then surface
+                        # the claim failure to the caller as before.
+                        claim_error = error
+                        claims = ()
+                    claimed_total += len(claims)
+                    exhausted = len(claims) < free
+                    running.update(
+                        asyncio.create_task(self._process_claim(claim)) for claim in claims
+                    )
+                if not running:
+                    break
+                done, running = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    outcome = task.result()
+                    outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        finally:
+            for task in running:
+                task.cancel()
+            if running:
+                await asyncio.gather(*running, return_exceptions=True)
+            if claimed_total:
+                await flush_traces()
+        if claim_error is not None:
+            raise claim_error
+        return GraphWorkerRun(
+            claimed_total,
+            outcomes.get("READY", 0),
+            outcomes.get("FAILED", 0),
+            outcomes.get("LEASE_LOST", 0),
+            outcomes.get("PARTIAL", 0),
         )
-        ready = partial = failed = lease_lost = 0
-        for claim in claims:
-            with (
-                bind_trace(scope=self._scope, job_id=claim.job_id, job_kind="graph_extraction"),
-                span("job.graph_extraction", {"tap.job_id": claim.job_id}),
-            ):
-                try:
-                    outcome = await self._run_claim(claim)
-                except GraphJobLeaseLost:
-                    lease_lost += 1
-                    continue
-                if outcome == "READY":
-                    ready += 1
-                elif outcome == "PARTIAL":
-                    partial += 1
-                else:
-                    failed += 1
-        if claims:
-            await flush_traces()
-        return GraphWorkerRun(len(claims), ready, failed, lease_lost, partial)
+
+    async def _process_claim(self, claim: ClaimedGraphJob) -> str:
+        with (
+            bind_trace(scope=self._scope, job_id=claim.job_id, job_kind="graph_extraction"),
+            span("job.graph_extraction", {"tap.job_id": claim.job_id}),
+        ):
+            try:
+                return await self._run_claim(claim)
+            except GraphJobLeaseLost:
+                return "LEASE_LOST"
 
     async def _run_claim(self, claim: ClaimedGraphJob) -> str:
         """Process one claimed job end to end, never letting a non-lease error escape.
@@ -214,11 +265,12 @@ class GraphWorker:
             return "FAILED"
 
     async def _run_claim_body(self, claim: ClaimedGraphJob) -> str:
-        # Every chunk is extracted: each model call carries at most ``batch_size``
-        # chunks, and ingestion already bounds a document's chunk count
+        # Every chunk is extracted: each model call carries at most ``batch_chars``
+        # characters (or one oversized chunk) and at most ``batch_size`` chunks, and
+        # ingestion already bounds a document's chunk count
         # (``MAX_CHUNKS_PER_DOCUMENT``), so no per-document read cap is needed.
         chunks = await self._artifacts.read_chunks(ArtifactLocator(claim.chunks_locator))
-        batches = split_batches(chunks, batch_size=self._batch_size)
+        batches = split_batches(chunks, batch_size=self._batch_size, max_chars=self._batch_chars)
         # Jobs claimed without a resolvable document record keep the revision id as
         # their title, which is what every job carried before filenames were resolved.
         document_title = claim.document_title.strip() or claim.revision_id

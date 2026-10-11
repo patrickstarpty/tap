@@ -16,6 +16,7 @@
     "apps/tap-ai-backend/src/tap/modules/knowledge/ports/documents.py",
     "apps/tap-ai-backend/src/tap/modules/knowledge/ports/errors.py",
     "apps/tap-ai-backend/src/tap/modules/knowledge/adapters/document_parsers.py",
+    "apps/tap-ai-backend/src/tap/modules/knowledge/adapters/pdf_layout.py",
     "apps/tap-ai-backend/src/tap/modules/knowledge/adapters/artifact_codecs.py",
     "apps/tap-ai-backend/src/tap/modules/knowledge/adapters/parser_protocol.py"
   ]

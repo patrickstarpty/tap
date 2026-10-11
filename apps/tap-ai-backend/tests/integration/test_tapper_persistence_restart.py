@@ -1256,7 +1256,7 @@ def test_verifier_rejects_revision_version_drift(drifted_field: str) -> None:
     row = {
         "document_id": "doc-1",
         "source_content_hash": "sha256:" + "1" * 64,
-        "parser_version": "tapper-parser-v1",
+        "parser_version": PARSER_VERSION,
         "chunker_version": "tapper-structure-512-v1",
         "pipeline_version": "tapper-ingestion-v1",
         "original_blob_locator": "original",

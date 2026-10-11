@@ -159,11 +159,16 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("candidate run requires TAPPER_GRAPH_EXTRACTION_MODE=model")
     _endpoint_open(settings.milvus_uri)
     engine, sessions = _open_database(settings)
-    models = _create_embeddings(settings, max_retries=0)
+    models = _create_embeddings(
+        settings,
+        max_retries=0,
+        timeout_ceiling_seconds=settings.graph_extraction_timeout_seconds,
+    )
     capture = CapturingGateway(models.gateway)
     extractor = ModelGatewayGraphExtraction(
         cast(ModelGateway, capture),
-        timeout_seconds=settings.model_timeout_seconds,
+        timeout_seconds=settings.graph_extraction_timeout_seconds,
+        max_output_tokens=settings.graph_extraction_max_tokens,
     )
     store = MysqlGraphStore(sessions)
     observations = deepcopy(profile)

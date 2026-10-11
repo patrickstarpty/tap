@@ -80,12 +80,12 @@ async def sessions(owned_project_mysql):
         await engine.dispose()
 
 
-def _request(revision_id: str) -> GraphJobRequest:
+def _request(revision_id: str, *, digest: str = _PROFILE_DIGEST) -> GraphJobRequest:
     return GraphJobRequest.create(
         scope=VALIDATION_SCOPE,
         revision_id=revision_id,
         chunks_locator=f"art-{revision_id}.chunks",
-        extraction_profile_digest=_PROFILE_DIGEST,
+        extraction_profile_digest=digest,
         model_alias="qwen-plus",
     )
 
@@ -152,12 +152,13 @@ async def _seed_fragment(
     revision_id: str,
     nodes: list[tuple[str, str, str, str]],
     edges: list[tuple[str, str, str, str, float, str]] | None = None,
+    digest: str = _PROFILE_DIGEST,
 ) -> GraphJobRequest:
     """Seed one READY fragment snapshot using `MysqlGraphStore.publish` for the
     graph facts, and `MysqlGraphJobStore.request` for the matching job row the
     merge worker's `MysqlMergeInputs` join needs."""
 
-    request = _request(revision_id)
+    request = _request(revision_id, digest=digest)
     draft = _draft(request, nodes, edges)
     await MysqlGraphJobStore(sessions).request(VALIDATION_SCOPE, request, now=NOW)
     await MysqlGraphStore(sessions).publish(VALIDATION_SCOPE, draft)
@@ -640,3 +641,135 @@ async def test_rebuild_cli_does_not_request_an_immediate_merge(owned_project_mys
             .one_or_none()
         )
     assert row is None
+
+
+@pytest.mark.asyncio
+async def test_model_mode_merge_ignores_fragments_from_deterministic_extraction(sessions) -> None:
+    from tap.modules.graph.adapters.extraction_profiles import extraction_profile_digest
+
+    await _seed_fragment(
+        sessions,
+        revision_id="rev-fake",
+        nodes=[("f1", "Section 1", "ENTITY", "section-1")],
+        digest=extraction_profile_digest("fake"),
+    )
+    await _seed_fragment(
+        sessions,
+        revision_id="rev-model",
+        nodes=[("m1", "健康告知", "ENTITY", "健康告知")],
+        digest=extraction_profile_digest("model"),
+    )
+    current = FakeCurrentRevisions({"rev-fake", "rev-model"})
+
+    model_inputs = MysqlMergeInputs(
+        sessions, current, extraction_profile_digest=extraction_profile_digest("model")
+    )
+    fake_inputs = MysqlMergeInputs(
+        sessions, current, extraction_profile_digest=extraction_profile_digest("fake")
+    )
+
+    model_fragments = await model_inputs.load_fragments(VALIDATION_SCOPE)
+    fake_fragments = await fake_inputs.load_fragments(VALIDATION_SCOPE)
+    assert {record.revision_id for record in model_fragments} == {"rev-model"}
+    assert {record.revision_id for record in fake_fragments} == {"rev-fake"}
+
+
+@pytest.mark.asyncio
+async def test_startup_backfill_against_mysql(sessions) -> None:
+    from tap.modules.graph.adapters.extraction_profiles import extraction_profile_digest
+    from tap.modules.graph.application.backfill import backfill_graph_jobs
+
+    model_digest = extraction_profile_digest("model")
+    fake_digest = extraction_profile_digest("fake")
+    jobs = MysqlGraphJobStore(sessions)
+    queue = MysqlProjectMergeQueue(sessions)
+    # A stale job another worker is running right now under a live lease.
+    await jobs.request(VALIDATION_SCOPE, _request("rev-running", digest=fake_digest), now=NOW)
+    claims = await jobs.claim(
+        VALIDATION_SCOPE,
+        worker_id="other-worker",
+        now=NOW,
+        lease_duration=timedelta(seconds=300),
+        limit=10,
+    )
+    assert [claim.revision_id for claim in claims] == ["rev-running"]
+    # A fragment extracted under the other mode (stale for model mode).
+    await _seed_fragment(
+        sessions,
+        revision_id="rev-stale",
+        nodes=[("s1", "Section 1", "ENTITY", "section-1")],
+        digest=fake_digest,
+    )
+
+    result = await backfill_graph_jobs(
+        scope=VALIDATION_SCOPE,
+        published={
+            "rev-missing": "art-rev-missing.chunks",
+            "rev-stale": "art-rev-stale.chunks",
+            "rev-running": "art-rev-running.chunks",
+        },
+        jobs=jobs,
+        merge_queue=queue,
+        extraction_profile_digest=model_digest,
+        model_alias="qwen-plus",
+        now=NOW + timedelta(seconds=1),
+    )
+
+    assert (result.requested, result.requeued, result.skipped) == (1, 1, 1)
+    assert result.merge_requested is False
+    states = {
+        state.revision_id: state for state in await jobs.revision_job_states(VALIDATION_SCOPE)
+    }
+    assert states["rev-missing"].status is GraphJobStatus.PENDING
+    assert states["rev-missing"].extraction_profile_digest == model_digest
+    assert states["rev-stale"].status is GraphJobStatus.PENDING
+    assert states["rev-stale"].extraction_profile_digest == model_digest
+    assert states["rev-running"].status is GraphJobStatus.RUNNING
+    assert states["rev-running"].extraction_profile_digest == fake_digest
+    async with sessions() as session:
+        stale_nodes = await session.scalar(
+            select(func.count())
+            .select_from(graph_node)
+            .where(graph_node.c.snapshot_id == _request("rev-stale").snapshot.snapshot_id)
+        )
+    assert stale_nodes == 0
+
+    # Idempotent: a second start finds nothing new to do.
+    again = await backfill_graph_jobs(
+        scope=VALIDATION_SCOPE,
+        published={"rev-missing": "art-rev-missing.chunks", "rev-stale": "art-rev-stale.chunks"},
+        jobs=jobs,
+        merge_queue=queue,
+        extraction_profile_digest=model_digest,
+        model_alias="qwen-plus",
+        now=NOW + timedelta(seconds=2),
+    )
+    assert (again.requested, again.requeued) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_reset_only_if_stale_leaves_a_current_fragment_alone(sessions) -> None:
+    jobs = MysqlGraphJobStore(sessions)
+    request = await _seed_fragment(
+        sessions, revision_id="rev-current", nodes=[("c1", "健康告知", "ENTITY", "健康告知")]
+    )
+    before = {s.revision_id: s for s in await jobs.revision_job_states(VALIDATION_SCOPE)}
+
+    job = await jobs.reset_for_profile(
+        VALIDATION_SCOPE,
+        request.revision_id,
+        extraction_profile_digest=_PROFILE_DIGEST,
+        model_alias="qwen-plus",
+        now=NOW + timedelta(seconds=5),
+        only_if_stale=True,
+    )
+
+    assert job.request_digest == request.request_digest
+    assert job.status == before["rev-current"].status
+    async with sessions() as session:
+        node_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_node)
+            .where(graph_node.c.snapshot_id == request.snapshot.snapshot_id)
+        )
+    assert node_count == 1
