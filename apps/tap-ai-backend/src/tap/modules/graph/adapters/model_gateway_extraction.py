@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Mapping
 from typing import cast
 
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest, schema_digest, text_digest
@@ -27,17 +28,22 @@ from tap.modules.graph.domain.vocabulary import (
 )
 from tap.platform.telemetry import span
 
+_CHUNK_REFS: dict[str, object] = {
+    "type": "array",
+    "items": {"type": "string"},
+    "description": "Refs (c1, c2, ...) of the input chunks that state this fact.",
+}
 GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["nodes", "edges", "evidence", "provenance"],
+    "required": ["nodes", "edges", "provenance"],
     "properties": {
         "nodes": {
             "type": "array",
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["id", "label", "type", "canonicalKey", "evidenceIds", "aliases"],
+                "required": ["id", "label", "type", "canonicalKey", "chunks", "aliases"],
                 "properties": {
                     "id": {"type": "string"},
                     "label": {"type": "string"},
@@ -52,7 +58,7 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                         ),
                     },
                     "canonicalKey": {"type": "string"},
-                    "evidenceIds": {"type": "array", "items": {"type": "string"}},
+                    "chunks": _CHUNK_REFS,
                     "aliases": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -74,7 +80,7 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                     "relationLabel",
                     "origin",
                     "confidence",
-                    "evidenceIds",
+                    "chunks",
                 ],
                 "properties": {
                     "id": {"type": "string"},
@@ -87,30 +93,7 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                         "enum": ["EXTRACTED", "INFERRED"],
                     },
                     "confidence": {"type": "number"},
-                    "evidenceIds": {"type": "array", "items": {"type": "string"}},
-                },
-            },
-        },
-        "evidence": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": [
-                    "id",
-                    "sourceRevisionId",
-                    "documentRevisionId",
-                    "chunkId",
-                    "anchorJson",
-                    "contentDigest",
-                ],
-                "properties": {
-                    "id": {"type": "string"},
-                    "sourceRevisionId": {"type": "string"},
-                    "documentRevisionId": {"type": "string"},
-                    "chunkId": {"type": "string"},
-                    "anchorJson": {"type": "string"},
-                    "contentDigest": {"type": "string"},
+                    "chunks": _CHUNK_REFS,
                 },
             },
         },
@@ -135,20 +118,24 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
 }
 GRAPH_EXTRACTION_PROMPT = (
     "Extract only grounded graph facts from the supplied chunks and return exactly the JSON "
-    "schema. Use stable nonblank IDs. Every node must cite existing evidence IDs. "
+    "schema as compact JSON without indentation. Each input chunk carries a short ref (c1, c2, "
+    "...). Cite where a fact is stated only by listing those refs in its chunks array; never "
+    "cite a ref that is not in this input and never copy chunk text, hashes, or anchors. Use "
+    "short stable IDs: n1, n2, ... for new nodes, e1, e2, ... for edges, and p1, p2, ... for "
+    "provenance. Every node must list at least one chunk ref. "
     "Classify every person or role as ACTOR, every named software application or service "
     "as SYSTEM, and every stated requirement or control as REQUIREMENT. Use ENTITY only "
     "if none of ACTOR, SYSTEM, REQUIREMENT, or CONCEPT applies. Every "
-    "EXTRACTED edge must cite existing evidence IDs. An INFERRED edge must have an empty "
-    "evidenceIds array and exactly one provenance item whose edgeId matches it and whose "
-    "inputFactIds are nonempty existing node, edge, or evidence IDs. Copy sourceRevisionId, "
-    "documentRevisionId, chunkId, and contentDigest exactly from an authorized input chunk. "
-    "Set anchorJson to the compact JSON string of that chunk's anchor. Never emit a self-edge; "
+    "EXTRACTED edge must list at least one chunk ref. An INFERRED edge must have an empty "
+    "chunks array and exactly one provenance item whose edgeId matches it and whose "
+    "inputFactIds are nonempty existing node or edge IDs. Never emit a self-edge; "
     "canonicalize aliases into one node and omit any alias edge that would become a self-edge. "
     "Preserve uppercase relation tokens explicitly declared by the document. Apply any explicit "
     "inference rule declared by the document, copy its declared canonical sha256 rule digest, and "
-    "record its input edge IDs as provenance. Do not invent facts. Input also carries "
-    "documentTitle and knownEntities from earlier batches of the same document. When an edge "
+    "record its input edge IDs as provenance. Do not invent facts. Write labels, aliases, "
+    "canonical keys, and relation labels in the document's own language and keep them short. "
+    "Input also carries documentTitle and knownEntities from earlier batches of the same "
+    "document. When an edge "
     "in this batch references a known entity, include that known entity in nodes with its "
     "existing id, label, type, and canonicalKey exactly as given -- never emit a new node "
     "with a different id for the same real-world thing, and never omit it from nodes just "
@@ -197,15 +184,20 @@ class ModelGatewayGraphExtraction:
         with span(
             "graph.extract_batch", {"tap.graph.batch_index": request.batch_index}
         ) as current_span:
+            refs = _chunk_refs(request)
+            # Non-ASCII text stays literal: escaping CJK as \uXXXX roughly
+            # triples its token cost and the model then echoes the escapes.
             context = json.dumps(
                 {
-                    "snapshotId": request.snapshot.snapshot_id,
                     "batchIndex": request.batch_index,
                     "documentTitle": request.document_title,
                     "knownEntities": list(request.known_entities),
-                    "chunks": list(request.chunks),
+                    "chunks": [
+                        {"ref": ref, "content": chunk.get("content")} for ref, chunk in refs.items()
+                    ],
                 },
                 sort_keys=True,
+                ensure_ascii=False,
                 separators=(",", ":"),
             )
             result = await self._gateway.generate_structured(
@@ -226,12 +218,11 @@ class ModelGatewayGraphExtraction:
             if not isinstance(result.output, dict):
                 raise ValueError("graph extraction output must be an object")
             output = cast(dict[str, object], result.output)
-            if set(output) != {"nodes", "edges", "evidence", "provenance"}:
+            if set(output) != {"nodes", "edges", "provenance"}:
                 raise ValueError("graph extraction output has invalid fields")
             try:
                 nodes_raw = _objects(output["nodes"], "nodes")
                 edges_raw = _objects(output["edges"], "edges")
-                evidence_raw = _objects(output["evidence"], "evidence")
                 provenance_raw = _objects(output["provenance"], "provenance")
                 snapshot_id = request.snapshot.snapshot_id
                 nodes = tuple(
@@ -241,22 +232,10 @@ class ModelGatewayGraphExtraction:
                         _string(item, "label"),
                         _string(item, "type"),
                         _string(item, "canonicalKey"),
-                        _strings(item, "evidenceIds"),
+                        _cited_refs(item, refs),
                         _sanitize_aliases(_optional_strings(item, "aliases")),
                     )
                     for item in nodes_raw
-                )
-                evidence = tuple(
-                    Evidence(
-                        _string(item, "id"),
-                        snapshot_id,
-                        _string(item, "sourceRevisionId"),
-                        _string(item, "documentRevisionId"),
-                        _string(item, "chunkId"),
-                        _json_mapping(item, "anchorJson"),
-                        _string(item, "contentDigest"),
-                    )
-                    for item in evidence_raw
                 )
                 node_ids = {node.node_id for node in nodes}
                 kept_edges_raw, kept_provenance_raw, dropped = _keep_edges(
@@ -271,7 +250,7 @@ class ModelGatewayGraphExtraction:
                         _string(item, "relationType"),
                         RelationOrigin(_string(item, "origin")),
                         _float(item, "confidence"),
-                        _strings(item, "evidenceIds"),
+                        _cited_refs(item, refs),
                         _string(item, "relationLabel")[:RELATION_LABEL_MAX],
                     )
                     for item in kept_edges_raw
@@ -286,6 +265,7 @@ class ModelGatewayGraphExtraction:
                     )
                     for item in kept_provenance_raw
                 )
+                evidence = _backfill_evidence(snapshot_id, refs, nodes, edges)
             except (KeyError, TypeError) as error:
                 raise ValueError("graph extraction output is malformed") from error
             current_span.set_attribute("tap.graph.dropped_edges", dropped)
@@ -296,25 +276,75 @@ class ModelGatewayGraphExtraction:
             # there is no way to represent "empty" as a draft; the worker treats
             # ``None`` as this batch's signal and skips it at assembly.
             return None
-        self._validate_evidence_against_chunks(request, evidence)
         return GraphSnapshotDraft(request.snapshot, nodes, edges, evidence, provenance)
 
-    @staticmethod
-    def _validate_evidence_against_chunks(
-        request: GraphExtractionRequest, evidence: tuple[Evidence, ...]
-    ) -> None:
-        chunks = {
-            (
-                item.get("sourceRevisionId"),
-                item.get("documentRevisionId"),
-                item.get("chunkId"),
-            ): item.get("contentDigest")
-            for item in request.chunks
-        }
-        for item in evidence:
-            key = (item.source_revision_id, item.document_revision_id, item.chunk_id)
-            if key not in chunks or chunks[key] != item.content_digest:
-                raise ValueError("evidence digest does not resolve to an authorized chunk")
+
+def _chunk_refs(request: GraphExtractionRequest) -> dict[str, Mapping[str, object]]:
+    """Batch-local short refs (``c1``..``cN``, in input order) for the request chunks."""
+
+    return {f"c{index}": chunk for index, chunk in enumerate(request.chunks, start=1)}
+
+
+def _cited_refs(
+    value: dict[str, object], refs: Mapping[str, Mapping[str, object]]
+) -> tuple[str, ...]:
+    """The chunk refs a fact cites, deduplicated in first-cited order.
+
+    A ref outside this batch fails the whole batch closed: the model may only ground
+    facts in chunks it was actually given.
+    """
+
+    cited: list[str] = []
+    for ref in _strings(value, "chunks"):
+        if ref not in refs:
+            raise ValueError("graph extraction cites a dangling chunk ref")
+        if ref not in cited:
+            cited.append(ref)
+    return tuple(cited)
+
+
+def _backfill_evidence(
+    snapshot_id: str,
+    refs: Mapping[str, Mapping[str, object]],
+    nodes: tuple[GraphNode, ...],
+    edges: tuple[GraphEdge, ...],
+) -> tuple[Evidence, ...]:
+    """Build one evidence record per cited chunk from the authorized request chunk.
+
+    Revision ids, chunk id, anchor and content digest come from the request, never
+    from model output, so they always resolve to a chunk this batch was given. The
+    evidence id is the chunk ref itself; the worker namespaces it per batch.
+    """
+
+    cited = {ref for node in nodes for ref in node.evidence_ids} | {
+        ref for edge in edges for ref in edge.evidence_ids
+    }
+    evidence: list[Evidence] = []
+    for ref, chunk in refs.items():
+        if ref not in cited:
+            continue
+        anchor = chunk.get("anchor")
+        if not isinstance(anchor, Mapping):
+            raise TypeError("anchor")
+        evidence.append(
+            Evidence(
+                ref,
+                snapshot_id,
+                _chunk_string(chunk, "sourceRevisionId"),
+                _chunk_string(chunk, "documentRevisionId"),
+                _chunk_string(chunk, "chunkId"),
+                dict(anchor),
+                _chunk_string(chunk, "contentDigest"),
+            )
+        )
+    return tuple(evidence)
+
+
+def _chunk_string(chunk: Mapping[str, object], key: str) -> str:
+    item = chunk.get(key)
+    if not isinstance(item, str):
+        raise TypeError(key)
+    return item
 
 
 def _keep_edges(
@@ -415,14 +445,3 @@ def _float(value: dict[str, object], key: str) -> float:
     if type(item) not in {int, float}:
         raise TypeError(key)
     return float(cast(float, item))
-
-
-def _json_mapping(value: dict[str, object], key: str) -> dict[str, object]:
-    raw = _string(value, key)
-    try:
-        item = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise TypeError(key) from error
-    if not isinstance(item, dict):
-        raise TypeError(key)
-    return cast(dict[str, object], item)
