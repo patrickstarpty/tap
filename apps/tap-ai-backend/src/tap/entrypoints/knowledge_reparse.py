@@ -67,7 +67,10 @@ async def run(*, settings: TapperSettings, operation: ReparseOperation) -> dict[
         if scope.project_id != operation.project_id:
             raise ValueError("knowledge reparse scope differs from the Validation Project")
         documents = tapper_runtime._build_document_repository(
-            sessions, scope=scope, default_chat_model=settings.default_chat_model
+            sessions,
+            scope=scope,
+            default_chat_model=settings.default_chat_model,
+            graph_extraction_profile_digest=tapper_runtime._graph_extraction_profile(settings),
         )
         requeued, skipped = await documents.reparse_stale_revisions(
             media_types=REPARSED_MEDIA_TYPES, limit=operation.limit
