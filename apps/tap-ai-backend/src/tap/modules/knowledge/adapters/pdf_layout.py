@@ -68,6 +68,7 @@ class _Paragraph:
     text: str
     open: bool
     rank: int | None = None
+    title_only: bool = False
 
 
 def _paragraphs(pages: Sequence[Sequence[str]], root: tuple[str, ...]) -> list[_Paragraph]:
@@ -98,7 +99,16 @@ def _paragraphs(pages: Sequence[Sequence[str]], root: tuple[str, ...]) -> list[_
                     headings.pop()
                 headings.append((rank, label))
                 path = root + tuple(item for _, item in headings)
-                current = _Paragraph(page_number, path, line, False, rank)
+                # A clause written on its heading line carries body text that may wrap.
+                title_only = _title_like(line)
+                current = _Paragraph(
+                    page_number,
+                    path,
+                    line,
+                    not title_only and _continues(line, full_width),
+                    rank,
+                    title_only,
+                )
             else:
                 path = root + tuple(item for _, item in headings)
                 current = _Paragraph(page_number, path, line, _continues(line, full_width))
@@ -124,7 +134,7 @@ def _pack(paragraphs: Sequence[_Paragraph]) -> list[PdfLayoutBlock]:
                     _common_prefix([item.heading_path for item in group]),
                     "\n".join(item.text for item in group),
                     # A heading left at the foot of a page labels the next page's text.
-                    all(item.rank is not None for item in group),
+                    all(item.title_only for item in group),
                 )
             )
             group.clear()

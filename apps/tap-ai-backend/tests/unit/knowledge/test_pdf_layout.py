@@ -318,3 +318,25 @@ def test_heading_at_the_foot_of_a_page_labels_the_next_page_without_its_own_chun
         (2, False),
     ]
     assert blocks[2].heading_path == ("Policy terms", "第二条 责任免除")
+
+
+def test_clause_written_on_one_line_stays_searchable_body_text() -> None:
+    """A whole clause on its heading line is a rule, not a bare heading block."""
+    filler = "本合同的保险责任与给付规则以本条款约定为准并适用下列各项约定内容"
+    pages = [
+        "Policy terms\n"
+        "第一条 保险责任\n"
+        f"{filler}。\n"
+        "第十七条 借款 本合同不提供借款。\n"
+        f"第十八条 明确说明与如实告知 订立本合同时，本公司应向投保人说明本合同的内容，{filler}\n"
+        "并作出明确说明。"
+    ]
+
+    blocks = layout_pdf_pages(pages).blocks
+
+    loan = next(block for block in blocks if "本合同不提供借款。" in block.text)
+    notice = next(block for block in blocks if "第十八条" in block.text)
+    assert not loan.heading_only
+    assert loan.heading_path == ("Policy terms", "第十七条")
+    assert not notice.heading_only
+    assert f"{filler}并作出明确说明。" in notice.text
