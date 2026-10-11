@@ -1004,7 +1004,10 @@ async def _create_database(
     try:
         scope = await ValidationScopeProvider().current(RequestFacts())
         repository = _build_document_repository(
-            sessions, scope=scope, default_chat_model=settings.default_chat_model
+            sessions,
+            scope=scope,
+            default_chat_model=settings.default_chat_model,
+            graph_extraction_profile_digest=_graph_extraction_profile(settings),
         )
     except BaseException as error:
         local = OwnedResources()
@@ -1027,6 +1030,7 @@ def _build_document_repository(
     *,
     scope: ProjectScopeContext,
     default_chat_model: str,
+    graph_extraction_profile_digest: str,
 ) -> MysqlDocumentRepository:
     from tap.entrypoints.prompt_suggestion_knowledge import (
         CompositeReadyProjection,
@@ -1052,7 +1056,11 @@ def _build_document_repository(
         audit_factory=create_project_audit,
         source_deleted_projection=GraphMergeOnSourceChange(MysqlProjectMergeQueue(sessions)),
         ready_projection=CompositeReadyProjection(
-            MysqlGraphReadyProjection(graph_jobs, model_alias=default_chat_model),
+            MysqlGraphReadyProjection(
+                graph_jobs,
+                model_alias=default_chat_model,
+                extraction_profile_digest=graph_extraction_profile_digest,
+            ),
             SuggestionReadyProjection(suggestion_store),
         ),
     )
@@ -1079,10 +1087,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
         )
         from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
         from tap.modules.graph.adapters.fake_extraction import DeterministicGraphExtraction
-        from tap.modules.graph.adapters.model_gateway_extraction import (
-            GRAPH_EXTRACTION_PROFILE_DIGEST,
-            ModelGatewayGraphExtraction,
-        )
+        from tap.modules.graph.adapters.model_gateway_extraction import ModelGatewayGraphExtraction
         from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
         from tap.modules.graph.adapters.mysql_merge import MysqlMergeInputs, MysqlProjectMergeQueue
         from tap.modules.graph.application.backfill import backfill_graph_jobs
@@ -1123,7 +1128,11 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             label_embeddings = _label_embedder(model_embeddings)
         merge_worker = ProjectGraphMergeWorker(
             queue=merge_queue,
-            inputs=MysqlMergeInputs(sessions, MysqlCurrentRevisions(sessions, scope=scope)),
+            inputs=MysqlMergeInputs(
+                sessions,
+                MysqlCurrentRevisions(sessions, scope=scope),
+                extraction_profile_digest=_graph_extraction_profile(settings),
+            ),
             merger=ProjectGraphMerger(align_threshold=settings.graph_align_threshold),
             scope=scope,
             worker_id=settings.worker_id + "-graph-merge",
@@ -1139,7 +1148,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
                 published=await published_locators.published(),
                 jobs=graph_jobs,
                 merge_queue=merge_queue,
-                extraction_profile_digest=GRAPH_EXTRACTION_PROFILE_DIGEST,
+                extraction_profile_digest=_graph_extraction_profile(settings),
                 model_alias=settings.default_chat_model,
                 now=datetime.now(UTC).replace(tzinfo=None),
             )
@@ -1181,6 +1190,14 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("graph worker resource settlement unexpectedly returned")
+
+
+def _graph_extraction_profile(settings: TapperSettings) -> str:
+    """The one extraction profile digest this process requests, backfills and merges."""
+
+    from tap.modules.graph.adapters.extraction_profiles import extraction_profile_digest
+
+    return extraction_profile_digest(settings.graph_extraction_mode)
 
 
 def _graph_worker_lease(settings: TapperSettings) -> timedelta:

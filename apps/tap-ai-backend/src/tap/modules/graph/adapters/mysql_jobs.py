@@ -1072,11 +1072,18 @@ class MysqlGraphJobStore:
 class MysqlGraphReadyProjection:
     """Create the durable graph job inside the document READY transaction."""
 
-    def __init__(self, jobs: MysqlGraphJobStore, *, model_alias: str) -> None:
+    def __init__(
+        self,
+        jobs: MysqlGraphJobStore,
+        *,
+        model_alias: str,
+        extraction_profile_digest: str = GRAPH_EXTRACTION_PROFILE_DIGEST,
+    ) -> None:
         if not model_alias:
             raise ValueError("graph model alias must be nonblank")
         self._jobs = jobs
         self._model_alias = model_alias
+        self._extraction_profile_digest = extraction_profile_digest
 
     async def after_ready(
         self,
@@ -1096,7 +1103,7 @@ class MysqlGraphReadyProjection:
             scope=scope,
             revision_id=revision_id,
             chunks_locator=chunks_locator,
-            extraction_profile_digest=GRAPH_EXTRACTION_PROFILE_DIGEST,
+            extraction_profile_digest=self._extraction_profile_digest,
             model_alias=self._model_alias,
         )
         await self._jobs.request_in_transaction(session, scope, request, now=now)

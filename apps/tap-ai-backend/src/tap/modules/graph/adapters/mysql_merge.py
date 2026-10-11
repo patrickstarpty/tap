@@ -381,9 +381,14 @@ class MysqlMergeInputs:
         self,
         sessions: async_sessionmaker[AsyncSession],
         current_revisions: CurrentRevisionsPort,
+        *,
+        extraction_profile_digest: str = GRAPH_EXTRACTION_PROFILE_DIGEST,
     ) -> None:
         self._sessions = sessions
         self._current_revisions = current_revisions
+        # Only fragments extracted under the process's active profile are merged;
+        # another mode's (or an older prompt's) fragments wait for backfill.
+        self._extraction_profile_digest = extraction_profile_digest
 
     async def load_fragments(self, scope: ProjectScopeContext) -> tuple[FragmentRecord, ...]:
         scope = require_project_scope(scope)
@@ -432,7 +437,7 @@ class MysqlMergeInputs:
                             *scope_predicates(graph_extraction_job, scope),
                             graph_snapshot.c.status.in_(("READY", "PARTIAL")),
                             graph_extraction_job.c.extraction_profile_digest
-                            == GRAPH_EXTRACTION_PROFILE_DIGEST,
+                            == self._extraction_profile_digest,
                             graph_extraction_job.c.revision_id.in_(revision_ids),
                         )
                         .order_by(graph_extraction_job.c.snapshot_id)

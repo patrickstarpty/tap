@@ -22,19 +22,20 @@ class FakeJobs:
         self.requested: list[str] = []
         self.reset: list[str] = []
         self.busy: set[str] = set()
+        self.expected_digest = CURRENT
 
     async def revision_job_states(self, scope):
         return self.states
 
     async def request(self, scope, request, *, now):
-        assert request.extraction_profile_digest == CURRENT
+        assert request.extraction_profile_digest == self.expected_digest
         assert request.model_alias == "qwen-plus"
         self.requested.append(request.revision_id)
 
     async def reset_for_profile(
         self, scope, revision_id, *, extraction_profile_digest, model_alias, now
     ):
-        assert extraction_profile_digest == CURRENT and model_alias == "qwen-plus"
+        assert extraction_profile_digest == self.expected_digest and model_alias == "qwen-plus"
         if revision_id in self.busy:
             raise ValueError("graph job is running")
         self.reset.append(revision_id)
@@ -159,3 +160,60 @@ async def test_backfill_is_idempotent_once_jobs_exist() -> None:
     assert (second.requested, second.requeued) == (0, 0)
     # Extraction is still pending, so no merge is requested yet.
     assert merge_queue.reasons == []
+
+
+def test_each_extraction_mode_has_its_own_profile_digest() -> None:
+    from tap.modules.graph.adapters.extraction_profiles import extraction_profile_digest
+    from tap.modules.graph.adapters.fake_extraction import (
+        DETERMINISTIC_EXTRACTION_PROFILE_DIGEST,
+    )
+    from tap.modules.graph.adapters.model_gateway_extraction import (
+        GRAPH_EXTRACTION_PROFILE_DIGEST,
+    )
+
+    assert extraction_profile_digest("model") == GRAPH_EXTRACTION_PROFILE_DIGEST
+    assert extraction_profile_digest("fake") == DETERMINISTIC_EXTRACTION_PROFILE_DIGEST
+    assert DETERMINISTIC_EXTRACTION_PROFILE_DIGEST != GRAPH_EXTRACTION_PROFILE_DIGEST
+    with pytest.raises(ValueError):
+        extraction_profile_digest("other")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("previous", "current"), [("fake", "model"), ("model", "fake")])
+async def test_switching_extraction_mode_requeues_the_other_modes_fragments(
+    previous, current
+) -> None:
+    from tap.modules.graph.adapters.extraction_profiles import extraction_profile_digest
+
+    jobs = FakeJobs(
+        (
+            _state("revision-a", GraphJobStatus.READY, extraction_profile_digest(previous)),
+            _state("revision-b", GraphJobStatus.READY, extraction_profile_digest(previous)),
+        )
+    )
+    jobs.expected_digest = extraction_profile_digest(current)
+    merge_queue = FakeMergeQueue()
+
+    result = await backfill_graph_jobs(
+        scope=VALIDATION_SCOPE,
+        published={"revision-a": "a", "revision-b": "b"},
+        jobs=jobs,
+        merge_queue=merge_queue,
+        extraction_profile_digest=extraction_profile_digest(current),
+        model_alias="qwen-plus",
+        now=NOW,
+    )
+
+    assert jobs.reset == ["revision-a", "revision-b"] and result.requeued == 2
+    # The other mode's fragments are not "current": no merge over them.
+    assert merge_queue.reasons == []
+
+
+def test_runtime_uses_the_profile_digest_of_its_extraction_mode() -> None:
+    from tap.entrypoints.tapper_runtime import TapperSettings, _graph_extraction_profile
+    from tap.modules.graph.adapters.extraction_profiles import extraction_profile_digest
+    from tests.object_settings import S3_SETTINGS
+
+    for mode in ("fake", "model"):
+        settings = TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_EXTRACTION_MODE": mode})
+        assert _graph_extraction_profile(settings) == extraction_profile_digest(mode)
