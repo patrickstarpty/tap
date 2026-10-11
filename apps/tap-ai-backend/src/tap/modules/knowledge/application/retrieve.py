@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import math
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -1654,25 +1655,49 @@ class AuthorizedRetrieval:
 
     @staticmethod
     def _has_conflicting_sources(evidence: tuple[Evidence, ...]) -> bool:
-        values_by_identity: dict[tuple[str, str], set[tuple[tuple[str, str, str], str]]] = {}
+        """Abstain only when two sources disagree about the same clause.
+
+        A clause is identified either by its immutable logical chunk id, or by a
+        meaningful last heading within one document lineage (same source id, or
+        same file name). Separator/punctuation, too-short and running headings
+        (labelling many chunks of one revision) never identify a clause, and a
+        generic heading shared by different documents is not one clause.
+        """
+        values_by_identity: dict[tuple[str, ...], set[tuple[tuple[str, str, str], str]]] = {}
+        chunks_by_heading: dict[tuple[tuple[str, ...], tuple[str, str, str]], set[str]] = {}
         for item in evidence:
             source_revision = (
                 item.source.source_id,
                 item.source.revision,
                 item.source.source_content_hash,
             )
-            identities = [("logical-chunk", item.logical_chunk_id)]
-            anchor = item.source.anchor
-            if isinstance(anchor, DocumentAnchor) and anchor.heading_path:
-                identities.append(("document-heading", anchor.heading_path[-1].casefold()))
+            identities: list[tuple[str, ...]] = [("logical-chunk", item.logical_chunk_id)]
+            heading = _clause_heading(item.source.anchor)
+            if heading is not None:
+                heading_identity: tuple[str, ...] = (
+                    "document-heading",
+                    *_document_lineage(item),
+                    heading,
+                )
+                identities.append(heading_identity)
+                chunks_by_heading.setdefault((heading_identity, source_revision), set()).add(
+                    item.logical_chunk_id
+                )
             for identity in identities:
                 values_by_identity.setdefault(identity, set()).add(
                     (source_revision, item.chunk_content_hash)
                 )
+        running_headings = {
+            identity
+            for (identity, _), chunks in chunks_by_heading.items()
+            if len(chunks) >= _RUNNING_HEADING_CHUNKS
+        }
         for identity, values in values_by_identity.items():
             if identity[0] == "logical-chunk":
                 if len({content_hash for _, content_hash in values}) > 1:
                     return True
+                continue
+            if identity in running_headings:
                 continue
             hashes_by_source: dict[tuple[str, str, str], set[str]] = {}
             for source, content_hash in values:
@@ -1841,3 +1866,24 @@ def _flowchart_hit_is_approved(hit: SearchHit, flowcharts: PublicationBinding | 
     return (
         anchor.inventory_item_id in flowcharts.for_revision(hit.source.revision).approved_item_ids
     )
+
+
+_MIN_CLAUSE_HEADING_CHARS = 2
+_RUNNING_HEADING_CHUNKS = 3
+
+
+def _clause_heading(anchor: object) -> str | None:
+    """The normalized last heading when it can name a clause, otherwise None."""
+    if not isinstance(anchor, DocumentAnchor) or not anchor.heading_path:
+        return None
+    heading = " ".join(unicodedata.normalize("NFKC", anchor.heading_path[-1]).casefold().split())
+    if sum(character.isalnum() for character in heading) < _MIN_CLAUSE_HEADING_CHARS:
+        return None
+    return heading
+
+
+def _document_lineage(item: Evidence) -> tuple[str, str]:
+    """Revisions or re-uploads of one document share a lineage; different
+    documents never do, so their identical generic headings stay distinct."""
+    title = " ".join(unicodedata.normalize("NFKC", item.title or "").casefold().split())
+    return ("title", title) if title else ("source", item.source.source_id)

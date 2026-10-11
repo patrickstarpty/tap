@@ -355,6 +355,108 @@ def test_chunks_under_one_heading_in_one_revision_are_not_conflicting_sources() 
     )
 
 
+def _heading_evidence(
+    index: int,
+    *,
+    heading: str,
+    title: str | None,
+    source_id: str,
+    content_hash: str | None = None,
+) -> Evidence:
+    digit = "0123456789abcdef"[index % 16]
+    return Evidence(
+        family=SourceFamily.DOC,
+        chunk_id="h_" + f"{index:02d}" + digit * 62,
+        logical_chunk_id="h_" + digit * 62 + f"{index:02d}",
+        title=title,
+        content=f"Clause text {index}.",
+        source=SourceRevisionRef(
+            source_id=source_id,
+            source_type="doc",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision=f"rev-{source_id}",
+            source_content_hash=SOURCE_HASH,
+            anchor=DocumentAnchor(heading_path=(heading,)),
+        ),
+        chunk_content_hash=content_hash or "sha256:" + f"{index:02d}" + digit * 62,
+        content_role=ContentRole.SOURCE,
+        citation_id=f"citation-{index}",
+        evidence_label=f"S{index}",
+        index_revision=IndexRevision(
+            physical_index="kb-doc-v1-20260828",
+            schema_version="search-schema-v1",
+            corpus_version="tapper-demo-v1",
+        ),
+        embedding_model_version="tap-embedding-v1",
+        acl_decision_id="decision-17",
+        score=1 / 61,
+    )
+
+
+@pytest.mark.parametrize(
+    "heading",
+    ["_" * 95, "_" * 88 + " " + "_" * 7, "———", "· · ·", "-", "第"],
+)
+def test_noise_or_too_short_headings_never_identify_a_clause(heading: str) -> None:
+    """PDF page-rule separators became the heading of almost every chunk."""
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(
+        (
+            _heading_evidence(1, heading=heading, title="policy.pdf", source_id="current"),
+            _heading_evidence(2, heading=heading, title="policy.pdf", source_id="legacy"),
+        )
+    )
+
+
+def test_separator_headings_across_many_selected_documents_do_not_conflict() -> None:
+    separator = "_" * 95
+    evidence = tuple(
+        _heading_evidence(
+            index, heading=separator, title=f"product-{index % 7}.pdf", source_id=f"doc-{index % 7}"
+        )
+        for index in range(10)
+    )
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(evidence)
+
+
+@pytest.mark.parametrize("heading", ["释义", "责任免除", "Definitions"])
+def test_generic_heading_shared_by_different_documents_is_not_one_clause(heading: str) -> None:
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(
+        (
+            _heading_evidence(1, heading=heading, title="annuity-terms.pdf", source_id="a"),
+            _heading_evidence(2, heading=heading, title="group-health-terms.pdf", source_id="b"),
+        )
+    )
+
+
+def test_same_document_lineage_with_contradicting_clause_still_conflicts() -> None:
+    # Two uploads of one document, same clause heading, different clause text.
+    assert retrieval_application.AuthorizedRetrieval._has_conflicting_sources(
+        (
+            _heading_evidence(1, heading="第七条 宽限期", title="Terms.PDF", source_id="v1"),
+            _heading_evidence(2, heading="第七条  宽限期", title="terms.pdf", source_id="v2"),
+        )
+    )
+    # Two revisions of one source keep conflicting without any title.
+    first = _heading_evidence(3, heading="第七条 宽限期", title=None, source_id="same")
+    second = replace(
+        _heading_evidence(4, heading="第七条 宽限期", title=None, source_id="same"),
+        source=replace(first.source, revision="rev-newer"),
+    )
+    assert retrieval_application.AuthorizedRetrieval._has_conflicting_sources((first, second))
+
+
+def test_heading_repeated_on_many_chunks_of_one_revision_is_not_a_clause_identity() -> None:
+    running = "Annuity Insurance Terms"
+    evidence = (
+        *(
+            _heading_evidence(index, heading=running, title="terms.pdf", source_id="v1")
+            for index in range(1, 4)
+        ),
+        _heading_evidence(4, heading=running, title="terms.pdf", source_id="v2"),
+    )
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(evidence)
+
+
 class FakeSearchPort:
     def __init__(
         self,
