@@ -152,7 +152,7 @@ GRAPH_EXTRACTION_PROFILE_DIGEST = text_digest(
 # One extraction batch is long-form structured output (tens of seconds on a
 # hosted model), so it gets its own deadline and completion budget instead of
 # the interactive model timeout and the gateway's 2048-token default.
-DEFAULT_EXTRACTION_TIMEOUT_SECONDS = 120.0
+DEFAULT_EXTRACTION_TIMEOUT_SECONDS = 240.0
 MAX_EXTRACTION_TIMEOUT_SECONDS = 300.0
 DEFAULT_EXTRACTION_MAX_OUTPUT_TOKENS = 8192
 MAX_EXTRACTION_OUTPUT_TOKENS = 32768

@@ -92,6 +92,9 @@ _FIXED_GROUP = "tapper-local"
 _FIXED_ENVIRONMENT = "global"
 
 logger = logging.getLogger(__name__)
+# Conservative hosted-model output rate used to reject a graph extraction deadline
+# that cannot fit its own output budget.
+GRAPH_EXTRACTION_TOKENS_PER_SECOND = 40
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +152,7 @@ class TapperSettings:
     e2e_mode: bool
     vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
-    graph_extraction_timeout_seconds: float = 120.0
+    graph_extraction_timeout_seconds: float = 240.0
     graph_extraction_max_tokens: int = 8192
     graph_worker_concurrency: int = 4
     s3_endpoint: str = ""
@@ -169,6 +172,19 @@ class TapperSettings:
     insights_expires_at: str = ""
     insights_max_micros_per_token: int = 0
     otel_exporter_otlp_endpoint: str | None = None
+
+    def __post_init__(self) -> None:
+        # A deadline too short for the output budget turns a detectable truncation
+        # into a timeout (then retried): require at least one second per
+        # GRAPH_EXTRACTION_TOKENS_PER_SECOND output tokens.
+        if (
+            self.graph_extraction_timeout_seconds * GRAPH_EXTRACTION_TOKENS_PER_SECOND
+            < self.graph_extraction_max_tokens
+        ):
+            raise ValueError(
+                "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS is too short for "
+                "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS"
+            )
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, str]) -> TapperSettings:
@@ -488,7 +504,7 @@ class TapperSettings:
                 values, "TAPPER_VISION_TIMEOUT_SECONDS", 60.0, maximum=60
             ),
             graph_extraction_timeout_seconds=_duration(
-                values, "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS", 120.0, maximum=300
+                values, "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS", 240.0, maximum=300
             ),
             graph_extraction_max_tokens=_integer(
                 values,

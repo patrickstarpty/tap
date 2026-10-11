@@ -122,7 +122,9 @@ def test_graph_batch_settings_defaults_and_bounds() -> None:
 def test_graph_extraction_budget_settings_are_separate_from_the_model_timeout() -> None:
     settings = TapperSettings.from_mapping(S3_SETTINGS)
 
-    assert settings.graph_extraction_timeout_seconds == 120.0
+    # 8192 tokens at roughly 45 tokens/s need about 180 s; the deadline leaves
+    # headroom so a long batch is caught as truncation, not as a timeout.
+    assert settings.graph_extraction_timeout_seconds == 240.0
     assert settings.graph_extraction_max_tokens == 8192
     # Interactive calls keep their existing deadline.
     assert settings.model_timeout_seconds == 15.0
@@ -135,6 +137,35 @@ def test_graph_extraction_budget_settings_are_separate_from_the_model_timeout() 
     ):
         with pytest.raises(ValueError):
             TapperSettings.from_mapping(S3_SETTINGS | {name: value})
+
+
+def test_graph_extraction_deadline_must_cover_its_output_budget() -> None:
+    # At least one second per 40 output tokens.
+    for timeout, budget in (("120", "8192"), ("300", "12001"), ("30", "2048")):
+        with pytest.raises(ValueError, match="TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS"):
+            TapperSettings.from_mapping(
+                S3_SETTINGS
+                | {
+                    "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS": timeout,
+                    "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS": budget,
+                }
+            )
+    for timeout, budget in (("60", "2048"), ("300", "12000"), ("205", "8192")):
+        settings = TapperSettings.from_mapping(
+            S3_SETTINGS
+            | {
+                "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS": timeout,
+                "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS": budget,
+            }
+        )
+        assert settings.graph_extraction_max_tokens == int(budget)
+
+
+def test_default_graph_worker_lease_is_five_minutes() -> None:
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert module._graph_worker_lease(settings).total_seconds() == 300.0
 
 
 def test_graph_worker_concurrency_defaults_to_four_and_widens_gateway_slots() -> None:
@@ -159,7 +190,7 @@ def test_graph_worker_concurrency_defaults_to_four_and_widens_gateway_slots() ->
 def test_graph_worker_gateway_and_lease_cover_the_extraction_deadline() -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(
-        S3_SETTINGS | {"TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS": "180"}
+        S3_SETTINGS | {"TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS": "300"}
     )
 
     default_models = module._create_embeddings(settings)
@@ -168,9 +199,9 @@ def test_graph_worker_gateway_and_lease_cover_the_extraction_deadline() -> None:
     )
 
     assert default_models.gateway._config.timeout_seconds == 15.0
-    assert graph_models.gateway._config.timeout_seconds == 180.0
+    assert graph_models.gateway._config.timeout_seconds == 300.0
     # A lease shorter than one model call would lapse mid-batch.
-    assert module._graph_worker_lease(settings).total_seconds() > 180.0
+    assert module._graph_worker_lease(settings).total_seconds() > 300.0
 
 
 def test_graph_alignment_settings_defaults_and_bounds() -> None:

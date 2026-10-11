@@ -111,7 +111,7 @@ async def test_model_gateway_extraction_is_schema_locked_and_grounded():
     assert gateway.requests[0].schema_digest.startswith("sha256:")
     # Extraction has its own deadline and output budget, independent of the
     # interactive model timeout and the gateway's 2048-token default.
-    assert gateway.requests[0].timeout_seconds == 120.0
+    assert gateway.requests[0].timeout_seconds == 240.0
     assert gateway.requests[0].max_output_tokens == 8192
 
 

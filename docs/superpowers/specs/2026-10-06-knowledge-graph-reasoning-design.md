@@ -221,6 +221,9 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 | `TAPPER_GRAPH_BATCH_CHARS` | 6000 | 每批字符预算（主约束） |
 | `TAPPER_GRAPH_BATCH_SIZE` | 100 | 每批切片数上限（辅约束） |
 | `TAPPER_GRAPH_BATCH_RETRIES` | 3 | 批次重试次数 |
+| `TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS` | 240 | 单次抽取调用截止时间（≤300 秒，须不短于输出预算按每秒 40 token 所需时间；作业租约为其加 60 秒） |
+| `TAPPER_GRAPH_EXTRACTION_MAX_TOKENS` | 8192 | 单次抽取调用输出 token 预算 |
+| `TAPPER_GRAPH_WORKER_CONCURRENCY` | 4 | graph worker 同时处理的作业数（作业内批次仍串行） |
 | `TAPPER_GRAPH_ALIGN_EMBEDDING` | 0 | 第三级 embedding 对齐开关 |
 | `TAPPER_GRAPH_ALIGN_THRESHOLD` | 0.92 | 对齐相似度阈值 |
 | `TAPPER_GRAPH_OVERVIEW_LIMIT` | 150 | 总览节点上限 |
