@@ -10,7 +10,14 @@ from pypdf import PageObject
 
 from tap.modules.knowledge.adapters.document_parsers import ParserRegistry
 from tap.modules.knowledge.adapters.pdf_layout import layout_pdf_pages
-from tap.modules.knowledge.domain.documents import DocumentSource, MediaType
+from tap.modules.knowledge.domain.documents import (
+    PARSER_VERSION,
+    DocumentId,
+    DocumentSource,
+    MediaType,
+    canonical_sha256,
+    revision_id_for,
+)
 
 _FIXTURES = Path(__file__).parents[2] / "fixtures" / "documents" / "pdf_layout"
 _SEPARATOR = "_" * 95
@@ -49,8 +56,11 @@ def parse_fixture(monkeypatch: pytest.MonkeyPatch):
         pages = _pages(name)
         texts = iter(pages)
         monkeypatch.setattr(PageObject, "extract_text", lambda self, *a, **k: next(texts))
+        content = _minimal_pdf(len(pages))
+        document = DocumentId("doc_" + "0" * 32)
+        revision = revision_id_for(document, canonical_sha256(content), PARSER_VERSION)
         return ParserRegistry().parse(
-            DocumentSource(f"{name}.pdf", MediaType.PDF, _minimal_pdf(len(pages)))
+            DocumentSource(f"{name}.pdf", MediaType.PDF, content, document, revision)
         )
 
     return parse
@@ -96,3 +106,92 @@ def test_parser_blocks_never_use_a_separator_as_heading(parse_fixture) -> None:
         all(set(item) - {"_", " "} for item in block.heading_path) for block in artifact.blocks
     )
     assert all(block.page is not None and block.inventory_item_id for block in artifact.blocks)
+
+
+def _chunks(artifact):
+    from tap.modules.knowledge.adapters.document_chunker import StructuralChunker
+
+    return StructuralChunker().chunk(artifact)
+
+
+def test_wrapped_chinese_lines_rejoin_without_spaces_and_list_items_stay_apart() -> None:
+    """A rule wrapped at the margin must read as one sentence in one block."""
+    pages = [
+        "条款\n"
+        "本合同的保险责任与给付规则以本条款约定为准并适用下列各项约定\n"
+        "本合同的保险责任。\n"
+        "若被保险人生存，则给付满期金，其金额等于满期时本合同基本保险\n"
+        "金额的 10%（百分之十）。\n"
+        "（1）第一项；\n"
+        "（2）第二项。",
+        "本页的给付规则与上一页的给付规则相互独立并分别适用下列约定\n第二页正文。",
+    ]
+
+    layout = layout_pdf_pages(pages)
+    text = "\n".join(block.text for block in layout.blocks)
+
+    assert "本合同的保险责任与给付规则以本条款约定为准并适用下列各项约定本合同的保险责任。" in text
+    assert "基本保险金额的 10%（百分之十）。" in text
+    assert "（1）第一项；\n（2）第二项。" in text
+    assert [block.page for block in layout.blocks] == [1, 2]
+
+
+def test_wrapped_english_lines_rejoin_with_a_space() -> None:
+    """Latin words wrap at a space, so the joined sentence keeps one."""
+    pages = [
+        "Terms\n"
+        "The insurer pays the maturity benefit equal to ten percent of the basic sum and\n"
+        "the payment ends this contract once the policy anniversary has been reached by\n"
+        "the insured person.\n"
+        "Finance approves refunds."
+    ]
+
+    text = "\n".join(block.text for block in layout_pdf_pages(pages).blocks)
+
+    assert "basic sum and the payment ends" in text
+    assert "reached by the insured person.\nFinance approves refunds." in text
+
+
+def test_wrapped_maturity_rule_stays_inside_one_chunk(parse_fixture) -> None:
+    """Splitting "...基本保 / 险金额的 10%" across chunks made the answer drop the 10%."""
+    chunks = _chunks(parse_fixture("annuity-terms"))
+
+    assert any(
+        "其金额等于满期时本合同基本保险金额的 10%（百分之十）。" in chunk.content
+        for chunk in chunks
+    )
+
+
+@pytest.mark.parametrize("name", ["annuity-terms", "group-medical-terms"])
+def test_chunk_count_and_average_length_fall_in_the_paragraph_target(
+    name: str, parse_fixture
+) -> None:
+    """One-line chunks (about 30 characters) starve retrieval and extraction of context."""
+    artifact = parse_fixture(name)
+    chunks = _chunks(artifact)
+    body = sum(len(block.text) for block in artifact.blocks)
+    average = sum(len(chunk.content) for chunk in chunks) / len(chunks)
+
+    assert body // 480 <= len(chunks) <= body // 200
+    assert 200 <= average <= 480
+
+
+@pytest.mark.parametrize("name", ["annuity-terms", "group-medical-terms"])
+def test_every_chunk_anchor_is_an_exact_slice_of_one_page_block(name: str, parse_fixture) -> None:
+    """Citation preview resolves a chunk to exactly one normalized block and its page."""
+    artifact = parse_fixture(name)
+    normalized = "\n\n".join(block.text for block in artifact.blocks)
+
+    for chunk in _chunks(artifact):
+        anchor = json.loads(chunk.anchor_json)
+        assert normalized[anchor["startOffset"] : anchor["endOffset"]] == chunk.content
+        (block,) = [
+            block
+            for block in artifact.blocks
+            if block.start_offset <= anchor["startOffset"]
+            and block.end_offset >= anchor["endOffset"]
+        ]
+        assert block.block_id == chunk.parent_id
+        assert block.page == anchor["page"]
+        assert list(block.heading_path) == anchor["headingPath"]
+        assert block.inventory_item_id == anchor["inventoryItemId"]

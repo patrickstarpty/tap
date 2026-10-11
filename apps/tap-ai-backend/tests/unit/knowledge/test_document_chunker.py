@@ -160,3 +160,39 @@ def test_chunker_rejects_artifact_without_answerable_text() -> None:
 
     with pytest.raises(DocumentParseRejected, match="^empty-document$"):
         StructuralChunker().chunk(artifact)
+
+
+def test_pdf_block_above_the_token_limit_splits_only_at_sentence_ends() -> None:
+    """A token-window cut in the middle of a PDF rule loses the figure that answers it."""
+    sentences = [
+        f"第{index}项：被保险人符合约定条件的，本公司按基本保险金额的10%给付。"
+        for index in range(60)
+    ]
+    text = "".join(sentences[:30]) + "\n" + "".join(sentences[30:])
+    block = replace(_block("paragraph", text, 0, len(text), page=3), paragraph_index=0)
+    artifact = replace(_artifact(block), filename="policy.pdf", media_type=MediaType.PDF)
+
+    chunks = StructuralChunker().chunk(artifact)
+
+    assert len(chunks) > 1
+    assert "".join(chunk.content for chunk in chunks) == text.replace("\n", "")
+    for chunk in chunks:
+        anchor = json.loads(chunk.anchor_json)
+        assert text[anchor["startOffset"] : anchor["endOffset"]] == chunk.content
+        assert chunk.content.endswith("。")
+        assert StructuralChunker().token_count(chunk.content) <= 512
+        assert anchor["page"] == 3
+
+
+def test_pdf_sentence_split_keeps_a_heading_line_with_its_paragraph() -> None:
+    """A chunk ending on a bare heading line cites a title without its rule."""
+    body = "本公司按约定给付保险金，给付后本合同继续有效，投保人可以申请变更受益人。" * 9
+    text = "\n".join([body, "四、满期金", body])
+    block = replace(_block("paragraph", text, 0, len(text), page=1), paragraph_index=0)
+    artifact = replace(_artifact(block), filename="policy.pdf", media_type=MediaType.PDF)
+
+    chunks = StructuralChunker().chunk(artifact)
+
+    assert len(chunks) > 1
+    assert not any(chunk.content.endswith("四、满期金") for chunk in chunks)
+    assert any("四、满期金\n本公司按约定给付保险金" in chunk.content for chunk in chunks)
