@@ -350,10 +350,12 @@ export function KnowledgeGraph({
   // Node positions are left untouched. Hovered, selected and cited-path
   // nodes are placed first, then search matches and the focused node's
   // neighbors (edge labels slide along or beside their edges out of these
-  // labels' way), then the rest by degree. Placement runs in screen space and
-  // is redone on zoom: labels (node and edge) grow only with the square
-  // root of the zoom while distances grow with the zoom itself, so zooming
-  // in still enlarges text but separates crowded labels. Keyed on content
+  // labels' way), then the rest by degree. Edge labels never overlap each
+  // other: of two that collide wherever they slide, the lower-priority one
+  // (see `edgeLabelTier`) is hidden at this zoom. Placement runs in screen
+  // space and is redone on zoom: labels (node and edge) grow only with the
+  // square root of the zoom while distances grow with the zoom itself, so
+  // zooming in still enlarges text but separates crowded labels. Keyed on content
   // (these id sets are rebuilt every render), so panning does not redo it.
   const labelZoom = Math.sqrt(zoom);
   const labelPriority = new Set(
@@ -371,10 +373,22 @@ export function KnowledgeGraph({
       .map((node) => node.id),
   );
   const shownEdgeLabels = visibleEdges.filter(isEdgeLabelShown);
+  // Where two edge labels cannot both be shown, cited edges keep theirs
+  // first, then edges at the hovered or selected node, then the rest.
+  const edgeLabelTier = (edge: GraphEdge) =>
+    (highlight?.edgeIds.has(edge.id) ?? false)
+      ? 0
+      : [hoveredNodeId, selectedNodeId].some(
+            (id) => id != null && (edge.source === id || edge.target === id),
+          )
+        ? 1
+        : 2;
   const labelInputsKey = [
     [...labelPriority].join("|"),
     [...labelEmphasis].join("|"),
-    shownEdgeLabels.map((edge) => edge.id).join("|"),
+    shownEdgeLabels
+      .map((edge) => `${edge.id}:${String(edgeLabelTier(edge))}`)
+      .join("|"),
   ].join("#");
   const labelPlacements = useMemo(
     () =>
@@ -399,6 +413,7 @@ export function KnowledgeGraph({
               x2: target.x,
               y2: target.y,
               text: edge.label,
+              tier: edgeLabelTier(edge),
             },
           ];
         }),

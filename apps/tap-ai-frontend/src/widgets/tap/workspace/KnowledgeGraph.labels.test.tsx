@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 
 import { WORKSPACE_COPY } from "./copy";
 import { KnowledgeGraph, type KnowledgeGraphProps } from "./KnowledgeGraph";
-import type { GraphNode } from "./graphLayout";
+import type { GraphEdge, GraphNode } from "./graphLayout";
 
 function buildNode(overrides: Partial<GraphNode> = {}): GraphNode {
   return {
@@ -150,4 +150,66 @@ it("re-places labels in screen space when zooming; labels grow slower than dista
   );
   expect(placementOf("Left label")).toBe("below");
   expect(placementOf("Right label")).toBe("below");
+});
+
+// Two parallel edges close enough that their labels overlap wherever they
+// slide along their edges: only one of the two can be shown.
+const PARALLEL_NODES: GraphNode[] = [
+  buildNode({ id: "h", label: "Hub", degree: 1, x: 300, y: 300 }),
+  buildNode({ id: "a", label: "Alpha", degree: 1, x: 500, y: 300 }),
+  buildNode({ id: "b", label: "Beta", degree: 1, x: 300, y: 316 }),
+  buildNode({ id: "c", label: "Gamma", degree: 1, x: 500, y: 316 }),
+];
+const PARALLEL_EDGES: GraphEdge[] = [
+  {
+    id: "ha",
+    label: "requires",
+    relationType: "REQUIRES",
+    provenance: "extracted",
+    source: "h",
+    target: "a",
+  },
+  {
+    id: "bc",
+    label: "precedes",
+    relationType: "PRECEDES",
+    provenance: "extracted",
+    source: "b",
+    target: "c",
+  },
+];
+
+function shownEdgeLabels(container: HTMLElement): string[] {
+  return [...container.querySelectorAll(".tap-graph-edge-label text")].map(
+    (text) => text.textContent ?? "",
+  );
+}
+
+it("hides an edge label that would overlap another, keeping the hovered node's edge", () => {
+  const { container } = render(
+    <KnowledgeGraph
+      {...props({ nodes: PARALLEL_NODES, edges: PARALLEL_EDGES })}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+
+  expect(shownEdgeLabels(container)).toEqual(["requires"]);
+
+  fireEvent.mouseEnter(nodeGroup("Gamma"));
+  expect(shownEdgeLabels(container)).toEqual(["precedes"]);
+});
+
+it("keeps a cited edge's label over the hovered node's edge", () => {
+  const { container } = render(
+    <KnowledgeGraph
+      {...props({
+        nodes: PARALLEL_NODES,
+        edges: PARALLEL_EDGES,
+        highlight: { edgeIds: new Set(["bc"]), nodeIds: new Set(["b", "c"]) },
+      })}
+    />,
+  );
+  fireEvent.mouseEnter(nodeGroup("Alpha"));
+
+  expect(shownEdgeLabels(container)).toEqual(["precedes"]);
 });

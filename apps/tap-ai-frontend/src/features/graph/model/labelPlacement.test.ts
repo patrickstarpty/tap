@@ -421,6 +421,115 @@ describe("placeGraphLabels", () => {
     expect(overlapArea(box("h"), box("v"))).toBe(0);
   });
 
+  describe("edge labels crowding a shared endpoint", () => {
+    // Two edges leaving the same node in nearly the same direction: their
+    // labels overlap at every spot along either edge.
+    const nearlyParallel = (tiers: { a?: number; b?: number } = {}) => [
+      {
+        id: "a",
+        x1: 300,
+        y1: 300,
+        x2: 500,
+        y2: 300,
+        text: "requires",
+        tier: tiers.a,
+      },
+      {
+        id: "b",
+        x1: 300,
+        y1: 300,
+        x2: 500,
+        y2: 320,
+        text: "precedes",
+        tier: tiers.b,
+      },
+    ];
+    const boxOf = (
+      placed: ReturnType<typeof placeGraphLabels>,
+      id: string,
+      text: string,
+      zoom = 1,
+    ) => {
+      const at = placed.edges.get(id)!;
+      return edgeLabelBox(at.x, at.y, text, zoom);
+    };
+
+    it("hides the later of two edge labels that collide wherever they slide", () => {
+      const placed = placeGraphLabels([], nearlyParallel(), options());
+      expect(placed.edges.get("a")).toEqual({ x: 400, y: 300 });
+      expect(placed.edges.has("b")).toBe(false);
+    });
+
+    it("keeps the higher-priority edge label and hides the other", () => {
+      const placed = placeGraphLabels(
+        [],
+        nearlyParallel({ a: 2, b: 0 }),
+        options(),
+      );
+      expect(placed.edges.get("b")).toEqual({ x: 400, y: 310 });
+      expect(placed.edges.has("a")).toBe(false);
+    });
+
+    it("slides a colliding edge label along its edge rather than hiding it", () => {
+      // The midpoints collide, but the second label clears the first a
+      // little further along its edge.
+      const edges = [
+        { id: "a", x1: 300, y1: 300, x2: 500, y2: 300, text: "requires" },
+        { id: "b", x1: 300, y1: 300, x2: 500, y2: 340, text: "requires" },
+      ];
+      const nodes = [
+        candidate({ id: "hub", x: 300, y: 300, text: "Hub" }),
+        candidate({ id: "a-end", x: 500, y: 300, text: "A" }),
+        candidate({ id: "b-end", x: 500, y: 340, text: "B" }),
+      ];
+      const placed = placeGraphLabels(nodes, edges, options());
+      expect(placed.edges.size).toBe(2);
+      expect(placed.edges.get("a")).toEqual({ x: 400, y: 300 });
+      expect(placed.edges.get("b")).not.toEqual({ x: 400, y: 320 });
+      expect(
+        overlapArea(
+          boxOf(placed, "a", "requires"),
+          boxOf(placed, "b", "requires"),
+        ),
+      ).toBe(0);
+    });
+
+    it("hides an edge label rather than push it onto a priority node label", () => {
+      // Both edges run down from the hub. "a" slides past the hub's label;
+      // the only spot "b" has clear of "a" covers the hub's label, so "b"
+      // is hidden and the hub's label stays clear.
+      const placed = placeGraphLabels(
+        [candidate({ id: "hub", x: 300, y: 300, text: "Hub" })],
+        [
+          { id: "a", x1: 300, y1: 300, x2: 300, y2: 400, text: "requires" },
+          { id: "b", x1: 300, y1: 300, x2: 310, y2: 400, text: "requires" },
+        ],
+        options({ priority: new Set(["hub"]) }),
+      );
+      expect(placed.nodes.get("hub")).toMatchObject({
+        placement: "below",
+        halo: false,
+      });
+      expect(placed.edges.has("a")).toBe(true);
+      expect(placed.edges.has("b")).toBe(false);
+    });
+
+    it("shows both again once zooming in separates them", () => {
+      const placed = placeGraphLabels(
+        [],
+        nearlyParallel(),
+        options({ zoom: 3 }),
+      );
+      expect(placed.edges.size).toBe(2);
+      expect(
+        overlapArea(
+          boxOf(placed, "a", "requires", 3),
+          boxOf(placed, "b", "precedes", 3),
+        ),
+      ).toBe(0);
+    });
+  });
+
   it("keeps other labels off the edge labels", () => {
     const placed = placeGraphLabels([hub, ...ends], edges, options());
     const edgeBoxes = [...placed.edges.entries()].map(([id, at]) =>

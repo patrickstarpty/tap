@@ -213,9 +213,9 @@ const HALO_OVERLAP_TOLERANCE = 0.1;
 
 /**
  * Asserts, from the browser's real text geometry, that every drawn node has
- * a label that the canvas does not cut off, and that node labels overlap
+ * a label that the canvas does not cut off, that node labels overlap
  * neither each other nor the visible edge labels -- except slightly, over a
- * halo.
+ * halo -- and that edge labels do not overlap each other.
  */
 async function expectNodeLabelsReadable(
   page: Page,
@@ -272,6 +272,15 @@ async function expectNodeLabelsReadable(
         if (!inside(core.getBoundingClientRect() as Box, 0)) return;
         if (!inside(text.getBoundingClientRect() as Box)) {
           problems.push(`${text.textContent ?? ""} is cut off by the canvas`);
+        }
+      });
+      // Edge labels never overlap each other (beyond rounding where two
+      // pills touch): one with no free spot is hidden instead.
+      edgeLabels.forEach((a, i) => {
+        for (const b of edgeLabels.slice(i + 1)) {
+          if (overlap(a.box, b.box) > 1) {
+            problems.push(`edge labels ${a.name} / ${b.name} overlap`);
+          }
         }
       });
       nodeLabels.forEach((a, i) => {

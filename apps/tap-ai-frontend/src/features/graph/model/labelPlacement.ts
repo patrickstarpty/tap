@@ -252,11 +252,21 @@ export interface EdgeLabelCandidate {
   x2: number;
   y2: number;
   text: string;
+  /**
+   * Which edge label keeps its place when two cannot both be shown: lower
+   * tiers are placed first (e.g. 0 for cited edges, 1 for edges at the
+   * hovered or selected node, 2 for the rest); ties keep input order.
+   */
+  tier?: number;
 }
 
 export interface GraphLabelPlacement {
   nodes: Map<string, PlacedLabel>;
-  /** Where each edge label is drawn along its edge, in canvas units. */
+  /**
+   * Where each shown edge label is drawn along its edge, in canvas units.
+   * An edge label with no spot clear of the edge labels placed before it is
+   * left out (hidden at this zoom).
+   */
   edges: Map<string, { x: number; y: number }>;
 }
 
@@ -403,6 +413,12 @@ interface PlacementCost {
  * label then slides along (or beside) its edge out of the way, and every
  * later node label avoids the edge labels where they finally sit.
  *
+ * Edge labels go in tier order and never overlap each other: one that
+ * collides with an earlier edge label at every spot along its edge (or
+ * whose only spots clear of those cover a leading label) is left out, so
+ * at a crowded hub the higher-tier labels stay. Only edge labels are ever
+ * left out; zooming in spreads the spots apart and brings them back.
+ *
  * Overlap checks go through uniform-grid spatial indexes, so a full
  * placement stays near-linear in the number of labels.
  */
@@ -526,47 +542,61 @@ export function placeGraphLabels(
     leadingBoxes.set(candidate.id, chosen.box);
   }
 
-  // 2. Edge labels slide along (or beside) their edges to clear the
-  // leading labels, then node circles, then each other, where they can.
+  // 2. Edge labels, in tier order, slide along (or beside) their edges to
+  // clear each other, the leading labels and then node circles.
   const edges = new Map<string, { x: number; y: number }>();
   const edgeGrid = new BoxGrid<null>();
-  for (const edge of edgeLabels) {
-    // Preference order: the first spot along the edge clear of everything;
-    // else the first spot clear of leading labels and nodes; else the first
-    // clear of leading labels; else the least overlap with them. Only
-    // zero/non-zero matters for nodes and other edge labels, so those
-    // checks stop at the first overlap.
+  const edgesByTier = edgeLabels
+    .map((edge, index) => ({ edge, index }))
+    .sort(
+      (a, b) => (a.edge.tier ?? 0) - (b.edge.tier ?? 0) || a.index - b.index,
+    )
+    .map(({ edge }) => edge);
+  for (const edge of edgesByTier) {
+    // Only spots clear of the edge labels already placed are eligible.
+    // Among them, the preference order is: the first clear of everything;
+    // else the first clear of leading labels; else, only if no spot at all
+    // is clear of them (as the leading labels were placed expecting), the
+    // least overlap with them. Otherwise the label is left out: it is only
+    // blocked by other edge labels and must not cover a leading label
+    // instead. Only zero or non-zero matters for nodes and other edge
+    // labels, so those checks stop at the first overlap.
     let chosen: { at: { x: number; y: number }; box: LabelBox } | undefined;
-    let clearOfLabelsAndNodes: typeof chosen;
     let clearOfLabels: typeof chosen;
     let leastOverlap: (typeof chosen & { labels: number }) | undefined;
+    // Whether some spot on the edge itself is clear of leading labels and
+    // nodes, edge labels aside: moving off the edge is only worth it to
+    // clear those, not another edge label (it would crowd the nodes' own
+    // label spots, so such a label is left out instead).
+    let edgeHasRoom = false;
+    let someSpotClearOfLabels = false;
     for (const spot of EDGE_LABEL_SPOTS) {
-      // Off-edge spots come after every along-edge one: once a spot clear
-      // of labels and nodes exists, no later spot can be preferred.
-      if (spot.side !== 0 && clearOfLabelsAndNodes) break;
+      // Off-edge spots come after every along-edge one.
+      if (spot.side !== 0 && edgeHasRoom) break;
       const at = edgeAt(edge, spot);
       const box = edgeLabelBox(at.x, at.y, edge.text, zoom);
       let labels = 0;
       for (const other of leadingBoxes.values()) {
         labels += overlapArea(box, other);
       }
+      const hitsNode =
+        labels === 0 &&
+        circleGrid.any(box, (_, circle) => circleOverlapArea(circle, box));
+      if (labels === 0) someSpotClearOfLabels = true;
+      if (spot.side === 0 && labels === 0 && !hitsNode) edgeHasRoom = true;
+      if (edgeGrid.any(box)) continue;
       if (!leastOverlap || labels < leastOverlap.labels) {
         leastOverlap = { at, box, labels };
       }
       if (labels > 0) continue;
       clearOfLabels ??= { at, box };
-      if (circleGrid.any(box, (_, circle) => circleOverlapArea(circle, box))) {
-        continue;
-      }
-      clearOfLabelsAndNodes ??= { at, box };
-      // Moving off the edge is only worth it to clear labels or nodes, not
-      // another edge label (it would crowd the nodes' own label spots).
-      if (spot.side === 0 && !edgeGrid.any(box)) {
-        chosen = { at, box };
-        break;
-      }
+      if (hitsNode) continue;
+      chosen = { at, box };
+      break;
     }
-    chosen ??= clearOfLabelsAndNodes ?? clearOfLabels ?? leastOverlap!;
+    chosen ??=
+      clearOfLabels ?? (someSpotClearOfLabels ? undefined : leastOverlap);
+    if (!chosen) continue;
     const chosenLabels = chosen === leastOverlap ? leastOverlap.labels : 0;
     edges.set(edge.id, chosen.at);
     edgeGrid.add(chosen.box, null);
