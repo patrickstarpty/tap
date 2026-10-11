@@ -1339,6 +1339,40 @@ def test_empty_relation_context_abstention_preserves_relation_outcome() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("status", [RelationContextStatus.NOT_READY, RelationContextStatus.EMPTY])
+def test_conflicting_sources_abstention_reports_the_actual_graph_status(
+    status: RelationContextStatus,
+) -> None:
+    """A conflict abstention must not report UNAVAILABLE (reasoning disabled)
+    while graph reasoning is wired; it carries the analysed graph status."""
+
+    async def scenario() -> None:
+        search = _SequencedSearchPort(
+            (
+                _relation_hit("chunk-s1", "rev-1", item_id="item-1", content="宽限期 60 日"),
+                _relation_hit(
+                    "chunk-s2", "rev-1", item_id="item-2", content="宽限期 30 日", local_rank=2
+                ),
+            )
+        )
+        model = _RecordingModel([])
+        relation = _FakeRelationAnalysis(
+            RelationContext(status=status, graph_version="7", seeds=_MIXED_SEEDS)
+        )
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert response.abstained
+        assert response.abstention_reason is AbstentionReason.CONFLICTING_SOURCES
+        assert model.calls == []
+        assert response.relation is not None
+        assert response.relation.status is status
+        assert response.relation.seed_count == 3
+        assert response.relation.query_seed_count == 2
+
+    asyncio.run(scenario())
+
+
 def test_stale_context_answers_chunk_only() -> None:
     async def scenario() -> None:
         search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
