@@ -9,7 +9,7 @@ import math
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 from urllib.parse import urlsplit
@@ -145,6 +145,8 @@ class TapperSettings:
     e2e_mode: bool
     vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
+    graph_extraction_timeout_seconds: float = 120.0
+    graph_extraction_max_tokens: int = 8192
     s3_endpoint: str = ""
     s3_bucket: str = ""
     s3_region: str = ""
@@ -472,6 +474,16 @@ class TapperSettings:
             vision_model=vision_model,
             vision_timeout_seconds=_duration(
                 values, "TAPPER_VISION_TIMEOUT_SECONDS", 60.0, maximum=60
+            ),
+            graph_extraction_timeout_seconds=_duration(
+                values, "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS", 120.0, maximum=300
+            ),
+            graph_extraction_max_tokens=_integer(
+                values,
+                "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS",
+                8192,
+                minimum=1024,
+                maximum=32768,
             ),
             milvus_uri=milvus_uri,
             milvus_database=_identity(values, "MILVUS_DATABASE", "default"),
@@ -1043,13 +1055,21 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
         model_embeddings: KnowledgeModelGateway | None = None
         if settings.graph_extraction_mode == "model" or settings.graph_align_embedding:
             model_embeddings = _create_embeddings(
-                settings, recorder=MysqlModelCallRecorder(sessions)
+                settings,
+                recorder=MysqlModelCallRecorder(sessions),
+                timeout_ceiling_seconds=(
+                    settings.graph_extraction_timeout_seconds
+                    if settings.graph_extraction_mode == "model"
+                    else None
+                ),
             )
             _push_if_owned(resources, model_embeddings)
         if settings.graph_extraction_mode == "model":
             assert model_embeddings is not None
             extractor: GraphExtractionPort = ModelGatewayGraphExtraction(
-                model_embeddings.gateway, timeout_seconds=settings.model_timeout_seconds
+                model_embeddings.gateway,
+                timeout_seconds=settings.graph_extraction_timeout_seconds,
+                max_output_tokens=settings.graph_extraction_max_tokens,
             )
         else:
             extractor = DeterministicGraphExtraction()
@@ -1075,6 +1095,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             worker_id=settings.worker_id + "-graph",
             batch_size=settings.graph_batch_size,
             batch_retries=settings.graph_batch_retries,
+            lease_duration=_graph_worker_lease(settings),
         )
         wakeups = RedisWakeupConsumer(
             scope=scope,
@@ -1093,6 +1114,17 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("graph worker resource settlement unexpectedly returned")
+
+
+def _graph_worker_lease(settings: TapperSettings) -> timedelta:
+    """A graph job lease that outlives one full extraction call plus bookkeeping.
+
+    The worker renews its lease between batches and around retries, never during a
+    model call, so the lease must cover the whole extraction deadline; otherwise a
+    long batch would lose its lease mid-call and the job would be reclaimed.
+    """
+
+    return timedelta(seconds=max(60.0, settings.graph_extraction_timeout_seconds + 60.0))
 
 
 async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
@@ -1269,7 +1301,18 @@ def _create_embeddings(
     max_retries: int = 1,
     catalog: LiteLLMCatalog | None = None,
     recorder: ModelCallRecorder | None = None,
+    timeout_ceiling_seconds: float | None = None,
 ) -> KnowledgeModelGateway:
+    # The gateway rejects any call whose own deadline exceeds this ceiling; long
+    # batch callers (graph extraction) raise it without changing interactive
+    # deadlines, which each call still sets for itself.
+    ceiling = (
+        max(settings.model_timeout_seconds, settings.vision_timeout_seconds)
+        if settings.vision_model
+        else settings.model_timeout_seconds
+    )
+    if timeout_ceiling_seconds is not None:
+        ceiling = max(ceiling, timeout_ceiling_seconds)
     config = LiteLLMModelGatewayConfig(
         base_url=settings.litellm_base_url,
         api_key=settings.litellm_api_key,
@@ -1277,11 +1320,7 @@ def _create_embeddings(
             settings.default_chat_model, settings.embedding_model, settings.vision_model
         ),
         embedding_dimension=settings.embedding_dimension,
-        timeout_seconds=(
-            max(settings.model_timeout_seconds, settings.vision_timeout_seconds)
-            if settings.vision_model
-            else settings.model_timeout_seconds
-        ),
+        timeout_seconds=ceiling,
         max_retries=max_retries,
     )
     gateway: LiteLLMModelGateway

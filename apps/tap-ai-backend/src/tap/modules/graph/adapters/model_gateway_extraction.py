@@ -162,12 +162,36 @@ GRAPH_EXTRACTION_PROFILE_DIGEST = text_digest(
 )
 
 
+# One extraction batch is long-form structured output (tens of seconds on a
+# hosted model), so it gets its own deadline and completion budget instead of
+# the interactive model timeout and the gateway's 2048-token default.
+DEFAULT_EXTRACTION_TIMEOUT_SECONDS = 120.0
+MAX_EXTRACTION_TIMEOUT_SECONDS = 300.0
+DEFAULT_EXTRACTION_MAX_OUTPUT_TOKENS = 8192
+MAX_EXTRACTION_OUTPUT_TOKENS = 32768
+
+
 class ModelGatewayGraphExtraction:
-    def __init__(self, gateway: ModelGateway, *, timeout_seconds: float = 15.0) -> None:
-        if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 60:
-            raise ValueError("graph extraction timeout must be between 0 and 60 seconds")
+    def __init__(
+        self,
+        gateway: ModelGateway,
+        *,
+        timeout_seconds: float = DEFAULT_EXTRACTION_TIMEOUT_SECONDS,
+        max_output_tokens: int = DEFAULT_EXTRACTION_MAX_OUTPUT_TOKENS,
+    ) -> None:
+        if (
+            not math.isfinite(timeout_seconds)
+            or not 0 < timeout_seconds <= MAX_EXTRACTION_TIMEOUT_SECONDS
+        ):
+            raise ValueError("graph extraction timeout must be between 0 and 300 seconds")
+        if (
+            type(max_output_tokens) is not int
+            or not 1 <= max_output_tokens <= MAX_EXTRACTION_OUTPUT_TOKENS
+        ):
+            raise ValueError("graph extraction output budget is out of bounds")
         self._gateway = gateway
         self._timeout_seconds = timeout_seconds
+        self._max_output_tokens = max_output_tokens
 
     async def extract(self, request: GraphExtractionRequest) -> GraphSnapshotDraft | None:
         with span(
@@ -196,6 +220,7 @@ class ModelGatewayGraphExtraction:
                     idempotency_key=request.idempotency_key,
                     schema=GRAPH_EXTRACTION_SCHEMA,
                     schema_digest=schema_digest(GRAPH_EXTRACTION_SCHEMA),
+                    max_output_tokens=self._max_output_tokens,
                 )
             )
             if not isinstance(result.output, dict):

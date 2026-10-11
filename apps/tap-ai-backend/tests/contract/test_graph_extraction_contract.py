@@ -116,7 +116,28 @@ async def test_model_gateway_extraction_is_schema_locked_and_grounded():
     assert draft.edges[0].evidence_ids == ("evidence-1",)
     assert gateway.requests[0].operation is ModelOperation.STRUCTURED
     assert gateway.requests[0].schema_digest.startswith("sha256:")
-    assert gateway.requests[0].timeout_seconds == 15.0
+    # Extraction has its own deadline and output budget, independent of the
+    # interactive model timeout and the gateway's 2048-token default.
+    assert gateway.requests[0].timeout_seconds == 120.0
+    assert gateway.requests[0].max_output_tokens == 8192
+
+
+@pytest.mark.asyncio
+async def test_extraction_deadline_and_budget_are_configurable_and_bounded():
+    gateway = Gateway(_output())
+
+    await ModelGatewayGraphExtraction(gateway, timeout_seconds=240, max_output_tokens=4096).extract(
+        _request()
+    )
+
+    assert gateway.requests[0].timeout_seconds == 240
+    assert gateway.requests[0].max_output_tokens == 4096
+    for timeout in (0, 301, float("nan")):
+        with pytest.raises(ValueError):
+            ModelGatewayGraphExtraction(gateway, timeout_seconds=timeout)
+    for budget in (0, 32769):
+        with pytest.raises(ValueError):
+            ModelGatewayGraphExtraction(gateway, max_output_tokens=budget)
 
 
 @pytest.mark.asyncio

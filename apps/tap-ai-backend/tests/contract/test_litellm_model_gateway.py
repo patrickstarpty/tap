@@ -1959,3 +1959,75 @@ def test_image_payload_shape_change_never_persists_bytes():
         "operation": ModelOperation.STRUCTURED.value,
         "image": image_digest,
     }
+
+
+@pytest.mark.asyncio
+async def test_structured_output_budget_is_per_request_and_defaults_unchanged():
+    sent = []
+    gateway = configured_gateway(lambda incoming: (sent.append(incoming), success(incoming))[1])
+
+    await gateway.generate_structured(request(ModelOperation.STRUCTURED))
+    await gateway.chat(request())
+    await gateway.generate_structured(
+        replace(request(ModelOperation.STRUCTURED), max_output_tokens=8192)
+    )
+
+    budgets = [json.loads(item.content)["max_tokens"] for item in sent]
+    assert budgets == [2048, 2048, 8192]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", [0, -1, 32769, True, 1.5])
+async def test_invalid_output_budget_is_rejected_before_transport(budget):
+    sent = []
+    gateway = configured_gateway(lambda incoming: (sent.append(incoming), success(incoming))[1])
+
+    with pytest.raises(ModelGatewayRejected):
+        await gateway.generate_structured(
+            replace(request(ModelOperation.STRUCTURED), max_output_tokens=budget)
+        )
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_truncated_structured_output_fails_closed_even_with_a_larger_budget():
+    def truncated(incoming):
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen-plus",
+                "choices": [{"message": {"content": '{"answer":"Grou'}, "finish_reason": "length"}],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 8192},
+            },
+        )
+
+    with pytest.raises(ModelGatewayUnavailable, match="^model-unavailable$"):
+        await configured_gateway(truncated).generate_structured(
+            replace(request(ModelOperation.STRUCTURED), max_output_tokens=8192)
+        )
+
+
+@pytest.mark.asyncio
+async def test_gateway_deadline_ceiling_allows_a_long_extraction_only_when_configured():
+    sent = []
+    long_request = replace(request(ModelOperation.STRUCTURED), timeout_seconds=120)
+
+    with pytest.raises(ModelGatewayRejected):
+        await configured_gateway(
+            lambda incoming: (sent.append(incoming), success(incoming))[1]
+        ).generate_structured(long_request)
+    assert sent == []
+
+    result = await configured_gateway(
+        lambda incoming: (sent.append(incoming), success(incoming))[1], timeout_seconds=120
+    ).generate_structured(long_request)
+    assert result.output == {"answer": "Grounded"} and len(sent) == 1
+
+    with pytest.raises(ValueError):
+        LiteLLMModelGatewayConfig(
+            base_url="https://litellm.example",
+            api_key="private-provider-key",
+            roles=ROLES,
+            embedding_dimension=2,
+            timeout_seconds=301,
+        )
