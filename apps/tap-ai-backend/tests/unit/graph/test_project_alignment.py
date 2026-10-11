@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import math
+import random
+import time
 from typing import Sequence
 
 from tap.modules.graph.application.alignment import alignment_key, merge_edges, resolve_entities
@@ -259,10 +262,10 @@ def _linear_scan_clusters(
                             if other is None:
                                 continue
                             dot = sum(x * y for x, y in zip(vector, other))
-                            norm = (
-                                sum(x * x for x in vector) ** 0.5 * sum(y * y for y in other) ** 0.5
-                            )
-                            score = 0.0 if norm == 0.0 else dot / norm
+                            norm_vector = math.sqrt(sum(x * x for x in vector))
+                            norm_other = math.sqrt(sum(y * y for y in other))
+                            norm_product = norm_vector * norm_other
+                            score = 0.0 if norm_product == 0.0 else dot / norm_product
                             if score >= threshold and score > best_score:
                                 best, best_score = cluster, score
                     if best is not None:
@@ -323,3 +326,157 @@ def test_indexed_alignment_matches_a_full_cluster_scan_on_overlapping_fragments(
                 for entity in resolve_entities(fragments, embeddings=supplied, threshold=0.92)
             ]
             assert actual == expected, f"seed {seed} embeddings={supplied is not None}"
+
+
+def _embedding_fragments(
+    rng: random.Random,
+    *,
+    node_count: int,
+    node_types: Sequence[str],
+    vector_for,
+    key_space: int,
+    vector_rate: float = 0.85,
+) -> tuple[list[GraphSnapshotDraft], dict[tuple[str, str], tuple[float, ...]]]:
+    """Nodes with keys drawn from ``key_space`` names (so EXACT/ALIAS still
+    build multi-member clusters whose members carry different vectors) spread
+    over several fragments; most nodes carry a vector from ``vector_for``."""
+    fragments: list[GraphSnapshotDraft] = []
+    embeddings: dict[tuple[str, str], tuple[float, ...]] = {}
+    remaining = node_count
+    fragment_index = 0
+    while remaining > 0:
+        size = min(remaining, rng.randint(1, 30))
+        remaining -= size
+        snapshot_id = f"frag-{rng.randint(0, 999):03d}-{fragment_index}"
+        fragment_index += 1
+        specs = []
+        for node_index in range(size):
+            node_id = f"n{node_index}"
+            key = f"key{rng.randrange(key_space)}"
+            label = f"label{rng.randrange(key_space)}"
+            specs.append((node_id, label, rng.choice(node_types), key))
+            if rng.random() < vector_rate:
+                embeddings[(snapshot_id, node_id)] = vector_for(rng)
+        fragments.append(_fragment(snapshot_id, specs))
+    return fragments, embeddings
+
+
+def _resolved_clusters(
+    fragments: Sequence[GraphSnapshotDraft],
+    embeddings: dict[tuple[str, str], tuple[float, ...]],
+    threshold: float,
+) -> list[tuple[str, tuple[tuple[str, str], ...], str]]:
+    return [
+        (entity.node_type, entity.members, entity.rule)
+        for entity in resolve_entities(fragments, embeddings=embeddings, threshold=threshold)
+    ]
+
+
+def test_embedding_alignment_matches_a_full_scan_on_clustered_random_vectors():
+    for seed in range(12):
+        rng = random.Random(1000 + seed)
+        dim = rng.choice((8, 16, 64))
+        centers = [tuple(rng.gauss(0.0, 1.0) for _ in range(dim)) for _ in range(12)]
+
+        def clustered(local: random.Random) -> tuple[float, ...]:
+            center = local.choice(centers)
+            return tuple(value + local.gauss(0.0, 0.2) for value in center)
+
+        fragments, embeddings = _embedding_fragments(
+            rng,
+            node_count=rng.randint(80, 240),
+            node_types=("CONCEPT", "ENTITY", "PROCESS")[: rng.randint(1, 3)],
+            vector_for=clustered,
+            key_space=400,
+        )
+        for threshold in (0.92, 0.8):
+            expected = _linear_scan_clusters(fragments, embeddings, threshold)
+            actual = _resolved_clusters(fragments, embeddings, threshold)
+            assert actual == expected, f"seed {seed} threshold {threshold}"
+            assert any(rule == "EMBEDDING" for _, _, rule in actual), f"seed {seed}"
+
+
+def test_embedding_alignment_matches_a_full_scan_on_ties_and_boundary_scores():
+    """Lattice directions, scaled duplicates and zero vectors produce exact
+    score ties across clusters and scores landing exactly on the threshold;
+    the earliest-created cluster must still win every tie."""
+    lattice = [
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (1.0, 1.0, 0.0),
+        (1.0, 1.0, 1.0),
+        (-1.0, 1.0, 0.0),
+        (0.0, 0.0, 0.0),
+    ]
+
+    def lattice_vector(local: random.Random) -> tuple[float, ...]:
+        scale = local.choice((1.0, 1.0, 2.0, 0.5, 3.0, 1e-3))
+        return tuple(scale * value for value in local.choice(lattice))
+
+    boundary = 1.0 / math.sqrt(2.0)
+    for seed in range(30):
+        rng = random.Random(2000 + seed)
+        fragments, embeddings = _embedding_fragments(
+            rng,
+            node_count=rng.randint(10, 80),
+            node_types=("CONCEPT", "ENTITY")[: rng.randint(1, 2)],
+            vector_for=lattice_vector,
+            key_space=rng.choice((6, 40)),
+        )
+        for threshold in (0.92, boundary, 0.5, 0.0):
+            expected = _linear_scan_clusters(fragments, embeddings, threshold)
+            actual = _resolved_clusters(fragments, embeddings, threshold)
+            assert actual == expected, f"seed {seed} threshold {threshold}"
+
+
+def test_embedding_alignment_matches_a_full_scan_on_mixed_dimensions_and_extreme_scales():
+    """Vectors the index cannot hold faithfully (mixed lengths within one type,
+    norms far outside a normal float range) still align exactly as the full
+    scan does."""
+
+    def irregular(local: random.Random) -> tuple[float, ...]:
+        dim = local.choice((3, 3, 3, 4))
+        scale = local.choice((1.0, 1.0, 1e200, 1e-200))
+        return tuple(scale * local.choice((-1.0, 0.0, 1.0, 0.5)) for _ in range(dim))
+
+    for seed in range(20):
+        rng = random.Random(3000 + seed)
+        fragments, embeddings = _embedding_fragments(
+            rng,
+            node_count=rng.randint(10, 60),
+            node_types=("CONCEPT", "ENTITY"),
+            vector_for=irregular,
+            key_space=50,
+        )
+        for threshold in (0.92, 0.5):
+            expected = _linear_scan_clusters(fragments, embeddings, threshold)
+            actual = _resolved_clusters(fragments, embeddings, threshold)
+            assert actual == expected, f"seed {seed} threshold {threshold}"
+
+
+def test_embedding_alignment_of_two_thousand_single_type_nodes_stays_fast():
+    rng = random.Random(7)
+    dim = 64
+    centers = [tuple(rng.gauss(0.0, 1.0) for _ in range(dim)) for _ in range(500)]
+
+    def clustered(local: random.Random) -> tuple[float, ...]:
+        center = local.choice(centers)
+        return tuple(value + local.gauss(0.0, 0.15) for value in center)
+
+    fragments, embeddings = _embedding_fragments(
+        rng,
+        node_count=2000,
+        node_types=("CONCEPT",),
+        vector_for=clustered,
+        key_space=10**9,
+        vector_rate=1.0,
+    )
+
+    started = time.perf_counter()
+    entities = resolve_entities(fragments, embeddings=embeddings, threshold=0.92)
+    elapsed = time.perf_counter() - started
+
+    assert any(entity.rule == "EMBEDDING" for entity in entities)
+    # The full scan takes well over ten seconds here; the indexed layer takes
+    # a fraction of a second, so this budget leaves wide headroom for CI.
+    assert elapsed < 3.0, elapsed

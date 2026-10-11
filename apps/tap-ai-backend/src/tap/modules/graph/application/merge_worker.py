@@ -4,6 +4,7 @@ the queue -- or back off on failure, or abandon cleanly on a lost lease."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timedelta, timezone
@@ -29,10 +30,12 @@ logger = logging.getLogger(__name__)
 # every cycle without ever publishing or recording a failure.
 _DEFAULT_EMBED_CHUNK_SIZE = 64
 
-# Level-3 embedding alignment is O(N^2 * dim) pure Python and blocks the
-# event loop; past this many raw fragment nodes (summed across all fragments
-# feeding one merge) in one merge, skip it rather than risk starving every
-# other coroutine for the lease duration.
+# Level-3 embedding alignment still compares every node with every earlier
+# same-type node (one matrix product per node, tenths of a second at a few
+# thousand nodes, seconds near the configurable 20000 ceiling); the merge runs
+# in a worker thread so it never blocks the event loop, and past this many raw
+# fragment nodes (summed across all fragments feeding one merge) embedding
+# alignment is skipped to bound each merge's CPU time.
 _DEFAULT_EMBEDDING_MAX_NODES = 2000
 
 
@@ -107,7 +110,11 @@ class ProjectGraphMergeWorker:
                         phase = "embed"
                         claim, embeddings = await self._embed_labels(claim, fragments)
                 phase = "merge"
-                draft = self._merger.merge(self._scope, fragments, embeddings=embeddings)
+                # CPU-bound (see `_DEFAULT_EMBEDDING_MAX_NODES`): run it off the
+                # event loop so other coroutines keep running meanwhile.
+                draft = await asyncio.to_thread(
+                    self._merger.merge, self._scope, fragments, embeddings=embeddings
+                )
                 phase = "complete"
                 await self._queue.complete(self._scope, claim, draft, now=self._now())
             except ProjectMergeLeaseLost:

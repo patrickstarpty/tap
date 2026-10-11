@@ -7,6 +7,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Literal, Mapping, Sequence
 
+import numpy as np
+import numpy.typing as npt
+
 from tap.modules.graph.domain.models import GraphEdge, GraphSnapshotDraft, RelationOrigin
 from tap.modules.graph.domain.project import ProjectEdge, project_edge_id, project_node_id
 from tap.modules.graph.domain.vocabulary import normalize_key
@@ -67,6 +70,165 @@ def _cosine_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> flo
     return dot / (norm_left * norm_right)
 
 
+# The index's matrix-product scores and `_cosine_similarity` differ only by
+# float rounding (on the order of the vector length times 1e-16, orders of
+# magnitude below this tolerance for any realistic embedding size); every
+# decision that rounding could flip is re-taken with `_cosine_similarity`
+# itself once the index has narrowed the candidates.
+_SCORE_TOLERANCE = 1e-9
+# Squared norms outside this range (or non-finite) can lose precision in
+# `_cosine_similarity`'s own sums, so a node type holding any such vector is
+# aligned by the plain scan instead of the index.
+_MIN_INDEXED_NORM_SQUARED = 1e-150
+_MAX_INDEXED_NORM_SQUARED = 1e150
+
+
+def _indexable_norm_squared(vector: tuple[float, ...]) -> float | None:
+    norm_squared = sum(x * x for x in vector)
+    if norm_squared == 0.0:
+        return 0.0
+    if not math.isfinite(norm_squared):
+        return None
+    if not _MIN_INDEXED_NORM_SQUARED <= norm_squared <= _MAX_INDEXED_NORM_SQUARED:
+        return None
+    return norm_squared
+
+
+class _TypeEmbeddingIndex:
+    """Unit-normalized vectors of one node type's placed members, one row per
+    member in placement order, with the cluster each row was placed in.
+
+    Every placed node is a member of exactly one cluster, so "best member of
+    any same-type cluster" is "best row", and the earliest cluster among the
+    rows tied at the best score is the cluster the plain scan picks."""
+
+    def __init__(self, dimension: int) -> None:
+        self._rows: npt.NDArray[np.float64] = np.empty((64, dimension), dtype=np.float64)
+        self._count = 0
+        self.keys: list[tuple[str, str]] = []
+        self.clusters: list[_Cluster] = []
+
+    def append(
+        self, key: tuple[str, str], unit: npt.NDArray[np.float64], cluster: _Cluster
+    ) -> None:
+        if self._count == len(self._rows):
+            grown = np.empty((2 * len(self._rows), self._rows.shape[1]), dtype=np.float64)
+            grown[: self._count] = self._rows[: self._count]
+            self._rows = grown
+        self._rows[self._count] = unit
+        self._count += 1
+        self.keys.append(key)
+        self.clusters.append(cluster)
+
+    def scores(self, unit: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        return self._rows[: self._count] @ unit
+
+
+class _EmbeddingAligner:
+    """EMBEDDING-level matching: the cluster holding the most similar
+    same-type member at or above `threshold`, ties to the earliest-created
+    cluster -- the same answer as scoring every member of every cluster.
+
+    Node types whose vectors share one length and a well-scaled norm go
+    through a per-type matrix index that scores all placed members with one
+    matrix-vector product and re-scores only the near-best rows exactly; any
+    other node type falls back to the plain scan."""
+
+    def __init__(
+        self,
+        ordered_fragments: Sequence[GraphSnapshotDraft],
+        embeddings: Mapping[tuple[str, str], tuple[float, ...]],
+        threshold: float,
+    ) -> None:
+        self._embeddings = embeddings
+        self._threshold = threshold
+        self._units: dict[tuple[str, str], npt.NDArray[np.float64]] = {}
+        dimensions: dict[str, int | None] = {}
+        for fragment in ordered_fragments:
+            snapshot_id = fragment.snapshot.snapshot_id
+            for node in fragment.nodes:
+                key = (snapshot_id, node.node_id)
+                vector = embeddings.get(key)
+                if vector is None:
+                    continue
+                norm_squared = _indexable_norm_squared(vector)
+                known = dimensions.get(node.node_type, len(vector))
+                if norm_squared is None or known != len(vector):
+                    dimensions[node.node_type] = None
+                    continue
+                dimensions.setdefault(node.node_type, len(vector))
+                if norm_squared == 0.0:
+                    self._units[key] = np.zeros(len(vector), dtype=np.float64)
+                else:
+                    self._units[key] = np.asarray(vector, dtype=np.float64) / math.sqrt(
+                        norm_squared
+                    )
+        self._indexes: dict[str, _TypeEmbeddingIndex] = {
+            node_type: _TypeEmbeddingIndex(dimension)
+            for node_type, dimension in dimensions.items()
+            if dimension is not None
+        }
+
+    def place(self, node_type: str, key: tuple[str, str], cluster: _Cluster) -> None:
+        index = self._indexes.get(node_type)
+        unit = self._units.get(key)
+        if index is not None and unit is not None:
+            index.append(key, unit, cluster)
+
+    def best_cluster(
+        self, node_type: str, key: tuple[str, str], clusters: Sequence[_Cluster]
+    ) -> _Cluster | None:
+        vector = self._embeddings.get(key)
+        if vector is None:
+            return None
+        index = self._indexes.get(node_type)
+        if index is None:
+            return self._scan(node_type, vector, clusters)
+        unit = self._units[key]
+        scores = index.scores(unit)
+        if not len(scores):
+            return None
+        floor = self._threshold - _SCORE_TOLERANCE
+        top = float(scores.max())
+        if not top >= floor:
+            return None
+        # Rows whose exact score could still equal the exact maximum.
+        rows = np.flatnonzero(scores >= max(top - 2 * _SCORE_TOLERANCE, floor))
+        winners = {index.clusters[int(row)].position for row in rows}
+        if (
+            len(winners) == 1
+            and top - _SCORE_TOLERANCE >= self._threshold
+            and top - _SCORE_TOLERANCE > -1.0
+        ):
+            return index.clusters[int(rows[0])]
+        best_cluster: _Cluster | None = None
+        best_score = -1.0
+        for row in sorted(
+            (int(row) for row in rows), key=lambda item: (index.clusters[item].position, item)
+        ):
+            score = _cosine_similarity(vector, self._embeddings[index.keys[row]])
+            if score >= self._threshold and score > best_score:
+                best_score, best_cluster = score, index.clusters[row]
+        return best_cluster
+
+    def _scan(
+        self, node_type: str, vector: tuple[float, ...], clusters: Sequence[_Cluster]
+    ) -> _Cluster | None:
+        best_cluster: _Cluster | None = None
+        best_score = -1.0
+        for cluster in clusters:
+            if cluster.node_type != node_type:
+                continue
+            for member in cluster.members:
+                member_vector = self._embeddings.get(member)
+                if member_vector is None:
+                    continue
+                score = _cosine_similarity(vector, member_vector)
+                if score >= self._threshold and score > best_score:
+                    best_score, best_cluster = score, cluster
+        return best_cluster
+
+
 def _majority(values: Sequence[str]) -> str:
     """Return the modal value, breaking ties by first occurrence."""
     counts = Counter(values)
@@ -95,6 +257,10 @@ def resolve_entities(
     # earliest-created one, so the index keeps the smallest creation position per
     # ``(node_type, key)``; the minimum over a node's keys is that same cluster.
     alias_index: dict[tuple[str, str], int] = {}
+    # EMBEDDING matches the best-scoring same-type member of any cluster; the
+    # aligner indexes placed members' vectors per node type so each node is
+    # scored against all of them in one matrix product (see `_EmbeddingAligner`).
+    aligner = _EmbeddingAligner(ordered_fragments, embeddings, threshold) if embeddings else None
 
     for fragment in ordered_fragments:
         snapshot_id = fragment.snapshot.snapshot_id
@@ -118,23 +284,11 @@ def resolve_entities(
                 if alias_positions:
                     target, rule_used = clusters[min(alias_positions)], "ALIAS"
 
-            if target is None and embeddings:
-                vector = embeddings.get((snapshot_id, node.node_id))
-                if vector is not None:
-                    best_cluster: _Cluster | None = None
-                    best_score = -1.0
-                    for cluster in clusters:
-                        if cluster.node_type != node.node_type:
-                            continue
-                        for member_snapshot_id, member_node_id in cluster.members:
-                            member_vector = embeddings.get((member_snapshot_id, member_node_id))
-                            if member_vector is None:
-                                continue
-                            score = _cosine_similarity(vector, member_vector)
-                            if score >= threshold and score > best_score:
-                                best_score, best_cluster = score, cluster
-                    if best_cluster is not None:
-                        target, rule_used = best_cluster, "EMBEDDING"
+            node_key = (snapshot_id, node.node_id)
+            if target is None and aligner is not None:
+                best_cluster = aligner.best_cluster(node.node_type, node_key, clusters)
+                if best_cluster is not None:
+                    target, rule_used = best_cluster, "EMBEDDING"
 
             if target is None:
                 target = _Cluster(
@@ -147,7 +301,9 @@ def resolve_entities(
                 clusters.append(target)
                 rule_used = "EXACT"
 
-            target.members.append((snapshot_id, node.node_id))
+            target.members.append(node_key)
+            if aligner is not None:
+                aligner.place(node.node_type, node_key, target)
             target.level1_keys.add(key1)
             exact_index.setdefault((node.node_type, key1), target)
             target.level2_keys |= keys2
