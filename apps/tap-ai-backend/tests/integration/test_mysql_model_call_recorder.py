@@ -189,3 +189,39 @@ def test_success_after_failure_clears_degraded(owned_project_mysql: IsolatedMysq
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_record_preserves_a_cost_below_the_old_scale_eight_resolution(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    """A per-call cost under 1e-8 used to round to a silent 0.00000000 under the
+    original DECIMAL(18,8) column; migration 0031 widens the scale so it survives."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            recorder = MysqlModelCallRecorder(sessions)
+            tiny_cost = Decimal("0.0000000037")
+            record = _record(cost_usd=tiny_cost)
+            await recorder.record(record)
+            assert recorder.degraded() is False
+
+            async with engine.connect() as connection:
+                call_rows = (
+                    (
+                        await connection.execute(
+                            sa.select(model_call).where(model_call.c.call_id == record.call_id)
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+            assert len(call_rows) == 1
+            assert call_rows[0]["cost_usd"] == tiny_cost
+            assert call_rows[0]["cost_usd"] != Decimal("0")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())

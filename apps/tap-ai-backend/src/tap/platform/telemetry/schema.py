@@ -56,7 +56,11 @@ model_call = Table(
     Column("provider", String(64)),
     Column("input_tokens", Integer),
     Column("output_tokens", Integer),
-    Column("cost_usd", DECIMAL(18, 8)),
+    # scale=10: a per-call USD cost below 1e-8 (plausible for a single cheap
+    # embedding token) would round to 0.00000000 under the original scale=8
+    # column, silently reporting a real charge as free. scale=10 keeps the
+    # same 8-digit integer headroom while resolving down to 1e-10.
+    Column("cost_usd", DECIMAL(18, 10)),
     Column("latency_ms", Integer, nullable=False),
     Column("attempts", Integer, nullable=False),
     Column("status", String(16), nullable=False),
