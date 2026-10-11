@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -17,7 +18,12 @@ from tap.modules.ai.adapters.litellm import (
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, LiteLLMModel, LiteLLMRoutes
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
-from tap.testing.deterministic_model import _first_evidence_sentence, deterministic_vector
+from tap.testing.deterministic_model import (
+    _ANSWER_DELAY_SECONDS,
+    _CANCELLATION_QUERY_SUFFIX,
+    _first_evidence_sentence,
+    deterministic_vector,
+)
 
 BUILT_IN_ROUTES = LiteLLMRoutes(
     {
@@ -48,6 +54,24 @@ class StaticLiteLLMCatalog(LiteLLMCatalog):
         return None
 
 
+def _cancellation_requested(context: str) -> bool:
+    """`KnowledgeModelGateway.answer` carries the question under the JSON `query` key
+    (`src/tap/modules/knowledge/adapters/litellm.py`); match the E2E cancel marker there
+    so an unrelated evidence or relation record ending in similar text cannot trigger it.
+    Other structured contexts (e.g. prompt suggestions) do not carry a separately
+    addressable question, so fall back to a plain substring check on the raw context --
+    the production marker never occurs there outside of this fake E2E contract."""
+
+    try:
+        parsed = json.loads(context)
+    except (ValueError, TypeError):
+        parsed = None
+    query = parsed.get("query") if isinstance(parsed, dict) else None
+    if isinstance(query, str):
+        return query.endswith(_CANCELLATION_QUERY_SUFFIX)
+    return isinstance(context, str) and _CANCELLATION_QUERY_SUFFIX in context
+
+
 class DeterministicModelGateway(LiteLLMModelGateway):
     def __init__(
         self,
@@ -56,6 +80,7 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         scope: ProjectScopeContext,
         redact: Redact,
         recorder: ModelCallRecorder | None = None,
+        answer_delay_seconds: float = _ANSWER_DELAY_SECONDS,
     ) -> None:
         super().__init__(
             config,
@@ -64,6 +89,13 @@ class DeterministicModelGateway(LiteLLMModelGateway):
             catalog=StaticLiteLLMCatalog(),
             recorder=recorder,
         )
+        if (
+            isinstance(answer_delay_seconds, bool)
+            or not isinstance(answer_delay_seconds, int | float)
+            or not 0 <= answer_delay_seconds <= 5
+        ):
+            raise ValueError("deterministic E2E answer delay must be zero to five seconds")
+        self._answer_delay_seconds = float(answer_delay_seconds)
 
     async def _post(
         self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
@@ -81,6 +113,8 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 "usage": {"prompt_tokens": len(request.context.split())},
             }
         else:
+            if self._answer_delay_seconds and _cancellation_requested(request.context):
+                await asyncio.sleep(self._answer_delay_seconds)
             content = "Grounded"
             if (
                 request.operation is ModelOperation.STRUCTURED
