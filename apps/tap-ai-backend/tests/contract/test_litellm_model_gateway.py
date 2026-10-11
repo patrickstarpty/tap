@@ -479,6 +479,113 @@ async def test_deterministic_gateway_answers_prompt_suggestion_schema():
     }
 
 
+def _structured_answer_request(context: str):
+    from tap.modules.knowledge.adapters.litellm import _ANSWER_SCHEMA
+
+    schema = _ANSWER_SCHEMA
+    prompt = "Answer the query directly and minimally using only supplied evidence."
+    return replace(
+        request(ModelOperation.STRUCTURED),
+        prompt=prompt,
+        prompt_digest=digest(prompt),
+        context=context,
+        schema=schema,
+        schema_digest=digest(json.dumps(schema, sort_keys=True, separators=(",", ":"))),
+    )
+
+
+@pytest.mark.asyncio
+async def test_deterministic_gateway_delays_structured_answer_with_cancel_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The isolated browser E2E clicks Stop generating on a third question ending in
+    ` [e2e-cancel]`; the fake gateway must hold the answer open long enough for the
+    cancel request to land, exactly like `DeterministicTapperModel.answer` already does."""
+
+    from tap.testing import deterministic_model_gateway
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    delays: list[float] = []
+
+    async def record_delay(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(deterministic_model_gateway.asyncio, "sleep", record_delay)
+
+    gateway = DeterministicModelGateway(
+        configured_gateway(success)._config, scope=VALIDATION_SCOPE, redact=redact
+    )
+    context = json.dumps(
+        {
+            "query": "退款规则是什么？ [e2e-cancel]",
+            "evidence": [{"label": "S1", "content": "退款需要两人审批。"}],
+        },
+        ensure_ascii=False,
+    )
+
+    await gateway.generate_structured(_structured_answer_request(context))
+
+    assert delays == [5.0]
+
+
+@pytest.mark.asyncio
+async def test_deterministic_gateway_does_not_delay_a_normal_structured_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tap.testing import deterministic_model_gateway
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    delays: list[float] = []
+
+    async def record_delay(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(deterministic_model_gateway.asyncio, "sleep", record_delay)
+
+    gateway = DeterministicModelGateway(
+        configured_gateway(success)._config, scope=VALIDATION_SCOPE, redact=redact
+    )
+    context = json.dumps(
+        {
+            "query": "退款规则是什么？",
+            "evidence": [{"label": "S1", "content": "退款需要两人审批。"}],
+        },
+        ensure_ascii=False,
+    )
+
+    await gateway.generate_structured(_structured_answer_request(context))
+
+    assert delays == []
+
+
+@pytest.mark.asyncio
+async def test_deterministic_gateway_embed_never_delays(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even if the cancellation marker somehow reached the raw text, embedding calls
+    must never pay the answer delay: only chat-shaped answers are cancellable."""
+
+    from tap.testing import deterministic_model_gateway
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    delays: list[float] = []
+
+    async def record_delay(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(deterministic_model_gateway.asyncio, "sleep", record_delay)
+
+    gateway = DeterministicModelGateway(
+        configured_gateway(success)._config, scope=VALIDATION_SCOPE, redact=redact
+    )
+
+    await gateway.embed(
+        replace(request(ModelOperation.EMBED), context="退款规则是什么？ [e2e-cancel]")
+    )
+
+    assert delays == []
+
+
 def _relation_evidence_fixture(
     *, subject_label: str = "Underwriting review", object_label: str = "health disclosure"
 ):
