@@ -1665,9 +1665,10 @@ class AuthorizedRetrieval:
 
         A clause is identified either by its immutable logical chunk id, or by a
         meaningful last heading within one document lineage (same source id, or
-        same file name). Separator/punctuation, too-short and running headings
-        (labelling many chunks of one revision) never identify a clause, and a
-        generic heading shared by different documents is not one clause.
+        same file name). Separator/punctuation and too-short headings never
+        identify a clause, a heading labelling many chunks in both compared
+        revisions is a running header, and a generic heading shared by
+        different documents is not one clause.
         """
         values_by_identity: dict[tuple[str, ...], set[tuple[tuple[str, str, str], str]]] = {}
         chunks_by_heading: dict[tuple[tuple[str, ...], tuple[str, str, str]], set[str]] = {}
@@ -1693,26 +1694,27 @@ class AuthorizedRetrieval:
                 values_by_identity.setdefault(identity, set()).add(
                     (source_revision, item.chunk_content_hash)
                 )
-        running_headings = {
-            identity
-            for (identity, _), chunks in chunks_by_heading.items()
-            if len(chunks) >= _RUNNING_HEADING_CHUNKS
-        }
         for identity, values in values_by_identity.items():
             if identity[0] == "logical-chunk":
                 if len({content_hash for _, content_hash in values}) > 1:
                     return True
                 continue
-            if identity in running_headings:
-                continue
             hashes_by_source: dict[tuple[str, str, str], set[str]] = {}
             for source, content_hash in values:
                 hashes_by_source.setdefault(source, set()).add(content_hash)
-            source_hashes = list(hashes_by_source.values())
+            # A heading is a running header for a pair only when it labels many
+            # chunks in both revisions; a long clause in one revision still counts.
+            running = {
+                source
+                for source in hashes_by_source
+                if len(chunks_by_heading[(identity, source)]) >= _RUNNING_HEADING_CHUNKS
+            }
+            sources = list(hashes_by_source)
             if any(
-                source_hashes[left].isdisjoint(source_hashes[right])
-                for left in range(len(source_hashes))
-                for right in range(left + 1, len(source_hashes))
+                not (sources[left] in running and sources[right] in running)
+                and hashes_by_source[sources[left]].isdisjoint(hashes_by_source[sources[right]])
+                for left in range(len(sources))
+                for right in range(left + 1, len(sources))
             ):
                 return True
         return False

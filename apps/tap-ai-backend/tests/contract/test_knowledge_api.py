@@ -445,16 +445,27 @@ def test_same_document_lineage_with_contradicting_clause_still_conflicts() -> No
     assert retrieval_application.AuthorizedRetrieval._has_conflicting_sources((first, second))
 
 
-def test_heading_repeated_on_many_chunks_of_one_revision_is_not_a_clause_identity() -> None:
+def test_heading_repeated_on_many_chunks_of_each_revision_is_not_a_clause_identity() -> None:
     running = "Annuity Insurance Terms"
-    evidence = (
-        *(
-            _heading_evidence(index, heading=running, title="terms.pdf", source_id="v1")
-            for index in range(1, 4)
-        ),
-        _heading_evidence(4, heading=running, title="terms.pdf", source_id="v2"),
+    evidence = tuple(
+        _heading_evidence(
+            index, heading=running, title="terms.pdf", source_id="v1" if index < 4 else "v2"
+        )
+        for index in range(1, 7)
     )
     assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(evidence)
+
+
+def test_long_clause_with_many_chunks_in_one_revision_still_conflicts() -> None:
+    clause = "第七条 宽限期"
+    evidence = (
+        *(
+            _heading_evidence(index, heading=clause, title="terms.pdf", source_id="v1")
+            for index in range(1, 4)
+        ),
+        _heading_evidence(4, heading=clause, title="terms.pdf", source_id="v2"),
+    )
+    assert retrieval_application.AuthorizedRetrieval._has_conflicting_sources(evidence)
 
 
 class FakeSearchPort:
