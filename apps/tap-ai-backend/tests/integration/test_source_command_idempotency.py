@@ -755,19 +755,19 @@ async def test_source_list_excludes_sources_without_a_live_document(operator_rep
     repo, engine = operator_repository
     live = upload()
     live_reservation = await repo.reserve_upload(live)
-    await repo.activate_upload(live_reservation, ArtifactLocator("blob:" + live_reservation.document_id))
-    live_source_id = (
-        await repo.source_command_result(live.command.key)
-    ).body["source"]["sourceId"]
+    await repo.activate_upload(
+        live_reservation, ArtifactLocator("blob:" + live_reservation.document_id)
+    )
+    live_source_id = (await repo.source_command_result(live.command.key)).body["source"]["sourceId"]
 
     deleted = upload()
     deleted_reservation = await repo.reserve_upload(deleted)
     await repo.activate_upload(
         deleted_reservation, ArtifactLocator("blob:" + deleted_reservation.document_id)
     )
-    deleted_source_id = (
-        await repo.source_command_result(deleted.command.key)
-    ).body["source"]["sourceId"]
+    deleted_source_id = (await repo.source_command_result(deleted.command.key)).body["source"][
+        "sourceId"
+    ]
     async with engine.begin() as connection:
         await connection.execute(
             update(ledger.knowledge_document)
