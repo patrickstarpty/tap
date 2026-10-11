@@ -857,6 +857,21 @@ class MysqlDocumentRepository:
             )
         )
 
+    def _source_has_live_document(self):
+        # A source only counts toward the Library total while it still owns at
+        # least one document that list_documents would also surface; otherwise
+        # it is a zombie row (deleted documents, or a source row left behind
+        # without ever gaining a document) and must not inflate "N/M sources".
+        return exists(
+            select(knowledge_document.c.document_id).where(
+                *scope_predicates(knowledge_document, self._scope),
+                knowledge_document.c.source_id == knowledge_source.c.source_id,
+                knowledge_document.c.activated_at.is_not(None),
+                knowledge_document.c.deleted_at.is_(None),
+                knowledge_document.c.status != DocumentState.DELETING.value,
+            )
+        )
+
     async def _require_source(self, session: AsyncSession, source_id: str) -> RowMapping:
         row = (
             (
@@ -2019,6 +2034,7 @@ class MysqlDocumentRepository:
         statement = select(knowledge_source).where(
             *scope_predicates(knowledge_source, self._scope),
             knowledge_source.c.deleted_at.is_(None),
+            self._source_has_live_document(),
         )
         if position is not None:
             stamp = datetime.fromisoformat(position[0])

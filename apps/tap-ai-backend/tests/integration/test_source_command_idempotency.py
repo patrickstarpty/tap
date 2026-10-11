@@ -742,3 +742,51 @@ async def test_source_selection_freezes_current_ready_documents_without_adding_n
 
     with pytest.raises(DocumentStateChanged):
         await repo.load_source_revisions((r1.document_id,))
+
+
+async def test_source_list_excludes_sources_without_a_live_document(operator_repository):
+    """A source row survives its only document's soft-delete (or never gets one);
+    the Library total must not count it as an available source."""
+    from sqlalchemy import insert, update
+
+    from tap.modules.knowledge.adapters import mysql_documents as ledger
+    from tap.platform.db.project_scope import scope_values
+
+    repo, engine = operator_repository
+    live = upload()
+    live_reservation = await repo.reserve_upload(live)
+    await repo.activate_upload(live_reservation, ArtifactLocator("blob:" + live_reservation.document_id))
+    live_source_id = (
+        await repo.source_command_result(live.command.key)
+    ).body["source"]["sourceId"]
+
+    deleted = upload()
+    deleted_reservation = await repo.reserve_upload(deleted)
+    await repo.activate_upload(
+        deleted_reservation, ArtifactLocator("blob:" + deleted_reservation.document_id)
+    )
+    deleted_source_id = (
+        await repo.source_command_result(deleted.command.key)
+    ).body["source"]["sourceId"]
+    async with engine.begin() as connection:
+        await connection.execute(
+            update(ledger.knowledge_document)
+            .where(ledger.knowledge_document.c.document_id == deleted_reservation.document_id)
+            .values(deleted_at=deleted.now)
+        )
+        documentless_source_id = "src_" + uuid4().hex
+        await connection.execute(
+            insert(ledger.knowledge_source).values(
+                **scope_values(VALIDATION_SCOPE),
+                source_id=documentless_source_id,
+                name="orphaned-fixture.md",
+                created_at=deleted.now,
+                updated_at=deleted.now,
+            )
+        )
+
+    page = await repo.list_sources(None, 50)
+    source_ids = {item.source_id for item in page.items}
+    assert source_ids == {live_source_id}
+    assert deleted_source_id not in source_ids
+    assert documentless_source_id not in source_ids
