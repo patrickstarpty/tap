@@ -527,8 +527,6 @@ class AuthorizedRetrieval:
         missing_reason = self._required_resource_failure(required, run.response.evidence)
         if missing_reason is not None:
             return self._abstain(run.response, missing_reason)
-        if self._has_conflicting_sources(run.response.evidence):
-            return self._abstain(run.response, AbstentionReason.CONFLICTING_SOURCES)
         if self._publication_authority is not None and run.publication is not None:
             await self._publication_authority.revalidate(run.publication)
         current = run.policy if frozen_policy else await self._verify_current(run.policy)
@@ -543,6 +541,14 @@ class AuthorizedRetrieval:
                 run.response.evidence,
                 tuple(sorted({resource.revision for resource in run.plan.resources})),
                 turn_id=None if answer_execution is None else answer_execution.plan_id,
+            )
+        # Checked after relation analysis so the abstention still reports the
+        # project graph status instead of UNAVAILABLE (reasoning disabled).
+        if self._has_conflicting_sources(run.response.evidence):
+            return self._abstain(
+                run.response,
+                AbstentionReason.CONFLICTING_SOURCES,
+                relation=self._baseline_relation_outcome(relation),
             )
         if relation is not None and self._retrieval_augment and relation.augment_chunks:
             run, relation = await self._augment_from_relations(
