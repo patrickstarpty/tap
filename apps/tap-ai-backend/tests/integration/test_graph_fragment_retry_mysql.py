@@ -1,4 +1,4 @@
-"""MySQL-integration coverage for fragment retry (review finding I1): a
+"""MySQL-integration coverage for fragment retry: a
 FAILED batch must actually change the published graph once the worker
 reruns, not just flip its own row back to PENDING."""
 

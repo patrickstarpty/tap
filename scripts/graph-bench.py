@@ -360,7 +360,7 @@ async def _run(
         "loadPassed": load_passed,
         "pathFoundRate": path_found_rate,
         "queries": queries,
-        # `loadPassed` is reported only; the brief gates the exit code on the
+        # `loadPassed` is reported only; the exit code is gated on the
         # p95 query thresholds alone, not on load time.
         "passed": overall_passed,
     }

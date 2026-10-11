@@ -4,7 +4,7 @@ relation-answer golden set, in two modes:
 
 - `fake` (default CI path, no external services): rule-based extraction
   (`DeterministicGraphExtraction`) over `*.md` documents under `--corpus-dir`,
-  merged with PR 2's pure `ProjectGraphMerger`, published into the reference
+  merged with the pure project-level `ProjectGraphMerger`, published into the reference
   `InMemoryProjectGraphStore`, queried by the registered `"relation-analysis"`
   agent subgraph (`RelationAnalysisAgent`), and answered by the deterministic
   `DeterministicTapperModel` so every answer carries real R-labeled edge
@@ -439,7 +439,7 @@ def _assemble_real_observations(
     finished_at: str,
 ) -> dict[str, Any]:
     """Pure (no I/O, no live service) assembly of the real-mode observation
-    document, factored out of `run_real` so its digest/field wiring (C2) is
+    document, factored out of `run_real` so its digest and field wiring is
     unit-testable without `create_api_runtime`."""
     return {
         "schemaVersion": OBSERVATIONS_SCHEMA_VERSION,

@@ -548,7 +548,7 @@ class ModelCallProvenance:
 @dataclass(frozen=True, slots=True)
 class EdgeCitation:
     """Project-graph edge facts for an `R`-labeled citation. `relation_label`
-    is the merged edge's display label (never blank -- PR 2 falls back to
+    is the merged edge's display label (never blank -- the project merge falls back to
     `relation_type` when a relation has no explicit label)."""
 
     edge_id: str

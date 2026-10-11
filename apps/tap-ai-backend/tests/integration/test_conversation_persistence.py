@@ -395,7 +395,7 @@ def test_claim_fails_snapshotless_queued_turn_and_keeps_claiming_others(owned_pr
 def test_applied_graph_context_validates_edge_citation_graph_version(owned_project_mysql):
     """When an answer's graph context is
     APPLIED, every edge citation's persisted `graph_version` must equal the
-    Turn's `graph_snapshot_id` (which, per the plan's
+    Turn's `graph_snapshot_id` (which, per the
     `graph_snapshot_id = graph_version` design, is the same string) or
     `complete()` must raise -- a stale or forged edge citation must not ride
     along with a graph-grounded answer. This checks the persisted

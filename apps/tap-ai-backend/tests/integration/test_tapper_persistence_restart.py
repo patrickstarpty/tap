@@ -916,7 +916,7 @@ def _answer_contributors(
     _require(len(citation_ids) == len(set(citation_ids)), "answer-citation-identity")
     # This check predates `kind="edge"` citations: it used to require every
     # citation's (source_id, chunk_id) to be unique, which rejected the
-    # now-tested, shipped PR 3 design where an edge citation legitimately
+    # now-tested, shipped relation-answer design where an edge citation legitimately
     # reuses its supporting chunk's own (source_id, chunk_id) verbatim
     # (`_edge_citation_for_relation`'s primary case -- see
     # `test_edge_citation_reuses_s_chunk_fields_and_gets_r_label` and
@@ -1420,7 +1420,7 @@ def _identity_fixture() -> tuple[
 
 
 def test_answer_citation_identity_allows_one_chunk_and_one_edge_over_the_same_chunk() -> None:
-    """PR 3's shipped design: an edge citation legitimately reuses its
+    """The shipped relation-answer design: an edge citation legitimately reuses its
     supporting chunk's own (source_id, chunk_id) verbatim
     (`_edge_citation_for_relation`'s primary case), so a chunk citation and an
     edge citation describing the same physical chunk must coexist."""

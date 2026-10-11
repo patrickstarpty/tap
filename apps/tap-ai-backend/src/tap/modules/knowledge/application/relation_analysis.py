@@ -114,7 +114,7 @@ class RelationSupport:
 
 @dataclass(frozen=True, slots=True)
 class RelationEvidence:
-    """`subject_aliases`/`object_aliases` come from PR 2's merged `ProjectNode.aliases`,
+    """`subject_aliases`/`object_aliases` come from the project merge's `ProjectNode.aliases`,
     which carry no per-source provenance (aliases are merged across every project
     source, not just the ones selected for this answer). They are used here only
     for endpoint matching (citation validation's "claim text must contain an
@@ -315,7 +315,7 @@ async def seed_from_query(
     allowed_source_revision_ids: frozenset[str],
 ) -> tuple[ProjectNode, ...]:
     """Alias-match the question, then keep only matches that have at least one
-    visible source inside `allowed_source_revision_ids` -- PR 2's merged
+    visible source inside `allowed_source_revision_ids` -- the project merge's
     aliases carry no per-source provenance, so an alias hit alone cannot tell
     whether the node is actually backed by a selected source. Visibility is
     checked with a one-hop, one-node `store.neighbors` call pinned to

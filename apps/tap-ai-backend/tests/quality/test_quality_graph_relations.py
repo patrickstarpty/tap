@@ -591,8 +591,9 @@ def test_real_mode_rejects_incomplete_regression_set(tmp_path, monkeypatch, caps
     corpus_digest = manifest_digest(manifest)
     _write(tmp_path / "manifest.json", manifest)
     # `_human_labeled_golden`'s corpus.manifest/digest and expectedSources must bind to
-    # this exact manifest (I2): the manifest entry ids are "policy-01".."policy-08" /
-    # "process-01"/"process-02", not the generic "source-a" default.
+    # this exact manifest, or the digest and source checks reject it: the manifest
+    # entry ids are "policy-01".."policy-08" / "process-01"/"process-02", not the
+    # generic "source-a" default.
     golden = _human_labeled_golden(
         manifest="manifest.json", digest=corpus_digest, source="policy-01"
     )
@@ -1300,7 +1301,7 @@ def test_real_answer_dict_abstains_on_none_answer():
 
 
 def test_committed_real_golden_corpus_manifest_resolves_to_the_sibling_manifest():
-    """I4 regression: `corpus.manifest` in the committed golden-v1.json must be
+    """`corpus.manifest` in the committed golden-v1.json must be
     resolvable relative to the golden file's own directory (the convention
     `validate_real`'s `golden_path.parent / manifest_relative` relies on, and
     that `test_real_mode_rejects_incomplete_regression_set` already exercises

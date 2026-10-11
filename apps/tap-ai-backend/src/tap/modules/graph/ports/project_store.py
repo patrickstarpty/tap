@@ -4,7 +4,7 @@ Every read method accepts a keyword-only `version`: `None` means "the current
 READY version"; an explicit version is served only if it is the current
 version or still inside the backing `ProjectGraphCache`'s retention window
 (`keep_per_project=2`), otherwise `ProjectGraphVersionMismatch` is raised. This
-lets a caller (PR 3's relation analysis) pin one version for the duration of a
+lets a caller (the answer-time relation analysis) pin one version for the duration of a
 single answer even if a background merge publishes a newer version mid-turn.
 """
 

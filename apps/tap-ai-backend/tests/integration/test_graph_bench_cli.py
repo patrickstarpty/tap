@@ -52,7 +52,7 @@ async def test_generate_run_cleanup_round_trip_on_a_small_bench_graph(
         assert "generated bench graph" in capsys.readouterr().out
 
         # Re-running `generate` with the same seed must skip, not crash with
-        # InvalidRequestError (I1) or re-publish the version.
+        # InvalidRequestError (a nested-transaction misuse) or re-publish the version.
         repeat_result = await module._generate(
             sessions,
             seed=seed,

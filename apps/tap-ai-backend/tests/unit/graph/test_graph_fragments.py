@@ -248,7 +248,7 @@ def test_assemble_fragment_labels_a_synthesized_fallback_with_the_document_title
 
 
 def test_assemble_fragment_merges_duplicate_canonical_keys_across_batches() -> None:
-    # Repro #1 from the F1 review finding: the same raw entity ("核保流程") is
+    # Cross-batch duplicate entity: the same raw entity ("核保流程") is
     # grounded independently in two batches. The rule-based extractor mints the
     # same *raw* id for it in both batches (deterministic by content hash), but
     # the worker's per-batch namespacing (b{i}-) gives those raw ids different
@@ -353,7 +353,7 @@ def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() 
     )
     # An unrelated EXTRACTED edge between two other kept early nodes, so the
     # document still has a real relation overall once edge-inferred cascades
-    # away -- otherwise the zero-kept-edges document-node fallback (see R2)
+    # away -- otherwise the zero-kept-edges document-node fallback
     # would replace everything, which is not what this test is about.
     evidence = _evidence("evidence-unrelated", "chunk-0")
     unrelated_edge = GraphEdge(
@@ -383,7 +383,7 @@ def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() 
 
 
 def test_assemble_fragment_keeps_one_provenance_when_two_batches_infer_the_same_edge() -> None:
-    # R1(a): two batches each independently infer the same real-world relation
+    # Two batches each independently infer the same real-world relation
     # (e.g. the same rule fired once per batch) with their own provenance. Once
     # the duplicate edge merges (shape dedupe), both provenances would cite the
     # same surviving edge_id -- InferenceProvenance uniqueness forbids that.
@@ -430,7 +430,7 @@ def test_assemble_fragment_keeps_one_provenance_when_two_batches_infer_the_same_
 
 
 def test_assemble_fragment_dedupes_provenance_inputs_that_collapse_to_one_node() -> None:
-    # R1(b): a provenance originally cites two *distinct* input facts
+    # A provenance originally cites two *distinct* input facts
     # ("b0-node-a" and "b1-node-a") that each name the same real-world entity
     # mentioned in a different batch -- so the canonical-key merge collapses
     # them onto the same surviving node. After remapping, both input facts
@@ -504,7 +504,7 @@ def test_assemble_fragment_drops_provenance_that_cites_only_its_own_edge() -> No
 
 
 def test_assemble_fragment_prefers_extracted_edge_over_inferred_of_the_same_shape() -> None:
-    # R1(c): one batch infers a relation (no evidence, carries provenance);
+    # One batch infers a relation (no evidence, carries provenance);
     # another batch directly extracts the same relation (real evidence). Once
     # the duplicate shape merges, naively unioning "evidence" onto the INFERRED
     # edge would violate GraphEdge's "inferred relation cannot claim direct
@@ -551,7 +551,7 @@ def test_assemble_fragment_prefers_extracted_edge_over_inferred_of_the_same_shap
 
 
 def test_assemble_fragment_merges_normalize_key_through_accent_folding() -> None:
-    # R4: MySQL's server default collation for canonical_key
+    # MySQL's server default collation for canonical_key
     # (utf8mb4_0900_ai_ci) is accent-insensitive, not just case-insensitive --
     # "café" and "cafe" collide there. normalize_key (used for the merge above)
     # must fold accents too, or such a pair would survive assembly as two nodes
@@ -564,7 +564,7 @@ def test_assemble_fragment_merges_normalize_key_through_accent_folding() -> None
     )
     # An unrelated other node and edge, purely so the merged document has a
     # real relation overall and does not instead trigger the zero-kept-edges
-    # document-node fallback (see R2), which is not what this test is about.
+    # document-node fallback, which is not what this test is about.
     other_node = GraphNode("node-other", SNAPSHOT.snapshot_id, "Other", "CONCEPT", "other")
     evidence_1 = _evidence("evidence-1", "chunk-0")
     evidence_2 = _evidence("evidence-2", "chunk-1")

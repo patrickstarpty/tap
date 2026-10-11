@@ -440,7 +440,7 @@ class EmptyBatchExtractor:
 
 @pytest.mark.asyncio
 async def test_empty_batch_succeeds_without_retries_and_job_stays_ready(monkeypatch) -> None:
-    # F3: a batch that grounds nothing (all boilerplate chunks) must be recorded
+    # A batch that grounds nothing (all boilerplate chunks) must be recorded
     # READY with no draft and must not burn the retry budget or turn a healthy
     # document PARTIAL.
     jobs = InMemoryGraphJobStore()
@@ -580,7 +580,7 @@ class FailOnFailJobs(InMemoryGraphJobStore):
 
 @pytest.mark.asyncio
 async def test_fail_itself_raising_counts_as_lease_lost_instead_of_crashing(monkeypatch) -> None:
-    # F4 regression: a non-GraphJobLeaseLost exception from jobs.fail() (e.g. a
+    # A non-GraphJobLeaseLost exception from jobs.fail() (e.g. a
     # database error while recording the failure) must not escape run_once and
     # crash the worker process.
     jobs = FailOnFailJobs()
@@ -672,7 +672,7 @@ class EventExtractor:
 
 @pytest.mark.asyncio
 async def test_renews_the_lease_again_after_the_backoff_sleep(monkeypatch) -> None:
-    # R4: capping the backoff sleep below the lease duration (M6) is not
+    # Capping the backoff sleep below the lease duration is not
     # enough on its own -- the sleep plus the next attempt's own extract() call
     # can still together outlive the lease that was renewed only *before* the
     # sleep. Renew again right after waking up too, so the event right after
@@ -979,10 +979,10 @@ class RepeatedContentArtifacts:
 async def test_batches_a_related_document_through_the_real_rule_based_extractor(
     monkeypatch,
 ) -> None:
-    # R3 repro #1: the real DeterministicGraphExtraction, batch_size 10, 12
+    # Related document: the real DeterministicGraphExtraction, batch_size 10, 12
     # chunks all containing the same relation sentence -- each batch
     # independently grounds the same two real-world entities under its own
-    # batch-namespaced ids, exercising the real canonical-key merge (F1) end to
+    # batch-namespaced ids, exercising the real canonical-key merge end to
     # end rather than hand-built drafts.
     jobs = InMemoryGraphJobStore()
     job = await _requested_job(jobs, locator="art-related.chunks")
@@ -1018,9 +1018,9 @@ async def test_batches_a_related_document_through_the_real_rule_based_extractor(
 
 @pytest.mark.asyncio
 async def test_batches_a_relation_less_document_into_one_document_node(monkeypatch) -> None:
-    # R3 repro #2: the real DeterministicGraphExtraction, batch_size 10, 12
+    # Relation-less document: the real DeterministicGraphExtraction, batch_size 10, 12
     # relation-less chunks -- each batch independently mints its own
-    # "document:<revision>" fallback node; the real canonical-key merge (F1)
+    # "document:<revision>" fallback node; the real canonical-key merge
     # must collapse them into exactly one, with zero edges, READY rather than
     # failing MySQL's uq_graph_node_canonical constraint.
     jobs = InMemoryGraphJobStore()

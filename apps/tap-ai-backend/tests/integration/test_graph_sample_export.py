@@ -303,9 +303,9 @@ async def test_export_edges_and_merges_writes_sampled_csv_rows_and_columns(
 ) -> None:
     """With no knowledge-module rows seeded, every edge's snippet/title stays
     blank: `export_edges` must still write the CSV but exit 1 with a count in
-    its stderr warning (I1/I2's failure outcome). Requesting more rows than
-    exist (50/30 vs 5/2) must also warn, without changing the exit code for
-    merges (M3)."""
+    its stderr warning (the unresolved title/snippet outcome). Requesting more
+    rows than exist (50/30 vs 5/2) must also warn, without changing the exit
+    code for merges."""
     module = _load_export_module()
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -357,9 +357,9 @@ async def test_export_picks_current_ready_version_and_resolves_titles_and_snippe
     owned_project_mysql, tmp_path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Version 1 is READY and version 2 is MERGING; omitting `--graph-version`
-    must sample version 1 (M1). With the full knowledge chain seeded and a
+    must sample the latest READY version, 1. With the full knowledge chain seeded and a
     fake blob store wired through `MysqlGraphNodeEnrichment`, every edge's
-    title/snippet resolves (I1/I2's success outcome): no blank warning, exit
+    title/snippet resolves (the resolved title/snippet outcome): no blank warning, exit
     0."""
     module = _load_export_module()
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))

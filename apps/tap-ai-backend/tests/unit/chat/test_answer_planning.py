@@ -649,7 +649,7 @@ async def test_model_intent_and_route_must_pair_for_relation_and_graph(raw_chang
         ("他们是什么关系户", False),
         ("What follows is a list of rules", False),
         ("What follows is a list of rules?", False),
-        ("What follows is a list of rules.", False),  # merged from the round-1 M1 test
+        ("What follows is a list of rules.", False),  # trailing punctuation variant
         ("如何提交理赔申请", False),
         ("比较核保流程和理赔流程的不同", False),
         ("哪些字段是必填的", False),

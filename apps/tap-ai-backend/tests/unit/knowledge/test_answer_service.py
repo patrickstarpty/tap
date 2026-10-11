@@ -1116,7 +1116,7 @@ def _real_formula_hit(index: int, *, revision: str = "rev-1") -> SearchHit:
     """Like `_relation_hit`, but with a formula-correct `chunk_id`/
     `logical_chunk_id` (matching `chunk_id_for`/`logical_chunk_id_for`) so the
     resulting evidence survives `AnswerSnapshot.from_response`'s strict
-    recomputation check -- needed to reproduce the C1 snapshot-layer failure
+    recomputation check -- needed to reproduce the citation-overflow snapshot-layer failure
     end-to-end, not just at the `AuthorizedRetrieval.answer` boundary."""
     anchor = DocumentAnchor(heading_path=(f"H{index}",), start_offset=0, end_offset=10)
     anchor_json = json.dumps(
@@ -1582,7 +1582,7 @@ def test_augmentation_never_adds_unauthorized_chunks() -> None:
 
 
 def test_augmentation_merges_at_most_five_candidates_even_with_more_available() -> None:
-    """`_augment_from_relations` searches wider for recall (I3) but must still
+    """`_augment_from_relations` searches wider for recall but must still
     only ever merge up to 5 augmented chunks into the response, even when
     more than 5 authorized, selected candidates come back."""
 
@@ -1781,7 +1781,7 @@ def _relation_evidence_for(
 
 
 def test_citations_are_capped_at_twenty_dropping_uncited_s_first() -> None:
-    """C1: 20 S citations (none cited by any claim) plus 1 cited R overflow the
+    """Citation overflow: 20 S citations (none cited by any claim) plus 1 cited R overflow the
     closed 20-citation bound; the lowest-ranked *uncited* S (S20) is dropped
     first, with no claim/degradation impact."""
 
@@ -1826,7 +1826,7 @@ def test_citations_are_capped_at_twenty_dropping_uncited_s_first() -> None:
 
 
 def test_citations_cap_renumbers_surviving_s_citations_contiguously() -> None:
-    """C1 (reproduced): dropping a *middle* uncited S citation (S19, while S20
+    """Citation overflow: dropping a *middle* uncited S citation (S19, while S20
     is cited) must not leave a gap -- `ports/answers.py` requires chunk
     citations to be exactly S1..Sn. The survivors are renumbered contiguously;
     the claim's own citation (originally S20) still resolves to its original
@@ -1880,7 +1880,7 @@ def test_citations_cap_renumbers_surviving_s_citations_contiguously() -> None:
 
 
 def test_answer_snapshot_accepts_contiguous_s_labels_after_a_cap_drop() -> None:
-    """C1 (reproduced): `AnswerSnapshot.from_response` requires chunk citations
+    """Citation overflow: `AnswerSnapshot.from_response` requires chunk citations
     to be exactly S1..Sn (`ports/answers.py`). Before this fix, dropping an
     uncited S citation from the middle (e.g. an augmented chunk at the tail)
     left a gap (...S18, S20, R1) and the whole answer was lost as
@@ -1936,7 +1936,7 @@ def test_answer_snapshot_accepts_contiguous_s_labels_after_a_cap_drop() -> None:
 
 
 def test_citations_cap_drops_lowest_ranked_r_when_no_s_is_droppable() -> None:
-    """C1: 15 S citations (all cited) plus 6 cited R overflow by one; every S is
+    """Citation overflow: 15 S citations (all cited) plus 6 cited R overflow by one; every S is
     used so none can be dropped, so the lowest-ranked cited R (R6) is dropped
     instead, stripped from its claim and counted as `invalid-relation-citation`
     / degraded. Quick profile: 10 base + 5 augmented S."""
@@ -2144,7 +2144,7 @@ def test_snippet_only_support_is_resolved_into_a_citable_edge_citation() -> None
 
 
 def test_snippet_only_support_with_anchor_drift_is_unresolvable_and_degraded() -> None:
-    """I2 follow-up: the model echoes `anchorJson` and extraction never
+    """Support identity check: the model echoes `anchorJson` and extraction never
     validates it, so the support's own `chunk_id` can drift from what the
     anchor+digest actually recompute. Require the recomputed `chunk_id` to
     match `support.chunk_id`, or treat the support as unresolvable rather than
@@ -2439,8 +2439,8 @@ def test_stale_context_omits_relation_prompt() -> None:
 
 
 def test_intent_relation_execution_sets_relation_first_through_planned_retrieval() -> None:
-    """`AuthorizedAnswerExecution(intent="relation")`, constructed directly as
-    the brief specifies, is exactly what makes `AuthorizedRetrieval.answer`'s
+    """`AuthorizedAnswerExecution(intent="relation")`, constructed directly,
+    is exactly what makes `AuthorizedRetrieval.answer`'s
     `relation_first` true -- exercised through the real planned-retrieval path,
     not a standalone boolean check."""
 

@@ -266,7 +266,7 @@ async def test_dropped_input_fact_cascades_to_inferred_edge(span_recorder):
 async def test_empty_model_output_returns_none_instead_of_raising():
     # A model returning zero nodes for a boilerplate chunk must not raise (the
     # domain forbids an empty-nodes GraphSnapshotDraft): it is a successful batch
-    # that simply grounded nothing (F3), not a failure to retry.
+    # that simply grounded nothing, not a failure to retry.
     output = {"nodes": [], "edges": [], "evidence": [], "provenance": []}
     draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
     assert draft is None
