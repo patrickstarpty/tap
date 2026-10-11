@@ -9,6 +9,7 @@ import struct
 from typing import Any
 
 from tap.modules.knowledge.domain.documents import (
+    LEGACY_PARSER_VERSIONS,
     MAX_UPLOAD_BYTES,
     PARSER_VERSION,
     DocumentId,
@@ -131,7 +132,11 @@ def decode_request(header: dict[str, Any], content: bytes) -> tuple[str, Documen
         revision = RevisionId(header["revisionId"])
         if not re.fullmatch("doc_[0-9a-f]{32}", document):
             raise ParserProtocolError()
-        if revision_id_for(document, header["sourceHash"], PARSER_VERSION) != revision:
+        # A legacy revision that failed before parsing may still be retried.
+        if revision not in {
+            revision_id_for(document, header["sourceHash"], version)
+            for version in (PARSER_VERSION, *LEGACY_PARSER_VERSIONS)
+        }:
             raise ParserProtocolError()
         filename = header["filename"]
         if not 0 < len(filename) <= 255 or any(ord(c) < 32 for c in filename):

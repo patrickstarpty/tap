@@ -34,6 +34,7 @@ from tap.modules.knowledge.adapters.mysql_documents import (
 from tap.modules.knowledge.adapters.mysql_documents import knowledge_parse_inventory as inventories
 from tap.modules.knowledge.adapters.mysql_documents import knowledge_source as sources
 from tap.modules.knowledge.domain.documents import (
+    PARSER_VERSION,
     BlockKind,
     ChunkDraft,
     DocumentId,
@@ -773,7 +774,7 @@ class MysqlManagedChunks:
                 content,
                 DocumentId("doc_" + "0" * 32),
                 revision_id_for(
-                    DocumentId("doc_" + "0" * 32), canonical_sha256(content), "tapper-parser-v1"
+                    DocumentId("doc_" + "0" * 32), canonical_sha256(content), PARSER_VERSION
                 ),
             )
         )

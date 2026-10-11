@@ -56,6 +56,9 @@ from tap.modules.governance.ports.audit import (
     SafeAuditMetadata,
 )
 from tap.modules.knowledge.domain.documents import (
+    CHUNKER_VERSION,
+    LEGACY_PARSER_VERSIONS,
+    PARSER_VERSION,
     DocumentId,
     new_document_id,
     revision_id_for,
@@ -94,6 +97,7 @@ from tap.modules.knowledge.ports.documents import (
     MAX_DOCUMENTS,
     MAX_JOB_LEASE,
     MAX_RESERVATION_LEASE,
+    PIPELINE_VERSION,
     SAFE_ERROR_SUMMARIES,
     ArtifactLocator,
     ClaimedIngestionJob,
@@ -3154,6 +3158,169 @@ class MysqlDocumentRepository:
                 )
             row = (await session.execute(statement)).mappings().one_or_none()
             return None if row is None else await self._record_for_row(session, row)
+
+    async def reparse_stale_revisions(
+        self, *, media_types: frozenset[str], limit: int
+    ) -> tuple[int, int]:
+        """Queue a fresh parse for ready documents whose revision predates PARSER_VERSION.
+
+        Each document gets a new revision of the same promoted original; the earlier
+        revision keeps its artifacts, so existing citations still resolve. Documents with
+        managed chunks keep their edited chunks and are not selected. Returns the requeued
+        and skipped document counts.
+        """
+        from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents
+
+        if not media_types or type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("reparse requires media types and a bounded limit")
+        managed = select(managed_documents.c.document_id).where(
+            *scope_predicates(managed_documents, self._scope)
+        )
+        async with self._sessions() as session:
+            candidates = (
+                await session.scalars(
+                    select(knowledge_document.c.document_id)
+                    .join(
+                        knowledge_document_revision,
+                        knowledge_document_revision.c.revision_id
+                        == knowledge_document.c.current_revision_id,
+                    )
+                    .where(
+                        *scope_predicates(knowledge_document, self._scope),
+                        *scope_predicates(knowledge_document_revision, self._scope),
+                        knowledge_document.c.status == DocumentState.READY.value,
+                        knowledge_document.c.activated_at.is_not(None),
+                        knowledge_document.c.deleted_at.is_(None),
+                        knowledge_document.c.media_type.in_(sorted(media_types)),
+                        knowledge_document_revision.c.parser_version.in_(
+                            sorted(LEGACY_PARSER_VERSIONS)
+                        ),
+                        knowledge_document.c.document_id.not_in(managed),
+                    )
+                    .order_by(knowledge_document.c.document_id)
+                    .limit(limit)
+                )
+            ).all()
+        requeued = 0
+        for document_id in candidates:
+            requeued += await self._reparse_document(document_id)
+        return requeued, len(candidates) - requeued
+
+    async def _reparse_document(self, document_id: str) -> bool:
+        async with self._sessions() as session, session.begin():
+            document = (
+                (
+                    await session.execute(
+                        select(knowledge_document)
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            knowledge_document.c.document_id == document_id,
+                            knowledge_document.c.status == DocumentState.READY.value,
+                            knowledge_document.c.deleted_at.is_(None),
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if document is None:
+                return False
+            old = (
+                (
+                    await session.execute(
+                        select(knowledge_document_revision).where(
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_document_revision.c.revision_id
+                            == document["current_revision_id"],
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if old is None or old["parser_version"] not in LEGACY_PARSER_VERSIONS:
+                return False
+            revision_id = str(
+                revision_id_for(DocumentId(document_id), old["source_content_hash"], PARSER_VERSION)
+            )
+            if await session.scalar(
+                select(knowledge_document_revision.c.revision_id).where(
+                    *scope_predicates(knowledge_document_revision, self._scope),
+                    knowledge_document_revision.c.revision_id == revision_id,
+                )
+            ):
+                return False
+            now = await _database_now(session)
+            await session.execute(
+                insert(knowledge_document_revision).values(
+                    **scope_values(self._scope),
+                    revision_id=revision_id,
+                    source_id=old["source_id"],
+                    document_id=document_id,
+                    source_content_hash=old["source_content_hash"],
+                    original_blob_locator=old["original_blob_locator"],
+                    parser_version=PARSER_VERSION,
+                    chunker_version=CHUNKER_VERSION,
+                    pipeline_version=PIPELINE_VERSION,
+                    created_at=now,
+                )
+            )
+            job_id = _job_id()
+            await session.execute(
+                insert(knowledge_ingestion_job).values(
+                    **scope_values(self._scope),
+                    job_id=job_id,
+                    revision_id=revision_id,
+                    kind=JobKind.INGESTION.value,
+                    attempt=1,
+                    status=JobState.PENDING.value,
+                    stage=JobStage.STORED.value,
+                    stage_results_json=serialize_stage_results(initial_stage_results(now)),
+                    next_attempt_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await self._insert_job_outbox(
+                session,
+                document_id=document_id,
+                job_id=job_id,
+                attempt=1,
+                message_type="knowledge.ingestion_requested",
+                now=now,
+            )
+            await session.execute(
+                update(knowledge_document)
+                .where(
+                    *scope_predicates(knowledge_document, self._scope),
+                    knowledge_document.c.document_id == document_id,
+                    knowledge_document.c.current_revision_id == old["revision_id"],
+                )
+                .values(
+                    current_revision_id=revision_id,
+                    status=DocumentState.QUEUED.value,
+                    stage=JobStage.STORED.value,
+                    chunk_count=0,
+                    error_code=None,
+                    error_summary=None,
+                    updated_at=now,
+                )
+            )
+            revision = (
+                (
+                    await session.execute(
+                        select(knowledge_document_revision).where(
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_document_revision.c.revision_id == revision_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            await self._revision_event(session, revision, ready=False, now=now, job_id=job_id)
+            return True
 
     async def retry_failed(
         self,

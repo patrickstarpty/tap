@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 from tap.modules.knowledge.domain.documents import (
+    LEGACY_PARSER_VERSIONS,
     PARSER_VERSION,
     BlockKind,
     ChunkDraft,
@@ -755,7 +756,7 @@ _MANAGED_CHUNKS_VERSION = "managed-chunks-v1"
 def _parser_version(value: object) -> str:
     version = _text(value, maximum=128)
     if (
-        version not in {PARSER_VERSION, _MANAGED_CHUNKS_VERSION}
+        version not in {PARSER_VERSION, *LEGACY_PARSER_VERSIONS, _MANAGED_CHUNKS_VERSION}
         and re.fullmatch(r"human-correction-[0-9a-f]{64}", version) is None
     ):
         raise ArtifactIntegrityError("unsupported parser provenance")
@@ -766,7 +767,7 @@ def _revision_parser_version(
     document_id: DocumentId, source_hash: str, revision_id: str, declared: object
 ) -> str | None:
     """Return the known parser provenance that derives exactly this revision."""
-    candidates = [PARSER_VERSION, _MANAGED_CHUNKS_VERSION]
+    candidates = [PARSER_VERSION, *sorted(LEGACY_PARSER_VERSIONS), _MANAGED_CHUNKS_VERSION]
     try:
         declared_version = _parser_version(declared)
     except ArtifactIntegrityError:
