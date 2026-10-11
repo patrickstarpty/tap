@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import ipaddress
+import logging
 import math
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -89,6 +90,8 @@ _FIXED_TENANT = "local"
 _FIXED_PROJECT = "tapper-demo"
 _FIXED_GROUP = "tapper-local"
 _FIXED_ENVIRONMENT = "global"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1054,12 +1057,19 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
         redis = _create_redis(settings)
         resources.push(redis)
 
-        from tap.entrypoints.graph_project_knowledge import MysqlCurrentRevisions
+        from tap.entrypoints.graph_project_knowledge import (
+            MysqlCurrentRevisions,
+            MysqlPublishedChunkLocators,
+        )
         from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
         from tap.modules.graph.adapters.fake_extraction import DeterministicGraphExtraction
-        from tap.modules.graph.adapters.model_gateway_extraction import ModelGatewayGraphExtraction
+        from tap.modules.graph.adapters.model_gateway_extraction import (
+            GRAPH_EXTRACTION_PROFILE_DIGEST,
+            ModelGatewayGraphExtraction,
+        )
         from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
         from tap.modules.graph.adapters.mysql_merge import MysqlMergeInputs, MysqlProjectMergeQueue
+        from tap.modules.graph.application.backfill import backfill_graph_jobs
         from tap.modules.graph.application.merge_worker import ProjectGraphMergeWorker
         from tap.modules.graph.application.merger import ProjectGraphMerger
         from tap.modules.graph.application.worker import GraphWorker
@@ -1104,8 +1114,29 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             embeddings=label_embeddings,
             embedding_max_nodes=settings.graph_align_embedding_max_nodes,
         )
+        graph_jobs = MysqlGraphJobStore(sessions, merge_queue=merge_queue)
+        published_locators = MysqlPublishedChunkLocators(sessions, scope=scope)
+
+        async def backfill() -> None:
+            result = await backfill_graph_jobs(
+                scope=scope,
+                published=await published_locators.published(),
+                jobs=graph_jobs,
+                merge_queue=merge_queue,
+                extraction_profile_digest=GRAPH_EXTRACTION_PROFILE_DIGEST,
+                model_alias=settings.default_chat_model,
+                now=datetime.now(UTC).replace(tzinfo=None),
+            )
+            logger.info(
+                "graph backfill: requested=%d requeued=%d skipped=%d merge_requested=%s",
+                result.requested,
+                result.requeued,
+                result.skipped,
+                result.merge_requested,
+            )
+
         worker = GraphWorker(
-            jobs=MysqlGraphJobStore(sessions, merge_queue=merge_queue),
+            jobs=graph_jobs,
             artifacts=cast(ArtifactStore, artifacts),
             extractor=extractor,
             scope=scope,
@@ -1129,6 +1160,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             wakeups=wakeups,
             resources=(resources,),
             pending_work=merge_worker.run_once,
+            startup=backfill,
         )
     except BaseException as error:
         await resources.aclose(error)

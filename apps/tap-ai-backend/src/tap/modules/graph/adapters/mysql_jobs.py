@@ -39,6 +39,7 @@ from tap.modules.graph.adapters.mysql import (
     publish_graph_snapshot,
 )
 from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
+from tap.modules.graph.application.backfill import GraphRevisionJobState
 from tap.modules.graph.domain.jobs import (
     ClaimedGraphJob,
     GraphBatchStatus,
@@ -765,6 +766,41 @@ class MysqlGraphJobStore:
                 cast(str, row["revision_id"]),
                 cast(str, row["status"]),
                 cast(str, row["snapshot_status"]),
+            )
+            for row in rows
+        )
+
+    async def revision_job_states(
+        self, scope: ProjectScopeContext
+    ) -> tuple[GraphRevisionJobState, ...]:
+        """Status, extraction profile and lease of every graph job in this Project,
+        keyed by revision -- what the startup backfill needs to find revisions with
+        no job or a fragment extracted under an older profile."""
+
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            graph_extraction_job.c.revision_id,
+                            graph_extraction_job.c.status,
+                            graph_extraction_job.c.extraction_profile_digest,
+                            graph_extraction_job.c.lease_expires_at,
+                        )
+                        .where(*scope_predicates(graph_extraction_job, scope))
+                        .order_by(graph_extraction_job.c.revision_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            GraphRevisionJobState(
+                cast(str, row["revision_id"]),
+                GraphJobStatus(cast(str, row["status"])),
+                cast(str, row["extraction_profile_digest"]),
+                cast("datetime | None", row["lease_expires_at"]),
             )
             for row in rows
         )
