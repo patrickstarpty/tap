@@ -71,18 +71,29 @@ function nodeGroup(name: string): SVGGElement {
   }) as unknown as SVGGElement;
 }
 
-function labelOf(name: string): SVGTextElement | null {
-  return nodeGroup(name).querySelector(".tap-graph-node-label");
+function labelGroupOf(name: string): SVGGElement | null {
+  return nodeGroup(name).querySelector(".tap-graph-node-label-group");
 }
 
-it("hides a crowded label and moves another above its node instead of overlapping", () => {
+function placementOf(name: string): string | null | undefined {
+  return labelGroupOf(name)?.getAttribute("data-label-placement");
+}
+
+it("labels every node, moving crowded labels above or beside their nodes", () => {
   render(<KnowledgeGraph {...props()} />);
 
-  expect(labelOf("Policy renewal")?.textContent).toBe("Policy renewal");
-  const above = labelOf("Beneficiary update");
-  expect(above?.textContent).toBe("Beneficiary update");
-  expect(Number(above?.getAttribute("y"))).toBeLessThan(395);
-  expect(labelOf("Address change")).toBeNull();
+  for (const node of CROWDED_ROW) {
+    expect(labelGroupOf(node.label)?.textContent).toBe(node.label);
+    expect(labelGroupOf(node.label)?.getAttribute("data-halo")).toBe("false");
+  }
+  expect(placementOf("Policy renewal")).toBe("below");
+  expect(placementOf("Beneficiary update")).toBe("above");
+  expect(placementOf("Address change")).toBe("left");
+  expect(
+    labelGroupOf("Address change")
+      ?.querySelector("text")
+      ?.getAttribute("text-anchor"),
+  ).toBe("end");
 });
 
 it("never moves node circles to make room for labels", () => {
@@ -95,21 +106,48 @@ it("never moves node circles to make room for labels", () => {
   }
 });
 
-it("shows a hidden label while its node is hovered or focused", () => {
+it("places the hovered or focused node's label first", () => {
   render(<KnowledgeGraph {...props()} />);
 
+  // Below would cover the neighboring "Policy renewal" node, so the
+  // hovered label takes the space above, and "Beneficiary update" yields it.
   fireEvent.mouseEnter(nodeGroup("Address change"));
-  expect(labelOf("Address change")?.textContent).toBe("Address change");
+  expect(placementOf("Address change")).toBe("above");
+  expect(placementOf("Beneficiary update")).not.toBe("above");
 
   fireEvent.mouseLeave(nodeGroup("Address change"));
-  expect(labelOf("Address change")).toBeNull();
+  expect(placementOf("Address change")).toBe("left");
 
   fireEvent.focus(nodeGroup("Address change"));
-  expect(labelOf("Address change")?.textContent).toBe("Address change");
+  expect(placementOf("Address change")).toBe("above");
 });
 
-it("always shows the selected node's label", () => {
+it("places the selected node's label first", () => {
   render(<KnowledgeGraph {...props({ selectedNodeId: "address" })} />);
 
-  expect(labelOf("Address change")?.textContent).toBe("Address change");
+  expect(placementOf("Address change")).toBe("above");
+  expect(placementOf("Beneficiary update")).not.toBe("above");
+});
+
+it("re-places labels in screen space when zooming; labels grow slower than distances", () => {
+  const pair = [
+    buildNode({ id: "a", label: "Left label", degree: 2, x: 400, y: 400 }),
+    buildNode({ id: "b", label: "Right label", x: 500, y: 400 }),
+  ];
+  render(<KnowledgeGraph {...props({ nodes: pair })} />);
+  expect(placementOf("Right label")).not.toBe("below");
+
+  const zoomIn = screen.getByRole("button", { name: "Zoom in" });
+  fireEvent.click(zoomIn);
+  fireEvent.click(zoomIn);
+  fireEvent.click(zoomIn);
+
+  expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe(
+    "175%",
+  );
+  expect(labelGroupOf("Right label")?.getAttribute("transform")).toContain(
+    `scale(${String(1 / Math.sqrt(1.75))})`,
+  );
+  expect(placementOf("Left label")).toBe("below");
+  expect(placementOf("Right label")).toBe("below");
 });

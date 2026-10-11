@@ -205,35 +205,101 @@ async function waitForGraphLayoutSettled(page: Page): Promise<void> {
 }
 
 /**
- * Asserts that no two rendered node labels on the graph canvas overlap, using
- * the browser's real text geometry (labels the canvas hides to avoid a
- * collision are not rendered at all).
+ * Share of the smaller box's area two labels may overlap when the node label
+ * involved is drawn over a halo (the canvas only does that when no free spot
+ * exists around the node).
  */
-async function expectNodeLabelsDisjoint(page: Page): Promise<void> {
-  const overlaps = await page.evaluate(() => {
-    const labels = [
-      ...document.querySelectorAll<SVGTextElement>(".tap-graph-node-label"),
-    ].map((element) => ({
-      text: element.textContent ?? "",
-      box: element.getBoundingClientRect(),
-    }));
-    const pairs: string[] = [];
-    labels.forEach((a, i) => {
-      labels.slice(i + 1).forEach((b) => {
-        if (
-          a.box.left < b.box.right &&
-          b.box.left < a.box.right &&
-          a.box.top < b.box.bottom &&
-          b.box.top < a.box.bottom
-        ) {
-          pairs.push(`${a.text} / ${b.text}`);
+const HALO_OVERLAP_TOLERANCE = 0.1;
+
+/**
+ * Asserts, from the browser's real text geometry, that every drawn node has
+ * a label that the canvas does not cut off, and that node labels overlap
+ * neither each other nor the visible edge labels -- except slightly, over a
+ * halo.
+ */
+async function expectNodeLabelsReadable(
+  page: Page,
+  { wholeCanvasInView = true } = {},
+): Promise<void> {
+  const report = await page.evaluate(
+    ([tolerance, checkCutOff]) => {
+      type Box = { left: number; right: number; top: number; bottom: number };
+      const area = (box: Box) =>
+        (box.right - box.left) * (box.bottom - box.top);
+      const overlap = (a: Box, b: Box) => {
+        const width = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const height = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        return width > 0 && height > 0 ? width * height : 0;
+      };
+      const nodes = [...document.querySelectorAll(".tap-graph-node")];
+      const nodeLabels = nodes.flatMap((node) => {
+        const group = node.querySelector(".tap-graph-node-label-group");
+        const text = group?.querySelector("text");
+        if (!group || !text) return [];
+        return [
+          {
+            name: text.textContent ?? "",
+            halo: group.getAttribute("data-halo") === "true",
+            box: text.getBoundingClientRect() as Box,
+          },
+        ];
+      });
+      const edgeLabels = [
+        ...document.querySelectorAll(".tap-graph-edge-label"),
+      ].map((group) => ({
+        name: group.querySelector("text")?.textContent ?? "",
+        halo: false,
+        box: group.querySelector("rect")!.getBoundingClientRect() as Box,
+      }));
+      const problems: string[] = [];
+      const halos: string[] = [];
+      // With the whole canvas in view (default zoom and pan), a label must
+      // not be cut off by the canvas edge. A zoomed or panned view may cut off
+      // labels of nodes at its edge, like the nodes themselves.
+      const canvas = document
+        .querySelector(".tap-graph-canvas")!
+        .getBoundingClientRect();
+      const inside = (box: Box, slack = 1) =>
+        box.left >= canvas.left - slack &&
+        box.right <= canvas.right + slack &&
+        box.top >= canvas.top - slack &&
+        box.bottom <= canvas.bottom + slack;
+      nodes.forEach((node) => {
+        if (!checkCutOff) return;
+        const core = node.querySelector(".tap-graph-node-core");
+        const text = node.querySelector(".tap-graph-node-label");
+        if (!core || !text) return;
+        if (!inside(core.getBoundingClientRect() as Box, 0)) return;
+        if (!inside(text.getBoundingClientRect() as Box)) {
+          problems.push(`${text.textContent ?? ""} is cut off by the canvas`);
         }
       });
-    });
-    return { count: labels.length, pairs };
+      nodeLabels.forEach((a, i) => {
+        for (const b of [...nodeLabels.slice(i + 1), ...edgeLabels]) {
+          const shared = overlap(a.box, b.box);
+          if (shared === 0) continue;
+          const share = shared / Math.min(area(a.box), area(b.box));
+          const pair = `${a.name} / ${b.name} (${(share * 100).toFixed(1)}%)`;
+          if ((a.halo || b.halo) && share < tolerance) halos.push(pair);
+          else problems.push(pair);
+        }
+      });
+      return {
+        nodes: nodes.length,
+        labeled: nodeLabels.length,
+        problems,
+        halos,
+      };
+    },
+    [HALO_OVERLAP_TOLERANCE, wholeCanvasInView] as const,
+  );
+  expect(report.nodes).toBeGreaterThan(0);
+  expect(report.labeled).toBe(report.nodes);
+  expect(report.problems).toEqual([]);
+  await test.info().attach("label-overlaps-over-halo", {
+    body: JSON.stringify(report.halos),
+    contentType: "application/json",
   });
-  expect(overlaps.count).toBeGreaterThan(0);
-  expect(overlaps.pairs).toEqual([]);
 }
 
 async function capture(page: Page, name: string) {
@@ -289,7 +355,7 @@ test("captures Library graph and document views", async ({ page }) => {
     page.getByRole("checkbox", { name: "Underwriting · 12 nodes" }),
   ).toBeVisible();
   await waitForGraphLayoutSettled(page);
-  await expectNodeLabelsDisjoint(page);
+  await expectNodeLabelsReadable(page);
   const graph = await capture(page, "05-knowledge-graph");
   await page.getByRole("tab", { name: "Documents", exact: true }).click();
   await expect(page.getByRole("tabpanel", { name: "Documents" })).toBeVisible();
@@ -306,7 +372,7 @@ test("captures the graph overview, node detail, edge citations and highlight", a
     page.getByRole("checkbox", { name: "Underwriting · 12 nodes" }),
   ).toBeVisible();
   await waitForGraphLayoutSettled(page);
-  await expectNodeLabelsDisjoint(page);
+  await expectNodeLabelsReadable(page);
   const overview = await capture(page, "10-graph-overview");
 
   // Step 2: node detail for "Health disclosure" (aliases, sources, grouped
@@ -315,7 +381,7 @@ test("captures the graph overview, node detail, edge citations and highlight", a
   const nodeDetails = page.getByRole("region", { name: "Node details" });
   await expect(nodeDetails).toContainText("Aliases");
   await waitForGraphLayoutSettled(page);
-  await expectNodeLabelsDisjoint(page);
+  await expectNodeLabelsReadable(page);
   const nodeDetail = await capture(page, "11-graph-node-detail");
   expect(nodeDetail).not.toBe(overview);
 
@@ -411,7 +477,7 @@ test("captures the graph overview, node detail, edge citations and highlight", a
     page.getByRole("region", { name: "Highlighted path" }),
   ).toBeVisible();
   await waitForGraphLayoutSettled(page);
-  await expectNodeLabelsDisjoint(page);
+  await expectNodeLabelsReadable(page, { wholeCanvasInView: false });
   const highlight = await capture(page, "13-graph-highlight");
 
   expect(new Set([overview, nodeDetail, edgeCitations, highlight]).size).toBe(

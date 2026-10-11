@@ -3759,7 +3759,8 @@
   stroke-width: 1.1;
   opacity: 0.24;
 }
-.tap-graph-edge[data-muted="true"] {
+.tap-graph-edge[data-muted="true"],
+.tap-graph-edge-label[data-muted="true"] {
   opacity: 0.12;
 }
 .tap-graph-edge[data-active="true"] path {
@@ -3777,6 +3778,10 @@
   font-size: 18px;
   font-weight: 600;
   stroke-width: 5px;
+}
+.tap-graph-node-label-halo {
+  fill: var(--tap-surface);
+  fill-opacity: 0.88;
 }
 .tap-graph-node[data-kind="document"] .tap-graph-node-label {
   font-size: 14px;
