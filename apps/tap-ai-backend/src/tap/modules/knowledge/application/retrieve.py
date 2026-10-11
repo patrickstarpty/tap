@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import math
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -526,8 +527,6 @@ class AuthorizedRetrieval:
         missing_reason = self._required_resource_failure(required, run.response.evidence)
         if missing_reason is not None:
             return self._abstain(run.response, missing_reason)
-        if self._has_conflicting_sources(run.response.evidence):
-            return self._abstain(run.response, AbstentionReason.CONFLICTING_SOURCES)
         if self._publication_authority is not None and run.publication is not None:
             await self._publication_authority.revalidate(run.publication)
         current = run.policy if frozen_policy else await self._verify_current(run.policy)
@@ -542,6 +541,14 @@ class AuthorizedRetrieval:
                 run.response.evidence,
                 tuple(sorted({resource.revision for resource in run.plan.resources})),
                 turn_id=None if answer_execution is None else answer_execution.plan_id,
+            )
+        # Checked after relation analysis so the abstention still reports the
+        # project graph status instead of UNAVAILABLE (reasoning disabled).
+        if self._has_conflicting_sources(run.response.evidence):
+            return self._abstain(
+                run.response,
+                AbstentionReason.CONFLICTING_SOURCES,
+                relation=self._baseline_relation_outcome(relation),
             )
         if relation is not None and self._retrieval_augment and relation.augment_chunks:
             run, relation = await self._augment_from_relations(
@@ -1654,17 +1661,35 @@ class AuthorizedRetrieval:
 
     @staticmethod
     def _has_conflicting_sources(evidence: tuple[Evidence, ...]) -> bool:
-        values_by_identity: dict[tuple[str, str], set[tuple[tuple[str, str, str], str]]] = {}
+        """Abstain only when two sources disagree about the same clause.
+
+        A clause is identified either by its immutable logical chunk id, or by a
+        meaningful last heading within one document lineage (same source id, or
+        same file name). Separator/punctuation and too-short headings never
+        identify a clause, a heading labelling many chunks in both compared
+        revisions is a running header, and a generic heading shared by
+        different documents is not one clause.
+        """
+        values_by_identity: dict[tuple[str, ...], set[tuple[tuple[str, str, str], str]]] = {}
+        chunks_by_heading: dict[tuple[tuple[str, ...], tuple[str, str, str]], set[str]] = {}
         for item in evidence:
             source_revision = (
                 item.source.source_id,
                 item.source.revision,
                 item.source.source_content_hash,
             )
-            identities = [("logical-chunk", item.logical_chunk_id)]
-            anchor = item.source.anchor
-            if isinstance(anchor, DocumentAnchor) and anchor.heading_path:
-                identities.append(("document-heading", anchor.heading_path[-1].casefold()))
+            identities: list[tuple[str, ...]] = [("logical-chunk", item.logical_chunk_id)]
+            heading = _clause_heading(item.source.anchor)
+            if heading is not None:
+                heading_identity: tuple[str, ...] = (
+                    "document-heading",
+                    *_document_lineage(item),
+                    heading,
+                )
+                identities.append(heading_identity)
+                chunks_by_heading.setdefault((heading_identity, source_revision), set()).add(
+                    item.logical_chunk_id
+                )
             for identity in identities:
                 values_by_identity.setdefault(identity, set()).add(
                     (source_revision, item.chunk_content_hash)
@@ -1677,11 +1702,19 @@ class AuthorizedRetrieval:
             hashes_by_source: dict[tuple[str, str, str], set[str]] = {}
             for source, content_hash in values:
                 hashes_by_source.setdefault(source, set()).add(content_hash)
-            source_hashes = list(hashes_by_source.values())
+            # A heading is a running header for a pair only when it labels many
+            # chunks in both revisions; a long clause in one revision still counts.
+            running = {
+                source
+                for source in hashes_by_source
+                if len(chunks_by_heading[(identity, source)]) >= _RUNNING_HEADING_CHUNKS
+            }
+            sources = list(hashes_by_source)
             if any(
-                source_hashes[left].isdisjoint(source_hashes[right])
-                for left in range(len(source_hashes))
-                for right in range(left + 1, len(source_hashes))
+                not (sources[left] in running and sources[right] in running)
+                and hashes_by_source[sources[left]].isdisjoint(hashes_by_source[sources[right]])
+                for left in range(len(sources))
+                for right in range(left + 1, len(sources))
             ):
                 return True
         return False
@@ -1841,3 +1874,24 @@ def _flowchart_hit_is_approved(hit: SearchHit, flowcharts: PublicationBinding | 
     return (
         anchor.inventory_item_id in flowcharts.for_revision(hit.source.revision).approved_item_ids
     )
+
+
+_MIN_CLAUSE_HEADING_CHARS = 2
+_RUNNING_HEADING_CHUNKS = 3
+
+
+def _clause_heading(anchor: object) -> str | None:
+    """The normalized last heading when it can name a clause, otherwise None."""
+    if not isinstance(anchor, DocumentAnchor) or not anchor.heading_path:
+        return None
+    heading = " ".join(unicodedata.normalize("NFKC", anchor.heading_path[-1]).casefold().split())
+    if sum(character.isalnum() for character in heading) < _MIN_CLAUSE_HEADING_CHARS:
+        return None
+    return heading
+
+
+def _document_lineage(item: Evidence) -> tuple[str, str]:
+    """Revisions or re-uploads of one document share a lineage; different
+    documents never do, so their identical generic headings stay distinct."""
+    title = " ".join(unicodedata.normalize("NFKC", item.title or "").casefold().split())
+    return ("title", title) if title else ("source", item.source.source_id)
