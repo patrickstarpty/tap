@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 import sys
@@ -15,6 +16,8 @@ from tap.platform.messaging.redis_wakeup import WakeupConsumer
 
 if TYPE_CHECKING:
     from tap.entrypoints.tapper_runtime import TapperSettings
+
+logger = logging.getLogger(__name__)
 
 
 class BoundedWorker(Protocol):
@@ -43,6 +46,9 @@ class WorkerRuntime:
     wakeups: WakeupConsumer
     resources: tuple[AsyncCloseable, ...] = ()
     pending_work: Callable[..., Awaitable[int]] | None = None
+    # One-shot step run before the loop (e.g. the graph worker's backfill). A
+    # failure is logged, not fatal: the loop itself still owns steady-state work.
+    startup: Callable[[], Awaitable[object]] | None = None
 
 
 RuntimeFactory = Callable[["TapperSettings"], Awaitable[WorkerRuntime]]
@@ -162,6 +168,11 @@ async def run(
     remove_handlers: Callable[[], None] | None = None
     try:
         remove_handlers = signal_installer(stop)
+        if runtime.startup is not None:
+            try:
+                await runtime.startup()
+            except Exception:
+                logger.warning("worker startup step failed", exc_info=True)
         await run_worker_loop(
             worker=runtime.worker,
             wakeups=runtime.wakeups,

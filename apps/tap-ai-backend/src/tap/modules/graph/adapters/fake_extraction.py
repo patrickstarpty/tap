@@ -7,6 +7,7 @@ import re
 from dataclasses import replace
 from typing import Mapping
 
+from tap.modules.ai.domain.models import text_digest
 from tap.modules.graph.domain.extraction import GraphExtractionRequest
 from tap.modules.graph.domain.models import (
     Evidence,
@@ -17,6 +18,14 @@ from tap.modules.graph.domain.models import (
     RelationOrigin,
 )
 from tap.modules.graph.domain.vocabulary import normalize_key
+
+# Fragments from this rule-based extractor carry their own profile digest, never
+# the model profile's: switching TAPPER_GRAPH_EXTRACTION_MODE then makes the other
+# mode's fragments stale, so they are re-extracted instead of silently merged.
+# Bump the version whenever the extraction rules change.
+DETERMINISTIC_EXTRACTION_PROFILE_DIGEST = text_digest(
+    "tapper-graph-extraction:deterministic-rule-based:v1"
+)
 
 _SENTENCE_SPLIT = re.compile(r"[。；！？.;!?\n]")
 

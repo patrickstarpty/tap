@@ -21,7 +21,6 @@ from tap.entrypoints.graph_project_knowledge import MysqlCurrentRevisions
 from tap.entrypoints.tapper_runtime import OwnedResources, TapperSettings
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationScopeProvider
 from tap.modules.access.application.scope import RequestFacts
-from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROFILE_DIGEST
 from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
 from tap.modules.knowledge.adapters.mysql_documents import knowledge_document_revision
 from tap.platform.db.project_scope import scope_predicates
@@ -118,7 +117,7 @@ async def run(*, settings: TapperSettings, operation: GraphOperation) -> dict[st
                 await jobs.reset_for_profile(
                     scope,
                     revision_id,
-                    extraction_profile_digest=GRAPH_EXTRACTION_PROFILE_DIGEST,
+                    extraction_profile_digest=tapper_runtime._graph_extraction_profile(settings),
                     model_alias=settings.default_chat_model,
                     now=_now(),
                 )

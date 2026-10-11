@@ -54,6 +54,7 @@ def _request():
                 "documentRevisionId": "document-revision-1",
                 "chunkId": "chunk-1",
                 "content": "Policy governs claims.",
+                "anchor": {"kind": "text", "start": 0, "end": 22},
                 "contentDigest": "sha256:" + "a" * 64,
             },
         ),
@@ -63,6 +64,8 @@ def _request():
 
 
 def _output():
+    # The model cites evidence only by the batch-local chunk ref; the server
+    # backfills revision ids, chunk id, anchor and digest from the request.
     return {
         "nodes": [
             {
@@ -70,14 +73,14 @@ def _output():
                 "label": "Policy",
                 "type": "ENTITY",
                 "canonicalKey": "policy",
-                "evidenceIds": ["evidence-1"],
+                "chunks": ["c1"],
             },
             {
                 "id": "node-2",
                 "label": "Claim",
                 "type": "ENTITY",
                 "canonicalKey": "claim",
-                "evidenceIds": ["evidence-1"],
+                "chunks": ["c1"],
             },
         ],
         "edges": [
@@ -89,17 +92,7 @@ def _output():
                 "relationLabel": "governs",
                 "origin": "EXTRACTED",
                 "confidence": 1.0,
-                "evidenceIds": ["evidence-1"],
-            }
-        ],
-        "evidence": [
-            {
-                "id": "evidence-1",
-                "sourceRevisionId": "source-revision-1",
-                "documentRevisionId": "document-revision-1",
-                "chunkId": "chunk-1",
-                "anchorJson": '{"kind":"text","start":0,"end":22}',
-                "contentDigest": "sha256:" + "a" * 64,
+                "chunks": ["c1"],
             }
         ],
         "provenance": [],
@@ -113,10 +106,31 @@ async def test_model_gateway_extraction_is_schema_locked_and_grounded():
     check_schema(GRAPH_EXTRACTION_SCHEMA)
     gateway = Gateway(_output())
     draft = await ModelGatewayGraphExtraction(gateway).extract(_request())
-    assert draft.edges[0].evidence_ids == ("evidence-1",)
+    assert draft.edges[0].evidence_ids == ("c1",)
     assert gateway.requests[0].operation is ModelOperation.STRUCTURED
     assert gateway.requests[0].schema_digest.startswith("sha256:")
-    assert gateway.requests[0].timeout_seconds == 15.0
+    # Extraction has its own deadline and output budget, independent of the
+    # interactive model timeout and the gateway's 2048-token default.
+    assert gateway.requests[0].timeout_seconds == 240.0
+    assert gateway.requests[0].max_output_tokens == 8192
+
+
+@pytest.mark.asyncio
+async def test_extraction_deadline_and_budget_are_configurable_and_bounded():
+    gateway = Gateway(_output())
+
+    await ModelGatewayGraphExtraction(gateway, timeout_seconds=240, max_output_tokens=4096).extract(
+        _request()
+    )
+
+    assert gateway.requests[0].timeout_seconds == 240
+    assert gateway.requests[0].max_output_tokens == 4096
+    for timeout in (0, 301, float("nan")):
+        with pytest.raises(ValueError):
+            ModelGatewayGraphExtraction(gateway, timeout_seconds=timeout)
+    for budget in (0, 32769):
+        with pytest.raises(ValueError):
+            ModelGatewayGraphExtraction(gateway, max_output_tokens=budget)
 
 
 @pytest.mark.asyncio
@@ -155,20 +169,19 @@ async def test_model_gateway_extraction_defines_specific_types_before_entity_fal
             lambda value: value
             | {
                 "nodes": [
-                    value["nodes"][0] | {"evidenceIds": ["missing-evidence"]},
+                    value["nodes"][0] | {"chunks": ["c2"]},
                     value["nodes"][1],
                 ]
             },
             "dangling",
         ),
         (
-            lambda value: value
-            | {"evidence": [value["evidence"][0] | {"contentDigest": "sha256:" + "b" * 64}]},
-            "digest",
+            lambda value: value | {"edges": [value["edges"][0] | {"chunks": ["chunk-1"]}]},
+            "dangling",
         ),
         (
             lambda value: value
-            | {"edges": [value["edges"][0] | {"origin": "INFERRED", "evidenceIds": []}]},
+            | {"edges": [value["edges"][0] | {"origin": "INFERRED", "chunks": []}]},
             "provenance",
         ),
     ],
@@ -216,7 +229,7 @@ async def test_dropped_edge_removes_its_provenance():
             "targetNodeId": "missing-node",
             "relationType": "USES",
             "origin": "INFERRED",
-            "evidenceIds": [],
+            "chunks": [],
         }
     )
     output["provenance"].append(
@@ -242,7 +255,7 @@ async def test_dropped_input_fact_cascades_to_inferred_edge(span_recorder):
             "id": "edge-y",
             "relationType": "USES",
             "origin": "INFERRED",
-            "evidenceIds": [],
+            "chunks": [],
         }
     )
     output["provenance"].append(
@@ -267,7 +280,7 @@ async def test_empty_model_output_returns_none_instead_of_raising():
     # A model returning zero nodes for a boilerplate chunk must not raise (the
     # domain forbids an empty-nodes GraphSnapshotDraft): it is a successful batch
     # that simply grounded nothing, not a failure to retry.
-    output = {"nodes": [], "edges": [], "evidence": [], "provenance": []}
+    output = {"nodes": [], "edges": [], "provenance": []}
     draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
     assert draft is None
 
@@ -302,3 +315,93 @@ def test_schema_locks_vocabulary_and_process_type():
     assert set(nodes["type"]["enum"]) == NODE_TYPES and nodes["aliases"]["maxItems"] == 5
     assert set(edges["relationType"]["enum"]) == RELATION_TYPES
     assert "relationLabel" in GRAPH_EXTRACTION_SCHEMA["properties"]["edges"]["items"]["required"]
+
+
+def _two_chunk_request():
+    return replace(
+        _request(),
+        chunks=(
+            _request().chunks[0],
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": "chunk-2",
+                "content": "理赔需要提交保险合同。",
+                "anchor": {
+                    "type": "document",
+                    "startOffset": 22,
+                    "endOffset": 33,
+                    "headingPath": ["第三条 保险责任"],
+                    "page": 2,
+                    "inventoryItemId": "pi_" + "e" * 64,
+                },
+                "contentDigest": "sha256:" + "f" * 64,
+            },
+        ),
+        document_title="理赔手册",
+        known_entities=(
+            {"id": "n9", "label": "保险合同", "type": "ENTITY", "canonicalKey": "保险合同"},
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_context_carries_short_chunk_refs_and_unescaped_chinese():
+    gateway = Gateway(_output())
+
+    await ModelGatewayGraphExtraction(gateway).extract(_two_chunk_request())
+
+    raw = gateway.requests[0].context
+    assert "\\u" not in raw and "理赔需要提交保险合同。" in raw and "保险合同" in raw
+    context = json.loads(raw)
+    assert context["chunks"] == [
+        {"ref": "c1", "content": "Policy governs claims."},
+        {"ref": "c2", "content": "理赔需要提交保险合同。"},
+    ]
+    # Identifiers the model never needs to echo stay out of its input.
+    for hidden in ("contentDigest", "anchor", "chunkId", "sha256:", "pi_", "snapshotId"):
+        assert hidden not in raw
+    assert context["documentTitle"] == "理赔手册"
+
+
+@pytest.mark.asyncio
+async def test_server_backfills_evidence_from_cited_refs_only():
+    output = _output()
+    output["nodes"][0]["chunks"] = ["c2", "c1", "c2"]
+    output["edges"][0]["chunks"] = ["c2"]
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_two_chunk_request())
+
+    by_id = {item.evidence_id: item for item in draft.evidence}
+    assert [item.evidence_id for item in draft.evidence] == ["c1", "c2"]
+    assert by_id["c2"].chunk_id == "chunk-2"
+    assert by_id["c2"].content_digest == "sha256:" + "f" * 64
+    assert by_id["c2"].source_revision_id == "source-revision-1"
+    assert by_id["c2"].document_revision_id == "document-revision-1"
+    assert dict(by_id["c2"].anchor)["headingPath"] == ["第三条 保险责任"]
+    assert dict(by_id["c1"].anchor) == {"kind": "text", "start": 0, "end": 22}
+    node = next(item for item in draft.nodes if item.node_id == "node-1")
+    assert node.evidence_ids == ("c2", "c1")
+    assert draft.edges[0].evidence_ids == ("c2",)
+
+
+@pytest.mark.asyncio
+async def test_uncited_chunks_produce_no_evidence():
+    draft = await ModelGatewayGraphExtraction(Gateway(_output())).extract(_two_chunk_request())
+
+    assert [item.evidence_id for item in draft.evidence] == ["c1"]
+
+
+def test_schema_and_prompt_never_ask_the_model_to_copy_hashes_or_anchors():
+    from tap.modules.graph.adapters.model_gateway_extraction import (
+        GRAPH_EXTRACTION_PROMPT,
+        GRAPH_EXTRACTION_SCHEMA,
+    )
+
+    serialized = json.dumps(GRAPH_EXTRACTION_SCHEMA)
+    for copied in ("contentDigest", "anchorJson", "chunkId", "sourceRevisionId", "evidence"):
+        assert copied not in serialized
+    assert set(GRAPH_EXTRACTION_SCHEMA["required"]) == {"nodes", "edges", "provenance"}
+    assert "contentDigest" not in GRAPH_EXTRACTION_PROMPT
+    assert "anchorJson" not in GRAPH_EXTRACTION_PROMPT
+    assert "c1" in GRAPH_EXTRACTION_PROMPT

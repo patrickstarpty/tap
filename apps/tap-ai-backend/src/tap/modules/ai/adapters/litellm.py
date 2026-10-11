@@ -48,6 +48,15 @@ Redact = Callable[[str], Awaitable[str]]
 
 logger = logging.getLogger(__name__)
 
+# Ceiling for any one call's deadline. Interactive calls stay at their own (much
+# shorter) configured timeouts; only long batch work such as graph extraction is
+# configured up to this bound.
+MAX_GATEWAY_TIMEOUT_SECONDS = 300
+# Completion-token budget bounds a caller may request per call.
+MAX_OUTPUT_TOKENS = 32768
+DEFAULT_OUTPUT_TOKENS = 2048
+VISION_OUTPUT_TOKENS = 8192
+
 # Audited upstream model identifiers: printable ASCII only, bounded to 256 characters.
 ACTUAL_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}")
 
@@ -99,6 +108,9 @@ class LiteLLMModelGatewayConfig:
     embedding_dimension: int
     timeout_seconds: float = 15.0
     max_retries: int = 1
+    # In-flight calls (and pooled connections) per gateway instance; a call queued
+    # behind full slots still spends its own deadline waiting.
+    max_concurrency: int = 4
 
     def __post_init__(self) -> None:
         validate_litellm_base_url(self.base_url)
@@ -110,10 +122,12 @@ class LiteLLMModelGatewayConfig:
             raise ValueError("model gateway dimension is invalid")
         if type(self.max_retries) is not int or not 0 <= self.max_retries <= 2:
             raise ValueError("model gateway retry budget is invalid")
+        if type(self.max_concurrency) is not int or not 1 <= self.max_concurrency <= 16:
+            raise ValueError("model gateway concurrency is invalid")
         if (
             isinstance(self.timeout_seconds, bool)
             or not math.isfinite(self.timeout_seconds)
-            or not 0 < self.timeout_seconds <= 60
+            or not 0 < self.timeout_seconds <= MAX_GATEWAY_TIMEOUT_SECONDS
         ):
             raise ValueError("model gateway timeout is invalid")
 
@@ -148,7 +162,7 @@ class LiteLLMModelGateway:
         self._catalog = catalog
         self._owns_client = client is None
         self._client = client
-        self._slots = asyncio.Semaphore(4)
+        self._slots = asyncio.Semaphore(config.max_concurrency)
         self._recorder = recorder
 
     async def catalog(self, scope: ProjectScopeContext) -> tuple[ModelDescriptor, ...]:
@@ -250,6 +264,14 @@ class LiteLLMModelGateway:
             or not math.isfinite(request.timeout_seconds)
             or not 0 < request.timeout_seconds <= self._config.timeout_seconds
             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", request.idempotency_key) is None
+            or (
+                request.max_output_tokens is not None
+                and (
+                    type(request.max_output_tokens) is not int
+                    or not 1 <= request.max_output_tokens <= MAX_OUTPUT_TOKENS
+                    or operation is ModelOperation.EMBED
+                )
+            )
         ):
             raise ModelGatewayRejected()
         for text in (request.prompt, request.context):
@@ -409,7 +431,13 @@ class LiteLLMModelGateway:
                                 {"role": "system", "content": system_prompt},
                                 {"role": "user", "content": user_content},
                             ],
-                            max_tokens=8192 if request.image_bytes is not None else 2048,
+                            max_tokens=(
+                                request.max_output_tokens
+                                if request.max_output_tokens is not None
+                                else VISION_OUTPUT_TOKENS
+                                if request.image_bytes is not None
+                                else DEFAULT_OUTPUT_TOKENS
+                            ),
                         )
                         if operation is ModelOperation.STRUCTURED:
                             payload["temperature"] = 0
@@ -522,7 +550,10 @@ class LiteLLMModelGateway:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self._config.timeout_seconds,
-                limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
+                limits=httpx.Limits(
+                    max_connections=self._config.max_concurrency,
+                    max_keepalive_connections=self._config.max_concurrency,
+                ),
                 transport=httpx.AsyncHTTPTransport(retries=0),
             )
         encoded = json.dumps(

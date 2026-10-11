@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.knowledge.adapters.mysql_documents import knowledge_document_revision
 from tap.modules.knowledge.adapters.mysql_ready_sources import MysqlReadySources
-from tap.platform.db.project_scope import require_project_scope
+from tap.platform.db.project_scope import require_project_scope, scope_predicates
 
-__all__ = ["MysqlCurrentRevisions"]
+__all__ = ["MysqlCurrentRevisions", "MysqlPublishedChunkLocators"]
 
 logger = logging.getLogger(__name__)
 
@@ -45,3 +47,43 @@ class MysqlCurrentRevisions:
                 _READY_SOURCES_CAP,
             )
         return frozenset(item.revision_id for item in page.items)
+
+
+class MysqlPublishedChunkLocators:
+    """Chunks-artifact locator of every currently-published revision (the same
+    bounded revision set the merge reads), for the graph worker's startup
+    backfill. A revision without a chunks artifact is omitted: it cannot be
+    extracted."""
+
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
+    ) -> None:
+        self._sessions = sessions
+        self._scope = require_project_scope(scope)
+        self._revisions = MysqlCurrentRevisions(sessions, scope=self._scope)
+
+    async def published(self) -> dict[str, str]:
+        revision_ids = await self._revisions.current_revision_ids(self._scope)
+        if not revision_ids:
+            return {}
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            knowledge_document_revision.c.revision_id,
+                            knowledge_document_revision.c.chunks_blob_locator,
+                        ).where(
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_document_revision.c.revision_id.in_(sorted(revision_ids)),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return {
+            str(row["revision_id"]): str(row["chunks_blob_locator"])
+            for row in rows
+            if row["chunks_blob_locator"]
+        }

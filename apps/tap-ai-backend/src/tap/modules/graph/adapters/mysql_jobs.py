@@ -39,6 +39,7 @@ from tap.modules.graph.adapters.mysql import (
     publish_graph_snapshot,
 )
 from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
+from tap.modules.graph.application.backfill import GraphRevisionJobState
 from tap.modules.graph.domain.jobs import (
     ClaimedGraphJob,
     GraphBatchStatus,
@@ -616,14 +617,17 @@ class MysqlGraphJobStore:
         extraction_profile_digest: str,
         model_alias: str,
         now: datetime,
+        only_if_stale: bool = False,
     ) -> GraphJob:
         """Requeue extraction for one currently-published revision under a
         (possibly changed) extraction profile/model: drop every fact the
         prior snapshot derived, put the snapshot back to CANDIDATE, and
-        rewrite the job row as a fresh PENDING request. Used only by the
-        `graph rebuild` operator CLI; never deletes a project-graph version
-        itself -- the merge worker replays a version once extraction
-        finishes."""
+        rewrite the job row as a fresh PENDING request. Used by the
+        `graph rebuild` operator CLI (always resets) and the graph worker's
+        startup backfill (``only_if_stale``: a job already under this profile,
+        e.g. reset by a concurrent worker start, is returned untouched); never
+        deletes a project-graph version itself -- the merge worker replays a
+        version once extraction finishes."""
 
         scope = require_project_scope(scope)
         async with self._sessions() as session, session.begin():
@@ -643,6 +647,9 @@ class MysqlGraphJobStore:
             )
             if row is None:
                 raise ValueError("graph job not found for revision")
+            if only_if_stale and row["extraction_profile_digest"] == extraction_profile_digest:
+                current = await self._locked_row(session, scope, cast(str, row["job_id"]))
+                return await self._job(session, scope, current)
             if (
                 row["status"] == GraphJobStatus.RUNNING.value
                 and row["lease_expires_at"] is not None
@@ -765,6 +772,41 @@ class MysqlGraphJobStore:
                 cast(str, row["revision_id"]),
                 cast(str, row["status"]),
                 cast(str, row["snapshot_status"]),
+            )
+            for row in rows
+        )
+
+    async def revision_job_states(
+        self, scope: ProjectScopeContext
+    ) -> tuple[GraphRevisionJobState, ...]:
+        """Status, extraction profile and lease of every graph job in this Project,
+        keyed by revision -- what the startup backfill needs to find revisions with
+        no job or a fragment extracted under an older profile."""
+
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            graph_extraction_job.c.revision_id,
+                            graph_extraction_job.c.status,
+                            graph_extraction_job.c.extraction_profile_digest,
+                            graph_extraction_job.c.lease_expires_at,
+                        )
+                        .where(*scope_predicates(graph_extraction_job, scope))
+                        .order_by(graph_extraction_job.c.revision_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            GraphRevisionJobState(
+                cast(str, row["revision_id"]),
+                GraphJobStatus(cast(str, row["status"])),
+                cast(str, row["extraction_profile_digest"]),
+                cast("datetime | None", row["lease_expires_at"]),
             )
             for row in rows
         )
@@ -1036,11 +1078,18 @@ class MysqlGraphJobStore:
 class MysqlGraphReadyProjection:
     """Create the durable graph job inside the document READY transaction."""
 
-    def __init__(self, jobs: MysqlGraphJobStore, *, model_alias: str) -> None:
+    def __init__(
+        self,
+        jobs: MysqlGraphJobStore,
+        *,
+        model_alias: str,
+        extraction_profile_digest: str = GRAPH_EXTRACTION_PROFILE_DIGEST,
+    ) -> None:
         if not model_alias:
             raise ValueError("graph model alias must be nonblank")
         self._jobs = jobs
         self._model_alias = model_alias
+        self._extraction_profile_digest = extraction_profile_digest
 
     async def after_ready(
         self,
@@ -1060,7 +1109,7 @@ class MysqlGraphReadyProjection:
             scope=scope,
             revision_id=revision_id,
             chunks_locator=chunks_locator,
-            extraction_profile_digest=GRAPH_EXTRACTION_PROFILE_DIGEST,
+            extraction_profile_digest=self._extraction_profile_digest,
             model_alias=self._model_alias,
         )
         await self._jobs.request_in_transaction(session, scope, request, now=now)

@@ -28,15 +28,39 @@ _MAX_GRAPH_EDGES = 2_000
 
 
 def split_batches(
-    chunks: Sequence[ChunkDraft], *, batch_size: int
+    chunks: Sequence[ChunkDraft], *, batch_size: int, max_chars: int | None = None
 ) -> tuple[tuple[ChunkDraft, ...], ...]:
-    """Split chunks into fixed-size, order-preserving batches."""
+    """Split chunks into order-preserving batches bounded by characters and count.
+
+    With ``max_chars``, a batch closes before the chunk that would push its total
+    content length past the budget, so the model's input (and with it the facts it
+    must write back) stays roughly constant however finely a document was chunked.
+    ``batch_size`` caps the chunk count per batch as a secondary bound for
+    documents split into very many tiny chunks. A single chunk longer than the
+    budget forms its own batch (ingestion already bounds a chunk's size). Without
+    ``max_chars`` the split is fixed-size by ``batch_size`` alone.
+    """
 
     if batch_size < 1:
         raise ValueError("graph extraction batch size must be positive")
-    return tuple(
-        tuple(chunks[index : index + batch_size]) for index in range(0, len(chunks), batch_size)
-    )
+    if max_chars is not None and max_chars < 1:
+        raise ValueError("graph extraction batch character budget must be positive")
+    batches: list[tuple[ChunkDraft, ...]] = []
+    current: list[ChunkDraft] = []
+    current_chars = 0
+    for chunk in chunks:
+        size = len(chunk.content)
+        if current and (
+            len(current) >= batch_size
+            or (max_chars is not None and current_chars + size > max_chars)
+        ):
+            batches.append(tuple(current))
+            current, current_chars = [], 0
+        current.append(chunk)
+        current_chars += size
+    if current:
+        batches.append(tuple(current))
+    return tuple(batches)
 
 
 def assemble_fragment(

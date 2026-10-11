@@ -52,6 +52,9 @@ class ModelRequest:
     allow_retries: bool = True
     image_bytes: bytes | None = field(default=None, repr=False)
     image_media_type: str | None = None
+    # Completion-token budget for this call; ``None`` keeps the gateway's
+    # per-operation default (vision structured output 8192, everything else 2048).
+    max_output_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
