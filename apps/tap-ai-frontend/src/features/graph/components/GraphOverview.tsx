@@ -489,6 +489,14 @@ export function GraphOverview({
   if (sourceScope.status === "no-match") {
     return <p role="status">{libraryCopy.noResults}</p>;
   }
+  if (project !== null && project.status === "FAILED") {
+    return (
+      <div className="tap-graph-empty">
+        <p>{libraryCopy.graphFailed}</p>
+        <p>{libraryCopy.graphFailedHint}</p>
+      </div>
+    );
+  }
   if (project === null || project.nodeCount === 0) {
     return (
       <div className="tap-graph-empty">
