@@ -25,6 +25,14 @@ _LIST_ITEM = re.compile(
     r"|[一二三四五六七八九十]+、|[-•·●▪]\s)"
 )
 _SPACES = re.compile(r"\s+")
+_HEADING_CHARACTERS = 40
+_HEADING_CLOSERS = ("。", "！", "？", "；", "，", "、", "!", "?", ";", ",", ".", "：", ":")
+_ARTICLE_RANK = 3
+_SUBSECTION_BLOCK_CHARACTERS = 300
+_NUMERAL = r"[一二三四五六七八九十百零〇两\d]+"
+_DIVISION = re.compile(rf"^第\s*{_NUMERAL}\s*(章|部分|节|条)")
+_ENUMERATED = re.compile(r"^[一二三四五六七八九十]+、\s*\S")
+_DECIMAL = re.compile(r"^(\d+(?:\.\d+)+)\s+\S")
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +40,7 @@ class PdfLayoutBlock:
     page: int
     heading_path: tuple[str, ...]
     text: str
+    heading_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,18 +51,13 @@ class PdfLayout:
 
 
 def layout_pdf_pages(pages: Sequence[str]) -> PdfLayout:
-    """Turn extracted page text (page 1 first) into titled, page-bound body blocks."""
+    """Turn extracted page text (page 1 first) into titled, page-bound clause blocks."""
     cleaned = clean_pdf_pages(pages)
-    title: str | None = None
-    title_page: int | None = None
-    for page_number, lines in enumerate(cleaned, start=1):
-        if lines:
-            title, title_page = lines[0], page_number
-            cleaned[page_number - 1] = lines[1:]
-            break
+    title, title_page = _title(cleaned)
+    if title is not None and title_page is not None:
+        cleaned[title_page - 1].remove(title)
     root = () if title is None else (title,)
-    paragraphs = _paragraphs(cleaned, root)
-    return PdfLayout(title, title_page, tuple(_pack(paragraphs)))
+    return PdfLayout(title, title_page, tuple(_pack(_paragraphs(cleaned, root))))
 
 
 @dataclass(slots=True)
@@ -62,28 +66,54 @@ class _Paragraph:
     heading_path: tuple[str, ...]
     text: str
     open: bool
+    rank: int | None = None
 
 
 def _paragraphs(pages: Sequence[Sequence[str]], root: tuple[str, ...]) -> list[_Paragraph]:
-    """Rejoin lines that the PDF wrapped at the right margin; pages stay separate."""
+    """Rejoin lines wrapped at the right margin and track the numbered heading path.
+
+    Paragraphs never cross a page, so every block keeps one page anchor.
+    """
     full_width = _full_line_width(pages)
     paragraphs: list[_Paragraph] = []
+    headings: list[tuple[int, str]] = []
     for page_number, lines in enumerate(pages, start=1):
         current: _Paragraph | None = None
         for line in lines:
-            if current is not None and current.open and not _LIST_ITEM.match(line):
+            heading = _heading(line)
+            if (
+                current is not None
+                and current.open
+                and not _LIST_ITEM.match(line)
+                # A long line opening with a clause number continues a cross-reference.
+                and (heading is None or not _title_like(line))
+            ):
                 current.text = _join_wrapped(current.text, line)
                 current.open = _continues(line, full_width)
                 continue
-            current = _Paragraph(page_number, root, line, _continues(line, full_width))
+            if heading is not None:
+                rank, label = heading
+                while headings and headings[-1][0] >= rank:
+                    headings.pop()
+                headings.append((rank, label))
+                path = root + tuple(item for _, item in headings)
+                current = _Paragraph(page_number, path, line, False, rank)
+            else:
+                path = root + tuple(item for _, item in headings)
+                current = _Paragraph(page_number, path, line, _continues(line, full_width))
             paragraphs.append(current)
     return paragraphs
 
 
 def _pack(paragraphs: Sequence[_Paragraph]) -> list[PdfLayoutBlock]:
-    """Group the paragraphs of one page; the chunker sizes blocks at sentence ends."""
+    """Group a page's paragraphs by clause; the chunker sizes blocks at sentence ends.
+
+    An article (or a larger division) always opens a block. A lower numbered heading
+    opens one only when the running block already holds enough text to stand alone.
+    """
     blocks: list[PdfLayoutBlock] = []
     group: list[_Paragraph] = []
+    size = 0
 
     def flush() -> None:
         if group:
@@ -92,16 +122,65 @@ def _pack(paragraphs: Sequence[_Paragraph]) -> list[PdfLayoutBlock]:
                     group[0].page,
                     _common_prefix([item.heading_path for item in group]),
                     "\n".join(item.text for item in group),
+                    # A heading left at the foot of a page labels the next page's text.
+                    all(item.rank is not None for item in group),
                 )
             )
             group.clear()
 
     for paragraph in paragraphs:
-        if group and paragraph.page != group[0].page:
+        if group and (
+            paragraph.page != group[0].page
+            or (paragraph.rank is not None and paragraph.rank <= _ARTICLE_RANK)
+            or (paragraph.rank is not None and size >= _SUBSECTION_BLOCK_CHARACTERS)
+        ):
             flush()
+            size = 0
+        size += len(paragraph.text)
         group.append(paragraph)
     flush()
     return blocks
+
+
+def _heading(line: str) -> tuple[int, str] | None:
+    """Rank and label of a numbered clause heading; deeper clauses rank higher."""
+    division = _DIVISION.match(line)
+    if division is not None:
+        rank = {"章": 1, "部分": 1, "节": 2, "条": _ARTICLE_RANK}[division.group(1)]
+        if _title_like(line):
+            return rank, _SPACES.sub(" ", line)
+        return rank, division.group(0)
+    if not _title_like(line):
+        return None
+    if _ENUMERATED.match(line):
+        return _ARTICLE_RANK + 1, _SPACES.sub(" ", line)
+    decimal = _DECIMAL.match(line)
+    if decimal is not None:
+        return _ARTICLE_RANK + 1 + decimal.group(1).count("."), _SPACES.sub(" ", line)
+    return None
+
+
+def _title(pages: Sequence[Sequence[str]]) -> tuple[str | None, int | None]:
+    """The last title-like line before the first clause, else a title-like first line."""
+    for page_number, lines in enumerate(pages, start=1):
+        if not lines:
+            continue
+        preamble: list[str] = []
+        for line in lines:
+            if _heading(line) is not None:
+                break
+            preamble.append(line)
+        candidates = [line for line in preamble if _title_like(line) and not _LIST_ITEM.match(line)]
+        if len(preamble) < len(lines) and candidates:
+            return candidates[-1], page_number
+        if _title_like(lines[0]) and not _LIST_ITEM.match(lines[0]):
+            return lines[0], page_number
+        return None, None
+    return None, None
+
+
+def _title_like(line: str) -> bool:
+    return len(line) <= _HEADING_CHARACTERS and not line.endswith(_HEADING_CLOSERS)
 
 
 def _common_prefix(paths: Sequence[tuple[str, ...]]) -> tuple[str, ...]:

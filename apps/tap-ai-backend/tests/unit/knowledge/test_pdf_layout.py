@@ -172,8 +172,10 @@ def test_chunk_count_and_average_length_fall_in_the_paragraph_target(
     body = sum(len(block.text) for block in artifact.blocks)
     average = sum(len(chunk.content) for chunk in chunks) / len(chunks)
 
-    assert body // 480 <= len(chunks) <= body // 200
-    assert 200 <= average <= 480
+    # Clause blocks below the 512-token chunk limit: short clauses stay whole.
+    assert body // 480 <= len(chunks) <= body // 150
+    assert 180 <= average <= 480
+    assert len(chunks) * 5 <= sum(len(page.split("\n")) for page in _pages(name))
 
 
 @pytest.mark.parametrize("name", ["annuity-terms", "group-medical-terms"])
@@ -195,3 +197,75 @@ def test_every_chunk_anchor_is_an_exact_slice_of_one_page_block(name: str, parse
         assert block.page == anchor["page"]
         assert list(block.heading_path) == anchor["headingPath"]
         assert block.inventory_item_id == anchor["inventoryItemId"]
+
+
+def test_clause_numbers_become_the_heading_path_of_their_chunks(parse_fixture) -> None:
+    """Conflict checks and citations identify a clause by its numbered heading."""
+    chunks = _chunks(parse_fixture("annuity-terms"))
+    paths = {tuple(json.loads(chunk.anchor_json)["headingPath"]): chunk.content for chunk in chunks}
+    maturity = next(
+        path for path, content in paths.items() if "基本保险金额的 10%（百分之十）" in content
+    )
+    exclusions = next(
+        path for path, content in paths.items() if "核爆炸、核辐射或核污染" in content
+    )
+
+    assert maturity[:2] == ("友邦悦享年年年金保险", "第二条 保险责任")
+    assert exclusions == ("友邦悦享年年年金保险", "第三条 责任免除")
+    assert sum(1 for path in paths if len(path) >= 2) >= len(paths) * 0.8
+
+
+@pytest.mark.parametrize("name", ["annuity-terms", "group-medical-terms"])
+def test_no_heading_is_a_separator_header_or_page_number(name: str, parse_fixture) -> None:
+    """Only the document title and numbered clauses may label a chunk."""
+    artifact = parse_fixture(name)
+    headings = {item for block in artifact.blocks for item in block.heading_path}
+
+    assert headings
+    assert all(any(character.isalnum() for character in item) for item in headings)
+    assert not any(item.startswith("条款编号") for item in headings)
+    clause_headings = headings - {artifact.blocks[0].text}
+    assert all(
+        item.startswith("第") or item[0] in "一二三四五六七八九十" or item[0].isdigit()
+        for item in clause_headings
+    )
+
+
+def test_numbered_headings_nest_and_a_new_article_starts_a_new_block() -> None:
+    """Sub-clauses nest under their article; the next article must not inherit them."""
+    pages = [
+        "Policy terms\n"
+        "第一条 保险责任\n"
+        "一、身故保险金\n"
+        "被保险人身故的，给付身故保险金。\n"
+        "1.2 给付比例\n"
+        "按基本保险金额的 10% 给付。\n"
+        "第二条 责任免除\n"
+        "被保险人故意自伤的，不承担给付责任。"
+    ]
+
+    layout = layout_pdf_pages(pages)
+
+    assert layout.title == "Policy terms"
+    assert [block.heading_path for block in layout.blocks] == [
+        ("Policy terms", "第一条 保险责任"),
+        ("Policy terms", "第二条 责任免除"),
+    ]
+    assert layout.blocks[0].text.startswith("第一条 保险责任\n一、身故保险金\n")
+
+
+def test_heading_at_the_foot_of_a_page_labels_the_next_page_without_its_own_chunk() -> None:
+    """A heading-only chunk would answer with a title and no rule."""
+    pages = [
+        "Policy terms\n第一条 保险责任\n被保险人身故的，给付身故保险金。\n第二条 责任免除",
+        "被保险人故意自伤的，不承担给付责任。",
+    ]
+
+    blocks = layout_pdf_pages(pages).blocks
+
+    assert [(block.page, block.heading_only) for block in blocks] == [
+        (1, False),
+        (1, True),
+        (2, False),
+    ]
+    assert blocks[2].heading_path == ("Policy terms", "第二条 责任免除")

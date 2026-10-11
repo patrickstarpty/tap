@@ -318,7 +318,7 @@ class PdfParser:
             )
         for block in layout.blocks:
             builder.add(
-                BlockKind.PARAGRAPH,
+                BlockKind.HEADING if block.heading_only else BlockKind.PARAGRAPH,
                 block.text,
                 block.heading_path,
                 page=block.page,
