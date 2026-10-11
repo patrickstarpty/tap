@@ -61,6 +61,7 @@ from tap.platform.telemetry import span
 
 __all__ = ["RelationAnalysisAgent"]
 
+_ROOT_SPAN_NAME = "agent.relation-analysis"
 _MAX_AUGMENT_CHUNKS = 5
 # Caps against unbounded per-answer graph work: only the first 10 S-labelled
 # evidence refs (in the order the caller gave them, i.e. S1..S10) ever seed a
@@ -161,6 +162,19 @@ class RelationAnalysisAgent:
         self._flowchart_gate = flowchart_gate
 
     async def run(self, context: AgentContext, value: RelationAnalysisInput) -> RelationContext:
+        """Runs the whole subgraph inside its own `agent.relation-analysis`
+        span, parented on `context.parent_context` (the caller's span); the
+        four stage spans nest under it. The run's selection and pinned graph
+        version come from `context` only -- `value` carries the
+        per-invocation payload (query and retrieval evidence)."""
+        with span(_ROOT_SPAN_NAME, context=context.parent_context) as root_span:
+            result = await self._run(context, value)
+            root_span.set_attribute("tap.relation.status", result.status.value)
+            if result.graph_version is not None:
+                root_span.set_attribute("tap.graph.version", result.graph_version)
+            return result
+
+    async def _run(self, context: AgentContext, value: RelationAnalysisInput) -> RelationContext:
         try:
             current = await self._store.get_current(context.scope)
         except Exception:
@@ -176,17 +190,17 @@ class RelationAnalysisAgent:
             return RelationContext(
                 status=RelationContextStatus.NOT_READY, graph_version=str(current.version)
             )
-        if value.graph_version and value.graph_version != str(current.version):
+        if context.graph_version and context.graph_version != str(current.version):
             return RelationContext(
-                status=RelationContextStatus.STALE, graph_version=value.graph_version
+                status=RelationContextStatus.STALE, graph_version=context.graph_version
             )
 
         version = current.version
         scope = context.scope
-        allowed = value.source_revision_ids
+        allowed = context.source_revision_ids
 
         try:
-            with span("graph.seed", context=context.parent_context) as seed_span:
+            with span("graph.seed") as seed_span:
                 evidence_seeds = await seed_from_evidence(
                     self._store, scope, version, value.evidence[:_MAX_EVIDENCE_SEED_REFS]
                 )
@@ -203,7 +217,7 @@ class RelationAnalysisAgent:
             all_seed_nodes, origins = _combine_seeds(query_seeds, evidence_seeds)
             seed_ids = frozenset(node.node_id for node in all_seed_nodes)
 
-            with span("graph.expand", context=context.parent_context) as expand_span:
+            with span("graph.expand") as expand_span:
                 subgraph = await expand(
                     self._store,
                     scope,
@@ -215,7 +229,7 @@ class RelationAnalysisAgent:
                 expand_span.set_attribute("tap.graph.edge_count", len(subgraph.edges))
                 expand_span.set_attribute("tap.graph.depth", expansion_depth(len(all_seed_nodes)))
 
-            with span("graph.path", context=context.parent_context) as path_span:
+            with span("graph.path") as path_span:
                 path_expansion = await find_paths(
                     self._store,
                     scope,
@@ -228,7 +242,7 @@ class RelationAnalysisAgent:
                 paths = path_expansion.paths
                 path_span.set_attribute("tap.graph.path_count", len(paths))
 
-            with span("relation.rank", context=context.parent_context) as rank_span:
+            with span("relation.rank") as rank_span:
                 flowchart_binding: PublicationBinding | None = None
                 if self._flowchart_gate is not None:
                     flowchart_binding = await self._flowchart_gate.current(scope.project_id)
@@ -286,7 +300,7 @@ class RelationAnalysisAgent:
             if refreshed is None or refreshed.version != version:
                 return RelationContext(
                     status=RelationContextStatus.STALE,
-                    graph_version=value.graph_version or str(version),
+                    graph_version=context.graph_version or str(version),
                 )
 
             seeds_out = _visible_seed_nodes(all_seed_nodes, origins, nodes_by_id)
@@ -336,7 +350,7 @@ class RelationAnalysisAgent:
             # version instead of surfacing a bare failure.
             return RelationContext(
                 status=RelationContextStatus.STALE,
-                graph_version=value.graph_version or str(version),
+                graph_version=context.graph_version or str(version),
             )
         except Exception:
             return RelationContext(

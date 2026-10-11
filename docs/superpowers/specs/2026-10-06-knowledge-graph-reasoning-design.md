@@ -105,7 +105,7 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 
 ### 2.3 关系分析子图
 
-输入 `RelationAnalysisInput`：standalone query、授权来源修订集合、检索证据（S 标签、chunk id、来源修订）、项目图版本。
+输入 `RelationAnalysisInput`：standalone query、检索证据（S 标签、chunk id、来源修订）；授权来源修订集合与项目图版本只由 `AgentContext` 携带，不在输入中重复。
 输出 `RelationContext`：状态（APPLIED/NOT_READY/STALE/FAILED/EMPTY）、种子节点、边列表（已编号 R1..Rn）、路径列表、诊断计数。全程确定性，不调用模型。
 
 1. **证据种子**：检索命中 chunk id 经 `graph_project_edge_evidence` 与 `graph_project_node_source` 反查节点。
@@ -135,7 +135,7 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 ### 2.7 事件、可观测性与失败处理
 
 - 新增流事件 `graph.context_ready`，payload：状态、种子数、路径摘要（最多 3 条，每条为 label 序列）、R 数量；`citation.resolved` 的 payload 带 `kind`。
-- span：`graph.seed`、`graph.expand`、`graph.path`、`relation.rank`，挂在 `turn.execute` 下，属性记录数量与耗时；替换现有 `graph.enrich`。
+- span：子图根 span `agent.relation-analysis` 挂在 `turn.execute` 下，`graph.seed`、`graph.expand`、`graph.path`、`relation.rank` 为其子 span，属性记录数量与耗时；替换现有 `graph.enrich`。
 - 项目图未就绪、合并中、查询异常分别为 NOT_READY / STALE / FAILED，回答退化为纯切片路径，`graph_context_status` 照常写入 Turn。图谱永不阻塞回答。`TAPPER_GRAPH_REASONING=0` 时整段跳过，作为回滚手段。
 
 ## 3. API 与前端

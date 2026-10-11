@@ -74,10 +74,12 @@ class EvidenceRef:
 
 @dataclass(frozen=True, slots=True)
 class RelationAnalysisInput:
+    """Per-invocation payload of the relation analysis subgraph. The
+    authorized source revision selection and the pinned project graph version
+    travel only on `AgentContext`, never duplicated here."""
+
     query: str
-    source_revision_ids: frozenset[str]
     evidence: tuple[EvidenceRef, ...]
-    graph_version: str | None
 
 
 @dataclass(frozen=True, slots=True)

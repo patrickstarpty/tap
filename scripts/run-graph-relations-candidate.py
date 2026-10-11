@@ -339,12 +339,7 @@ async def run_fake(*, golden: Path, corpus_dir: Path) -> dict[str, Any]:
             graph_version=graph_version,
             turn_id=None,
         )
-        value = RelationAnalysisInput(
-            query=question.question,
-            source_revision_ids=source_revision_ids,
-            evidence=(),
-            graph_version=graph_version,
-        )
+        value = RelationAnalysisInput(query=question.question, evidence=())
         relation_context = await agent.run(context, value)
         answer = await _fake_answer(relation_context, question.question)
         answers.append({"questionId": question.id, "group": "golden", **answer})
