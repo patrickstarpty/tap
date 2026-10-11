@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import replace
 from typing import Sequence
 
@@ -18,6 +19,8 @@ from tap.modules.graph.domain.models import (
 )
 from tap.modules.graph.domain.vocabulary import NODE_ALIAS_MAX, normalize_key
 from tap.modules.knowledge.domain.documents import ChunkDraft
+
+logger = logging.getLogger(__name__)
 
 # Mirrors GraphSnapshotDraft's own internal edge bound (domain/models.py), which a merge
 # across batches -- each individually within bounds -- can otherwise exceed.
@@ -73,13 +76,14 @@ def assemble_fragment(
     worker, the merge truncates deterministically: nodes are kept in first-seen order
     up to ``MAX_GRAPH_NODES``; edges whose endpoint was dropped are dropped too; the
     remaining edges are kept in first-seen order up to the same 2000-edge bound
-    ``GraphSnapshotDraft`` enforces. Provenance for a dropped edge is dropped with it,
-    and -- because an ``INFERRED`` edge requires its own provenance, and a
-    provenance's ``input_fact_ids`` can themselves name other (node or edge) facts --
-    dropping one inferred edge can orphan another provenance that cites it as an
-    input fact. This cascades: any ``INFERRED`` edge whose provenance's input facts
-    are no longer all kept is dropped together with that provenance, repeating until
-    nothing more changes. Evidence has no such cap and is kept in full.
+    ``GraphSnapshotDraft`` enforces. When either cap bites, a warning records the
+    snapshot id and how many nodes and edges were dropped. Provenance for a dropped edge
+    is dropped with it, and -- because an ``INFERRED`` edge requires its own provenance,
+    and a provenance's ``input_fact_ids`` can themselves name other (node or edge) facts
+    -- dropping one inferred edge can orphan another provenance that cites it as an
+    input fact. This cascades: any ``INFERRED`` edge whose provenance's input facts are
+    no longer all kept is dropped together with that provenance, repeating until nothing
+    more changes. Evidence has no such cap and is kept in full.
 
     If, after all of the above, the merged document has zero edges (every batch was
     either empty or only ever touched a lone, relation-less entity), the whole
@@ -301,6 +305,21 @@ def assemble_fragment(
             next_kept_edge_order.append(edge_id)
         kept_edge_order = next_kept_edge_order
     kept_edge_id_set = set(kept_edge_order)
+
+    dropped_node_count = len(node_order) - len(kept_node_order)
+    if dropped_node_count or len(endpoint_filtered_edge_order) > _MAX_GRAPH_EDGES:
+        # Record what the caps discarded rather than drop it silently: the nodes cut
+        # by MAX_GRAPH_NODES and every edge lost with them, past the edge cap, or in
+        # the provenance cascade that follows.
+        logger.warning(
+            "graph fragment merge truncated to draft caps: "
+            "snapshot_id=%s dropped_nodes=%d dropped_edges=%d max_nodes=%d max_edges=%d",
+            snapshot.snapshot_id,
+            dropped_node_count,
+            len(edge_order) - len(kept_edge_order),
+            MAX_GRAPH_NODES,
+            _MAX_GRAPH_EDGES,
+        )
 
     kept_provenance_order = [
         provenance_id

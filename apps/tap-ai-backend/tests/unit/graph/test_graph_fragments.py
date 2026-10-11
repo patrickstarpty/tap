@@ -223,6 +223,125 @@ def test_assemble_fragment_caps_merged_edges_at_two_thousand() -> None:
     assert kept_ids[1001:] == [f"b-edge-{i}" for i in range(999)]
 
 
+def _truncation_records(caplog) -> list:
+    return [
+        record
+        for record in caplog.records
+        if record.name == "tap.modules.graph.application.fragments"
+        and "truncated" in record.getMessage()
+    ]
+
+
+def test_assemble_fragment_logs_how_many_nodes_and_edges_the_node_cap_dropped(caplog) -> None:
+    first_nodes = tuple(
+        GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
+        for i in range(500)
+    )
+    extra_nodes = tuple(
+        GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
+        for i in range(500, 520)
+    )
+    evidence_1 = _evidence("evidence-1", "chunk-0")
+    evidence_2 = _evidence("evidence-2", "chunk-1")
+
+    def _edge(edge_id: str, source: str, target: str, evidence_id: str) -> GraphEdge:
+        return GraphEdge(
+            edge_id,
+            SNAPSHOT.snapshot_id,
+            source,
+            target,
+            "GOVERNS",
+            RelationOrigin.EXTRACTED,
+            1.0,
+            (evidence_id,),
+        )
+
+    draft_1 = GraphSnapshotDraft(
+        SNAPSHOT,
+        first_nodes,
+        (_edge("edge-kept", "node-0", "node-1", "evidence-1"),),
+        (evidence_1,),
+        (),
+    )
+    draft_2 = GraphSnapshotDraft(
+        SNAPSHOT,
+        extra_nodes,
+        (_edge("edge-dropped", "node-500", "node-510", "evidence-2"),),
+        (evidence_2,),
+        (),
+    )
+
+    with caplog.at_level("WARNING", logger="tap.modules.graph.application.fragments"):
+        assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    records = _truncation_records(caplog)
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert f"snapshot_id={SNAPSHOT.snapshot_id}" in message
+    assert "dropped_nodes=20" in message
+    assert "dropped_edges=1" in message
+
+
+def test_assemble_fragment_logs_edges_dropped_by_the_edge_cap(caplog) -> None:
+    nodes = tuple(
+        GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
+        for i in range(50)
+    )
+
+    def _edges(prefix: str, evidence_id: str) -> tuple[GraphEdge, ...]:
+        return tuple(
+            GraphEdge(
+                f"{prefix}-edge-{i}",
+                SNAPSHOT.snapshot_id,
+                f"node-{i % 50}",
+                f"node-{(i + 1) % 50}",
+                "GOVERNS",
+                RelationOrigin.EXTRACTED,
+                1.0,
+                (evidence_id,),
+            )
+            for i in range(1001)
+        )
+
+    draft_1 = GraphSnapshotDraft(
+        SNAPSHOT, nodes, _edges("a", "evidence-1"), (_evidence("evidence-1", "chunk-0"),), ()
+    )
+    draft_2 = GraphSnapshotDraft(
+        SNAPSHOT, nodes, _edges("b", "evidence-2"), (_evidence("evidence-2", "chunk-1"),), ()
+    )
+
+    with caplog.at_level("WARNING", logger="tap.modules.graph.application.fragments"):
+        fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
+
+    assert len(fragment.edges) == 2000
+    records = _truncation_records(caplog)
+    assert len(records) == 1
+    assert "dropped_nodes=0" in records[0].getMessage()
+    assert "dropped_edges=2" in records[0].getMessage()
+
+
+def test_assemble_fragment_within_the_caps_logs_no_truncation(caplog) -> None:
+    node_a = GraphNode("node-a", SNAPSHOT.snapshot_id, "A", "CONCEPT", "a")
+    node_b = GraphNode("node-b", SNAPSHOT.snapshot_id, "B", "CONCEPT", "b")
+    evidence = _evidence("evidence-1", "chunk-0")
+    edge = GraphEdge(
+        "edge-1",
+        SNAPSHOT.snapshot_id,
+        "node-a",
+        "node-b",
+        "GOVERNS",
+        RelationOrigin.EXTRACTED,
+        1.0,
+        ("evidence-1",),
+    )
+    draft = GraphSnapshotDraft(SNAPSHOT, (node_a, node_b), (edge,), (evidence,), ())
+
+    with caplog.at_level("WARNING", logger="tap.modules.graph.application.fragments"):
+        assemble_fragment(SNAPSHOT, (draft,))
+
+    assert _truncation_records(caplog) == []
+
+
 def test_assemble_fragment_falls_back_to_a_document_node_when_every_batch_is_empty() -> None:
     # Every batch of a relation-less document returns ``None`` (nothing
     # grounded, e.g. the model extractor's empty-batch signal) and the worker
