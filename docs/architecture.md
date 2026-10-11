@@ -48,8 +48,9 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 
 1. API 接收上传，原件写入对象存储，文档与任务状态写入 MySQL，并写 Outbox。
 2. Relay 把 Outbox 事件转发到 Redis Stream 唤醒 worker；worker 同时按固定间隔轮询 MySQL。
-3. worker 按阶段执行解析（`tap-parser`）、切片、embedding，每阶段产物内容寻址写入对象存储。
+3. worker 按阶段执行解析（`tap-parser`）、切片、embedding，每阶段产物内容寻址写入对象存储。PDF 解析先去掉页眉页脚（在过半页面的首尾行重复出现的行）、分隔线与页码，再把页边换行的行合并成段落（中文不加空格、英文加空格），并以条款编号（`第X条`、`一、`、`1.2` 等）建立标题路径；同一页内同一条款的段落组成一个块，块不跨页，锚点页码因此准确。切片不超过 512 token：PDF 块超限时只在段落或句末断开且不重叠，其他格式超限时仍按 token 窗口重叠切分。
 4. 切片投影写入 Milvus；投影可从 MySQL 与中间产物重建。
+5. 修订身份由 `PARSER_VERSION` 决定，解析行为变化记录在 `parser_config_digest`。解析器升级后，`make knowledge-reparse ARGS="knowledge reparse --project tapper-demo"` 为旧解析器生成的就绪 PDF 文档新建修订并重新入队（复用已存原件，旧修订及其产物保留，已有引用仍可解析；有手工切片的文档跳过）；文档在新修订就绪前不可检索，就绪后图谱按新修订重新抽取。运行前需用 `make parser-build` 重建解析器镜像。
 
 **问答**
 
