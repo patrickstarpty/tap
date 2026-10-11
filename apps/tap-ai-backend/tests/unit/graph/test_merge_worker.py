@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from datetime import datetime, timedelta
 
 import pytest
@@ -264,6 +265,46 @@ async def test_embedding_dedupes_labels_before_embedding(monkeypatch) -> None:
     assert result == 1
     embedded_texts = [text for batch in embeddings.calls for text in batch]
     assert sorted(embedded_texts) == ["保单", "理赔"]
+    current = await queue.store.get_current(VALIDATION_SCOPE)
+    assert current is not None and current.version == 1
+
+
+class ThreadRecordingMerger(ProjectGraphMerger):
+    """Records which thread ran `merge` and whether embeddings reached it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.threads: list[int] = []
+        self.embedded: list[bool] = []
+
+    def merge(self, scope, fragments, *, embeddings=None):
+        self.threads.append(threading.get_ident())
+        self.embedded.append(bool(embeddings))
+        return super().merge(scope, fragments, embeddings=embeddings)
+
+
+@pytest.mark.asyncio
+async def test_merge_with_embedding_alignment_runs_off_the_event_loop_thread(
+    monkeypatch,
+) -> None:
+    fragments = (_fragment("frag-a", label="保单"), _fragment("frag-b", label="理赔"))
+    queue = InMemoryProjectMergeQueue()
+    merger = ThreadRecordingMerger()
+    worker = ProjectGraphMergeWorker(
+        queue=queue,
+        inputs=FakeInputs(fragments),
+        merger=merger,
+        scope=VALIDATION_SCOPE,
+        worker_id="merge-worker-1",
+        embeddings=RecordingEmbeddings(),
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    assert await worker.run_once(limit=10) == 1
+
+    assert merger.embedded == [True]
+    assert merger.threads and merger.threads[0] != threading.get_ident()
     current = await queue.store.get_current(VALIDATION_SCOPE)
     assert current is not None and current.version == 1
 

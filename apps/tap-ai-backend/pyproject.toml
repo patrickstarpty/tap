@@ -27,6 +27,7 @@ dependencies = [
   "opentelemetry-api==1.45.0",
   "opentelemetry-sdk==1.45.0",
   "opentelemetry-exporter-otlp-proto-http==1.45.0",
+  "numpy==2.5.2",
 ]
 
 [tool.uv.sources]

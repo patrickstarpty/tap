@@ -27,7 +27,7 @@ PR 2 把图谱从"每次查询按来源集合即时合并快照"改为项目级�
       async def run(self, context: AgentContext, value: InputT) -> OutputT: ...
   ```
 
-  `AgentContext` 携带 scope、已授权来源修订集合、项目图版本与 span 根；子图在自己的 span 内运行，失败时返回带状态的输出（`RelationContext.status`：APPLIED/NOT_READY/STALE/FAILED/EMPTY）而不抛出。子图之间不直接通信，只经调用方传递类型化对象；证据对象原样传递，不经模型转述。子图在 `modules/ai/application/agents/` 下注册，调用方现阶段是 `knowledge_service` 的确定性检索流水线，Skills/Agents 子项目的 orchestrator 预期复用同一注册表。
+  `AgentContext` 携带 scope、已授权来源修订集合、项目图版本与 span 根（来源修订集合与图版本不在子图输入中重复）；子图在自己的根 span（如 `agent.relation-analysis`）内运行，失败时返回带状态的输出（`RelationContext.status`：APPLIED/NOT_READY/STALE/FAILED/EMPTY）而不抛出。子图之间不直接通信，只经调用方传递类型化对象；证据对象原样传递，不经模型转述。子图在 `modules/ai/application/agents/` 下注册，调用方现阶段是 `knowledge_service` 的确定性检索流水线，Skills/Agents 子项目的 orchestrator 预期复用同一注册表。
 - `ProjectGraphVersionMismatch` 是子图内部的可恢复信号（映射为 `RelationContext.status=STALE`），不是失败；只有图存储本身的异常才映射为 `FAILED`。
 
 ## 考虑过的方案

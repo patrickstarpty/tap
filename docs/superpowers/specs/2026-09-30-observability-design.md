@@ -89,6 +89,7 @@ OpenTelemetry 埋点，属性遵循 OTel GenAI 语义约定；MySQL 为权威存
 | `turn.execute` | 生成 worker | turn_id、attempt、outcome |
 | `chat.plan` | AnswerPlanner | 计划类型 |
 | `retrieval.search` | `_retrieve`（含规划多路查询、流程图补充检索） | 命中切片 ID、分数、数量 |
+| `agent.relation-analysis` | 关系分析 Agent 子图根 span（`RelationAnalysisAgent`），以下四个阶段 span 的父 span | `tap.relation.status`、`tap.graph.version` |
 | `graph.seed` / `graph.expand` / `graph.path` / `relation.rank` | 关系分析 Agent 子图（`RelationAnalysisAgent`，PR 3 替换 `graph.enrich`） | 种子/节点/边/路径数量与耗时 |
 | `tool.insights.query` | Insights 分支 | 查询参数、行数 |
 | `citations.resolve` | 引用解析 | 引用数 |

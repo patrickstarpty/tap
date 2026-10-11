@@ -11,14 +11,17 @@ failure hook.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
 
 import pytest
 from opentelemetry import context as otel_context
+from opentelemetry import trace
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.application.agents.protocol import AgentContext
+from tap.modules.ai.application.agents.registry import AgentRegistry
 from tap.modules.ai.application.agents.relation_analysis import RelationAnalysisAgent
 from tap.modules.graph.domain.project import ProjectGraphVersion, ProjectNode
 from tap.modules.knowledge.application.publication import (
@@ -28,14 +31,17 @@ from tap.modules.knowledge.application.publication import (
 from tap.modules.knowledge.application.relation_analysis import (
     EvidenceRef,
     RelationAnalysisInput,
+    RelationContext,
     RelationContextStatus,
 )
+from tap.modules.knowledge.application.retrieve import RegisteredRelationAnalysis
 from tap.modules.knowledge.domain.review import KnowledgePublication
 from tap.platform.telemetry import span
 from tests.unit.knowledge.test_relation_analysis import FakeProjectGraphStore, _build_store
 
 _SCOPE = VALIDATION_SCOPE
 _SPAN_NAMES = {"graph.seed", "graph.expand", "graph.path", "relation.rank"}
+_ROOT_SPAN_NAME = "agent.relation-analysis"
 _NOW = datetime(2026, 9, 23, 9, tzinfo=UTC)
 
 
@@ -202,9 +208,7 @@ def _single_edge_store(*, anchor: Mapping[str, object]) -> VersionedStore:
 def _input(**overrides: Any) -> RelationAnalysisInput:
     defaults: dict[str, Any] = {
         "query": "健康告知",
-        "source_revision_ids": frozenset({"rev-1"}),
         "evidence": (),
-        "graph_version": None,
     }
     defaults.update(overrides)
     return RelationAnalysisInput(**defaults)
@@ -221,7 +225,7 @@ def _context(**overrides: Any) -> AgentContext:
 
 
 @pytest.mark.asyncio
-async def test_agent_applies_with_spans_under_parent(span_recorder: Any) -> None:
+async def test_agent_runs_stage_spans_inside_its_own_root_span(span_recorder: Any) -> None:
     store = VersionedStore(**_fixture_kwargs())
     agent = RelationAnalysisAgent(
         store, FakeSnippets({"chunk-2": "B 到 C 的片段", "chunk-3": "C 到 D 的片段"})
@@ -237,12 +241,103 @@ async def test_agent_applies_with_spans_under_parent(span_recorder: Any) -> None
     assert result.relations
 
     recorded = span_recorder.get_finished_spans()
-    agent_spans = [item for item in recorded if item.name != "turn.execute"]
-    assert {item.name for item in agent_spans} == _SPAN_NAMES
     assert all(item.name != "graph.enrich" for item in recorded)
-    for item in agent_spans:
+    roots = [item for item in recorded if item.name == _ROOT_SPAN_NAME]
+    assert len(roots) == 1
+    root = roots[0]
+    assert root.parent is not None
+    assert root.parent.span_id == outer_span_id
+    assert root.attributes is not None
+    assert root.attributes["tap.graph.version"] == "7"
+    assert root.attributes["tap.relation.status"] == "APPLIED"
+    stage_spans = [item for item in recorded if item.name in _SPAN_NAMES]
+    assert {item.name for item in stage_spans} == _SPAN_NAMES
+    for item in stage_spans:
         assert item.parent is not None
-        assert item.parent.span_id == outer_span_id
+        assert item.parent.span_id == root.context.span_id
+
+
+@pytest.mark.asyncio
+async def test_agent_root_span_wraps_early_status_returns(span_recorder: Any) -> None:
+    store = VersionedStore(status=None, **_fixture_kwargs())
+    agent = RelationAnalysisAgent(store, FakeSnippets())
+
+    result = await agent.run(_context(), _input())
+
+    assert result.status is RelationContextStatus.NOT_READY
+    roots = [item for item in span_recorder.get_finished_spans() if item.name == _ROOT_SPAN_NAME]
+    assert len(roots) == 1
+    assert roots[0].attributes is not None
+    assert roots[0].attributes["tap.relation.status"] == "NOT_READY"
+
+
+@pytest.mark.asyncio
+async def test_agent_reads_the_selection_from_agent_context() -> None:
+    store = VersionedStore(**_fixture_kwargs())
+    agent = RelationAnalysisAgent(
+        store, FakeSnippets({"chunk-2": "B 到 C 的片段", "chunk-3": "C 到 D 的片段"})
+    )
+
+    applied = await agent.run(_context(source_revision_ids=frozenset({"rev-1"})), _input())
+    outside = await agent.run(_context(source_revision_ids=frozenset({"rev-other"})), _input())
+
+    assert applied.status is RelationContextStatus.APPLIED
+    assert outside.status is RelationContextStatus.EMPTY
+    assert outside.relations == ()
+
+
+@pytest.mark.asyncio
+async def test_agent_reads_the_pinned_graph_version_from_agent_context() -> None:
+    store = VersionedStore(version=7, **_fixture_kwargs())
+    agent = RelationAnalysisAgent(store, FakeSnippets())
+
+    current = await agent.run(_context(graph_version="7"), _input())
+    stale = await agent.run(_context(graph_version="6"), _input())
+
+    assert current.status is not RelationContextStatus.STALE
+    assert stale.status is RelationContextStatus.STALE
+    assert stale.graph_version == "6"
+
+
+def test_relation_analysis_input_carries_no_context_fields() -> None:
+    names = {item.name for item in dataclasses.fields(RelationAnalysisInput)}
+
+    assert names == {"query", "evidence"}
+
+
+class _RecordingAgent:
+    name = "relation-analysis"
+    input_schema = RelationAnalysisInput
+    output_schema = RelationContext
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[AgentContext, RelationAnalysisInput]] = []
+
+    async def run(self, context: AgentContext, value: RelationAnalysisInput) -> RelationContext:
+        self.calls.append((context, value))
+        return RelationContext(status=RelationContextStatus.EMPTY, graph_version=None)
+
+
+@pytest.mark.asyncio
+async def test_registered_relation_analysis_passes_the_caller_span_as_parent() -> None:
+    recording = _RecordingAgent()
+    registry = AgentRegistry()
+    registry.register(recording)
+    adapter = RegisteredRelationAnalysis(registry, scope=_SCOPE)
+
+    with span("turn.execute") as turn_span:
+        outer_span_id = turn_span.get_span_context().span_id
+        await adapter.analyse("健康告知", (), ("rev-2", "rev-1"), turn_id="turn-1")
+
+    [(context, value)] = recording.calls
+    assert context.parent_context is not None
+    parent_span = trace.get_current_span(context.parent_context)
+    assert parent_span.get_span_context().span_id == outer_span_id
+    assert context.source_revision_ids == frozenset({"rev-1", "rev-2"})
+    assert context.graph_version is None
+    assert context.turn_id == "turn-1"
+    assert value.query == "健康告知"
+    assert value.evidence == ()
 
 
 @pytest.mark.asyncio
@@ -880,7 +975,6 @@ async def test_document_fallback_nodes_never_seed_relation_analysis(query: str) 
         _context(source_revision_ids=sources),
         _input(
             query=query,
-            source_revision_ids=sources,
             evidence=(
                 EvidenceRef("S1", "chunk-rev-a", "rev-a", "rev-a"),
                 EvidenceRef("S2", "chunk-rev-b", "rev-b", "rev-b"),

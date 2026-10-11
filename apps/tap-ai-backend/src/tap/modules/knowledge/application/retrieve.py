@@ -11,6 +11,8 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
+from opentelemetry import context as otel_context
+
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import (
@@ -144,12 +146,11 @@ class RegisteredRelationAnalysis:
             source_revision_ids=frozenset(source_revision_ids),
             graph_version=None,
             turn_id=turn_id,
+            parent_context=otel_context.get_current(),
         )
         value = RelationAnalysisInput(
             query=query,
-            source_revision_ids=frozenset(source_revision_ids),
             evidence=tuple(_evidence_ref(item) for item in evidence),
-            graph_version=None,
         )
         return cast(RelationContext, await self._agent.run(context, value))
 
