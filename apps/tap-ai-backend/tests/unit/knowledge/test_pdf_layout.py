@@ -96,6 +96,55 @@ def test_page_number_footer_is_not_body_text() -> None:
     assert "Directors approve second." in body
 
 
+def test_rate_table_rows_at_page_edges_are_kept() -> None:
+    """Number-only table rows differ by value; they are content, not a running header."""
+    pages = [
+        "费率表\n年龄 保费\n18 1200\n19 1250\n20 1300",
+        "21 1350\n22 1400\n23 1450\n24 1500",
+        "25 1550\n26 1600\n27 1650\n28 1700",
+    ]
+
+    body = "\n".join(block.text for block in layout_pdf_pages(pages).blocks)
+
+    for row in ("18 1200", "20 1300", "21 1350", "24 1500", "25 1550", "28 1700"):
+        assert row in body
+
+
+def test_two_page_document_keeps_lines_repeated_on_both_pages() -> None:
+    """Two pages are too few to tell a running header from repeated content."""
+    pages = [
+        "退保说明\n第一条 退保\n投保人可以申请退保。",
+        "第一条 退保\n退保后本公司退还现金价值。",
+    ]
+
+    body = "\n".join(block.text for block in layout_pdf_pages(pages).blocks)
+
+    assert body.count("第一条 退保") == 2
+    assert "退保后本公司退还现金价值。" in body
+
+
+def test_clause_headings_and_sentences_opening_pages_are_not_running_headers() -> None:
+    """Numbered clause titles and sentences only look alike once digits are ignored."""
+    pages = [
+        "Terms\n第1条 保险责任\n本公司承担第一项责任。",
+        "第2条 保险责任\n本公司承担第二项责任。",
+        "第3条 保险责任\n本公司承担第三项责任。",
+        "第4条 保险责任\n本公司承担第四项责任。",
+    ]
+
+    layout = layout_pdf_pages(pages)
+    body = "\n".join(block.text for block in layout.blocks)
+
+    for number in range(1, 5):
+        assert f"第{number}条 保险责任" in body
+    assert [block.heading_path[-1] for block in layout.blocks] == [
+        "第1条 保险责任",
+        "第2条 保险责任",
+        "第3条 保险责任",
+        "第4条 保险责任",
+    ]
+
+
 def test_parser_blocks_never_use_a_separator_as_heading(parse_fixture) -> None:
     """The parser must apply the layout so chunks inherit a real document heading."""
     artifact = parse_fixture("annuity-terms")

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 # Running headers and footers sit in the first or last few lines of a page.
 _EDGE_LINES = 3
+_MIN_RUNNING_PAGES = 3
 _PAGE_NUMBER = re.compile(
     r"^[-–—\s]*(?:第\s*\d+\s*页(?:\s*[,，/]?\s*共\s*\d+\s*页)?|\d+\s*/\s*\d+|\d+"
     r"|page\s+\d+(?:\s+of\s+\d+)?)[-–—\s]*$",
@@ -241,7 +242,7 @@ def clean_pdf_pages(pages: Sequence[str]) -> list[list[str]]:
         kept = []
         for index, line in enumerate(page_lines):
             at_edge = index < _EDGE_LINES or index >= last - _EDGE_LINES
-            if at_edge and (_PAGE_NUMBER.fullmatch(line) or _edge_key(line) in repeated):
+            if at_edge and (_PAGE_NUMBER.fullmatch(line) or _running(line, repeated)):
                 continue
             kept.append(line)
         cleaned.append(kept)
@@ -249,21 +250,42 @@ def clean_pdf_pages(pages: Sequence[str]) -> list[list[str]]:
 
 
 def _running_lines(pages: Sequence[Sequence[str]]) -> frozenset[str]:
-    """Edge lines that recur, digits aside, on more than half of the text pages."""
+    """Edge lines that recur on at least three and more than half of the text pages.
+
+    Clause headings and complete sentences are content even when they repeat, and
+    digits count as page-number noise only beside letters or ideographs, so rows of a
+    numeric table never collapse into one key.
+    """
     text_pages = [page for page in pages if page]
-    if len(text_pages) < 2:
+    if len(text_pages) < _MIN_RUNNING_PAGES:
         return frozenset()
     counts: Counter[str] = Counter()
     for page in text_pages:
         edges = list(page[:_EDGE_LINES]) + list(page[-_EDGE_LINES:])
-        counts.update({_edge_key(line) for line in edges})
+        counts.update(
+            {
+                _edge_key(line)
+                for line in edges
+                if _heading(line) is None and not line.endswith(_SENTENCE_END)
+            }
+        )
     return frozenset(
-        key for key, count in counts.items() if count >= 2 and count * 2 > len(text_pages)
+        key
+        for key, count in counts.items()
+        if count >= _MIN_RUNNING_PAGES and count * 2 > len(text_pages)
+    )
+
+
+def _running(line: str, repeated: frozenset[str]) -> bool:
+    return (
+        _edge_key(line) in repeated and _heading(line) is None and not line.endswith(_SENTENCE_END)
     )
 
 
 def _edge_key(line: str) -> str:
-    return _SPACES.sub(" ", _DIGITS.sub("#", line)).strip()
+    if any(unicodedata.category(character)[0] == "L" for character in line):
+        line = _DIGITS.sub("#", line)
+    return _SPACES.sub(" ", line).strip()
 
 
 def _is_separator(line: str) -> bool:
