@@ -613,7 +613,7 @@ class RecordingSleepExtractor:
 
 @pytest.mark.asyncio
 async def test_backoff_sleep_never_exceeds_the_lease_duration(monkeypatch) -> None:
-    # M6: with a large configured backoff, the sleep before the next attempt must
+    # With a large configured backoff, the sleep before the next attempt must
     # stay below the lease duration that was just renewed, instead of risking the
     # lease expiring while still asleep.
     jobs = InMemoryGraphJobStore()

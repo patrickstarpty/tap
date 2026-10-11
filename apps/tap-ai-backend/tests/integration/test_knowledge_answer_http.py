@@ -245,7 +245,7 @@ def test_http_normalizes_selection_and_maps_answer_and_citation_dtos() -> None:
 
 
 def test_http_answer_exposes_graph_context_summary_and_edge_citation_kind() -> None:
-    """PR 3 Task 5: `response.relation` drives `graphContextStatus`/`graphContext`
+    """`response.relation` drives `graphContextStatus`/`graphContext`
     and an edge citation is exposed with `kind == "edge"` and its `edge` facts."""
     app = harness()
     anchor = DocumentAnchor(heading_path=("Policy",), start_offset=0, end_offset=18)

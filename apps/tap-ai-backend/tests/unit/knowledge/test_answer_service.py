@@ -1065,7 +1065,7 @@ async def test_unpublished_flowchart_images_are_refused_while_text_sources_answe
 
 
 # ---------------------------------------------------------------------------
-# PR 3 Task 5: relation analysis wired into `AuthorizedRetrieval.answer` --
+# Relation analysis wired into `AuthorizedRetrieval.answer` --
 # prompt records, retrieval-augmentation re-authorization, claim
 # reconciliation and edge citations.
 # ---------------------------------------------------------------------------
@@ -2097,7 +2097,7 @@ def _snippet_only_relation_evidence(
 
 
 def test_snippet_only_support_is_resolved_into_a_citable_edge_citation() -> None:
-    """I2: a relation support that never became an `S` label (snippet-only) is
+    """A relation support that never became an `S` label (snippet-only) is
     still reconstructed into a citable edge citation from its own fields plus
     the matching selected revision."""
 
@@ -2191,7 +2191,7 @@ def test_snippet_only_support_with_anchor_drift_is_unresolvable_and_degraded() -
 
 
 def test_unresolvable_snippet_only_support_degrades_and_excludes_relation_count() -> None:
-    """I2: when a snippet-only support's document_id cannot be resolved (never
+    """When a snippet-only support's document_id cannot be resolved (never
     carried alongside the snippet), the R citation cannot be built; the claim's
     R label is stripped, `degraded_mode` is set, and the relation does not
     count toward `graphContext.relationCount`."""
@@ -2233,7 +2233,7 @@ def test_unresolvable_snippet_only_support_degrades_and_excludes_relation_count(
 
 
 def test_uncited_unresolvable_relation_does_not_degrade() -> None:
-    """Task 5 review: an unresolvable relation that no claim cited never
+    """An unresolvable relation that no claim cited never
     reached the reader, so it must not flip `degraded_mode` or add
     `relation-support-unresolvable` to `degradation_reasons` -- only the
     diagnostics total (and `relation_count`, which already excludes every
@@ -2277,7 +2277,7 @@ def test_uncited_unresolvable_relation_does_not_degrade() -> None:
 
 
 def test_s_label_support_chunk_id_mismatch_is_treated_as_unresolvable() -> None:
-    """Task 5 review: a relation support that carries an `S` label must still
+    """A relation support that carries an `S` label must still
     have its own `chunk_id` verified against that label's actual chunk --
     same identity guard as the snippet-only path. A mismatch (stale or wrong
     label) is skipped in favour of the next support instead of silently
@@ -2355,7 +2355,7 @@ def test_s_label_support_chunk_id_mismatch_is_treated_as_unresolvable() -> None:
 
 
 def test_citing_only_r2_renumbers_to_r1_with_the_right_edge() -> None:
-    """M4: the model may cite any original R label; the surviving edge citation
+    """The model may cite any original R label; the surviving edge citation
     is always renumbered starting at R1 (ascending original-rank order), never
     keeping a gap from an unused earlier label."""
 
@@ -2404,7 +2404,7 @@ def test_citing_only_r2_renumbers_to_r1_with_the_right_edge() -> None:
 
 
 def test_stale_context_omits_relation_prompt() -> None:
-    """M5: a STALE (non-applied) relation context never triggers the relation
+    """A STALE (non-applied) relation context never triggers the relation
     prompt text unless `relation_first` is true."""
 
     async def scenario() -> None:
@@ -2439,7 +2439,7 @@ def test_stale_context_omits_relation_prompt() -> None:
 
 
 def test_intent_relation_execution_sets_relation_first_through_planned_retrieval() -> None:
-    """M5: `AuthorizedAnswerExecution(intent="relation")`, constructed directly as
+    """`AuthorizedAnswerExecution(intent="relation")`, constructed directly as
     the brief specifies, is exactly what makes `AuthorizedRetrieval.answer`'s
     `relation_first` true -- exercised through the real planned-retrieval path,
     not a standalone boolean check."""

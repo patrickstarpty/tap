@@ -583,7 +583,7 @@ def test_append_route_opens_turn_request_span(span_recorder):
 
 @pytest.mark.parametrize("status", ["STALE", "EMPTY"])
 def test_conversation_turn_summary_accepts_stale_and_empty_graph_status(status: str) -> None:
-    """PR 3 Task 7: the relation analysis subgraph's `STALE`/`EMPTY` outcomes
+    """The relation analysis subgraph's `STALE`/`EMPTY` outcomes
     must validate on the Conversation turn summary, not only the answer."""
     summary = ConversationTurnSummary.model_validate(
         {

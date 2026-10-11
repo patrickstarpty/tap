@@ -407,7 +407,7 @@ async def test_export_picks_current_ready_version_and_resolves_titles_and_snippe
 async def test_export_rejects_a_graph_version_with_no_ready_row(
     owned_project_mysql, tmp_path
 ) -> None:
-    """M2: a `--graph-version` that is not `READY` (or does not exist) must
+    """A `--graph-version` that is not `READY` (or does not exist) must
     be rejected with a clear message instead of silently sampling it or an
     empty version."""
     module = _load_export_module()

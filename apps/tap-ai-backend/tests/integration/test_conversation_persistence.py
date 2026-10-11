@@ -393,7 +393,7 @@ def test_claim_fails_snapshotless_queued_turn_and_keeps_claiming_others(owned_pr
 
 
 def test_applied_graph_context_validates_edge_citation_graph_version(owned_project_mysql):
-    """PR 3 Task 8 preflight ruling: when an answer's graph context is
+    """When an answer's graph context is
     APPLIED, every edge citation's persisted `graph_version` must equal the
     Turn's `graph_snapshot_id` (which, per the plan's
     `graph_snapshot_id = graph_version` design, is the same string) or

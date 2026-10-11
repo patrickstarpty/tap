@@ -82,7 +82,7 @@ class _Knowledge:
 
 @pytest.mark.parametrize("status", ["STALE", "EMPTY"])
 def test_turn_completed_accepts_stale_and_empty_graph_context_status(status: str) -> None:
-    """PR 3 Task 5 review I4: the relation analysis subgraph's `STALE`/`EMPTY`
+    """The relation analysis subgraph's `STALE`/`EMPTY`
     outcomes must be streamable, not just the HTTP answer contract."""
     envelope = _envelope(
         sequence=1,
@@ -379,7 +379,7 @@ _GRAPH_CONTEXT_PAYLOAD = {
 
 @pytest.mark.asyncio
 async def test_graph_context_ready_event_precedes_answer_and_citation_kind_is_emitted() -> None:
-    """PR 3 Task 7: the relation analysis subgraph's readiness must stream as
+    """The relation analysis subgraph's readiness must stream as
     `graph.context_ready`, and an edge citation must carry `kind == "edge"`."""
 
     class _KnowledgeWithGraphContext:

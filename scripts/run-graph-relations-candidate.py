@@ -10,7 +10,7 @@ relation-answer golden set, in two modes:
   `DeterministicTapperModel` so every answer carries real R-labeled edge
   citations. Fake mode exists to check wiring, citation shape and evaluator
   plumbing end to end in CI -- it says nothing about real extraction or
-  real-model relation precision; that is what Task 8's `--mode real` run
+  real-model relation precision; that is what the `--mode real` run
   against a real corpus and model is for.
 - `real` (opt-in, requires `TAPPER_GRAPH_EXTRACTION_MODE=model` and a running
   Tapper API stack): dry-runs each question through the real chat answer
@@ -256,7 +256,7 @@ async def run_fake(*, golden: Path, corpus_dir: Path) -> dict[str, Any]:
     This checks wiring, citation shape and evaluator plumbing in CI -- not
     relation precision (rule-based extraction plus a deterministic model
     stand in for the real extractor and model, so a passing fake run says
-    nothing about real-model relation accuracy; that is Task 8's job)."""
+    nothing about real-model relation accuracy; that is the real run's job)."""
     started_at = _now_iso()
     golden_json = json.loads(golden.read_text(encoding="utf-8"))
     golden_set = validate_golden(golden_json)
@@ -584,7 +584,7 @@ def main() -> int:
                 )
             )
     except (ValueError, OSError) as error:
-        # M3: a real-mode refusal (TAPPER_GRAPH_EXTRACTION_MODE != "model", a missing
+        # A real-mode refusal (TAPPER_GRAPH_EXTRACTION_MODE != "model", a missing
         # corpus.json, an unreadable golden/regression file, ...) must print a clean,
         # actionable message and exit 2 -- not an uncaught traceback.
         print(f"error: {error}", file=sys.stderr)

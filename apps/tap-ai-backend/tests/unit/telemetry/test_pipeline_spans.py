@@ -1,4 +1,4 @@
-"""Pipeline stage spans and background job root spans (observability Task 7)."""
+"""Pipeline stage spans and background job root spans."""
 
 from __future__ import annotations
 

@@ -933,7 +933,7 @@ def test_real_mode_rejects_null_graph_version(tmp_path, monkeypatch, capsys):
 
 
 def test_real_mode_rejects_a_baseline_passed_as_observations(tmp_path, monkeypatch, capsys):
-    # M2: `graphReasoning` distinguishes the candidate run (True) from the
+    # `graphReasoning` distinguishes the candidate run (True) from the
     # TAPPER_GRAPH_REASONING=0 baseline run (False) -- a baseline file passed by
     # mistake as --observations must be rejected, not silently scored as the candidate.
     golden_path, regression_path, observations, baseline = _real_mode_fixtures(tmp_path)
@@ -955,7 +955,7 @@ def test_real_mode_rejects_a_baseline_passed_as_observations(tmp_path, monkeypat
 def test_real_mode_rejects_golden_digest_not_matching_manifest(tmp_path, monkeypatch, capsys):
     manifest = _valid_manifest()
     _write(tmp_path / "manifest.json", manifest)
-    # I2: `corpus.digest` left at the default fixture value instead of the real
+    # `corpus.digest` left at the default fixture value instead of the real
     # manifest's digest -- the golden set is not actually bound to this manifest.
     golden = _human_labeled_golden(manifest="manifest.json", source="policy-01")
     golden_digest = canonical_digest(golden)
@@ -998,7 +998,7 @@ def test_real_mode_rejects_expected_source_not_in_manifest(tmp_path, monkeypatch
     manifest = _valid_manifest()
     corpus_digest = manifest_digest(manifest)
     _write(tmp_path / "manifest.json", manifest)
-    # I2: "not-a-manifest-id" is not one of this manifest's entry ids.
+    # "not-a-manifest-id" is not one of this manifest's entry ids.
     golden = _human_labeled_golden(
         manifest="manifest.json", digest=corpus_digest, source="not-a-manifest-id"
     )
@@ -1044,7 +1044,7 @@ REAL_REGRESSION = REAL_FIXTURE_DIR / "regression-questions.json"
 
 
 def test_committed_placeholder_golden_fails_for_a_meaningful_reason(tmp_path, monkeypatch, capsys):
-    """I3: the committed `golden-v1.json` (pending labeler, 0 questions) must fail
+    """The committed `golden-v1.json` (pending labeler, 0 questions) must fail
     real-mode validation for its own reason -- unlabeled and empty -- not for an
     unrelated, accidental reason like a missing/unparsable observations file."""
     observations_path = _write(tmp_path / "observations.json", {})
@@ -1171,7 +1171,7 @@ def test_real_mode_refuses_fake_extraction_mode(monkeypatch):
 def test_main_prints_a_clean_message_and_exits_2_on_real_mode_refusal(
     tmp_path, monkeypatch, capsys
 ):
-    """M3: `main()` must catch the real-mode refusal `run_real` raises (here,
+    """`main()` must catch the real-mode refusal `run_real` raises (here,
     `TAPPER_GRAPH_EXTRACTION_MODE` left at its "fake" default) and exit 2 with a clean
     `error: ...` message, instead of letting it propagate as an uncaught traceback."""
     monkeypatch.delenv("TAPPER_GRAPH_EXTRACTION_MODE", raising=False)

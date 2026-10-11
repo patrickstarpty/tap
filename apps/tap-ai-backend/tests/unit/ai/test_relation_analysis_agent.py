@@ -1,8 +1,9 @@
-"""Unit tests for `RelationAnalysisAgent` (PR 3 task 3): the deterministic
+"""Unit tests for `RelationAnalysisAgent`: the deterministic
 relation analysis pipeline run as a contract agent subgraph, with span
 coverage and fail-closed status handling.
 
-Reuses Task 2's `FakeProjectGraphStore`/fixture graph (nodes A/B/C/D/E; see
+Reuses the relation analysis pipeline tests' `FakeProjectGraphStore`/fixture
+graph (nodes A/B/C/D/E; see
 `tests.unit.knowledge.test_relation_analysis` for the fixture docstring),
 extended here with `get_current`/`set_version` and an optional `neighbors`
 failure hook.
@@ -76,7 +77,7 @@ def _fixture_kwargs(store: FakeProjectGraphStore | None = None) -> dict[str, Any
 
 class VersionedStore(FakeProjectGraphStore):
     """Adds `get_current`/`set_version` and an optional `neighbors` failure
-    hook to Task 2's fixture-only `FakeProjectGraphStore`."""
+    hook to the pipeline tests' fixture-only `FakeProjectGraphStore`."""
 
     def __init__(self, *, version: int = 7, status: str = "READY", **kwargs: Any) -> None:
         super().__init__(**kwargs)
