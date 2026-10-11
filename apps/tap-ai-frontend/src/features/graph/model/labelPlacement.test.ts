@@ -241,6 +241,141 @@ describe("placeNodeLabels", () => {
     expect(placed.get("a")).toMatchObject({ placement: "left", halo: false });
   });
 
+  describe("within the visible viewport", () => {
+    const metrics = { fontSize: FONT_SIZE, zoom: 1 };
+    const sides = ["below", "above", "right", "left"] as const;
+    const viewport = { left: 0, top: 0, right: 1000, bottom: 800 };
+    const outside = (box: LabelBox) =>
+      (box.right - box.left) * (box.bottom - box.top) -
+      overlapArea(box, viewport);
+
+    it("keeps labels out of a blocked area such as a floating toolbar", () => {
+      const node = candidate({ id: "a", x: 900, y: 40, text: "Corner" });
+      const toolbar = { left: 885, top: 10, right: 990, bottom: 70 };
+      const placed = placeNodeLabels(
+        [node],
+        options({ bounds: viewport, blocked: [toolbar] }),
+      );
+      const label = placed.get("a")!;
+      const box = labelBox(node, label.placement, metrics);
+      expect(overlapArea(box, toolbar)).toBe(0);
+      expect(outside(box)).toBe(0);
+      expect(label).toMatchObject({ placement: "left", halo: false });
+    });
+
+    it("takes an overlapping spot inside the viewport over a clear one cut off by its edge", () => {
+      // Right is free but runs off the viewport; left is covered by a
+      // neighbor's label, by more area than right would lose.
+      const node = candidate({ id: "a", x: 960, y: 400, text: "Edge node" });
+      const obstacles = [
+        labelBox(node, "below", metrics),
+        labelBox(node, "above", metrics),
+        labelBox(node, "left", metrics),
+      ];
+      expect(outside(labelBox(node, "right", metrics))).toBeLessThan(
+        overlapArea(
+          labelBox(node, "left", metrics),
+          labelBox(node, "left", metrics),
+        ),
+      );
+      const placed = placeNodeLabels(
+        [node],
+        options({ bounds: viewport, obstacles }),
+      );
+      expect(placed.get("a")).toMatchObject({ placement: "left", halo: true });
+    });
+
+    it("takes the spot least outside the viewport when every one is cut off", () => {
+      // A node in the viewport's corner: every spot runs off it somewhat.
+      const node = candidate({
+        id: "a",
+        x: 985,
+        y: 790,
+        text: "Corner label",
+      });
+      const areas = sides.map((side) => outside(labelBox(node, side, metrics)));
+      expect(Math.min(...areas)).toBeGreaterThan(0);
+      const least = sides[areas.indexOf(Math.min(...areas))]!;
+      // An obstacle over the least-cut-off spot does not push the label
+      // further out of view.
+      const placed = placeNodeLabels(
+        [node],
+        options({
+          bounds: viewport,
+          obstacles: [labelBox(node, least, metrics)],
+        }),
+      );
+      expect(placed.get("a")?.placement).toBe(least);
+    });
+
+    it("still keeps the labels of nodes out of view clear of others", () => {
+      // Every spot is equally out of view, so overlap decides as usual,
+      // whatever rounding the box arithmetic leaves (here, the side spots
+      // come out a hair smaller than below and above).
+      const zoom = Math.sqrt(1.75);
+      const node = candidate({
+        id: "a",
+        x: 1500,
+        y: 900,
+        text: "Policy renewal",
+      });
+      const sideMetrics = { fontSize: FONT_SIZE, zoom };
+      const placed = placeNodeLabels(
+        [node],
+        options({
+          bounds: viewport,
+          zoom,
+          obstacles: [
+            labelBox(node, "right", sideMetrics),
+            labelBox(node, "left", sideMetrics),
+          ],
+        }),
+      );
+      expect(placed.get("a")).toMatchObject({
+        placement: "below",
+        halo: false,
+      });
+    });
+
+    it("leaves the label of a node wholly out of view out of view too", () => {
+      // Pulled toward the viewport, the label would show in it with no
+      // node beside it; it is placed against the whole canvas instead.
+      const node = candidate({ id: "a", x: 1030, y: 400, text: "Doc" });
+      const placed = placeNodeLabels(
+        [node],
+        options({
+          bounds: viewport,
+          canvasBounds: { left: -24, top: 0, right: 1584, bottom: 1120 },
+        }),
+      );
+      const label = placed.get("a")!;
+      expect(
+        overlapArea(labelBox(node, label.placement, metrics), viewport),
+      ).toBe(0);
+      expect(label).toMatchObject({ placement: "below", halo: false });
+    });
+
+    it("keeps the label of a partly visible node inside the viewport", () => {
+      const node = candidate({ id: "a", x: 1005, y: 400, text: "Doc" });
+      const placed = placeNodeLabels(
+        [node],
+        options({
+          bounds: viewport,
+          canvasBounds: { left: -24, top: 0, right: 1584, bottom: 1120 },
+        }),
+      );
+      const label = placed.get("a")!;
+      expect(outside(labelBox(node, label.placement, metrics))).toBe(0);
+      expect(label.placement).toBe("left");
+    });
+
+    it("does not back a label with a halo just because the viewport cuts it off", () => {
+      const node = candidate({ id: "a", x: 995, y: 795, text: "Corner" });
+      const placed = placeNodeLabels([node], options({ bounds: viewport }));
+      expect(placed.get("a")?.halo).toBe(false);
+    });
+  });
+
   it("places priority labels (hovered, selected, cited) first, ahead of higher-degree ones", () => {
     const nodes = [
       candidate({ id: "hub", x: 100, y: 100, text: "Hub label", degree: 9 }),
@@ -419,6 +554,115 @@ describe("placeGraphLabels", () => {
     };
     expect(placed.edges.get("h")).toEqual({ x: 200, y: 200 });
     expect(overlapArea(box("h"), box("v"))).toBe(0);
+  });
+
+  describe("edge labels crowding a shared endpoint", () => {
+    // Two edges leaving the same node in nearly the same direction: their
+    // labels overlap at every spot along either edge.
+    const nearlyParallel = (tiers: { a?: number; b?: number } = {}) => [
+      {
+        id: "a",
+        x1: 300,
+        y1: 300,
+        x2: 500,
+        y2: 300,
+        text: "requires",
+        tier: tiers.a,
+      },
+      {
+        id: "b",
+        x1: 300,
+        y1: 300,
+        x2: 500,
+        y2: 320,
+        text: "precedes",
+        tier: tiers.b,
+      },
+    ];
+    const boxOf = (
+      placed: ReturnType<typeof placeGraphLabels>,
+      id: string,
+      text: string,
+      zoom = 1,
+    ) => {
+      const at = placed.edges.get(id)!;
+      return edgeLabelBox(at.x, at.y, text, zoom);
+    };
+
+    it("hides the later of two edge labels that collide wherever they slide", () => {
+      const placed = placeGraphLabels([], nearlyParallel(), options());
+      expect(placed.edges.get("a")).toEqual({ x: 400, y: 300 });
+      expect(placed.edges.has("b")).toBe(false);
+    });
+
+    it("keeps the higher-priority edge label and hides the other", () => {
+      const placed = placeGraphLabels(
+        [],
+        nearlyParallel({ a: 2, b: 0 }),
+        options(),
+      );
+      expect(placed.edges.get("b")).toEqual({ x: 400, y: 310 });
+      expect(placed.edges.has("a")).toBe(false);
+    });
+
+    it("slides a colliding edge label along its edge rather than hiding it", () => {
+      // The midpoints collide, but the second label clears the first a
+      // little further along its edge.
+      const edges = [
+        { id: "a", x1: 300, y1: 300, x2: 500, y2: 300, text: "requires" },
+        { id: "b", x1: 300, y1: 300, x2: 500, y2: 340, text: "requires" },
+      ];
+      const nodes = [
+        candidate({ id: "hub", x: 300, y: 300, text: "Hub" }),
+        candidate({ id: "a-end", x: 500, y: 300, text: "A" }),
+        candidate({ id: "b-end", x: 500, y: 340, text: "B" }),
+      ];
+      const placed = placeGraphLabels(nodes, edges, options());
+      expect(placed.edges.size).toBe(2);
+      expect(placed.edges.get("a")).toEqual({ x: 400, y: 300 });
+      expect(placed.edges.get("b")).not.toEqual({ x: 400, y: 320 });
+      expect(
+        overlapArea(
+          boxOf(placed, "a", "requires"),
+          boxOf(placed, "b", "requires"),
+        ),
+      ).toBe(0);
+    });
+
+    it("hides an edge label rather than push it onto a priority node label", () => {
+      // Both edges run down from the hub. "a" slides past the hub's label;
+      // the only spot "b" has clear of "a" covers the hub's label, so "b"
+      // is hidden and the hub's label stays clear.
+      const placed = placeGraphLabels(
+        [candidate({ id: "hub", x: 300, y: 300, text: "Hub" })],
+        [
+          { id: "a", x1: 300, y1: 300, x2: 300, y2: 400, text: "requires" },
+          { id: "b", x1: 300, y1: 300, x2: 310, y2: 400, text: "requires" },
+        ],
+        options({ priority: new Set(["hub"]) }),
+      );
+      expect(placed.nodes.get("hub")).toMatchObject({
+        placement: "below",
+        halo: false,
+      });
+      expect(placed.edges.has("a")).toBe(true);
+      expect(placed.edges.has("b")).toBe(false);
+    });
+
+    it("shows both again once zooming in separates them", () => {
+      const placed = placeGraphLabels(
+        [],
+        nearlyParallel(),
+        options({ zoom: 3 }),
+      );
+      expect(placed.edges.size).toBe(2);
+      expect(
+        overlapArea(
+          boxOf(placed, "a", "requires", 3),
+          boxOf(placed, "b", "precedes", 3),
+        ),
+      ).toBe(0);
+    });
   });
 
   it("keeps other labels off the edge labels", () => {

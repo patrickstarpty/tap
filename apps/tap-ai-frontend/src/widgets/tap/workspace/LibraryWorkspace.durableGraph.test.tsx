@@ -248,6 +248,20 @@ it("shows an empty state for a project without communities", async () => {
   expect(screen.queryByRole("group")).not.toBeInTheDocument();
 });
 
+it("shows a failed-build state instead of the generic empty hint when the project merge failed", async () => {
+  const project = buildProject({
+    status: "FAILED",
+    nodeCount: 0,
+    communities: [],
+  });
+  renderLibrary({ project });
+
+  await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+  expect(screen.getByText("The knowledge graph build failed.")).toBeVisible();
+  expect(screen.queryByText(/built automatically/i)).not.toBeInTheDocument();
+});
+
 it("loads more nodes when the overview is truncated", async () => {
   const project = buildProject();
   renderLibrary({

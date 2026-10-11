@@ -65,8 +65,18 @@ export interface LabelPlacementOptions {
   measureText?: (text: string) => number;
   /** Boxes labels should stay clear of, e.g. visible edge labels. */
   obstacles?: readonly LabelBox[];
-  /** The drawable area, in label space; labels should stay inside it. */
+  /** The visible area, in label space; labels should stay inside it. */
   bounds?: LabelBox;
+  /** Areas inside `bounds` that labels must not use either, in label
+   * space: e.g. the space under a floating toolbar. */
+  blocked?: readonly LabelBox[];
+  /**
+   * The whole drawable canvas, in label space. A node whose circle lies
+   * wholly outside `bounds` keeps its label out of view with it: the label
+   * ignores `bounds` and `blocked`, and only counts area outside this box
+   * like an overlap.
+   */
+  canvasBounds?: LabelBox;
 }
 
 // Gap between the node's edge and the label baseline below it (the line
@@ -228,10 +238,15 @@ function circleOverlapArea(
   });
 }
 
-/** Area of `box` that falls outside `bounds`. */
-function outsideArea(box: LabelBox, bounds: LabelBox | undefined): number {
-  if (!bounds) return 0;
-  return area(box) - overlapArea(box, bounds);
+/** Area of `box` that falls outside `bounds` or inside a `blocked` area. */
+function outsideArea(
+  box: LabelBox,
+  bounds: LabelBox | undefined,
+  blocked: readonly LabelBox[],
+): number {
+  let outside = bounds ? area(box) - overlapArea(box, bounds) : 0;
+  for (const other of blocked) outside += overlapArea(box, other);
+  return outside;
 }
 
 function area(box: LabelBox): number {
@@ -252,11 +267,21 @@ export interface EdgeLabelCandidate {
   x2: number;
   y2: number;
   text: string;
+  /**
+   * Which edge label keeps its place when two cannot both be shown: lower
+   * tiers are placed first (e.g. 0 for cited edges, 1 for edges at the
+   * hovered or selected node, 2 for the rest); ties keep input order.
+   */
+  tier?: number;
 }
 
 export interface GraphLabelPlacement {
   nodes: Map<string, PlacedLabel>;
-  /** Where each edge label is drawn along its edge, in canvas units. */
+  /**
+   * Where each shown edge label is drawn along its edge, in canvas units.
+   * An edge label with no spot clear of the edge labels placed before it is
+   * left out (hidden at this zoom).
+   */
   edges: Map<string, { x: number; y: number }>;
 }
 
@@ -382,10 +407,31 @@ function circleBox(circle: Circle): LabelBox {
 interface PlacementCost {
   label: Omit<PlacedLabel, "halo">;
   box: LabelBox;
+  /** Area outside the bounds or inside a blocked area (cut off or hidden;
+   * a halo does not help). */
+  outside: number;
   /** Overlap with node labels and other nodes' circles. */
   labels: number;
-  /** Overlap with obstacles (edge labels) and area outside the bounds. */
+  /** Overlap with obstacles (edge labels). */
   obstacles: number;
+}
+
+// Out-of-view areas (label space, px²) closer than this count as equal:
+// the four spots of a label far out of view differ only by rounding.
+const OUTSIDE_TOLERANCE = 0.5;
+
+/** Whether a spot costing `outside`/`overlap` beats `best`: staying in
+ * view comes first, then overlapping less. */
+function isBetter(
+  outside: number,
+  overlap: number,
+  best: { outside: number; overlap: number } | undefined,
+): boolean {
+  if (best === undefined) return true;
+  if (Math.abs(outside - best.outside) > OUTSIDE_TOLERANCE) {
+    return outside < best.outside;
+  }
+  return overlap < best.overlap;
 }
 
 /**
@@ -393,15 +439,26 @@ interface PlacementCost {
  *
  * Node labels go in priority order — priority, then emphasized, then by
  * descending degree, ties kept in input order. Each takes the first of
- * below/above/right/left that overlaps no label placed before it, no other
- * node's circle and no edge label (or other obstacle); when all four
- * overlap something, it takes the one with the least overlap area and is
- * flagged for a halo. No label is ever left out.
+ * below/above/right/left that stays in view (inside `bounds`, outside every
+ * `blocked` area) and overlaps no label placed before it, no other node's
+ * circle and no edge label (or other obstacle). A spot that leaves the view
+ * counts as unusable: when none of the four is clear, the label takes, of
+ * those in view, the one with the least overlap area and is flagged for a
+ * halo; when all four leave the view, the one least out of view. A node
+ * wholly out of view is the exception: its label stays out of view with
+ * it, placed against `canvasBounds` as if that were an obstacle's edge. No
+ * label is ever left out.
  *
  * Priority labels (hovered, selected, cited) come first and may claim a
  * spot that is only blocked by an edge label at its midpoint: that edge
  * label then slides along (or beside) its edge out of the way, and every
  * later node label avoids the edge labels where they finally sit.
+ *
+ * Edge labels go in tier order and never overlap each other: one that
+ * collides with an earlier edge label at every spot along its edge (or
+ * whose only spots clear of those cover a leading label) is left out, so
+ * at a crowded hub the higher-tier labels stay. Only edge labels are ever
+ * left out; zooming in spreads the spots apart and brings them back.
  *
  * Overlap checks go through uniform-grid spatial indexes, so a full
  * placement stays near-linear in the number of labels.
@@ -411,7 +468,7 @@ export function placeGraphLabels(
   edgeLabels: readonly EdgeLabelCandidate[],
   options: LabelPlacementOptions,
 ): GraphLabelPlacement {
-  const { fontSize, zoom, measureText, obstacles = [] } = options;
+  const { fontSize, zoom, measureText, obstacles = [], blocked = [] } = options;
   const circleGrid = new BoxGrid<Circle>();
   for (const candidate of candidates) {
     const circle = {
@@ -457,6 +514,21 @@ export function placeGraphLabels(
   const nodes = new Map<string, PlacedLabel>();
   const leadingBoxes = new Map<string, LabelBox>();
 
+  // Whether a node's circle lies wholly outside the visible bounds.
+  const isOutOfView = (candidate: LabelCandidate) => {
+    const { bounds } = options;
+    if (!bounds) return false;
+    const circle = {
+      x: candidate.x * zoom,
+      y: candidate.y * zoom,
+      r: candidate.radius * zoom,
+    };
+    const nearestX = Math.min(Math.max(circle.x, bounds.left), bounds.right);
+    const nearestY = Math.min(Math.max(circle.y, bounds.top), bounds.bottom);
+    return (
+      (nearestX - circle.x) ** 2 + (nearestY - circle.y) ** 2 >= circle.r ** 2
+    );
+  };
   const costOf = (
     candidate: LabelCandidate,
     placement: LabelPlacement,
@@ -474,9 +546,23 @@ export function placeGraphLabels(
       circleGrid.sum(box, (_, circle) =>
         circle.id === candidate.id ? 0 : circleOverlapArea(circle, box),
       );
-    const obstacleCost =
-      outsideArea(box, options.bounds) + obstacleGrid.sum(box);
-    return { label, box, labels, obstacles: obstacleCost };
+    if (isOutOfView(candidate)) {
+      return {
+        label,
+        box,
+        outside: 0,
+        labels,
+        obstacles:
+          obstacleGrid.sum(box) + outsideArea(box, options.canvasBounds, []),
+      };
+    }
+    return {
+      label,
+      box,
+      outside: outsideArea(box, options.bounds, blocked),
+      labels,
+      obstacles: obstacleGrid.sum(box),
+    };
   };
 
   // 1. Leading (priority) labels. An edge label in the way only counts for
@@ -509,13 +595,16 @@ export function placeGraphLabels(
     });
   for (const candidate of leadingCandidates) {
     const textWidth = widthOf(candidate);
-    let best: { cost: PlacementCost; total: number } | undefined;
+    let best:
+      { cost: PlacementCost; outside: number; overlap: number } | undefined;
     for (const placement of PLACEMENTS) {
       const cost = costOf(candidate, placement, textWidth);
-      const unavoidable = unavoidableEdgeOverlap(cost.box);
-      const total = cost.labels + cost.obstacles + unavoidable;
-      if (best === undefined || total < best.total) best = { cost, total };
-      if (total === 0) break;
+      const overlap =
+        cost.labels + cost.obstacles + unavoidableEdgeOverlap(cost.box);
+      if (isBetter(cost.outside, overlap, best)) {
+        best = { cost, outside: cost.outside, overlap };
+      }
+      if (cost.outside <= OUTSIDE_TOLERANCE && overlap === 0) break;
     }
     const chosen = best!.cost;
     nodes.set(candidate.id, {
@@ -526,47 +615,61 @@ export function placeGraphLabels(
     leadingBoxes.set(candidate.id, chosen.box);
   }
 
-  // 2. Edge labels slide along (or beside) their edges to clear the
-  // leading labels, then node circles, then each other, where they can.
+  // 2. Edge labels, in tier order, slide along (or beside) their edges to
+  // clear each other, the leading labels and then node circles.
   const edges = new Map<string, { x: number; y: number }>();
   const edgeGrid = new BoxGrid<null>();
-  for (const edge of edgeLabels) {
-    // Preference order: the first spot along the edge clear of everything;
-    // else the first spot clear of leading labels and nodes; else the first
-    // clear of leading labels; else the least overlap with them. Only
-    // zero/non-zero matters for nodes and other edge labels, so those
-    // checks stop at the first overlap.
+  const edgesByTier = edgeLabels
+    .map((edge, index) => ({ edge, index }))
+    .sort(
+      (a, b) => (a.edge.tier ?? 0) - (b.edge.tier ?? 0) || a.index - b.index,
+    )
+    .map(({ edge }) => edge);
+  for (const edge of edgesByTier) {
+    // Only spots clear of the edge labels already placed are eligible.
+    // Among them, the preference order is: the first clear of everything;
+    // else the first clear of leading labels; else, only if no spot at all
+    // is clear of them (as the leading labels were placed expecting), the
+    // least overlap with them. Otherwise the label is left out: it is only
+    // blocked by other edge labels and must not cover a leading label
+    // instead. Only zero or non-zero matters for nodes and other edge
+    // labels, so those checks stop at the first overlap.
     let chosen: { at: { x: number; y: number }; box: LabelBox } | undefined;
-    let clearOfLabelsAndNodes: typeof chosen;
     let clearOfLabels: typeof chosen;
     let leastOverlap: (typeof chosen & { labels: number }) | undefined;
+    // Whether some spot on the edge itself is clear of leading labels and
+    // nodes, edge labels aside: moving off the edge is only worth it to
+    // clear those, not another edge label (it would crowd the nodes' own
+    // label spots, so such a label is left out instead).
+    let edgeHasRoom = false;
+    let someSpotClearOfLabels = false;
     for (const spot of EDGE_LABEL_SPOTS) {
-      // Off-edge spots come after every along-edge one: once a spot clear
-      // of labels and nodes exists, no later spot can be preferred.
-      if (spot.side !== 0 && clearOfLabelsAndNodes) break;
+      // Off-edge spots come after every along-edge one.
+      if (spot.side !== 0 && edgeHasRoom) break;
       const at = edgeAt(edge, spot);
       const box = edgeLabelBox(at.x, at.y, edge.text, zoom);
       let labels = 0;
       for (const other of leadingBoxes.values()) {
         labels += overlapArea(box, other);
       }
+      const hitsNode =
+        labels === 0 &&
+        circleGrid.any(box, (_, circle) => circleOverlapArea(circle, box));
+      if (labels === 0) someSpotClearOfLabels = true;
+      if (spot.side === 0 && labels === 0 && !hitsNode) edgeHasRoom = true;
+      if (edgeGrid.any(box)) continue;
       if (!leastOverlap || labels < leastOverlap.labels) {
         leastOverlap = { at, box, labels };
       }
       if (labels > 0) continue;
       clearOfLabels ??= { at, box };
-      if (circleGrid.any(box, (_, circle) => circleOverlapArea(circle, box))) {
-        continue;
-      }
-      clearOfLabelsAndNodes ??= { at, box };
-      // Moving off the edge is only worth it to clear labels or nodes, not
-      // another edge label (it would crowd the nodes' own label spots).
-      if (spot.side === 0 && !edgeGrid.any(box)) {
-        chosen = { at, box };
-        break;
-      }
+      if (hitsNode) continue;
+      chosen = { at, box };
+      break;
     }
-    chosen ??= clearOfLabelsAndNodes ?? clearOfLabels ?? leastOverlap!;
+    chosen ??=
+      clearOfLabels ?? (someSpotClearOfLabels ? undefined : leastOverlap);
+    if (!chosen) continue;
     const chosenLabels = chosen === leastOverlap ? leastOverlap.labels : 0;
     edges.set(edge.id, chosen.at);
     edgeGrid.add(chosen.box, null);
@@ -585,16 +688,12 @@ export function placeGraphLabels(
   for (const candidate of ordered) {
     if (isLeading(candidate.id)) continue;
     const textWidth = widthOf(candidate);
-    let best: PlacementCost | undefined;
+    let best: (PlacementCost & { overlap: number }) | undefined;
     for (const placement of PLACEMENTS) {
       const cost = costOf(candidate, placement, textWidth);
-      if (
-        best === undefined ||
-        cost.labels + cost.obstacles < best.labels + best.obstacles
-      ) {
-        best = cost;
-      }
-      if (cost.labels + cost.obstacles === 0) break;
+      const overlap = cost.labels + cost.obstacles;
+      if (isBetter(cost.outside, overlap, best)) best = { ...cost, overlap };
+      if (cost.outside <= OUTSIDE_TOLERANCE && overlap === 0) break;
     }
     nodes.set(candidate.id, {
       ...best!.label,

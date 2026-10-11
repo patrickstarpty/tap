@@ -219,6 +219,8 @@ export interface WorkspaceCopy {
     sourceCapNotice(n: number): string;
     graphEmpty: string;
     graphEmptyHint: string;
+    graphFailed: string;
+    graphFailedHint: string;
     graphMerging: string;
     graphLoading: string;
     graphUnavailable: string;
@@ -485,6 +487,8 @@ export const WORKSPACE_COPY = {
       graphEmpty: "No knowledge graph yet.",
       graphEmptyHint:
         "The graph is built automatically after sources are published.",
+      graphFailed: "The knowledge graph build failed.",
+      graphFailedHint: "Retry the build, or check with an operator.",
       graphMerging: "The graph is being rebuilt…",
       graphLoading: "Loading the knowledge graph…",
       graphUnavailable:
@@ -738,6 +742,8 @@ export const WORKSPACE_COPY = {
         `已匹配 ${n} 个来源，图谱仅显示前 50 个。`,
       graphEmpty: "暂无知识图谱。",
       graphEmptyHint: "来源发布后会自动建图。",
+      graphFailed: "知识图谱构建失败。",
+      graphFailedHint: "请重试构建，或联系运维排查。",
       graphMerging: "图谱正在重建…",
       graphLoading: "正在加载知识图谱…",
       graphUnavailable: "知识图谱暂时无法加载，请重试。",

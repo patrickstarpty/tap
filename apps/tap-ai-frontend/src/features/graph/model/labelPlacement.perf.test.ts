@@ -82,17 +82,24 @@ it(`re-places ${String(NODE_COUNT)} node and ${String(EDGE_COUNT)} edge labels f
   run(null);
   run("n0");
   const timings: number[] = [];
+  let shownEdges = 0;
   for (let i = 0; i < 15; i += 1) {
     const started = performance.now();
     const placed = run(i % 2 === 0 ? `n${String(i)}` : null);
     timings.push(performance.now() - started);
+    // Every node keeps its label; edge labels that would overlap another
+    // edge label are left out.
     expect(placed.nodes.size).toBe(NODE_COUNT);
-    expect(placed.edges.size).toBe(EDGE_COUNT);
+    expect(placed.edges.size).toBeGreaterThan(0);
+    expect(placed.edges.size).toBeLessThanOrEqual(EDGE_COUNT);
+    shownEdges = placed.edges.size;
   }
   const fastest = Math.min(...timings);
   const summary = `fastest ${fastest.toFixed(1)} ms, median ${median(
     timings,
-  ).toFixed(1)} ms over ${String(timings.length)} runs`;
+  ).toFixed(1)} ms over ${String(timings.length)} runs; ${String(
+    shownEdges,
+  )} of ${String(EDGE_COUNT)} edge labels shown`;
   await annotate(summary);
   expect(fastest, summary).toBeLessThanOrEqual(BUDGET_MS);
 });
