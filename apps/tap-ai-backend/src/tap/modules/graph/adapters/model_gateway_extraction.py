@@ -79,13 +79,15 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                     },
                     "canonicalKey": {"type": "string"},
                     "chunks": _CHUNK_REFS,
+                    # No maxItems: the gateway would reject a sixth alias outright;
+                    # ``_sanitize_aliases`` keeps the first NODE_ALIAS_MAX instead.
                     "aliases": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "maxItems": NODE_ALIAS_MAX,
                         "description": (
-                            f"Other short names (at most {ALIAS_LENGTH_MAX} characters) of "
-                            "this entity itself; never a pronoun, a reference such as this "
+                            "Other names of this entity, up to five, each at most "
+                            f"{ALIAS_LENGTH_MAX} characters, naming the entity itself; "
+                            "never a pronoun, a reference such as this "
                             "contract or the company, or a clause or section number."
                         ),
                     },

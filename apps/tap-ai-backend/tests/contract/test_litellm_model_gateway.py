@@ -2101,3 +2101,37 @@ async def test_complete_but_invalid_output_is_not_reported_as_truncated(content)
     with pytest.raises(ModelGatewayUnavailable) as raised:
         await gateway.generate_structured(request(ModelOperation.STRUCTURED))
     assert not isinstance(raised.value, ModelOutputTruncated)
+
+
+@pytest.mark.asyncio
+async def test_a_nested_array_over_its_bound_is_invalid_not_truncated():
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tags": {"type": "array", "maxItems": 1, "items": {"type": "string"}}
+                    },
+                    "required": ["tags"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }
+    nested = replace(
+        request(ModelOperation.STRUCTURED),
+        schema=schema,
+        schema_digest=digest(json.dumps(schema, sort_keys=True, separators=(",", ":"))),
+    )
+    gateway = configured_gateway(_structured_reply('{"items":[{"tags":["a","b"]}]}'))
+
+    with pytest.raises(ModelGatewayUnavailable) as raised:
+        await gateway.generate_structured(nested)
+    assert not isinstance(raised.value, ModelOutputTruncated)

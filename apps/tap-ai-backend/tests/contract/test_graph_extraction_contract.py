@@ -312,7 +312,10 @@ def test_schema_locks_vocabulary_and_process_type():
 
     nodes = GRAPH_EXTRACTION_SCHEMA["properties"]["nodes"]["items"]["properties"]
     edges = GRAPH_EXTRACTION_SCHEMA["properties"]["edges"]["items"]["properties"]
-    assert set(nodes["type"]["enum"]) == NODE_TYPES and nodes["aliases"]["maxItems"] == 5
+    assert set(nodes["type"]["enum"]) == NODE_TYPES
+    # Aliases are capped at five by the adapter, not by the schema: an over-long
+    # alias list must not fail (or split) a batch.
+    assert "maxItems" not in nodes["aliases"] and "up to five" in nodes["aliases"]["description"]
     assert set(edges["relationType"]["enum"]) == RELATION_TYPES
     assert "relationLabel" in GRAPH_EXTRACTION_SCHEMA["properties"]["edges"]["items"]["required"]
 
@@ -614,3 +617,21 @@ async def test_reference_words_never_become_aliases_or_names(span_recorder):
     ]
     assert spans[0].attributes["tap.graph.rejected_names"] == 1
     assert "never a pronoun" in GRAPH_EXTRACTION_PROMPT and "第十九条" in GRAPH_EXTRACTION_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_six_aliases_on_one_node_are_trimmed_without_splitting_the_batch():
+    from tap.modules.ai.application.schema import validate_output
+    from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_SCHEMA
+
+    output = _output()
+    output["nodes"][0]["aliases"] = [f"Policy name {index}" for index in range(6)]
+    output["nodes"][1]["aliases"] = []
+
+    # The gateway's locked-schema check accepts it (nothing to split) ...
+    validate_output(GRAPH_EXTRACTION_SCHEMA, output)
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    # ... and the adapter keeps the first five.
+    node = next(node for node in draft.nodes if node.node_id == "node-1")
+    assert node.aliases == tuple(f"Policy name {index}" for index in range(5))
