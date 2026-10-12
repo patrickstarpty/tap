@@ -225,3 +225,42 @@ def test_record_preserves_a_cost_below_the_old_scale_eight_resolution(
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_record_stores_a_floating_point_litellm_cost_without_truncation(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    """LiteLLM reports float costs such as 7.000000000000001e-05; the gateway rounds them to
+    the column scale, so MySQL stores them exactly instead of warning `Data truncated`."""
+    import warnings
+
+    from tap.modules.ai.adapters.litellm import _parse_cost_header
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            recorder = MysqlModelCallRecorder(sessions)
+            cost = _parse_cost_header("7.000000000000001e-05")
+            assert cost is not None
+            record = _record(operation=ModelOperation.EMBED, cost_usd=cost)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                await recorder.record(record)
+            assert recorder.degraded() is False
+            assert not [item for item in caught if "truncated" in str(item.message).lower()]
+
+            async with engine.connect() as connection:
+                stored = (
+                    await connection.execute(
+                        sa.select(model_call.c.cost_usd).where(
+                            model_call.c.call_id == record.call_id
+                        )
+                    )
+                ).scalar_one()
+            assert stored == Decimal("0.0000700000")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())

@@ -1908,6 +1908,70 @@ async def test_missing_or_invalid_cost_header_is_null(header_value):
 
 
 @pytest.mark.asyncio
+async def test_cost_header_is_rounded_to_the_stored_precision():
+    """LiteLLM sends float costs with long tails; storing them unrounded truncates in MySQL."""
+
+    def respond(incoming):
+        return httpx.Response(
+            200,
+            json=success(incoming).json(),
+            headers={"x-litellm-response-cost": "0.004916800000000001"},
+        )
+
+    recorder = FakeRecorder()
+    result = await configured_gateway(respond, recorder=recorder).chat(request())
+
+    assert result.cost_usd == Decimal("0.0049168000")
+    assert recorder.records[0].cost_usd.as_tuple().exponent == -10
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header_value", ["1e-12", "100000000"])
+async def test_cost_outside_the_stored_range_is_rounded_or_null(header_value):
+    def respond(incoming):
+        return httpx.Response(
+            200, json=success(incoming).json(), headers={"x-litellm-response-cost": header_value}
+        )
+
+    recorder = FakeRecorder()
+    await configured_gateway(respond, recorder=recorder).chat(request())
+
+    expected = Decimal("0E-10") if header_value == "1e-12" else None
+    assert recorder.records[0].cost_usd == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"finish_reason": "length"},
+        {"content": '{"unexpected": true}'},
+    ],
+    ids=("truncated", "schema-invalid"),
+)
+async def test_failed_call_with_a_response_still_records_usage_and_cost(change):
+    def respond(incoming):
+        body = success(incoming).json()
+        if "finish_reason" in change:
+            body["choices"][0]["finish_reason"] = change["finish_reason"]
+        else:
+            body["choices"][0]["message"]["content"] = change["content"]
+        body["usage"] = {"prompt_tokens": 1500, "completion_tokens": 8192}
+        return httpx.Response(200, json=body, headers={"x-litellm-response-cost": "0.0104304"})
+
+    recorder = FakeRecorder()
+    with pytest.raises(ModelGatewayUnavailable):
+        await configured_gateway(respond, recorder=recorder).generate_structured(
+            request(ModelOperation.STRUCTURED)
+        )
+
+    record = recorder.records[0]
+    assert record.status == "error"
+    assert (record.input_tokens, record.output_tokens) == (1500, 8192)
+    assert record.cost_usd == Decimal("0.0104304000")
+
+
+@pytest.mark.asyncio
 async def test_request_json_matches_sent_payload():
     sent = []
 

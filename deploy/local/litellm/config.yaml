@@ -41,6 +41,9 @@ model_list:
       model: dashscope/text-embedding-v4
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
+      # LiteLLM has no built-in price for this model; without one every embedding cost is NULL.
+      input_cost_per_token: 0.00000007
+      output_cost_per_token: 0
     model_info:
       mode: embedding
 general_settings:
