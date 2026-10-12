@@ -635,3 +635,18 @@ async def test_six_aliases_on_one_node_are_trimmed_without_splitting_the_batch()
     # ... and the adapter keeps the first five.
     node = next(node for node in draft.nodes if node.node_id == "node-1")
     assert node.aliases == tuple(f"Policy name {index}" for index in range(5))
+
+
+@pytest.mark.asyncio
+async def test_an_edge_to_a_known_id_not_sent_in_this_request_is_dropped():
+    # "b0-n9" exists in an earlier batch but fell outside this request's 50-entity
+    # cap, so the model cannot have been told about it: the edge is not grounded.
+    output = _output()
+    output["edges"].append(
+        output["edges"][0] | {"id": "edge-2", "sourceNodeId": "b0-n9", "relationType": "USES"}
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_known_policy_request())
+
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    assert "b0-n9" not in {node.node_id for node in draft.nodes}
