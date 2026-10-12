@@ -26,7 +26,11 @@ from tap.modules.ai.adapters.litellm_catalog import (
     ModelRoles,
     validate_litellm_base_url,
 )
-from tap.modules.ai.application.schema import check_schema, validate_output
+from tap.modules.ai.application.schema import (
+    StructuredOutputOverflow,
+    check_schema,
+    validate_output,
+)
 from tap.modules.ai.domain.model_calls import ModelCallRecord
 from tap.modules.ai.domain.models import (
     ModelCallAudit,
@@ -35,6 +39,7 @@ from tap.modules.ai.domain.models import (
     ModelGatewayRejected,
     ModelGatewayUnavailable,
     ModelOperation,
+    ModelOutputTruncated,
     ModelRequest,
     ModelResult,
     ModelUsage,
@@ -659,6 +664,13 @@ class LiteLLMModelGateway:
         else:
             choices = body["choices"]
             if (
+                isinstance(choices, list)
+                and len(choices) == 1
+                and isinstance(choices[0], dict)
+                and choices[0].get("finish_reason") == "length"
+            ):
+                raise ModelOutputTruncated()
+            if (
                 not isinstance(choices, list)
                 or len(choices) != 1
                 or not isinstance(choices[0], dict)
@@ -673,11 +685,21 @@ class LiteLLMModelGateway:
                 raise ModelGatewayUnavailable()
             output = content
             if request.operation is ModelOperation.STRUCTURED:
-                output = json.loads(content)
+                try:
+                    output = json.loads(content)
+                except json.JSONDecodeError as error:
+                    if error.msg.startswith("Unterminated string") or error.pos >= len(
+                        content.rstrip()
+                    ):
+                        raise ModelOutputTruncated() from None
+                    raise
                 if not isinstance(output, dict):
                     raise ModelGatewayUnavailable()
                 assert request.schema is not None
-                validate_output(request.schema, output)
+                try:
+                    validate_output(request.schema, output)
+                except StructuredOutputOverflow:
+                    raise ModelOutputTruncated() from None
         audit = ModelCallAudit(
             request.scope,
             request.alias,

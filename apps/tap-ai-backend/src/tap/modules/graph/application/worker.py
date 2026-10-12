@@ -15,19 +15,24 @@ from tap.modules.graph.application.fragments import (
     split_batches,
 )
 from tap.modules.graph.application.jobs import GraphJobStore
-from tap.modules.graph.domain.extraction import GraphExtractionRequest
+from tap.modules.graph.domain.extraction import GraphExtractionRequest, GraphExtractionTruncated
 from tap.modules.graph.domain.jobs import (
     ClaimedGraphJob,
     GraphBatchStatus,
     GraphFragmentBatch,
     GraphJobLeaseLost,
 )
-from tap.modules.graph.domain.models import GraphSnapshotDraft
+from tap.modules.graph.domain.models import GraphNode, GraphSnapshotDraft
+from tap.modules.graph.domain.vocabulary import NODE_ALIAS_MAX
 from tap.modules.graph.ports.extraction import GraphExtractionPort
 from tap.modules.knowledge.domain.documents import ChunkDraft
 from tap.modules.knowledge.ports.documents import ArtifactLocator, ArtifactStore
 from tap.platform.db.project_scope import require_project_scope
 from tap.platform.telemetry import bind_trace, flush_traces, span
+
+# A READY batch whose output was truncated, split in two, and one half truncated
+# again: the other half's facts are kept and the job counts the batch as partial.
+HALF_TRUNCATED = "graph-batch-half-truncated"
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,20 +56,20 @@ def _chunk_request_mapping(chunk: ChunkDraft, *, revision_id: str) -> Mapping[st
 
 
 def _namespace_draft(
-    draft: GraphSnapshotDraft, *, batch_index: int, known_entity_ids: frozenset[str]
+    draft: GraphSnapshotDraft, *, prefix: str, known_entity_ids: frozenset[str]
 ) -> GraphSnapshotDraft:
     """Namespace every id this batch minted so restart-at-``n1``/``e1``/``ev1`` model ids
     cannot collide with another batch's ids for the same document.
 
-    Evidence, edge and provenance ids are always rewritten under the ``b{batch_index}-``
-    prefix. Node ids are rewritten the same way, except a node id already present in
+    Evidence, edge and provenance ids are always rewritten under ``prefix``
+    (``b{batch_index}-``, or ``b{batch_index}h{half}-`` for the halves of a split
+    batch). Node ids are rewritten the same way, except a node id already present in
     ``known_entity_ids`` (the known entities handed to this batch's request) is an
     intentional reuse of an entity minted by an earlier batch and keeps its id as-is.
     Every reference to a rewritten id (edge endpoints, evidence ids, provenance edge id
     and input-fact ids) is rewritten consistently.
     """
 
-    prefix = f"b{batch_index}-"
     node_id_map = {
         node.node_id: node.node_id if node.node_id in known_entity_ids else prefix + node.node_id
         for node in draft.nodes
@@ -107,6 +112,37 @@ def _namespace_draft(
         for item in draft.provenance
     )
     return replace(draft, nodes=nodes, edges=edges, evidence=evidence, provenance=provenance)
+
+
+def _combine_halves(drafts: Sequence[GraphSnapshotDraft]) -> GraphSnapshotDraft | None:
+    """One batch draft from the namespaced drafts of its two halves.
+
+    Their minted ids differ by prefix; a node id both halves carry is a known
+    entity they both referenced and is kept once with its evidence and aliases
+    unioned. ``None`` when neither half grounded anything.
+    """
+
+    if not drafts:
+        return None
+    nodes: dict[str, GraphNode] = {}
+    for draft in drafts:
+        for node in draft.nodes:
+            existing = nodes.get(node.node_id)
+            if existing is None:
+                nodes[node.node_id] = node
+                continue
+            nodes[node.node_id] = replace(
+                existing,
+                evidence_ids=tuple(dict.fromkeys((*existing.evidence_ids, *node.evidence_ids))),
+                aliases=tuple(dict.fromkeys((*existing.aliases, *node.aliases)))[:NODE_ALIAS_MAX],
+            )
+    return GraphSnapshotDraft(
+        drafts[0].snapshot,
+        tuple(nodes.values()),
+        tuple(edge for draft in drafts for edge in draft.edges),
+        tuple(item for draft in drafts for item in draft.evidence),
+        tuple(item for draft in drafts for item in draft.provenance),
+    )
 
 
 class GraphWorker:
@@ -294,6 +330,8 @@ class GraphWorker:
                 if existing_batch.draft is not None:
                     drafts.append(existing_batch.draft)
                 batch_ready += 1
+                if existing_batch.failure_code == HALF_TRUNCATED:
+                    batch_failed += 1
             elif existing_batch is not None and existing_batch.status is GraphBatchStatus.FAILED:
                 batch_failed += 1
             else:
@@ -310,8 +348,7 @@ class GraphWorker:
                     if draft is not None:
                         drafts.append(draft)
                     batch_ready += 1
-                else:
-                    batch_failed += batch_failed_here
+                batch_failed += batch_failed_here
             claim = await self._jobs.renew(
                 self._scope, claim, now=self._now(), lease_duration=self._lease_duration
             )
@@ -347,34 +384,35 @@ class GraphWorker:
         batch_text = "\n".join(chunk.content for chunk in batch_chunks)
         while attempt < self._batch_retries:
             attempt += 1
+            lost_halves = 0
             try:
-                request = GraphExtractionRequest(
-                    scope=self._scope,
-                    snapshot=claim.snapshot,
-                    chunks=request_chunks,
-                    model_alias=claim.model_alias,
-                    idempotency_key=f"{claim.request_digest}:batch:{index}",
-                    batch_index=index,
-                    document_title=document_title,
-                    known_entities=known_entities_from(drafts_so_far, text=batch_text),
-                )
-                raw_draft = await self._extractor.extract(request)
-                # ``None`` means the extractor grounded nothing in this batch (all
-                # boilerplate, or no relation sentences): a successful batch that
-                # simply contributes nothing, not a failure -- do not namespace or
-                # retry it.
-                if raw_draft is None:
-                    draft = None
-                else:
-                    known_entity_ids = frozenset(
-                        str(entity["id"]) for entity in request.known_entities
+                try:
+                    draft = await self._extract(
+                        claim,
+                        index,
+                        request_chunks,
+                        batch_text,
+                        drafts_so_far=drafts_so_far,
+                        document_title=document_title,
+                        idempotency_key=f"{claim.request_digest}:batch:{index}",
+                        prefix=f"b{index}-",
                     )
-                    draft = _namespace_draft(
-                        raw_draft, batch_index=index, known_entity_ids=known_entity_ids
+                except GraphExtractionTruncated:
+                    if len(batch_chunks) < 2:
+                        raise
+                    draft, lost_halves, claim = await self._extract_halves(
+                        claim,
+                        index,
+                        batch_chunks,
+                        request_chunks,
+                        drafts_so_far=drafts_so_far,
+                        document_title=document_title,
                     )
             except Exception as error:
                 failure_code = type(error).__name__[:64]
-                if attempt >= self._batch_retries:
+                # A truncated output repeats on the same input, so a batch still
+                # truncated after its one split fails now instead of retrying.
+                if attempt >= self._batch_retries or isinstance(error, GraphExtractionTruncated):
                     await self._jobs.record_batch(
                         self._scope,
                         claim,
@@ -432,11 +470,12 @@ class GraphWorker:
                         chunk_ids,
                         GraphBatchStatus.READY,
                         attempt=attempt,
+                        failure_code=HALF_TRUNCATED if lost_halves else None,
                         draft=draft,
                     ),
                     now=self._now(),
                 )
-                return draft, True, 0, claim
+                return draft, True, 1 if lost_halves else 0, claim
         # The retry budget was already exhausted before this call started (e.g.
         # batch_retries was lowered after a previous PENDING attempt was recorded for
         # this batch). Record it as terminally failed instead of looping forever or
@@ -455,3 +494,80 @@ class GraphWorker:
             now=self._now(),
         )
         return None, False, 1, claim
+
+    async def _extract(
+        self,
+        claim: ClaimedGraphJob,
+        index: int,
+        request_chunks: tuple[Mapping[str, object], ...],
+        text: str,
+        *,
+        drafts_so_far: Sequence[GraphSnapshotDraft],
+        document_title: str,
+        idempotency_key: str,
+        prefix: str,
+    ) -> GraphSnapshotDraft | None:
+        request = GraphExtractionRequest(
+            scope=self._scope,
+            snapshot=claim.snapshot,
+            chunks=request_chunks,
+            model_alias=claim.model_alias,
+            idempotency_key=idempotency_key,
+            batch_index=index,
+            document_title=document_title,
+            known_entities=known_entities_from(drafts_so_far, text=text),
+        )
+        raw_draft = await self._extractor.extract(request)
+        # ``None`` means the extractor grounded nothing in this batch (all
+        # boilerplate, or no relation sentences): a successful batch that simply
+        # contributes nothing, not a failure -- do not namespace or retry it.
+        if raw_draft is None:
+            return None
+        known_entity_ids = frozenset(str(entity["id"]) for entity in request.known_entities)
+        return _namespace_draft(raw_draft, prefix=prefix, known_entity_ids=known_entity_ids)
+
+    async def _extract_halves(
+        self,
+        claim: ClaimedGraphJob,
+        index: int,
+        batch_chunks: Sequence[ChunkDraft],
+        request_chunks: tuple[Mapping[str, object], ...],
+        *,
+        drafts_so_far: Sequence[GraphSnapshotDraft],
+        document_title: str,
+    ) -> tuple[GraphSnapshotDraft | None, int, ClaimedGraphJob]:
+        """Extract a truncated batch as two halves, once (no further splitting).
+
+        The second half also reuses entities the first half minted. A half that
+        truncates again is lost and counted; the other half's facts are kept. Any
+        other error, or both halves truncating, propagates to the batch's retry
+        handling. The lease is renewed before each half, since each is a full
+        extraction call of its own.
+        """
+
+        middle = len(batch_chunks) // 2
+        drafts: list[GraphSnapshotDraft] = []
+        lost = 0
+        for half, (start, end) in enumerate(((0, middle), (middle, len(batch_chunks)))):
+            claim = await self._jobs.renew(
+                self._scope, claim, now=self._now(), lease_duration=self._lease_duration
+            )
+            try:
+                draft = await self._extract(
+                    claim,
+                    index,
+                    request_chunks[start:end],
+                    "\n".join(chunk.content for chunk in batch_chunks[start:end]),
+                    drafts_so_far=(*drafts_so_far, *drafts),
+                    document_title=document_title,
+                    idempotency_key=f"{claim.request_digest}:batch:{index}:half:{half}",
+                    prefix=f"b{index}h{half}-",
+                )
+            except GraphExtractionTruncated:
+                lost += 1
+                if lost == 2:
+                    raise
+                continue
+            if draft is not None:
+                drafts.append(draft)
+        return _combine_halves(drafts), lost, claim

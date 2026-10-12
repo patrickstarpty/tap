@@ -5,11 +5,18 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import cast
 
-from tap.modules.ai.domain.models import ModelOperation, ModelRequest, schema_digest, text_digest
+from tap.modules.ai.domain.models import (
+    ModelOperation,
+    ModelOutputTruncated,
+    ModelRequest,
+    schema_digest,
+    text_digest,
+)
 from tap.modules.ai.ports.gateway import ModelGateway
-from tap.modules.graph.domain.extraction import GraphExtractionRequest
+from tap.modules.graph.domain.extraction import GraphExtractionRequest, GraphExtractionTruncated
 from tap.modules.graph.domain.models import (
     Evidence,
     GraphEdge,
@@ -215,21 +222,26 @@ class ModelGatewayGraphExtraction:
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
-            result = await self._gateway.generate_structured(
-                ModelRequest(
-                    scope=request.scope,
-                    alias=request.model_alias,
-                    operation=ModelOperation.STRUCTURED,
-                    prompt=GRAPH_EXTRACTION_PROMPT,
-                    prompt_digest=text_digest(GRAPH_EXTRACTION_PROMPT),
-                    context=context,
-                    timeout_seconds=self._timeout_seconds,
-                    idempotency_key=request.idempotency_key,
-                    schema=GRAPH_EXTRACTION_SCHEMA,
-                    schema_digest=schema_digest(GRAPH_EXTRACTION_SCHEMA),
-                    max_output_tokens=self._max_output_tokens,
+            try:
+                result = await self._gateway.generate_structured(
+                    ModelRequest(
+                        scope=request.scope,
+                        alias=request.model_alias,
+                        operation=ModelOperation.STRUCTURED,
+                        prompt=GRAPH_EXTRACTION_PROMPT,
+                        prompt_digest=text_digest(GRAPH_EXTRACTION_PROMPT),
+                        context=context,
+                        timeout_seconds=self._timeout_seconds,
+                        idempotency_key=request.idempotency_key,
+                        schema=GRAPH_EXTRACTION_SCHEMA,
+                        schema_digest=schema_digest(GRAPH_EXTRACTION_SCHEMA),
+                        max_output_tokens=self._max_output_tokens,
+                    )
                 )
-            )
+            except ModelOutputTruncated as error:
+                # Cut off at the token budget or past the schema caps: the same
+                # input would truncate again, so the worker splits the batch.
+                raise GraphExtractionTruncated() from error
             if not isinstance(result.output, dict):
                 raise ValueError("graph extraction output must be an object")
             output = cast(dict[str, object], result.output)
@@ -247,8 +259,10 @@ class ModelGatewayGraphExtraction:
                 }
                 node_id_remap: dict[str, str] = {}
                 known_refs: dict[str, list[str]] = {}
-                new_nodes: list[GraphNode] = []
+                new_nodes: dict[str, GraphNode] = {}
+                new_id_by_key: dict[str, str] = {}
                 repeated_known = 0
+                duplicate_nodes = 0
                 for item in nodes_raw:
                     node = GraphNode(
                         _string(item, "id"),
@@ -271,12 +285,35 @@ class ModelGatewayGraphExtraction:
                         node_id_remap[node.node_id] = known_id
                         known_refs.setdefault(known_id, []).extend(node.evidence_ids)
                         continue
-                    new_nodes.append(node)
+                    key = normalize_key(node.canonical_key)
+                    survivor_id = (
+                        node.node_id if node.node_id in new_nodes else new_id_by_key.get(key)
+                    )
+                    if survivor_id is not None:
+                        # The same node twice (same id, or same canonical key under
+                        # another id): keep the first, union citations and aliases.
+                        duplicate_nodes += 1
+                        if node.node_id != survivor_id:
+                            node_id_remap[node.node_id] = survivor_id
+                        survivor = new_nodes[survivor_id]
+                        new_nodes[survivor_id] = replace(
+                            survivor,
+                            evidence_ids=tuple(
+                                dict.fromkeys((*survivor.evidence_ids, *node.evidence_ids))
+                            ),
+                            aliases=_sanitize_aliases((*survivor.aliases, *node.aliases)),
+                        )
+                        continue
+                    new_nodes[node.node_id] = node
+                    new_id_by_key.setdefault(key, node.node_id)
                 edges_raw = tuple(_remap_endpoints(item, node_id_remap) for item in edges_raw)
                 provenance_raw = tuple(
                     _remap_input_facts(item, node_id_remap) for item in provenance_raw
                 )
-                node_ids = {node.node_id for node in new_nodes} | set(known)
+                edges_raw, provenance_raw, duplicate_edges = _dedupe_edges(
+                    edges_raw, provenance_raw
+                )
+                node_ids = set(new_nodes) | set(known)
                 kept_edges_raw, kept_provenance_raw, dropped = _keep_edges(
                     edges_raw, provenance_raw, node_ids
                 )
@@ -296,7 +333,7 @@ class ModelGatewayGraphExtraction:
                 )
                 nodes = (
                     *_referenced_known_nodes(snapshot_id, known, known_refs, edges),
-                    *new_nodes,
+                    *new_nodes.values(),
                 )
                 provenance = tuple(
                     InferenceProvenance(
@@ -313,6 +350,8 @@ class ModelGatewayGraphExtraction:
                 raise ValueError("graph extraction output is malformed") from error
             current_span.set_attribute("tap.graph.dropped_edges", dropped)
             current_span.set_attribute("tap.graph.repeated_known_entities", repeated_known)
+            current_span.set_attribute("tap.graph.duplicate_nodes", duplicate_nodes)
+            current_span.set_attribute("tap.graph.duplicate_edges", duplicate_edges)
         if not nodes:
             # The model grounded nothing in this batch (boilerplate chunks, no
             # facts to extract): a successful batch with nothing to contribute,
@@ -459,10 +498,12 @@ def _keep_edges(
 ) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int]:
     """Drop edges outside the vocabulary or batch, then cascade to their provenance.
 
-    An edge is dropped when its relationType is outside RELATION_TYPES or either endpoint
-    is not among this batch's node ids. Dropping an edge also drops the provenance record
-    that cites it (by edgeId), and any INFERRED edge whose provenance lists a dropped edge
-    id as an input fact is dropped in turn, repeating until no further edge is dropped.
+    An edge is dropped when its relationType is outside RELATION_TYPES, either endpoint
+    is not among this batch's node ids, or both endpoints are the same node (e.g. after
+    a duplicate node was merged into the other endpoint). Dropping an edge also drops
+    the provenance record that cites it (by edgeId), and any INFERRED edge whose
+    provenance lists a dropped edge id as an input fact is dropped in turn, repeating
+    until no further edge is dropped.
     """
     provenance_by_edge: dict[object, dict[str, object]] = {
         item.get("edgeId"): item for item in provenance_raw
@@ -473,6 +514,7 @@ def _keep_edges(
         if item.get("relationType") not in RELATION_TYPES
         or item.get("sourceNodeId") not in node_ids
         or item.get("targetNodeId") not in node_ids
+        or item.get("sourceNodeId") == item.get("targetNodeId")
     }
     changed = True
     while changed:
@@ -491,6 +533,66 @@ def _keep_edges(
         item for item in provenance_raw if item.get("edgeId") not in dropped_ids
     )
     return kept_edges, kept_provenance, len(dropped_ids)
+
+
+def _dedupe_edges(
+    edges_raw: tuple[dict[str, object], ...],
+    provenance_raw: tuple[dict[str, object], ...],
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int]:
+    """Keep one edge per id and per (source, relationType, target, origin).
+
+    A repeated edge (real outputs looped on one edge until truncated) merges into
+    the first: chunk refs union, confidence takes the maximum. Its provenance is
+    dropped, inputs citing it point at the survivor, and only the first provenance
+    per edge id is kept. Returns the kept edges, provenance and the number dropped.
+    """
+
+    kept: dict[object, dict[str, object]] = {}
+    survivor_by_shape: dict[tuple[str, ...], object] = {}
+    edge_remap: dict[str, str] = {}
+    duplicates = 0
+    for item in edges_raw:
+        edge_id = item.get("id")
+        shape = tuple(
+            item.get(key) for key in ("sourceNodeId", "relationType", "targetNodeId", "origin")
+        )
+        if not isinstance(edge_id, str) or not all(isinstance(part, str) for part in shape):
+            kept.setdefault(edge_id, item)  # malformed: left for parsing to reject
+            continue
+        if edge_id in kept:
+            duplicates += 1
+            continue
+        survivor_id = survivor_by_shape.get(cast(tuple[str, ...], shape))
+        if survivor_id is None:
+            kept[edge_id] = item
+            survivor_by_shape[cast(tuple[str, ...], shape)] = edge_id
+            continue
+        duplicates += 1
+        edge_remap[edge_id] = cast(str, survivor_id)
+        survivor = kept[survivor_id]
+        chunks, extra = survivor.get("chunks"), item.get("chunks")
+        confidence, other = survivor.get("confidence"), item.get("confidence")
+        merged = dict(survivor)
+        if isinstance(chunks, list) and isinstance(extra, list):
+            merged["chunks"] = list(dict.fromkeys([*chunks, *extra]))
+        if type(confidence) in {int, float} and type(other) in {int, float}:
+            merged["confidence"] = max(cast(float, confidence), cast(float, other))
+        kept[survivor_id] = merged
+    provenance: list[dict[str, object]] = []
+    claimed: set[object] = set()
+    for item in provenance_raw:
+        edge_id = item.get("edgeId")
+        if edge_id in edge_remap or edge_id in claimed:
+            continue
+        claimed.add(edge_id)
+        facts = item.get("inputFactIds")
+        if isinstance(facts, list) and any(fact in edge_remap for fact in facts):
+            remapped = [
+                edge_remap.get(fact, fact) if isinstance(fact, str) else fact for fact in facts
+            ]
+            item = item | {"inputFactIds": list(dict.fromkeys(remapped))}
+        provenance.append(item)
+    return tuple(kept.values()), tuple(provenance), duplicates
 
 
 def _sanitize_aliases(raw: tuple[str, ...]) -> tuple[str, ...]:

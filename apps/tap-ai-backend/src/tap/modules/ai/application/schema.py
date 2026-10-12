@@ -64,6 +64,10 @@ def check_schema(schema: object, depth: int = 0) -> None:
         raise ValueError("invalid locked schema enum")
 
 
+class StructuredOutputOverflow(ValueError):
+    """A structured output array is longer than its schema's ``maxItems``."""
+
+
 def validate_output(schema: dict[str, object], value: object) -> None:
     kind = schema["type"]
     if kind == "object":
@@ -78,8 +82,10 @@ def validate_output(schema: dict[str, object], value: object) -> None:
         assert isinstance(items, dict)
         maximum = schema.get("maxItems", 10000)
         assert isinstance(maximum, int)
-        if not isinstance(value, list) or len(value) > maximum:
+        if not isinstance(value, list):
             raise ValueError("structured output is not a bounded array")
+        if len(value) > maximum:
+            raise StructuredOutputOverflow("structured output is not a bounded array")
         for item in value:
             validate_output(items, item)
     elif not (

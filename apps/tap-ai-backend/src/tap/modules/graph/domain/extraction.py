@@ -10,6 +10,13 @@ from tap.modules.graph.domain.models import GraphSnapshot
 from tap.platform.db.project_scope import require_project_scope
 
 
+class GraphExtractionTruncated(Exception):
+    """The extractor's output for this request did not fit its output budget.
+
+    Retrying the same input reproduces it; the worker splits the batch instead.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class GraphExtractionRequest:
     scope: ProjectScopeContext

@@ -1307,3 +1307,126 @@ async def test_known_entities_offered_to_a_batch_are_those_its_text_mentions(mon
     assert [
         [entity["id"] for entity in request.known_entities] for request in extractor.requests
     ] == [[], ["b0-node-0"], ["b0-node-0"]]
+
+
+class TruncatingExtractor:
+    """Replays the real failure: the model output for a batch of more than
+    ``fits`` chunks is cut off at the token budget; smaller inputs fit."""
+
+    def __init__(self, *, fits: int = 2, always_truncate: frozenset[str] = frozenset()) -> None:
+        self.requests: list = []
+        self._fits = fits
+        self._always_truncate = always_truncate
+
+    async def extract(self, request):
+        from tap.modules.graph.domain.extraction import GraphExtractionTruncated
+
+        self.requests.append(request)
+        chunk_ids = tuple(str(item["chunkId"]) for item in request.chunks)
+        if len(chunk_ids) > self._fits or self._always_truncate.intersection(chunk_ids):
+            raise GraphExtractionTruncated()
+        revision_id = request.snapshot.source_revision_ids[0]
+        evidence = tuple(
+            Evidence(
+                f"c{index}",
+                request.snapshot.snapshot_id,
+                revision_id,
+                revision_id,
+                chunk_id,
+                {"kind": "text", "start": 0, "end": 5},
+                "sha256:" + "a" * 64,
+            )
+            for index, chunk_id in enumerate(chunk_ids, start=1)
+        )
+        node = GraphNode(
+            "n1",
+            request.snapshot.snapshot_id,
+            f"Entity {chunk_ids[0]}",
+            "CONCEPT",
+            f"entity-{chunk_ids[0]}",
+            tuple(item.evidence_id for item in evidence),
+        )
+        return GraphSnapshotDraft(request.snapshot, (node,), (), evidence, ())
+
+
+async def _run_truncating(monkeypatch, extractor, *, count: int = 4, batch_retries: int = 3):
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-truncating.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(locator="art-truncating.chunks", count=count),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=batch_retries,
+        backoff_seconds=0,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+    result = await worker.run_once(limit=1)
+    batches = await jobs.load_batches(VALIDATION_SCOPE, SimpleNamespace(snapshot=job.snapshot))
+    return result, batches
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_batch_is_split_in_two_and_both_halves_kept(monkeypatch) -> None:
+    extractor = TruncatingExtractor()
+
+    result, batches = await _run_truncating(monkeypatch, extractor)
+
+    assert [len(request.chunks) for request in extractor.requests] == [4, 2, 2]
+    assert [request.idempotency_key.rsplit(":", 3)[1:] for request in extractor.requests[1:]] == [
+        ["0", "half", "0"],
+        ["0", "half", "1"],
+    ]
+    assert result.ready == 1 and result.partial == 0
+    (batch,) = batches
+    assert batch.status is GraphBatchStatus.READY and batch.failure_code is None
+    assert sorted(node.label for node in batch.draft.nodes) == ["Entity chunk-0", "Entity chunk-2"]
+    assert len({node.node_id for node in batch.draft.nodes}) == 2
+    assert {item.chunk_id for item in batch.draft.evidence} == {
+        "chunk-0",
+        "chunk-1",
+        "chunk-2",
+        "chunk-3",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_half_truncated_again_is_lost_but_the_other_half_is_kept(monkeypatch) -> None:
+    extractor = TruncatingExtractor(always_truncate=frozenset({"chunk-0"}))
+
+    result, batches = await _run_truncating(monkeypatch, extractor)
+
+    # One split only: the truncated half is not split again or retried.
+    assert [len(request.chunks) for request in extractor.requests] == [4, 2, 2]
+    assert result.partial == 1
+    (batch,) = batches
+    assert batch.status is GraphBatchStatus.READY
+    assert batch.failure_code == "graph-batch-half-truncated"
+    assert [node.label for node in batch.draft.nodes] == ["Entity chunk-2"]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_still_truncated_after_the_split_fails_without_retrying(
+    monkeypatch,
+) -> None:
+    extractor = TruncatingExtractor(fits=1)
+
+    result, batches = await _run_truncating(monkeypatch, extractor)
+
+    assert [len(request.chunks) for request in extractor.requests] == [4, 2, 2]
+    assert result.failed == 1
+    (batch,) = batches
+    assert batch.status is GraphBatchStatus.FAILED
+    assert batch.failure_code == "GraphExtractionTruncated"
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_single_chunk_batch_fails_without_retrying(monkeypatch) -> None:
+    extractor = TruncatingExtractor(fits=0)
+
+    result, batches = await _run_truncating(monkeypatch, extractor, count=1)
+
+    assert len(extractor.requests) == 1 and result.failed == 1
+    assert batches[0].failure_code == "GraphExtractionTruncated"

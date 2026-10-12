@@ -481,3 +481,86 @@ async def test_repeated_known_entities_are_dropped_and_counted(span_recorder):
         item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
     ]
     assert spans[0].attributes["tap.graph.repeated_known_entities"] == 2
+
+
+@pytest.mark.asyncio
+async def test_truncated_model_output_is_reported_as_a_truncated_batch():
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+    from tap.modules.graph.domain.extraction import GraphExtractionTruncated
+
+    class TruncatingGateway:
+        async def generate_structured(self, request):
+            raise ModelOutputTruncated()
+
+    with pytest.raises(GraphExtractionTruncated):
+        await ModelGatewayGraphExtraction(TruncatingGateway()).extract(_request())
+
+
+def _real_zengli_replay():
+    from pathlib import Path
+
+    sample = json.loads(
+        (Path(__file__).parents[1] / "fixtures/graph/real_extraction_replay.json").read_text()
+    )["zengliBatch0"]
+    request = replace(
+        _request(),
+        chunks=tuple(
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": f"chunk-{chunk['ref']}",
+                "content": chunk["content"],
+                "anchor": {"kind": "text", "start": 0, "end": 1},
+                "contentDigest": "sha256:" + "a" * 64,
+            }
+            for chunk in sample["chunks"]
+        ),
+        document_title=sample["documentTitle"],
+    )
+    return request, {"nodes": sample["nodes"], "edges": sample["edges"], "provenance": []}
+
+
+@pytest.mark.asyncio
+async def test_real_repeated_edge_loop_is_deduplicated_and_counted(span_recorder):
+    # Replay of the real batch whose output looped on one DEFINES edge until the
+    # 8192-token budget cut it off (first 60 of its 124 edges, 33 of them n1->n15).
+    request, output = _real_zengli_replay()
+    shapes = [(e["sourceNodeId"], e["relationType"], e["targetNodeId"]) for e in output["edges"]]
+    duplicates = len(shapes) - len(set(shapes))
+    assert duplicates == 32
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(request)
+
+    kept = [(e.source_node_id, e.relation_type, e.target_node_id) for e in draft.edges]
+    assert len(kept) == len(set(kept)) == len(set(shapes))
+    loop = next(e for e in draft.edges if (e.source_node_id, e.target_node_id) == ("n1", "n15"))
+    assert loop.relation_type == "DEFINES"
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.duplicate_edges"] == duplicates
+
+
+@pytest.mark.asyncio
+async def test_duplicate_nodes_merge_and_their_edges_follow(span_recorder):
+    output = _output()
+    # The same entity twice under two ids (real batches did this, e.g. b3-n2/b3-n3),
+    # plus an edge through the copy that becomes a duplicate and one that becomes a
+    # self-edge once the copy is merged.
+    output["nodes"].append(output["nodes"][1] | {"id": "node-2b", "chunks": ["c1"]})
+    output["nodes"].append(output["nodes"][0] | {"id": "node-1"})
+    output["edges"].append(output["edges"][0] | {"id": "edge-2", "targetNodeId": "node-2b"})
+    output["edges"].append(
+        output["edges"][0] | {"id": "edge-3", "sourceNodeId": "node-2b", "relationType": "USES"}
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    assert [node.node_id for node in draft.nodes] == ["node-1", "node-2"]
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.duplicate_nodes"] == 2
+    assert spans[0].attributes["tap.graph.duplicate_edges"] == 1
+    assert spans[0].attributes["tap.graph.dropped_edges"] == 1

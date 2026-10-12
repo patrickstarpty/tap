@@ -466,9 +466,7 @@ def known_entities_from(
             if count:
                 mentions[node_id] = count
         position = {node_id: index for index, node_id in enumerate(order)}
-        kept = sorted(mentions, key=lambda node_id: (-mentions[node_id], position[node_id]))[
-            :limit
-        ]
+        kept = sorted(mentions, key=lambda node_id: (-mentions[node_id], position[node_id]))[:limit]
     return tuple(
         {
             "id": nodes_by_id[node_id].node_id,
