@@ -1128,7 +1128,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             )
         else:
             extractor = DeterministicGraphExtraction()
-        merge_queue = MysqlProjectMergeQueue(sessions, cache=None)
+        merge_queue = MysqlProjectMergeQueue(sessions, cache=None, debounce=_GRAPH_MERGE_DEBOUNCE)
         label_embeddings = None
         if settings.graph_align_embedding:
             assert model_embeddings is not None
@@ -1202,6 +1202,13 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("graph worker resource settlement unexpectedly returned")
+
+
+# Fragment completions from concurrent extraction slots often land seconds
+# apart; each merge is a full replay that publishes a version, so the graph
+# worker's own merge requests (fragment ready, backfill) wait this long and
+# coalesce. Source deletes and publication changes from the API stay immediate.
+_GRAPH_MERGE_DEBOUNCE = timedelta(seconds=5)
 
 
 def _graph_extraction_profile(settings: TapperSettings) -> str:

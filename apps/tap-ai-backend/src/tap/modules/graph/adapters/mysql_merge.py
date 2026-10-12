@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, cast
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, case, func, select, update
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -62,9 +62,16 @@ class MysqlProjectMergeQueue:
         sessions: async_sessionmaker[AsyncSession],
         *,
         cache: ProjectGraphCache | None = None,
+        debounce: timedelta = timedelta(0),
     ) -> None:
         self._sessions = sessions
         self._cache = cache
+        # A request becomes due `debounce` after the first one of a burst; later
+        # requests in that window keep the earlier due time, so a run of fragment
+        # completions is replayed and published once instead of once each.
+        if debounce < timedelta(0):
+            raise ValueError("project merge debounce must not be negative")
+        self._debounce = debounce
 
     async def request(self, scope: ProjectScopeContext, *, reason: str, now: datetime) -> None:
         async with self._sessions() as session, session.begin():
@@ -84,7 +91,7 @@ class MysqlProjectMergeQueue:
         common = scope_values(scope)
         statement = insert(graph_project_merge_job).values(
             **common,
-            due_at=now,
+            due_at=now + self._debounce,
             last_reason=reason,
             claimed_due_at=None,
             lease_owner=None,
@@ -97,7 +104,21 @@ class MysqlProjectMergeQueue:
         )
         await session.execute(
             statement.on_duplicate_key_update(
-                due_at=statement.inserted.due_at,
+                # An idle pending row keeps its earlier due time (coalescing the
+                # burst); a row under a claim or in failure backoff takes the new
+                # one, so a request made mid-merge is never cleared by `complete`
+                # and a fresh cause still overrides a backoff, as before.
+                due_at=case(
+                    (
+                        and_(
+                            graph_project_merge_job.c.due_at.is_not(None),
+                            graph_project_merge_job.c.claimed_due_at.is_(None),
+                            graph_project_merge_job.c.failure_code.is_(None),
+                        ),
+                        func.least(graph_project_merge_job.c.due_at, statement.inserted.due_at),
+                    ),
+                    else_=statement.inserted.due_at,
+                ),
                 last_reason=statement.inserted.last_reason,
                 updated_at=statement.inserted.updated_at,
             )

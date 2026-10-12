@@ -873,3 +873,35 @@ async def test_repeated_batch_output_merges_and_publishes_idempotently(sessions)
     assert evidence_count == 1
     assert source_count == 2
     assert failure_code is None
+
+
+@pytest.mark.asyncio
+async def test_merge_requests_inside_the_debounce_window_coalesce(sessions) -> None:
+    queue = MysqlProjectMergeQueue(sessions, debounce=timedelta(seconds=5))
+    lease = timedelta(seconds=300)
+
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW + timedelta(seconds=2))
+
+    # A burst of fragment completions waits for the window opened by the first.
+    assert (
+        await queue.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-1",
+            now=NOW + timedelta(seconds=4),
+            lease_duration=lease,
+        )
+        is None
+    )
+    claim = await queue.claim(
+        VALIDATION_SCOPE, worker_id="worker-1", now=NOW + timedelta(seconds=5), lease_duration=lease
+    )
+    assert claim is not None and claim.claimed_due_at == NOW + timedelta(seconds=5)
+
+    # A request while that merge runs is kept for the next one, not cleared.
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW + timedelta(seconds=6))
+    draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, ())
+    await queue.complete(VALIDATION_SCOPE, claim, draft, now=NOW + timedelta(seconds=7))
+    async with sessions() as session:
+        due_at = await session.scalar(select(graph_project_merge_job.c.due_at))
+    assert due_at == NOW + timedelta(seconds=11)

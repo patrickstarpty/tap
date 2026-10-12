@@ -1880,6 +1880,8 @@ async def test_graph_worker_runtime_is_independent_and_owns_only_its_resources(
     # The project merge runs alongside extraction, not only after it.
     assert isinstance(runtime.worker, MergingGraphWorker)
     assert runtime.pending_work is None
+    # The worker's own merge requests coalesce over a short window.
+    assert runtime.worker._merge._queue._debounce.total_seconds() == 5
     assert runtime.worker.extraction._artifacts is blob
     assert runtime.worker.extraction._worker_id == settings.worker_id + "-graph"
     assert runtime.wakeups._group_name == "tapper-graph"
