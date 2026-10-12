@@ -397,12 +397,20 @@ export function useConversationStream(
     const identity = `${conversationId}:${targetTurnId}`;
     if (streamIdentity.current !== identity) {
       streamIdentity.current = identity;
-      resume.current =
-        streamConversation.current === conversationId
-          ? Math.max(resume.current, initialCursorRef.current)
-          : initialCursorRef.current;
+      const sameConversation = streamConversation.current === conversationId;
+      resume.current = sameConversation
+        ? Math.max(resume.current, initialCursorRef.current)
+        : initialCursorRef.current;
       streamConversation.current = conversationId;
-      setState({ lastSequence: resume.current, turns: {} });
+      // A new turn in the same conversation resumes the same event log, so the
+      // outcomes already streamed for earlier turns stay known; dropping them
+      // would let a stale detail payload revive a finished turn as running.
+      const cursor = resume.current;
+      setState((current) =>
+        sameConversation
+          ? { ...current, lastSequence: Math.max(current.lastSequence, cursor) }
+          : { lastSequence: cursor, turns: {} },
+      );
     }
     setError(null);
     const controller = new AbortController();

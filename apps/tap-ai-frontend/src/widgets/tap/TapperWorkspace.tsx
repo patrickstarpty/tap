@@ -1563,12 +1563,41 @@ export function TapperWorkspace() {
         skillRevisionIds: turn.input.skillRevisionIds,
       };
     });
+    // The detail refetch after a send can land after the accepted turn is
+    // shown; keep that turn last so Stop and status follow the turn that is
+    // actually generating instead of the previous one.
+    const acceptedTurnId =
+      requestedStreamTarget?.conversationId ===
+        conversationDetail.data.conversationId &&
+      !turns.some((turn) => turn.id === requestedStreamTarget.turnId)
+        ? requestedStreamTarget.turnId
+        : null;
+    const withAcceptedTurn = (previous: readonly AssistantTurn[]) => {
+      const accepted =
+        acceptedTurnId === null
+          ? undefined
+          : previous.find((turn) => turn.id === acceptedTurnId);
+      if (accepted === undefined) return turns;
+      const streamed = latestTurnState(
+        accepted.id,
+        recoveredStreamState,
+        streamState,
+      );
+      return [
+        ...turns,
+        {
+          ...accepted,
+          status: streamed?.status ?? accepted.status,
+          response: streamed?.response ?? accepted.response ?? null,
+        },
+      ];
+    };
     setConversations((current) =>
       current.map((conversation) =>
         conversation.id === conversationDetail.data.conversationId
           ? {
               ...conversation,
-              turns,
+              turns: withAcceptedTurn(conversation.turns),
               ...(conversationDetail.data.turns.at(-1) === undefined
                 ? {}
                 : {
@@ -1623,6 +1652,7 @@ export function TapperWorkspace() {
     conversationEvents.isLoading,
     conversationStream.error,
     recoveredStreamState,
+    requestedStreamTarget,
     selectableModelAliases,
     streamState,
   ]);
