@@ -15,6 +15,7 @@ from tap.modules.graph.domain.models import (
     GraphSnapshotDraft,
     RelationOrigin,
 )
+from tap.modules.graph.domain.naming import is_reference_name
 
 
 def _digest(seed: str) -> str:
@@ -238,7 +239,11 @@ def _linear_scan_clusters(
         snapshot_id = fragment.snapshot.snapshot_id
         for node in fragment.nodes:
             key1 = alignment_key(node.canonical_key)
-            keys2 = {alignment_key(node.label)} | {alignment_key(a) for a in node.aliases}
+            keys2 = {
+                alignment_key(name)
+                for name in (node.label, *node.aliases)
+                if not is_reference_name(name) and not is_reference_name(alignment_key(name))
+            }
             target = None
             rule = None
             for cluster in clusters:
@@ -480,3 +485,46 @@ def test_embedding_alignment_of_two_thousand_single_type_nodes_stays_fast():
     # The full scan takes well over ten seconds here; the indexed layer takes
     # a fraction of a second, so this budget leaves wide headroom for CI.
     assert elapsed < 3.0, elapsed
+
+
+def _real_alias_fragments() -> list[GraphSnapshotDraft]:
+    """The fragment nodes behind the 9 ALIAS merges of the real-model run."""
+    import json
+    from pathlib import Path
+
+    samples = json.loads(
+        (Path(__file__).parents[2] / "fixtures/graph/real_extraction_replay.json").read_text()
+    )["aliasMerges"]
+    specs: dict[str, dict[str, tuple[str, str, str, str, tuple[str, ...]]]] = {}
+    for sample in samples:
+        for member in sample["members"]:
+            specs.setdefault(member["snapshot"], {})[member["id"]] = (
+                member["id"],
+                member["label"],
+                member["type"],
+                member["key"],
+                tuple(member["aliases"]),
+            )
+    return [_fragment(snapshot_id, list(nodes.values())) for snapshot_id, nodes in specs.items()]
+
+
+def _merged_labels(entities) -> set[frozenset[str]]:
+    return {
+        frozenset(entity.aliases) | {entity.label} for entity in entities if len(entity.members) > 1
+    }
+
+
+def test_reference_aliases_from_the_real_run_no_longer_merge_entities():
+    entities = resolve_entities(_real_alias_fragments())
+
+    merged = _merged_labels(entities)
+    # Before: "本合同" merged two products, "第十九条"/"第十五条"/"第十六条"/"第十七条"/
+    # "第二十条" merged unrelated clauses, "释义四" merged two definitions.
+    assert merged == {
+        # Same document: the insurer, named "本公司" with "友邦保险" as its alias.
+        frozenset({"友邦保险"}),
+        frozenset({"境内医院", "医院"}),
+        # Two documents, same canonical key: an EXACT merge, not an alias one.
+        frozenset({"明确说明与如实告知"}),
+    }
+    assert not any(is_reference_name(alias) for entity in entities for alias in entity.aliases)

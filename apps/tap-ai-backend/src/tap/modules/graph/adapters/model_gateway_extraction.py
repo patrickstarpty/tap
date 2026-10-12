@@ -25,8 +25,12 @@ from tap.modules.graph.domain.models import (
     InferenceProvenance,
     RelationOrigin,
 )
+from tap.modules.graph.domain.naming import (
+    ALIAS_LENGTH_MAX,
+    is_reference_name,
+    usable_alias,
+)
 from tap.modules.graph.domain.vocabulary import (
-    NODE_ALIAS_LENGTH_MAX,
     NODE_ALIAS_MAX,
     NODE_TYPES,
     RELATION_LABEL_MAX,
@@ -79,6 +83,11 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                         "type": "array",
                         "items": {"type": "string"},
                         "maxItems": NODE_ALIAS_MAX,
+                        "description": (
+                            f"Other short names (at most {ALIAS_LENGTH_MAX} characters) of "
+                            "this entity itself; never a pronoun, a reference such as this "
+                            "contract or the company, or a clause or section number."
+                        ),
                     },
                 },
             },
@@ -164,7 +173,10 @@ GRAPH_EXTRACTION_PROMPT = (
     "Classify processes, steps, or workflow stages as PROCESS. "
     "Use relationType only from the provided enum; put the document's own wording for the "
     "relation in relationLabel (at most 64 characters). List up to five aliases for a node "
-    "when the text names it differently."
+    "when the text names it differently. A label or alias names the entity itself, never a "
+    "pronoun or a reference whose meaning depends on the document (本合同, 本公司, 该产品, "
+    "this contract, the company), never a clause, section or schedule number (第十九条, 附表1, "
+    "Article 5), and never a number; an alias is a short name, not a sentence."
 )
 GRAPH_EXTRACTION_PROFILE_DIGEST = text_digest(
     GRAPH_EXTRACTION_PROMPT + "\n" + schema_digest(GRAPH_EXTRACTION_SCHEMA)
@@ -263,15 +275,28 @@ class ModelGatewayGraphExtraction:
                 new_id_by_key: dict[str, str] = {}
                 repeated_known = 0
                 duplicate_nodes = 0
+                rejected_names = 0
                 for item in nodes_raw:
+                    label = _string(item, "label")
+                    canonical_key = _string(item, "canonicalKey")
+                    aliases = _sanitize_aliases(_optional_strings(item, "aliases"))
+                    if is_reference_name(label):
+                        # Named only by a reference ("本公司", "第十九条"): use its
+                        # first real alias as the name, or drop the node and its edges.
+                        if not aliases:
+                            rejected_names += 1
+                            continue
+                        label, aliases = aliases[0], aliases[1:]
+                    if is_reference_name(canonical_key):
+                        canonical_key = label
                     node = GraphNode(
                         _string(item, "id"),
                         snapshot_id,
-                        _string(item, "label"),
+                        label,
                         _string(item, "type"),
-                        _string(item, "canonicalKey"),
+                        canonical_key,
                         _cited_refs(item, refs),
-                        _sanitize_aliases(_optional_strings(item, "aliases")),
+                        aliases,
                     )
                     known_id = (
                         node.node_id
@@ -352,6 +377,7 @@ class ModelGatewayGraphExtraction:
             current_span.set_attribute("tap.graph.repeated_known_entities", repeated_known)
             current_span.set_attribute("tap.graph.duplicate_nodes", duplicate_nodes)
             current_span.set_attribute("tap.graph.duplicate_edges", duplicate_edges)
+            current_span.set_attribute("tap.graph.rejected_names", rejected_names)
         if not nodes:
             # The model grounded nothing in this batch (boilerplate chunks, no
             # facts to extract): a successful batch with nothing to contribute,
@@ -598,18 +624,19 @@ def _dedupe_edges(
 def _sanitize_aliases(raw: tuple[str, ...]) -> tuple[str, ...]:
     """Clean model-provided aliases before constructing a ``GraphNode``.
 
-    Strips surrounding whitespace, drops blank or over-length (>128 char) entries,
-    dedupes case/width-insensitively (via ``normalize_key``, keeping the
-    first-seen spelling), and caps the result at ``NODE_ALIAS_MAX``. Without this,
-    a model that returns a blank, over-length, or merely differently-cased
-    duplicate alias would make ``GraphNode`` construction raise.
+    Strips surrounding whitespace, drops blank entries and any alias ``usable_alias``
+    rejects (references, numbering, longer than ``ALIAS_LENGTH_MAX``), dedupes
+    case/width-insensitively (via ``normalize_key``, keeping the first-seen
+    spelling), and caps the result at ``NODE_ALIAS_MAX``. Without this, a model that
+    returns a blank, over-length, or merely differently-cased duplicate alias would
+    make ``GraphNode`` construction raise.
     """
 
     seen: set[str] = set()
     sanitized: list[str] = []
     for alias in raw:
         stripped = alias.strip()
-        if not stripped or len(stripped) > NODE_ALIAS_LENGTH_MAX:
+        if not stripped or not usable_alias(stripped):
             continue
         key = normalize_key(stripped)
         if key in seen:

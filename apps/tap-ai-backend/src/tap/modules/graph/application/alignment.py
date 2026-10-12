@@ -11,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 
 from tap.modules.graph.domain.models import GraphEdge, GraphSnapshotDraft, RelationOrigin
+from tap.modules.graph.domain.naming import is_reference_name
 from tap.modules.graph.domain.project import ProjectEdge, project_edge_id, project_node_id
 from tap.modules.graph.domain.vocabulary import normalize_key
 
@@ -26,6 +27,22 @@ ALIGNMENT_SUFFIXES: tuple[str, ...] = (
     "process",
     "clause",
 )
+
+
+def alias_keys(names: Sequence[str]) -> set[str]:
+    """Level-2 (ALIAS) keys of a node's label and aliases.
+
+    A reference word or number ("本合同", "第十九条", "this Policy") means a
+    different thing in every document, so it is never an alignment key, before or
+    after the trailing modifier is stripped.
+    """
+
+    keys: set[str] = set()
+    for name in names:
+        key = alignment_key(name)
+        if not is_reference_name(name) and not is_reference_name(key):
+            keys.add(key)
+    return keys
 
 
 def alignment_key(text: str) -> str:
@@ -266,7 +283,7 @@ def resolve_entities(
         snapshot_id = fragment.snapshot.snapshot_id
         for node in fragment.nodes:
             key1 = alignment_key(node.canonical_key)
-            keys2 = {alignment_key(node.label)} | {alignment_key(alias) for alias in node.aliases}
+            keys2 = alias_keys((node.label, *node.aliases))
 
             target: _Cluster | None = None
             rule_used: Literal["EXACT", "ALIAS", "EMBEDDING"] | None = None
@@ -321,7 +338,7 @@ def resolve_entities(
         seen: set[str] = set()
         aliases: list[str] = []
         for text in (*cluster.labels, *cluster.model_aliases):
-            if text == label or text in seen:
+            if text == label or text in seen or is_reference_name(text):
                 continue
             seen.add(text)
             aliases.append(text)

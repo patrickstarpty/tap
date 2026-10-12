@@ -40,7 +40,7 @@
 - 批次结果合入同一修订的片段图（现有单文档快照表继续承载，称为**片段图**）；片段图的 `snapshot_id` 不变，批次表记录每批的状态、失败码、重试次数。
 - 节点类型：现有 ACTOR、SYSTEM、REQUIREMENT、CONCEPT、ENTITY 之外增加 PROCESS（流程、步骤、环节）。
 - 关系类型受控词表：REQUIRES、APPLIES_TO、PART_OF、EXCEPTION_OF、SUPERSEDES、TRIGGERS、PRECEDES、VALIDATED_BY、RESPONSIBLE_FOR、USES、DEFINES、CONFLICTS_WITH，兜底 RELATED_TO。模型同时输出自由文本 `relationLabel`（原文表述，≤64 字）供展示；`relation_type` 不在词表内的输出整条边作废并计入批次诊断。
-- 抽取 schema 在现有基础上增加 `relationLabel`、节点 `aliases`（模型从本批文本中识别的别名，≤5 个）。推理边（INFERRED）与推理来源机制保留，不扩展。
+- 抽取 schema 在现有基础上增加 `relationLabel`、节点 `aliases`（模型从本批文本中识别的别名，≤5 个、每个 ≤32 字）。指代词与结构词（本合同、本公司、该产品、上述、前款、第X条/章/节、附表X、释义X 等，以及 this contract、the policy、Article 5 等英文对应词）、纯数字或编号、规范化后不足 2 字的文本不得作别名或实体名：抽取时丢弃这类别名；实体名是这类文本时改用其第一个有效别名，没有则丢弃该节点及其边。规则集中在 `graph/domain/naming.py`，抽取与对齐共用。推理边（INFERRED）与推理来源机制保留，不扩展。
 - 抽取提示词与 schema 摘要更新后，`GRAPH_EXTRACTION_PROFILE_DIGEST` 随之变化，旧片段视为过期（见第 5 节重建）。规则式假抽取使用独立的确定性档案摘要；进程按 `TAPPER_GRAPH_EXTRACTION_MODE` 选用摘要，另一模式的片段同样视为过期。
 
 ### 1.2 项目级图与合并
@@ -66,7 +66,7 @@
 - 合并是**全量重放**：取项目内当前已发布修订的全部 READY/PARTIAL 且档案摘要为当前值的片段，重新计算一个新版本；删除来源即重放时排除。片段集合摘要与上一版本相同则跳过。版本就绪后原子切换 `graph_project_version.status=READY`，旧版本保留一个用于查询过渡，更早版本清理。
 - 实体对齐三级，依次尝试：
   1. 规范化 canonical key 精确匹配。规范化：casefold、全角转半角、去标点与空白、去尾部修饰词（"规则""条款""流程""policy""rule" 等有限列表）。
-  2. 别名表匹配：任一规范化别名（label、模型给出的 aliases、历史合并产生的别名）相同且节点类型相同。
+  2. 别名表匹配：任一规范化别名（label、模型给出的 aliases、历史合并产生的别名）相同且节点类型相同；指代词、结构词与编号不参与匹配，也不进入合并后的别名。
   3. embedding 相似度 ≥ `TAPPER_GRAPH_ALIGN_THRESHOLD`（默认 0.92）且节点类型相同；由 `TAPPER_GRAPH_ALIGN_EMBEDDING` 控制，第一版默认关闭。
   合并后的节点 label 取出现次数最多的片段 label，其余进别名表；每次合并写 `graph_merge_log`。
 - 边合并：两端节点合并后、`relation_type` 相同的边合并为一条，置信度取最大值，证据取并集，`relation_label` 取出现次数最多者。

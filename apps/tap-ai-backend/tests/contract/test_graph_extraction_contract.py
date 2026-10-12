@@ -564,3 +564,53 @@ async def test_duplicate_nodes_merge_and_their_edges_follow(span_recorder):
     assert spans[0].attributes["tap.graph.duplicate_nodes"] == 2
     assert spans[0].attributes["tap.graph.duplicate_edges"] == 1
     assert spans[0].attributes["tap.graph.dropped_edges"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reference_words_never_become_aliases_or_names(span_recorder):
+    from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROMPT
+
+    output = _output()
+    # Real outputs: a product aliased "本合同", the insurer named "本公司" with its
+    # real name as alias, a clause named only by its number, and a clause-long alias.
+    output["nodes"] = [
+        output["nodes"][0]
+        | {"label": "友邦尊享智选康惠团体医疗保险", "canonicalKey": "团体医疗保险"}
+        | {"aliases": ["本合同", "团体医疗保险", "第十九条", "（一）"]},
+        output["nodes"][1]
+        | {"label": "本公司", "canonicalKey": "本公司", "aliases": ["我们", "友邦保险"]},
+        {
+            "id": "node-3",
+            "label": "第十九条",
+            "type": "REQUIREMENT",
+            "canonicalKey": "第十九条",
+            "chunks": ["c1"],
+            "aliases": [],
+        },
+        {
+            "id": "node-4",
+            "label": "保单贷款",
+            "type": "REQUIREMENT",
+            "canonicalKey": "保单贷款",
+            "chunks": ["c1"],
+            "aliases": ["本公司在合同订立时已经知道投保人未如实告知的情况的，本公司不得解除合同"],
+        },
+    ]
+    output["edges"].append(
+        output["edges"][0] | {"id": "edge-2", "sourceNodeId": "node-3", "targetNodeId": "node-4"}
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    by_id = {node.node_id: node for node in draft.nodes}
+    assert set(by_id) == {"node-1", "node-2", "node-4"}
+    assert by_id["node-1"].aliases == ("团体医疗保险",)
+    insurer = by_id["node-2"]
+    assert (insurer.label, insurer.canonical_key, insurer.aliases) == ("友邦保险", "友邦保险", ())
+    assert by_id["node-4"].aliases == ()
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.rejected_names"] == 1
+    assert "never a pronoun" in GRAPH_EXTRACTION_PROMPT and "第十九条" in GRAPH_EXTRACTION_PROMPT
