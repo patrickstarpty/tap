@@ -107,7 +107,7 @@ def _batch_chunks(count: int) -> tuple[ChunkDraft, ...]:
             logical_chunk_id=f"logical-{index}",
             root_id="document-1",
             parent_id=None,
-            content=f"content {index}",
+            content=f"Entity 0 and Policy, content {index}",
             anchor_json='{"endOffset":1,"headingPath":[],"startOffset":0,"type":"document"}',
             source_content_hash="sha256:" + "b" * 64,
             chunk_content_hash="sha256:" + "a" * 64,
@@ -753,6 +753,7 @@ async def test_every_chunk_of_a_long_document_is_extracted_in_bounded_batches(
         scope=VALIDATION_SCOPE,
         worker_id="graph-worker-1",
         batch_size=100,
+        batch_chars=None,
     )
     monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
 
@@ -1283,3 +1284,26 @@ def test_worker_concurrency_must_be_positive() -> None:
         _concurrent_worker(
             InMemoryGraphJobStore(), OverlapTrackingExtractor(), worker_id="w", concurrency=0
         )
+
+
+@pytest.mark.asyncio
+async def test_known_entities_offered_to_a_batch_are_those_its_text_mentions(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    await worker.run_once(limit=1)
+
+    # Every chunk mentions "Entity 0"; no chunk mentions "Entity 1".
+    assert [
+        [entity["id"] for entity in request.known_entities] for request in extractor.requests
+    ] == [[], ["b0-node-0"], ["b0-node-0"]]

@@ -425,3 +425,59 @@ def test_schema_and_prompt_bound_each_batch_output():
     assert "at most 40 nodes and at most 60 edges" in GRAPH_EXTRACTION_PROMPT
     assert "only entities and relations stated in this batch's chunks" in GRAPH_EXTRACTION_PROMPT
     assert "at most one edge per source, relationType and target" in GRAPH_EXTRACTION_PROMPT
+
+
+def _known_policy_request():
+    return replace(
+        _request(),
+        batch_index=1,
+        known_entities=(
+            {"id": "b0-n1", "label": "Policy", "type": "ENTITY", "canonicalKey": "policy"},
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_edges_reference_known_entities_without_repeating_them(span_recorder):
+    from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROMPT
+
+    output = _output()
+    # The model lists only the new node; the edge cites the known entity by id.
+    output["nodes"] = [output["nodes"][1]]
+    output["edges"][0] = output["edges"][0] | {"sourceNodeId": "b0-n1"}
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_known_policy_request())
+
+    by_id = {node.node_id: node for node in draft.nodes}
+    assert set(by_id) == {"b0-n1", "node-2"}
+    known = by_id["b0-n1"]
+    assert (known.label, known.node_type, known.canonical_key) == ("Policy", "ENTITY", "policy")
+    assert known.evidence_ids == ("c1",)
+    assert [(edge.source_node_id, edge.target_node_id) for edge in draft.edges] == [
+        ("b0-n1", "node-2")
+    ]
+    assert "Never output a known entity in nodes" in GRAPH_EXTRACTION_PROMPT
+    assert "when the text names it differently" in GRAPH_EXTRACTION_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_repeated_known_entities_are_dropped_and_counted(span_recorder):
+    output = _output()
+    # A copy under the known id and a copy under a fresh id with the known key.
+    output["nodes"].append(output["nodes"][0] | {"id": "b0-n1"})
+    output["edges"].append(
+        output["edges"][0] | {"id": "edge-2", "sourceNodeId": "b0-n1", "relationType": "USES"}
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_known_policy_request())
+
+    by_id = {node.node_id: node for node in draft.nodes}
+    assert set(by_id) == {"b0-n1", "node-2"}
+    assert {(edge.edge_id, edge.source_node_id) for edge in draft.edges} == {
+        ("edge-1", "b0-n1"),
+        ("edge-2", "b0-n1"),
+    }
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.repeated_known_entities"] == 2

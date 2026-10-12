@@ -344,6 +344,7 @@ class GraphWorker:
         request_chunks = tuple(
             _chunk_request_mapping(chunk, revision_id=claim.revision_id) for chunk in batch_chunks
         )
+        batch_text = "\n".join(chunk.content for chunk in batch_chunks)
         while attempt < self._batch_retries:
             attempt += 1
             try:
@@ -355,7 +356,7 @@ class GraphWorker:
                     idempotency_key=f"{claim.request_digest}:batch:{index}",
                     batch_index=index,
                     document_title=document_title,
-                    known_entities=known_entities_from(drafts_so_far),
+                    known_entities=known_entities_from(drafts_so_far, text=batch_text),
                 )
                 raw_draft = await self._extractor.extract(request)
                 # ``None`` means the extractor grounded nothing in this batch (all

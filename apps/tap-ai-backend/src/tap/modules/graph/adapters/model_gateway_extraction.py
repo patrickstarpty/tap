@@ -150,12 +150,11 @@ GRAPH_EXTRACTION_PROMPT = (
     "inference rule declared by the document, copy its declared canonical sha256 rule digest, and "
     "record its input edge IDs as provenance. Do not invent facts. Write labels, aliases, "
     "canonical keys, and relation labels in the document's own language and keep them short. "
-    "Input also carries documentTitle and knownEntities from earlier batches of the same "
-    "document. When an edge "
-    "in this batch references a known entity, include that known entity in nodes with its "
-    "existing id, label, type, and canonicalKey exactly as given -- never emit a new node "
-    "with a different id for the same real-world thing, and never omit it from nodes just "
-    "because it was already known. Classify processes, steps, or workflow stages as PROCESS. "
+    "Input also carries documentTitle and knownEntities: entities that earlier batches of "
+    "the same document already extracted and that this batch's chunks mention. Never output "
+    "a known entity in nodes, and never emit a new node for the same real-world thing; an "
+    "edge refers to a known entity by putting its id in sourceNodeId or targetNodeId. "
+    "Classify processes, steps, or workflow stages as PROCESS. "
     "Use relationType only from the provided enum; put the document's own wording for the "
     "relation in relationLabel (at most 64 characters). List up to five aliases for a node "
     "when the text names it differently."
@@ -241,8 +240,17 @@ class ModelGatewayGraphExtraction:
                 edges_raw = _objects(output["edges"], "edges")
                 provenance_raw = _objects(output["provenance"], "provenance")
                 snapshot_id = request.snapshot.snapshot_id
-                nodes = tuple(
-                    GraphNode(
+                known = _known_entities(request)
+                known_id_by_key = {
+                    normalize_key(entity["canonicalKey"]): entity_id
+                    for entity_id, entity in known.items()
+                }
+                node_id_remap: dict[str, str] = {}
+                known_refs: dict[str, list[str]] = {}
+                new_nodes: list[GraphNode] = []
+                repeated_known = 0
+                for item in nodes_raw:
+                    node = GraphNode(
                         _string(item, "id"),
                         snapshot_id,
                         _string(item, "label"),
@@ -251,9 +259,24 @@ class ModelGatewayGraphExtraction:
                         _cited_refs(item, refs),
                         _sanitize_aliases(_optional_strings(item, "aliases")),
                     )
-                    for item in nodes_raw
+                    known_id = (
+                        node.node_id
+                        if node.node_id in known
+                        else known_id_by_key.get(normalize_key(node.canonical_key))
+                    )
+                    if known_id is not None:
+                        # A known entity repeated in nodes: drop the copy, keep its
+                        # citations, and point its edges at the known id.
+                        repeated_known += 1
+                        node_id_remap[node.node_id] = known_id
+                        known_refs.setdefault(known_id, []).extend(node.evidence_ids)
+                        continue
+                    new_nodes.append(node)
+                edges_raw = tuple(_remap_endpoints(item, node_id_remap) for item in edges_raw)
+                provenance_raw = tuple(
+                    _remap_input_facts(item, node_id_remap) for item in provenance_raw
                 )
-                node_ids = {node.node_id for node in nodes}
+                node_ids = {node.node_id for node in new_nodes} | set(known)
                 kept_edges_raw, kept_provenance_raw, dropped = _keep_edges(
                     edges_raw, provenance_raw, node_ids
                 )
@@ -271,6 +294,10 @@ class ModelGatewayGraphExtraction:
                     )
                     for item in kept_edges_raw
                 )
+                nodes = (
+                    *_referenced_known_nodes(snapshot_id, known, known_refs, edges),
+                    *new_nodes,
+                )
                 provenance = tuple(
                     InferenceProvenance(
                         _string(item, "id"),
@@ -285,6 +312,7 @@ class ModelGatewayGraphExtraction:
             except (KeyError, TypeError) as error:
                 raise ValueError("graph extraction output is malformed") from error
             current_span.set_attribute("tap.graph.dropped_edges", dropped)
+            current_span.set_attribute("tap.graph.repeated_known_entities", repeated_known)
         if not nodes:
             # The model grounded nothing in this batch (boilerplate chunks, no
             # facts to extract): a successful batch with nothing to contribute,
@@ -293,6 +321,67 @@ class ModelGatewayGraphExtraction:
             # ``None`` as this batch's signal and skips it at assembly.
             return None
         return GraphSnapshotDraft(request.snapshot, nodes, edges, evidence, provenance)
+
+
+def _known_entities(request: GraphExtractionRequest) -> dict[str, Mapping[str, str]]:
+    """The request's known entities by id (string fields only; others are ignored)."""
+
+    known: dict[str, Mapping[str, str]] = {}
+    for entity in request.known_entities:
+        fields = {key: entity.get(key) for key in ("id", "label", "type", "canonicalKey")}
+        if all(isinstance(value, str) and value for value in fields.values()):
+            known[str(fields["id"])] = cast(dict[str, str], fields)
+    return known
+
+
+def _remap_endpoints(item: dict[str, object], remap: Mapping[str, str]) -> dict[str, object]:
+    source, target = item.get("sourceNodeId"), item.get("targetNodeId")
+    if source not in remap and target not in remap:
+        return item
+    return item | {
+        "sourceNodeId": remap.get(source, source) if isinstance(source, str) else source,
+        "targetNodeId": remap.get(target, target) if isinstance(target, str) else target,
+    }
+
+
+def _remap_input_facts(item: dict[str, object], remap: Mapping[str, str]) -> dict[str, object]:
+    facts = item.get("inputFactIds")
+    if not isinstance(facts, list) or not any(fact in remap for fact in facts):
+        return item
+    remapped = [remap.get(fact, fact) if isinstance(fact, str) else fact for fact in facts]
+    return item | {"inputFactIds": list(dict.fromkeys(remapped))}
+
+
+def _referenced_known_nodes(
+    snapshot_id: str,
+    known: Mapping[str, Mapping[str, str]],
+    known_refs: Mapping[str, list[str]],
+    edges: tuple[GraphEdge, ...],
+) -> tuple[GraphNode, ...]:
+    """Server-built nodes for the known entities this batch's edges reference.
+
+    Label, type and canonical key come from the request (the entity an earlier batch
+    minted); evidence is every chunk ref a repeated copy or a touching edge cited.
+    """
+
+    refs: dict[str, list[str]] = {}
+    for edge in edges:
+        for endpoint in (edge.source_node_id, edge.target_node_id):
+            if endpoint in known:
+                refs.setdefault(endpoint, list(known_refs.get(endpoint, ()))).extend(
+                    edge.evidence_ids
+                )
+    return tuple(
+        GraphNode(
+            entity_id,
+            snapshot_id,
+            known[entity_id]["label"],
+            known[entity_id]["type"],
+            known[entity_id]["canonicalKey"],
+            tuple(dict.fromkeys(cited)),
+        )
+        for entity_id, cited in refs.items()
+    )
 
 
 def _chunk_refs(request: GraphExtractionRequest) -> dict[str, Mapping[str, object]]:
