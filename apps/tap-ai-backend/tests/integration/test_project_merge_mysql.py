@@ -905,3 +905,27 @@ async def test_merge_requests_inside_the_debounce_window_coalesce(sessions) -> N
     async with sessions() as session:
         due_at = await session.scalar(select(graph_project_merge_job.c.due_at))
     assert due_at == NOW + timedelta(seconds=11)
+
+
+@pytest.mark.asyncio
+async def test_released_merge_lease_is_claimable_at_once_and_stays_due(sessions) -> None:
+    queue = MysqlProjectMergeQueue(sessions)
+    lease = timedelta(seconds=300)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+    first = await queue.claim(VALIDATION_SCOPE, worker_id="worker-1", now=NOW, lease_duration=lease)
+    assert first is not None
+
+    assert await queue.release(VALIDATION_SCOPE, first, now=NOW + timedelta(seconds=1))
+    # The stale holder can neither release again nor publish.
+    assert not await queue.release(VALIDATION_SCOPE, first, now=NOW + timedelta(seconds=2))
+    draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, ())
+    with pytest.raises(ProjectMergeLeaseLost):
+        await queue.complete(VALIDATION_SCOPE, first, draft, now=NOW + timedelta(seconds=2))
+    assert await queue.merge_state(VALIDATION_SCOPE, now=NOW + timedelta(seconds=2)) == "PENDING"
+    second = await queue.claim(
+        VALIDATION_SCOPE,
+        worker_id="worker-2",
+        now=NOW + timedelta(seconds=3),
+        lease_duration=lease,
+    )
+    assert second is not None and second.claimed_due_at == NOW

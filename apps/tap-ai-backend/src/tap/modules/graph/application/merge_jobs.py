@@ -88,6 +88,10 @@ class ProjectMergeQueue(Protocol):
         now: datetime,
     ) -> None: ...
 
+    async def release(
+        self, scope: ProjectScopeContext, claim: MergeClaim, *, now: datetime
+    ) -> bool: ...
+
     async def merge_state(
         self, scope: ProjectScopeContext, *, now: datetime
     ) -> Literal["IDLE", "PENDING", "RUNNING", "FAILED"]: ...
@@ -230,6 +234,20 @@ class InMemoryProjectMergeQueue:
         row.lease_token = None
         row.lease_expires_at = None
         row.claimed_due_at = None
+
+    async def release(
+        self, scope: ProjectScopeContext, claim: MergeClaim, *, now: datetime
+    ) -> bool:
+        scope = require_project_scope(scope)
+        del now
+        row = self._rows.get(scope.project_id)
+        if row is None or row.lease_token != claim.lease_token:
+            return False
+        row.lease_owner = None
+        row.lease_token = None
+        row.lease_expires_at = None
+        row.claimed_due_at = None
+        return True
 
     async def merge_state(
         self, scope: ProjectScopeContext, *, now: datetime

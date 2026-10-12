@@ -567,3 +567,39 @@ async def test_a_failing_merge_poll_never_stops_the_running_extraction(caplog) -
     assert merge.calls == 4
     errors = [record for record in caplog.records if record.levelno == logging.ERROR]
     assert len(errors) == 4 and all(record.exc_info is not None for record in errors)
+
+
+class BlockingInputs:
+    """`load_fragments` that blocks, like a slow fragment read during shutdown."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def load_fragments(self, scope):
+        del scope
+        self.started.set()
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_merge_releases_its_lease_and_stays_due(monkeypatch) -> None:
+    queue = InMemoryProjectMergeQueue()
+    inputs = BlockingInputs()
+    worker = _worker(queue=queue, inputs=inputs, monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    run = asyncio.create_task(worker.run_once(limit=10))
+    await inputs.started.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+    assert await queue.merge_state(VALIDATION_SCOPE, now=NOW) == "PENDING"
+    # A restarted worker claims it straight away, well inside the old lease.
+    claim = await queue.claim(
+        VALIDATION_SCOPE,
+        worker_id="merge-worker-2",
+        now=NOW + timedelta(seconds=1),
+        lease_duration=timedelta(seconds=300),
+    )
+    assert claim is not None and claim.reason == "fragment-ready"

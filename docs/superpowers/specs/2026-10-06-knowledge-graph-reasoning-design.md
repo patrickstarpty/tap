@@ -224,7 +224,7 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 | `TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS` | 240 | 单次抽取调用截止时间（≤300 秒，须不短于输出预算按每秒 40 token 所需时间；作业租约为其加 60 秒） |
 | `TAPPER_GRAPH_EXTRACTION_MAX_TOKENS` | 8192 | 单次抽取调用输出 token 预算 |
 | `TAPPER_GRAPH_WORKER_CONCURRENCY` | 4 | graph worker 同时处理的作业数（作业内批次仍串行）；有空闲槽位时每 `TAPPER_POLL_SECONDS` 继续领取，含租约过期的运行中作业 |
-| `TAPPER_WORKER_SHUTDOWN_GRACE_SECONDS` | 10 | graph worker 收到停止信号后停止领取，进行中的作业在此时限内收尾，超时取消并释放租约（作业回到 PENDING） |
+| `TAPPER_WORKER_SHUTDOWN_GRACE_SECONDS` | 10 | graph worker 收到停止信号后停止领取，进行中的作业在此时限内收尾，超时取消并释放租约（作业回到 PENDING；进行中的合并释放合并租约，仍待合并） |
 | `TAPPER_GRAPH_ALIGN_EMBEDDING` | 0 | 第三级 embedding 对齐开关 |
 | `TAPPER_GRAPH_ALIGN_THRESHOLD` | 0.92 | 对齐相似度阈值 |
 | `TAPPER_GRAPH_OVERVIEW_LIMIT` | 150 | 总览节点上限 |

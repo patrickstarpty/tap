@@ -368,6 +368,31 @@ class MysqlProjectMergeQueue:
                 )
             )
 
+    async def release(
+        self, scope: ProjectScopeContext, claim: MergeClaim, *, now: datetime
+    ) -> bool:
+        """Drop a still-held lease without merging (worker shutdown) so the next
+        worker claims the merge at once instead of waiting out the lease; the
+        row stays due. Returns False when the lease was already gone."""
+
+        scope = require_project_scope(scope)
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(
+                update(graph_project_merge_job)
+                .where(
+                    *scope_predicates(graph_project_merge_job, scope),
+                    graph_project_merge_job.c.lease_token == claim.lease_token,
+                )
+                .values(
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    claimed_due_at=None,
+                    updated_at=now,
+                )
+            )
+        return bool(result.rowcount == 1)
+
     async def merge_state(
         self, scope: ProjectScopeContext, *, now: datetime
     ) -> Literal["IDLE", "PENDING", "RUNNING", "FAILED"]:

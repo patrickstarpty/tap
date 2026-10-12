@@ -129,6 +129,13 @@ class ProjectGraphMergeWorker:
                     self._scope.project_id,
                     phase,
                 )
+            except asyncio.CancelledError:
+                # Shutdown: hand the lease back so a restarted worker merges at
+                # once instead of waiting out the lease (the row stays due). A
+                # merge already running in its worker thread cannot be stopped,
+                # but nothing it computes is published without the lease.
+                await self._release(claim)
+                raise
             except Exception as error:
                 # Phase plus exception type is the bounded summary the queue row
                 # keeps; the message and stack go to the log only, never the row.
@@ -154,6 +161,16 @@ class ProjectGraphMergeWorker:
                     # claim governs retry/backoff from here.
                     pass
         return 1
+
+    async def _release(self, claim: MergeClaim) -> None:
+        try:
+            await self._queue.release(self._scope, claim, now=self._now())
+        except Exception:
+            logger.warning(
+                "project graph merge release failed: job_kind=project_merge project_id=%s",
+                self._scope.project_id,
+                exc_info=True,
+            )
 
     async def _embed_labels(
         self, claim: MergeClaim, fragments: Sequence[FragmentRecord]
