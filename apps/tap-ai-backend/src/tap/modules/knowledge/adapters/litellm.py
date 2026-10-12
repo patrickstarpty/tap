@@ -418,19 +418,23 @@ class KnowledgeModelGateway:
                     governance_digests,
                 )
             )
-            answer, claims = parse_grounded_answer_payload(
-                result.output,
-                evidence,
-                max_answer_chars=16000,
-                max_claims=64,
-                max_claim_chars=4000,
-                max_labels_per_claim=16,
-                extra_labels=(
-                    frozenset(relation_context.by_label())
-                    if relation_context is not None
-                    else frozenset()
-                ),
-            )
+            try:
+                answer, claims = parse_grounded_answer_payload(
+                    result.output,
+                    evidence,
+                    max_answer_chars=16000,
+                    max_claims=64,
+                    max_claim_chars=4000,
+                    max_labels_per_claim=16,
+                    extra_labels=(
+                        frozenset(relation_context.by_label())
+                        if relation_context is not None
+                        else frozenset()
+                    ),
+                )
+            except ValueError:
+                # The model answered but nothing in it can be grounded: abstain, not an outage.
+                answer, claims = "", ()
             return AnswerGeneration(
                 answer,
                 claims,

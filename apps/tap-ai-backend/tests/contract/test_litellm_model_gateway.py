@@ -1002,6 +1002,108 @@ def _capturing_model_gateway():
     return models, captured
 
 
+def _answering_model_gateway(output):
+    from tap.modules.ai.domain.models import ModelCallAudit, ModelResult, ModelUsage, text_digest
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    class AnsweringGateway:
+        async def generate_structured(self, request):
+            if isinstance(output, Exception):
+                raise output
+            return ModelResult(
+                output=output,
+                actual_model="qwen-plus",
+                usage=ModelUsage(),
+                actual_provider="dashscope",
+                audit=ModelCallAudit(
+                    request.scope,
+                    request.alias,
+                    request.operation,
+                    request.prompt_digest,
+                    request.schema_digest,
+                    text_digest(request.context),
+                    request.idempotency_key,
+                    "dashscope",
+                    "qwen-plus",
+                    ModelUsage(),
+                ),
+            )
+
+    return KnowledgeModelGateway(
+        AnsweringGateway(),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "output",
+    [
+        {
+            "answer": "合同效力中止。\n\n合同效力中止。",
+            "claims": [
+                {"text": "合同效力中止", "evidenceLabels": ["S1"]},
+                {"text": "合同效力中止", "evidenceLabels": ["S1"]},
+            ],
+        },
+        {"answer": "合同效力中止。", "claims": [{"text": "合同效力中止。"}]},
+        {"answer": "合同效力中止。"},
+    ],
+    ids=("claims-misaligned-and-duplicated", "claim-without-labels", "open-schema"),
+)
+async def test_ungroundable_answer_output_abstains_instead_of_failing(output):
+    """A model that answered but could not be grounded is an abstention, not an outage."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    generation = await _answering_model_gateway(output).answer(
+        "query", (_claim_resolution_evidence(),), "quick-hybrid-v1"
+    )
+
+    assert (generation.text, generation.claims) == ("", ())
+
+
+@pytest.mark.asyncio
+async def test_partly_grounded_answer_output_keeps_the_grounded_claims():
+    from test_knowledge_api import _claim_resolution_evidence
+
+    generation = await _answering_model_gateway(
+        {
+            "answer": "合同效力中止。\n\n无依据",
+            "claims": [
+                {"text": "合同效力中止。", "evidenceLabels": ["S1"]},
+                {"text": "无依据", "evidenceLabels": ["S7"]},
+            ],
+        }
+    ).answer("query", (_claim_resolution_evidence(),), "quick-hybrid-v1")
+
+    assert generation.text == "合同效力中止。"
+    assert tuple(claim.text for claim in generation.claims) == ("合同效力中止。",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (ModelGatewayUnavailable(), "model-unavailable"),
+        (ModelGatewayRejected(), "model-request-rejected"),
+    ],
+)
+async def test_unreachable_answer_model_is_still_unavailable(error, reason):
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.ports.errors import AnswerUnavailable
+
+    with pytest.raises(AnswerUnavailable, match=f"^{reason}$"):
+        await _answering_model_gateway(error).answer(
+            "query", (_claim_resolution_evidence(),), "quick-hybrid-v1"
+        )
+
+
 def _relation_context():
     from tap.modules.knowledge.application.relation_analysis import (
         RelationContext,
