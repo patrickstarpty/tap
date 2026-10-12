@@ -751,3 +751,141 @@ it("does not render suggestions or a skeleton when the knowledge client does not
     screen.queryByRole("group", { name: "Suggested questions" }),
   ).not.toBeInTheDocument();
 });
+
+it("stops the turn that is generating, not the previous completed turn", async () => {
+  const turn = (turnId: string, message: string, state: string) => ({
+    turnId,
+    state,
+    attempt: 1,
+    inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
+    answerEvidenceSnapshotDigest: null,
+    input: {
+      message,
+      modelAlias: "qwen-plus",
+      sourceRevisionIds: [],
+      documentRevisionIds: [],
+      resolvedResources: [],
+      agentRevisionId: null,
+      agentLabel: null,
+      skillRevisionIds: [],
+      skillLabels: [],
+      insightsQueryId: null,
+    },
+  });
+  const frame = (sequence: number, turnId: string) =>
+    `data: ${JSON.stringify({
+      eventId: `event-${sequence}`,
+      sequence,
+      chatId: "conversation-a",
+      turnId,
+      occurredAt: "2026-09-29T08:00:02Z",
+      schemaVersion: 1,
+      event: { type: "turn.completed", payload: { answer: ANSWER } },
+    })}\n\n`;
+  // The detail cache only learns about turn-2 while it is still queued, and
+  // the refetch after turn-3 is accepted is still in flight when Stop is hit.
+  let detailTurns = [turn("turn-1", "What is the rule?", "completed")];
+  let holdDetail = false;
+  const appended: string[] = [];
+  const canceled: string[] = [];
+  vi.stubGlobal("fetch", async (request: Request) => {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    if (path.endsWith("/conversations") && request.method === "GET")
+      return json({
+        items: [
+          {
+            conversationId: "conversation-a",
+            title: "What is the rule?",
+            createdAt: "2026-09-29T08:00:00Z",
+            updatedAt: "2026-09-29T08:00:00Z",
+          },
+        ],
+        nextCursor: null,
+      });
+    if (path.endsWith("/conversations/conversation-a")) {
+      if (holdDetail) return new Promise<Response>(() => {});
+      return json({
+        conversationId: "conversation-a",
+        title: "What is the rule?",
+        createdAt: "2026-09-29T08:00:00Z",
+        updatedAt: `2026-09-29T08:00:0${detailTurns.length}Z`,
+        turns: detailTurns,
+      });
+    }
+    if (path.endsWith("/conversations/conversation-a/events"))
+      return json({
+        items: [
+          {
+            eventId: "event-1",
+            sequence: 1,
+            turnId: "turn-1",
+            occurredAt: "2026-09-29T08:00:01Z",
+            eventType: "turn.completed",
+            payload: { answer: ANSWER },
+          },
+        ],
+        nextCursor: null,
+      });
+    if (path.endsWith("/conversations/conversation-a/stream")) {
+      // turn-2 finishes on the live stream; turn-3 keeps generating.
+      if (appended.length === 1)
+        return new Response(frame(2, "turn-2"), {
+          headers: { "content-type": "text/event-stream" },
+        });
+      return new Response(new ReadableStream({ start() {} }), {
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    if (path.endsWith("/conversations/conversation-a/turns")) {
+      const turnId = `turn-${appended.length + 2}`;
+      appended.push(turnId);
+      if (turnId === "turn-2")
+        detailTurns = [
+          ...detailTurns,
+          turn("turn-2", "Second question", "queued"),
+        ];
+      else holdDetail = true;
+      return json(
+        { conversationId: "conversation-a", turnId, state: "queued" },
+        202,
+      );
+    }
+    const cancel = /\/turns\/([^/]+)\/cancel$/u.exec(path);
+    if (cancel !== null) {
+      canceled.push(cancel[1]!);
+      return json(
+        {
+          conversationId: "conversation-a",
+          turnId: cancel[1],
+          state: "canceled",
+        },
+        202,
+      );
+    }
+    throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
+  });
+  const api = fakeKnowledgeClient().withPublishedSources(PUBLISHED);
+  renderKnowledgeApp(<TapperWorkspace />, { api });
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: "Regenerate" });
+  const composer = screen.getByRole("textbox", { name: "Message Tapper" });
+
+  await user.type(composer, "Second question");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() =>
+    expect(screen.getAllByRole("button", { name: "Regenerate" })).toHaveLength(
+      2,
+    ),
+  );
+  await screen.findByRole("button", { name: "Send" });
+
+  await user.type(composer, "Third question");
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  const stop = await screen.findByRole("button", { name: "Stop generating" });
+  // turn-2 keeps its streamed outcome even though the cached detail says queued.
+  expect(screen.getAllByRole("button", { name: "Regenerate" })).toHaveLength(2);
+  await user.click(stop);
+
+  await waitFor(() => expect(canceled).toEqual(["turn-3"]));
+});
