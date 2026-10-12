@@ -1104,6 +1104,38 @@ async def test_unreachable_answer_model_is_still_unavailable(error, reason):
         )
 
 
+@pytest.mark.asyncio
+async def test_document_evidence_names_its_source_document_for_attribution():
+    """Multi-document evidence must say which document each item comes from."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.adapters.litellm import _ANSWER_PROMPT
+    from tap.modules.knowledge.domain.models import DocumentAnchor
+
+    base = _claim_resolution_evidence()
+    document = replace(
+        base,
+        title="盛世终身寿险条款.pdf",
+        source=replace(
+            base.source,
+            anchor=DocumentAnchor(heading_path=("盛世终身寿险", "第二条 投保范围"), page=1),
+        ),
+    )
+    models, captured = _capturing_model_gateway()
+
+    await models.answer(
+        "投保年龄？", (document, replace(base, evidence_label="S2")), "quick-hybrid-v1"
+    )
+
+    evidence = json.loads(captured[0].context)["evidence"]
+    assert evidence[0]["document"] == "盛世终身寿险条款.pdf"
+    assert evidence[0]["section"] == "盛世终身寿险 > 第二条 投保范围"
+    assert "document" not in evidence[1] and "section" not in evidence[1]
+    assert "name the product or document it applies to" in _ANSWER_PROMPT
+    assert "never apply a value from one document" in _ANSWER_PROMPT
+    assert _ANSWER_PROMPT in captured[0].prompt
+
+
 def _relation_context():
     from tap.modules.knowledge.application.relation_analysis import (
         RelationContext,

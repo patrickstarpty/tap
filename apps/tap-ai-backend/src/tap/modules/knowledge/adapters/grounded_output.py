@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from tap.modules.knowledge.domain.models import Evidence
+import re
+import unicodedata
+from collections.abc import Mapping
+
+from tap.modules.knowledge.domain.models import DocumentAnchor, Evidence
 from tap.modules.knowledge.ports.models import GeneratedClaim
 
 
@@ -32,6 +36,8 @@ def parse_grounded_answer_payload(
         raise ValueError("claim count is outside the closed bound")
 
     allowed_labels = {item.evidence_label for item in evidence} | extra_labels
+    label_documents = {item.evidence_label: item.source.source_id for item in evidence}
+    document_names = _document_names(evidence)
     answer_paragraphs = answer.split("\n\n")
     claims: list[GeneratedClaim] = []
     seen_claims: set[str] = set()
@@ -48,7 +54,7 @@ def parse_grounded_answer_payload(
             max_claim_chars=max_claim_chars,
             max_labels_per_claim=max_labels_per_claim,
         )
-        if claim is None:
+        if claim is None or _borrows_another_document(claim, label_documents, document_names):
             continue
         all_claims_are_unique_paragraphs &= answer_paragraphs.count(claim.text) == 1
         seen_claims.add(claim.text)
@@ -99,6 +105,66 @@ def _grounded_claim(
     if len(set(labels)) != len(labels):
         return None
     return GeneratedClaim(text=text, evidence_labels=tuple(labels))
+
+
+# Clause headings ("第二条 投保范围", "一、", "1.2") are sections, not document names.
+_CLAUSE_HEADING = re.compile(
+    r"^(第[一二三四五六七八九十百零〇\d]+[条章节款]|[一二三四五六七八九十]+、|\d)"
+)
+_FILE_EXTENSION = re.compile(r"\.[A-Za-z0-9]{1,5}$")
+_MIN_DOCUMENT_NAME_CHARS = 4
+
+
+def _normalized(text: str) -> str:
+    return "".join(unicodedata.normalize("NFKC", text).casefold().split())
+
+
+def _document_names(evidence: tuple[Evidence, ...]) -> dict[str, frozenset[str]]:
+    """Names (file stem, document title) each evidence document can be referred to by.
+
+    A name shared by several documents identifies none of them and is ignored.
+    """
+
+    names: dict[str, set[str]] = {}
+    for item in evidence:
+        anchor = item.source.anchor
+        if not isinstance(anchor, DocumentAnchor):
+            continue
+        candidates: list[str] = []
+        if item.title:
+            candidates.append(_FILE_EXTENSION.sub("", item.title))
+        if anchor.heading_path:
+            root = anchor.heading_path[0].strip()
+            if _CLAUSE_HEADING.match(root) is None:
+                candidates.append(root)
+        for candidate in candidates:
+            name = _normalized(candidate)
+            if len(name) >= _MIN_DOCUMENT_NAME_CHARS:
+                names.setdefault(name, set()).add(item.source.source_id)
+    by_document: dict[str, set[str]] = {}
+    for name, documents in names.items():
+        if len(documents) == 1:
+            by_document.setdefault(next(iter(documents)), set()).add(name)
+    return {document: frozenset(items) for document, items in by_document.items()}
+
+
+def _borrows_another_document(
+    claim: GeneratedClaim,
+    label_documents: Mapping[str, str],
+    document_names: Mapping[str, frozenset[str]],
+) -> bool:
+    """True when the claim names a document but cites evidence only from other documents."""
+
+    cited = {label_documents[label] for label in claim.evidence_labels if label in label_documents}
+    if not cited:
+        return False
+    text = _normalized(claim.text)
+    named = {
+        document
+        for document, names in document_names.items()
+        if any(name in text for name in names)
+    }
+    return bool(named) and not named & cited
 
 
 def _bounded_utf8_string(value: object, *, maximum: int) -> bool:

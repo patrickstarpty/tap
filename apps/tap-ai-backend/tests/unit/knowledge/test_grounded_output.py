@@ -8,6 +8,7 @@ from tap.modules.knowledge.adapters.grounded_output import parse_grounded_answer
 from tap.modules.knowledge.domain.models import (
     CodeAnchor,
     ContentRole,
+    DocumentAnchor,
     Evidence,
     IndexRevision,
     RevisionKind,
@@ -321,4 +322,102 @@ def test_grounded_output_accepts_relation_labels_only_when_supplied() -> None:
         max_claims=64,
         max_claim_chars=4_000,
         max_labels_per_claim=16,
+    ) == ("", ())
+
+
+def document_evidence(*, label: str, source: str, filename: str, heading: str) -> Evidence:
+    return Evidence(
+        family=SourceFamily.DOC,
+        chunk_id="h_" + "1" * 64,
+        logical_chunk_id="h_" + "2" * 64,
+        title=filename,
+        content="投保年龄范围见本条。",
+        source=SourceRevisionRef(
+            source_id=source,
+            source_type="doc",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision="rev_" + "c" * 64,
+            source_content_hash=SOURCE_HASH,
+            anchor=DocumentAnchor(heading_path=(heading, "第二条 投保范围"), page=1),
+        ),
+        chunk_content_hash=CHUNK_HASH,
+        content_role=ContentRole.SOURCE,
+        citation_id="citation-" + label,
+        evidence_label=label,
+        index_revision=IndexRevision(
+            physical_index="kb-doc-v1-20260824",
+            schema_version="search-schema-v1",
+            corpus_version="corpus-17",
+        ),
+        embedding_model_version="tap-embed-fixed-v1",
+        acl_decision_id="decision-17",
+        score=1 / 61,
+    )
+
+
+GROUP = document_evidence(
+    label="S1",
+    source="src_" + "1" * 32,
+    filename="尊享智选康惠团体医疗保险条款.pdf",
+    heading="尊享智选康惠团体医疗保险",
+)
+LIFE = document_evidence(
+    label="S2",
+    source="src_" + "2" * 32,
+    filename="盛世终身寿险条款.pdf",
+    heading="盛世终身寿险",
+)
+
+
+def _attributed(claims: list[dict[str, object]]) -> tuple[str, tuple[object, ...]]:
+    return parse_grounded_answer_payload(
+        {"answer": "\n\n".join(str(claim["text"]) for claim in claims), "claims": claims},
+        (GROUP, LIFE),
+        max_answer_chars=16_000,
+        max_claims=64,
+        max_claim_chars=4_000,
+        max_labels_per_claim=16,
+    )
+
+
+def test_grounded_output_drops_a_claim_that_names_a_product_its_evidence_is_not_from() -> None:
+    answer, claims = _attributed(
+        [
+            {
+                "text": "尊享智选康惠团体医疗保险的被保险人为团体成员及其配偶、子女。",
+                "evidenceLabels": ["S1"],
+            },
+            {
+                "text": "尊享智选康惠团体医疗保险的投保年龄为0周岁至70周岁。",
+                "evidenceLabels": ["S2"],
+            },
+        ]
+    )
+
+    assert answer == "尊享智选康惠团体医疗保险的被保险人为团体成员及其配偶、子女。"
+    assert len(claims) == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "labels"),
+    [
+        ("盛世终身寿险的投保年龄为0周岁至70周岁。", ["S2"]),
+        ("盛世终身寿险条款规定投保年龄为0周岁至70周岁。", ["S2"]),
+        ("两款产品都规定了投保年龄，盛世终身寿险为0周岁至70周岁。", ["S1", "S2"]),
+        ("本合同的投保年龄为0周岁至70周岁。", ["S2"]),
+    ],
+    ids=("names-its-product", "names-its-file", "cites-both-products", "names-no-product"),
+)
+def test_grounded_output_keeps_claims_attributed_to_their_own_documents(
+    text: str, labels: list[str]
+) -> None:
+    answer, claims = _attributed([{"text": text, "evidenceLabels": labels}])
+
+    assert answer == text
+    assert len(claims) == 1
+
+
+def test_grounded_output_abstains_when_every_claim_borrows_another_documents_values() -> None:
+    assert _attributed(
+        [{"text": "盛世终身寿险的被保险人为团体成员。", "evidenceLabels": ["S1"]}]
     ) == ("", ())
