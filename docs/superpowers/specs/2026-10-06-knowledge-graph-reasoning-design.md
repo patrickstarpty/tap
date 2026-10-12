@@ -62,7 +62,7 @@
 
 合并规则：
 
-- 触发：片段 READY/PARTIAL、来源删除或撤销发布、`graph rebuild` 命令。合并 job 按项目租约串行，复用 `MysqlGraphJobStore` 的租约与幂等模式（新增 job 种类 `project_merge`）。
+- 触发：片段 READY/PARTIAL、来源删除或撤销发布、`graph rebuild` 命令。合并 job 按项目租约串行，复用 `MysqlGraphJobStore` 的租约与幂等模式（新增 job 种类 `project_merge`）。graph worker 在抽取进行期间按 `TAPPER_POLL_SECONDS` 轮询合并队列，有片段就绪即合并，不等全部抽取结束；合并失败记录带堆栈的错误日志，合并 job 的 `failure_code` 记为“阶段:异常类型”摘要并按退避重试。
 - 合并是**全量重放**：取项目内当前已发布修订的全部 READY/PARTIAL 且档案摘要为当前值的片段，重新计算一个新版本；删除来源即重放时排除。片段集合摘要与上一版本相同则跳过。节点、边、来源、证据与别名写入前按各表主键去重（模型常在同一批里重复输出同一条边或同一实体，对齐后共用一个主键），同一组片段重复合并结果一致。版本就绪后原子切换 `graph_project_version.status=READY`，旧版本保留一个用于查询过渡，更早版本清理。
 - 实体对齐三级，依次尝试：
   1. 规范化 canonical key 精确匹配。规范化：casefold、全角转半角、去标点与空白、去尾部修饰词（"规则""条款""流程""policy""rule" 等有限列表）。

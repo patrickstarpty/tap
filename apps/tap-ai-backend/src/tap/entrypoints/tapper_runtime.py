@@ -1091,7 +1091,10 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
         from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
         from tap.modules.graph.adapters.mysql_merge import MysqlMergeInputs, MysqlProjectMergeQueue
         from tap.modules.graph.application.backfill import backfill_graph_jobs
-        from tap.modules.graph.application.merge_worker import ProjectGraphMergeWorker
+        from tap.modules.graph.application.merge_worker import (
+            MergingGraphWorker,
+            ProjectGraphMergeWorker,
+        )
         from tap.modules.graph.application.merger import ProjectGraphMerger
         from tap.modules.graph.application.worker import GraphWorker
         from tap.modules.graph.ports.extraction import GraphExtractionPort
@@ -1181,10 +1184,14 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             aggregate_type="GraphSnapshot",
         )
         return WorkerRuntime(
-            worker=worker,
+            # Merge ready fragments while other documents are still extracting.
+            worker=MergingGraphWorker(
+                extraction=worker,
+                merge=merge_worker,
+                merge_interval_seconds=settings.poll_seconds,
+            ),
             wakeups=wakeups,
             resources=(resources,),
-            pending_work=merge_worker.run_once,
             startup=backfill,
         )
     except BaseException as error:

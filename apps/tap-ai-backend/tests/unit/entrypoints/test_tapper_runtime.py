@@ -1859,8 +1859,13 @@ async def test_graph_worker_runtime_is_independent_and_owns_only_its_resources(
 
     runtime = await module.create_graph_worker_runtime(settings)
 
-    assert runtime.worker._artifacts is blob
-    assert runtime.worker._worker_id == settings.worker_id + "-graph"
+    from tap.modules.graph.application.merge_worker import MergingGraphWorker
+
+    # The project merge runs alongside extraction, not only after it.
+    assert isinstance(runtime.worker, MergingGraphWorker)
+    assert runtime.pending_work is None
+    assert runtime.worker.extraction._artifacts is blob
+    assert runtime.worker.extraction._worker_id == settings.worker_id + "-graph"
     assert runtime.wakeups._group_name == "tapper-graph"
     assert runtime.wakeups._aggregate_type == "GraphSnapshot"
     await runtime.resources[0].aclose()

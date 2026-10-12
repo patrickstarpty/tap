@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import threading
 from datetime import datetime, timedelta
 
@@ -11,7 +13,10 @@ from tap.modules.graph.application.merge_jobs import (
     InMemoryProjectMergeQueue,
     ProjectMergeLeaseLost,
 )
-from tap.modules.graph.application.merge_worker import ProjectGraphMergeWorker
+from tap.modules.graph.application.merge_worker import (
+    MergingGraphWorker,
+    ProjectGraphMergeWorker,
+)
 from tap.modules.graph.application.merger import ProjectGraphMerger
 from tap.modules.graph.domain.models import Evidence, GraphNode, GraphSnapshot, GraphSnapshotDraft
 from tap.modules.graph.domain.project import FragmentRecord
@@ -222,7 +227,7 @@ async def test_failure_backs_off_and_records_code(monkeypatch) -> None:
 
     assert result == 1
     row = queue._rows[VALIDATION_SCOPE.project_id]
-    assert row.failure_code == "RuntimeError"
+    assert row.failure_code == "load_fragments:RuntimeError"
     assert row.due_at == NOW + timedelta(seconds=60)
 
 
@@ -431,3 +436,83 @@ async def test_fail_swallows_a_lease_already_lost_to_another_worker(monkeypatch)
     result = await worker.run_once(limit=10)
 
     assert result == 1
+
+
+@pytest.mark.asyncio
+async def test_failure_logs_the_stack_with_project_phase_and_attempt(monkeypatch, caplog):
+    queue = InMemoryProjectMergeQueue()
+    worker = _worker(queue=queue, inputs=FailingInputs(), monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    with caplog.at_level(logging.ERROR):
+        await worker.run_once(limit=10)
+
+    [record] = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert record.exc_info is not None and record.exc_info[0] is RuntimeError
+    assert VALIDATION_SCOPE.project_id in record.getMessage()
+    assert "phase=load_fragments" in record.getMessage()
+    assert "attempt=0" in record.getMessage()
+
+
+class GatedExtraction:
+    """Extraction `run_once` that blocks until released, like a long model call."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+
+    async def run_once(self, limit: int) -> str:
+        del limit
+        await self.release.wait()
+        return "extraction-run"
+
+
+class CountingMerge:
+    def __init__(self, extraction: GatedExtraction, *, release_after: int) -> None:
+        self.calls = 0
+        self._extraction = extraction
+        self._release_after = release_after
+
+    async def run_once(self, limit: int) -> int:
+        del limit
+        self.calls += 1
+        if self.calls == self._release_after:
+            self._extraction.release.set()
+        return 1
+
+
+@pytest.mark.asyncio
+async def test_merges_ready_fragments_while_extraction_is_still_running() -> None:
+    extraction = GatedExtraction()
+    merge = CountingMerge(extraction, release_after=3)
+    worker = MergingGraphWorker(extraction=extraction, merge=merge, merge_interval_seconds=0.001)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == "extraction-run"
+    # Three merges ran while extraction was still blocked, then one after it ended.
+    assert merge.calls == 4
+
+
+@pytest.mark.asyncio
+async def test_merges_once_after_a_quick_extraction() -> None:
+    extraction = GatedExtraction()
+    extraction.release.set()
+    merge = CountingMerge(extraction, release_after=0)
+    worker = MergingGraphWorker(extraction=extraction, merge=merge, merge_interval_seconds=60)
+
+    assert await worker.run_once(limit=10) == "extraction-run"
+    assert merge.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_run_cancels_the_extraction() -> None:
+    extraction = GatedExtraction()
+    merge = CountingMerge(extraction, release_after=0)
+    worker = MergingGraphWorker(extraction=extraction, merge=merge, merge_interval_seconds=60)
+
+    run = asyncio.create_task(worker.run_once(limit=10))
+    await asyncio.sleep(0)
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert merge.calls == 0

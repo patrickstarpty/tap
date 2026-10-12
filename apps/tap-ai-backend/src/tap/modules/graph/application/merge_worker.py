@@ -1,6 +1,9 @@
 """Bounded project graph merge worker: claim one project's due merge, replay
 every currently-ready/partial fragment into a new merged version, and clear
-the queue -- or back off on failure, or abandon cleanly on a lost lease."""
+the queue -- or back off on failure, or abandon cleanly on a lost lease.
+
+`MergingGraphWorker` runs that merge alongside extraction, so fragments that
+turn ready are merged while other documents are still being extracted."""
 
 from __future__ import annotations
 
@@ -8,6 +11,9 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timedelta, timezone
+from typing import Protocol, TypeVar
+
+from opentelemetry.trace import Status, StatusCode
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.application.merge_jobs import (
@@ -86,7 +92,7 @@ class ProjectGraphMergeWorker:
         phase = "claim"
         with (
             bind_trace(scope=self._scope, job_kind="project_merge"),
-            span("job.project_merge"),
+            span("job.project_merge") as merge_span,
         ):
             try:
                 phase = "load_fragments"
@@ -124,7 +130,19 @@ class ProjectGraphMergeWorker:
                     phase,
                 )
             except Exception as error:
-                failure_code = type(error).__name__[:64]
+                # Phase plus exception type is the bounded summary the queue row
+                # keeps; the message and stack go to the log only, never the row.
+                failure_code = f"{phase}:{type(error).__name__}"[:64]
+                logger.exception(
+                    "project graph merge failed: job_kind=project_merge project_id=%s "
+                    "phase=%s attempt=%d failure_code=%s",
+                    self._scope.project_id,
+                    phase,
+                    claim.attempt,
+                    failure_code,
+                )
+                merge_span.set_status(Status(StatusCode.ERROR, failure_code))
+                merge_span.record_exception(error)
                 try:
                     await self._queue.fail(
                         self._scope, claim, failure_code=failure_code, now=self._now()
@@ -165,3 +183,57 @@ class ProjectGraphMergeWorker:
             for key in keys:
                 embeddings[key] = vector
         return claim, embeddings
+
+
+_Run = TypeVar("_Run", covariant=True)
+
+
+class _BoundedRun(Protocol[_Run]):
+    async def run_once(self, limit: int) -> _Run: ...
+
+
+class _MergeRun(Protocol):
+    async def run_once(self, limit: int) -> int: ...
+
+
+class MergingGraphWorker[RunT]:
+    """Run one extraction pass and the project merge side by side.
+
+    Extraction `run_once` keeps going until every job it claimed is done, which
+    with real model calls takes tens of minutes. Merging only afterwards left the
+    project graph stale (or never built) for that whole time, so while extraction
+    runs the merge worker is polled every `merge_interval_seconds`; it only acts
+    when a fragment completion (or another cause) made the project merge due, and
+    it still replays every ready fragment into the next version. One more poll
+    follows the extraction pass so its last fragments are merged promptly.
+    """
+
+    def __init__(
+        self,
+        *,
+        extraction: _BoundedRun[RunT],
+        merge: _MergeRun,
+        merge_interval_seconds: float,
+    ) -> None:
+        if merge_interval_seconds <= 0:
+            raise ValueError("merge interval must be positive")
+        self._extraction = extraction
+        self._merge = merge
+        self._merge_interval_seconds = merge_interval_seconds
+
+    @property
+    def extraction(self) -> _BoundedRun[RunT]:
+        return self._extraction
+
+    async def run_once(self, limit: int) -> RunT:
+        extraction = asyncio.create_task(self._extraction.run_once(limit))
+        try:
+            while True:
+                done, _ = await asyncio.wait({extraction}, timeout=self._merge_interval_seconds)
+                await self._merge.run_once(limit)
+                if done:
+                    return extraction.result()
+        finally:
+            if not extraction.done():
+                extraction.cancel()
+                await asyncio.gather(extraction, return_exceptions=True)
