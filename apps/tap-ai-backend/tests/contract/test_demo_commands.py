@@ -2223,11 +2223,14 @@ def test_litellm_config_is_the_single_model_source() -> None:
         "qwen3-vl-plus",
         "text-embedding-v4",
     ]
+    # Only models LiteLLM cannot price carry an explicit per-token price.
+    prices = {"text-embedding-v4": {"input_cost_per_token": 0.00000007, "output_cost_per_token": 0}}
     for item in config["model_list"]:
         assert item["litellm_params"] == {
             "model": "dashscope/" + item["model_name"],
             "api_key": "os.environ/DASHSCOPE_API_KEY",
             "api_base": "os.environ/DASHSCOPE_API_BASE",
+            **prices.get(item["model_name"], {}),
         }
     info = {item["model_name"]: item["model_info"] for item in config["model_list"]}
     assert info["qwen-plus"] == {
