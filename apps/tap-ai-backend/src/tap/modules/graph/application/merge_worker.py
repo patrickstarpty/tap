@@ -239,10 +239,19 @@ class MergingGraphWorker[RunT]:
             while True:
                 done, _ = await asyncio.wait({extraction}, timeout=self._merge_interval_seconds)
                 if not self._draining:
-                    await self._merge.run_once(limit)
+                    await self._poll_merge(limit)
                 if done:
                     return extraction.result()
         finally:
             if not extraction.done():
                 extraction.cancel()
                 await asyncio.gather(extraction, return_exceptions=True)
+
+    async def _poll_merge(self, limit: int) -> None:
+        """A merge error (e.g. a lock wait timeout or a dropped connection while
+        claiming) is logged and retried on the next poll: it must never cancel
+        the extraction running alongside or end the worker process."""
+        try:
+            await self._merge.run_once(limit)
+        except Exception:
+            logger.exception("project graph merge poll failed: job_kind=project_merge")

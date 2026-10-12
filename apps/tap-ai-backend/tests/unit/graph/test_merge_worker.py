@@ -536,3 +536,34 @@ async def test_stop_claiming_drains_extraction_and_starts_no_more_merges() -> No
     assert await run == "extraction-run"
     assert extraction.draining
     assert merge.calls == 0
+
+
+class FlakyMerge:
+    """Merge poll whose claim fails (a lock wait timeout, a dropped connection)."""
+
+    def __init__(self, extraction: GatedExtraction, *, release_after: int) -> None:
+        self.calls = 0
+        self._extraction = extraction
+        self._release_after = release_after
+
+    async def run_once(self, limit: int) -> int:
+        del limit
+        self.calls += 1
+        if self.calls == self._release_after:
+            self._extraction.release.set()
+        raise RuntimeError("synthetic merge claim failure")
+
+
+@pytest.mark.asyncio
+async def test_a_failing_merge_poll_never_stops_the_running_extraction(caplog) -> None:
+    extraction = GatedExtraction()
+    merge = FlakyMerge(extraction, release_after=3)
+    worker = MergingGraphWorker(extraction=extraction, merge=merge, merge_interval_seconds=0.001)
+
+    with caplog.at_level(logging.ERROR):
+        result = await worker.run_once(limit=10)
+
+    assert result == "extraction-run"
+    assert merge.calls == 4
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 4 and all(record.exc_info is not None for record in errors)
