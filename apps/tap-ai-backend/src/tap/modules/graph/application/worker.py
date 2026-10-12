@@ -119,7 +119,7 @@ class GraphWorker:
         scope: ProjectScopeContext,
         worker_id: str,
         batch_size: int = 100,
-        batch_chars: int | None = 6000,
+        batch_chars: int | None = 3000,
         batch_retries: int = 3,
         backoff_seconds: float = 1.0,
         lease_duration: timedelta = timedelta(seconds=60),

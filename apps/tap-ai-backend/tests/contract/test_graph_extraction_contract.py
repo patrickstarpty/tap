@@ -405,3 +405,23 @@ def test_schema_and_prompt_never_ask_the_model_to_copy_hashes_or_anchors():
     assert "contentDigest" not in GRAPH_EXTRACTION_PROMPT
     assert "anchorJson" not in GRAPH_EXTRACTION_PROMPT
     assert "c1" in GRAPH_EXTRACTION_PROMPT
+
+
+def test_schema_and_prompt_bound_each_batch_output():
+    # A real 1500-character batch once wrote 142 nodes and no edges, or 125+ copies
+    # of one edge, until the 8192-token budget cut it off; every list is capped.
+    from tap.modules.graph.adapters.model_gateway_extraction import (
+        GRAPH_BATCH_MAX_EDGES,
+        GRAPH_BATCH_MAX_NODES,
+        GRAPH_EXTRACTION_PROMPT,
+        GRAPH_EXTRACTION_SCHEMA,
+    )
+
+    properties = GRAPH_EXTRACTION_SCHEMA["properties"]
+    assert (GRAPH_BATCH_MAX_NODES, GRAPH_BATCH_MAX_EDGES) == (40, 60)
+    assert properties["nodes"]["maxItems"] == 40
+    assert properties["edges"]["maxItems"] == 60
+    assert properties["provenance"]["maxItems"] == 60
+    assert "at most 40 nodes and at most 60 edges" in GRAPH_EXTRACTION_PROMPT
+    assert "only entities and relations stated in this batch's chunks" in GRAPH_EXTRACTION_PROMPT
+    assert "at most one edge per source, relationType and target" in GRAPH_EXTRACTION_PROMPT

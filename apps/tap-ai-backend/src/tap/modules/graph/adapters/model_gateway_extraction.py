@@ -28,6 +28,14 @@ from tap.modules.graph.domain.vocabulary import (
 )
 from tap.platform.telemetry import span
 
+# Per-batch output caps. One node costs about 35-60 output tokens and one edge
+# about 45-60 (compact JSON, Chinese labels; measured on qwen-plus truncations of
+# 142 nodes or 125+ edges in 8192 tokens), so 40 nodes + 60 edges stay near 6000
+# tokens, inside the 8192-token default budget with room for provenance. A
+# 3000-character batch of dense insurance clauses grounds roughly that many
+# distinct facts; a batch that needs more is split in two (see the worker).
+GRAPH_BATCH_MAX_NODES = 40
+GRAPH_BATCH_MAX_EDGES = 60
 _CHUNK_REFS: dict[str, object] = {
     "type": "array",
     "items": {"type": "string"},
@@ -40,6 +48,7 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
     "properties": {
         "nodes": {
             "type": "array",
+            "maxItems": GRAPH_BATCH_MAX_NODES,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -69,6 +78,7 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
         },
         "edges": {
             "type": "array",
+            "maxItems": GRAPH_BATCH_MAX_EDGES,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -99,6 +109,7 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
         },
         "provenance": {
             "type": "array",
+            "maxItems": GRAPH_BATCH_MAX_EDGES,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -118,8 +129,13 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
 }
 GRAPH_EXTRACTION_PROMPT = (
     "Extract only grounded graph facts from the supplied chunks and return exactly the JSON "
-    "schema as compact JSON without indentation. Each input chunk carries a short ref (c1, c2, "
-    "...). Cite where a fact is stated only by listing those refs in its chunks array; never "
+    "schema as compact JSON without indentation. "
+    f"Output at most {GRAPH_BATCH_MAX_NODES} nodes and at most {GRAPH_BATCH_MAX_EDGES} edges, "
+    "keeping the most important facts when there are more. Output only entities and relations "
+    "stated in this batch's chunks. Output each node once and at most one edge per source, "
+    "relationType and target; never repeat a node or an edge. "
+    "Each input chunk carries a short ref (c1, c2, ...). "
+    "Cite where a fact is stated only by listing those refs in its chunks array; never "
     "cite a ref that is not in this input and never copy chunk text, hashes, or anchors. Use "
     "short stable IDs: n1, n2, ... for new nodes, e1, e2, ... for edges, and p1, p2, ... for "
     "provenance. Every node must list at least one chunk ref. "
