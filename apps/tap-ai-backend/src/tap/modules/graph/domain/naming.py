@@ -11,6 +11,7 @@ rejected here, with numbers, numbering and names shorter than two characters.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from tap.modules.graph.domain.vocabulary import normalize_key
 
@@ -44,8 +45,11 @@ _CHINESE_REFERENCES = frozenset(
         "各方",
     }
 )
-_ENGLISH_REFERENCES = frozenset(
-    {
+# Pronouns compare case-sensitively on the stripped text, so the acronyms they fold
+# onto ("IT", "US", "WE") stay names.
+_ENGLISH_PRONOUNS = frozenset(
+    form
+    for word in (
         "we",
         "us",
         "our",
@@ -62,6 +66,12 @@ _ENGLISH_REFERENCES = frozenset(
         "she",
         "him",
         "her",
+    )
+    for form in (word, word.capitalize())
+)
+# Compared after ``normalize_key``.
+_ENGLISH_REFERENCES = frozenset(
+    {
         "above",
         "theabove",
         "aforementioned",
@@ -76,7 +86,16 @@ _ENGLISH_REFERENCES = frozenset(
         "thesame",
     }
 )
-_NUMERAL = "0-9零〇一二三四五六七八九十百千两壹贰叁肆伍陆柒捌玖拾佰"
+_CHINESE_DIGIT = "一二三四五六七八九壹贰叁肆伍陆柒捌玖"
+_NUMERAL = "0-9零〇两十百千拾佰仟" + _CHINESE_DIGIT
+# A well-formed positional Chinese number (十九, 三十九, 一百零五, 两千); a run of
+# bare digits such as 三九 or 九九 is a name, not a number.
+_CHINESE_POSITIONAL = re.compile(
+    rf"(?:[{_CHINESE_DIGIT}两]?[千仟])?零?(?:[{_CHINESE_DIGIT}两]?[百佰])?零?"
+    rf"(?:[{_CHINESE_DIGIT}]?[十拾])?[{_CHINESE_DIGIT}]?"
+)
+# Digit by digit with a zero (二〇二五, 一〇一).
+_CHINESE_DIGIT_RUN = re.compile(rf"[{_CHINESE_DIGIT}零〇]*[零〇][{_CHINESE_DIGIT}零〇]*")
 _PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
@@ -88,26 +107,60 @@ _PATTERNS = tuple(
         rf"第[{_NUMERAL}]+[条章节款项部篇编目段页点]",
         # 附表1, 附件二, 释义四, 条款, ...
         rf"(附表|附件|附录|释义|条款|章节|条|款|项|表|图)[{_NUMERAL}a-z]*",
-        # 19, 十九, （一）, 1.2, 19条, ...
-        rf"[{_NUMERAL}]+[条章节款项点]?",
-        # a1, 1a
-        r"[a-z][0-9]+|[0-9]+[a-z]",
         # this contract, the policy, said agreement, ...
         r"(this|the|such|said|that|these|those)"
         r"(contract|contracts|policy|policies|agreement|plan|product|company|clause|section"
         r"|article|schedule|document|insurance|rider|terms|provision|provisions|above|same)",
-        # Article 5, Section 3a, § 4, Schedule B, Part IV, ...
-        r"(section|sec|article|art|clause|chapter|chap|schedule|appendix|annex|exhibit|part"
-        r"|item|paragraph|para|§)([0-9]+[a-z]?|[ivxlc]+|[a-z])",
     )
 )
+# Article 5, Section 3a, § 4, Schedule B, Part IV, Annex A1: matched on the text
+# with punctuation turned into spaces, so a letter suffix must stand apart from the
+# structural word ("Part C", never "Parts"; "Annex A1", never "Annexe").
+_STRUCTURAL_WORD = (
+    r"(section|sec|article|art|clause|chapter|chap|schedule|appendix|annex|exhibit|part"
+    r"|item|paragraph|para|§)"
+)
+_STRUCTURAL_REFERENCE = re.compile(
+    rf"{_STRUCTURAL_WORD}(\s*[0-9]+[a-z]?|\s+([ivxlc]+|[a-z][0-9]*))"
+)
+
+
+def _is_number(key: str) -> bool:
+    """19, 十九, 二〇二五, 1.2 (folded to 12), 19条, ...: a number or numbering."""
+
+    if key[-1] in "条章节款项点":
+        key = key[:-1]
+    if not key:
+        return False
+    if key.isascii():
+        return key.isdigit()
+    return bool(
+        _CHINESE_POSITIONAL.fullmatch(key)
+        and any(unit in key for unit in "十拾百佰千仟")
+        or _CHINESE_DIGIT_RUN.fullmatch(key)
+    )
+
+
+def _spaced(text: str) -> str:
+    folded = unicodedata.normalize("NFKC", text).casefold()
+    return " ".join(
+        "".join(" " if unicodedata.category(ch).startswith("P") else ch for ch in folded).split()
+    )
 
 
 def is_reference_name(text: str) -> bool:
     """True when ``text`` cannot name an entity on its own (see the module doc)."""
 
     key = normalize_key(text)
-    if len(key) < 2 or key in _CHINESE_REFERENCES or key in _ENGLISH_REFERENCES:
+    if (
+        len(key) < 2
+        or key in _CHINESE_REFERENCES
+        or key in _ENGLISH_REFERENCES
+        or text.strip() in _ENGLISH_PRONOUNS
+        or _is_number(key)
+    ):
+        return True
+    if _STRUCTURAL_REFERENCE.fullmatch(_spaced(text)):
         return True
     return any(pattern.fullmatch(key) for pattern in _PATTERNS)
 
