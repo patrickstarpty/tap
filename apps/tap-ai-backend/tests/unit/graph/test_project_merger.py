@@ -171,3 +171,76 @@ def test_merge_rejects_scope_mismatch():
 
     with pytest.raises(ValueError):
         ProjectGraphMerger().merge(VALIDATION_SCOPE, [record])
+
+
+def _shared_chunk_draft() -> GraphSnapshotDraft:
+    """One batch where the model emitted the same node twice (two ids whose
+    canonical keys align) and the same edge three times, all grounded in one chunk -- the
+    shape that collided on the merged provenance primary keys."""
+
+    snapshot = _snapshot("frag-dup")
+    evidence = tuple(
+        Evidence(
+            evidence_id=evidence_id,
+            snapshot_id="frag-dup",
+            source_revision_id="frag-dup-source",
+            document_revision_id="frag-dup-document",
+            chunk_id="chunk-shared",
+            anchor={"kind": "text", "start": start, "end": start + 4},
+            content_digest=_digest(evidence_id),
+        )
+        for start, evidence_id in enumerate(("ev-n1", "ev-n2", "ev-n3", "ev-e1", "ev-e2", "ev-e3"))
+    )
+    nodes = (
+        GraphNode("n1", "frag-dup", "效力中止", "ENTITY", "效力中止", ("ev-n1",)),
+        GraphNode("n2", "frag-dup", "效力中止", "ENTITY", "效力中止。", ("ev-n2",)),
+        GraphNode("n3", "frag-dup", "保单", "ENTITY", "保单", ("ev-n3",)),
+    )
+    edges = tuple(
+        GraphEdge(
+            edge_id=edge_id,
+            snapshot_id="frag-dup",
+            source_node_id="n3",
+            target_node_id=target,
+            relation_type="RELATED_TO",
+            origin=RelationOrigin.EXTRACTED,
+            confidence=0.8,
+            evidence_ids=(f"ev-{edge_id}",),
+            relation_label="适用",
+        )
+        for edge_id, target in (("e1", "n1"), ("e2", "n2"), ("e3", "n1"))
+    )
+    return GraphSnapshotDraft(snapshot, nodes, edges, evidence, ())
+
+
+def test_merge_dedupes_provenance_on_its_primary_keys():
+    records = [_record("frag-dup", _shared_chunk_draft())]
+
+    draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, records)
+
+    def keys(rows, *names):
+        return [tuple(getattr(row, name) for name in names) for row in rows]
+
+    for rows, names in (
+        (draft.nodes, ("node_id",)),
+        (draft.edges, ("edge_id",)),
+        (draft.node_sources, ("node_id", "source_revision_id", "chunk_id")),
+        (draft.edge_evidence, ("edge_id", "source_revision_id", "chunk_id")),
+        (draft.aliases, ("alias_norm", "node_id")),
+    ):
+        primary_keys = keys(rows, *names)
+        assert len(primary_keys) == len(set(primary_keys)), names
+    assert len(draft.edges) == 1
+    assert len(draft.edge_evidence) == 1
+    assert draft.edge_evidence[0].fragment_edge_id == "e1"
+    suspended = next(node for node in draft.nodes if node.canonical_key == "效力中止")
+    sources = [source for source in draft.node_sources if source.node_id == suspended.node_id]
+    assert [source.fragment_node_id for source in sources] == ["n1"]
+
+
+def test_merge_is_deterministic_across_reruns():
+    records = [_record("frag-dup", _shared_chunk_draft())]
+
+    assert ProjectGraphMerger().merge(VALIDATION_SCOPE, records) == ProjectGraphMerger().merge(
+        VALIDATION_SCOPE, records
+    )

@@ -4,7 +4,8 @@ aliases, provenance and the merge log.
 
 from __future__ import annotations
 
-from typing import Literal, Mapping, Sequence
+from dataclasses import replace
+from typing import Callable, Hashable, Iterable, Literal, Mapping, Sequence, TypeVar
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.application.alignment import ResolvedEntity, merge_edges, resolve_entities
@@ -33,6 +34,44 @@ from tap.modules.graph.domain.vocabulary import normalize_key
 # adapters/mysql_project.py); a merged alias whose normalized form exceeds
 # that bound would fail publication, so it is dropped here instead.
 _MAX_ALIAS_NORM_LENGTH = 255
+
+_Row = TypeVar("_Row")
+
+
+def _unique_by(rows: Iterable[_Row], key: Callable[[_Row], Hashable]) -> tuple[_Row, ...]:
+    seen: set[Hashable] = set()
+    kept: list[_Row] = []
+    for row in rows:
+        identity = key(row)
+        if identity not in seen:
+            seen.add(identity)
+            kept.append(row)
+    return tuple(kept)
+
+
+def dedupe_on_primary_keys(draft: ProjectGraphDraft) -> ProjectGraphDraft:
+    """Keep the first node, edge, provenance row and alias per merged-table
+    primary key, in input order.
+
+    A model batch often repeats one edge or one entity under several fragment
+    ids grounded in the same chunk; once aligned they share a merged primary
+    key, and inserting every copy fails publication with an IntegrityError.
+    """
+
+    return replace(
+        draft,
+        nodes=_unique_by(draft.nodes, lambda node: node.node_id),
+        edges=_unique_by(draft.edges, lambda edge: edge.edge_id),
+        node_sources=_unique_by(
+            draft.node_sources,
+            lambda source: (source.node_id, source.source_revision_id, source.chunk_id),
+        ),
+        edge_evidence=_unique_by(
+            draft.edge_evidence,
+            lambda evidence: (evidence.edge_id, evidence.source_revision_id, evidence.chunk_id),
+        ),
+        aliases=_unique_by(draft.aliases, lambda alias: (alias.alias_norm, alias.node_id)),
+    )
 
 
 def _find_node(draft: GraphSnapshotDraft, node_id: str) -> GraphNode:
@@ -125,15 +164,17 @@ class ProjectGraphMerger:
             if len(entity.members) > 1
         )
 
-        return ProjectGraphDraft(
-            fragment_digest=digest,
-            nodes=nodes,
-            edges=edges,
-            node_sources=node_sources,
-            edge_evidence=edge_evidence,
-            aliases=aliases,
-            communities=communities,
-            merge_log=merge_log,
+        return dedupe_on_primary_keys(
+            ProjectGraphDraft(
+                fragment_digest=digest,
+                nodes=nodes,
+                edges=edges,
+                node_sources=node_sources,
+                edge_evidence=edge_evidence,
+                aliases=aliases,
+                communities=communities,
+                merge_log=merge_log,
+            )
         )
 
 

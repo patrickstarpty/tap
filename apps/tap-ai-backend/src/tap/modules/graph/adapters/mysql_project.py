@@ -32,6 +32,7 @@ from tap.modules.graph.adapters.mysql import (
     graph_node_evidence,
     graph_snapshot,
 )
+from tap.modules.graph.application.merger import dedupe_on_primary_keys
 from tap.modules.graph.domain.models import (
     Evidence,
     GraphEdge,
@@ -309,6 +310,7 @@ async def publish_project_version(
     ).scalar_one_or_none()
     if existing is not None:
         raise ValueError(f"project graph version {version} already exists")
+    draft = dedupe_on_primary_keys(draft)
     await session.execute(
         insert(graph_project_version).values(
             **common,

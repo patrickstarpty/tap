@@ -19,6 +19,7 @@ from tap.modules.graph.adapters.mysql_project import (
     graph_merge_log,
     graph_project_alias,
     graph_project_edge,
+    graph_project_edge_evidence,
     graph_project_merge_job,
     graph_project_node,
     graph_project_node_source,
@@ -773,3 +774,102 @@ async def test_reset_only_if_stale_leaves_a_current_fragment_alone(sessions) -> 
             .where(graph_node.c.snapshot_id == request.snapshot.snapshot_id)
         )
     assert node_count == 1
+
+
+async def _seed_repeated_batch(sessions, *, revision_id: str) -> GraphJobRequest:
+    """One fragment whose batch repeated an entity under two ids and one edge
+    three times, every copy grounded in the same chunk: aligned, they share the
+    merged provenance primary keys that used to raise IntegrityError."""
+
+    request = _request(revision_id)
+    snapshot = request.snapshot
+    snapshot_id = snapshot.snapshot_id
+    evidence = tuple(
+        Evidence(
+            evidence_id=f"ev-{snapshot_id}-{name}",
+            snapshot_id=snapshot_id,
+            source_revision_id=snapshot.source_revision_ids[0],
+            document_revision_id=snapshot.document_revision_ids[0],
+            chunk_id=f"chunk-{snapshot_id}-shared",
+            anchor={"kind": "text", "start": start, "end": start + 4},
+            content_digest="sha256:" + ("e" * 64),
+        )
+        for start, name in enumerate(("n1", "n2", "n3", "e1", "e2", "e3"))
+    )
+    nodes = (
+        GraphNode("n1", snapshot_id, "效力中止", "ENTITY", "效力中止", (f"ev-{snapshot_id}-n1",)),
+        GraphNode("n2", snapshot_id, "效力中止", "ENTITY", "效力中止。", (f"ev-{snapshot_id}-n2",)),
+        GraphNode("n3", snapshot_id, "保单", "ENTITY", "保单", (f"ev-{snapshot_id}-n3",)),
+    )
+    edges = tuple(
+        GraphEdge(
+            edge_id=edge_id,
+            snapshot_id=snapshot_id,
+            source_node_id="n3",
+            target_node_id=target,
+            relation_type="RELATED_TO",
+            origin=RelationOrigin.EXTRACTED,
+            confidence=0.8,
+            evidence_ids=(f"ev-{snapshot_id}-{edge_id}",),
+            relation_label="适用",
+        )
+        for edge_id, target in (("e1", "n1"), ("e2", "n2"), ("e3", "n1"))
+    )
+    await MysqlGraphJobStore(sessions).request(VALIDATION_SCOPE, request, now=NOW)
+    await MysqlGraphStore(sessions).publish(
+        VALIDATION_SCOPE, GraphSnapshotDraft(snapshot, nodes, edges, evidence, ())
+    )
+    return request
+
+
+@pytest.mark.asyncio
+async def test_repeated_batch_output_merges_and_publishes_idempotently(sessions) -> None:
+    rev = await _seed_repeated_batch(sessions, revision_id="rev-dup")
+    queue = MysqlProjectMergeQueue(sessions)
+    inputs = MysqlMergeInputs(sessions, FakeCurrentRevisions({rev.revision_id}))
+    lease = timedelta(seconds=300)
+
+    versions = []
+    for attempt in range(2):
+        now = NOW + timedelta(seconds=attempt * 10)
+        await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=now)
+        claim = await queue.claim(
+            VALIDATION_SCOPE, worker_id="worker-1", now=now, lease_duration=lease
+        )
+        assert claim is not None
+        draft = ProjectGraphMerger().merge(
+            VALIDATION_SCOPE, await inputs.load_fragments(VALIDATION_SCOPE)
+        )
+        if attempt == 0:
+            # The publication path dedupes on its own too: a draft carrying
+            # repeated provenance rows (as the merger used to emit) still lands.
+            draft = replace(
+                draft,
+                node_sources=draft.node_sources * 2,
+                edge_evidence=draft.edge_evidence * 2,
+            )
+        versions.append(await queue.complete(VALIDATION_SCOPE, claim, draft, now=now))
+
+    assert versions[0] is not None and versions[0].version == 1
+    assert versions[0].node_count == 2 and versions[0].edge_count == 1
+    # Re-running the same merge over the same fragments changes nothing.
+    assert versions[1] is None
+    async with sessions() as session:
+        version_count = await session.scalar(
+            select(func.count()).select_from(graph_project_version)
+        )
+        evidence_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_project_edge_evidence)
+            .where(graph_project_edge_evidence.c.version == 1)
+        )
+        source_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_project_node_source)
+            .where(graph_project_node_source.c.version == 1)
+        )
+        failure_code = await session.scalar(select(graph_project_merge_job.c.failure_code))
+    assert version_count == 1
+    assert evidence_count == 1
+    assert source_count == 2
+    assert failure_code is None
