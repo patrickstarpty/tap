@@ -106,7 +106,7 @@ def test_graph_batch_settings_defaults_and_bounds() -> None:
 
     # The character budget is the primary batch bound; the chunk count only caps
     # documents split into very many tiny chunks.
-    assert settings.graph_batch_chars == 6000
+    assert settings.graph_batch_chars == 3000
     assert settings.graph_batch_size == 100 and settings.graph_batch_retries == 3
 
     for name, value in (

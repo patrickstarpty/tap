@@ -816,3 +816,69 @@ def test_assemble_fragment_keeps_a_real_node_whose_key_merely_starts_with_docume
     assert "node-handbook" in {node.node_id for node in fragment.nodes}
     assert "edge-handbook" in {edge.edge_id for edge in fragment.edges}
     assert "edge-other" in {edge.edge_id for edge in fragment.edges}
+
+
+def _labelled_draft(specs: tuple[tuple[str, str, tuple[str, ...]], ...]) -> GraphSnapshotDraft:
+    nodes = tuple(
+        GraphNode(node_id, SNAPSHOT.snapshot_id, label, "CONCEPT", label, (), aliases)
+        for node_id, label, aliases in specs
+    )
+    return GraphSnapshotDraft(SNAPSHOT, nodes, (), (), ())
+
+
+def test_known_entities_keep_only_those_the_batch_text_mentions() -> None:
+    draft = _labelled_draft(
+        (
+            ("b0-n1", "保单贷款", ()),
+            ("b0-n2", "宽限期", ()),
+            ("b0-n3", "现金价值", ()),
+            ("b0-n4", "Cash Value Table", ("CV table",)),
+        )
+    )
+    text = "宽限期内…现金价值。现金价值不足时…See the cv-table."
+
+    known = known_entities_from((draft,), text=text)
+
+    # Most-mentioned first, then first-seen; an alias mention counts too.
+    assert [entity["id"] for entity in known] == ["b0-n3", "b0-n2", "b0-n4"]
+    assert set(known[0]) == {"id", "label", "type", "canonicalKey"}
+
+
+def test_known_entities_for_a_batch_are_capped_at_fifty() -> None:
+    draft = _labelled_draft(tuple((f"b0-n{i}", f"条目{i:03d}", ()) for i in range(80)))
+    text = "".join(f"条目{i:03d}" for i in range(80))
+
+    known = known_entities_from((draft,), text=text)
+
+    assert len(known) == 50 and known[0]["id"] == "b0-n0"
+
+
+def test_real_batch_sends_only_mentioned_known_entities() -> None:
+    # Replay of the real group-medical batch 4: 84 known entities were sent with a
+    # 1486-character batch and the model re-copied all of them before writing a
+    # single edge (142 nodes, 0 edges, 8192 tokens).
+    import json
+    from pathlib import Path
+
+    sample = json.loads(
+        (Path(__file__).parents[2] / "fixtures/graph/real_extraction_replay.json").read_text()
+    )["groupMedicalBatch4"]
+    draft = GraphSnapshotDraft(
+        SNAPSHOT,
+        tuple(
+            GraphNode(e["id"], SNAPSHOT.snapshot_id, e["label"], e["type"], e["canonicalKey"])
+            for e in sample["knownEntities"]
+        ),
+        (),
+        (),
+        (),
+    )
+    text = "".join(chunk["content"] for chunk in sample["chunks"])
+
+    known = known_entities_from((draft,), text=text)
+
+    assert len(sample["knownEntities"]) == 84
+    assert 0 < len(known) <= 20
+    labels = {entity["label"] for entity in known}
+    assert {"被保险人", "投保人", "住院费用补偿金"} <= labels
+    assert all(entity["label"] in text or entity["canonicalKey"] in text for entity in known)

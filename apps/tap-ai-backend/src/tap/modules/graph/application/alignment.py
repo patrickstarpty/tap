@@ -11,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 
 from tap.modules.graph.domain.models import GraphEdge, GraphSnapshotDraft, RelationOrigin
+from tap.modules.graph.domain.naming import is_reference_name
 from tap.modules.graph.domain.project import ProjectEdge, project_edge_id, project_node_id
 from tap.modules.graph.domain.vocabulary import normalize_key
 
@@ -26,6 +27,22 @@ ALIGNMENT_SUFFIXES: tuple[str, ...] = (
     "process",
     "clause",
 )
+
+
+def alias_keys(names: Sequence[str]) -> set[str]:
+    """Level-2 (ALIAS) keys of a node's label and aliases.
+
+    A reference word or number ("本合同", "第十九条", "this Policy") means a
+    different thing in every document, so it is never an alignment key, before or
+    after the trailing modifier is stripped.
+    """
+
+    keys: set[str] = set()
+    for name in names:
+        key = alignment_key(name)
+        if not is_reference_name(name) and not is_reference_name(key):
+            keys.add(key)
+    return keys
 
 
 def alignment_key(text: str) -> str:
@@ -254,9 +271,15 @@ def resolve_entities(
     # same cluster a scan in creation order would.
     exact_index: dict[tuple[str, str], _Cluster] = {}
     # Level-2 keys can be shared by several clusters, and the ALIAS match is the
-    # earliest-created one, so the index keeps the smallest creation position per
-    # ``(node_type, key)``; the minimum over a node's keys is that same cluster.
-    alias_index: dict[tuple[str, str], int] = {}
+    # earliest-created one, so each index keeps the smallest creation position per
+    # key; the minimum over a node's keys is that same cluster. A model alias names
+    # an entity only inside its own document ("本合同", "the Plan", an abbreviation
+    # each product defines for itself), so level 2 matches a node's own name
+    # (label) against any document's names, but its other keys only against
+    # clusters holding the same key from the same source revisions. Different
+    # source revisions are different documents, i.e. different products here.
+    label_index: dict[tuple[str, str], int] = {}
+    alias_index: dict[tuple[str, tuple[str, ...], str], int] = {}
     # EMBEDDING matches the best-scoring same-type member of any cluster; the
     # aligner indexes placed members' vectors per node type so each node is
     # scored against all of them in one matrix product (see `_EmbeddingAligner`).
@@ -264,9 +287,11 @@ def resolve_entities(
 
     for fragment in ordered_fragments:
         snapshot_id = fragment.snapshot.snapshot_id
+        source = fragment.snapshot.source_revision_ids
         for node in fragment.nodes:
             key1 = alignment_key(node.canonical_key)
-            keys2 = {alignment_key(node.label)} | {alignment_key(alias) for alias in node.aliases}
+            label_keys = alias_keys((node.label,))
+            keys2 = alias_keys((node.label, *node.aliases))
 
             target: _Cluster | None = None
             rule_used: Literal["EXACT", "ALIAS", "EMBEDDING"] | None = None
@@ -278,8 +303,12 @@ def resolve_entities(
             if target is None:
                 alias_positions = [
                     position
+                    for key in label_keys
+                    if (position := label_index.get((node.node_type, key))) is not None
+                ] + [
+                    position
                     for key in keys2
-                    if (position := alias_index.get((node.node_type, key))) is not None
+                    if (position := alias_index.get((node.node_type, source, key))) is not None
                 ]
                 if alias_positions:
                     target, rule_used = clusters[min(alias_positions)], "ALIAS"
@@ -307,10 +336,14 @@ def resolve_entities(
             target.level1_keys.add(key1)
             exact_index.setdefault((node.node_type, key1), target)
             target.level2_keys |= keys2
-            for key in keys2:
-                known_position = alias_index.get((node.node_type, key))
+            for key in label_keys:
+                known_position = label_index.get((node.node_type, key))
                 if known_position is None or target.position < known_position:
-                    alias_index[(node.node_type, key)] = target.position
+                    label_index[(node.node_type, key)] = target.position
+            for key in keys2:
+                known_position = alias_index.get((node.node_type, source, key))
+                if known_position is None or target.position < known_position:
+                    alias_index[(node.node_type, source, key)] = target.position
             target.labels.append(node.label)
             target.model_aliases.extend(node.aliases)
             target.rule = rule_used if rule_used is not None else target.rule
@@ -321,7 +354,7 @@ def resolve_entities(
         seen: set[str] = set()
         aliases: list[str] = []
         for text in (*cluster.labels, *cluster.model_aliases):
-            if text == label or text in seen:
+            if text == label or text in seen or is_reference_name(text):
                 continue
             seen.add(text)
             aliases.append(text)

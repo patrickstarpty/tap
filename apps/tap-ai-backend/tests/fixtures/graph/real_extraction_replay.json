@@ -1,0 +1,1917 @@
+{
+ "_about": "Sanitized samples from the 2026-10-12 qwen-plus revalidation run over public product terms; replayed through fake gateways only.",
+ "zengliBatch0": {
+  "documentTitle": "aia-cn-zengli-annuity-brochure.pdf",
+  "chunks": [
+   {
+    "content": "产品说明书\n《友邦附加增利宝趸交年金保险（分红型）》是一款分红型的年金产品。\n风险提示\n本产品为分红保险，其红利分配是不确定的，在某些年度红利可能为零。红利分配方式为现金红利。\n本说明书仅供参考，具体保险责任及保险合同的内容以保险合同的保险条款为准。",
+    "ref": "c1"
+   },
+   {
+    "content": "产品基本特征\n分红保险是客户享有本公司分红保险业务红利分配权的一类保险产品。本公司将根据上一法定会计年度本合同所属的分红保险产品组业务的实际经营状况决定各保单年度的红利分配金额，尚未分配的红利是不保证的，在某些年度红利可能为零。本公司一般每年宣布一次红利分配方案，并将以《红利通知书》的方式通知客户每张保单的红利分配金额。\n投保年龄和保险期间\n本附加合同所承保的被保险人的投保年龄为出生满七天至七十岁。\n本附加合同有效至被保险人年满一百零五岁后的首个保险单周年日（若保险单周年日与被保险人生日是同一日期，则至被保险人一百零五岁生日）满期。\n趸缴保险费的支付\n投保人在投保时须一次性向本公司支付保险费，该金额载于保险单上。\n保险责任\n身故保险金\n在本附加合同有效期内，若被保险人身故，则本公司将给付身故保险金予健在的身故保险金受益人，其金额等于被保险人身故时本附加合同的现金价值及趸缴保险费中的较大者。\n本项身故保险金按照身故时的基本保险金额所对应的“趸缴保险费”计算。",
+    "ref": "c2"
+   },
+   {
+    "content": "年金\n若被保险人生存且本附加合同仍然有效，则本公司将在本附加合同的第五个保险单周年日及此后的每个保险单周年日给付年金，直至本附加合同的保险期间届满。在本附加合同的第五个保险单周年日，年金给付金额等于本附加合同基本保险金额的 10%（百分之十）；此后，每年的年金给付金额等于本附加合同基本保险金额的 2%（百分之二）。\n在年金给付期间，若被保险人身故，则本附加合同终止，本公司将不再给付年金。\n满期金\n若被保险人在本附加合同的保险期间届满时仍然生存，则本公司将给付满期金，其金额等于满期时本附加合同的基本保险金额。\n保单红利及红利分配\n红利来源\n红利来源于利差。利差是本公司预定投资收益率和实际投资收益率的差额导致的收益或者亏损。\n红利分配\n本合同的红利分配方式为现金红利。在本合同有效期内，红利是非保证的，在某些年度红利可能为零。",
+    "ref": "c3"
+   },
+   {
+    "content": "在本合同有效期内，自第一个保险单周年日后首个法定会计年度起，本公司每年将根据上一法定会计年度本合同所属的分红保险产品组业务的实际经营状况决定红利的分配，尚未分配的红利是不保证的，在某些年度红利可能为零。若本公司决定该会计年度本合同有红利分配，则该红利将以现金的形式发放，领取人为被保险人。\n本公司每年将向投保人邮寄《红利通知书》，以方便投保人了解红利金额和派发时间。\n现金红利的处理方式以投保人在投保单上所选的为准，且在本合同有效期内，投保人可根据本公司的规定，提出变更现金红利处理方式的书面申请，经本公司同意并在本合同上批注后生效。\n分红险的主要投资策略\n分红险的投资遵循安全与收益并重的原则。一方面，本公司通过合理配置资产确保保险资金能够产生长期、充足、持续稳定的收益，用于支付本公司承诺给客户的各种保险利益；另一方面，我们还遵循投资分散化的原则，密切关注投资环境以控制和分散投资风险，充分保证资金的流动性和安全性。",
+    "ref": "c4"
+   },
+   {
+    "content": "分红保险资金投资范围包括：银行和金融机构存款、债券回购、政府债券、金融债券、企业债券、短期商业票据、证券投资基金、上市公司股票、间接投资基础设施项目和境外投资。\n红利分配政策及确定保单红利水平的影响因素\n影响红利水平的因素可能包括分红保险业务的投资表现、赔付情况、分红保险业务所产生或分摊的费用等。本公司在决定红利分配时还会综合考虑分红账户未来长期的盈利情况等，以维持红利的稳定性和可持续性，避免",
+    "ref": "c5"
+   },
+   {
+    "content": "各年度红利因市场的变化而发生较大的起伏。根据中国保险监督管理委员会的规定，本公司每年向客户实际分配红利额度的比例不低于当年可分配红利额度的 90%。\n责任免除\n因下列情形之一导致被保险人身故的，本公司不承担给付身故保险金的责任：\n（1）投保人对被保险人的故意杀害、故意伤害；\n（2）被保险人故意犯罪或者抗拒依法采取的刑事强制措施；\n（3）被保险人自本附加合同成立或者合同效力恢复之日起二年内自杀，但被保险人自杀时为无民事行为能力人的除外。\n发生上述第（１）项情形导致被保险人身故的，本附加合同终止，投保人已交足二年以上保险费的，本公司向受益人退还本附加合同的现金价值；若无受益人或受益人丧失受益权的，本公司向被保险人的继承人退还本附加合同的现金价值。\n发生上述其他情形导致被保险人身故的，本附加合同终止，本公司向投保人退还本附加合同的现金价值。\n犹豫期及解除合同（退保）\n犹豫期指从投保人收到本附加合同并书面签收起的十日（保险监督管理机构对犹豫期日数另有规定的，从其规定）。",
+    "ref": "c6"
+   },
+   {
+    "content": "投保人在犹豫期内，有权以任何理由将本附加合同交回本公司并申请解除本附加合同，本公司自始不承担保险责任，并返还所有的已付保险费。\n如投保人在犹豫期后申请解除本附加合同，请填写解除合同申请书并向本公司提供下列资料：\n（1）保险合同；\n（2）投保人的有效身份证件。\n自本公司收到解除合同申请书时起，本附加合同终止。本公司自收到解除合同申请书之日起三十日内向投保人退还本公司收到解除合同申请书之日的本附加合同的现金价值。\n投保人犹豫期后解除合同会遭受一定损失。",
+    "ref": "c7"
+   },
+   {
+    "content": "投保示例\n王先生 40岁，成功继承父辈产业，资金充足的他意识到资产配置的重要性，希望在生前就可以将资产传承给下一代，所以选择为其 5岁的儿子购买《友邦附加增利宝趸交年金保险（分红型）》，一次性交纳保费 508,000元，基本保险金额为 50万元，保障至 105岁。具体保险利益如下：保证利益 当年度现金红利 累计现金红利\n保单年度 被保险人年龄 当年度保险费 累计保险费\n年金/满期金 退保金\n（现金价值） 身故保险金\n累计年金/满\n期金 低 中 高 低 中 高\n1 5 508,000 508,000 0 482,500 508,000 0 0 11,210 17,215 0 11,210 17,215\n2 6 0 508,000 0 487,500 508,000 0 0 11,430 17,560 0 22,640 34,775\n3 7 0 508,000 0 493,000 508,000 0 0 11,660 17,910 0 34,300 52,685\n4 8 0 508,000 0 498,000 508,000 0 0 11,895 18,270 0 46,195 70,955\n5 9 0 508,000 50,000 550,000 550,000 50,000 0 12,130 18,635 0 58,325 89,590",
+    "ref": "c8"
+   }
+  ],
+  "finishReason": "length",
+  "usage": {
+   "completion_tokens": 8192,
+   "prompt_tokens": 2451
+  },
+  "truncatedContentHead": "{\"nodes\":[{\"id\":\"n1\",\"label\":\"友邦附加增利宝趸交年金保险（分红型）\",\"type\":\"SYSTEM\",\"canonicalKey\":\"友邦附加增利宝趸交年金保险（分红型）\",\"chunks\":[\"c1\"],\"aliases\":[\"《友邦附加增利宝趸交年金保险（分红型）》\"]},{\"id\":\"n2\",\"label\":\"现金红利\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"现金红利\",\"chunks\":[\"c1\",\"c2\",\"c3\",\"c4\"],\"aliases\":[\"现金红利分配方式\"]},{\"id\":\"n3\",\"label\":\"身故保险金\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"身故保险金\",\"chunks\":[\"c2\"],\"aliases\":[]},{\"id\":\"n4\",\"label\":\"年金\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"年金\",\"chunks\":[\"c3\"],\"aliases\":[]},{\"id\":\"n5\",\"label\":\"满期金\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"满期金\",\"chunks\":[\"c3\"],\"aliases\":[]},{\"id\":\"n6\",\"label\":\"利差\",\"type\":\"CONCEPT\",\"canonicalKey\":\"利差\",\"chunks\":[\"c3\"],\"aliases\":[\"投资收益率差额\"]},{\"id\":\"n7\",\"label\":\"分红保险资金投资范围\",\"type\":\"CONCEPT\",\"canonicalKey\":\"分红保险资金投资范围\",\"chunks\":[\"c5\"],\"aliases\":[]},{\"id\":\"n8\",\"label\":\"责任免除\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"责任免除\",\"chunks\":[\"c6\"],\"aliases\":[]},{\"id\":\"n9\",\"label\":\"犹豫期\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"犹豫期\",\"chunks\":[\"c6\",\"c7\"],\"aliases\":[]},{\"id\":\"n10\",\"label\":\"退保\",\"type\":\"PROCESS\",\"canonicalKey\":\"退保\",\"chunks\":[\"c7\"],\"aliases\":[\"解除合同\"]},{\"id\":\"n11\",\"label\":\"王先生\",\"type\":\"ACTOR\",\"canonicalKey\":\"王先生\",\"chunks\":[\"c8\"],\"aliases\":[]},{\"id\":\"n12\",\"label\":\"被保险人（王先生之子）\",\"type\":\"ACTOR\",\"canonicalKey\":\"被保险人\",\"chunks\":[\"c8\"],\"aliases\":[\"5岁儿子\"]},{\"id\":\"n13\",\"label\":\"基本保险金额\",\"type\":\"CONCEPT\",\"canonicalKey\":\"基本保险金额\",\"chunks\":[\"c2\",\"c3\",\"c8\"],\"aliases\":[]},{\"id\":\"n14\",\"label\":\"趸缴保险费\",\"type\":\"CONCEPT\",\"canonicalKey\":\"趸缴保险费\",\"chunks\":[\"c2\",\"c3\",\"c8\"],\"aliases\":[]},{\"id\":\"n15\",\"label\":\"现金价值\",\"type\":\"CONCEPT\",\"canonicalKey\":\"现金价值\",\"chunks\":[\"c2\",\"c3\",\"c6\",\"c7\",\"c8\"],\"aliases\":[]},{\"id\":\"n16\",\"label\":\"保险单周年日\",\"type\":\"CONCEPT\",\"canonicalKey\":\"保险单周年日\",\"chunks\":[\"c2\",\"c3\"],\"aliases\":[]},{\"id\":\"n17\",\"label\":\"法定会计年度\",\"type\":\"CONCEPT\",\"canonicalKey\":\"法定会计年度\",\"chunks\":[\"c2\",\"c4\"],\"aliases\":[]},{\"id\":\"n18\",\"label\":\"红利通知书\",\"type\":\"SYSTEM\",\"canonicalKey\":\"红利通知书\",\"chunks\":[\"c2\",\"c4\"],\"aliases\":[]},{\"id\":\"n19\",\"label\":\"中国保险监督管理委员会\",\"type\":\"ACTOR\",\"canonicalKey\":\"中国保险监督管理委员会\",\"chunks\":[\"c6\"],\"aliases\":[\"保监会\"]},{\"id\":\"n20\",\"label\":\"投保人\",\"type\":\"ACTOR\",\"canonicalKey\":\"投保人\",\"chunks\":[\"c2\",\"c3\",\"c4\",\"c6\",\"c7\",\"c8\"],\"aliases\":[]},{\"id\":\"n21\",\"label\":\"被保险人\",\"type\":\"ACTOR\",\"canonicalKey\":\"被保险人\",\"chunks\":[\"c2\",\"c3\",\"c4\",\"c6\",\"c7\",\"c8\"],\"aliases\":[]},{\"id\":\"n22\",\"label\":\"受益人\",\"type\":\"ACTOR\",\"canonicalKey\":\"受益人\",\"chunks\":[\"c2\",\"c6\"],\"aliases\":[]},{\"id\":\"n23\",\"label\":\"继承人\",\"type\":\"ACTOR\",\"canonicalKey\":\"继承人\",\"chunks\":[\"c6\"],\"aliases\":[]},{\"id\":\"n24\",\"label\":\"分红保险产品组业务\",\"type\":\"CONCEPT\",\"canonicalKey\":\"分红保险产品组业务\",\"chunks\":[\"c2\",\"c4\"],\"aliases\":[]}],\"edges\":[{\"id\":\"e1\",\"sourceNodeId\":\"n1\",\"targetNodeId\":\"n2\",\"relationType\":\"USES\",\"relationLabel\":\"红利分配方式为现金红利\",\"origin\":\"EXTRACTED\",\"confidence\":1.0,\"chunks\":[\"c1\",\"c2\",\"c3\",\"c4\"]},{\"id\":\"e2\",\"sourceNodeId\":\"n1\",\"targetNodeId\":\"n3\",\"relationType\":\"CONFLICTS_WITH\",\"relationLabel\":\"身故保险金给付条件\",\"origin\":\"EXTRACTED\",\"confidence\":1.0,\"chunks\":[\"c2\"]},{\"id\":\"e3\",\"sourceNodeId\":\"n1\",\"targetNodeId\":\"n4\",\"relationType\":\"TRIGGERS\",\"relationLabel\":\"年金给付起始时间\",\"origin\":\"EXTRACTED\",\"confidence\":1.0,\"chunks\":[\"c3\"]},{\"id\":\"e4\",\"sourceNodeId\":\"n1\",\"targetNodeId\":\"n5\",\"relationType\":\"TRIGGERS\",\"relationLabel\":\"满期金给付条件\",\"origin\":\"EXTRACTED\",\"confidence\":1.0,\"chunks\":[\"c3\"]},{\"id\":\"e5\",\"sourceNodeId\":\"n1\",\"targetNodeId\":\"n6\",\"relationType\":\"DEFINES\",\"relationLabel\":\"红利来源于利差\",\"origin\":\"EXTRACTED\",\"confidence\":1.0,\"chunks\":[\"c3\"]},{\"id\":\"e6\",\"sourceNodeId\":\"n1\",\"targetNodeId\":\"n7\",\"relationType\":\"DEFINES\",\"relationLabel\":\"投资范围包括\",\"origin\":\"EXTRACTED\",\"confidence\":1.0,\"chunks\":[\"c5\"]},{\"id\":\"e7\",\"sourceNodeId\":\"n1\",\"targetNodeId\":\"n8\",\"relationType\":\"EXCEPTION_OF\",\"relationLabel\":\"责任免除情形\",\"origin\":\"EXTRACTED\",\"confidence\":1.0,\"chunks\":[\"c6\"]},{\"id\":\"e8\",\"sourceNodeId\":\"n1\",\"targetNodeId\":\"n9\",\"relationType\":\"DEFINES\",\"relationLabel\":\"犹豫期为十日\",\"origin\":\"EXTRACTED\",\"confidence\":1.0,\"chunks\":[\"c6\",\"c7\"]},{\"id\":\"e9\",\"sourceNodeId\":\"n1\",\"targetNodeId\":\"n10\",\"relationType\":\"SUPERSEDES\",\"relationLabel\":\"犹豫期后解除合同\",\"origin\":\"EXTRACTED\",",
+  "nodes": [
+   {
+    "id": "n1",
+    "label": "友邦附加增利宝趸交年金保险（分红型）",
+    "type": "SYSTEM",
+    "canonicalKey": "友邦附加增利宝趸交年金保险（分红型）",
+    "chunks": [
+     "c1"
+    ],
+    "aliases": [
+     "《友邦附加增利宝趸交年金保险（分红型）》"
+    ]
+   },
+   {
+    "id": "n2",
+    "label": "现金红利",
+    "type": "REQUIREMENT",
+    "canonicalKey": "现金红利",
+    "chunks": [
+     "c1",
+     "c2",
+     "c3",
+     "c4"
+    ],
+    "aliases": [
+     "现金红利分配方式"
+    ]
+   },
+   {
+    "id": "n3",
+    "label": "身故保险金",
+    "type": "REQUIREMENT",
+    "canonicalKey": "身故保险金",
+    "chunks": [
+     "c2"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n4",
+    "label": "年金",
+    "type": "REQUIREMENT",
+    "canonicalKey": "年金",
+    "chunks": [
+     "c3"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n5",
+    "label": "满期金",
+    "type": "REQUIREMENT",
+    "canonicalKey": "满期金",
+    "chunks": [
+     "c3"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n6",
+    "label": "利差",
+    "type": "CONCEPT",
+    "canonicalKey": "利差",
+    "chunks": [
+     "c3"
+    ],
+    "aliases": [
+     "投资收益率差额"
+    ]
+   },
+   {
+    "id": "n7",
+    "label": "分红保险资金投资范围",
+    "type": "CONCEPT",
+    "canonicalKey": "分红保险资金投资范围",
+    "chunks": [
+     "c5"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n8",
+    "label": "责任免除",
+    "type": "REQUIREMENT",
+    "canonicalKey": "责任免除",
+    "chunks": [
+     "c6"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n9",
+    "label": "犹豫期",
+    "type": "REQUIREMENT",
+    "canonicalKey": "犹豫期",
+    "chunks": [
+     "c6",
+     "c7"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n10",
+    "label": "退保",
+    "type": "PROCESS",
+    "canonicalKey": "退保",
+    "chunks": [
+     "c7"
+    ],
+    "aliases": [
+     "解除合同"
+    ]
+   },
+   {
+    "id": "n11",
+    "label": "王先生",
+    "type": "ACTOR",
+    "canonicalKey": "王先生",
+    "chunks": [
+     "c8"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n12",
+    "label": "被保险人（王先生之子）",
+    "type": "ACTOR",
+    "canonicalKey": "被保险人",
+    "chunks": [
+     "c8"
+    ],
+    "aliases": [
+     "5岁儿子"
+    ]
+   },
+   {
+    "id": "n13",
+    "label": "基本保险金额",
+    "type": "CONCEPT",
+    "canonicalKey": "基本保险金额",
+    "chunks": [
+     "c2",
+     "c3",
+     "c8"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n14",
+    "label": "趸缴保险费",
+    "type": "CONCEPT",
+    "canonicalKey": "趸缴保险费",
+    "chunks": [
+     "c2",
+     "c3",
+     "c8"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n15",
+    "label": "现金价值",
+    "type": "CONCEPT",
+    "canonicalKey": "现金价值",
+    "chunks": [
+     "c2",
+     "c3",
+     "c6",
+     "c7",
+     "c8"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n16",
+    "label": "保险单周年日",
+    "type": "CONCEPT",
+    "canonicalKey": "保险单周年日",
+    "chunks": [
+     "c2",
+     "c3"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n17",
+    "label": "法定会计年度",
+    "type": "CONCEPT",
+    "canonicalKey": "法定会计年度",
+    "chunks": [
+     "c2",
+     "c4"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n18",
+    "label": "红利通知书",
+    "type": "SYSTEM",
+    "canonicalKey": "红利通知书",
+    "chunks": [
+     "c2",
+     "c4"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n19",
+    "label": "中国保险监督管理委员会",
+    "type": "ACTOR",
+    "canonicalKey": "中国保险监督管理委员会",
+    "chunks": [
+     "c6"
+    ],
+    "aliases": [
+     "保监会"
+    ]
+   },
+   {
+    "id": "n20",
+    "label": "投保人",
+    "type": "ACTOR",
+    "canonicalKey": "投保人",
+    "chunks": [
+     "c2",
+     "c3",
+     "c4",
+     "c6",
+     "c7",
+     "c8"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n21",
+    "label": "被保险人",
+    "type": "ACTOR",
+    "canonicalKey": "被保险人",
+    "chunks": [
+     "c2",
+     "c3",
+     "c4",
+     "c6",
+     "c7",
+     "c8"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n22",
+    "label": "受益人",
+    "type": "ACTOR",
+    "canonicalKey": "受益人",
+    "chunks": [
+     "c2",
+     "c6"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n23",
+    "label": "继承人",
+    "type": "ACTOR",
+    "canonicalKey": "继承人",
+    "chunks": [
+     "c6"
+    ],
+    "aliases": []
+   },
+   {
+    "id": "n24",
+    "label": "分红保险产品组业务",
+    "type": "CONCEPT",
+    "canonicalKey": "分红保险产品组业务",
+    "chunks": [
+     "c2",
+     "c4"
+    ],
+    "aliases": []
+   }
+  ],
+  "edges": [
+   {
+    "id": "e1",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n2",
+    "relationType": "USES",
+    "relationLabel": "红利分配方式为现金红利",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c1",
+     "c2",
+     "c3",
+     "c4"
+    ]
+   },
+   {
+    "id": "e2",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n3",
+    "relationType": "CONFLICTS_WITH",
+    "relationLabel": "身故保险金给付条件",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e3",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n4",
+    "relationType": "TRIGGERS",
+    "relationLabel": "年金给付起始时间",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c3"
+    ]
+   },
+   {
+    "id": "e4",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n5",
+    "relationType": "TRIGGERS",
+    "relationLabel": "满期金给付条件",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c3"
+    ]
+   },
+   {
+    "id": "e5",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n6",
+    "relationType": "DEFINES",
+    "relationLabel": "红利来源于利差",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c3"
+    ]
+   },
+   {
+    "id": "e6",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n7",
+    "relationType": "DEFINES",
+    "relationLabel": "投资范围包括",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c5"
+    ]
+   },
+   {
+    "id": "e7",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n8",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "责任免除情形",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e8",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n9",
+    "relationType": "DEFINES",
+    "relationLabel": "犹豫期为十日",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c6",
+     "c7"
+    ]
+   },
+   {
+    "id": "e9",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n10",
+    "relationType": "SUPERSEDES",
+    "relationLabel": "犹豫期后解除合同",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e10",
+    "sourceNodeId": "n11",
+    "targetNodeId": "n12",
+    "relationType": "PART_OF",
+    "relationLabel": "父子关系",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c8"
+    ]
+   },
+   {
+    "id": "e11",
+    "sourceNodeId": "n12",
+    "targetNodeId": "n13",
+    "relationType": "RELATED_TO",
+    "relationLabel": "基本保险金额为50万元",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c8"
+    ]
+   },
+   {
+    "id": "e12",
+    "sourceNodeId": "n12",
+    "targetNodeId": "n14",
+    "relationType": "RELATED_TO",
+    "relationLabel": "趸缴保险费为508,000元",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c8"
+    ]
+   },
+   {
+    "id": "e13",
+    "sourceNodeId": "n12",
+    "targetNodeId": "n15",
+    "relationType": "RELATED_TO",
+    "relationLabel": "现金价值随保单年度变化",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c8"
+    ]
+   },
+   {
+    "id": "e14",
+    "sourceNodeId": "n12",
+    "targetNodeId": "n16",
+    "relationType": "RELATED_TO",
+    "relationLabel": "第五个保险单周年日起给付年金",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c3",
+     "c8"
+    ]
+   },
+   {
+    "id": "e15",
+    "sourceNodeId": "n20",
+    "targetNodeId": "n21",
+    "relationType": "APPLIES_TO",
+    "relationLabel": "投保人与被保险人可为不同人",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2",
+     "c8"
+    ]
+   },
+   {
+    "id": "e16",
+    "sourceNodeId": "n20",
+    "targetNodeId": "n22",
+    "relationType": "APPLIES_TO",
+    "relationLabel": "身故保险金受益人",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e17",
+    "sourceNodeId": "n21",
+    "targetNodeId": "n22",
+    "relationType": "APPLIES_TO",
+    "relationLabel": "身故保险金受益人",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e18",
+    "sourceNodeId": "n21",
+    "targetNodeId": "n23",
+    "relationType": "APPLIES_TO",
+    "relationLabel": "无受益人时向继承人退还现金价值",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e19",
+    "sourceNodeId": "n19",
+    "targetNodeId": "n2",
+    "relationType": "REQUIRES",
+    "relationLabel": "实际分配红利比例不低于90%",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e20",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n24",
+    "relationType": "PART_OF",
+    "relationLabel": "所属分红保险产品组业务",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2",
+     "c4"
+    ]
+   },
+   {
+    "id": "e21",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n17",
+    "relationType": "APPLIES_TO",
+    "relationLabel": "自第一个保险单周年日后首个法定会计年度起决定红利",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2",
+     "c4"
+    ]
+   },
+   {
+    "id": "e22",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n18",
+    "relationType": "USES",
+    "relationLabel": "以《红利通知书》通知红利金额",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2",
+     "c4"
+    ]
+   },
+   {
+    "id": "e23",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "身故保险金等于现金价值与趸缴保险费较大者",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e24",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n13",
+    "relationType": "DEFINES",
+    "relationLabel": "满期金等于基本保险金额",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c3"
+    ]
+   },
+   {
+    "id": "e25",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n4",
+    "relationType": "DEFINES",
+    "relationLabel": "年金给付金额为基本保险金额的10%及2%",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c3"
+    ]
+   },
+   {
+    "id": "e26",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n14",
+    "relationType": "DEFINES",
+    "relationLabel": "趸缴保险费一次性支付",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e27",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n16",
+    "relationType": "DEFINES",
+    "relationLabel": "保险期间至被保险人105岁后首个保险单周年日",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e28",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n17",
+    "relationType": "DEFINES",
+    "relationLabel": "每年根据上一法定会计年度经营状况决定红利",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2",
+     "c4"
+    ]
+   },
+   {
+    "id": "e29",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "退保金为现金价值",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e30",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "犹豫期退保返还全部已付保险费",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e31",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "责任免除情形下退还现金价值",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e32",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "年金给付期间身故则合同终止且不再给付年金",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c3"
+    ]
+   },
+   {
+    "id": "e33",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "红利非保证，某些年度可能为零",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c1",
+     "c2",
+     "c3",
+     "c4",
+     "c5",
+     "c6"
+    ]
+   },
+   {
+    "id": "e34",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "尚未分配的红利不保证",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2",
+     "c4"
+    ]
+   },
+   {
+    "id": "e35",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "红利分配方案每年宣布一次",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2",
+     "c4"
+    ]
+   },
+   {
+    "id": "e36",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "现金红利领取人为被保险人",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c4"
+    ]
+   },
+   {
+    "id": "e37",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "现金红利处理方式可变更",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c4"
+    ]
+   },
+   {
+    "id": "e38",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "分红险投资遵循安全与收益并重原则",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c4"
+    ]
+   },
+   {
+    "id": "e39",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "分红险投资遵循分散化原则",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c4"
+    ]
+   },
+   {
+    "id": "e40",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "影响红利水平的因素包括投资表现、赔付情况、费用等",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c5"
+    ]
+   },
+   {
+    "id": "e41",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "红利分配需考虑未来长期盈利以维持稳定性和可持续性",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c5"
+    ]
+   },
+   {
+    "id": "e42",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "各年度红利可能因市场变化而起伏",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e43",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "投保年龄为出生满七天至七十岁",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e44",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "保险期间届满时间为被保险人105岁后首个保险单周年日",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e45",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "犹豫期为收到合同并签收起十日",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e46",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "犹豫期解除合同返还全部已付保险费",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e47",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "犹豫期后解除合同退还现金价值",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e48",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "投保人需提供保险合同和有效身份证件",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e49",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "本公司三十日内退还现金价值",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e50",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "投保人犹豫期后解除合同会遭受损失",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e51",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "红利分配政策受保监会监管",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e52",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "红利分配方案以《红利通知书》形式通知",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2",
+     "c4"
+    ]
+   },
+   {
+    "id": "e53",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "红利来源为利差",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c3"
+    ]
+   },
+   {
+    "id": "e54",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "红利分配方式为现金红利",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c1",
+     "c2",
+     "c3",
+     "c4"
+    ]
+   },
+   {
+    "id": "e55",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "红利非保证，在某些年度可能为零",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c1",
+     "c2",
+     "c3",
+     "c4",
+     "c5",
+     "c6"
+    ]
+   },
+   {
+    "id": "e56",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "尚未分配的红利是不保证的",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2",
+     "c4"
+    ]
+   },
+   {
+    "id": "e57",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "本公司每年宣布一次红利分配方案",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c2",
+     "c4"
+    ]
+   },
+   {
+    "id": "e58",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "红利以现金形式发放，领取人为被保险人",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c4"
+    ]
+   },
+   {
+    "id": "e59",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "现金红利处理方式以投保单所选为准",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c4"
+    ]
+   },
+   {
+    "id": "e60",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n15",
+    "relationType": "DEFINES",
+    "relationLabel": "现金红利处理方式可书面申请变更",
+    "origin": "EXTRACTED",
+    "confidence": 1.0,
+    "chunks": [
+     "c4"
+    ]
+   }
+  ]
+ },
+ "groupMedicalBatch4": {
+  "documentTitle": "aia-cn-group-medical-terms.pdf",
+  "batchIndex": 4,
+  "chunks": [
+   {
+    "content": "订立本合同时，本公司应向投保人说明本合同的内容。对保险条款中免除本公司责任的条款，本公司在订立合同时应当在投保单、保险单或者其他保险凭证上作出足以引起投保人注意的提示，并对该条款的内容以书面或者口头形式向投保人作出明确说明，未作提示或者明确说明的，该条款不产生效力。\n本公司就投保人和被保险人的有关情况提出询问，投保人应当如实告知。\n如果投保人故意或者因重大过失未履行前款规定的如实告知义务， 足以影响本公司决定是否同意承保或者提高保险费率的， 本公司有权解除本合同； 但若上述未如实告知情况仅对是否承担某被保险人保险责任产生影响的，本公司仅有权终止对该被保险人的保险责任 。\n如果投保人故意不履行如实告知义务，对于本合同解除前 或对某被保险人的保险责任终止前 发生的保险事故，本公司不承担给付保险金的责任，并不退还保险费。\n如果投保人因重大过失未履行如实告知义务， 对保险事故的发生有严重影响的， 对于本合同解除前或对某被保险人的保险责任终止前发生的保险事故，本公司不承担给付保险金的责任，但应当退还保险费。",
+    "ref": "c1"
+   },
+   {
+    "content": "本公司在合同订立时已经知道投保人未如实告知的情况的，本公司不得解除合同或终止对该被保险人的保险责任；发生保险事故的，本公司承担给付保险金的责任。",
+    "ref": "c2"
+   },
+   {
+    "content": "第十九条  本公司合同解除权及被保险人的保险责任终止权 的限制\n前条规定的合同解除权及被保险人的保险责任终止权，自本公司知道有解除及终止事由之日起，超过三十日不行使而消灭。自本合同成立之日起超过二年的，本公司不得解除合同及终止被保险人的保险责任；发生保险事故的，本公司承担给付保险金的责任。",
+    "ref": "c3"
+   },
+   {
+    "content": "第二十条  投保人解除合同的手续\n如投保人申请解除本合同，请填写解除合同申请书并向本公司提供下列资料：\n（1）保险合同；\n（2）投保人的有效身份证件或其他相关证明材料。\n自本公司收到解除合同申请书时起 ， 本合同终止。 本公司自收到解除合同申请书之日起三十日内退还未满期净保险费。",
+    "ref": "c4"
+   },
+   {
+    "content": "第二十一条  保险事故通知\n投保人或被保险人知道保险事故后应当在十日内通知本公司。\n如果投保人或被保险人故意或者因重大过失未及时通知， 致使保险事故的性质、 原因、 损失程度等难以确定的，本公司对无法确定的部分，不承担给付保险金的责任， 但本公司通过其他途径已经及时知道或者应当及时知道保险事故发生或者虽未及时通知但不影响本公司确定保险事故的性质、原因、损失程度的除外。",
+    "ref": "c5"
+   },
+   {
+    "content": "第二十二条  保险金申请\n一、在申请住院费用补偿金时，被保险人须填写保险金给付申请书，并提供下列证明和资料：\n（1）完整的门、急诊病历卡；\n（2）出院小结；\n（3）住院医疗正式收据；\n（4）住院费用清单；\n（5）所能提供的与确认保险事故的性质、原因等有关的其他证明和资料。\n二、在申请指定门急诊费用补偿金时，被保险人须填写保险金给付申请书，并提供下列证明和资料：\n（1）完整的门、急诊病历卡；\n（2）门诊医疗正式收据；\n（3）门诊费用清单；\n（4）所能提供的与确认保险事故的性质、原因等有关的其他证明和资料。\n被保险人申请门诊手术费补偿金的，还应提供由医生（释义三十四）出具的诊断书、手术证明；被保险人申请住院前后门急诊费补偿金的，还应提供出院小结。\n被保险人发生就医费用并提出保险金申请后，应向本公司递交被保险人相应的医院病史资料及医院所签发的住院或门诊收据原件。当赔付金额未达实际发生的住院或门诊费用全额时，被保险人可书面向本公司申请发还收据原件。本公司在加盖",
+    "ref": "c6"
+   },
+   {
+    "content": "印戳并注明已赔付金额后发还收据原件。以上证明和资料不完整的，本公司将及时一次性通知被保险人补充提供有关证明和资料。",
+    "ref": "c7"
+   }
+  ],
+  "knownEntities": [
+   {
+    "canonicalKey": "友邦保险",
+    "id": "b0-n1",
+    "label": "友邦保险",
+    "type": "ACTOR"
+   },
+   {
+    "canonicalKey": "友邦尊享智选康惠团体医疗保险",
+    "id": "b0-n2",
+    "label": "友邦尊享智选康惠团体医疗保险",
+    "type": "SYSTEM"
+   },
+   {
+    "canonicalKey": "法人",
+    "id": "b0-n3",
+    "label": "法人",
+    "type": "ACTOR"
+   },
+   {
+    "canonicalKey": "非法人组织",
+    "id": "b0-n4",
+    "label": "非法人组织",
+    "type": "ACTOR"
+   },
+   {
+    "canonicalKey": "其他不以购买保险为目的而组成的团体",
+    "id": "b0-n5",
+    "label": "其他不以购买保险为目的而组成的团体",
+    "type": "ACTOR"
+   },
+   {
+    "canonicalKey": "被保险人",
+    "id": "b0-n6",
+    "label": "被保险人",
+    "type": "ACTOR"
+   },
+   {
+    "canonicalKey": "投保人",
+    "id": "b0-n7",
+    "label": "投保人",
+    "type": "ACTOR"
+   },
+   {
+    "canonicalKey": "境内医院",
+    "id": "b0-n8",
+    "label": "境内医院",
+    "type": "ENTITY"
+   },
+   {
+    "canonicalKey": "意外事故",
+    "id": "b0-n9",
+    "label": "意外事故",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "疾病",
+    "id": "b0-n10",
+    "label": "疾病",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "等待期",
+    "id": "b0-n11",
+    "label": "等待期",
+    "type": "PROCESS"
+   },
+   {
+    "canonicalKey": "住院费用补偿金",
+    "id": "b0-n12",
+    "label": "住院费用补偿金",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "指定门急诊费用补偿金",
+    "id": "b0-n13",
+    "label": "指定门急诊费用补偿金",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "床位费",
+    "id": "b0-n14",
+    "label": "床位费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "膳食费",
+    "id": "b0-n15",
+    "label": "膳食费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "药品费",
+    "id": "b0-n16",
+    "label": "药品费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "住院手术费",
+    "id": "b0-n17",
+    "label": "住院手术费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "其他费用",
+    "id": "b0-n18",
+    "label": "其他费用",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "高端病房",
+    "id": "b0-n19",
+    "label": "高端病房",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "社会医疗保险",
+    "id": "b0-n20",
+    "label": "社会医疗保险",
+    "type": "SYSTEM"
+   },
+   {
+    "canonicalKey": "住院前后门急诊费",
+    "id": "b0-n21",
+    "label": "住院前后门急诊费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "门诊手术费",
+    "id": "b0-n22",
+    "label": "门诊手术费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "放化疗",
+    "id": "b0-n23",
+    "label": "放化疗",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "透析",
+    "id": "b0-n24",
+    "label": "透析",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "器官移植后抗排异治疗门诊费",
+    "id": "b0-n25",
+    "label": "器官移植后抗排异治疗门诊费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "门诊靶向药费",
+    "id": "b0-n26",
+    "label": "门诊靶向药费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "高端门急诊",
+    "id": "b0-n27",
+    "label": "高端门急诊",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "年度免赔额",
+    "id": "b0-n28",
+    "label": "年度免赔额",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "初算金额",
+    "id": "b0-n29",
+    "label": "初算金额",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "给付比例",
+    "id": "b0-n30",
+    "label": "给付比例",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "公费医疗",
+    "id": "b0-n31",
+    "label": "公费医疗",
+    "type": "SYSTEM"
+   },
+   {
+    "canonicalKey": "剩余年度免赔额",
+    "id": "b0-n32",
+    "label": "剩余年度免赔额",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "约定项目费用",
+    "id": "b0-n33",
+    "label": "约定项目费用",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "年度免赔额",
+    "id": "b1-n1",
+    "label": "年度免赔额",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "补偿原则",
+    "id": "b1-n2",
+    "label": "补偿原则",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "指定门急诊费用补偿金",
+    "id": "b1-n3",
+    "label": "指定门急诊费用补偿金",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "住院费用补偿金",
+    "id": "b1-n4",
+    "label": "住院费用补偿金",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "责任免除",
+    "id": "b1-n5",
+    "label": "责任免除",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "保险合同成立与生效",
+    "id": "b1-n6",
+    "label": "保险合同成立与生效",
+    "type": "PROCESS"
+   },
+   {
+    "canonicalKey": "保险期间",
+    "id": "b2-n1",
+    "label": "保险期间",
+    "type": "PROCESS"
+   },
+   {
+    "canonicalKey": "续保",
+    "id": "b2-n2",
+    "label": "续保",
+    "type": "PROCESS"
+   },
+   {
+    "canonicalKey": "合同效力终止",
+    "id": "b2-n3",
+    "label": "合同效力终止",
+    "type": "PROCESS"
+   },
+   {
+    "canonicalKey": "年龄错误处理",
+    "id": "b2-n4",
+    "label": "年龄错误处理",
+    "type": "PROCESS"
+   },
+   {
+    "canonicalKey": "资料提供义务",
+    "id": "b2-n5",
+    "label": "资料提供义务",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "职业变更通知",
+    "id": "b2-n6",
+    "label": "职业变更通知",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "拒保职业",
+    "id": "b2-n7",
+    "label": "拒保职业",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "未满期净保险费",
+    "id": "b2-n8",
+    "label": "未满期净保险费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "保险责任终止",
+    "id": "b2-n9",
+    "label": "保险责任终止",
+    "type": "PROCESS"
+   },
+   {
+    "canonicalKey": "保险事故",
+    "id": "b2-n10",
+    "label": "保险事故",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "实付保险费",
+    "id": "b2-n11",
+    "label": "实付保险费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "应付保险费",
+    "id": "b2-n12",
+    "label": "应付保险费",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "保险金给付比例",
+    "id": "b2-n13",
+    "label": "保险金给付比例",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "个人资料准确性保证",
+    "id": "b2-n14",
+    "label": "个人资料准确性保证",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "资料调阅权",
+    "id": "b2-n15",
+    "label": "资料调阅权",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "个人资料收集与使用",
+    "id": "b2-n16",
+    "label": "个人资料收集与使用",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "法定工作年龄",
+    "id": "b2-n17",
+    "label": "法定工作年龄",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "书面通知",
+    "id": "b2-n18",
+    "label": "书面通知",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "保险责任终止日",
+    "id": "b2-n19",
+    "label": "保险责任终止日",
+    "type": "PROCESS"
+   },
+   {
+    "canonicalKey": "保险单周年日",
+    "id": "b2-n20",
+    "label": "保险单周年日",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "被保险人年满九十九岁",
+    "id": "b2-n21",
+    "label": "被保险人年满九十九岁",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "被保险人年满一百岁",
+    "id": "b2-n22",
+    "label": "被保险人年满一百岁",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "首次投保年龄",
+    "id": "b2-n23",
+    "label": "首次投保年龄",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "出生满三十日",
+    "id": "b2-n24",
+    "label": "出生满三十日",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "六十岁",
+    "id": "b2-n25",
+    "label": "六十岁",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "九十九岁生日",
+    "id": "b2-n26",
+    "label": "九十九岁生日",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "一百岁生日",
+    "id": "b2-n27",
+    "label": "一百岁生日",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "累计给付之和",
+    "id": "b2-n28",
+    "label": "累计给付之和",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "给付最高限额",
+    "id": "b2-n29",
+    "label": "给付最高限额",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "投保人破产",
+    "id": "b2-n30",
+    "label": "投保人破产",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "投保人解散",
+    "id": "b2-n31",
+    "label": "投保人解散",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "合同解除权",
+    "id": "b2-n32",
+    "label": "合同解除权",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "保险责任终止权",
+    "id": "b2-n33",
+    "label": "保险责任终止权",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "职业分类",
+    "id": "b2-n34",
+    "label": "职业分类",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "保险费补交",
+    "id": "b2-n35",
+    "label": "保险费补交",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "保险费退还",
+    "id": "b2-n36",
+    "label": "保险费退还",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "保险责任",
+    "id": "b2-n37",
+    "label": "保险责任",
+    "type": "REQUIREMENT"
+   },
+   {
+    "canonicalKey": "保险事故发生前",
+    "id": "b2-n38",
+    "label": "保险事故发生前",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "保险事故发生后",
+    "id": "b2-n39",
+    "label": "保险事故发生后",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "身故保险金受益人",
+    "id": "b2-n40",
+    "label": "身故保险金受益人",
+    "type": "ACTOR"
+   },
+   {
+    "canonicalKey": "保险计划类别",
+    "id": "b2-n41",
+    "label": "保险计划类别",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "被保资格终止日",
+    "id": "b2-n42",
+    "label": "被保资格终止日",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "保险金额",
+    "id": "b2-n43",
+    "label": "保险金额",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "职务",
+    "id": "b2-n44",
+    "label": "职务",
+    "type": "CONCEPT"
+   },
+   {
+    "canonicalKey": "职业",
+    "id": "b2-n45",
+    "label": "职业",
+    "type": "CONCEPT"
+   }
+  ],
+  "finishReason": "length",
+  "usage": {
+   "completion_tokens": 8192,
+   "prompt_tokens": 3755
+  },
+  "truncatedContentHead": "{\"nodes\":[{\"id\":\"b0-n1\",\"label\":\"友邦保险\",\"type\":\"ACTOR\",\"canonicalKey\":\"友邦保险\",\"chunks\":[\"c1\"],\"aliases\":[]},{\"id\":\"b0-n2\",\"label\":\"友邦尊享智选康惠团体医疗保险\",\"type\":\"SYSTEM\",\"canonicalKey\":\"友邦尊享智选康惠团体医疗保险\",\"chunks\":[\"c1\"],\"aliases\":[]},{\"id\":\"b0-n6\",\"label\":\"被保险人\",\"type\":\"ACTOR\",\"canonicalKey\":\"被保险人\",\"chunks\":[\"c1\",\"c5\",\"c6\"],\"aliases\":[]},{\"id\":\"b0-n7\",\"label\":\"投保人\",\"type\":\"ACTOR\",\"canonicalKey\":\"投保人\",\"chunks\":[\"c1\",\"c5\",\"c6\"],\"aliases\":[]},{\"id\":\"b2-n10\",\"label\":\"保险事故\",\"type\":\"CONCEPT\",\"canonicalKey\":\"保险事故\",\"chunks\":[\"c1\",\"c2\",\"c3\",\"c5\",\"c6\"],\"aliases\":[]},{\"id\":\"b2-n32\",\"label\":\"合同解除权\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"合同解除权\",\"chunks\":[\"c3\"],\"aliases\":[]},{\"id\":\"b2-n33\",\"label\":\"保险责任终止权\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险责任终止权\",\"chunks\":[\"c3\"],\"aliases\":[]},{\"id\":\"b2-n36\",\"label\":\"保险费退还\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险费退还\",\"chunks\":[\"c4\"],\"aliases\":[]},{\"id\":\"b2-n37\",\"label\":\"保险责任\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险责任\",\"chunks\":[\"c1\",\"c2\",\"c3\"],\"aliases\":[]},{\"id\":\"b2-n38\",\"label\":\"保险事故发生前\",\"type\":\"CONCEPT\",\"canonicalKey\":\"保险事故发生前\",\"chunks\":[\"c1\"],\"aliases\":[]},{\"id\":\"b2-n39\",\"label\":\"保险事故发生后\",\"type\":\"CONCEPT\",\"canonicalKey\":\"保险事故发生后\",\"chunks\":[\"c1\",\"c2\",\"c3\"],\"aliases\":[]},{\"id\":\"n1\",\"label\":\"如实告知义务\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"如实告知义务\",\"chunks\":[\"c1\"],\"aliases\":[\"如实告知\"]},{\"id\":\"n2\",\"label\":\"提示与明确说明义务\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"提示与明确说明义务\",\"chunks\":[\"c1\"],\"aliases\":[\"提示义务\",\"明确说明义务\"]},{\"id\":\"n3\",\"label\":\"保险事故通知义务\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险事故通知义务\",\"chunks\":[\"c5\"],\"aliases\":[\"及时通知义务\"]},{\"id\":\"n4\",\"label\":\"保险金申请资料提供义务\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险金申请资料提供义务\",\"chunks\":[\"c6\",\"c7\"],\"aliases\":[\"资料提供义务\"]},{\"id\":\"n5\",\"label\":\"未满期净保险费退还期限\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"未满期净保险费退还期限\",\"chunks\":[\"c4\"],\"aliases\":[\"三十日退还期限\"]},{\"id\":\"n6\",\"label\":\"合同解除权消灭期限\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"合同解除权消灭期限\",\"chunks\":[\"c3\"],\"aliases\":[\"三十日不行使而消灭\"]},{\"id\":\"n7\",\"label\":\"合同成立二年不可抗辩期\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"合同成立二年不可抗辩期\",\"chunks\":[\"c3\"],\"aliases\":[\"二年不可抗辩期\"]},{\"id\":\"n8\",\"label\":\"保险责任终止情形\",\"type\":\"PROCESS\",\"canonicalKey\":\"保险责任终止情形\",\"chunks\":[\"c1\"],\"aliases\":[\"终止对该被保险人的保险责任\"]},{\"id\":\"n9\",\"label\":\"保险合同终止\",\"type\":\"PROCESS\",\"canonicalKey\":\"保险合同终止\",\"chunks\":[\"c4\"],\"aliases\":[\"合同终止\"]},{\"id\":\"n10\",\"label\":\"保险金给付责任\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险金给付责任\",\"chunks\":[\"c1\",\"c2\",\"c3\"],\"aliases\":[\"承担给付保险金的责任\"]},{\"id\":\"n11\",\"label\":\"免责条款不产生效力\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"免责条款不产生效力\",\"chunks\":[\"c1\"],\"aliases\":[\"条款不产生效力\"]},{\"id\":\"n12\",\"label\":\"保险费不退还\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险费不退还\",\"chunks\":[\"c1\"],\"aliases\":[\"不退还保险费\"]},{\"id\":\"n13\",\"label\":\"保险费退还\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险费退还\",\"chunks\":[\"c1\"],\"aliases\":[\"应当退还保险费\"]},{\"id\":\"n14\",\"label\":\"保险责任不承担\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险责任不承担\",\"chunks\":[\"c1\",\"c5\"],\"aliases\":[\"不承担给付保险金的责任\"]},{\"id\":\"n15\",\"label\":\"保险责任部分不承担\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险责任部分不承担\",\"chunks\":[\"c5\"],\"aliases\":[\"对无法确定的部分不承担\"]},{\"id\":\"n16\",\"label\":\"保险责任承担例外\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险责任承担例外\",\"chunks\":[\"c5\"],\"aliases\":[\"虽未及时通知但不影响确定事故的除外\"]},{\"id\":\"n17\",\"label\":\"保险合同解除前提\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险合同解除前提\",\"chunks\":[\"c1\"],\"aliases\":[\"足以影响承保或提高费率\"]},{\"id\":\"n18\",\"label\":\"保险责任终止前提\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"保险责任终止前提\",\"chunks\":[\"c1\"],\"aliases\":[\"仅对是否承担某被保险人保险责任产生影响\"]},{\"id\":\"n19\",\"label\":\"合同解除权及保险责任终止权限制\",\"type\":\"REQUIREMENT\",\"canonicalKey\":\"合同解除权及保险责任终止权限制\",\"chunks\":[\"c3\"],\"aliases\":[\"限制\"]},{\"id\":\"n20\",\"label\":\"保险金申请材料\",\"type\":\"CONCEPT\",\"canonicalKey\":\"保险金申请材料\",\"chunks\":[\"c6\",\"c7\"],\"aliases\":[\"证明和资料\"]},{\"id\":\"n21\",\"label\":\"住院费用补偿金申请材料\",\"type\":\"CONCEPT\",\"canonicalKey\":\"住院费用补偿金申请材料\",\"chunks\":[\"c6\"],\"aliases\":[\"住院费用补偿金所需资料\"]},{\"id\":\"n22\",\"label\":\"指定门急诊费用补偿金申请材料\",\"type\":\"CONCEPT\",\"canonicalKey\":\"指定门急诊费用补偿金申请材料\",\"chunks\":[\"c6\"],\"aliases\":[\"指定门急诊费用补偿金所需资料\"]},{\"id\":\"n23\",\"label\":\"门诊手术费补偿金附加材料\",\"type\":\"CONCEPT\",\"canonicalKey\":\"门诊手术费补偿金附加材料\",\"chunks\":[\"c6\"],\"aliases\":[\"门诊手术费附加材料\"]},{\"id\":\"n24\",\"label\":\"住院"
+ },
+ "aliasMerges": [
+  {
+   "projectLabel": "友邦保险",
+   "members": [
+    {
+     "snapshot": "grs_45a3fedafb1a904778bd630a13b2f8db",
+     "revision": "rev_c465e3984bf15feaadb60201a2a88ed81ee010a1aea31b317f9160dcb912cba2",
+     "file": "aia-cn-group-medical-terms.pdf",
+     "id": "b0-n1",
+     "label": "友邦保险",
+     "type": "ACTOR",
+     "key": "友邦保险",
+     "aliases": []
+    },
+    {
+     "snapshot": "grs_45a3fedafb1a904778bd630a13b2f8db",
+     "revision": "rev_c465e3984bf15feaadb60201a2a88ed81ee010a1aea31b317f9160dcb912cba2",
+     "file": "aia-cn-group-medical-terms.pdf",
+     "id": "b6-n11",
+     "label": "本公司",
+     "type": "ACTOR",
+     "key": "本公司",
+     "aliases": [
+      "友邦保险"
+     ]
+    },
+    {
+     "snapshot": "grs_dd89e1ae4829484b886773931156b0d2",
+     "revision": "rev_08eed1e581bede6a9de126f500afb0100a3d822d6a5103568b2fdd88922a5b06",
+     "file": "aia-cn-shengshi-leyou-2-whole-life-terms.pdf",
+     "id": "b0-n1",
+     "label": "友邦人寿保险有限公司",
+     "type": "ACTOR",
+     "key": "友邦人寿保险有限公司",
+     "aliases": [
+      "本公司",
+      "我们"
+     ]
+    }
+   ]
+  },
+  {
+   "projectLabel": "友邦尊享智选康惠团体医疗保险",
+   "members": [
+    {
+     "snapshot": "grs_45a3fedafb1a904778bd630a13b2f8db",
+     "revision": "rev_c465e3984bf15feaadb60201a2a88ed81ee010a1aea31b317f9160dcb912cba2",
+     "file": "aia-cn-group-medical-terms.pdf",
+     "id": "b0-n2",
+     "label": "友邦尊享智选康惠团体医疗保险",
+     "type": "SYSTEM",
+     "key": "友邦尊享智选康惠团体医疗保险",
+     "aliases": [
+      "本合同"
+     ]
+    },
+    {
+     "snapshot": "grs_b828618673307818beb61e2760ccf313",
+     "revision": "rev_6f7068b62b43dcbed59ff7ffe06edd1c523d5cd9eddd6d0d41d97c690badc84a",
+     "file": "aia-cn-youxiang-changban-2025-care-terms.pdf",
+     "id": "b0-n1",
+     "label": "友邦优享长伴（2025）终身护理保险",
+     "type": "SYSTEM",
+     "key": "友邦优享长伴（2025）终身护理保险",
+     "aliases": [
+      "本合同"
+     ]
+    }
+   ]
+  },
+  {
+   "projectLabel": "境内医院",
+   "members": [
+    {
+     "snapshot": "grs_45a3fedafb1a904778bd630a13b2f8db",
+     "revision": "rev_c465e3984bf15feaadb60201a2a88ed81ee010a1aea31b317f9160dcb912cba2",
+     "file": "aia-cn-group-medical-terms.pdf",
+     "id": "b0-n8",
+     "label": "境内医院",
+     "type": "ENTITY",
+     "key": "境内医院",
+     "aliases": [
+      "医院"
+     ]
+    },
+    {
+     "snapshot": "grs_45a3fedafb1a904778bd630a13b2f8db",
+     "revision": "rev_c465e3984bf15feaadb60201a2a88ed81ee010a1aea31b317f9160dcb912cba2",
+     "file": "aia-cn-group-medical-terms.pdf",
+     "id": "b5-n6",
+     "label": "医院",
+     "type": "ENTITY",
+     "key": "医院",
+     "aliases": []
+    }
+   ]
+  },
+  {
+   "projectLabel": "指定水陆公共交通工具",
+   "members": [
+    {
+     "snapshot": "grs_82634e13a4229f407793c80f35916b12",
+     "revision": "rev_739bf58488eccf76c6ac66b2142db3a567037762993f248f17337cc8c1621fac",
+     "file": "aia-cn-yuexiang-annuity-terms.pdf",
+     "id": "b0-n14",
+     "label": "指定水陆公共交通工具",
+     "type": "CONCEPT",
+     "key": "指定水陆公共交通工具",
+     "aliases": [
+      "释义四"
+     ]
+    },
+    {
+     "snapshot": "grs_b828618673307818beb61e2760ccf313",
+     "revision": "rev_6f7068b62b43dcbed59ff7ffe06edd1c523d5cd9eddd6d0d41d97c690badc84a",
+     "file": "aia-cn-youxiang-changban-2025-care-terms.pdf",
+     "id": "b0-n11",
+     "label": "确定伤残",
+     "type": "CONCEPT",
+     "key": "确定伤残",
+     "aliases": [
+      "释义四"
+     ]
+    }
+   ]
+  },
+  {
+   "projectLabel": "明确说明与如实告知",
+   "members": [
+    {
+     "snapshot": "grs_82634e13a4229f407793c80f35916b12",
+     "revision": "rev_739bf58488eccf76c6ac66b2142db3a567037762993f248f17337cc8c1621fac",
+     "file": "aia-cn-yuexiang-annuity-terms.pdf",
+     "id": "b2-n9",
+     "label": "明确说明与如实告知",
+     "type": "REQUIREMENT",
+     "key": "明确说明与如实告知",
+     "aliases": []
+    },
+    {
+     "snapshot": "grs_b828618673307818beb61e2760ccf313",
+     "revision": "rev_6f7068b62b43dcbed59ff7ffe06edd1c523d5cd9eddd6d0d41d97c690badc84a",
+     "file": "aia-cn-youxiang-changban-2025-care-terms.pdf",
+     "id": "b3-n7",
+     "label": "明确说明与如实告知",
+     "type": "REQUIREMENT",
+     "key": "明确说明与如实告知",
+     "aliases": [
+      "第十九条"
+     ]
+    },
+    {
+     "snapshot": "grs_dd89e1ae4829484b886773931156b0d2",
+     "revision": "rev_08eed1e581bede6a9de126f500afb0100a3d822d6a5103568b2fdd88922a5b06",
+     "file": "aia-cn-shengshi-leyou-2-whole-life-terms.pdf",
+     "id": "b1-n7",
+     "label": "保单贷款规则",
+     "type": "REQUIREMENT",
+     "key": "保单贷款规则",
+     "aliases": [
+      "第十九条"
+     ]
+    }
+   ]
+  },
+  {
+   "projectLabel": "效力中止",
+   "members": [
+    {
+     "snapshot": "grs_b828618673307818beb61e2760ccf313",
+     "revision": "rev_6f7068b62b43dcbed59ff7ffe06edd1c523d5cd9eddd6d0d41d97c690badc84a",
+     "file": "aia-cn-youxiang-changban-2025-care-terms.pdf",
+     "id": "b3-n2",
+     "label": "效力中止",
+     "type": "PROCESS",
+     "key": "效力中止",
+     "aliases": [
+      "第十五条"
+     ]
+    },
+    {
+     "snapshot": "grs_b828618673307818beb61e2760ccf313",
+     "revision": "rev_6f7068b62b43dcbed59ff7ffe06edd1c523d5cd9eddd6d0d41d97c690badc84a",
+     "file": "aia-cn-youxiang-changban-2025-care-terms.pdf",
+     "id": "b3-n3",
+     "label": "效力恢复",
+     "type": "PROCESS",
+     "key": "效力恢复",
+     "aliases": [
+      "第十五条"
+     ]
+    },
+    {
+     "snapshot": "grs_dd89e1ae4829484b886773931156b0d2",
+     "revision": "rev_08eed1e581bede6a9de126f500afb0100a3d822d6a5103568b2fdd88922a5b06",
+     "file": "aia-cn-shengshi-leyou-2-whole-life-terms.pdf",
+     "id": "b1-n3",
+     "label": "宣告死亡处理规则",
+     "type": "PROCESS",
+     "key": "宣告死亡处理规则",
+     "aliases": [
+      "第十五条"
+     ]
+    }
+   ]
+  },
+  {
+   "projectLabel": "自动垫付保险费",
+   "members": [
+    {
+     "snapshot": "grs_b828618673307818beb61e2760ccf313",
+     "revision": "rev_6f7068b62b43dcbed59ff7ffe06edd1c523d5cd9eddd6d0d41d97c690badc84a",
+     "file": "aia-cn-youxiang-changban-2025-care-terms.pdf",
+     "id": "b3-n4",
+     "label": "自动垫付保险费",
+     "type": "REQUIREMENT",
+     "key": "自动垫付保险费",
+     "aliases": [
+      "第十六条"
+     ]
+    },
+    {
+     "snapshot": "grs_dd89e1ae4829484b886773931156b0d2",
+     "revision": "rev_08eed1e581bede6a9de126f500afb0100a3d822d6a5103568b2fdd88922a5b06",
+     "file": "aia-cn-shengshi-leyou-2-whole-life-terms.pdf",
+     "id": "b1-n4",
+     "label": "保险费支付约定",
+     "type": "REQUIREMENT",
+     "key": "保险费支付约定",
+     "aliases": [
+      "第十六条"
+     ]
+    }
+   ]
+  },
+  {
+   "projectLabel": "减额付清保险",
+   "members": [
+    {
+     "snapshot": "grs_b828618673307818beb61e2760ccf313",
+     "revision": "rev_6f7068b62b43dcbed59ff7ffe06edd1c523d5cd9eddd6d0d41d97c690badc84a",
+     "file": "aia-cn-youxiang-changban-2025-care-terms.pdf",
+     "id": "b3-n5",
+     "label": "减额付清保险",
+     "type": "REQUIREMENT",
+     "key": "减额付清保险",
+     "aliases": [
+      "第十七条"
+     ]
+    },
+    {
+     "snapshot": "grs_dd89e1ae4829484b886773931156b0d2",
+     "revision": "rev_08eed1e581bede6a9de126f500afb0100a3d822d6a5103568b2fdd88922a5b06",
+     "file": "aia-cn-shengshi-leyou-2-whole-life-terms.pdf",
+     "id": "b1-n5",
+     "label": "宽限期规则",
+     "type": "REQUIREMENT",
+     "key": "宽限期规则",
+     "aliases": [
+      "第十七条"
+     ]
+    }
+   ]
+  },
+  {
+   "projectLabel": "合同解除权的限制",
+   "members": [
+    {
+     "snapshot": "grs_b828618673307818beb61e2760ccf313",
+     "revision": "rev_6f7068b62b43dcbed59ff7ffe06edd1c523d5cd9eddd6d0d41d97c690badc84a",
+     "file": "aia-cn-youxiang-changban-2025-care-terms.pdf",
+     "id": "b3-n8",
+     "label": "合同解除权的限制",
+     "type": "REQUIREMENT",
+     "key": "合同解除权的限制",
+     "aliases": [
+      "第二十条"
+     ]
+    },
+    {
+     "snapshot": "grs_dd89e1ae4829484b886773931156b0d2",
+     "revision": "rev_08eed1e581bede6a9de126f500afb0100a3d822d6a5103568b2fdd88922a5b06",
+     "file": "aia-cn-shengshi-leyou-2-whole-life-terms.pdf",
+     "id": "b1-n8",
+     "label": "自动垫交规则",
+     "type": "REQUIREMENT",
+     "key": "自动垫交规则",
+     "aliases": [
+      "第二十条"
+     ]
+    }
+   ]
+  }
+ ]
+}

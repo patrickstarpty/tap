@@ -419,7 +419,7 @@ class TapperSettings:
             graph_batch_chars=_integer(
                 values,
                 "TAPPER_GRAPH_BATCH_CHARS",
-                6000,
+                3000,
                 minimum=500,
                 maximum=50000,
             ),

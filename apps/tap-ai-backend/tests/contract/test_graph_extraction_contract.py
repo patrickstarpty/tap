@@ -312,7 +312,10 @@ def test_schema_locks_vocabulary_and_process_type():
 
     nodes = GRAPH_EXTRACTION_SCHEMA["properties"]["nodes"]["items"]["properties"]
     edges = GRAPH_EXTRACTION_SCHEMA["properties"]["edges"]["items"]["properties"]
-    assert set(nodes["type"]["enum"]) == NODE_TYPES and nodes["aliases"]["maxItems"] == 5
+    assert set(nodes["type"]["enum"]) == NODE_TYPES
+    # Aliases are capped at five by the adapter, not by the schema: an over-long
+    # alias list must not fail (or split) a batch.
+    assert "maxItems" not in nodes["aliases"] and "up to five" in nodes["aliases"]["description"]
     assert set(edges["relationType"]["enum"]) == RELATION_TYPES
     assert "relationLabel" in GRAPH_EXTRACTION_SCHEMA["properties"]["edges"]["items"]["required"]
 
@@ -405,3 +408,245 @@ def test_schema_and_prompt_never_ask_the_model_to_copy_hashes_or_anchors():
     assert "contentDigest" not in GRAPH_EXTRACTION_PROMPT
     assert "anchorJson" not in GRAPH_EXTRACTION_PROMPT
     assert "c1" in GRAPH_EXTRACTION_PROMPT
+
+
+def test_schema_and_prompt_bound_each_batch_output():
+    # A real 1500-character batch once wrote 142 nodes and no edges, or 125+ copies
+    # of one edge, until the 8192-token budget cut it off; every list is capped.
+    from tap.modules.graph.adapters.model_gateway_extraction import (
+        GRAPH_BATCH_MAX_EDGES,
+        GRAPH_BATCH_MAX_NODES,
+        GRAPH_EXTRACTION_PROMPT,
+        GRAPH_EXTRACTION_SCHEMA,
+    )
+
+    properties = GRAPH_EXTRACTION_SCHEMA["properties"]
+    assert (GRAPH_BATCH_MAX_NODES, GRAPH_BATCH_MAX_EDGES) == (40, 60)
+    assert properties["nodes"]["maxItems"] == 40
+    assert properties["edges"]["maxItems"] == 60
+    assert properties["provenance"]["maxItems"] == 60
+    assert "at most 40 nodes and at most 60 edges" in GRAPH_EXTRACTION_PROMPT
+    assert "only entities and relations stated in this batch's chunks" in GRAPH_EXTRACTION_PROMPT
+    assert "at most one edge per source, relationType and target" in GRAPH_EXTRACTION_PROMPT
+
+
+def _known_policy_request():
+    return replace(
+        _request(),
+        batch_index=1,
+        known_entities=(
+            {"id": "b0-n1", "label": "Policy", "type": "ENTITY", "canonicalKey": "policy"},
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_edges_reference_known_entities_without_repeating_them(span_recorder):
+    from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROMPT
+
+    output = _output()
+    # The model lists only the new node; the edge cites the known entity by id.
+    output["nodes"] = [output["nodes"][1]]
+    output["edges"][0] = output["edges"][0] | {"sourceNodeId": "b0-n1"}
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_known_policy_request())
+
+    by_id = {node.node_id: node for node in draft.nodes}
+    assert set(by_id) == {"b0-n1", "node-2"}
+    known = by_id["b0-n1"]
+    assert (known.label, known.node_type, known.canonical_key) == ("Policy", "ENTITY", "policy")
+    assert known.evidence_ids == ("c1",)
+    assert [(edge.source_node_id, edge.target_node_id) for edge in draft.edges] == [
+        ("b0-n1", "node-2")
+    ]
+    assert "Never output a known entity in nodes" in GRAPH_EXTRACTION_PROMPT
+    assert "when the text names it differently" in GRAPH_EXTRACTION_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_repeated_known_entities_are_dropped_and_counted(span_recorder):
+    output = _output()
+    # A copy under the known id and a copy under a fresh id with the known key.
+    output["nodes"].append(output["nodes"][0] | {"id": "b0-n1"})
+    output["edges"].append(
+        output["edges"][0] | {"id": "edge-2", "sourceNodeId": "b0-n1", "relationType": "USES"}
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_known_policy_request())
+
+    by_id = {node.node_id: node for node in draft.nodes}
+    assert set(by_id) == {"b0-n1", "node-2"}
+    assert {(edge.edge_id, edge.source_node_id) for edge in draft.edges} == {
+        ("edge-1", "b0-n1"),
+        ("edge-2", "b0-n1"),
+    }
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.repeated_known_entities"] == 2
+
+
+@pytest.mark.asyncio
+async def test_truncated_model_output_is_reported_as_a_truncated_batch():
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+    from tap.modules.graph.domain.extraction import GraphExtractionTruncated
+
+    class TruncatingGateway:
+        async def generate_structured(self, request):
+            raise ModelOutputTruncated()
+
+    with pytest.raises(GraphExtractionTruncated):
+        await ModelGatewayGraphExtraction(TruncatingGateway()).extract(_request())
+
+
+def _real_zengli_replay():
+    from pathlib import Path
+
+    sample = json.loads(
+        (Path(__file__).parents[1] / "fixtures/graph/real_extraction_replay.json").read_text()
+    )["zengliBatch0"]
+    request = replace(
+        _request(),
+        chunks=tuple(
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": f"chunk-{chunk['ref']}",
+                "content": chunk["content"],
+                "anchor": {"kind": "text", "start": 0, "end": 1},
+                "contentDigest": "sha256:" + "a" * 64,
+            }
+            for chunk in sample["chunks"]
+        ),
+        document_title=sample["documentTitle"],
+    )
+    return request, {"nodes": sample["nodes"], "edges": sample["edges"], "provenance": []}
+
+
+@pytest.mark.asyncio
+async def test_real_repeated_edge_loop_is_deduplicated_and_counted(span_recorder):
+    # Replay of the real batch whose output looped on one DEFINES edge until the
+    # 8192-token budget cut it off (first 60 of its 124 edges, 33 of them n1->n15).
+    request, output = _real_zengli_replay()
+    shapes = [(e["sourceNodeId"], e["relationType"], e["targetNodeId"]) for e in output["edges"]]
+    duplicates = len(shapes) - len(set(shapes))
+    assert duplicates == 32
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(request)
+
+    kept = [(e.source_node_id, e.relation_type, e.target_node_id) for e in draft.edges]
+    assert len(kept) == len(set(kept)) == len(set(shapes))
+    loop = next(e for e in draft.edges if (e.source_node_id, e.target_node_id) == ("n1", "n15"))
+    assert loop.relation_type == "DEFINES"
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.duplicate_edges"] == duplicates
+
+
+@pytest.mark.asyncio
+async def test_duplicate_nodes_merge_and_their_edges_follow(span_recorder):
+    output = _output()
+    # The same entity twice under two ids (real batches did this, e.g. b3-n2/b3-n3),
+    # plus an edge through the copy that becomes a duplicate and one that becomes a
+    # self-edge once the copy is merged.
+    output["nodes"].append(output["nodes"][1] | {"id": "node-2b", "chunks": ["c1"]})
+    output["nodes"].append(output["nodes"][0] | {"id": "node-1"})
+    output["edges"].append(output["edges"][0] | {"id": "edge-2", "targetNodeId": "node-2b"})
+    output["edges"].append(
+        output["edges"][0] | {"id": "edge-3", "sourceNodeId": "node-2b", "relationType": "USES"}
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    assert [node.node_id for node in draft.nodes] == ["node-1", "node-2"]
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.duplicate_nodes"] == 2
+    assert spans[0].attributes["tap.graph.duplicate_edges"] == 1
+    assert spans[0].attributes["tap.graph.dropped_edges"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reference_words_never_become_aliases_or_names(span_recorder):
+    from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROMPT
+
+    output = _output()
+    # Real outputs: a product aliased "本合同", the insurer named "本公司" with its
+    # real name as alias, a clause named only by its number, and a clause-long alias.
+    output["nodes"] = [
+        output["nodes"][0]
+        | {"label": "友邦尊享智选康惠团体医疗保险", "canonicalKey": "团体医疗保险"}
+        | {"aliases": ["本合同", "团体医疗保险", "第十九条", "（一）"]},
+        output["nodes"][1]
+        | {"label": "本公司", "canonicalKey": "本公司", "aliases": ["我们", "友邦保险"]},
+        {
+            "id": "node-3",
+            "label": "第十九条",
+            "type": "REQUIREMENT",
+            "canonicalKey": "第十九条",
+            "chunks": ["c1"],
+            "aliases": [],
+        },
+        {
+            "id": "node-4",
+            "label": "保单贷款",
+            "type": "REQUIREMENT",
+            "canonicalKey": "保单贷款",
+            "chunks": ["c1"],
+            "aliases": ["本公司在合同订立时已经知道投保人未如实告知的情况的，本公司不得解除合同"],
+        },
+    ]
+    output["edges"].append(
+        output["edges"][0] | {"id": "edge-2", "sourceNodeId": "node-3", "targetNodeId": "node-4"}
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    by_id = {node.node_id: node for node in draft.nodes}
+    assert set(by_id) == {"node-1", "node-2", "node-4"}
+    assert by_id["node-1"].aliases == ("团体医疗保险",)
+    insurer = by_id["node-2"]
+    assert (insurer.label, insurer.canonical_key, insurer.aliases) == ("友邦保险", "友邦保险", ())
+    assert by_id["node-4"].aliases == ()
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.rejected_names"] == 1
+    assert "never a pronoun" in GRAPH_EXTRACTION_PROMPT and "第十九条" in GRAPH_EXTRACTION_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_six_aliases_on_one_node_are_trimmed_without_splitting_the_batch():
+    from tap.modules.ai.application.schema import validate_output
+    from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_SCHEMA
+
+    output = _output()
+    output["nodes"][0]["aliases"] = [f"Policy name {index}" for index in range(6)]
+    output["nodes"][1]["aliases"] = []
+
+    # The gateway's locked-schema check accepts it (nothing to split) ...
+    validate_output(GRAPH_EXTRACTION_SCHEMA, output)
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    # ... and the adapter keeps the first five.
+    node = next(node for node in draft.nodes if node.node_id == "node-1")
+    assert node.aliases == tuple(f"Policy name {index}" for index in range(5))
+
+
+@pytest.mark.asyncio
+async def test_an_edge_to_a_known_id_not_sent_in_this_request_is_dropped():
+    # "b0-n9" exists in an earlier batch but fell outside this request's 50-entity
+    # cap, so the model cannot have been told about it: the edge is not grounded.
+    output = _output()
+    output["edges"].append(
+        output["edges"][0] | {"id": "edge-2", "sourceNodeId": "b0-n9", "relationType": "USES"}
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_known_policy_request())
+
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    assert "b0-n9" not in {node.node_id for node in draft.nodes}

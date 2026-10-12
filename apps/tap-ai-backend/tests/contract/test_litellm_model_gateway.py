@@ -2229,3 +2229,107 @@ async def test_gateway_deadline_ceiling_allows_a_long_extraction_only_when_confi
             embedding_dimension=2,
             timeout_seconds=301,
         )
+
+
+def _structured_reply(content: str, finish_reason: str = "stop"):
+    def respond(incoming):
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen-plus",
+                "choices": [{"message": {"content": content}, "finish_reason": finish_reason}],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 8192},
+            },
+        )
+
+    return respond
+
+
+def _real_truncated_extraction_head() -> str:
+    from pathlib import Path
+
+    fixture = Path(__file__).parents[1] / "fixtures/graph/real_extraction_replay.json"
+    return json.loads(fixture.read_text())["groupMedicalBatch4"]["truncatedContentHead"]
+
+
+def _items_request(maximum: int):
+    schema = {
+        "type": "object",
+        "properties": {
+            "items": {"type": "array", "maxItems": maximum, "items": {"type": "string"}}
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }
+    return replace(
+        request(ModelOperation.STRUCTURED),
+        schema=schema,
+        schema_digest=digest(json.dumps(schema, sort_keys=True, separators=(",", ":"))),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "finish_reason", "structured"),
+    [
+        ('{"answer":"Grou', "length", request(ModelOperation.STRUCTURED)),
+        # The head of a real qwen-plus graph extraction cut off at 8192 tokens.
+        (_real_truncated_extraction_head(), "stop", request(ModelOperation.STRUCTURED)),
+        ('{"answer":"unterminated', "stop", request(ModelOperation.STRUCTURED)),
+        ('{"items":["a","b","c"]}', "stop", _items_request(2)),
+    ],
+    ids=["length", "real-extraction-head", "unterminated", "over-max-items"],
+)
+async def test_output_that_does_not_fit_is_reported_as_truncated(
+    content, finish_reason, structured
+):
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+
+    gateway = configured_gateway(_structured_reply(content, finish_reason))
+    with pytest.raises(ModelOutputTruncated, match="^model-unavailable$"):
+        await gateway.generate_structured(structured)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ['{"answer":7}', '{"answer":"a"} trailing', "[1,2]x"])
+async def test_complete_but_invalid_output_is_not_reported_as_truncated(content):
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+
+    gateway = configured_gateway(_structured_reply(content))
+    with pytest.raises(ModelGatewayUnavailable) as raised:
+        await gateway.generate_structured(request(ModelOperation.STRUCTURED))
+    assert not isinstance(raised.value, ModelOutputTruncated)
+
+
+@pytest.mark.asyncio
+async def test_a_nested_array_over_its_bound_is_invalid_not_truncated():
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tags": {"type": "array", "maxItems": 1, "items": {"type": "string"}}
+                    },
+                    "required": ["tags"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }
+    nested = replace(
+        request(ModelOperation.STRUCTURED),
+        schema=schema,
+        schema_digest=digest(json.dumps(schema, sort_keys=True, separators=(",", ":"))),
+    )
+    gateway = configured_gateway(_structured_reply('{"items":[{"tags":["a","b"]}]}'))
+
+    with pytest.raises(ModelGatewayUnavailable) as raised:
+        await gateway.generate_structured(nested)
+    assert not isinstance(raised.value, ModelOutputTruncated)
