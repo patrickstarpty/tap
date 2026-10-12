@@ -1174,6 +1174,7 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             batch_retries=settings.graph_batch_retries,
             lease_duration=_graph_worker_lease(settings),
             concurrency=settings.graph_worker_concurrency,
+            claim_interval_seconds=settings.poll_seconds,
         )
         wakeups = RedisWakeupConsumer(
             scope=scope,

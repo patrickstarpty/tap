@@ -125,6 +125,7 @@ class GraphWorker:
         lease_duration: timedelta = timedelta(seconds=60),
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         concurrency: int = 1,
+        claim_interval_seconds: float = 1.0,
     ) -> None:
         self._jobs = jobs
         self._artifacts = artifacts
@@ -141,6 +142,9 @@ class GraphWorker:
             raise ValueError("graph worker batch retries must be positive")
         if type(concurrency) is not int or concurrency < 1:
             raise ValueError("graph worker concurrency must be positive")
+        if claim_interval_seconds <= 0:
+            raise ValueError("graph worker claim interval must be positive")
+        self._claim_interval_seconds = claim_interval_seconds
         self._batch_size = batch_size
         self._batch_chars = batch_chars
         self._concurrency = concurrency
@@ -162,17 +166,21 @@ class GraphWorker:
         worker processes never hold the same job, and a job's batches run
         sequentially inside its one slot (later batches reuse the entities earlier
         batches minted) -- no batch is ever extracted twice at once.
+
+        While a slot stays free the loop keeps claiming every
+        ``claim_interval_seconds``, not only when a running job finishes: a claim
+        that found fewer jobs than free slots must not leave those slots idle for
+        the rest of the pass while jobs arrive or a crashed worker's lease expires.
         """
 
         outcomes: dict[str, int] = {}
         claimed_total = 0
         running: set[asyncio.Task[str]] = set()
-        exhausted = False
         claim_error: BaseException | None = None
         try:
             while True:
                 free = min(self._concurrency - len(running), limit - claimed_total)
-                if free > 0 and not exhausted and claim_error is None:
+                if free > 0 and claim_error is None:
                     try:
                         claims = await self._jobs.claim(
                             self._scope,
@@ -188,13 +196,20 @@ class GraphWorker:
                         claim_error = error
                         claims = ()
                     claimed_total += len(claims)
-                    exhausted = len(claims) < free
                     running.update(
                         asyncio.create_task(self._process_claim(claim)) for claim in claims
                     )
                 if not running:
                     break
-                done, running = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+                slots_free = (
+                    claim_error is None
+                    and min(self._concurrency - len(running), limit - claimed_total) > 0
+                )
+                done, running = await asyncio.wait(
+                    running,
+                    timeout=self._claim_interval_seconds if slots_free else None,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
                 for task in done:
                     outcome = task.result()
                     outcomes[outcome] = outcomes.get(outcome, 0) + 1

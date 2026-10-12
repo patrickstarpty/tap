@@ -1283,3 +1283,114 @@ def test_worker_concurrency_must_be_positive() -> None:
         _concurrent_worker(
             InMemoryGraphJobStore(), OverlapTrackingExtractor(), worker_id="w", concurrency=0
         )
+
+
+class GatedExtractor(OverlapTrackingExtractor):
+    """Holds every extract call until `expected` distinct jobs are in flight at
+    once, so the test proves later claims happened while earlier jobs still ran."""
+
+    def __init__(self, *, expected: int) -> None:
+        super().__init__()
+        self._expected = expected
+        self._snapshots: set[str] = set()
+        self._all_in_flight = self._asyncio.Event()
+
+    async def extract(self, request):
+        self._snapshots.add(request.snapshot.snapshot_id)
+        if len(self._snapshots) >= self._expected:
+            self._all_in_flight.set()
+        await self._all_in_flight.wait()
+        return await super().extract(request)
+
+
+class ArrivingJobs(InMemoryGraphJobStore):
+    """The first claim finds one job; four more are queued right after it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.claim_calls = 0
+
+    async def claim(self, scope, *, worker_id, now, lease_duration, limit):
+        self.claim_calls += 1
+        claims = await super().claim(
+            scope, worker_id=worker_id, now=now, lease_duration=lease_duration, limit=limit
+        )
+        if self.claim_calls == 1:
+            for index in range(1, 5):
+                await self.request(
+                    scope,
+                    GraphJobRequest.create(
+                        scope=scope,
+                        revision_id=f"revision-late-{index}",
+                        chunks_locator=f"art-late-{index}.chunks",
+                        extraction_profile_digest="sha256:" + "1" * 64,
+                        model_alias="qwen-plus",
+                    ),
+                    now=now,
+                )
+        return claims
+
+
+@pytest.mark.asyncio
+async def test_worker_keeps_claiming_while_slots_are_free(monkeypatch) -> None:
+    jobs = ArrivingJobs()
+    await _request_jobs(jobs, 1)
+    extractor = GatedExtractor(expected=5)
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=AnyLocatorArtifacts(count=5),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        concurrency=5,
+        claim_interval_seconds=0.001,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=10)
+
+    # The first claim got 1 job with 5 slots free; the next loop claimed the
+    # 4 that arrived while the first was still extracting.
+    assert (result.claimed, result.ready) == (5, 5)
+    assert extractor.max_in_flight == 5
+
+
+@pytest.mark.asyncio
+async def test_worker_reclaims_a_job_whose_lease_expires_mid_run(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 2)
+    clock = {"now": NOW}
+    # A crashed worker holds the second job; its lease outlives the first claim.
+    [abandoned] = await jobs.claim(
+        VALIDATION_SCOPE,
+        worker_id="crashed-worker",
+        now=NOW,
+        lease_duration=timedelta(seconds=30),
+        limit=1,
+    )
+
+    class AdvancingExtractor(GatedExtractor):
+        async def extract(self, request):
+            # Time passes during the model call, expiring the crashed lease.
+            clock["now"] = NOW + timedelta(seconds=45)
+            return await super().extract(request)
+
+    extractor = AdvancingExtractor(expected=2)
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=AnyLocatorArtifacts(count=5),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        concurrency=4,
+        claim_interval_seconds=0.001,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: clock["now"])
+
+    result = await worker.run_once(limit=10)
+
+    assert (result.claimed, result.ready) == (2, 2)
+    reclaimed = await jobs.get_job(VALIDATION_SCOPE, abandoned.job_id)
+    assert reclaimed.status is GraphJobStatus.READY
