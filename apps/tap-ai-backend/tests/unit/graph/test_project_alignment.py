@@ -77,19 +77,68 @@ def test_same_key_different_type_stays_separate():
 
 
 def test_alias_level_requires_same_type_and_records_rule():
-    a = _fragment(
+    same_type = _fragment(
         "frag-a",
-        [("a1", "Underwriting", "CONCEPT", "underwriting", ("核保",))],
+        [
+            ("a1", "Underwriting", "CONCEPT", "underwriting", ("核保",)),
+            ("a2", "核保", "CONCEPT", "核保"),
+        ],
     )
-    b_same_type = _fragment("frag-b", [("b1", "核保", "CONCEPT", "核保")])
 
-    entities = resolve_entities([a, b_same_type])
+    entities = resolve_entities([same_type])
     assert len(entities) == 1
     assert entities[0].rule == "ALIAS"
 
-    b_other_type = _fragment("frag-b", [("b1", "核保", "PROCESS", "核保")])
-    separate_entities = resolve_entities([a, b_other_type])
+    other_type = _fragment(
+        "frag-a",
+        [
+            ("a1", "Underwriting", "CONCEPT", "underwriting", ("核保",)),
+            ("a2", "核保", "PROCESS", "核保"),
+        ],
+    )
+    separate_entities = resolve_entities([other_type])
     assert len(separate_entities) == 2
+
+
+def test_a_model_alias_never_merges_entities_of_different_documents():
+    # Two products each aliased "重疾险" by their own document: an alias hit alone
+    # does not cross documents (different source revisions).
+    a = _fragment("frag-a", [("a1", "安心重疾保险", "SYSTEM", "安心重疾保险", ("重疾险",))])
+    b = _fragment("frag-b", [("b1", "康健重疾保险", "SYSTEM", "康健重疾保险", ("重疾险",))])
+    assert len(resolve_entities([a, b])) == 2
+
+    # Nor does one document's alias matching the other document's name.
+    b_named = _fragment("frag-b", [("b1", "重疾险", "SYSTEM", "重疾险")])
+    assert len(resolve_entities([a, b_named])) == 2
+
+
+def test_the_same_name_still_merges_across_documents_by_alias_level():
+    a = _fragment("frag-a", [("a1", "核保", "CONCEPT", "核保流程审核")])
+    b = _fragment("frag-b", [("b1", "核保", "CONCEPT", "核保")])
+
+    entities = resolve_entities([a, b])
+
+    assert len(entities) == 1 and entities[0].rule == "ALIAS"
+
+
+def test_an_alias_still_merges_within_one_document_and_exact_keys_across():
+    a = _fragment(
+        "frag-a",
+        [
+            ("a1", "安心重疾保险", "SYSTEM", "安心重疾保险", ("重疾险",)),
+            ("a2", "重疾险", "SYSTEM", "重疾险"),
+        ],
+    )
+    b = _fragment("frag-b", [("b1", "重疾险", "SYSTEM", "安心重疾保险")])
+
+    entities = resolve_entities([a, b])
+
+    assert len(entities) == 1
+    assert {member for member in entities[0].members} == {
+        ("frag-a", "a1"),
+        ("frag-a", "a2"),
+        ("frag-b", "b1"),
+    }
 
 
 def test_embedding_level_only_when_vectors_supplied():
@@ -231,19 +280,26 @@ def _linear_scan_clusters(
     """Reference resolver that scans every cluster for every node, in creation order.
 
     It states the alignment semantics directly (first cluster of the same type whose
-    level-1 keys contain the node's key, else first whose level-2 keys intersect,
-    else the best embedding match) so the indexed resolver can be checked against it.
+    level-1 keys contain the node's key, else first holding the node's name or, from
+    the node's own document, any of its level-2 keys, else the best embedding match)
+    so the indexed resolver can be checked against it.
     """
     clusters: list[dict[str, object]] = []
+
+    def names(texts):
+        return {
+            alignment_key(name)
+            for name in texts
+            if not is_reference_name(name) and not is_reference_name(alignment_key(name))
+        }
+
     for fragment in sorted(fragments, key=lambda item: item.snapshot.snapshot_id):
         snapshot_id = fragment.snapshot.snapshot_id
+        source = fragment.snapshot.source_revision_ids
         for node in fragment.nodes:
             key1 = alignment_key(node.canonical_key)
-            keys2 = {
-                alignment_key(name)
-                for name in (node.label, *node.aliases)
-                if not is_reference_name(name) and not is_reference_name(alignment_key(name))
-            }
+            label_keys = names((node.label,))
+            keys2 = names((node.label, *node.aliases))
             target = None
             rule = None
             for cluster in clusters:
@@ -251,8 +307,11 @@ def _linear_scan_clusters(
                     target, rule = cluster, "EXACT"
                     break
             if target is None:
+                # Names match across documents; aliases only within one document.
                 for cluster in clusters:
-                    if cluster["type"] == node.node_type and cluster["l2"] & keys2:
+                    if cluster["type"] == node.node_type and (
+                        cluster["labels"] & label_keys or cluster["l2"].get(source, set()) & keys2
+                    ):
                         target, rule = cluster, "ALIAS"
                         break
             if target is None and embeddings:
@@ -279,7 +338,8 @@ def _linear_scan_clusters(
                 target = {
                     "type": node.node_type,
                     "l1": set(),
-                    "l2": set(),
+                    "labels": set(),
+                    "l2": {},
                     "members": [],
                     "rule": "EXACT",
                 }
@@ -287,7 +347,8 @@ def _linear_scan_clusters(
                 rule = "EXACT"
             target["members"].append((snapshot_id, node.node_id))
             target["l1"].add(key1)
-            target["l2"] |= keys2
+            target["labels"] |= label_keys
+            target["l2"].setdefault(source, set()).update(keys2)
             target["rule"] = rule
     return [
         (str(cluster["type"]), tuple(cluster["members"]), str(cluster["rule"]))
