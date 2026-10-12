@@ -459,6 +459,10 @@ class GatedExtraction:
 
     def __init__(self) -> None:
         self.release = asyncio.Event()
+        self.draining = False
+
+    def stop_claiming(self) -> None:
+        self.draining = True
 
     async def run_once(self, limit: int) -> str:
         del limit
@@ -515,4 +519,20 @@ async def test_cancelling_the_run_cancels_the_extraction() -> None:
     run.cancel()
     with pytest.raises(asyncio.CancelledError):
         await run
+    assert merge.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_stop_claiming_drains_extraction_and_starts_no_more_merges() -> None:
+    extraction = GatedExtraction()
+    merge = CountingMerge(extraction, release_after=0)
+    worker = MergingGraphWorker(extraction=extraction, merge=merge, merge_interval_seconds=60)
+
+    run = asyncio.create_task(worker.run_once(limit=10))
+    await asyncio.sleep(0)
+    worker.stop_claiming()
+    extraction.release.set()
+
+    assert await run == "extraction-run"
+    assert extraction.draining
     assert merge.calls == 0

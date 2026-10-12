@@ -38,6 +38,9 @@ class WorkerSettings:
     stream_name: str
     group_name: str
     worker_id: str
+    # On SIGTERM/SIGINT a running pass gets this long to finish (after being told
+    # to stop claiming) before it is cancelled, which releases its job leases.
+    shutdown_grace_seconds: float = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +81,7 @@ def worker_settings_from_tapper(settings: TapperSettings) -> WorkerSettings:
         stream_name=settings.redis_stream,
         group_name="tapper-ingestion",
         worker_id=settings.worker_id,
+        shutdown_grace_seconds=settings.worker_shutdown_grace_seconds,
     )
 
 
@@ -104,9 +108,14 @@ async def run_worker_loop(
             wakeup_failed = True
         if stop.is_set():
             break
-        await worker.run_once(limit=settings.job_batch_size)
-        if pending_work is not None:
-            await pending_work(limit=settings.job_batch_size)
+        if not await _run_until_stopped(
+            worker.run_once(limit=settings.job_batch_size), worker, stop, settings
+        ):
+            break
+        if pending_work is not None and not await _run_until_stopped(
+            pending_work(limit=settings.job_batch_size), worker, stop, settings
+        ):
+            break
         if wakeup is not None:
             await wakeups.ack(wakeup)
         if wakeup_failed:
@@ -119,6 +128,49 @@ async def run_worker_loop(
         iterations += 1
         if max_iterations is not None and iterations >= max_iterations:
             return
+
+
+async def _run_until_stopped(
+    work: Awaitable[object],
+    worker: object,
+    stop: asyncio.Event,
+    settings: WorkerSettings,
+) -> bool:
+    """Run one pass; on stop, drain it within the grace period, then cancel it.
+
+    A graph pass can last as long as its slowest model call (minutes), so the
+    stop signal must not wait for it: the worker is told to stop claiming, gets
+    `shutdown_grace_seconds` to finish what it holds, and is then cancelled,
+    which hands its job leases back. A worker without `stop_claiming` finishes
+    its pass first. Returns False once the loop must exit.
+    """
+
+    task = asyncio.ensure_future(work)
+    stopping = asyncio.ensure_future(stop.wait())
+    try:
+        await asyncio.wait({task, stopping}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        stopping.cancel()
+    if task.done():
+        task.result()
+        return True
+    stop_claiming = getattr(type(worker), "stop_claiming", None)
+    if not callable(stop_claiming):
+        # A worker that cannot drain (ingestion) finishes its pass as before.
+        await task
+        return False
+    stop_claiming(worker)
+    done, _ = await asyncio.wait({task}, timeout=settings.shutdown_grace_seconds)
+    if done:
+        task.result()
+    else:
+        logger.warning(
+            "worker pass outlived the %.1fs shutdown grace period; cancelling it",
+            settings.shutdown_grace_seconds,
+        )
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    return False
 
 
 def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:

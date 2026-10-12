@@ -81,6 +81,10 @@ class GraphJobStore(Protocol):
         now: datetime,
     ) -> GraphJob: ...
 
+    async def release(
+        self, scope: ProjectScopeContext, claim: ClaimedGraphJob, *, now: datetime
+    ) -> bool: ...
+
     async def list_fragment_states(
         self, scope: ProjectScopeContext
     ) -> tuple[tuple[str, str, str], ...]: ...
@@ -285,6 +289,36 @@ class InMemoryGraphJobStore:
         )
         self._jobs[(scope.project_id, current.job_id)] = failed
         return failed
+
+    async def release(
+        self, scope: ProjectScopeContext, claim: ClaimedGraphJob, *, now: datetime
+    ) -> bool:
+        """Hand a still-owned RUNNING job back to PENDING (worker shutdown); its
+        recorded batches stay, so the next claim resumes where this one stopped."""
+
+        scope = require_project_scope(scope)
+        key = (scope.project_id, claim.job_id)
+        current = self._jobs.get(key)
+        if (
+            not isinstance(current, ClaimedGraphJob)
+            or current.status is not GraphJobStatus.RUNNING
+            or current.lease_token != claim.lease_token
+        ):
+            return False
+        self._jobs[key] = GraphJob(
+            current.job_id,
+            current.revision_id,
+            current.snapshot,
+            current.chunks_locator,
+            current.extraction_profile_digest,
+            current.request_digest,
+            current.model_alias,
+            GraphJobStatus.PENDING,
+            current.created_at,
+            now,
+            current.failure_code,
+        )
+        return True
 
     async def list_jobs(self, scope: ProjectScopeContext) -> tuple[GraphJob, ...]:
         scope = require_project_scope(scope)

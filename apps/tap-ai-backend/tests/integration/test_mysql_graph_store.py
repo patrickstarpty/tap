@@ -386,3 +386,46 @@ async def test_mysql_graph_job_claim_resolves_the_document_filename(owned_projec
         assert renewed.document_title == "claims-handbook.pdf"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mysql_graph_job_release_hands_a_running_job_back_at_once(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    jobs = MysqlGraphJobStore(sessions)
+    now = datetime(2026, 9, 13, 9, 0, 0)
+    request = GraphJobRequest.create(
+        scope=VALIDATION_SCOPE,
+        revision_id="source-revision-1",
+        chunks_locator="art1.chunks",
+        extraction_profile_digest="sha256:" + "1" * 64,
+        model_alias="qwen-plus",
+    )
+    lease = timedelta(seconds=300)
+    try:
+        await jobs.request(VALIDATION_SCOPE, request, now=now)
+        [first] = await jobs.claim(
+            VALIDATION_SCOPE, worker_id="worker-1", now=now, lease_duration=lease, limit=1
+        )
+
+        assert await jobs.release(VALIDATION_SCOPE, first, now=now + timedelta(seconds=1))
+        # A stale holder cannot release (or renew) what it already gave back.
+        assert not await jobs.release(VALIDATION_SCOPE, first, now=now + timedelta(seconds=2))
+        with pytest.raises(GraphJobLeaseLost):
+            await jobs.renew(
+                VALIDATION_SCOPE, first, now=now + timedelta(seconds=2), lease_duration=lease
+            )
+        # Well inside the original lease, another worker claims it straight away.
+        [second] = await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-2",
+            now=now + timedelta(seconds=3),
+            lease_duration=lease,
+            limit=1,
+        )
+        assert second.job_id == first.job_id
+        assert second.lease_owner == "worker-2"
+    finally:
+        await engine.dispose()

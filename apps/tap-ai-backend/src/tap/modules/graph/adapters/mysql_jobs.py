@@ -609,6 +609,34 @@ class MysqlGraphJobStore:
             )
             return failed
 
+    async def release(
+        self, scope: ProjectScopeContext, claim: ClaimedGraphJob, *, now: datetime
+    ) -> bool:
+        """Hand a still-owned RUNNING job back to PENDING (worker shutdown) so
+        another worker claims it at once instead of waiting out the lease; its
+        recorded batches stay, so the next claim resumes where this one stopped.
+        Returns False when the lease was already gone."""
+
+        scope = require_project_scope(scope)
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(
+                update(graph_extraction_job)
+                .where(
+                    *scope_predicates(graph_extraction_job, scope),
+                    graph_extraction_job.c.job_id == claim.job_id,
+                    graph_extraction_job.c.status == GraphJobStatus.RUNNING.value,
+                    graph_extraction_job.c.lease_token == claim.lease_token,
+                )
+                .values(
+                    status=GraphJobStatus.PENDING.value,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    updated_at=now,
+                )
+            )
+        return bool(result.rowcount == 1)
+
     async def reset_for_profile(
         self,
         scope: ProjectScopeContext,

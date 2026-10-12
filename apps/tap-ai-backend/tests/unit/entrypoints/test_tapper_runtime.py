@@ -187,6 +187,22 @@ def test_graph_worker_concurrency_defaults_to_four_and_widens_gateway_slots() ->
     assert models.gateway._config.max_concurrency == 8
 
 
+def test_worker_shutdown_grace_is_bounded_and_reaches_the_loop_settings() -> None:
+    from tap.entrypoints.tapper_ingestion_worker import worker_settings_from_tapper
+
+    module = _runtime()
+    assert module.TapperSettings.from_mapping(S3_SETTINGS).worker_shutdown_grace_seconds == 10.0
+    for value in ("0", "301"):
+        with pytest.raises(ValueError):
+            module.TapperSettings.from_mapping(
+                S3_SETTINGS | {"TAPPER_WORKER_SHUTDOWN_GRACE_SECONDS": value}
+            )
+    settings = module.TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_WORKER_SHUTDOWN_GRACE_SECONDS": "30"}
+    )
+    assert worker_settings_from_tapper(settings).shutdown_grace_seconds == 30.0
+
+
 def test_graph_worker_gateway_and_lease_cover_the_extraction_deadline() -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(

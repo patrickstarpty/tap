@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,8 @@ from tap.modules.knowledge.domain.documents import ChunkDraft
 from tap.modules.knowledge.ports.documents import ArtifactLocator, ArtifactStore
 from tap.platform.db.project_scope import require_project_scope
 from tap.platform.telemetry import bind_trace, flush_traces, span
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +148,7 @@ class GraphWorker:
         if claim_interval_seconds <= 0:
             raise ValueError("graph worker claim interval must be positive")
         self._claim_interval_seconds = claim_interval_seconds
+        self._draining = False
         self._batch_size = batch_size
         self._batch_chars = batch_chars
         self._concurrency = concurrency
@@ -156,6 +160,12 @@ class GraphWorker:
     @staticmethod
     def _now() -> datetime:
         return datetime.now(timezone.utc).replace(tzinfo=None)
+
+    def stop_claiming(self) -> None:
+        """Stop claiming new jobs (process shutdown); running jobs keep going
+        until they finish or the caller cancels the pass, which releases them."""
+
+        self._draining = True
 
     async def run_once(self, limit: int) -> GraphWorkerRun:
         """Claim and process up to ``limit`` jobs, at most ``concurrency`` at a time.
@@ -180,7 +190,7 @@ class GraphWorker:
         try:
             while True:
                 free = min(self._concurrency - len(running), limit - claimed_total)
-                if free > 0 and claim_error is None:
+                if free > 0 and claim_error is None and not self._draining:
                     try:
                         claims = await self._jobs.claim(
                             self._scope,
@@ -203,6 +213,7 @@ class GraphWorker:
                     break
                 slots_free = (
                     claim_error is None
+                    and not self._draining
                     and min(self._concurrency - len(running), limit - claimed_total) > 0
                 )
                 done, running = await asyncio.wait(
@@ -239,6 +250,22 @@ class GraphWorker:
                 return await self._run_claim(claim)
             except GraphJobLeaseLost:
                 return "LEASE_LOST"
+            except asyncio.CancelledError:
+                await self._release(claim)
+                raise
+
+    async def _release(self, claim: ClaimedGraphJob) -> None:
+        """Give a cancelled job back to PENDING; on failure its lease just expires."""
+        try:
+            released = await self._jobs.release(self._scope, claim, now=self._now())
+        except Exception:
+            logger.warning(
+                "graph job release failed: job_kind=graph_extraction job_id=%s",
+                claim.job_id,
+                exc_info=True,
+            )
+            return
+        logger.info("graph job released on shutdown: job_id=%s released=%s", claim.job_id, released)
 
     async def _run_claim(self, claim: ClaimedGraphJob) -> str:
         """Process one claimed job end to end, never letting a non-lease error escape.

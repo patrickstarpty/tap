@@ -191,6 +191,8 @@ _Run = TypeVar("_Run", covariant=True)
 class _BoundedRun(Protocol[_Run]):
     async def run_once(self, limit: int) -> _Run: ...
 
+    def stop_claiming(self) -> None: ...
+
 
 class _MergeRun(Protocol):
     async def run_once(self, limit: int) -> int: ...
@@ -220,17 +222,24 @@ class MergingGraphWorker[RunT]:
         self._extraction = extraction
         self._merge = merge
         self._merge_interval_seconds = merge_interval_seconds
+        self._draining = False
 
     @property
     def extraction(self) -> _BoundedRun[RunT]:
         return self._extraction
+
+    def stop_claiming(self) -> None:
+        """Shutdown: extraction claims nothing new and no further merge starts."""
+        self._draining = True
+        self._extraction.stop_claiming()
 
     async def run_once(self, limit: int) -> RunT:
         extraction = asyncio.create_task(self._extraction.run_once(limit))
         try:
             while True:
                 done, _ = await asyncio.wait({extraction}, timeout=self._merge_interval_seconds)
-                await self._merge.run_once(limit)
+                if not self._draining:
+                    await self._merge.run_once(limit)
                 if done:
                     return extraction.result()
         finally:

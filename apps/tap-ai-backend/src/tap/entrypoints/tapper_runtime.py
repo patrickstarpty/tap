@@ -155,6 +155,7 @@ class TapperSettings:
     graph_extraction_timeout_seconds: float = 240.0
     graph_extraction_max_tokens: int = 8192
     graph_worker_concurrency: int = 4
+    worker_shutdown_grace_seconds: float = 10.0
     s3_endpoint: str = ""
     s3_bucket: str = ""
     s3_region: str = ""
@@ -519,6 +520,9 @@ class TapperSettings:
                 4,
                 minimum=1,
                 maximum=16,
+            ),
+            worker_shutdown_grace_seconds=_duration(
+                values, "TAPPER_WORKER_SHUTDOWN_GRACE_SECONDS", 10.0, maximum=300
             ),
             milvus_uri=milvus_uri,
             milvus_database=_identity(values, "MILVUS_DATABASE", "default"),

@@ -1394,3 +1394,80 @@ async def test_worker_reclaims_a_job_whose_lease_expires_mid_run(monkeypatch) ->
     assert (result.claimed, result.ready) == (2, 2)
     reclaimed = await jobs.get_job(VALIDATION_SCOPE, abandoned.job_id)
     assert reclaimed.status is GraphJobStatus.READY
+
+
+class BlockingExtractor(OverlapTrackingExtractor):
+    """Signals when a model call starts, then blocks until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = self._asyncio.Event()
+        self.release = self._asyncio.Event()
+
+    async def extract(self, request):
+        self.started.set()
+        await self.release.wait()
+        return await super().extract(request)
+
+
+def _blocking_worker(jobs, extractor, *, concurrency: int = 1) -> GraphWorker:
+    return GraphWorker(
+        jobs=jobs,
+        artifacts=AnyLocatorArtifacts(count=5),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        concurrency=concurrency,
+        claim_interval_seconds=0.001,
+    )
+
+
+@pytest.mark.asyncio
+async def test_stop_claiming_lets_running_jobs_finish_without_claiming_more(monkeypatch) -> None:
+    import asyncio
+
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 3)
+    extractor = BlockingExtractor()
+    worker = _blocking_worker(jobs, extractor, concurrency=2)
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    run = asyncio.create_task(worker.run_once(limit=10))
+    await extractor.started.wait()
+    worker.stop_claiming()
+    extractor.release.set()
+    result = await run
+
+    assert (result.claimed, result.ready) == (2, 2)
+    statuses = sorted(job.status.value for job in await jobs.list_jobs(VALIDATION_SCOPE))
+    assert statuses == ["PENDING", "READY", "READY"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_run_releases_its_job_leases(monkeypatch) -> None:
+    import asyncio
+
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 1)
+    extractor = BlockingExtractor()
+    worker = _blocking_worker(jobs, extractor)
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    run = asyncio.create_task(worker.run_once(limit=10))
+    await extractor.started.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+    [job] = await jobs.list_jobs(VALIDATION_SCOPE)
+    assert job.status is GraphJobStatus.PENDING
+    # Another worker takes it over at once instead of waiting out the lease.
+    reclaimed = await jobs.claim(
+        VALIDATION_SCOPE,
+        worker_id="graph-worker-2",
+        now=NOW + timedelta(seconds=2),
+        lease_duration=timedelta(seconds=60),
+        limit=1,
+    )
+    assert [claim.job_id for claim in reclaimed] == [job.job_id]
