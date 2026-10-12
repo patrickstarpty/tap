@@ -382,11 +382,16 @@ class GraphWorker:
             _chunk_request_mapping(chunk, revision_id=claim.revision_id) for chunk in batch_chunks
         )
         batch_text = "\n".join(chunk.content for chunk in batch_chunks)
+        # Once the whole batch has truncated, a retry (after a transient error in a
+        # half) goes straight to the halves: the whole batch would truncate again.
+        split = False
         while attempt < self._batch_retries:
             attempt += 1
             lost_halves = 0
             try:
                 try:
+                    if split:
+                        raise GraphExtractionTruncated()
                     draft = await self._extract(
                         claim,
                         index,
@@ -400,6 +405,7 @@ class GraphWorker:
                 except GraphExtractionTruncated:
                     if len(batch_chunks) < 2:
                         raise
+                    split = True
                     draft, lost_halves, claim = await self._extract_halves(
                         claim,
                         index,

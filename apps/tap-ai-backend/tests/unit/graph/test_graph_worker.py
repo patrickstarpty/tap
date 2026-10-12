@@ -1430,3 +1430,32 @@ async def test_a_truncated_single_chunk_batch_fails_without_retrying(monkeypatch
 
     assert len(extractor.requests) == 1 and result.failed == 1
     assert batches[0].failure_code == "GraphExtractionTruncated"
+
+
+class FlakyHalfExtractor(TruncatingExtractor):
+    """Truncates the whole batch; the first half call fails once with a transient error."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._failed_once = False
+
+    async def extract(self, request):
+        if len(request.chunks) <= 2 and not self._failed_once:
+            self._failed_once = True
+            self.requests.append(request)
+            raise RuntimeError("transient half failure")
+        return await super().extract(request)
+
+
+@pytest.mark.asyncio
+async def test_a_retry_after_a_split_goes_straight_to_the_halves(monkeypatch) -> None:
+    extractor = FlakyHalfExtractor()
+
+    result, batches = await _run_truncating(monkeypatch, extractor)
+
+    # Whole batch (truncated), half 0 (transient error), then the retry re-runs only
+    # the two halves instead of the whole batch again.
+    assert [len(request.chunks) for request in extractor.requests] == [4, 2, 2, 2]
+    assert result.ready == 1
+    (batch,) = batches
+    assert batch.status is GraphBatchStatus.READY and batch.attempt == 2
