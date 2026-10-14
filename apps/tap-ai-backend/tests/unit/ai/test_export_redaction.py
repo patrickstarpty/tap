@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import time
+
+import pytest
+
 from tap.modules.ai.application.export_redaction import ExportRedactor, load_custom_rules
 
 
@@ -47,3 +51,71 @@ def test_custom_rule_and_nested_values(tmp_path):
 
 def test_none_passthrough():
     assert ExportRedactor().redact(None) is None
+
+
+# --- Fix round 1 regressions ---
+
+
+def test_card_followed_by_extra_digits_is_fully_masked():
+    out = ExportRedactor().redact("card 4111111111111111 123")
+    assert "4111" not in out and "1111" not in out and "[PHONE]" not in out
+
+
+def test_card_with_trailing_expiry_like_digits_is_fully_masked():
+    out = ExportRedactor().redact("卡 4111 1111 1111 1111 12/25")
+    assert "4111" not in out and "1111" not in out and "[PHONE]" not in out
+
+
+def test_dash_grouped_card_with_trailing_digits_is_fully_masked():
+    out = ExportRedactor().redact("4111-1111-1111-1111-01")
+    assert "4111" not in out and "1111" not in out and "[PHONE]" not in out
+
+
+def test_card_preceded_by_stray_digit_is_fully_masked():
+    out = ExportRedactor().redact("No.1 4111 1111 1111 1111")
+    assert "4111" not in out and "1111" not in out and "[PHONE]" not in out
+
+
+def test_large_adversarial_input_redacts_quickly():
+    text = "a!" * 100000
+    start = time.monotonic()
+    ExportRedactor().redact(text)
+    assert time.monotonic() - start < 1.0
+
+
+def test_redact_value_handles_keys_tuples_and_sets():
+    out = ExportRedactor().redact_value({"a@b.com": ("13812345678",), "s": {"13812345678"}})
+    assert out == {"[EMAIL]": ("[PHONE]",), "s": {"[PHONE]"}}
+
+
+def test_unexpected_exception_in_pipeline_fails_closed(monkeypatch):
+    import tap.modules.ai.application.export_redaction as module
+
+    def boom(_text: str) -> str:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(module, "_redact_email", boom)
+    assert ExportRedactor().redact("anything") == "[REDACTION_FAILED]"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not-a-mapping",
+        "rules: not-a-list",
+        "rules:\n  - name: 'Bad Name'\n    pattern: 'x'\n",
+        "rules:\n  - name: ok_name\n",
+        "rules:\n  - name: ok_name\n    pattern: '('\n",
+    ],
+    ids=["not-mapping", "rules-not-list", "bad-name", "missing-pattern", "invalid-regex"],
+)
+def test_load_custom_rules_normalizes_errors_to_value_error(tmp_path, content):
+    p = tmp_path / "r.yaml"
+    p.write_text(content)
+    with pytest.raises(ValueError):
+        load_custom_rules(p)
+
+
+def test_load_custom_rules_missing_file_stays_file_not_found(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        load_custom_rules(tmp_path / "missing.yaml")
