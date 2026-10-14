@@ -7,7 +7,7 @@ export TAP_INSIGHTS_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
 .PHONY: schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset quality-graph-relations quality-graph-relations-real graph-sample-export graph-bench
-.PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check
+.PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check langfuse-up langfuse-down
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
@@ -241,6 +241,15 @@ quality-test-design-real: ## evaluate existing real outputs after authorized nam
 	@case "$${TAP_QUALITY_TEST_REVIEWER_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-test-design-real requires explicit reviewer authorization" >&2; exit 2;; esac
 	@[ -f "$(TAP_QUALITY_TEST_OBSERVATIONS)" ] || { echo "quality-test-design-real requires existing reviewed observations" >&2; exit 2; }
 	uv run --project apps/tap-ai-backend python scripts/evaluate-quality-test-design.py "$(TAP_QUALITY_TEST_OBSERVATIONS)" --report "$(TAP_QUALITY_TEST_REPORT)" --real
+
+langfuse-up: ## start insights ClickHouse, bootstrap langfuse's db/bucket, then start langfuse
+	docker compose --profile insights up -d --wait --wait-timeout 180 clickhouse
+	bash "$(TAP_REPO_ROOT)/deploy/local/langfuse/bootstrap.sh"
+	docker compose --profile langfuse up -d
+
+langfuse-down: ## stop only langfuse profile containers and preserve named volumes
+	docker compose --profile langfuse stop langfuse-web langfuse-worker langfuse-postgres
+	docker compose --profile langfuse rm -f langfuse-web langfuse-worker langfuse-postgres
 
 milvus-preflight: ## require Docker with at least 2 vCPU and 8 GiB memory
 	@set -eu; \

@@ -213,16 +213,106 @@ services:
       retries: 12
       start_period: 30s
 
-  phoenix:
-    profiles: [observability]
-    image: ${PHOENIX_IMAGE:-arizephoenix/phoenix:version-20.16.0}
+  langfuse-postgres:
+    profiles: [langfuse]
+    image: ${LANGFUSE_POSTGRES_IMAGE:-postgres:17-alpine}
     restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 1.0
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 128
     environment:
-      PHOENIX_WORKING_DIR: /mnt/data
-    ports:
-      - "127.0.0.1:${PHOENIX_PORT:-26006}:6006"
+      POSTGRES_DB: ${LANGFUSE_POSTGRES_DB:-langfuse}
+      POSTGRES_USER: ${LANGFUSE_POSTGRES_USER:-tap_langfuse}
+      POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:-tap-local-langfuse-postgres}
     volumes:
-      - phoenix-data:/mnt/data
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  langfuse-web:
+    profiles: [langfuse]
+    image: ${LANGFUSE_IMAGE:-langfuse/langfuse:3.225.11}
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 2.0
+    mem_limit: 1g
+    memswap_limit: 1g
+    pids_limit: 512
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${LANGFUSE_POSTGRES_USER:-tap_langfuse}:${LANGFUSE_POSTGRES_PASSWORD:-tap-local-langfuse-postgres}@langfuse-postgres:5432/${LANGFUSE_POSTGRES_DB:-langfuse}
+      NEXTAUTH_URL: http://127.0.0.1:${LANGFUSE_PORT:-23000}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-tap-local-langfuse-nextauth-secret}
+      SALT: ${LANGFUSE_SALT:-tap-local-langfuse-salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-6ff714a074e50e47ef0fec2d8a891ce2626d8208df40c6a7066acce50615901e}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-tap_langfuse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-tap-local-langfuse}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_CONNECTION_STRING: redis://redis:6379/1
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://tap-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: ${TAPPER_S3_REGION:-us-east-1}
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${TAPPER_S3_ACCESS_KEY:-tap-local-object-key}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${TAPPER_S3_SECRET_KEY:-tap-local-object-password}
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-tap-local-org}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-tap-local-project}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-local-example}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-local-example}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-tap-local-admin@example.com}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-tap-local-langfuse-admin}
+    ports:
+      - "127.0.0.1:${LANGFUSE_PORT:-23000}:3000"
+
+  langfuse-worker:
+    profiles: [langfuse]
+    image: ${LANGFUSE_WORKER_IMAGE:-langfuse/langfuse-worker:3.225.11}
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 1.0
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 256
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${LANGFUSE_POSTGRES_USER:-tap_langfuse}:${LANGFUSE_POSTGRES_PASSWORD:-tap-local-langfuse-postgres}@langfuse-postgres:5432/${LANGFUSE_POSTGRES_DB:-langfuse}
+      NEXTAUTH_URL: http://127.0.0.1:${LANGFUSE_PORT:-23000}
+      SALT: ${LANGFUSE_SALT:-tap-local-langfuse-salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-6ff714a074e50e47ef0fec2d8a891ce2626d8208df40c6a7066acce50615901e}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-tap_langfuse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-tap-local-langfuse}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_CONNECTION_STRING: redis://redis:6379/1
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://tap-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: ${TAPPER_S3_REGION:-us-east-1}
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${TAPPER_S3_ACCESS_KEY:-tap-local-object-key}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${TAPPER_S3_SECRET_KEY:-tap-local-object-password}
+      TELEMETRY_ENABLED: "false"
 
 volumes:
   mysql-data:
@@ -233,4 +323,4 @@ volumes:
   milvus-data:
   clickhouse-insights-data:
   clickhouse-insights-backups:
-  phoenix-data:
+  langfuse-postgres-data:
