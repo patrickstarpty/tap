@@ -3280,7 +3280,17 @@
   grid-template-columns: var(--graph-communities-width) minmax(0, 1fr) var(
       --graph-inspector-width
     );
-  min-height: max(440px, calc(100dvh - 270px));
+  /* A bound, not just a floor: with only `min-height`, a community or
+     relation list taller than this (e.g. a project with many topic groups)
+     stretches the whole row past it via `align-items: stretch`, pushing the
+     canvas — and the graph inside it — below the viewport ("the graph
+     appears below the first screen", real-model revalidation report 2 §9
+     Important 1/§5). `height` caps the row at this size regardless of
+     sibling content; `.tap-graph-communities`/`.tap-graph-inspector` scroll
+     their own overflow instead of growing it (see `min-height: 0` below —
+     required for a stretched grid item to actually shrink to fit and
+     scroll rather than reverting to its content size). */
+  height: max(440px, calc(100dvh - 270px));
   gap: 0;
 }
 .tap-graph-workspace[data-communities-open="false"] {
@@ -3291,17 +3301,22 @@
 }
 .tap-graph-communities {
   grid-column: 1;
+  min-height: 0;
   margin-right: 12px;
+  overflow-y: auto;
 }
 .tap-knowledge-graph {
   grid-column: 2;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 .tap-graph-inspector {
   grid-column: 3;
   grid-row: 1;
+  min-height: 0;
   margin-left: 12px;
+  overflow-y: auto;
 }
 .tap-graph-communities[hidden],
 .tap-graph-inspector[hidden] {

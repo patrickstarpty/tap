@@ -387,6 +387,133 @@ test("captures Library graph and document views", async ({ page }) => {
   expect(await capture(page, "06-documents")).not.toBe(graph);
 });
 
+// Regression coverage for real-model revalidation report 2 (§9 Important
+// 1/§5): with a project carrying many topic groups, the community sidebar
+// -- unbounded, in the same CSS grid row as the canvas with
+// `align-items: stretch` -- used to stretch the whole `.tap-graph-workspace`
+// row (and so the canvas) well past the viewport, leaving the first screen's
+// canvas empty and the graph itself scrolled out of view below it
+// (`TapperWorkspace.css`'s `.tap-graph-workspace`/`.tap-graph-communities`).
+// This project/overview pair is deliberately local to this test (not added
+// to the shared `graphCaptureFixture`, which every other capture in this
+// file also renders against) -- 24 communities is enough to reproduce the
+// stretch on a 720px-tall viewport without perturbing any existing capture.
+function buildManyCommunitiesProject() {
+  const communities = Array.from({ length: 24 }, (_, index) => ({
+    communityId: `community-${String(index)}`,
+    label: `Topic group ${String(index)}`,
+    size: 4,
+  }));
+  return {
+    graphVersion: 1,
+    status: "READY",
+    nodeCount: communities.length * 4,
+    edgeCount: communities.length * 3,
+    mergedAt: "2026-10-05T08:00:00Z",
+    communities,
+    extractingRevisionIds: [],
+    partialRevisionIds: [],
+  };
+}
+
+function buildManyCommunitiesOverview() {
+  const nodes: {
+    nodeId: string;
+    nodeType: string;
+    label: string;
+    canonicalKey: string;
+    degree: number;
+    communityId: string;
+    aliases: string[];
+  }[] = [];
+  const edges: {
+    edgeId: string;
+    sourceNodeId: string;
+    targetNodeId: string;
+    relationType: string;
+    relationLabel: string;
+    confidence: number;
+    origin: string;
+  }[] = [];
+  for (let community = 0; community < 24; community += 1) {
+    for (let member = 0; member < 4; member += 1) {
+      const nodeId = `node-${String(community)}-${String(member)}`;
+      nodes.push({
+        nodeId,
+        nodeType: "CONCEPT",
+        label: `Node ${String(community)}-${String(member)}`,
+        canonicalKey: nodeId,
+        degree: 2,
+        communityId: `community-${String(community)}`,
+        aliases: [],
+      });
+      if (member > 0) {
+        edges.push({
+          edgeId: `edge-${String(community)}-${String(member)}`,
+          sourceNodeId: `node-${String(community)}-${String(member - 1)}`,
+          targetNodeId: nodeId,
+          relationType: "RELATED_TO",
+          relationLabel: "related to",
+          confidence: 0.9,
+          origin: "EXTRACTED",
+        });
+      }
+    }
+  }
+  return { graphVersion: 1, nodes, edges };
+}
+
+test("keeps the graph canvas inside the first screen when a project has many topic groups", async ({
+  page,
+}) => {
+  const manyCommunitiesProject = buildManyCommunitiesProject();
+  const manyCommunitiesOverview = buildManyCommunitiesOverview();
+  // Registered after `beforeEach`'s catch-all route, so Playwright matches
+  // these two handlers first and everything else (sources, highlight, …)
+  // still falls through to the shared fixture.
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/knowledge/graph/project")) {
+      await route.fulfill({ json: manyCommunitiesProject });
+    } else if (path.endsWith("/knowledge/graph/overview")) {
+      await route.fulfill({ json: manyCommunitiesOverview });
+    } else {
+      await route.fallback();
+    }
+  });
+
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("tab", { name: "Knowledge Graph" }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "Topic group 0 · 4 nodes" }),
+  ).toBeVisible();
+  await waitForGraphLayoutSettled(page);
+
+  const viewport = page.viewportSize();
+  expect(viewport).not.toBeNull();
+  const canvasBox = await page.locator(".tap-graph-canvas").boundingBox();
+  expect(canvasBox).not.toBeNull();
+  // The canvas itself never grows past the workspace's bounded row height,
+  // so its node circles stay inside the viewport without scrolling.
+  expect(canvasBox!.y + canvasBox!.height).toBeLessThanOrEqual(
+    viewport!.height,
+  );
+  const nodeCore = page.locator(".tap-graph-node-core").first();
+  await expect(nodeCore).toBeVisible();
+  const nodeBox = await nodeCore.boundingBox();
+  expect(nodeBox).not.toBeNull();
+  expect(nodeBox!.y).toBeGreaterThanOrEqual(0);
+  expect(nodeBox!.y).toBeLessThanOrEqual(viewport!.height);
+
+  // The sidebar's own overflow scrolls internally instead of stretching the
+  // row -- its scrollHeight exceeds its own clientHeight once there are more
+  // topic groups than fit, confirming the list didn't just get hidden.
+  const communitiesScrollable = await page
+    .locator(".tap-graph-communities")
+    .evaluate((el) => el.scrollHeight > el.clientHeight);
+  expect(communitiesScrollable).toBe(true);
+});
+
 test("captures the graph overview, node detail, edge citations and highlight", async ({
   page,
 }) => {
