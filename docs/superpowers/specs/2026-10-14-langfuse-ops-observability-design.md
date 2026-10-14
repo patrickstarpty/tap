@@ -43,7 +43,7 @@ flowchart LR
     W -->|同步状态| DB
 ```
 
-同步 worker 只读 MySQL 并写自己的同步状态表；业务进程不感知 Langfuse。
+同步 worker 只读业务与链路表，只写自己的游标表和失败表；业务进程不感知 Langfuse。
 
 ## 2. 数据模型（新迁移，编号接续现有序列）
 
@@ -52,50 +52,60 @@ flowchart LR
 | 列 | 说明 |
 | --- | --- |
 | `feedback_id` CHAR(36) | 主键 |
-| `project_id`、`chat_id`、`turn_id`、`actor_id` | 唯一键 `(turn_id, actor_id)`；索引 `(project_id, updated_at)` |
+| `project_id`、`conversation_id`、`turn_id`、`actor_id` | 唯一键 `(turn_id, actor_id)`；索引 `(project_id, updated_at)` |
 | `trace_id` CHAR(32) NULL | 冗余自 `chat_turn.traceparent`，便于同步 |
 | `rating` VARCHAR(8) NULL | `up` / `down`；撤销时置 NULL（软删除，以便同步撤销） |
 | `comment` VARCHAR(500) NULL | 仅 `down` 时可填 |
-| `version` INT | 每次写入、修改、撤销加 1 |
 | `created_at`、`updated_at` DATETIME(6) | |
 
-### `langfuse_sync_state`
+### `trace_span.recorded_at`（新增列）
+
+`DATETIME(6)`，默认 `CURRENT_TIMESTAMP(6)`，索引 `ix_trace_span_recorded_at`。表示 span 写入 MySQL 的时间，用作增量同步游标；历史行迁移时回填为 `started_at`。
+
+### `langfuse_sync_cursor`
+
+| 列 | 说明 |
+| --- | --- |
+| `name` VARCHAR(32) | 主键：`trace` / `feedback` |
+| `position` DATETIME(6) | 已扫描到的 `trace_span.recorded_at` / `answer_feedback.updated_at` |
+
+### `langfuse_sync_failure`
 
 | 列 | 说明 |
 | --- | --- |
 | `kind` | `trace` / `feedback` |
 | `subject_id` | `trace_id` 或 `feedback_id`；主键 `(kind, subject_id)` |
-| `synced_version` VARCHAR(64) | trace：`<span 数>:<最大结束时间>`；feedback：已同步的 `version` |
-| `status` | `synced` / `failed` |
-| `failure_count`、`last_error`（截断）、`synced_at` | |
+| `failure_count`、`last_error`（截断至 1000 字符）、`last_failed_at` | |
+
+成功重试后删除对应行。
 
 ### 保留
 
-沿用原设计：MySQL 链路数据永久保留，不做自动清理。同步状态表随之保留。
+沿用原设计：MySQL 链路数据永久保留，不做自动清理。同步游标与失败表很小，无需清理。
 
 ## 3. 同步 worker
 
 新进程入口 `tap/entrypoints/tapper_langfuse_sync_worker.py`，按固定间隔轮询（默认 5 秒）：
 
-1. **选取 trace**：最后一个 span 结束后超过静默窗口（`TAP_LANGFUSE_SYNC_SETTLE_SECONDS`，默认 60）且未同步，或摘要变化（Turn 重新执行出现新 span）的 trace。按 `started_at` 升序、批量处理。
-2. **读取**：该 trace 的全部 `trace_span`、关联 `model_call` 与 `model_call_content`、所属 `chat_turn` 的 `chat_id`。
+1. **选取 trace**：`cutoff = now - TAP_LANGFUSE_SYNC_SETTLE_SECONDS`（默认 60）。按 `recorded_at` 升序扫描 `(cursor, cutoff]` 内的 span，取其 `trace_id`（每批最多 200 个），处理后把游标推进到本批最大 `recorded_at`。Turn 重新执行写入的新 span 会被再次扫到，整条 trace 重推。另取 `langfuse_sync_failure` 中的 trace 重试。
+2. **读取**：该 trace 的全部 `trace_span`、关联 `model_call` 与 `model_call_content`、所属 `chat_turn` 的 `chat_id`（即 conversation_id）。
 3. **映射**：
    - trace 名为根 span 名；`chat_id` → session，`actor_id` → user，`project_id`、`service_name`、环境 → tags/metadata；`tap.redaction_version` 写入 metadata。
    - span 保持原 trace/span id、父子关系与起止时间。
    - 模型调用 span → generation：`model`（实际上游模型，缺失时用请求模型）、input/output（脱敏后的 `request_json` / `response_text`）、`usage_details`（input/output tokens）、`cost_details`（`cost_usd`）、失败时 level=ERROR 与 `error_code`；推理摘要放 metadata。
 4. **推送**：通过 Langfuse Python SDK 作为客户端推送，指定原 id 与历史时间戳；SDK 不支持的部分退回 Langfuse 的 OTLP 端点。Langfuse 按 id 覆盖，重推幂等。
-5. **反馈**：`answer_feedback.version` 大于 `synced_version` 时推送 score：名称 `user_feedback`，`up` = 1、`down` = 0，comment 为脱敏后的评论，score id 由 `turn_id` + `actor_id` 确定性生成；`rating` 为 NULL 时删除该 score。trace 尚未同步的反馈等待下一轮。
-6. **状态**：成功写 `synced`；失败记录 `failure_count` 与 `last_error`，下一轮重试，无次数上限，从不丢弃。
+5. **反馈**：按 `answer_feedback.updated_at` 游标扫描（同样只扫 `cutoff` 之前的行），推送 score：名称 `user_feedback`，`up` = 1、`down` = 0，comment 为脱敏后的评论，score id 由 `turn_id` + `actor_id` 确定性生成；`rating` 为 NULL 时删除该 score。若 Langfuse 拒绝尚未入库 trace 的 score，记入失败表下一轮重试。
+6. **状态**：失败写入 `langfuse_sync_failure`，下一轮重试，无次数上限，从不丢弃；游标照常推进，失败项不阻塞后续数据。
 
 行为约束：
 
 - 未配置 `LANGFUSE_HOST` 时空转（只打一条启动日志），配置后自动补推全部历史。
 - worker 自身异常不影响业务；单条失败不阻塞其他条目。
-- 重置同步状态（删除 `langfuse_sync_state` 行）即可整体重推，用于 ClickHouse 数据丢失或脱敏规则升级。
+- 把游标重置为最早时间即可整体重推，用于 ClickHouse 数据丢失或脱敏规则升级。
 
 ## 4. 脱敏
 
-新模块 `tap/platform/telemetry/export_redaction.py`，只在同步 worker 中调用；MySQL 中的原文不改。
+新模块 `tap/modules/ai/application/export_redaction.py`，只在同步 worker 中调用；凭据正则从 `knowledge/adapters/pattern_redaction.py` 抽到 `tap/platform/redaction_patterns.py` 供两处共用；MySQL 中的原文不改。
 
 - **凭据**：复用 `PatternEgressRedactor` 的规则（私钥块、`password=`/`token=` 类赋值、密钥值）。与其“可疑即整段拒绝”不同，导出脱敏只替换命中片段，整段无法安全处理时才把该字段替换为 `[REDACTION_FAILED]`。
 - **个人信息**（正则 + 校验位，宁多勿漏）：
@@ -167,6 +177,7 @@ flowchart LR
 # LANGFUSE_PUBLIC_KEY=pk-lf-local-example
 # LANGFUSE_SECRET_KEY=sk-lf-local-example
 TAP_LANGFUSE_SYNC_SETTLE_SECONDS=60
+TAP_LANGFUSE_ENVIRONMENT=local
 # TAP_TRACE_REDACTION_RULES=deploy/local/redaction/custom-rules.example.yaml
 ```
 
@@ -184,8 +195,8 @@ TAP_LANGFUSE_SYNC_SETTLE_SECONDS=60
 - 后端单元：
   - 脱敏规则命中/不命中、Luhn 与身份证校验位、截断、失败替换、版本；
   - MySQL → Langfuse 映射（span 树与 id、时间戳、generation 字段、session/user/tags）；
-  - 静默窗口与重新执行后的重推判定；
-  - 反馈 `version` 递增与确定性 score id。
+  - 游标扫描：静默窗口内不推、重新执行后整条重推、失败项重试且不阻塞游标；
+  - 确定性 score id；撤销映射为删除 score。
 - 后端集成（真实 MySQL + 假 Langfuse 客户端）：
   - 选取 → 推送 → 状态更新；推送失败重试且不丢；
   - 未配置时空转，配置后补推历史；
