@@ -473,7 +473,10 @@ async def test_worker_records_preplanning_publication_denial_as_failed_turn(leas
                 (
                     "chat-denied",
                     SimpleNamespace(
-                        turn_id="turn-denied", lease_token="lease-denied", input_snapshot=snapshot
+                        turn_id="turn-denied",
+                        lease_token="lease-denied",
+                        attempt=1,
+                        input_snapshot=snapshot,
                     ),
                 ),
             )

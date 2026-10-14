@@ -967,7 +967,11 @@ async def test_generation_worker_rechecks_turn_lease_before_provider_call():
 
         async def renew_processing_lease(self, *_args, **_kwargs):
             self.validations += 1
-            if self.validations >= 3:
+            # `tapper-chat-v2` authorize-gates `guard_in` (1st) then
+            # `seed_search` (2nd) before the provider-calling step runs, so
+            # the 2nd renewal is the last chance to lose the lease before
+            # the provider would otherwise be invoked.
+            if self.validations >= 2:
                 raise ConversationConflict("generation lease lost")
 
     class Conversations:
