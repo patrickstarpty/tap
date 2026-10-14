@@ -134,6 +134,15 @@ class ModelGatewayUnavailable(Exception):
         super().__init__("model-unavailable")
 
 
+class ModelOutputTruncated(ModelGatewayUnavailable):
+    """The model's output did not fit: it stopped at the output token budget, its
+    structured output ends mid-document, or it exceeds a schema array bound.
+
+    Still reported as ``model-unavailable``; callers that can shrink their input
+    (e.g. graph extraction splitting a batch) catch this subclass.
+    """
+
+
 class ModelNotSelectable(ValueError):
     """The requested alias is absent from the catalog or lacks a required capability."""
 

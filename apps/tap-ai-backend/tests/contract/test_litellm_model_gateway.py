@@ -1002,6 +1002,140 @@ def _capturing_model_gateway():
     return models, captured
 
 
+def _answering_model_gateway(output):
+    from tap.modules.ai.domain.models import ModelCallAudit, ModelResult, ModelUsage, text_digest
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    class AnsweringGateway:
+        async def generate_structured(self, request):
+            if isinstance(output, Exception):
+                raise output
+            return ModelResult(
+                output=output,
+                actual_model="qwen-plus",
+                usage=ModelUsage(),
+                actual_provider="dashscope",
+                audit=ModelCallAudit(
+                    request.scope,
+                    request.alias,
+                    request.operation,
+                    request.prompt_digest,
+                    request.schema_digest,
+                    text_digest(request.context),
+                    request.idempotency_key,
+                    "dashscope",
+                    "qwen-plus",
+                    ModelUsage(),
+                ),
+            )
+
+    return KnowledgeModelGateway(
+        AnsweringGateway(),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "output",
+    [
+        {
+            "answer": "合同效力中止。\n\n合同效力中止。",
+            "claims": [
+                {"text": "合同效力中止", "evidenceLabels": ["S1"]},
+                {"text": "合同效力中止", "evidenceLabels": ["S1"]},
+            ],
+        },
+        {"answer": "合同效力中止。", "claims": [{"text": "合同效力中止。"}]},
+        {"answer": "合同效力中止。"},
+    ],
+    ids=("claims-misaligned-and-duplicated", "claim-without-labels", "open-schema"),
+)
+async def test_ungroundable_answer_output_abstains_instead_of_failing(output):
+    """A model that answered but could not be grounded is an abstention, not an outage."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    generation = await _answering_model_gateway(output).answer(
+        "query", (_claim_resolution_evidence(),), "quick-hybrid-v1"
+    )
+
+    assert (generation.text, generation.claims) == ("", ())
+
+
+@pytest.mark.asyncio
+async def test_partly_grounded_answer_output_keeps_the_grounded_claims():
+    from test_knowledge_api import _claim_resolution_evidence
+
+    generation = await _answering_model_gateway(
+        {
+            "answer": "合同效力中止。\n\n无依据",
+            "claims": [
+                {"text": "合同效力中止。", "evidenceLabels": ["S1"]},
+                {"text": "无依据", "evidenceLabels": ["S7"]},
+            ],
+        }
+    ).answer("query", (_claim_resolution_evidence(),), "quick-hybrid-v1")
+
+    assert generation.text == "合同效力中止。"
+    assert tuple(claim.text for claim in generation.claims) == ("合同效力中止。",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (ModelGatewayUnavailable(), "model-unavailable"),
+        (ModelGatewayRejected(), "model-request-rejected"),
+    ],
+)
+async def test_unreachable_answer_model_is_still_unavailable(error, reason):
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.ports.errors import AnswerUnavailable
+
+    with pytest.raises(AnswerUnavailable, match=f"^{reason}$"):
+        await _answering_model_gateway(error).answer(
+            "query", (_claim_resolution_evidence(),), "quick-hybrid-v1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_document_evidence_names_its_source_document_for_attribution():
+    """Multi-document evidence must say which document each item comes from."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.adapters.litellm import _ANSWER_PROMPT
+    from tap.modules.knowledge.domain.models import DocumentAnchor
+
+    base = _claim_resolution_evidence()
+    document = replace(
+        base,
+        title="盛世终身寿险条款.pdf",
+        source=replace(
+            base.source,
+            anchor=DocumentAnchor(heading_path=("盛世终身寿险", "第二条 投保范围"), page=1),
+        ),
+    )
+    models, captured = _capturing_model_gateway()
+
+    await models.answer(
+        "投保年龄？", (document, replace(base, evidence_label="S2")), "quick-hybrid-v1"
+    )
+
+    evidence = json.loads(captured[0].context)["evidence"]
+    assert evidence[0]["document"] == "盛世终身寿险条款.pdf"
+    assert evidence[0]["section"] == "盛世终身寿险 > 第二条 投保范围"
+    assert "document" not in evidence[1] and "section" not in evidence[1]
+    assert "name the product or document it applies to" in _ANSWER_PROMPT
+    assert "never apply a value from one document" in _ANSWER_PROMPT
+    assert _ANSWER_PROMPT in captured[0].prompt
+
+
 def _relation_context():
     from tap.modules.knowledge.application.relation_analysis import (
         RelationContext,
@@ -1774,6 +1908,70 @@ async def test_missing_or_invalid_cost_header_is_null(header_value):
 
 
 @pytest.mark.asyncio
+async def test_cost_header_is_rounded_to_the_stored_precision():
+    """LiteLLM sends float costs with long tails; storing them unrounded truncates in MySQL."""
+
+    def respond(incoming):
+        return httpx.Response(
+            200,
+            json=success(incoming).json(),
+            headers={"x-litellm-response-cost": "0.004916800000000001"},
+        )
+
+    recorder = FakeRecorder()
+    result = await configured_gateway(respond, recorder=recorder).chat(request())
+
+    assert result.cost_usd == Decimal("0.0049168000")
+    assert recorder.records[0].cost_usd.as_tuple().exponent == -10
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header_value", ["1e-12", "100000000"])
+async def test_cost_outside_the_stored_range_is_rounded_or_null(header_value):
+    def respond(incoming):
+        return httpx.Response(
+            200, json=success(incoming).json(), headers={"x-litellm-response-cost": header_value}
+        )
+
+    recorder = FakeRecorder()
+    await configured_gateway(respond, recorder=recorder).chat(request())
+
+    expected = Decimal("0E-10") if header_value == "1e-12" else None
+    assert recorder.records[0].cost_usd == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"finish_reason": "length"},
+        {"content": '{"unexpected": true}'},
+    ],
+    ids=("truncated", "schema-invalid"),
+)
+async def test_failed_call_with_a_response_still_records_usage_and_cost(change):
+    def respond(incoming):
+        body = success(incoming).json()
+        if "finish_reason" in change:
+            body["choices"][0]["finish_reason"] = change["finish_reason"]
+        else:
+            body["choices"][0]["message"]["content"] = change["content"]
+        body["usage"] = {"prompt_tokens": 1500, "completion_tokens": 8192}
+        return httpx.Response(200, json=body, headers={"x-litellm-response-cost": "0.0104304"})
+
+    recorder = FakeRecorder()
+    with pytest.raises(ModelGatewayUnavailable):
+        await configured_gateway(respond, recorder=recorder).generate_structured(
+            request(ModelOperation.STRUCTURED)
+        )
+
+    record = recorder.records[0]
+    assert record.status == "error"
+    assert (record.input_tokens, record.output_tokens) == (1500, 8192)
+    assert record.cost_usd == Decimal("0.0104304000")
+
+
+@pytest.mark.asyncio
 async def test_request_json_matches_sent_payload():
     sent = []
 
@@ -2031,3 +2229,107 @@ async def test_gateway_deadline_ceiling_allows_a_long_extraction_only_when_confi
             embedding_dimension=2,
             timeout_seconds=301,
         )
+
+
+def _structured_reply(content: str, finish_reason: str = "stop"):
+    def respond(incoming):
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen-plus",
+                "choices": [{"message": {"content": content}, "finish_reason": finish_reason}],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 8192},
+            },
+        )
+
+    return respond
+
+
+def _real_truncated_extraction_head() -> str:
+    from pathlib import Path
+
+    fixture = Path(__file__).parents[1] / "fixtures/graph/real_extraction_replay.json"
+    return json.loads(fixture.read_text())["groupMedicalBatch4"]["truncatedContentHead"]
+
+
+def _items_request(maximum: int):
+    schema = {
+        "type": "object",
+        "properties": {
+            "items": {"type": "array", "maxItems": maximum, "items": {"type": "string"}}
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }
+    return replace(
+        request(ModelOperation.STRUCTURED),
+        schema=schema,
+        schema_digest=digest(json.dumps(schema, sort_keys=True, separators=(",", ":"))),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "finish_reason", "structured"),
+    [
+        ('{"answer":"Grou', "length", request(ModelOperation.STRUCTURED)),
+        # The head of a real qwen-plus graph extraction cut off at 8192 tokens.
+        (_real_truncated_extraction_head(), "stop", request(ModelOperation.STRUCTURED)),
+        ('{"answer":"unterminated', "stop", request(ModelOperation.STRUCTURED)),
+        ('{"items":["a","b","c"]}', "stop", _items_request(2)),
+    ],
+    ids=["length", "real-extraction-head", "unterminated", "over-max-items"],
+)
+async def test_output_that_does_not_fit_is_reported_as_truncated(
+    content, finish_reason, structured
+):
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+
+    gateway = configured_gateway(_structured_reply(content, finish_reason))
+    with pytest.raises(ModelOutputTruncated, match="^model-unavailable$"):
+        await gateway.generate_structured(structured)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ['{"answer":7}', '{"answer":"a"} trailing', "[1,2]x"])
+async def test_complete_but_invalid_output_is_not_reported_as_truncated(content):
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+
+    gateway = configured_gateway(_structured_reply(content))
+    with pytest.raises(ModelGatewayUnavailable) as raised:
+        await gateway.generate_structured(request(ModelOperation.STRUCTURED))
+    assert not isinstance(raised.value, ModelOutputTruncated)
+
+
+@pytest.mark.asyncio
+async def test_a_nested_array_over_its_bound_is_invalid_not_truncated():
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tags": {"type": "array", "maxItems": 1, "items": {"type": "string"}}
+                    },
+                    "required": ["tags"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }
+    nested = replace(
+        request(ModelOperation.STRUCTURED),
+        schema=schema,
+        schema_digest=digest(json.dumps(schema, sort_keys=True, separators=(",", ":"))),
+    )
+    gateway = configured_gateway(_structured_reply('{"items":[{"tags":["a","b"]}]}'))
+
+    with pytest.raises(ModelGatewayUnavailable) as raised:
+        await gateway.generate_structured(nested)
+    assert not isinstance(raised.value, ModelOutputTruncated)

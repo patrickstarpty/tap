@@ -423,13 +423,24 @@ def assemble_fragment(
     )
 
 
+# Known entities offered to one batch: only entities the batch text mentions,
+# at most this many. Sending every earlier entity (up to 200) made the model
+# re-copy all of them before writing a single edge.
+KNOWN_ENTITIES_MAX = 50
+
+
 def known_entities_from(
-    drafts: Sequence[GraphSnapshotDraft], *, limit: int = 200
+    drafts: Sequence[GraphSnapshotDraft],
+    *,
+    text: str | None = None,
+    limit: int = KNOWN_ENTITIES_MAX,
 ) -> tuple[dict[str, object], ...]:
     """Summarize nodes seen so far for reuse by later batches of the same document.
 
-    Nodes are kept in first-seen order; when more than ``limit`` distinct nodes have
-    been seen, only the newest ``limit`` (the most recently first-seen) are kept.
+    With ``text`` (the batch's chunk content), only nodes whose label, canonical
+    key or alias literally occurs in it (after ``normalize_key``) are kept, most
+    occurrences first and then in first-seen order, at most ``limit``. Without
+    ``text``, the newest ``limit`` first-seen nodes are kept.
     """
 
     nodes_by_id: dict[str, GraphNode] = {}
@@ -439,7 +450,23 @@ def known_entities_from(
             if node.node_id not in nodes_by_id:
                 nodes_by_id[node.node_id] = node
                 order.append(node.node_id)
-    kept = order[-limit:] if len(order) > limit else order
+    if text is None:
+        kept = order[-limit:] if len(order) > limit else order
+    else:
+        normalized_text = normalize_key(text)
+        mentions: dict[str, int] = {}
+        for node_id in order:
+            node = nodes_by_id[node_id]
+            names = {
+                normalize_key(name) for name in (node.label, node.canonical_key, *node.aliases)
+            }
+            count = max(
+                (normalized_text.count(name) for name in names if len(name) >= 2), default=0
+            )
+            if count:
+                mentions[node_id] = count
+        position = {node_id: index for index, node_id in enumerate(order)}
+        kept = sorted(mentions, key=lambda node_id: (-mentions[node_id], position[node_id]))[:limit]
     return tuple(
         {
             "id": nodes_by_id[node_id].node_id,

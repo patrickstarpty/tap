@@ -35,12 +35,12 @@
 ### 1.1 抽取（按文档修订）
 
 - graph job 仍由 `MysqlGraphReadyProjection` 在文档 READY 事务内创建，每个修订一个 job。
-- worker 把修订的切片按顺序切成批次，每批以字符预算 `TAPPER_GRAPH_BATCH_CHARS`（默认 6000 字，超长的单个切片单独成批）为主、块数上限 `TAPPER_GRAPH_BATCH_SIZE`（默认 100）为辅，每批一次 `generate_structured` 调用。调用上下文包含：文档标题、本批切片、**本修订此前批次已抽出的实体清单**（id、label、type、canonicalKey），要求模型复用已有实体 id，保证同一文档内 canonical key 稳定。
+- worker 把修订的切片按顺序切成批次，每批以字符预算 `TAPPER_GRAPH_BATCH_CHARS`（默认 3000 字，超长的单个切片单独成批）为主、块数上限 `TAPPER_GRAPH_BATCH_SIZE`（默认 100）为辅，每批一次 `generate_structured` 调用。每批输出有界：schema 与提示词限定至多 40 个节点、60 条边（按每个节点约 35–60、每条边约 45–60 输出 token 估算，约 6000 token，在 8192 token 预算内），只输出本批原文中出现的实体与关系。解析阶段丢弃重复节点与重复边并计数；响应被截断（`finish_reason=length`、JSON 不完整或顶层 nodes/edges/provenance 超出数组上限；别名超过 5 个由服务端截取前 5 个，不触发拆批）时，对本批做一次二分重试（拆成两半各自抽取），某一半仍失败则保留另一半、该批计入 PARTIAL，两半都失败才记失败，截断不原样重试。调用上下文包含：文档标题、本批切片、**本修订此前批次已抽出、且在本批原文中字面出现的实体清单**（id、label、type、canonicalKey；按出现次数取前 50 个），要求模型的边直接引用已知实体 id，不得在 nodes 中重复输出已知实体；服务端丢弃模型重抄的已知实体（按 id 或 canonical key 识别）并计数，按请求中的已知实体回填被边引用的节点，保证同一文档内 canonical key 稳定。
 - 批次幂等键为（修订 id、批次号、抽取档案摘要）。批次失败按退避重试，`TAPPER_GRAPH_BATCH_RETRIES`（默认 3）次后标记该批失败并继续后续批次。全部批次成功时片段状态 READY；有失败批次时 PARTIAL，仍可合并；全部失败时 FAILED。
 - 批次结果合入同一修订的片段图（现有单文档快照表继续承载，称为**片段图**）；片段图的 `snapshot_id` 不变，批次表记录每批的状态、失败码、重试次数。
 - 节点类型：现有 ACTOR、SYSTEM、REQUIREMENT、CONCEPT、ENTITY 之外增加 PROCESS（流程、步骤、环节）。
 - 关系类型受控词表：REQUIRES、APPLIES_TO、PART_OF、EXCEPTION_OF、SUPERSEDES、TRIGGERS、PRECEDES、VALIDATED_BY、RESPONSIBLE_FOR、USES、DEFINES、CONFLICTS_WITH，兜底 RELATED_TO。模型同时输出自由文本 `relationLabel`（原文表述，≤64 字）供展示；`relation_type` 不在词表内的输出整条边作废并计入批次诊断。
-- 抽取 schema 在现有基础上增加 `relationLabel`、节点 `aliases`（模型从本批文本中识别的别名，≤5 个）。推理边（INFERRED）与推理来源机制保留，不扩展。
+- 抽取 schema 在现有基础上增加 `relationLabel`、节点 `aliases`（模型从本批文本中识别的别名，≤5 个、每个 ≤32 字）。指代词与结构词（本合同、本公司、该产品、上述、前款、第X条/章/节、附表X、释义X 等，以及 this contract、the policy、Article 5 等英文对应词）、纯数字或编号、规范化后不足 2 字的文本不得作别名或实体名：抽取时丢弃这类别名；实体名是这类文本时改用其第一个有效别名，没有则丢弃该节点及其边。规则集中在 `graph/domain/naming.py`，抽取与对齐共用。推理边（INFERRED）与推理来源机制保留，不扩展。
 - 抽取提示词与 schema 摘要更新后，`GRAPH_EXTRACTION_PROFILE_DIGEST` 随之变化，旧片段视为过期（见第 5 节重建）。规则式假抽取使用独立的确定性档案摘要；进程按 `TAPPER_GRAPH_EXTRACTION_MODE` 选用摘要，另一模式的片段同样视为过期。
 
 ### 1.2 项目级图与合并
@@ -66,7 +66,7 @@
 - 合并是**全量重放**：取项目内当前已发布修订的全部 READY/PARTIAL 且档案摘要为当前值的片段，重新计算一个新版本；删除来源即重放时排除。片段集合摘要与上一版本相同则跳过。节点、边、来源、证据与别名写入前按各表主键去重（模型常在同一批里重复输出同一条边或同一实体，对齐后共用一个主键），同一组片段重复合并结果一致。版本就绪后原子切换 `graph_project_version.status=READY`，旧版本保留一个用于查询过渡，更早版本清理。
 - 实体对齐三级，依次尝试：
   1. 规范化 canonical key 精确匹配。规范化：casefold、全角转半角、去标点与空白、去尾部修饰词（"规则""条款""流程""policy""rule" 等有限列表）。
-  2. 别名表匹配：任一规范化别名（label、模型给出的 aliases、历史合并产生的别名）相同且节点类型相同。
+  2. 别名表匹配：任一规范化别名（label、模型给出的 aliases、历史合并产生的别名）相同且节点类型相同；指代词、结构词与编号不参与匹配，也不进入合并后的别名。模型给出的别名只在同一来源修订（同一文档、即同一产品）内生效：跨来源修订只按名称（label 与 label）相同合并，仅凭别名命中的不跨来源合并；精确 key 合并不受影响。
   3. embedding 相似度 ≥ `TAPPER_GRAPH_ALIGN_THRESHOLD`（默认 0.92）且节点类型相同；由 `TAPPER_GRAPH_ALIGN_EMBEDDING` 控制，第一版默认关闭。
   合并后的节点 label 取出现次数最多的片段 label，其余进别名表；每次合并写 `graph_merge_log`。
 - 边合并：两端节点合并后、`relation_type` 相同的边合并为一条，置信度取最大值，证据取并集，`relation_label` 取出现次数最多者。
@@ -124,7 +124,7 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 
 - `Citation` 增加 `kind`：`chunk`（现状）或 `edge`。边引用字段：`edge_id`、`graph_version`、`subject`（node_id、label）、`object`（node_id、label）、`relation_type`、`relation_label`、`evidence`（支撑切片的 chunk id、来源修订、内容摘要、锚点）。边引用最终仍锚定到原文。
 - `ports/answers.py` 校验：S 标签保持 `S1..S20` 位置规则；R 标签 `R1..R20`，必须对应本次 `RelationContext` 中的边；含 R 引用的 claim 文本须包含该边两端节点的 label 或任一别名；边引用的 `graph_version` 必须等于本次使用的版本。
-- 校验失败处理：某个 claim 的 R 引用不合法时，去掉该 claim 的 R 标签后按 S 标签重新校验；仍有 S 标签则保留该 claim 并计入诊断 `invalid-relation-citation`，没有任何合法标签则丢弃该 claim；全部 claim 被丢弃才弃答。
+- 校验失败处理：某个 claim 的 R 引用不合法时，去掉该 claim 的 R 标签后按 S 标签重新校验；仍有 S 标签则保留该 claim 并计入诊断 `invalid-relation-citation`，没有任何合法标签则丢弃该 claim；全部 claim 被丢弃才弃答。S 侧同理：文本无法与回答对齐、重复或引用未知标签的 claim 逐条丢弃，回答由剩余 claim 重建；全部丢弃时以 `insufficient_evidence` 弃答，不报服务不可用。多来源归属：S 证据带来源文档名与标题路径进入提示词；claim 文本点名某份证据文档（文件名或文档标题，多份文档共用的名称不算）而引用的 S 证据全部来自其他文档时丢弃该 claim。
 - 持久化：`citation_snapshot` 增加可空列 `citation_kind`、`graph_version`、`edge_id`、`subject_node_id`、`object_node_id`、`relation_type`、`relation_label`；历史行 `citation_kind` 默认 `chunk`。
 - 推荐问题的依据校验复用对话回答链路，自动支持 R 引用；刷新输入在"主要实体"之外加入"主要关系"（按度数与置信度取前 20 条）。
 
@@ -218,7 +218,7 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `TAPPER_GRAPH_EXTRACTION_MODE` | `.env.example` 改为 `model`；CI 与 E2E 为 `fake` | 抽取方式 |
-| `TAPPER_GRAPH_BATCH_CHARS` | 6000 | 每批字符预算（主约束） |
+| `TAPPER_GRAPH_BATCH_CHARS` | 3000 | 每批字符预算（主约束） |
 | `TAPPER_GRAPH_BATCH_SIZE` | 100 | 每批切片数上限（辅约束） |
 | `TAPPER_GRAPH_BATCH_RETRIES` | 3 | 批次重试次数 |
 | `TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS` | 240 | 单次抽取调用截止时间（≤300 秒，须不短于输出预算按每秒 40 token 所需时间；作业租约为其加 60 秒） |

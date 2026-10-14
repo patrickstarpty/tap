@@ -15,6 +15,7 @@ from tap.modules.graph.domain.models import (
     GraphSnapshotDraft,
     RelationOrigin,
 )
+from tap.modules.graph.domain.naming import is_reference_name
 
 
 def _digest(seed: str) -> str:
@@ -76,19 +77,68 @@ def test_same_key_different_type_stays_separate():
 
 
 def test_alias_level_requires_same_type_and_records_rule():
-    a = _fragment(
+    same_type = _fragment(
         "frag-a",
-        [("a1", "Underwriting", "CONCEPT", "underwriting", ("核保",))],
+        [
+            ("a1", "Underwriting", "CONCEPT", "underwriting", ("核保",)),
+            ("a2", "核保", "CONCEPT", "核保"),
+        ],
     )
-    b_same_type = _fragment("frag-b", [("b1", "核保", "CONCEPT", "核保")])
 
-    entities = resolve_entities([a, b_same_type])
+    entities = resolve_entities([same_type])
     assert len(entities) == 1
     assert entities[0].rule == "ALIAS"
 
-    b_other_type = _fragment("frag-b", [("b1", "核保", "PROCESS", "核保")])
-    separate_entities = resolve_entities([a, b_other_type])
+    other_type = _fragment(
+        "frag-a",
+        [
+            ("a1", "Underwriting", "CONCEPT", "underwriting", ("核保",)),
+            ("a2", "核保", "PROCESS", "核保"),
+        ],
+    )
+    separate_entities = resolve_entities([other_type])
     assert len(separate_entities) == 2
+
+
+def test_a_model_alias_never_merges_entities_of_different_documents():
+    # Two products each aliased "重疾险" by their own document: an alias hit alone
+    # does not cross documents (different source revisions).
+    a = _fragment("frag-a", [("a1", "安心重疾保险", "SYSTEM", "安心重疾保险", ("重疾险",))])
+    b = _fragment("frag-b", [("b1", "康健重疾保险", "SYSTEM", "康健重疾保险", ("重疾险",))])
+    assert len(resolve_entities([a, b])) == 2
+
+    # Nor does one document's alias matching the other document's name.
+    b_named = _fragment("frag-b", [("b1", "重疾险", "SYSTEM", "重疾险")])
+    assert len(resolve_entities([a, b_named])) == 2
+
+
+def test_the_same_name_still_merges_across_documents_by_alias_level():
+    a = _fragment("frag-a", [("a1", "核保", "CONCEPT", "核保流程审核")])
+    b = _fragment("frag-b", [("b1", "核保", "CONCEPT", "核保")])
+
+    entities = resolve_entities([a, b])
+
+    assert len(entities) == 1 and entities[0].rule == "ALIAS"
+
+
+def test_an_alias_still_merges_within_one_document_and_exact_keys_across():
+    a = _fragment(
+        "frag-a",
+        [
+            ("a1", "安心重疾保险", "SYSTEM", "安心重疾保险", ("重疾险",)),
+            ("a2", "重疾险", "SYSTEM", "重疾险"),
+        ],
+    )
+    b = _fragment("frag-b", [("b1", "重疾险", "SYSTEM", "安心重疾保险")])
+
+    entities = resolve_entities([a, b])
+
+    assert len(entities) == 1
+    assert {member for member in entities[0].members} == {
+        ("frag-a", "a1"),
+        ("frag-a", "a2"),
+        ("frag-b", "b1"),
+    }
 
 
 def test_embedding_level_only_when_vectors_supplied():
@@ -230,15 +280,26 @@ def _linear_scan_clusters(
     """Reference resolver that scans every cluster for every node, in creation order.
 
     It states the alignment semantics directly (first cluster of the same type whose
-    level-1 keys contain the node's key, else first whose level-2 keys intersect,
-    else the best embedding match) so the indexed resolver can be checked against it.
+    level-1 keys contain the node's key, else first holding the node's name or, from
+    the node's own document, any of its level-2 keys, else the best embedding match)
+    so the indexed resolver can be checked against it.
     """
     clusters: list[dict[str, object]] = []
+
+    def names(texts):
+        return {
+            alignment_key(name)
+            for name in texts
+            if not is_reference_name(name) and not is_reference_name(alignment_key(name))
+        }
+
     for fragment in sorted(fragments, key=lambda item: item.snapshot.snapshot_id):
         snapshot_id = fragment.snapshot.snapshot_id
+        source = fragment.snapshot.source_revision_ids
         for node in fragment.nodes:
             key1 = alignment_key(node.canonical_key)
-            keys2 = {alignment_key(node.label)} | {alignment_key(a) for a in node.aliases}
+            label_keys = names((node.label,))
+            keys2 = names((node.label, *node.aliases))
             target = None
             rule = None
             for cluster in clusters:
@@ -246,8 +307,11 @@ def _linear_scan_clusters(
                     target, rule = cluster, "EXACT"
                     break
             if target is None:
+                # Names match across documents; aliases only within one document.
                 for cluster in clusters:
-                    if cluster["type"] == node.node_type and cluster["l2"] & keys2:
+                    if cluster["type"] == node.node_type and (
+                        cluster["labels"] & label_keys or cluster["l2"].get(source, set()) & keys2
+                    ):
                         target, rule = cluster, "ALIAS"
                         break
             if target is None and embeddings:
@@ -274,7 +338,8 @@ def _linear_scan_clusters(
                 target = {
                     "type": node.node_type,
                     "l1": set(),
-                    "l2": set(),
+                    "labels": set(),
+                    "l2": {},
                     "members": [],
                     "rule": "EXACT",
                 }
@@ -282,7 +347,8 @@ def _linear_scan_clusters(
                 rule = "EXACT"
             target["members"].append((snapshot_id, node.node_id))
             target["l1"].add(key1)
-            target["l2"] |= keys2
+            target["labels"] |= label_keys
+            target["l2"].setdefault(source, set()).update(keys2)
             target["rule"] = rule
     return [
         (str(cluster["type"]), tuple(cluster["members"]), str(cluster["rule"]))
@@ -480,3 +546,46 @@ def test_embedding_alignment_of_two_thousand_single_type_nodes_stays_fast():
     # The full scan takes well over ten seconds here; the indexed layer takes
     # a fraction of a second, so this budget leaves wide headroom for CI.
     assert elapsed < 3.0, elapsed
+
+
+def _real_alias_fragments() -> list[GraphSnapshotDraft]:
+    """The fragment nodes behind the 9 ALIAS merges of the real-model run."""
+    import json
+    from pathlib import Path
+
+    samples = json.loads(
+        (Path(__file__).parents[2] / "fixtures/graph/real_extraction_replay.json").read_text()
+    )["aliasMerges"]
+    specs: dict[str, dict[str, tuple[str, str, str, str, tuple[str, ...]]]] = {}
+    for sample in samples:
+        for member in sample["members"]:
+            specs.setdefault(member["snapshot"], {})[member["id"]] = (
+                member["id"],
+                member["label"],
+                member["type"],
+                member["key"],
+                tuple(member["aliases"]),
+            )
+    return [_fragment(snapshot_id, list(nodes.values())) for snapshot_id, nodes in specs.items()]
+
+
+def _merged_labels(entities) -> set[frozenset[str]]:
+    return {
+        frozenset(entity.aliases) | {entity.label} for entity in entities if len(entity.members) > 1
+    }
+
+
+def test_reference_aliases_from_the_real_run_no_longer_merge_entities():
+    entities = resolve_entities(_real_alias_fragments())
+
+    merged = _merged_labels(entities)
+    # Before: "本合同" merged two products, "第十九条"/"第十五条"/"第十六条"/"第十七条"/
+    # "第二十条" merged unrelated clauses, "释义四" merged two definitions.
+    assert merged == {
+        # Same document: the insurer, named "本公司" with "友邦保险" as its alias.
+        frozenset({"友邦保险"}),
+        frozenset({"境内医院", "医院"}),
+        # Two documents, same canonical key: an EXACT merge, not an alias one.
+        frozenset({"明确说明与如实告知"}),
+    }
+    assert not any(is_reference_name(alias) for entity in entities for alias in entity.aliases)

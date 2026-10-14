@@ -13,7 +13,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
 
@@ -26,7 +26,11 @@ from tap.modules.ai.adapters.litellm_catalog import (
     ModelRoles,
     validate_litellm_base_url,
 )
-from tap.modules.ai.application.schema import check_schema, validate_output
+from tap.modules.ai.application.schema import (
+    StructuredOutputOverflow,
+    check_schema,
+    validate_output,
+)
 from tap.modules.ai.domain.model_calls import ModelCallRecord
 from tap.modules.ai.domain.models import (
     ModelCallAudit,
@@ -35,6 +39,7 @@ from tap.modules.ai.domain.models import (
     ModelGatewayRejected,
     ModelGatewayUnavailable,
     ModelOperation,
+    ModelOutputTruncated,
     ModelRequest,
     ModelResult,
     ModelUsage,
@@ -61,17 +66,41 @@ VISION_OUTPUT_TOKENS = 8192
 ACTUAL_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}")
 
 
+# `model_call.cost_usd` is DECIMAL(18,10): 8 integer digits, 10 fractional digits.
+_COST_QUANTUM = Decimal("1E-10")
+_COST_LIMIT = Decimal("1E8")
+
+
 def _parse_cost_header(value: str | None) -> Decimal | None:
-    """Parse the LiteLLM cost header; non-finite or negative values are never recorded."""
+    """Parse the LiteLLM cost header at the stored precision.
+
+    LiteLLM computes cost in floating point (e.g. ``0.004916800000000001``); rounding here keeps
+    MySQL from truncating on write. Non-finite, negative or out-of-range values are never recorded.
+    """
     if value is None:
         return None
     try:
         cost = Decimal(value)
     except InvalidOperation:
         return None
-    if not cost.is_finite() or cost < 0:
+    if not cost.is_finite() or cost < 0 or cost >= _COST_LIMIT:
         return None
-    return cost
+    return cost.quantize(_COST_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def _reported_usage(body: dict[str, Any]) -> tuple[int | None, int | None]:
+    """Token usage the provider reported, read before the output is validated.
+
+    A call whose output is rejected (truncated, off-schema) was still billed.
+    """
+    usage = body.get("usage")
+    if not isinstance(usage, dict):
+        return None, None
+
+    def count(value: object) -> int | None:
+        return value if type(value) is int and 0 <= value <= 1000000 else None
+
+    return count(usage.get("prompt_tokens")), count(usage.get("completion_tokens"))
 
 
 def _request_json_for_record(
@@ -454,6 +483,8 @@ class LiteLLMModelGateway:
                                 }
                             )
                     body, headers = await self._post(request, payload, attempts)
+                    cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
+                    input_tokens, output_tokens = _reported_usage(body)
                     result = self._normalize(request, body, headers, self._upstream_model(headers))
                     gateway_call_id = result.gateway_call_id
                     provider_request_id = result.provider_request_id
@@ -461,7 +492,6 @@ class LiteLLMModelGateway:
                     provider = result.actual_provider
                     input_tokens = result.usage.input_tokens
                     output_tokens = result.usage.output_tokens
-                    cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
                     if operation is ModelOperation.EMBED:
                         rows = body.get("data")
                         if isinstance(rows, list):
@@ -659,6 +689,13 @@ class LiteLLMModelGateway:
         else:
             choices = body["choices"]
             if (
+                isinstance(choices, list)
+                and len(choices) == 1
+                and isinstance(choices[0], dict)
+                and choices[0].get("finish_reason") == "length"
+            ):
+                raise ModelOutputTruncated()
+            if (
                 not isinstance(choices, list)
                 or len(choices) != 1
                 or not isinstance(choices[0], dict)
@@ -673,11 +710,21 @@ class LiteLLMModelGateway:
                 raise ModelGatewayUnavailable()
             output = content
             if request.operation is ModelOperation.STRUCTURED:
-                output = json.loads(content)
+                try:
+                    output = json.loads(content)
+                except json.JSONDecodeError as error:
+                    if error.msg.startswith("Unterminated string") or error.pos >= len(
+                        content.rstrip()
+                    ):
+                        raise ModelOutputTruncated() from None
+                    raise
                 if not isinstance(output, dict):
                     raise ModelGatewayUnavailable()
                 assert request.schema is not None
-                validate_output(request.schema, output)
+                try:
+                    validate_output(request.schema, output)
+                except StructuredOutputOverflow:
+                    raise ModelOutputTruncated() from None
         audit = ModelCallAudit(
             request.scope,
             request.alias,
