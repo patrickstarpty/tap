@@ -4,6 +4,7 @@ outcomes) must be unchanged."""
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -172,6 +173,37 @@ async def test_oversized_bundle_fails_turn() -> None:
     event_type, payload = kwargs["terminal_event"]
     assert event_type == "turn.failed"
     assert payload["problem"]["type"].endswith("answer-unavailable")
+
+
+@pytest.mark.asyncio
+async def test_slow_prepare_is_reflected_in_stage_completed_duration() -> None:
+    """`stage.completed`'s `durationMs` must cover retrieval (the `prepare`
+    phase), not just the time after it: on the `SingleShotAnswerSteps` path,
+    `prepare` makes the whole answer call, so a slow `prepare` must show up
+    as a correspondingly large `durationMs`, matching the old code, which
+    timed the entire `TurnProcessor.process` call."""
+
+    class SlowSingleShotKnowledge:
+        async def answer(self, _request):
+            await asyncio.sleep(0.05)
+            return _answer()
+
+    turn = _turn()
+    conversations = _Conversations(turn)
+    worker = GenerationWorker(
+        conversations, SlowSingleShotKnowledge(), checkpointer=InMemorySaver()
+    )
+
+    assert await worker.run_once(limit=1) == 1
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
+    assert evidence.outcome == "completed"
+    stage_payload = next(
+        payload
+        for event_type, payload in kwargs["stream_events"]
+        if event_type == "stage.completed"
+    )
+    assert stage_payload["durationMs"] >= 40
 
 
 @pytest.mark.asyncio

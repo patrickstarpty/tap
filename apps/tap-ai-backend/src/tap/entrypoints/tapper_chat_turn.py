@@ -314,10 +314,18 @@ class ChatTurnNodes:
                 for item in value.resolved_resources
             ],
         )
+        # Wall-clock epoch milliseconds, not `time.monotonic()`: this value is
+        # checkpointed and `finalize` may resume it on a different worker
+        # process or host, where a monotonic clock's origin is not
+        # comparable. Captured before `prepare_conversation_answer` so a slow
+        # retrieval call is still reflected in `stage.completed`'s
+        # `durationMs` (matching the old code, which timed the whole
+        # `TurnProcessor.process` call).
+        started_at_ms = int(time.time() * 1000)
         step = await self._steps.prepare_conversation_answer(
             request, value, answer_plan=active_plan, authorize=self._require_authorized
         )
-        return {"step": step, "started_at_ms": int(time.monotonic() * 1000)}
+        return {"step": step, "started_at_ms": started_at_ms}
 
     async def model(self, state: ChatGraphState) -> dict[str, object]:
         active_plan = self._active_plan(state)
@@ -535,7 +543,11 @@ class ChatTurnNodes:
                 "type": ("turn.abstained" if answer_response.abstained else "turn.completed"),
                 "payload": {"answer": answer_response.model_dump(mode="json", by_alias=True)},
             }
-        duration_ms = int(time.monotonic() * 1000) - int(state.get("started_at_ms") or 0)
+        # Wall-clock epoch milliseconds, matching `seed_search`'s
+        # `started_at_ms`; clamp at 0 since a resumed run's elapsed time
+        # should never read negative (e.g. clock skew across a resume on a
+        # different host).
+        duration_ms = max(0, int(time.time() * 1000) - int(state.get("started_at_ms") or 0))
         return {
             "result": {
                 "evidence": _evidence_checkpoint(evidence, graph_context=graph_context_payload),
