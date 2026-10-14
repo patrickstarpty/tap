@@ -618,8 +618,12 @@ class AuthorizedRetrieval:
         edge_citations: tuple[Citation, ...] = ()
         s_citations = [self._citation(item) for item in run.response.evidence]
         if relation is not None:
+            evidence_content = {item.chunk_id: item.content for item in run.response.evidence}
             reconciled = reconcile_relation_claims(
-                generation, relation, graph_version=relation.graph_version
+                generation,
+                relation,
+                graph_version=relation.graph_version,
+                evidence_content=evidence_content,
             )
             stripped = reconciled.stripped
             if reconciled.claims == () and generation.claims:

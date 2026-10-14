@@ -1078,7 +1078,12 @@ def _relation_hit(
     chunk_id: str,
     revision: str,
     *,
-    content: str = "relation evidence content",
+    # Names both `_relation_evidence_for`'s default subject/object labels
+    # ("核保流程"/"健康告知") so this chunk doubles as valid support content
+    # for `relation_support_mentions_both_endpoints` wherever a test reuses
+    # it as an R citation's S-backed support, without needing every call
+    # site to pass an explicit, label-matching `content`.
+    content: str = "核保流程需要先完成健康告知，relation evidence content",
     item_id: str,
     generation: str = "gen-1",
     local_rank: int = 1,
@@ -1129,7 +1134,9 @@ def _real_formula_hit(index: int, *, revision: str = "rev-1") -> SearchHit:
         separators=(",", ":"),
         sort_keys=True,
     )
-    content = f"relation evidence content {index}"
+    # See `_relation_hit`'s content default: also names both of
+    # `_relation_evidence_for`'s default labels for the same reason.
+    content = f"核保流程需要先完成健康告知，relation evidence content {index}"
     content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
     chunk_id = str(chunk_id_for(RevisionId(revision), anchor_json, content_hash))
     logical_chunk_id = "h_" + str(
