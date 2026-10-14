@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import pytest
 import sqlalchemy as sa
 from scripts.migration_support import IsolatedMysql
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from tap.modules.access.adapters import mysql as _access_mysql  # noqa: F401  (registers FK targets)
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.mysql_langfuse_sync import MysqlLangfuseSyncStore
+from tap.modules.chat.adapters.mysql_feedback import answer_feedback
 from tap.platform.db.session import create_engine_and_session_factory
 from tap.platform.telemetry.schema import model_call, model_call_content, trace_span
 from tests.owned_mysql import owned_project_database_url
@@ -89,6 +91,31 @@ async def _insert_conversation_and_turn(
             last_sequence=0,
             created_at=_T0,
             traceparent=None,
+            **_scope_values(),
+        )
+    )
+
+
+async def _insert_feedback(
+    connection: AsyncConnection,
+    *,
+    feedback_id: str,
+    turn_id: str,
+    chat_id: str,
+    updated_at: datetime,
+    rating: str | None = "up",
+) -> None:
+    await _insert_conversation_and_turn(connection, turn_id=turn_id, chat_id=chat_id)
+    await connection.execute(
+        sa.insert(answer_feedback).values(
+            feedback_id=feedback_id,
+            conversation_id=chat_id,
+            turn_id=turn_id,
+            trace_id=None,
+            rating=rating,
+            comment=None,
+            created_at=updated_at,
+            updated_at=updated_at,
             **_scope_values(),
         )
     )
@@ -178,6 +205,270 @@ def test_row_inserted_behind_cursor_is_not_rescanned(owned_project_mysql: Isolat
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_scan_traces_tie_at_cut_is_not_lost(owned_project_mysql: IsolatedMysql) -> None:
+    """A `LIMIT`-sized page that lands exactly on a group of tied timestamps must
+    not advance the cursor until every row sharing that timestamp is accounted
+    for, even when the page is smaller than the tied group (here: `limit=1` with
+    two traces tied at `_T1`)."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            trace_c, trace_d, trace_e = uuid4().hex, uuid4().hex, uuid4().hex
+            async with engine.begin() as connection:
+                await _insert_span(
+                    connection, trace_id=trace_c, span_id=uuid4().hex[:16], recorded_at=_T1
+                )
+                await _insert_span(
+                    connection, trace_id=trace_d, span_id=uuid4().hex[:16], recorded_at=_T1
+                )
+                await _insert_span(
+                    connection, trace_id=trace_e, span_id=uuid4().hex[:16], recorded_at=_T2
+                )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            trace_ids, position = await store.scan_traces(cutoff=_T2, limit=1)
+            assert set(trace_ids) == {trace_c, trace_d}
+            assert position == _T1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_scan_traces_full_page_of_identical_timestamp_refetches_without_limit(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    """When every row in a full page shares one timestamp, there may be more rows
+    at that timestamp past the `LIMIT`; the store must fetch all of them, not
+    just the page, before advancing past that timestamp."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            trace_f, trace_g, trace_h = uuid4().hex, uuid4().hex, uuid4().hex
+            async with engine.begin() as connection:
+                for trace_id in (trace_f, trace_g, trace_h):
+                    await _insert_span(
+                        connection, trace_id=trace_id, span_id=uuid4().hex[:16], recorded_at=_T1
+                    )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            trace_ids, position = await store.scan_traces(cutoff=_T1, limit=2)
+            assert set(trace_ids) == {trace_f, trace_g, trace_h}
+            assert position == _T1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_scan_traces_repeated_scan_returns_every_trace_at_least_once(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    """Interleaved spans (one trace split across two timestamps, another trace
+    between them) with a `limit` smaller than the number of distinct traces: a
+    repeated scan+advance loop must eventually surface every trace, never stall,
+    and never regress its position."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            trace_a, trace_b = uuid4().hex, uuid4().hex
+            async with engine.begin() as connection:
+                await _insert_span(
+                    connection, trace_id=trace_a, span_id=uuid4().hex[:16], recorded_at=_T0
+                )
+                await _insert_span(
+                    connection,
+                    trace_id=trace_b,
+                    span_id=uuid4().hex[:16],
+                    recorded_at=_T0 + timedelta(seconds=30),
+                )
+                await _insert_span(
+                    connection,
+                    trace_id=trace_a,
+                    span_id=uuid4().hex[:16],
+                    recorded_at=_T0 + timedelta(minutes=10),
+                    started_at=_T0 + timedelta(minutes=10),
+                )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            cutoff = _T0 + timedelta(hours=1)
+            seen: set[str] = set()
+            last_position: datetime | None = None
+            for _ in range(10):
+                trace_ids, position = await store.scan_traces(cutoff=cutoff, limit=1)
+                if not trace_ids:
+                    break
+                if last_position is not None:
+                    assert position is not None
+                    assert position > last_position
+                last_position = position
+                seen.update(trace_ids)
+                await store.advance("trace", position)
+            else:
+                pytest.fail("scan did not converge within 10 iterations")
+            assert seen == {trace_a, trace_b}
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_scan_feedback_tie_at_cut_is_not_lost(owned_project_mysql: IsolatedMysql) -> None:
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            feedback_c, feedback_d, feedback_e = uuid4().hex, uuid4().hex, uuid4().hex
+            async with engine.begin() as connection:
+                for feedback_id, updated_at in (
+                    (feedback_c, _T1),
+                    (feedback_d, _T1),
+                    (feedback_e, _T2),
+                ):
+                    await _insert_feedback(
+                        connection,
+                        feedback_id=feedback_id,
+                        turn_id=f"turn-{feedback_id[:8]}",
+                        chat_id=f"chat-{feedback_id[:8]}",
+                        updated_at=updated_at,
+                    )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            records, position = await store.scan_feedback(cutoff=_T2, limit=1)
+            assert {record.feedback_id for record in records} == {feedback_c, feedback_d}
+            assert position == _T1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_scan_feedback_full_page_of_identical_timestamp_refetches_without_limit(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            feedback_ids = [uuid4().hex for _ in range(3)]
+            async with engine.begin() as connection:
+                for feedback_id in feedback_ids:
+                    await _insert_feedback(
+                        connection,
+                        feedback_id=feedback_id,
+                        turn_id=f"turn-{feedback_id[:8]}",
+                        chat_id=f"chat-{feedback_id[:8]}",
+                        updated_at=_T1,
+                    )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            records, position = await store.scan_feedback(cutoff=_T1, limit=2)
+            assert {record.feedback_id for record in records} == set(feedback_ids)
+            assert position == _T1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_scan_feedback_repeated_scan_returns_every_feedback_at_least_once(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            feedback_ids = [uuid4().hex for _ in range(3)]
+            async with engine.begin() as connection:
+                for index, feedback_id in enumerate(feedback_ids):
+                    await _insert_feedback(
+                        connection,
+                        feedback_id=feedback_id,
+                        turn_id=f"turn-{feedback_id[:8]}",
+                        chat_id=f"chat-{feedback_id[:8]}",
+                        updated_at=_T0 + timedelta(minutes=index),
+                    )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            cutoff = _T0 + timedelta(hours=1)
+            seen: set[str] = set()
+            last_position: datetime | None = None
+            for _ in range(10):
+                records, position = await store.scan_feedback(cutoff=cutoff, limit=1)
+                if not records:
+                    break
+                if last_position is not None:
+                    assert position is not None
+                    assert position > last_position
+                last_position = position
+                seen.update(record.feedback_id for record in records)
+                await store.advance("feedback", position)
+            else:
+                pytest.fail("scan did not converge within 10 iterations")
+            assert seen == set(feedback_ids)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_recorded_at_default_is_utc_regardless_of_session_time_zone(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    """`recorded_at`'s server default must use `UTC_TIMESTAMP(6)`, not
+    `CURRENT_TIMESTAMP(6)`: the latter would follow the connection's session
+    time zone and desync from the naive-UTC `started_at` column and the
+    worker's UTC cutoff whenever that session isn't UTC."""
+
+    sync_engine = sa.create_engine(owned_project_mysql.url)
+    trace_id = uuid4().hex
+    span_id = uuid4().hex[:16]
+    try:
+        with sync_engine.begin() as connection:
+            connection.execute(sa.text("SET time_zone = '+08:00'"))
+            connection.execute(
+                sa.insert(trace_span).values(
+                    trace_id=trace_id,
+                    span_id=span_id,
+                    parent_span_id=None,
+                    turn_id=None,
+                    job_id=None,
+                    service_name="tap-ai-backend",
+                    name="turn.execute",
+                    status="ok",
+                    status_message=None,
+                    started_at=datetime(2026, 1, 1),
+                    duration_ms=5,
+                    attributes={},
+                    **_scope_values(),
+                )
+            )
+            row = (
+                connection.execute(
+                    sa.select(trace_span.c.recorded_at).where(trace_span.c.trace_id == trace_id)
+                )
+                .mappings()
+                .one()
+            )
+        recorded_at = row["recorded_at"]
+        now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        assert abs((recorded_at - now_utc_naive).total_seconds()) < 5
+    finally:
+        sync_engine.dispose()
 
 
 def test_load_trace_joins_calls_content_and_conversation(
@@ -321,51 +612,46 @@ def test_failures_roundtrip(owned_project_mysql: IsolatedMysql) -> None:
 def test_migration_backfills_recorded_at_from_started_at(
     owned_project_mysql: IsolatedMysql,
 ) -> None:
-    async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(
-            owned_project_database_url(owned_project_mysql)
-        )
-        try:
-            trace_id = uuid4().hex
-            span_id = uuid4().hex[:16]
-            started_at = datetime(2025, 6, 1, 12, 0, 0)
-            # Bypass the fixture helper's own `recorded_at` to exercise the server
-            # default the way a pre-migration row (inserted by the exporter before
-            # this column existed) would have been created, then backfilled.
-            async with engine.begin() as connection:
-                await connection.execute(
-                    sa.insert(trace_span).values(
-                        trace_id=trace_id,
-                        span_id=span_id,
-                        parent_span_id=None,
-                        turn_id=None,
-                        job_id=None,
-                        service_name="tap-ai-backend",
-                        name="turn.execute",
-                        status="ok",
-                        status_message=None,
-                        started_at=started_at,
-                        duration_ms=5,
-                        attributes={},
-                        **_scope_values(),
-                    )
-                )
-                await connection.execute(sa.text("UPDATE trace_span SET recorded_at = started_at"))
+    """At `0032_answer_feedback`, `trace_span` has no `recorded_at` column yet —
+    insert a row there (the way the exporter would have, pre-migration), then
+    upgrade to `0033_langfuse_sync` and assert the new column was backfilled
+    from `started_at`, not left at the migration's own run time."""
+    owned_project_mysql.rebuild("0032_answer_feedback")
+    sync_engine = sa.create_engine(owned_project_mysql.url)
+    trace_id = uuid4().hex
+    span_id = uuid4().hex[:16]
+    started_at = datetime(2025, 6, 1, 12, 0, 0)
+    try:
+        with sync_engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "INSERT INTO trace_span "
+                    "(trace_id, span_id, parent_span_id, turn_id, job_id, service_name, "
+                    "name, status, status_message, started_at, duration_ms, attributes, "
+                    "enterprise_id, project_id, actor_id, identity_mode, identity_origin) "
+                    "VALUES (:trace_id, :span_id, NULL, NULL, NULL, 'tap-ai-backend', "
+                    "'turn.execute', 'ok', NULL, :started_at, 5, '{}', "
+                    ":enterprise_id, :project_id, :actor_id, :identity_mode, :identity_origin)"
+                ),
+                {
+                    "trace_id": trace_id,
+                    "span_id": span_id,
+                    "started_at": started_at,
+                    **_scope_values(),
+                },
+            )
 
-            async with engine.connect() as connection:
-                row = (
-                    (
-                        await connection.execute(
-                            sa.select(trace_span.c.recorded_at).where(
-                                trace_span.c.trace_id == trace_id
-                            )
-                        )
-                    )
-                    .mappings()
-                    .one()
-                )
-            assert row["recorded_at"] == started_at
-        finally:
-            await engine.dispose()
+        owned_project_mysql.upgrade("0033_langfuse_sync")
 
-    asyncio.run(scenario())
+        with sync_engine.connect() as connection:
+            row = (
+                connection.execute(
+                    sa.text("SELECT recorded_at FROM trace_span WHERE trace_id = :trace_id"),
+                    {"trace_id": trace_id},
+                )
+                .mappings()
+                .one()
+            )
+        assert row["recorded_at"] == started_at
+    finally:
+        sync_engine.dispose()

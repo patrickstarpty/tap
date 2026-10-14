@@ -56,6 +56,10 @@ Index(
     answer_feedback.c.project_id,
     answer_feedback.c.updated_at,
 )
+# Bare, not Project-prefixed: the Langfuse sync worker scans `updated_at` across
+# every Project (see `MysqlLangfuseSyncStore.scan_feedback`), unlike the
+# Project-scoped index above.
+Index("ix_answer_feedback_updated", answer_feedback.c.updated_at)
 
 
 def _naive(value: datetime) -> datetime:

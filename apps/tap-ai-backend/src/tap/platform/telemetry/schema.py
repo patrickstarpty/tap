@@ -41,11 +41,16 @@ trace_span = Table(
     # When this row landed in MySQL, independent of `started_at` (span clock time).
     # The Langfuse sync worker scans by this column, not `started_at`, so it never
     # misses a span whose write landed after an earlier-timestamped sibling.
+    # `UTC_TIMESTAMP(6)`, not `CURRENT_TIMESTAMP(6)`: the latter follows the MySQL
+    # server's session time zone, which would silently desync this naive-UTC
+    # column from `started_at` (always UTC) and the worker's UTC cutoff whenever
+    # the server's time zone isn't UTC. MySQL 8.0.13+/8.4 requires the extra
+    # parens around a non-`CURRENT_TIMESTAMP` function default.
     Column(
         "recorded_at",
         DATETIME(fsp=6),
         nullable=False,
-        server_default=sa.text("CURRENT_TIMESTAMP(6)"),
+        server_default=sa.text("(UTC_TIMESTAMP(6))"),
     ),
 )
 # Rewritten to (project_id, turn_id) by `augment_project_table` below.

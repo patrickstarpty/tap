@@ -8,11 +8,12 @@ and `feedback_id` are already globally unique, so this is safe.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timezone
-from typing import Literal, cast
+from typing import Literal, TypeVar, cast
 
 import sqlalchemy as sa
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -36,6 +37,47 @@ from tap.platform.telemetry.schema import (
 
 _EPOCH = datetime(1970, 1, 1)
 _LAST_ERROR_LIMIT = 1000
+
+_Row = TypeVar("_Row")
+
+
+async def _paginate(
+    rows: Sequence[_Row],
+    *,
+    limit: int,
+    time_of: Callable[[_Row], datetime],
+    refetch_tied: Callable[[datetime], Awaitable[Sequence[_Row]]],
+) -> tuple[Sequence[_Row], datetime | None]:
+    """Turn a `LIMIT`-ed, time-ordered page into a lossless `(rows, next_position)`.
+
+    A plain `ORDER BY time ASC LIMIT n` can split a group of rows that share the
+    exact same timestamp across two pages, silently dropping whichever half
+    lands after the cut if the cursor advances to the last row's timestamp. This
+    never advances past a timestamp it cannot prove it has read in full:
+
+    - a short page (fewer than `limit` rows) is the end of the window, so every
+      row is safe and the position advances to the last row's timestamp;
+    - a full page that is entirely one timestamp might still have more rows at
+      that exact timestamp past the `LIMIT`, so every matching row is re-fetched
+      without a limit and the position advances to that timestamp (all of it,
+      not just this page, is now accounted for);
+    - a full page spanning more than one timestamp drops the trailing group that
+      shares the last row's timestamp (it might be incomplete) and advances only
+      to the next distinct timestamp below it; the dropped group is picked up,
+      complete, on the next scan.
+    """
+    if not rows:
+        return (), None
+    if len(rows) < limit:
+        return rows, time_of(rows[-1])
+    last_value = time_of(rows[-1])
+    distinct_values = {time_of(row) for row in rows}
+    if distinct_values == {last_value}:
+        tied_rows = await refetch_tied(last_value)
+        return tied_rows, last_value
+    threshold = max(value for value in distinct_values if value != last_value)
+    kept_rows = [row for row in rows if time_of(row) <= threshold]
+    return kept_rows, threshold
 
 
 def _span_record(row: RowMapping) -> SpanRecord:
@@ -105,22 +147,32 @@ class MysqlLangfuseSyncStore:
         self, *, cutoff: datetime, limit: int
     ) -> tuple[list[str], datetime | None]:
         position = await self._cursor_position("trace")
-        min_recorded_at = func.min(trace_span.c.recorded_at)
-        max_recorded_at = func.max(trace_span.c.recorded_at)
+        columns = (trace_span.c.recorded_at, trace_span.c.trace_id)
         statement = (
-            select(trace_span.c.trace_id, min_recorded_at, max_recorded_at)
+            select(*columns)
             .where(trace_span.c.recorded_at > position, trace_span.c.recorded_at <= cutoff)
-            .group_by(trace_span.c.trace_id)
-            .order_by(min_recorded_at.asc())
+            .order_by(trace_span.c.recorded_at.asc())
             .limit(limit)
         )
+
+        async def refetch_tied(value: datetime) -> Sequence[sa.engine.Row]:
+            tie_statement = select(*columns).where(trace_span.c.recorded_at == value)
+            return (await session.execute(tie_statement)).all()
+
         async with self._sessions() as session:
             rows = (await session.execute(statement)).all()
-        if not rows:
-            return [], None
-        trace_ids = [row[0] for row in rows]
-        batch_max = max(row[2] for row in rows)
-        return trace_ids, batch_max
+            kept_rows, new_position = await _paginate(
+                rows, limit=limit, time_of=lambda row: row[0], refetch_tied=refetch_tied
+            )
+
+        trace_ids: list[str] = []
+        seen: set[str] = set()
+        for row in kept_rows:
+            trace_id = row[1]
+            if trace_id not in seen:
+                seen.add(trace_id)
+                trace_ids.append(trace_id)
+        return trace_ids, new_position
 
     async def scan_feedback(
         self, *, cutoff: datetime, limit: int
@@ -135,13 +187,22 @@ class MysqlLangfuseSyncStore:
             .order_by(answer_feedback.c.updated_at.asc())
             .limit(limit)
         )
+
+        async def refetch_tied(value: datetime) -> Sequence[RowMapping]:
+            tie_statement = select(answer_feedback).where(answer_feedback.c.updated_at == value)
+            return (await session.execute(tie_statement)).mappings().all()
+
         async with self._sessions() as session:
             rows = (await session.execute(statement)).mappings().all()
-        if not rows:
-            return [], None
-        records = [_feedback_record(row) for row in rows]
-        batch_max = max(row["updated_at"] for row in rows)
-        return records, batch_max
+            kept_rows, new_position = await _paginate(
+                rows,
+                limit=limit,
+                time_of=lambda row: row["updated_at"],
+                refetch_tied=refetch_tied,
+            )
+
+        records = [_feedback_record(row) for row in kept_rows]
+        return records, new_position
 
     async def advance(self, name: SyncKind, position: datetime) -> None:
         insert_stmt = mysql_insert(langfuse_sync_cursor).values(name=name, position=position)
