@@ -52,7 +52,7 @@ flowchart LR
 | 子项目 3 可靠问答（能力 1） | 未设计（推荐问题部分见上一行；链路可靠性修复并入子项目 6 ②） |
 | 子项目 4 知识图谱脉络分析（能力 2、3） | 进行中（PR 1–PR 5 与验收修复已合并到 `develop`（a7869d9），独立验收有条件通过；真实 golden set 待人工标注、真实门禁待运行） |
 | 子项目 5 Skills/Agents（能力 4） | 进行中（[spec](../specs/2026-10-11-skills-agents-design.md)、[计划](2026-10-12-skills-agents.md)；MCP 不在 V1） |
-| 子项目 6 LangGraph 编排（能力 6，② 图重构 → ③ 角色与意图 → ④ 围栏 → ⑤ 工具与长任务 → ⑥ 可信知识） | 未设计（2026-10-14 由 V2 方向提入 V1；实施在能力 4 之后） |
+| 子项目 6 LangGraph 编排（能力 6，② 图重构 → ③ 角色与意图 → ④ 围栏 → ⑤ 工具与长任务 → ⑥ 可信知识） | 已设计（[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md)，7 个 PR；2026-10-14 由 V2 方向提入 V1；实施在能力 4 之后） |
 
 ## V2：主动 Tapper（已设计）
 
