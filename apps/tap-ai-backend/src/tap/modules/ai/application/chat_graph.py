@@ -113,10 +113,10 @@ class ChatGraph:
 
     @staticmethod
     def _route_after_guard(state: ChatGraphState) -> str:
-        if state.get("route") == "insights":
-            return "insights"
         if state.get("failure"):
             return "finalize"
+        if state.get("route") == "insights":
+            return "insights"
         return "chat"
 
     @staticmethod

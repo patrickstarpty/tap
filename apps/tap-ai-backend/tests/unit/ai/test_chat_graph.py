@@ -84,6 +84,51 @@ async def test_insights_route_skips_answer_nodes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_guard_in_failure_on_insights_route_skips_insights_explain() -> None:
+    calls: list[str] = []
+    captured: dict[str, object] = {}
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("guard_in")
+        raise RuntimeError("guard rejected the request")
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run after a guard_in failure")
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("seed_search must not run after a guard_in failure")
+
+    async def model(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("model must not run after a guard_in failure")
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("verify must not run after a guard_in failure")
+
+    async def finalize(state: ChatGraphState) -> dict[str, object]:
+        calls.append("finalize")
+        captured["failure"] = state.get("failure")
+        return {"result": {"answer": "degraded"}}
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=_always_authorized(),
+    )
+
+    await graph.start(run_id="run-insights-guard-failure", payload={}, route="insights")
+
+    assert calls == ["guard_in", "finalize"]
+    assert captured["failure"] == {"node": "guard_in", "error": "RuntimeError"}
+
+
+@pytest.mark.asyncio
 async def test_node_failure_routes_to_finalize_with_failure() -> None:
     calls: list[str] = []
 
