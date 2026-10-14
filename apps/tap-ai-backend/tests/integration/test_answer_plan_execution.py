@@ -604,9 +604,17 @@ async def test_http_selected_plan_returns_citations_from_existing_answer_boundar
     class Scoped:
         scope = VALIDATION_SCOPE
 
-        async def answer_frozen(self, *args, **kwargs):
+        # `answer_conversation` now composes the resumable prepare / generate /
+        # verify / finalize phases rather than calling `answer_frozen` as one
+        # call; returning the finished answer straight from `prepare_frozen`
+        # exercises the same abstain-at-prepare short circuit `AnswerService`
+        # itself supports, so `generate_frozen`/`verify_frozen` need no double.
+        async def prepare_frozen(self, *args, **kwargs):
             assert kwargs["answer_execution"].plan_id == plan.plan_id
             return answer_response()
+
+        async def save_frozen(self, *args, **kwargs) -> None:
+            return None
 
     service = KnowledgeHttpService(documents=Scoped(), answers=Scoped(), citations=Scoped())
     result = await service.answer_conversation(

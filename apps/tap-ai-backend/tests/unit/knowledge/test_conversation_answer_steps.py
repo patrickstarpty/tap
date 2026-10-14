@@ -15,7 +15,6 @@ from test_answer_service import answer_response, ready
 from tap.contracts.http import RetrievalAnswerRequest
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.chat.application.plan_answer import AnswerPlanner, PlanningInput, planning_input
 from tap.modules.chat.domain.conversations import (
     FrozenResource,
@@ -111,14 +110,12 @@ class Scoped:
 
 class PhaseAnswers:
     """A resumable-phase double standing in for `AnswerService`'s frozen answer
-    surface: records calls and lets a revocation between prepare and generate be
-    simulated, the same shape the real `AnswerService`/`KnowledgeAPI` expose."""
+    surface: records how many times each phase's knowledge port was entered,
+    the same shape the real `AnswerService`/`KnowledgeAPI` expose."""
 
     scope = VALIDATION_SCOPE
 
-    def __init__(self, *, revoke_after_prepare: bool = False) -> None:
-        self.revoke_after_prepare = revoke_after_prepare
-        self.revoked = False
+    def __init__(self) -> None:
         self.prepare_calls = 0
         self.generate_calls = 0
         self.verify_calls = 0
@@ -138,8 +135,6 @@ class PhaseAnswers:
         self.prepare_calls += 1
         if authorize is not None:
             await authorize()
-        if self.revoke_after_prepare:
-            self.revoked = True
         return _bundle(query=request.query)
 
     async def generate_frozen(
@@ -153,8 +148,6 @@ class PhaseAnswers:
         answer_execution=None,
         authorize=None,
     ):
-        if self.revoked:
-            raise AuthorizationDenied("selected source authorization was revoked")
         self.generate_calls += 1
         if authorize is not None:
             await authorize()
@@ -183,47 +176,6 @@ class PhaseAnswers:
 
     async def save_frozen(self, response, query, revisions) -> None:
         self.save_calls.append(response)
-
-    async def answer_frozen(
-        self,
-        request,
-        revisions,
-        policy,
-        *,
-        governance,
-        graph_context=(),
-        model_alias=None,
-        answer_execution=None,
-        authorize=None,
-    ):
-        bundle = await self.prepare_frozen(
-            request,
-            revisions,
-            policy,
-            governance=governance,
-            graph_context=graph_context,
-            answer_execution=answer_execution,
-            authorize=authorize,
-        )
-        generation = await self.generate_frozen(
-            bundle,
-            revisions,
-            policy,
-            governance=governance,
-            model_alias=model_alias,
-            answer_execution=answer_execution,
-            authorize=authorize,
-        )
-        response = await self.verify_frozen(
-            bundle,
-            generation,
-            revisions,
-            policy,
-            answer_execution=answer_execution,
-            authorize=authorize,
-        )
-        await self.save_frozen(response, request.query, revisions)
-        return response
 
 
 async def _retrieve_route() -> tuple[TurnInput, object]:
@@ -365,24 +317,58 @@ async def test_steps_share_persisted_plan_deadline() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_rechecks_authority_before_model_call() -> None:
+    """The recheck must be observable at the service level, not merely
+    inside the double: a `frozen_input` whose ACL changed after `prepare`
+    (e.g. the source was re-permissioned) must stop `generate` from ever
+    entering the generation port -- proving `generate_conversation_answer`
+    re-derives and re-validates from `frozen_input` itself, not just from
+    the checkpointed `step`."""
     frozen, plan = await _retrieve_route()
     request = RetrievalAnswerRequest(query=frozen.message)
+    changed_frozen = replace(frozen, acl_digest="sha256:" + "0" * 64)
 
-    revoking_answers = PhaseAnswers(revoke_after_prepare=True)
-    service = _service(revoking_answers)
-    step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    stepped_answers = PhaseAnswers()
+    stepped_service = _service(stepped_answers)
+    step = await stepped_service.prepare_conversation_answer(request, frozen, answer_plan=plan)
     assert step["kind"] == "prepared"
 
-    with pytest.raises(Exception) as stepped_error:
-        await service.generate_conversation_answer(step, frozen, answer_plan=plan)
-    assert revoking_answers.generate_calls == 0
+    with pytest.raises(ValueError, match="answer plan input or authorization binding changed"):
+        await stepped_service.generate_conversation_answer(step, changed_frozen, answer_plan=plan)
+    assert stepped_answers.generate_calls == 0
 
-    composed_answers = PhaseAnswers(revoke_after_prepare=True)
+    # Same condition (the plan's bound ACL digest no longer matches the
+    # current `frozen_input`), exercised through the composed call instead of
+    # the standalone step, raises the identical exception type.
+    composed_answers = PhaseAnswers()
     composed_service = _service(composed_answers)
-    with pytest.raises(Exception) as composed_error:
-        await composed_service.answer_conversation(request, frozen, answer_plan=plan)
+    with pytest.raises(ValueError, match="answer plan input or authorization binding changed"):
+        await composed_service.answer_conversation(request, changed_frozen, answer_plan=plan)
+    assert composed_answers.prepare_calls == 0
+    assert composed_answers.generate_calls == 0
 
-    assert type(stepped_error.value) is type(composed_error.value)
+
+@pytest.mark.asyncio
+async def test_expired_direct_plan_times_out_before_the_model_call() -> None:
+    """`prepare_conversation_answer` must bound its non-retrieval model call
+    by the plan's persisted deadline, same as `answer_conversation`: an
+    already-expired `direct` plan must raise `TimeoutError` without ever
+    calling the chat model."""
+    chat_calls = 0
+
+    class Models:
+        async def chat(self, *args, **kwargs):
+            nonlocal chat_calls
+            chat_calls += 1
+            return AnswerGeneration("Hello", (), "qwen-plus", "direct-chat-v1", None)
+
+    frozen, plan = await _direct_route()
+    request = RetrievalAnswerRequest(query=frozen.message)
+    service = _service(PhaseAnswers(), models=Models())
+
+    expired_plan = replace(plan, deadline_at=time.time() - 1)
+    with pytest.raises(TimeoutError):
+        await service.prepare_conversation_answer(request, frozen, answer_plan=expired_plan)
+    assert chat_calls == 0
 
 
 @pytest.mark.asyncio
