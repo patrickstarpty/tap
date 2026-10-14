@@ -111,8 +111,35 @@ _PATTERNS = tuple(
         r"(this|the|such|said|that|these|those)"
         r"(contract|contracts|policy|policies|agreement|plan|product|company|clause|section"
         r"|article|schedule|document|insurance|rider|terms|provision|provisions|above|same)",
+        # 十日, 九十日: a bare day count with no qualifying noun. Real-model output
+        # used this shape ("十日") as an alias of the statutory cooling-off period,
+        # which collides with any other period a different product happens to set
+        # at the same number of days. A count that keeps its noun ("六十日宽限期")
+        # is a different, longer string and is not matched here.
+        r"[0-9〇零一二三四五六七八九十百千]+[日天]",
+        # IV 级, Ⅲ级, 四级, 十级: a bare classification grade. Real-model output merged
+        # three unrelated classification systems (NYHA heart function, rheumatoid
+        # arthritis function) across one document this way. A grade that keeps its
+        # qualifying noun ("心功能分级Ⅲ级") is a different, longer string and is not
+        # matched here.
+        r"(?:[ivxlc]+|[0-9]+|[一二三四五六七八九十]+)级",
+        # 王先生, 王先生的儿子, 李女士: a brochure's illustrative example person, never
+        # a real entity name.
+        r"[一-鿿]{1,2}(先生|女士|小姐)(的[一-鿿]{1,10})?",
+        # 5岁被保险人, 三岁以上被保险人: a role restated with a bare age qualifier, not
+        # an alternate name for the role.
+        r"[0-9〇零一二三四五六七八九十百]+(周)?岁(以上|以下)?(被保险人|投保人|受益人)",
+        # 疾病定义一.9, 释义七: a clause/definition locator with no term attached (the
+        # "." is punctuation and already gone from ``key`` by this point, so "一.9"
+        # and "一9" are the same match here; contrast with "全残（释义七）", where the
+        # parenthetical is only a suffix on a real term and is stripped by
+        # ``clean_alias`` instead of rejecting the whole alias).
+        r"(疾病定义|释义|条款释义)[0-9〇零一二三四五六七八九十]+",
     )
 )
+# A single overly generic noun: real enough to mention, far too broad to identify one
+# entity across documents ("死亡证明"'s alias "证明" could mean any certificate at all).
+_GENERIC_ALONE = frozenset({"证明"})
 # Article 5, Section 3a, § 4, Schedule B, Part IV, Annex A1: matched on the text
 # with punctuation turned into spaces, so a letter suffix must stand apart from the
 # structural word ("Part C", never "Parts"; "Annex A1", never "Annexe").
@@ -156,6 +183,7 @@ def is_reference_name(text: str) -> bool:
         len(key) < 2
         or key in _CHINESE_REFERENCES
         or key in _ENGLISH_REFERENCES
+        or key in _GENERIC_ALONE
         or text.strip() in _ENGLISH_PRONOUNS
         or _is_number(key)
     ):
@@ -169,3 +197,35 @@ def usable_alias(text: str) -> bool:
     """True when ``text`` may be kept as a model-provided alias."""
 
     return len(text.strip()) <= ALIAS_LENGTH_MAX and not is_reference_name(text)
+
+
+# A leading clause/article number ("第二十五条 ", "第9章"), matched (and stripped) on
+# the raw text rather than ``key`` so the readable remainder keeps its own spacing.
+_LEADING_ARTICLE = re.compile(rf"^第[{_NUMERAL}]+[条章节款项部篇编目段页点]\s*")
+# A trailing interpretation-note parenthetical ("（释义七）", "(释义3)").
+_TRAILING_DEFINITION_NOTE = re.compile(
+    r"[（(]\s*释义[0-9〇零一二三四五六七八九十百]+\s*[）)]\s*$"
+)
+
+
+def clean_alias(text: str) -> str | None:
+    """Return ``text`` usable as a displayed or merge-key alias, or ``None``.
+
+    A clause-numbered or interpretation-noted alias ("第二十五条 明确说明与如实
+    告知", "全残（释义七）") carries a real term; only the affix around it is a
+    reference. Stripping it first -- before falling back to the plain
+    ``usable_alias`` check -- turns both into their real term ("明确说明与如实
+    告知", "全残") instead of leaving the affix on display or keying alignment
+    on a string two documents would spell differently. A pure locator with no
+    term attached ("疾病定义一.9", "释义七" on its own) has nothing left once the
+    affix is gone and is rejected outright by ``usable_alias`` already.
+    """
+
+    stripped = text.strip()
+    if not stripped:
+        return None
+    core = _TRAILING_DEFINITION_NOTE.sub("", _LEADING_ARTICLE.sub("", stripped, count=1), count=1)
+    core = core.strip()
+    if core and core != stripped and usable_alias(core):
+        return core
+    return stripped if usable_alias(stripped) else None
