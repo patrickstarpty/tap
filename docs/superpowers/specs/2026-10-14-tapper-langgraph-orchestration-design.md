@@ -251,15 +251,15 @@ golden set 新增“诱导胡编”子集：证据中没有答案、证据与常
 
 ## 9. 交付批次
 
-每个 PR 可独立验收，合入 `develop` 后 `make demo-e2e` 保持通过。前置：能力 4 已合入 `develop`。
+每个 PR 可独立验收，合入 `develop` 后 `make demo-e2e` 保持通过。PR 1–4 不依赖能力 4，可先行；能力 4 须在 PR 5 之前合入，其对话链路改动挂在新图上。
 
 | PR | 内容 | 依赖 |
 | --- | --- | --- |
-| 1 | ② 图骨架：`tapper-chat-v2`、检索与生成拆分、Insights 分支、`verify` 承接现有 claim 校验；已知差距修复 | 能力 4 |
+| 1 | ② 图骨架：`tapper-chat-v2`、检索与生成拆分、Insights 分支、`verify` 承接现有 claim 校验；已知差距修复 | — |
 | 2 | ② 可靠性：错误分类、`next_attempt_at` 迁移、attempt 上限、worker 主循环存活 | PR 1 |
 | 3 | ② 流式：`ModelGateway` 流式接口、内联引用格式、Redis 草稿流、SSE 改造、前端草稿与引用徽标、停止生成；切换前后 golden set 对比 | PR 1；能力 1 golden set 回归命令 |
 | 4 | ④ 围栏：预算、注入隔离与检测、脱敏、范围外拒答 | PR 1 |
-| 5 | ③ 角色 + ⑤ agent 循环：`TapperPersona`、Agent 入图、planner `intent`、工具注册表扩展、tool calling 循环、`task.step`、澄清回复、关系分析迁为工具 | PR 3、PR 4 |
+| 5 | ③ 角色 + ⑤ agent 循环：`TapperPersona`、Agent 入图、planner `intent`、工具注册表扩展、tool calling 循环、`task.step`、澄清回复、关系分析迁为工具 | PR 3、PR 4、能力 4 |
 | 6 | ⑥ 可信知识：依据支撑校验、诱导胡编子集 | PR 3 |
 | 7 | ⑤ 长任务：`document.read_section` / `document.analyse`、durable 子图、`interrupt` / `resume`、进度与确认卡片 | PR 5 |
 
