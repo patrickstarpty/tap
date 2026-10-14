@@ -216,14 +216,18 @@ TAP_LANGFUSE_ENVIRONMENT=local
 
 ## 8. 首个实施任务：验证
 
-实施计划第一个任务先在本地验证并记录：
+静态验证，Task 12 实机确认（未启动容器，依据 SDK 源码与 Langfuse 官方文档/changelog 核实）：
 
-- Langfuse 自托管版本与 Python SDK 版本（固定）；
-- SDK 能否指定历史时间戳与 trace/span id，否则 trace 走 OTLP、SDK 只负责 score；
-- Langfuse 对 `CLICKHOUSE_DB` 非默认库、Redis 非 0 号 db、MinIO path-style 的支持；
-- score 按 id 覆盖与删除的接口。
+- **服务端版本**：Docker Hub `latest`已指向 Langfuse v4，但 v4 要求 ClickHouse ≥ 25.12（推荐 26.4），而本仓库 `insights` 复用的 ClickHouse 镜像固定在 `25.8.33.6`；升级该镜像属跨模块改动（影响 insights，需单独验证），超出本任务范围。v4 的基础设施种类不变（web/worker、Postgres、ClickHouse、Redis、S3），但数据模型改为 `events_full`/`events_core`，legacy ingestion 与读取端点在自托管升级到 v4 后 404。结论：**维持 Langfuse 服务端 `3.225.11`**，compose 镜像 tag 不改；待未来升级 insights ClickHouse 到 25.12+ 时再评估 v4。（证据：<https://langfuse.com/self-hosting/upgrade/upgrade-guides/upgrade-v3-to-v4>、<https://langfuse.com/self-hosting/infrastructure/clickhouse>；置信：高）
+- **Python SDK 版本**：自托管兼容矩阵显示 SDK v3/v4 均要求服务端 ≥ 3.63.0，v4 为 GA/"Full support"，v3 已 deprecated。选定并已固定 `langfuse==4.18.0`（`uv add --project apps/tap-ai-backend 'langfuse==4.18.0'`，已更新 `pyproject.toml`/`uv.lock`；`uv run --project apps/tap-ai-backend python -c "import langfuse; print(langfuse.__version__)"` 输出 `4.18.0`）。（证据：<https://langfuse.com/self-hosting/upgrade/versioning>；置信：高）
+- **(a) 历史 trace/span 写入**：高层 OTel API（`Langfuse.start_observation`/`start_as_current_observation`）只能通过 `trace_context={"trace_id": ...}` 指定 trace id，观测自身的 span id 始终由 `RandomIdGenerator` 生成且无显式起止时间参数（`_client/client.py` 第 717–780 行），不满足“caller-supplied 16 位 hex 观测 id + 历史起止时间”的要求。但 SDK 内置的生成式低层客户端 `langfuse.api.ingestion.batch(batch=[...])`（`langfuse/api/ingestion/client.py`）接受 `IngestionEvent`，其 `TraceBody`/`CreateSpanBody`/`CreateGenerationBody` 均有显式 `id`、`trace_id`、`start_time`、`end_time`、`parent_observation_id` 字段（`langfuse/api/ingestion/types/{trace_body,create_event_body,create_span_body,optional_observation_body}.py`），可完全指定历史 trace/span/generation 的 id 与时间戳；该方法同步发起 HTTP 请求并返回 `IngestionResponse`（207 多状态，含逐事件错误列表）。该端点在 Langfuse Cloud 标注 deprecated（2026-11-16 起移除），但文档明确“self-hosted 在升级到 v4 前不受影响”——与本次“维持 v3”的结论一致。**结论：trace/span/generation 走 SDK 内置的 `langfuse.api.ingestion.batch` 低层接口，不走高层 OTel API，也不需要直连 OTLP 端点**（证据：`langfuse/api/ingestion/client.py` `batch()` 文档字符串与弃用说明；置信：高，基于源码直读）。
+- **(b) 同 id 重推**：trace/observation 侧，ingestion 批次文档明确“body.id 即该 trace 的真实 id，用于更新”（`client.py` 注释），重推同 id 覆盖而非重复，与 spec §3.4 结论一致。score 侧有特别限制：官方文档指出“重推只在 `id`、`name`、与`timestamp`（日粒度）三者都一致时才覆盖，仅 id 相同不足以覆盖”，否则会产生重复记录。**结论：sink 重推 score 时必须让 `name` 固定（`user_feedback`）且信封 `timestamp` 固定为反馈首次创建时间的日期（不要用 `updated_at`/当前时间），否则跨天改评分会产生重复 score 而非覆盖**（证据：<https://langfuse.com/docs/evaluation/evaluation-methods/scores-via-sdk>；置信：中，来自文档转述，未实机验证，列入 Task 12）。
+- **(c) generation 成本字段**：`CreateGenerationBody`（`langfuse/api/ingestion/types/create_generation_body.py`）字段为 `usage_details`（别名 `usageDetails`，类型 `UsageDetails`，即 `Dict[str, int]` 语义的 token 明细）与 `cost_details`（别名 `costDetails`，`Dict[str, float]`），与 spec §3.3 一致；看板成本统计读取该字段（文档未逐项复核看板聚合逻辑，口径沿用 Langfuse 官方约定）。（证据：源码读取；置信：高字段名，中看板联动细节，列入 Task 12 用真实数据核实看板显示）。
+- **(d) score 指定 id 创建/覆盖/删除、未入库 trace 的 score**：创建/覆盖用 `langfuse.api.scores.create(...)`（或底层 `ScoreBody`，均含显式 `id`、`trace_id`、`observation_id` 字段，`langfuse/api/ingestion/types/score_body.py`）。删除用 `langfuse.api.legacy.score_v1.delete(score_id=...)`（`langfuse/api/legacy/score_v1/client.py`，非 v3/v4 废弃对象，标注为兼容别名但功能可用；`scores` 主客户端本身不提供 delete）。官方文档确认“若 score 以 `trace_id` 引用尚未入库的 trace，无需等待该 trace 创建，trace 入库后会自动关联”，满足 spec §3.5“反馈先于 trace 到达”的场景。（证据：<https://langfuse.com/docs/evaluation/evaluation-methods/scores-via-sdk>；源码 `langfuse/api/legacy/score_v1/client.py`；置信：高删除接口存在，中“未入库 trace 可接受”，列入 Task 12 实机验证）。
+- **(e) 同步可见失败**：高层 OTel 路径的 `langfuse.flush()` 仅保证“已投递”，不重新抛出单条失败（`_client/client.py` `flush()` 注释），失败只进日志，不适合“失败即异常”的 worker 语义。改用 `langfuse.api`（同步 REST 客户端属性）直接发起 `ingestion.batch`/`scores.create`/`legacy.score_v1.delete` 调用：这些方法本身是同步 HTTP 请求，网络/HTTP 层错误会抛出异常，`IngestionResponse` 还带逐事件错误列表供显式检查，不依赖后台 flush 的异步语义。**结论：sink 统一走 `langfuse.api.*` 同步客户端而非 `Langfuse()` 高层 tracer 实例**，worker 对返回值/异常做判断后写入 `langfuse_sync_failure`。（证据：`_client/client.py` `flush()`/`api` 属性文档字符串；置信：高）。
+- **Langfuse 对非默认中间件的支持**：Task 1 已用 `CLICKHOUSE_DB=langfuse`、Redis `/1`、MinIO path-style 启动过 `langfuse` profile 验证通过，本任务未重复起容器复核；该结论继续有效。
 
-验证结论写回本 spec 再继续后续任务。
+**Task 7 `LangfuseSdkSink` 选型**：trace/span/generation 使用 Langfuse SDK 内置的低层 `langfuse.api.ingestion.batch` 同步接口直接构造 `IngestionEvent`（`TraceBody`/`CreateSpanBody`/`CreateGenerationBody`/`CreateEventBody`），不使用高层 OTel API，也不直连 OTLP `/api/public/otel/v1/traces`；score 创建/覆盖用 `langfuse.api.scores.create`，删除用 `langfuse.api.legacy.score_v1.delete`；全部通过 `langfuse.api`（`LangfuseAPI` 同步客户端）调用，由返回值与异常判定成功/失败。以上除标注“置信：中”的两项（score 覆盖的日期粒度要求、未入库 trace 的 score 接受）外均为源码直读结论；两项“置信：中”的结论在 Task 12 用真实 Langfuse 3.225.11 实例补充实机验证。
 
 ## 9. 文档
 
