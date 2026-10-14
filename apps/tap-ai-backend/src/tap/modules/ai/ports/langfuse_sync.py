@@ -5,7 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
-from tap.modules.ai.domain.langfuse_sync import FeedbackRecord, SyncKind, TraceBundle
+from tap.modules.ai.domain.langfuse_sync import (
+    FeedbackRecord,
+    LangfuseScore,
+    LangfuseTrace,
+    SyncKind,
+    TraceBundle,
+)
 
 
 class LangfuseSyncStore(Protocol):
@@ -30,4 +36,14 @@ class LangfuseSyncStore(Protocol):
     async def clear_failure(self, kind: SyncKind, subject_id: str) -> None: ...
 
 
-__all__ = ["LangfuseSyncStore"]
+class LangfuseSink(Protocol):
+    """Where mapped Langfuse data goes; the SDK-backed implementation lives outside this module."""
+
+    async def push_trace(self, trace: LangfuseTrace) -> None: ...
+
+    async def upsert_score(self, score: LangfuseScore) -> None: ...
+
+    async def delete_score(self, score_id: str) -> None: ...
+
+
+__all__ = ["LangfuseSink", "LangfuseSyncStore"]

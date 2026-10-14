@@ -70,9 +70,64 @@ class FeedbackRecord:
     updated_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class LangfuseObservation:
+    """A Langfuse span or generation, mapped from one `SpanRecord` (+ its `CallRecord`, if any)."""
+
+    id: str
+    parent_id: str | None
+    kind: Literal["span", "generation"]
+    name: str
+    start_time: datetime
+    end_time: datetime
+    level: Literal["DEFAULT", "ERROR"]
+    status_message: str | None
+    input: object
+    output: object
+    model: str | None
+    usage_details: dict[str, int]
+    cost_details: dict[str, float]
+    metadata: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class LangfuseTrace:
+    """A Langfuse trace, mapped from one `TraceBundle`."""
+
+    id: str
+    name: str
+    session_id: str | None
+    user_id: str
+    environment: str
+    tags: tuple[str, ...]
+    metadata: dict[str, object]
+    observations: tuple[LangfuseObservation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LangfuseScore:
+    """A Langfuse score, mapped from one `FeedbackRecord` with a non-null `rating`.
+
+    `timestamp` is the feedback's `created_at`: Langfuse upserts a score only when
+    `id`, `name` and the timestamp's day all match (spec §8), so this must stay
+    stable across re-pushes of the same feedback row and must never be `updated_at`
+    or the current time.
+    """
+
+    id: str
+    trace_id: str
+    name: str
+    value: float
+    comment: str | None
+    timestamp: datetime
+
+
 __all__ = [
     "CallRecord",
     "FeedbackRecord",
+    "LangfuseObservation",
+    "LangfuseScore",
+    "LangfuseTrace",
     "SpanRecord",
     "SyncKind",
     "TraceBundle",
