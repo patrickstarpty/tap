@@ -242,14 +242,34 @@ quality-test-design-real: ## evaluate existing real outputs after authorized nam
 	@[ -f "$(TAP_QUALITY_TEST_OBSERVATIONS)" ] || { echo "quality-test-design-real requires existing reviewed observations" >&2; exit 2; }
 	uv run --project apps/tap-ai-backend python scripts/evaluate-quality-test-design.py "$(TAP_QUALITY_TEST_OBSERVATIONS)" --report "$(TAP_QUALITY_TEST_REPORT)" --real
 
-langfuse-up: ## start insights ClickHouse, bootstrap langfuse's db/bucket, then start langfuse
-	docker compose --profile insights up -d --wait --wait-timeout 180 clickhouse
-	bash "$(TAP_REPO_ROOT)/deploy/local/langfuse/bootstrap.sh"
-	docker compose --profile langfuse up -d
+langfuse-up: ## start insights ClickHouse, bootstrap langfuse's db/bucket, then start langfuse in the Tapper demo project
+	@set -eu; \
+	tapper_demo_project="$${TAP_TAPPER_COMPOSE_PROJECT:-tap-tapper-demo}"; \
+	case "$$tapper_demo_project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Tapper Compose project" >&2; exit 2;; esac; \
+	[ "$${#tapper_demo_project}" -ge 3 ] && [ "$${#tapper_demo_project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
+	tapper_insights_project="$${TAP_INSIGHTS_COMPOSE_PROJECT:-tap-insights-local}"; \
+	printf '%s' "$$tapper_insights_project" | grep -Eq '^tap-insights-[a-z0-9][a-z0-9_-]{2,48}$$' || { echo "invalid owned TAP Insights Compose project" >&2; exit 2; }; \
+	readonly tapper_demo_project tapper_insights_project; \
+	if [ -f "$(TAP_REPO_ROOT)/.env" ]; then set -a; . "$(TAP_REPO_ROOT)/.env"; set +a; fi; \
+	export TAP_TAPPER_COMPOSE_PROJECT="$$tapper_demo_project"; \
+	export TAP_INSIGHTS_COMPOSE_PROJECT="$$tapper_insights_project"; \
+	if [ -z "$$(docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" ps -q redis)" ]; then \
+		echo "redis is not running in Compose project $$tapper_demo_project; run make demo-up first" >&2; exit 1; \
+	fi; \
+	if [ -z "$$(docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" ps -q tap-minio)" ]; then \
+		echo "tap-minio is not running in Compose project $$tapper_demo_project; run make demo-up first" >&2; exit 1; \
+	fi; \
+	$(MAKE) tap-insights-up TAP_INSIGHTS_COMPOSE_PROJECT="$$tapper_insights_project"; \
+	bash "$(TAP_REPO_ROOT)/deploy/local/langfuse/bootstrap.sh"; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile langfuse up -d --wait --wait-timeout 180 langfuse-postgres langfuse-web langfuse-worker
 
-langfuse-down: ## stop only langfuse profile containers and preserve named volumes
-	docker compose --profile langfuse stop langfuse-web langfuse-worker langfuse-postgres
-	docker compose --profile langfuse rm -f langfuse-web langfuse-worker langfuse-postgres
+langfuse-down: ## stop only langfuse containers in the Tapper demo project and preserve named volumes
+	@set -eu; \
+	tapper_demo_project="$${TAP_TAPPER_COMPOSE_PROJECT:-tap-tapper-demo}"; \
+	case "$$tapper_demo_project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Tapper Compose project" >&2; exit 2;; esac; \
+	[ "$${#tapper_demo_project}" -ge 3 ] && [ "$${#tapper_demo_project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile langfuse stop langfuse-web langfuse-worker langfuse-postgres; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile langfuse rm -f langfuse-web langfuse-worker langfuse-postgres
 
 milvus-preflight: ## require Docker with at least 2 vCPU and 8 GiB memory
 	@set -eu; \

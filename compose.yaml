@@ -252,6 +252,9 @@ services:
     depends_on:
       langfuse-postgres:
         condition: service_healthy
+    networks:
+      default: {}
+      langfuse-insights: {}
     environment:
       DATABASE_URL: postgres://${LANGFUSE_POSTGRES_USER:-tap_langfuse}:${LANGFUSE_POSTGRES_PASSWORD:-tap-local-langfuse-postgres}@langfuse-postgres:5432/${LANGFUSE_POSTGRES_DB:-langfuse}
       NEXTAUTH_URL: http://127.0.0.1:${LANGFUSE_PORT:-23000}
@@ -269,7 +272,7 @@ services:
       LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://tap-minio:9000
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       LANGFUSE_S3_EVENT_UPLOAD_REGION: ${TAPPER_S3_REGION:-us-east-1}
-      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${TAPPER_S3_ACCESS_KEY:-tap-local-object-key}
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${TAPPER_S3_ACCESS_KEY:-tap-object-user}
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${TAPPER_S3_SECRET_KEY:-tap-local-object-password}
       TELEMETRY_ENABLED: "false"
       LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-tap-local-org}
@@ -294,6 +297,9 @@ services:
     depends_on:
       langfuse-postgres:
         condition: service_healthy
+    networks:
+      default: {}
+      langfuse-insights: {}
     environment:
       DATABASE_URL: postgres://${LANGFUSE_POSTGRES_USER:-tap_langfuse}:${LANGFUSE_POSTGRES_PASSWORD:-tap-local-langfuse-postgres}@langfuse-postgres:5432/${LANGFUSE_POSTGRES_DB:-langfuse}
       NEXTAUTH_URL: http://127.0.0.1:${LANGFUSE_PORT:-23000}
@@ -310,7 +316,7 @@ services:
       LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://tap-minio:9000
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       LANGFUSE_S3_EVENT_UPLOAD_REGION: ${TAPPER_S3_REGION:-us-east-1}
-      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${TAPPER_S3_ACCESS_KEY:-tap-local-object-key}
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${TAPPER_S3_ACCESS_KEY:-tap-object-user}
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${TAPPER_S3_SECRET_KEY:-tap-local-object-password}
       TELEMETRY_ENABLED: "false"
 
@@ -324,3 +330,12 @@ volumes:
   clickhouse-insights-data:
   clickhouse-insights-backups:
   langfuse-postgres-data:
+
+networks:
+  default: {}
+  # Langfuse runs in the Tapper demo Compose project (redis, tap-minio) but the
+  # insights ClickHouse lives in its own project/network (see tap-insights-up);
+  # attach only langfuse-web/langfuse-worker to it so "clickhouse" resolves.
+  langfuse-insights:
+    name: ${TAP_INSIGHTS_COMPOSE_PROJECT:-tap-insights-local}_default
+    external: true
