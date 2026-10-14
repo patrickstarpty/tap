@@ -4,6 +4,8 @@ later LangGraph node can call them on their own."""
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from test_answer_service import (
     MemoryAnswerRepository,
@@ -20,10 +22,13 @@ class PhaseKnowledge:
     """A minimal frozen-phase gateway double: records calls and lets each
     phase's return value (and whether `authorize` fires) be configured."""
 
-    def __init__(self, *, prepared=None, generation=None, response=None) -> None:
+    def __init__(
+        self, *, prepared=None, generation=None, response=None, delay: float = 0.0
+    ) -> None:
         self.prepared = prepared if prepared is not None else "bundle-marker"
         self.generation = generation if generation is not None else "generation-marker"
         self.response = response or answer_response()
+        self.delay = delay
         self.calls: list[tuple[str, object]] = []
         self.authorize_calls = 0
 
@@ -37,6 +42,8 @@ class PhaseKnowledge:
         answer_execution=None,
         authorize=None,
     ):
+        if self.delay:
+            await asyncio.sleep(self.delay)
         self.calls.append(("prepare", request))
         if authorize is not None:
             await authorize()
@@ -53,6 +60,8 @@ class PhaseKnowledge:
         answer_execution=None,
         authorize=None,
     ):
+        if self.delay:
+            await asyncio.sleep(self.delay)
         self.calls.append(("generate", bundle))
         if authorize is not None:
             await authorize()
@@ -68,6 +77,8 @@ class PhaseKnowledge:
         answer_execution=None,
         authorize=None,
     ):
+        if self.delay:
+            await asyncio.sleep(self.delay)
         self.calls.append(("verify", (bundle, generation)))
         if authorize is not None:
             await authorize()
@@ -91,6 +102,17 @@ def _frozen_policy() -> RetrievalPolicyContext:
     from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 
     return build_demo_policy_context((ready(),))
+
+
+class _Execution:
+    """Stands in for `AuthorizedAnswerExecution`: only `remaining_seconds` is
+    read by `AnswerService`/`KnowledgeAPI`'s timeout wrapping. It is a fixed
+    budget captured once (not a countdown), which is exactly what makes a
+    per-phase timeout dangerous: each phase alone would get the *whole*
+    budget again."""
+
+    def __init__(self, remaining_seconds: float) -> None:
+        self.remaining_seconds = remaining_seconds
 
 
 @pytest.mark.asyncio
@@ -135,3 +157,45 @@ async def test_prepare_abstain_is_persisted_by_finalize():
     assert tuple(item.citation_id for item in repository.snapshots[0].citations) == ("citation-a",)
     # abstention short-circuits generate/verify: only prepare was ever called
     assert [name for name, _ in knowledge.calls] == ["prepare"]
+
+
+@pytest.mark.asyncio
+async def test_answer_frozen_enforces_one_total_deadline():
+    """`answer_frozen` must keep its single persisted-deadline guarantee: three
+    resumable phases, each individually timed against the *same* fixed
+    `remaining_seconds` budget, must not let the composed call run to ~3x that
+    budget -- the whole prepare/generate/verify composition shares one
+    deadline, same as before these phases were split out."""
+    budget = 0.3
+    # each phase alone fits comfortably in the budget; all three in sequence
+    # overshoot it by 20%, so a per-phase (not composed) timeout would pass.
+    delay = 0.4 * budget
+    revisions = (ready(),)
+    policy = _frozen_policy()
+
+    bounded_repository = MemoryAnswerRepository((ready(),))
+    bounded_knowledge = PhaseKnowledge(delay=delay)
+    bounded_service = AnswerService(repository=bounded_repository, knowledge=bounded_knowledge)
+
+    with pytest.raises(TimeoutError):
+        await bounded_service.answer_frozen(
+            request_for("doc_a"),
+            revisions,
+            policy,
+            governance=None,
+            answer_execution=_Execution(budget),
+        )
+    assert bounded_repository.snapshots == []
+
+    # the same three slow phases, with no plan budget, still complete.
+    unbounded_repository = MemoryAnswerRepository((ready(),))
+    unbounded_knowledge = PhaseKnowledge(delay=delay)
+    unbounded_service = AnswerService(
+        repository=unbounded_repository, knowledge=unbounded_knowledge
+    )
+
+    response = await unbounded_service.answer_frozen(
+        request_for("doc_a"), revisions, policy, governance=None
+    )
+    assert response == answer_response()
+    assert len(unbounded_repository.snapshots) == 1

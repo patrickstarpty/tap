@@ -157,19 +157,28 @@ class AnswerService:
         authorize=None,
     ) -> AnswerResponse:
         """Compose the resumable phases below into the same one-call behavior
-        this method has always had; LangGraph nodes call the phases directly."""
-        prepared = await self.prepare_frozen(
-            request,
-            revisions,
-            policy,
-            governance=governance,
-            graph_context=graph_context,
-            answer_execution=answer_execution,
-            authorize=authorize,
-        )
-        if isinstance(prepared, AnswerResponse):
-            response = prepared
-        else:
+        this method has always had; LangGraph nodes call the phases directly.
+
+        Each phase independently re-opens `asyncio.timeout(answer_execution.
+        remaining_seconds)` (a fixed budget captured once by `authorized_execution`,
+        not a countdown) so it can be called alone as a resumed node. Composed
+        here in one call, that would let total wall-clock grow to ~3x the plan's
+        budget; wrap the whole composition in one outer timeout for the same
+        single persisted deadline `answer_frozen` always enforced.
+        """
+
+        async def compose() -> AnswerResponse:
+            prepared = await self.prepare_frozen(
+                request,
+                revisions,
+                policy,
+                governance=governance,
+                graph_context=graph_context,
+                answer_execution=answer_execution,
+                authorize=authorize,
+            )
+            if isinstance(prepared, AnswerResponse):
+                return prepared
             generation = await self.generate_frozen(
                 prepared,
                 revisions,
@@ -179,7 +188,7 @@ class AnswerService:
                 answer_execution=answer_execution,
                 authorize=authorize,
             )
-            response = await self.verify_frozen(
+            return await self.verify_frozen(
                 prepared,
                 generation,
                 revisions,
@@ -187,6 +196,12 @@ class AnswerService:
                 answer_execution=answer_execution,
                 authorize=authorize,
             )
+
+        if answer_execution is None:
+            response = await compose()
+        else:
+            async with asyncio.timeout(answer_execution.remaining_seconds):
+                response = await compose()
         await self.save_frozen(response, request.query, revisions)
         return response
 
