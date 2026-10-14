@@ -34,7 +34,7 @@ _HK_ID = re.compile(r"(?<![A-Za-z0-9])[A-Z]{1,2}\d{6}\(?[0-9A]\)?(?![A-Za-z0-9])
 _CARD_MIN_DIGITS = 13
 _CARD_MAX_DIGITS = 19
 _DIGIT_SPAN = re.compile(r"(?<!\d)\d(?:[ \-]?\d)*(?!\d)")
-_DIGIT_GROUP = re.compile(r"\d+")
+_DIGIT = re.compile(r"\d")
 
 _MAINLAND_PHONE = re.compile(r"(?<!\d)(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d{4}){2}(?!\d)")
 _HK_PHONE = re.compile(r"(?<!\d)(?:\+?852[\s-]?)?[2-9]\d{3}[\s-]?\d{4}(?!\d)")
@@ -203,28 +203,28 @@ def _redact_id_numbers(text: str) -> str:
 
 
 def _card_windows(span_text: str, span_start: int) -> list[tuple[int, int]]:
-    """Non-overlapping, longest-first Luhn-valid windows made of whole digit groups.
+    """Non-overlapping, longest-first Luhn-valid windows, sliding over every digit.
 
-    Only whole digit groups (maximal digit runs with no internal separator) are ever
-    combined or sliced at their edges; a single ungrouped digit run is tried only as a
-    whole, which is what keeps a coincidental Luhn match on an arbitrary mid-run slice
-    (e.g. inside an 18-digit non-card number) from ever being considered.
+    "宁多勿漏": a card glued directly to other digits with no separator (no 4-digit
+    grouping to anchor on) must still be found, so every digit position is tried as a
+    window start, not just separator-delimited group boundaries. The window length is
+    capped at `_CARD_MAX_DIGITS`, so this stays linear in the span's digit count.
     """
-    groups = [
-        (match.start() + span_start, match.end() + span_start, match.group())
-        for match in _DIGIT_GROUP.finditer(span_text)
+    digits_with_offsets = [
+        (match.start() + span_start, match.group()) for match in _DIGIT.finditer(span_text)
     ]
-    candidates: list[tuple[int, int, int]] = []  # (digit_count, start, end)
-    for start_index in range(len(groups)):
-        total_digits = 0
+    digit_count = len(digits_with_offsets)
+    candidates: list[tuple[int, int, int]] = []  # (window_length, start_offset, end_offset)
+    for start_index in range(digit_count):
         digits: list[str] = []
-        for end_index in range(start_index, len(groups)):
-            total_digits += len(groups[end_index][2])
-            if total_digits > _CARD_MAX_DIGITS:
-                break
-            digits.append(groups[end_index][2])
-            if total_digits >= _CARD_MIN_DIGITS and _luhn_valid("".join(digits)):
-                candidates.append((total_digits, groups[start_index][0], groups[end_index][1]))
+        last_index = min(start_index + _CARD_MAX_DIGITS, digit_count)
+        for end_index in range(start_index, last_index):
+            digits.append(digits_with_offsets[end_index][1])
+            length = len(digits)
+            if length >= _CARD_MIN_DIGITS and _luhn_valid("".join(digits)):
+                start_offset = digits_with_offsets[start_index][0]
+                end_offset = digits_with_offsets[end_index][0] + 1
+                candidates.append((length, start_offset, end_offset))
     candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
     chosen: list[tuple[int, int]] = []
     occupied_until = -1
@@ -303,6 +303,13 @@ class ExportRedactor:
             working = _redact_card_numbers(working)
             working = _redact_phone_numbers(working)
             working = _redact_custom(working, self._custom_rules)
+            if original_length > _MATCH_WINDOW:
+                # A value straddling the original scan-window edge is only half
+                # inside `bounded`, so the visible half never matches any pattern
+                # and would otherwise leak right before the truncation marker. Any
+                # such fragment can only land within the last `_MATCH_WINDOW_SLACK`
+                # characters of `working`, so dropping that slack removes it.
+                working = working[: max(0, len(working) - _MATCH_WINDOW_SLACK)]
             return _truncate(working, original_length)
         except Exception:
             return _FAILED
