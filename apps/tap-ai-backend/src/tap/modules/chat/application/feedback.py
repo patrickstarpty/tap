@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from uuid import uuid4
 
@@ -72,6 +72,26 @@ class FeedbackService:
             raise ConversationNotFound
         return turn
 
+    @staticmethod
+    def _after(existing: AnswerFeedback | None, now: datetime) -> datetime:
+        """A timestamp strictly after `existing.updated_at`, even if the wall
+        clock has not advanced (or has gone backwards) since the last write.
+
+        `existing.updated_at` is aware for the in-memory repository and naive
+        UTC for the MySQL one (the driver strips tzinfo on read), so both are
+        normalized to aware UTC before comparing. The MySQL adapter applies
+        the same floor again at the SQL level (`GREATEST(... + 1 MICROSECOND,
+        ...)`), so this guard is belt-and-suspenders for that adapter and the
+        only guarantee for the in-memory one.
+        """
+        if existing is None:
+            return now
+        previous = existing.updated_at
+        if previous.tzinfo is None:
+            previous = previous.replace(tzinfo=timezone.utc)
+        floor = previous + timedelta(microseconds=1)
+        return now if now > floor else floor
+
     async def submit(
         self,
         conversation_id: str,
@@ -86,8 +106,8 @@ class FeedbackService:
         turn = await self._owned_turn(conversation_id, turn_id)
         if turn.state != "completed":
             raise FeedbackNotAllowed("feedback requires a completed Turn")
-        now = datetime.now(timezone.utc)
         existing = await self.repository.get(turn_id, self.scope.actor_id)
+        now = self._after(existing, datetime.now(timezone.utc))
         feedback = AnswerFeedback(
             feedback_id=existing.feedback_id if existing is not None else uuid4().hex,
             project_id=self.scope.project_id,
@@ -107,9 +127,8 @@ class FeedbackService:
         existing = await self.repository.get(turn_id, self.scope.actor_id)
         if existing is None or existing.rating is None:
             return
-        await self.repository.upsert(
-            replace(existing, rating=None, comment=None, updated_at=datetime.now(timezone.utc))
-        )
+        now = self._after(existing, datetime.now(timezone.utc))
+        await self.repository.upsert(replace(existing, rating=None, comment=None, updated_at=now))
 
     async def mine(self, turn_ids: Sequence[str]) -> dict[str, AnswerFeedback]:
         if not turn_ids:

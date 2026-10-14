@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -100,6 +101,73 @@ def test_upsert_keeps_one_row_per_turn_actor_and_for_turns_batches(owned_project
         await repository.upsert(_feedback("turn-2", rating="up"))
         batch = await repository.for_turns(["turn-1", "turn-2"], VALIDATION_SCOPE.actor_id)
         assert set(batch) == {"turn-1", "turn-2"}
+
+        await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_upsert_keeps_updated_at_strictly_increasing_and_preserves_identity(
+    owned_project_mysql,
+):
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+            for table in ("answer_feedback", "chat_turn", "conversation"):
+                await connection.execute(text(f"DELETE FROM {table}"))
+            await connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE), scope=VALIDATION_SCOPE
+        )
+        await conversations.create("conversation-1", "turn-1", "request-1", _input())
+
+        repository = MysqlFeedbackRepository(sessions, scope=VALIDATION_SCOPE)
+        feedback_id = uuid4().hex
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        first = await repository.upsert(
+            _feedback("turn-1", rating="up", feedback_id=feedback_id, now=base)
+        )
+
+        # A second write racing with the same wall-clock timestamp as the
+        # first (e.g. two concurrent PUTs) must still strictly increase
+        # updated_at, and must not mint a new feedback_id or created_at.
+        second = await repository.upsert(
+            _feedback(
+                "turn-1", rating="down", comment="needs work", feedback_id=feedback_id, now=base
+            )
+        )
+        assert second.feedback_id == first.feedback_id
+        assert second.created_at == first.created_at
+        assert second.updated_at > first.updated_at
+
+        # A write that carries an earlier timestamp than what is already
+        # stored (e.g. a retried request whose clock lagged) must not move
+        # updated_at backwards either.
+        earlier = base - timedelta(seconds=10)
+        third = await repository.upsert(
+            _feedback("turn-1", rating="up", feedback_id=feedback_id, now=earlier)
+        )
+        assert third.feedback_id == first.feedback_id
+        assert third.created_at == first.created_at
+        assert third.updated_at > second.updated_at
+
+        # Retract (rating/comment cleared) is just another write through the
+        # same path: identity survives and updated_at keeps increasing.
+        retracted = await repository.upsert(
+            replace(third, rating=None, comment=None, updated_at=earlier)
+        )
+        assert retracted.feedback_id == first.feedback_id
+        assert retracted.created_at == first.created_at
+        assert retracted.rating is None
+        assert retracted.comment is None
+        assert retracted.updated_at > third.updated_at
 
         await engine.dispose()
 

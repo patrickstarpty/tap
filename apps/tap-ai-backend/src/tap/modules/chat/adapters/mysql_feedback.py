@@ -13,13 +13,13 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
-    insert,
+    func,
     select,
-    update,
+    text,
 )
 from sqlalchemy.dialects.mysql import DATETIME
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import RowMapping
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -90,6 +90,18 @@ class MysqlFeedbackRepository:
         self._scope = require_project_scope(scope)
 
     async def upsert(self, feedback: AnswerFeedback) -> AnswerFeedback:
+        """Insert a new row, or update the existing `(turn_id, actor_id)` row in place.
+
+        A single atomic `INSERT ... ON DUPLICATE KEY UPDATE` (rather than a
+        separate insert-then-update) means two concurrent writes for the same
+        key never race to an earlier `updated_at`: MySQL serializes both
+        statements against the same row, and each one's `updated_at` is
+        floored at `<current row value> + 1 microsecond` via `GREATEST(...)`,
+        so every write strictly increases it regardless of wall-clock drift
+        or which caller's write lands first. `feedback_id` and `created_at`
+        are never part of the UPDATE clause, so an existing row's identity
+        and creation time survive every subsequent write untouched.
+        """
         values = {
             **{**scope_values(self._scope), "actor_id": feedback.actor_id},
             "feedback_id": feedback.feedback_id,
@@ -101,27 +113,31 @@ class MysqlFeedbackRepository:
             "created_at": _naive(feedback.created_at),
             "updated_at": _naive(feedback.updated_at),
         }
-        try:
-            async with self._sessions() as session, session.begin():
-                await session.execute(insert(answer_feedback).values(**values))
-        except IntegrityError:
-            async with self._sessions() as session, session.begin():
-                result = await session.execute(
-                    update(answer_feedback)
-                    .where(
-                        *scope_predicates(answer_feedback, self._scope),
-                        answer_feedback.c.turn_id == feedback.turn_id,
-                        answer_feedback.c.actor_id == feedback.actor_id,
-                    )
-                    .values(
-                        rating=feedback.rating,
-                        comment=feedback.comment,
-                        updated_at=_naive(feedback.updated_at),
+        insert_stmt = mysql_insert(answer_feedback).values(**values)
+        upsert_stmt = insert_stmt.on_duplicate_key_update(
+            rating=insert_stmt.inserted.rating,
+            comment=insert_stmt.inserted.comment,
+            updated_at=func.greatest(
+                answer_feedback.c.updated_at + text("INTERVAL 1 MICROSECOND"),
+                insert_stmt.inserted.updated_at,
+            ),
+        )
+        async with self._sessions() as session, session.begin():
+            await session.execute(upsert_stmt)
+            row = (
+                (
+                    await session.execute(
+                        select(answer_feedback).where(
+                            *scope_predicates(answer_feedback, self._scope),
+                            answer_feedback.c.turn_id == feedback.turn_id,
+                            answer_feedback.c.actor_id == feedback.actor_id,
+                        )
                     )
                 )
-                if result.rowcount != 1:
-                    raise
-        return feedback
+                .mappings()
+                .one()
+            )
+        return _from_row(row)
 
     async def get(self, turn_id: str, actor_id: str) -> AnswerFeedback | None:
         async with self._sessions() as session:
