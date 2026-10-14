@@ -207,6 +207,90 @@ def test_row_inserted_behind_cursor_is_not_rescanned(owned_project_mysql: Isolat
     asyncio.run(scenario())
 
 
+def test_scan_traces_full_mixed_page_drops_trailing_tie_until_next_scan(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    """The one `_paginate` branch with no prior MySQL-level coverage: a full
+    page spanning more than one timestamp (A alone at `_T0`, C and D tied at
+    `_T1`, `limit=2`). The first scan must return only A, positioned at `_T0`
+    — not advance to `_T1` and not include C or D yet, since a 2-row page
+    cannot prove there isn't a third row tied at `_T1` beyond it. The second
+    scan (after `advance`) must then return both C and D, positioned at
+    `_T1`."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            trace_a, trace_c, trace_d = uuid4().hex, uuid4().hex, uuid4().hex
+            async with engine.begin() as connection:
+                await _insert_span(
+                    connection, trace_id=trace_a, span_id=uuid4().hex[:16], recorded_at=_T0
+                )
+                await _insert_span(
+                    connection, trace_id=trace_c, span_id=uuid4().hex[:16], recorded_at=_T1
+                )
+                await _insert_span(
+                    connection, trace_id=trace_d, span_id=uuid4().hex[:16], recorded_at=_T1
+                )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            first_ids, first_position = await store.scan_traces(cutoff=_T1, limit=2)
+            assert first_ids == [trace_a]
+            assert first_position == _T0
+
+            await store.advance("trace", first_position)
+            second_ids, second_position = await store.scan_traces(cutoff=_T1, limit=2)
+            assert set(second_ids) == {trace_c, trace_d}
+            assert second_position == _T1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_scan_feedback_full_mixed_page_drops_trailing_tie_until_next_scan(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    """Same shape as `test_scan_traces_full_mixed_page_drops_trailing_tie_until_next_scan`,
+    for `scan_feedback`."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            feedback_a, feedback_c, feedback_d = uuid4().hex, uuid4().hex, uuid4().hex
+            async with engine.begin() as connection:
+                for feedback_id, updated_at in (
+                    (feedback_a, _T0),
+                    (feedback_c, _T1),
+                    (feedback_d, _T1),
+                ):
+                    await _insert_feedback(
+                        connection,
+                        feedback_id=feedback_id,
+                        turn_id=f"turn-{feedback_id[:8]}",
+                        chat_id=f"chat-{feedback_id[:8]}",
+                        updated_at=updated_at,
+                    )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            first_records, first_position = await store.scan_feedback(cutoff=_T1, limit=2)
+            assert [record.feedback_id for record in first_records] == [feedback_a]
+            assert first_position == _T0
+
+            await store.advance("feedback", first_position)
+            second_records, second_position = await store.scan_feedback(cutoff=_T1, limit=2)
+            assert {record.feedback_id for record in second_records} == {feedback_c, feedback_d}
+            assert second_position == _T1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_scan_traces_tie_at_cut_is_not_lost(owned_project_mysql: IsolatedMysql) -> None:
     """A `LIMIT`-sized page that lands exactly on a group of tied timestamps must
     not advance the cursor until every row sharing that timestamp is accounted
