@@ -12,6 +12,8 @@ from fastapi.responses import StreamingResponse
 
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.contracts.http import (
+    AnswerFeedbackRequest,
+    AnswerFeedbackView,
     CitationPreview,
     ConversationAccepted,
     ConversationCreateRequest,
@@ -27,10 +29,16 @@ from tap.contracts.http import (
     TurnTrace,
 )
 from tap.interfaces.http.conversation_selection import freeze_conversation_selection
-from tap.interfaces.http.dependencies import conversation_service, knowledge_service, trace_service
+from tap.interfaces.http.dependencies import (
+    conversation_service,
+    feedback_service,
+    knowledge_service,
+    trace_service,
+)
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.sse import encode_sse
+from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA, resolve_skill_selection
 from tap.modules.ai.domain.assets import AssetRevisionRejected
 from tap.modules.ai.domain.models import (
@@ -45,7 +53,9 @@ from tap.modules.chat.application.conversations import (
     ConversationNotFound,
     ConversationService,
 )
+from tap.modules.chat.application.feedback import FeedbackService
 from tap.modules.chat.domain.conversations import TurnInput
+from tap.modules.chat.domain.feedback import AnswerFeedback
 from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.platform.telemetry import bind_trace, span, trace_id_of
@@ -178,7 +188,7 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
     )
 
 
-def _turn(value):
+def _turn(value, *, feedback: AnswerFeedback | None = None):
     frozen = value.input_snapshot.value
     return ConversationTurnSummary(
         turn_id=value.turn_id,
@@ -225,6 +235,11 @@ def _turn(value):
             insights_query_id=frozen.insights_query_id,
         ),
         trace_id=trace_id_of(value.traceparent),
+        my_feedback=(
+            None
+            if feedback is None or feedback.rating is None
+            else AnswerFeedbackView(rating=feedback.rating, comment=feedback.comment)
+        ),
     )
 
 
@@ -237,13 +252,14 @@ def _summary(value):
     )
 
 
-def _detail(value):
+def _detail(value, feedback_by_turn: dict[str, AnswerFeedback] | None = None):
+    feedback_by_turn = feedback_by_turn or {}
     return ConversationDetail(
         conversation_id=value.conversation_id,
         title=value.title,
         created_at=value.created_at.isoformat(),
         updated_at=value.updated_at.isoformat(),
-        turns=[_turn(turn) for turn in value.turns],
+        turns=[_turn(turn, feedback=feedback_by_turn.get(turn.turn_id)) for turn in value.turns],
     )
 
 
@@ -319,8 +335,19 @@ async def list_conversations(
     operation_id="conversation_get",
     responses={404: problem_response_metadata("Conversation not found")},
 )
-async def get(conversation_id: str, service: ConversationService = Depends(conversation_service)):
-    return _detail(await service.load(conversation_id))
+async def get(
+    conversation_id: str,
+    request: Request,
+    service: ConversationService = Depends(conversation_service),
+):
+    conversation = await service.load(conversation_id)
+    feedback_by_turn: dict[str, AnswerFeedback] = {}
+    services = request.app.state.http_services
+    if services.feedback is not None:
+        feedback_by_turn = await services.feedback.mine(
+            tuple(turn.turn_id for turn in conversation.turns)
+        )
+    return _detail(conversation, feedback_by_turn)
 
 
 @router.patch(
@@ -539,3 +566,46 @@ async def turn_trace(conversation_id: str, turn_id: str, request: Request) -> Tu
     if trace is None:
         raise ConversationNotFound
     return trace
+
+
+@router.put(
+    "/{conversation_id}/turns/{turn_id}/feedback",
+    response_model=AnswerFeedbackView,
+    operation_id="conversation_put_turn_feedback",
+    responses={
+        404: problem_response_metadata("Conversation or Turn not found"),
+        409: problem_response_metadata("Turn is not completed"),
+        422: problem_response_metadata("Request validation failed"),
+    },
+)
+async def put_turn_feedback(
+    conversation_id: str,
+    turn_id: str,
+    body: AnswerFeedbackRequest,
+    service: FeedbackService = Depends(feedback_service),
+) -> AnswerFeedbackView:
+    try:
+        feedback = await service.submit(conversation_id, turn_id, body.rating, body.comment)
+    except AuthorizationDenied:
+        # Do not reveal that the Conversation exists but belongs to another actor.
+        raise ConversationNotFound from None
+    return AnswerFeedbackView(rating=feedback.rating, comment=feedback.comment)
+
+
+@router.delete(
+    "/{conversation_id}/turns/{turn_id}/feedback",
+    status_code=204,
+    response_class=Response,
+    operation_id="conversation_delete_turn_feedback",
+    responses={404: problem_response_metadata("Conversation or Turn not found")},
+)
+async def delete_turn_feedback(
+    conversation_id: str,
+    turn_id: str,
+    service: FeedbackService = Depends(feedback_service),
+) -> Response:
+    try:
+        await service.retract(conversation_id, turn_id)
+    except AuthorizationDenied:
+        raise ConversationNotFound from None
+    return Response(status_code=204)

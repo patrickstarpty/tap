@@ -1095,6 +1095,18 @@ class ConversationTurnInputView(ContractModel):
     insights_query_id: str | None = None
 
 
+class AnswerFeedbackRequest(ContractModel):
+    """Owner-only up/down rating on a completed Turn; comment is down-only."""
+
+    rating: Literal["up", "down"]
+    comment: Annotated[str, Field(strict=True, min_length=1, max_length=500)] | None = None
+
+
+class AnswerFeedbackView(ContractModel):
+    rating: Literal["up", "down"]
+    comment: str | None = None
+
+
 class ConversationTurnSummary(ContractModel):
     turn_id: str
     state: Literal["queued", "running", "completed", "abstained", "canceled", "failed"]
@@ -1109,6 +1121,7 @@ class ConversationTurnSummary(ContractModel):
     graph_snapshot_id: str | None = None
     input: ConversationTurnInputView
     trace_id: str | None = None
+    my_feedback: AnswerFeedbackView | None = None
 
 
 class ConversationSummary(ContractModel):

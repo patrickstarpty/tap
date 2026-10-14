@@ -1307,6 +1307,28 @@
         {
           "properties": {
             "detail": {
+              "const": "Feedback is only accepted for a completed Turn."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Feedback not allowed"
+            },
+            "type": {
+              "const": "https://tap.example/problems/feedback-not-allowed"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The graph fact is unavailable in this Project snapshot."
             },
             "failureStage": {
@@ -1937,6 +1959,7 @@
             "https://tap.example/problems/embedding-unavailable",
             "https://tap.example/problems/empty-document",
             "https://tap.example/problems/execution-provider-unavailable",
+            "https://tap.example/problems/feedback-not-allowed",
             "https://tap.example/problems/graph-fact-not-found",
             "https://tap.example/problems/graph-job-busy",
             "https://tap.example/problems/graph-unavailable",

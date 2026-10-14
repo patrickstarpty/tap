@@ -12,6 +12,7 @@ from tap.modules.chat.adapters.mysql_conversations import (
     turn_artifact_link,
     turn_input_snapshot,
 )
+from tap.modules.chat.adapters.mysql_feedback import answer_feedback
 from tap.modules.chat.adapters.mysql_suggestions import prompt_suggestion, prompt_suggestion_refresh
 from tap.modules.governance.adapters.schema import project_audit
 from tap.modules.graph.adapters.mysql import GRAPH_TABLES
@@ -61,6 +62,7 @@ BUSINESS_TABLES = (
     turn_input_snapshot,
     turn_answer_evidence_snapshot,
     turn_artifact_link,
+    answer_feedback,
     prompt_suggestion_refresh,
     prompt_suggestion,
     knowledge_document,

@@ -1874,6 +1874,7 @@ def _assemble_http_services(
     )
     conversations = None
     traces = None
+    feedback = None
     if conversation_sessions is not None:
         from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
         from tap.modules.chat.application.conversations import ConversationService
@@ -1888,6 +1889,18 @@ def _assemble_http_services(
         from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService
 
         traces = MysqlTraceHttpService(conversation_sessions)  # type: ignore[arg-type]
+
+        from tap.modules.chat.adapters.mysql_feedback import MysqlFeedbackRepository
+        from tap.modules.chat.application.feedback import FeedbackService
+
+        feedback = FeedbackService(
+            MysqlFeedbackRepository(
+                conversation_sessions,  # type: ignore[arg-type]
+                scope=repository.scope,
+            ),
+            conversations,
+            scope=repository.scope,
+        )
     test_plans = None
     if test_plan_sessions is not None:
         from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
@@ -2010,6 +2023,7 @@ def _assemble_http_services(
         authorization_policy=authorization_policy,
         scope=repository.scope,
         conversations=conversations,
+        feedback=feedback,
         prompt_suggestions=prompt_suggestions,
         prompt_suggestion_store=prompt_suggestion_store,
         traces=traces,

@@ -73,6 +73,7 @@ EXPECTED_TABLES = {
     "turn_input_snapshot",
     "turn_answer_evidence_snapshot",
     "turn_artifact_link",
+    "answer_feedback",
     "prompt_suggestion_refresh",
     "prompt_suggestion",
     "knowledge_document",
