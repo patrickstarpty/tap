@@ -12,7 +12,7 @@
 | pytest/Allure 上传、指标和运行详情 | `apps/web`                 | `src/features/insights/`                                                 |
 | 查看完整产品设计和跨模块交互       | `apps/web` 的 `/prototype` | `src/widgets/tap/TapProductPrototype.tsx`                                |
 
-先读[产品原型基准](2026-09-22-product-prototype-baseline.md)。完整原型是设计基准；运行页面通过 API 获取实际业务状态。修改前确认需求属于哪个应用，不要因为两套应用都有同名组件就跨目录复制实现。
+完整原型 `/prototype` 是全模块设计参考，新交互直接在对应应用源码中设计（[原型基准规范](2026-09-22-product-prototype-baseline.md)已于 2026-10-14 停用）；运行页面通过 API 获取实际业务状态。修改前确认需求属于哪个应用，不要因为两套应用都有同名组件就跨目录复制实现。
 
 当前隔离模拟业务 UAT 已通过；真实业务 M1–M4 仍待验收。能力与证据以[交付门禁](../archive/reviews/2026-09-26-trusted-knowledge-insights-delivery-gate.md)为准。
 
@@ -95,7 +95,7 @@ make tap-web-dev
 
 建议选择已有页面的一项明确需求，例如优化报告失败提示；以下流程也适用于正式任务。
 
-1. 在 `/prototype` 确认预期交互，并在对应运行页面复现问题。
+1. 在对应运行页面确认预期交互并复现问题。
 2. 找到所属 feature 的组件、API client 和现有测试。保持 `app/pages → widgets → features → shared` 依赖方向。
 3. 若改变行为，先在同目录测试中补一个用户可观察的失败用例；只改静态文案时做针对性检查即可。
 4. 修改组件，覆盖加载、空态、错误、权限不足和成功状态；不把 fixture、模拟控制或实现说明加到产品 UI。
@@ -118,7 +118,7 @@ corepack pnpm --dir apps/tap-ai-frontend run check
 
 ## 7. 向后端交接并提交
 
-提交前提供：页面入口、复现步骤、请求/响应示例（脱敏）、错误和异步状态、测试结果。UI 变更附相同视口的前后截图，并确认完整原型所有模块仍可达；不得用独立新壳替换 `/prototype`。
+提交前提供：页面入口、复现步骤、请求/响应示例（脱敏）、错误和异步状态、测试结果。UI 变更附相同视口的前后截图。
 
 ```sh
 git diff --check
