@@ -6,7 +6,12 @@ import random
 import time
 from typing import Sequence
 
-from tap.modules.graph.application.alignment import alignment_key, merge_edges, resolve_entities
+from tap.modules.graph.application.alignment import (
+    _ambiguous_alias_keys,
+    alignment_key,
+    merge_edges,
+    resolve_entities,
+)
 from tap.modules.graph.domain.models import (
     Evidence,
     GraphEdge,
@@ -285,6 +290,7 @@ def _linear_scan_clusters(
     so the indexed resolver can be checked against it.
     """
     clusters: list[dict[str, object]] = []
+    ambiguous = _ambiguous_alias_keys(sorted(fragments, key=lambda item: item.snapshot.snapshot_id))
 
     def names(texts):
         return {
@@ -299,7 +305,10 @@ def _linear_scan_clusters(
         for node in fragment.nodes:
             key1 = alignment_key(node.canonical_key)
             label_keys = names((node.label,))
-            keys2 = names((node.label, *node.aliases))
+            keys2 = {
+                key for key in names((node.label, *node.aliases))
+                if (node.node_type, source, key) not in ambiguous
+            }
             target = None
             rule = None
             for cluster in clusters:
@@ -589,3 +598,60 @@ def test_reference_aliases_from_the_real_run_no_longer_merge_entities():
         frozenset({"明确说明与如实告知"}),
     }
     assert not any(is_reference_name(alias) for entity in entities for alias in entity.aliases)
+
+
+def test_an_alias_shared_by_three_distinct_entities_in_one_document_does_not_merge_them():
+    # Real-model run: three distinct cardiomyopathies in the same filing were all
+    # glossed "心肌病", and the shared alias merged them into one node.
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("n1", "扩张型心肌病", "CONCEPT", "扩张型心肌病", ("心肌病",)),
+            ("n2", "肥厚型心肌病", "CONCEPT", "肥厚型心肌病", ("心肌病",)),
+            ("n3", "限制型心肌病", "CONCEPT", "限制型心肌病", ("心肌病",)),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert {entity.label for entity in entities} == {"扩张型心肌病", "肥厚型心肌病", "限制型心肌病"}
+    assert all(len(entity.members) == 1 for entity in entities)
+
+
+def test_an_alias_shared_by_two_grades_in_one_document_does_not_merge_them():
+    # Real-model run: an NYHA heart-function grade and an unrelated rheumatoid-
+    # arthritis functional grade were both glossed "IV 级"/"Ⅳ级" in the same filing.
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("n1", "心功能分级Ⅳ级", "CONCEPT", "心功能分级Ⅳ级", ("Ⅳ级",)),
+            ("n2", "类风湿性关节炎功能分类IV级", "CONCEPT", "类风湿性关节炎功能分类IV级", ("IV 级",)),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert {entity.label for entity in entities} == {
+        "心功能分级Ⅳ级",
+        "类风湿性关节炎功能分类IV级",
+    }
+    assert all(len(entity.members) == 1 for entity in entities)
+
+
+def test_an_ambiguous_alias_does_not_block_a_different_entitys_safe_merge():
+    # The ambiguity guard only disqualifies the ambiguous key itself; an unrelated
+    # pair sharing a different, unambiguous alias in the same document still merges.
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("n1", "扩张型心肌病", "CONCEPT", "扩张型心肌病", ("心肌病",)),
+            ("n2", "肥厚型心肌病", "CONCEPT", "肥厚型心肌病", ("心肌病",)),
+            ("n3", "安心重疾保险", "SYSTEM", "安心重疾保险", ("重疾险",)),
+            ("n4", "重疾险", "SYSTEM", "重疾险"),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    merged = {entity.label: entity for entity in entities if len(entity.members) > 1}
+    assert set(merged) == {"安心重疾保险"}

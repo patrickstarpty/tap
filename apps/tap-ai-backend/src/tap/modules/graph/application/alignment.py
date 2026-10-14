@@ -256,6 +256,52 @@ def _majority(values: Sequence[str]) -> str:
     raise AssertionError("unreachable: values is nonempty")
 
 
+def _ambiguous_alias_keys(
+    ordered_fragments: Sequence[GraphSnapshotDraft],
+) -> frozenset[tuple[str, tuple[str, ...], str]]:
+    """Level-2 keys that may not merge within their own source revisions.
+
+    A model alias names an entity only inside its own document, so the ALIAS
+    level only ever matches a key against the same source revisions. That
+    scoping is not enough on its own: a real-model run glossed three distinct
+    cardiomyopathies "心肌病" in the same filing, and separately glossed an
+    unrelated rheumatoid-arthritis functional grade "IV 级" the same as a heart-
+    function grade in that filing -- both would merge unrelated entities
+    together under the first one's cluster, because nothing distinguishes that
+    case from the ordinary, wanted one where one entity's alias names another
+    entity that really is called that (e.g. "Underwriting" aliased "核保",
+    merging into the entity actually labelled "核保").
+
+    The distinction is who *owns* the key: at most one distinct canonical
+    entity may hold it as its own (normalized) label -- the key's "real" name,
+    if any -- with any number of others free to alias to that one owner. A key
+    no entity owns, but that more than one distinct canonical entity glosses
+    only as an alias, has no real anchor and is ambiguous; so is a key more
+    than one distinct canonical entity owns as its own label.
+    """
+
+    owners: dict[tuple[str, tuple[str, ...], str], set[str]] = {}
+    aliasers: dict[tuple[str, tuple[str, ...], str], set[str]] = {}
+    for fragment in ordered_fragments:
+        source = fragment.snapshot.source_revision_ids
+        for node in fragment.nodes:
+            canonical = alignment_key(node.canonical_key)
+            label_keys = alias_keys((node.label,))
+            for key in label_keys:
+                owners.setdefault((node.node_type, source, key), set()).add(canonical)
+            for key in alias_keys(node.aliases) - label_keys:
+                aliasers.setdefault((node.node_type, source, key), set()).add(canonical)
+
+    ambiguous: set[tuple[str, tuple[str, ...], str]] = set()
+    for key, canonicals in owners.items():
+        if len(canonicals) > 1:
+            ambiguous.add(key)
+    for key, canonicals in aliasers.items():
+        if key not in owners and len(canonicals) > 1:
+            ambiguous.add(key)
+    return frozenset(ambiguous)
+
+
 def resolve_entities(
     fragments: Sequence[GraphSnapshotDraft],
     *,
@@ -264,6 +310,7 @@ def resolve_entities(
 ) -> tuple[ResolvedEntity, ...]:
     """Merge Fragment nodes into Project entities across EXACT/ALIAS/EMBEDDING levels."""
     ordered_fragments = sorted(fragments, key=lambda fragment: fragment.snapshot.snapshot_id)
+    ambiguous_alias_keys = _ambiguous_alias_keys(ordered_fragments)
     clusters: list[_Cluster] = []
     # A level-1 key joins a cluster only when no same-type cluster already holds it
     # (otherwise the EXACT match below would have picked that cluster), so each
@@ -308,7 +355,8 @@ def resolve_entities(
                 ] + [
                     position
                     for key in keys2
-                    if (position := alias_index.get((node.node_type, source, key))) is not None
+                    if (node.node_type, source, key) not in ambiguous_alias_keys
+                    and (position := alias_index.get((node.node_type, source, key))) is not None
                 ]
                 if alias_positions:
                     target, rule_used = clusters[min(alias_positions)], "ALIAS"
@@ -341,6 +389,8 @@ def resolve_entities(
                 if known_position is None or target.position < known_position:
                     label_index[(node.node_type, key)] = target.position
             for key in keys2:
+                if (node.node_type, source, key) in ambiguous_alias_keys:
+                    continue
                 known_position = alias_index.get((node.node_type, source, key))
                 if known_position is None or target.position < known_position:
                     alias_index[(node.node_type, source, key)] = target.position
