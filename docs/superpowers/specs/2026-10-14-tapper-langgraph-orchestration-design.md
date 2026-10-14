@@ -12,7 +12,7 @@
 - 答案生成结束后才写一个 `answer.delta` 事件进 MySQL；API 的 SSE 每 100ms 重新加载整个会话事件（`interfaces/http/routes/conversations.py`）。
 - `processing_attempt` 与 `max_checkpoint_attempts` 只覆盖 checkpoint 冲突；模型或检索的瞬时失败直接使 Turn 失败；worker 主循环中 `run_once` 抛异常即退出进程。
 - Tapper 的身份与边界写死在 `modules/knowledge/adapters/litellm.py` 的字符串常量中。能力 4 引入 Agent（系统提示词 + Skills + 工具白名单 + 默认模型）与代码定义的工具注册表，但没有工具调用循环。
-- 已知差距：运行时 `publication_authority` 为 `None`，关系证据的发布授权复检不执行；R 证据片段不过流程图发布闸门。
+- V1 总纲记录的已知差距：运行时 `publication_authority` 为 `None`，关系证据的发布授权复检不执行；R 证据片段不过流程图发布闸门。核对代码后见 6.3。
 
 ## 目标
 
@@ -212,9 +212,9 @@ finalize ──同一事务──▶ MySQL 权威事件（turn.completed / turn.
 | 不支撑比例 > 30%（可配置）或首句结论不支撑 | 整体弃答，`turn.abstained`（`unsupported-claims`） |
 | 校验调用失败 | 按瞬时错误重试；超过上限则弃答，不退化为未校验输出 |
 
-### 6.3 已知差距修复
+### 6.3 已知差距核对
 
-在 `seed_search` 中启用运行时 `publication_authority`，执行关系证据发布授权复检；R 证据片段经过流程图发布闸门。
+2026-10-14 核对代码：按 [ADR-030](../../decisions/2026-09-27-adr-030-direct-knowledge-chunk-lifecycle.md)，切片启用并索引后直接可检索，不经发布，运行时 `publication_authority = None` 是设计而非缺口，不启用。流程图图片区域仍须审阅发布：检索命中经 `_flowchart_hit_is_approved` 过滤，关系支撑经 `_flowchart_support_allowed`（`modules/ai/application/agents/relation_analysis.py`）过滤，定稿前 `authorize_completed_answer` 对每条引用做当前性复检。PR 1 只以回归测试锁定这三项行为，并修正 V1 总纲已知局限的措辞。
 
 ### 6.4 评测
 
@@ -246,7 +246,7 @@ golden set 新增“诱导胡编”子集：证据中没有答案、证据与常
 - ③：Tapper 基础角色版本化并进入冻结与 trace；Agent 角色与工具白名单在图内生效；意图子集门禁通过。
 - ④：预算在图内统一执行并可见；注入防护、脱敏、范围外拒答有自动化测试覆盖。
 - ⑤：多步检索、Insights 联合分析（fake）、整份文档分析（长上下文与 map-reduce 两种）、高成本动作确认均有 E2E 或集成测试覆盖；关系分析以工具形式调用。
-- ⑥：所有对话回答经统一引用校验与支撑校验；诱导胡编子集门禁通过；已知差距修复。
+- ⑥：所有对话回答经统一引用校验与支撑校验；诱导胡编子集门禁通过；流程图闸门与引用复检有回归测试锁定。
 - `make check`、`make test`、`make demo-e2e` 通过。
 
 ## 9. 交付批次
@@ -255,7 +255,7 @@ golden set 新增“诱导胡编”子集：证据中没有答案、证据与常
 
 | PR | 内容 | 依赖 |
 | --- | --- | --- |
-| 1 | ② 图骨架：`tapper-chat-v2`、检索与生成拆分、Insights 分支、`verify` 承接现有 claim 校验；已知差距修复 | — |
+| 1 | ② 图骨架：`tapper-chat-v2`、检索与生成拆分、Insights 分支、`verify` 承接现有 claim 校验；已知差距回归测试 | — |
 | 2 | ② 可靠性：错误分类、`next_attempt_at` 迁移、attempt 上限、worker 主循环存活 | PR 1 |
 | 3 | ② 流式：`ModelGateway` 流式接口、内联引用格式、Redis 草稿流、SSE 改造、前端草稿与引用徽标、停止生成；切换前后 golden set 对比 | PR 1；能力 1 golden set 回归命令 |
 | 4 | ④ 围栏：预算、注入隔离与检测、脱敏、范围外拒答 | PR 1 |
