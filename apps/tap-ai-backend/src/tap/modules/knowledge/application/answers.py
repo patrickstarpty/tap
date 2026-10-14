@@ -156,67 +156,137 @@ class AnswerService:
         answer_execution=None,
         authorize=None,
     ) -> AnswerResponse:
-        if (
-            not revisions
-            or tuple(sorted(revisions, key=lambda item: item.document_id)) != revisions
-        ):
-            raise DocumentStateChanged("accepted revision selection is invalid")
+        """Compose the resumable phases below into the same one-call behavior
+        this method has always had; LangGraph nodes call the phases directly."""
+        prepared = await self.prepare_frozen(
+            request,
+            revisions,
+            policy,
+            governance=governance,
+            graph_context=graph_context,
+            answer_execution=answer_execution,
+            authorize=authorize,
+        )
+        if isinstance(prepared, AnswerResponse):
+            response = prepared
+        else:
+            generation = await self.generate_frozen(
+                prepared,
+                revisions,
+                policy,
+                governance=governance,
+                model_alias=model_alias,
+                answer_execution=answer_execution,
+                authorize=authorize,
+            )
+            response = await self.verify_frozen(
+                prepared,
+                generation,
+                revisions,
+                policy,
+                answer_execution=answer_execution,
+                authorize=authorize,
+            )
+        await self.save_frozen(response, request.query, revisions)
+        return response
+
+    async def prepare_frozen(
+        self,
+        request: AnswerRequest,
+        revisions: tuple[ReadyDocumentRevision, ...],
+        policy: RetrievalPolicyContext,
+        *,
+        governance: GenerationGovernance | None,
+        graph_context=(),
+        answer_execution=None,
+        authorize=None,
+    ):
+        publication = await self._authorize_frozen_selection(revisions, policy)
         trusted = AnswerRequest(
             query=request.query,
             answer_mode=AnswerMode.QUICK,
             source_families=(SourceFamily.DOC,),
             resource_refs=_scope_refs(revisions),
         )
-        publication = await self._authorize_selection(revisions)
-        grants = {
-            (grant.source_id, grant.revision, grant.source_content_hash)
-            for grant in policy.resource_grants
-        }
-        if grants != {
-            (item.source_id, item.revision_id, item.source_content_hash) for item in revisions
-        }:
-            raise DocumentStateChanged("accepted retrieval authority is invalid")
-        frozen_answer = getattr(self._knowledge, "answer_frozen", None)
-        if answer_execution is not None:
-            if frozen_answer is None:
+        knowledge_prepare = getattr(self._knowledge, "prepare_frozen", None)
+        if knowledge_prepare is None:
+            if answer_execution is not None:
                 raise ValueError("planned answers require the authorized Knowledge boundary")
-
-            async def reauthorize():
-                await self._revalidate_publication(publication)
-                if authorize is not None:
-                    await authorize()
-
-            response = await frozen_answer(
-                trusted,
-                policy,
-                governance=governance,
-                graph_context=graph_context,
-                model_alias=model_alias,
-                answer_execution=answer_execution,
-                authorize=reauthorize,
-            )
-        elif frozen_answer is None:
-            response = await self._knowledge.answer(trusted, policy)
-        elif model_alias is None:
-            response = await frozen_answer(
-                trusted,
-                policy,
-                governance=governance,
-                graph_context=graph_context,
-            )
+            result = await self._knowledge.answer(trusted, policy)
         else:
-            response = await frozen_answer(
+            result = await knowledge_prepare(
                 trusted,
                 policy,
                 governance=governance,
                 graph_context=graph_context,
-                model_alias=model_alias,
+                answer_execution=answer_execution,
+                authorize=self._reauthorize(publication, authorize),
             )
+        await self._revalidate_publication(publication)
+        return result
+
+    async def generate_frozen(
+        self,
+        bundle,
+        revisions: tuple[ReadyDocumentRevision, ...],
+        policy: RetrievalPolicyContext,
+        *,
+        governance: GenerationGovernance | None,
+        model_alias: str | None = None,
+        answer_execution=None,
+        authorize=None,
+    ):
+        publication = await self._authorize_frozen_selection(revisions, policy)
+        knowledge_generate = getattr(self._knowledge, "generate_frozen", None)
+        if knowledge_generate is None:
+            raise ValueError("planned answers require the authorized Knowledge boundary")
+        generation = await knowledge_generate(
+            bundle,
+            policy,
+            governance=governance,
+            model_alias=model_alias,
+            answer_execution=answer_execution,
+            authorize=self._reauthorize(publication, authorize),
+        )
+        await self._revalidate_publication(publication)
+        return generation
+
+    async def verify_frozen(
+        self,
+        bundle,
+        generation,
+        revisions: tuple[ReadyDocumentRevision, ...],
+        policy: RetrievalPolicyContext,
+        *,
+        answer_execution=None,
+        authorize=None,
+    ) -> AnswerResponse:
+        publication = await self._authorize_frozen_selection(revisions, policy)
+        knowledge_verify = getattr(self._knowledge, "verify_frozen", None)
+        if knowledge_verify is None:
+            raise ValueError("planned answers require the authorized Knowledge boundary")
+        response = await knowledge_verify(
+            bundle,
+            generation,
+            policy,
+            answer_execution=answer_execution,
+            authorize=self._reauthorize(publication, authorize),
+        )
+        await self._revalidate_publication(publication)
+        return response
+
+    async def save_frozen(
+        self,
+        response: AnswerResponse,
+        query: str,
+        revisions: tuple[ReadyDocumentRevision, ...],
+    ) -> None:
+        publication = await self._authorize_selection(revisions)
         await self._revalidate_publication(publication)
         try:
             snapshot = AnswerSnapshot.from_response(
                 response=response,
-                query=trusted.query,
+                query=query,
                 selected_revisions=revisions,
                 corpus_version=self._corpus_version,
             )
@@ -230,7 +300,42 @@ class AnswerService:
         except Exception as error:
             raise AnswerSnapshotUnavailable("answer snapshot commit failed") from error
         await self._revalidate_publication(publication)
-        return response
+
+    async def _authorize_frozen_selection(
+        self,
+        revisions: tuple[ReadyDocumentRevision, ...],
+        policy: RetrievalPolicyContext,
+    ) -> PublicationBinding | None:
+        """Re-derive and re-check the accepted revision selection's authority:
+        every resumable phase calls this independently rather than trusting a
+        checkpointed binding from an earlier phase."""
+        if (
+            not revisions
+            or tuple(sorted(revisions, key=lambda item: item.document_id)) != revisions
+        ):
+            raise DocumentStateChanged("accepted revision selection is invalid")
+        publication = await self._authorize_selection(revisions)
+        grants = {
+            (grant.source_id, grant.revision, grant.source_content_hash)
+            for grant in policy.resource_grants
+        }
+        if grants != {
+            (item.source_id, item.revision_id, item.source_content_hash) for item in revisions
+        }:
+            raise DocumentStateChanged("accepted retrieval authority is invalid")
+        return publication
+
+    def _reauthorize(
+        self,
+        publication: PublicationBinding | None,
+        authorize,
+    ):
+        async def reauthorize() -> None:
+            await self._revalidate_publication(publication)
+            if authorize is not None:
+                await authorize()
+
+        return reauthorize
 
     async def authorize_frozen_selection(
         self, revisions: tuple[ReadyDocumentRevision, ...]
