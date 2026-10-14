@@ -25,20 +25,22 @@ _MATCH_WINDOW_SLACK = 512
 _MATCH_WINDOW = _MAX_CHARS + _MATCH_WINDOW_SLACK
 _CUSTOM_RULE_NAME = re.compile(r"[a-z0-9_]+")
 
-_MAINLAND_ID = re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)")
+_MAINLAND_ID = re.compile(r"\d{17}[\dXx]")
 _MAINLAND_ID_WEIGHTS = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
 _MAINLAND_ID_CHECK_CHARS = "10X98765432"
+_MAINLAND_ID_BODY_DIGITS = 17
 
 _HK_ID = re.compile(r"(?<![A-Za-z0-9])[A-Z]{1,2}\d{6}\(?[0-9A]\)?(?![A-Za-z0-9])")
 
 _CARD_MIN_DIGITS = 13
 _CARD_MAX_DIGITS = 19
-_RESIDUAL_MIN_DIGITS = 11
-_DIGIT_SPAN = re.compile(r"(?<!\d)\d(?:[ \-]?\d)*(?!\d)")
-_DIGIT_GROUP = re.compile(r"\d+")
-
-_MAINLAND_PHONE = re.compile(r"(?<!\d)(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d{4}){2}(?!\d)")
-_HK_PHONE = re.compile(r"(?<!\d)(?:\+?852[\s-]?)?[2-9]\d{3}[\s-]?\d{4}(?!\d)")
+_NUMBER_MIN_DIGITS = 8
+# Digit groups joined by 1-3 separator characters; never preceded or followed by a digit.
+_DIGIT_SPAN = re.compile(r"(?<!\d)\+?\d+(?:[ \t\-]{1,3}\d+)*(?!\d)")
+_SPAN_NON_VALUE = re.compile(r"[ \t\-+]")
+_MAINLAND_PHONE = re.compile(r"(?:86)?1[3-9]\d{9}")
+_HK_PHONE = re.compile(r"(?:852)?[2-9]\d{7}")
+_DATE = re.compile(r"(?:19|20)\d{2}-?\d{2}-?\d{2}")
 
 _FULLWIDTH_OFFSET = 0xFEE0
 _FULLWIDTH_START = 0xFF01
@@ -178,119 +180,64 @@ def _redact_email(text: str) -> str:
     return "".join(output)
 
 
-def _redact_id_numbers(text: str) -> str:
+def _redact_hk_ids(text: str) -> str:
     normalized = _normalize(text)
     output: list[str] = []
     offset = 0
-    for match in _MAINLAND_ID.finditer(normalized):
-        if match.start() < offset:
-            continue
-        if _mainland_id_valid(match.group()):
-            output.extend((text[offset : match.start()], "[ID_NUMBER]"))
-            offset = match.end()
-    output.append(text[offset:])
-    text = "".join(output)
-
-    normalized = _normalize(text)
-    output = []
-    offset = 0
     for match in _HK_ID.finditer(normalized):
-        if match.start() < offset:
-            continue
         output.extend((text[offset : match.start()], "[ID_NUMBER]"))
         offset = match.end()
     output.append(text[offset:])
     return "".join(output)
 
 
-def _card_windows(span_text: str, span_start: int) -> list[tuple[int, int]]:
-    """Non-overlapping, longest-first Luhn-valid windows made of whole digit groups.
+def _classify_span(span: str) -> str | None:
+    """Placeholder for a whole digit span, or None to keep it.
 
-    Only whole digit groups (maximal digit runs with no internal separator) are ever
-    combined or sliced at their edges; a single ungrouped digit run is tried only as a
-    whole. Sliding a window to arbitrary digit positions was tried and reverted: it let
-    a Luhn-valid window start or end inside an adjacent, unrelated phone number glued on
-    by a single space, leaking most of that phone's digits. Anything this misses (a
-    card glued with no separator at all, or a coincidental mid-run Luhn match) is caught
-    by the residual long-digit-run sweep (`_redact_residual_numbers`) that runs later.
+    A span that is exactly one typed value gets its typed label; any other span of
+    8+ digits (except a bare date) becomes `[NUMBER]` as a whole. Masking whole spans
+    instead of typed sub-matches means no digit of a long span can ever survive
+    (宁多勿漏: over-masking is acceptable, leaking is not). Custom rules run after
+    this pass, so they only see digit runs shorter than 8 digits.
     """
-    groups = [
-        (match.start() + span_start, match.end() + span_start, match.group())
-        for match in _DIGIT_GROUP.finditer(span_text)
-    ]
-    candidates: list[tuple[int, int, int]] = []  # (digit_count, start, end)
-    for start_index in range(len(groups)):
-        total_digits = 0
-        digits: list[str] = []
-        for end_index in range(start_index, len(groups)):
-            total_digits += len(groups[end_index][2])
-            if total_digits > _CARD_MAX_DIGITS:
-                break
-            digits.append(groups[end_index][2])
-            if total_digits >= _CARD_MIN_DIGITS and _luhn_valid("".join(digits)):
-                candidates.append((total_digits, groups[start_index][0], groups[end_index][1]))
-    candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
-    chosen: list[tuple[int, int]] = []
-    occupied_until = -1
-    for _, start, end in candidates:
-        if start >= occupied_until:
-            chosen.append((start, end))
-            occupied_until = end
-    chosen.sort()
-    return chosen
+    value = _SPAN_NON_VALUE.sub("", span)
+    if _MAINLAND_ID.fullmatch(value) and _mainland_id_valid(value):
+        return "[ID_NUMBER]"
+    if _MAINLAND_PHONE.fullmatch(value):
+        return "[PHONE]"
+    if (
+        value.isdigit()
+        and _CARD_MIN_DIGITS <= len(value) <= _CARD_MAX_DIGITS
+        and _luhn_valid(value)
+    ):
+        return "[CARD_NUMBER]"
+    is_date = _DATE.fullmatch(span) is not None
+    if is_date and "-" in span:
+        return None  # a dashed date is never an HK phone; plain 2xxxxxxx stays [PHONE]
+    if _HK_PHONE.fullmatch(value):
+        return "[PHONE]"
+    digit_count = len(value) - (value[-1] in "Xx")
+    if digit_count < _NUMBER_MIN_DIGITS or is_date:
+        return None
+    return "[NUMBER]"
 
 
-def _redact_card_numbers(text: str) -> str:
+def _redact_digit_spans(text: str) -> str:
     normalized = _normalize(text)
     output: list[str] = []
     offset = 0
-    for span in _DIGIT_SPAN.finditer(normalized):
-        if span.start() < offset:
-            continue
-        for start, end in _card_windows(span.group(), span.start()):
-            output.extend((text[offset:start], "[CARD_NUMBER]"))
+    for match in _DIGIT_SPAN.finditer(normalized):
+        end = match.end()
+        if (
+            normalized[end : end + 1] in ("X", "x")
+            and not normalized[end + 1 : end + 2].isdigit()
+            and sum(character.isdigit() for character in match.group()) == _MAINLAND_ID_BODY_DIGITS
+        ):
+            end += 1
+        replacement = _classify_span(normalized[match.start() : end])
+        if replacement is not None:
+            output.extend((text[offset : match.start()], replacement))
             offset = end
-    output.append(text[offset:])
-    return "".join(output)
-
-
-def _redact_phone_numbers(text: str) -> str:
-    normalized = _normalize(text)
-    output: list[str] = []
-    offset = 0
-    matches = sorted(
-        (*_MAINLAND_PHONE.finditer(normalized), *_HK_PHONE.finditer(normalized)),
-        key=lambda m: m.start(),
-    )
-    for match in matches:
-        if match.start() < offset:
-            continue
-        output.extend((text[offset : match.start()], "[PHONE]"))
-        offset = match.end()
-    output.append(text[offset:])
-    return "".join(output)
-
-
-def _redact_residual_numbers(text: str) -> str:
-    """Catch-all sweep: any digit run of 11+ digits no earlier rule already placed a
-    placeholder over is replaced with `[NUMBER]`.
-
-    "宁多勿漏" (over-masking is acceptable, leaking is not): this is what actually
-    catches a card or ID glued to other digits with no separator, or any otherwise
-    unrecognized long digit run, without needing the card/ID/phone rules themselves to
-    slide into ambiguous territory. Placeholders already inserted by earlier steps are
-    not digits, so they break a span and are never swept up here.
-    """
-    normalized = _normalize(text)
-    output: list[str] = []
-    offset = 0
-    for span in _DIGIT_SPAN.finditer(normalized):
-        if span.start() < offset:
-            continue
-        digit_count = sum(character.isdigit() for character in span.group())
-        if digit_count >= _RESIDUAL_MIN_DIGITS:
-            output.extend((text[offset : span.start()], "[NUMBER]"))
-            offset = span.end()
     output.append(text[offset:])
     return "".join(output)
 
@@ -327,10 +274,8 @@ class ExportRedactor:
             working = without_keys
             working = _redact_credentials(working)
             working = _redact_email(working)
-            working = _redact_id_numbers(working)
-            working = _redact_card_numbers(working)
-            working = _redact_phone_numbers(working)
-            working = _redact_residual_numbers(working)
+            working = _redact_hk_ids(working)
+            working = _redact_digit_spans(working)
             working = _redact_custom(working, self._custom_rules)
             if original_length > _MATCH_WINDOW:
                 # A value straddling the original scan-window edge is only half

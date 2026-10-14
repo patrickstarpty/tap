@@ -11,18 +11,20 @@ import pytest
 from tap.modules.ai.application import export_redaction as export_redaction_module
 from tap.modules.ai.application.export_redaction import ExportRedactor, load_custom_rules
 
-_BRACKETED = re.compile(r"\[[^\[\]]*\]")
+_TRUNCATION_MARKER = re.compile(r"\[TRUNCATED \d+ chars\]")
 
 
-def _no_leaked_digit_run(out: str) -> bool:
-    """True once every `[PLACEHOLDER]`/`[TRUNCATED ...]` marker is stripped and no run
-    of 4+ consecutive original digits remains. Used consistently by the round-3
-    regression tests below instead of each picking its own leak check."""
-    return re.search(r"\d{4,}", _BRACKETED.sub("", out)) is None
+def assert_no_pii_digits(out: str, *values: str) -> None:
+    """No 4 consecutive digits of any PII value may appear in `out` (separators ignored)."""
+    compact = re.sub(r"[ \t\-]", "", _TRUNCATION_MARKER.sub("", out))
+    for value in values:
+        digits = re.sub(r"\D", "", value)
+        for index in range(len(digits) - 3):
+            gram = digits[index : index + 4]
+            assert gram not in compact, f"{gram!r} of {value!r} leaked in {out!r}"
 
 
-def _random_luhn_card(rng: random.Random) -> str:
-    payload = [rng.choice("123456789")] + [rng.choice("0123456789") for _ in range(14)]
+def _luhn_check_digit(payload: str) -> str:
     total = 0
     for index, char in enumerate(reversed(payload)):
         digit = int(char)
@@ -31,7 +33,39 @@ def _random_luhn_card(rng: random.Random) -> str:
             if digit > 9:
                 digit -= 9
         total += digit
-    return "".join(payload) + str((10 - total % 10) % 10)
+    return str((10 - total % 10) % 10)
+
+
+def _random_digits(rng: random.Random, count: int) -> str:
+    return "".join(rng.choice("0123456789") for _ in range(count))
+
+
+def _random_card(rng: random.Random) -> str:
+    payload = rng.choice("123456789") + _random_digits(rng, 14)
+    card = payload + _luhn_check_digit(payload)
+    if rng.random() < 0.5:
+        return card
+    return " ".join(card[i : i + 4] for i in range(0, 16, 4))
+
+
+def _random_cn_phone(rng: random.Random) -> str:
+    phone = "1" + rng.choice("3456789") + _random_digits(rng, 9)
+    if rng.random() < 0.5:
+        return phone
+    sep = rng.choice(" -")
+    return f"{phone[:3]}{sep}{phone[3:7]}{sep}{phone[7:]}"
+
+
+def _random_hk_phone(rng: random.Random) -> str:
+    phone = rng.choice("23456789") + _random_digits(rng, 7)
+    return f"{phone[:4]} {phone[4:]}"
+
+
+def _random_mainland_id(rng: random.Random) -> str:
+    body = rng.choice("123456789") + _random_digits(rng, 16)
+    weights = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
+    total = sum(int(d) * w for d, w in zip(body, weights, strict=True))
+    return body + "10X98765432"[total % 11]
 
 
 def test_pii_is_masked():
@@ -49,17 +83,14 @@ def test_formatted_numbers_are_masked():
 
 
 def test_luhn_and_checksum_reject_random_digits():
-    # 宁多勿漏 (over-masking is acceptable, leaking is not): the checksum-invalid
-    # mainland ID fails the card step's whole-run Luhn check too, so the residual
-    # long-digit-run sweep catches it as a plain [NUMBER] instead of [ID_NUMBER].
+    # 宁多勿漏 (over-masking is acceptable, leaking is not): checksum-invalid values
+    # get no typed label but are still masked as [NUMBER].
     out = ExportRedactor().redact("订单 4111111111111112，编号 110105194912310021")
     assert "[ID_NUMBER]" not in out
     assert "[NUMBER]" in out
 
-    # A date's 8 digits stay below the residual sweep's 11-digit floor and no other
-    # rule matches a dash-separated date, so it survives untouched. The adjacent
-    # 8-digit amount happens to fit the HK phone shape and may be masked as [PHONE]
-    # too (accepted over-masking) -- only the date itself is asserted here.
+    # A date span is exempt from the [NUMBER] sweep. The adjacent 8-digit amount fits
+    # the HK phone shape and is masked as [PHONE] (accepted over-masking).
     out2 = ExportRedactor().redact("日期 2026-10-14，金额 30001234 元")
     assert "2026-10-14" in out2
 
@@ -80,9 +111,11 @@ def test_truncates_after_redaction():
 
 def test_custom_rule_and_nested_values(tmp_path):
     p = tmp_path / "r.yaml"
-    p.write_text("rules:\n  - name: policy\n    pattern: 'P\\d{8}'\n")
+    p.write_text("rules:\n  - name: policy\n    pattern: 'P\\d{6}'\n")
     r = ExportRedactor(load_custom_rules(p))
-    assert r.redact_value({"a": ["P12345678", 3]}) == {"a": ["[CUSTOM:policy]", 3]}
+    assert r.redact_value({"a": ["P123456", 3]}) == {"a": ["[CUSTOM:policy]", 3]}
+    # Custom rules run after the digit-span pass: 8+ digit runs are already [NUMBER].
+    assert r.redact("P12345678") == "P[NUMBER]"
 
 
 def test_none_passthrough():
@@ -189,20 +222,19 @@ def test_value_straddling_match_window_edge_does_not_leak():
     assert len(out) <= max_chars + len(f"[TRUNCATED {overflow} chars]")
 
 
-# --- Fix round 3: sliding-window card search leaked adjacent phone digits ---
+# --- Fix round 4: single span-first digit pass ---
 
 
-def test_clean_card_and_phone_still_get_typed_placeholders():
-    out = ExportRedactor().redact("4111111111111111 13812345678")
-    assert "[CARD_NUMBER]" in out and "[PHONE]" in out
-
-    assert ExportRedactor().redact("13812345678") == "[PHONE]"
-
-    out_id = ExportRedactor().redact("身份证 11010519491231002X")
-    assert "[ID_NUMBER]" in out_id
-
-
-_NO_LEAK_CASES = [
+_LEAK_PROBES = [
+    "846346484850 138 6786 9819",
+    "157391645947-138-8732-2872",
+    "648792 138 2233 3853",
+    "901703041797 6494 5068",
+    "1671117279914541 138 1077 1977",
+    "3190 8833 4288",
+    "1490 7518 3833 7650 13855199906",
+    "0718 3300-8791 1390",
+    "4111  1111  1111  1111",
     "4111111111111111 13812345678",
     "202610141234 13812345678",
     "478266025142 9123 4567",
@@ -213,21 +245,57 @@ _NO_LEAK_CASES = [
     "411111111111111113812345678",
     "411111111111111111010519491231002X",
     "93152741916111010519491231002X",
+    "+86 138 1234 5678",
+    "+852 9123 4567",
 ]
 
 
-@pytest.mark.parametrize("text", _NO_LEAK_CASES)
-def test_no_long_digit_run_survives_group_aligned_or_glued_cases(text):
-    assert _no_leaked_digit_run(ExportRedactor().redact(text))
+@pytest.mark.parametrize("text", _LEAK_PROBES)
+def test_no_pii_digits_leak_from_probes(text):
+    assert_no_pii_digits(ExportRedactor().redact(f"x {text} y"), text)
 
 
-def test_random_card_and_random_digit_runs_never_leak_into_adjacent_phone():
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("4111 1111 1111 1111", "[CARD_NUMBER]"),
+        ("13812345678", "[PHONE]"),
+        ("+86 138-1234-5678", "[PHONE]"),
+        ("11010519491231002X", "[ID_NUMBER]"),
+        ("９１２３ ４５６７", "[PHONE]"),
+        ("A123456(7)", "[ID_NUMBER]"),
+    ],
+)
+def test_clean_standalone_values_get_typed_placeholders(text, expected):
+    assert ExportRedactor().redact(f"值 {text} 结束") == f"值 {expected} 结束"
+
+
+@pytest.mark.parametrize(
+    "text", ["日期 2026-10-14", "第 3 页 共 12 页", "HTTP 422", "编号 1234567"]
+)
+def test_short_numbers_and_dates_survive(text):
+    assert ExportRedactor().redact(text) == text
+
+
+@pytest.mark.parametrize("separator", ["", " ", "-", "  ", " - "])
+def test_random_concatenations_never_leak_pii_digits(separator):
     rng = random.Random(20261014)
-    for _ in range(500):
-        phone_tail = "138" + "".join(rng.choice("0123456789") for _ in range(8))
+    generators = [_random_card, _random_cn_phone, _random_hk_phone, _random_mainland_id]
+    for _ in range(1000):
+        items: list[str] = []
+        pii: list[str] = []
+        for _ in range(rng.randint(2, 3)):
+            pick = rng.randrange(len(generators) + 1)
+            if pick == len(generators):
+                items.append(_random_digits(rng, rng.randint(4, 12)))
+            else:
+                value = generators[pick](rng)
+                items.append(value)
+                pii.append(value)
+        assert_no_pii_digits(ExportRedactor().redact(f"x {separator.join(items)} y"), *pii)
 
-        random_digits = "".join(rng.choice("0123456789") for _ in range(12))
-        assert _no_leaked_digit_run(ExportRedactor().redact(f"{random_digits} {phone_tail}"))
 
-        card = _random_luhn_card(rng)
-        assert _no_leaked_digit_run(ExportRedactor().redact(f"{card} {phone_tail}"))
+def test_double_spaced_long_digit_run_redacts_quickly():
+    start = time.monotonic()
+    ExportRedactor().redact("1  " * 13000)
+    assert time.monotonic() - start < 1.0
