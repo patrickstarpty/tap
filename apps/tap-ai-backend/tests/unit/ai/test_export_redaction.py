@@ -16,7 +16,7 @@ _TRUNCATION_MARKER = re.compile(r"\[TRUNCATED \d+ chars\]")
 
 def assert_no_pii_digits(out: str, *values: str) -> None:
     """No 4 consecutive digits of any PII value may appear in `out` (separators ignored)."""
-    compact = re.sub(r"[ \t\-]", "", _TRUNCATION_MARKER.sub("", out))
+    compact = re.sub(r"[\s\-\u2010\u2013\u2014./_]", "", _TRUNCATION_MARKER.sub("", out))
     for value in values:
         digits = re.sub(r"\D", "", value)
         for index in range(len(digits) - 3):
@@ -298,4 +298,56 @@ def test_random_concatenations_never_leak_pii_digits(separator):
 def test_double_spaced_long_digit_run_redacts_quickly():
     start = time.monotonic()
     ExportRedactor().redact("1  " * 13000)
+    assert time.monotonic() - start < 1.0
+
+
+# --- Fix round 5: wider separators, narrow date exemption ---
+
+
+_SEPARATOR_PROBES = [
+    "138\n1234\n5678",
+    "9123\n4567",
+    "138\xa01234\xa05678",
+    "9123\xa04567",
+    "4111.1111.1111.1111",
+    "4111/1111/1111/1111",
+    "4111_1111_1111_1111",
+    "4111    1111    1111    1111",
+    "138.1234.5678",
+    "138 -- 1234 -- 5678",
+    "138\u20131234\u20135678",
+    "138\u20101234\u20105678",
+    "138\u20141234\u20145678",
+    "4111\t1111\t1111\t1111",
+]
+
+
+@pytest.mark.parametrize("text", _SEPARATOR_PROBES)
+def test_no_pii_digits_leak_across_wider_separators(text):
+    assert_no_pii_digits(ExportRedactor().redact(f"x {text} y"), text)
+
+
+@pytest.mark.parametrize("date", ["2026-10-14", "2026/10/14", "2026.10.14"])
+def test_exact_dates_survive(date):
+    assert ExportRedactor().redact(f"日期 {date} 止") == f"日期 {date} 止"
+
+
+@pytest.mark.parametrize(
+    "text", ["2026-13-01", "2012-3456", "2099-8877", "2012-34-56", "2026-10/14", "20261014"]
+)
+def test_non_date_spans_are_masked(text):
+    assert_no_pii_digits(ExportRedactor().redact(f"x {text} y"), text)
+
+
+@pytest.mark.parametrize(
+    "separator", ["\t", "\n", "\xa0", "\u2013", ".", "/", "_", "    ", " \u2014 "]
+)
+def test_random_concatenations_never_leak_with_wider_separators(separator):
+    test_random_concatenations_never_leak_pii_digits(separator)
+
+
+@pytest.mark.parametrize("text", ["1\xa0" * 20000, "1." * 20000])
+def test_wide_separator_long_digit_runs_redact_quickly(text):
+    start = time.monotonic()
+    ExportRedactor().redact(text)
     assert time.monotonic() - start < 1.0

@@ -3,7 +3,8 @@
 Standalone from the knowledge-module query redactor: this redactor never rejects
 a field outright (except an unterminated private-key block), it best-effort masks
 PII/credentials and always returns a usable string so the sync worker can keep
-exporting the surrounding trace.
+exporting the surrounding trace. Digit spans of 8 or more digits are claimed by the
+digit-span pass before custom rules run, so custom rules only ever see shorter runs.
 """
 
 from __future__ import annotations
@@ -35,12 +36,13 @@ _HK_ID = re.compile(r"(?<![A-Za-z0-9])[A-Z]{1,2}\d{6}\(?[0-9A]\)?(?![A-Za-z0-9])
 _CARD_MIN_DIGITS = 13
 _CARD_MAX_DIGITS = 19
 _NUMBER_MIN_DIGITS = 8
-# Digit groups joined by 1-3 separator characters; never preceded or followed by a digit.
-_DIGIT_SPAN = re.compile(r"(?<!\d)\+?\d+(?:[ \t\-]{1,3}\d+)*(?!\d)")
-_SPAN_NON_VALUE = re.compile(r"[ \t\-+]")
+# Digit groups joined by 1-4 separator characters (any whitespace, dashes, `.`, `/`,
+# `_`); never preceded or followed by a digit.
+_DIGIT_SPAN = re.compile(r"(?<!\d)\+?\d+(?:[\s\-\u2010\u2013\u2014./_]{1,4}\d+)*(?!\d)")
+_SPAN_NON_VALUE = re.compile(r"[^\dXx]")
 _MAINLAND_PHONE = re.compile(r"(?:86)?1[3-9]\d{9}")
 _HK_PHONE = re.compile(r"(?:852)?[2-9]\d{7}")
-_DATE = re.compile(r"(?:19|20)\d{2}-?\d{2}-?\d{2}")
+_DATE = re.compile(r"(?:19|20)\d{2}([-/.])(?:0[1-9]|1[0-2])\1(?:0[1-9]|[12]\d|3[01])")
 
 _FULLWIDTH_OFFSET = 0xFEE0
 _FULLWIDTH_START = 0xFF01
@@ -211,13 +213,12 @@ def _classify_span(span: str) -> str | None:
         and _luhn_valid(value)
     ):
         return "[CARD_NUMBER]"
-    is_date = _DATE.fullmatch(span) is not None
-    if is_date and "-" in span:
-        return None  # a dashed date is never an HK phone; plain 2xxxxxxx stays [PHONE]
+    if _DATE.fullmatch(span):
+        return None  # exact YYYY-MM-DD (or / .); plain YYYYMMDD stays masked
     if _HK_PHONE.fullmatch(value):
         return "[PHONE]"
     digit_count = len(value) - (value[-1] in "Xx")
-    if digit_count < _NUMBER_MIN_DIGITS or is_date:
+    if digit_count < _NUMBER_MIN_DIGITS:
         return None
     return "[NUMBER]"
 
