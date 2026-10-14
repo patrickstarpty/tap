@@ -119,7 +119,7 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
     )
     checkpoint = await checkpointer.aget_tuple({"configurable": {"thread_id": "turn-1"}})
     assert checkpoint is not None
-    assert checkpoint.checkpoint["channel_values"]["graph_version"] == "fast-chat-v1"
+    assert checkpoint.checkpoint["channel_values"]["graph_version"] == "tapper-chat-v2"
     assert knowledge.requests[0].resource_refs[0].source_id == "src_" + "1" * 32
     assert knowledge.requests[0].resource_refs[0].mode.value == "scope"
     assert conversations.events[0] == (

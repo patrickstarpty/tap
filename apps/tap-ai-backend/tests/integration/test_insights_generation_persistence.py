@@ -189,7 +189,7 @@ async def test_insights_turn_reload_and_checkpoint_reclaim_preserve_result_and_a
                 .one()
             )
             assert run["status"] == "SUCCEEDED"
-            assert run["graph_version"] == "insights-explanation-v1"
+            assert run["graph_version"] == "tapper-chat-v2"
             assert (
                 await session.scalar(
                     select(func.count())
