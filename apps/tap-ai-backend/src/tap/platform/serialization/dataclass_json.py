@@ -2,11 +2,12 @@
 
 `to_json`/`from_json` round-trip the closed value shapes used across module
 application boundaries (Knowledge, Graph, ...): `None`, `bool`/`int`/`float`/`str`,
-`Enum` (by value), `datetime` (ISO 8601), `tuple[X, ...]` (homogeneous or
-fixed-length), `list[X]`, `dict[str, X]`, `Mapping[str, X]` (decoded as
-`MappingProxyType`), `X | None`, a union of dataclasses (tagged by `__type__`
-on decode), and nested dataclasses. `Any`/`object`-typed fields are decoded as
-plain JSON (dict/list/primitive) with no further interpretation.
+`Enum` (by value), `Literal[...]` (plain value, membership-checked on decode),
+`datetime` (ISO 8601), `tuple[X, ...]` (homogeneous or fixed-length), `list[X]`,
+`dict[str, X]`, `Mapping[str, X]` (decoded as `MappingProxyType`), `X | None`, a
+union of dataclasses (tagged by `__type__` on decode), and nested dataclasses.
+`Any`/`object`-typed fields are decoded as plain JSON (dict/list/primitive)
+with no further interpretation.
 
 A dataclass is encoded as a JSON object carrying `"__type__": <class name>`
 alongside its fields. A field declared with `init=False` is rejected with
@@ -21,7 +22,7 @@ from collections.abc import Mapping as MappingABC
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType, UnionType
-from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
+from typing import Any, Literal, TypeVar, Union, get_args, get_origin, get_type_hints
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
@@ -83,6 +84,9 @@ def _decode(tp: Any, data: object) -> Any:
 
     if origin is Union or origin is UnionType:
         return _decode_union(tp, data)
+
+    if origin is Literal:
+        return _decode_literal(tp, data)
 
     if tp is Any or tp is object:
         return _decode_generic(data)
@@ -153,6 +157,13 @@ def _decode_union(tp: Any, data: object) -> Any:
                 return _decode(candidate, data)
         raise TypeError(f"no member of union {tp!r} matches type tag {tag!r}")
     raise TypeError(f"ambiguous union {tp!r} without a {_TYPE_TAG} tag")
+
+
+def _decode_literal(tp: Any, data: object) -> Any:
+    allowed = get_args(tp)
+    if data not in allowed:
+        raise ValueError(f"expected one of {allowed!r} for {tp!r}, got {data!r}")
+    return data
 
 
 def _decode_tuple(tp: Any, data: object) -> tuple[Any, ...]:

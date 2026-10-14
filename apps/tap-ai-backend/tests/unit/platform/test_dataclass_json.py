@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Mapping
+from typing import Literal, Mapping
 
 import pytest
 
@@ -100,3 +100,19 @@ def test_init_false_field_is_rejected() -> None:
 
     with pytest.raises(TypeError):
         to_json(instance)
+
+
+@dataclass(frozen=True, slots=True)
+class HoldsLiteral:
+    status: Literal["published", "withdrawn"]
+
+
+def test_literal_round_trips_and_rejects_unknown_values() -> None:
+    value = HoldsLiteral(status="withdrawn")
+
+    restored = from_json(HoldsLiteral, json.loads(json.dumps(to_json(value))))
+
+    assert restored == value
+
+    with pytest.raises(ValueError):
+        from_json(HoldsLiteral, {"status": "archived"})

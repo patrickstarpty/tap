@@ -48,6 +48,7 @@ from tap.modules.knowledge.domain.models import (
     SourceFamily,
     SourceRevisionRef,
 )
+from tap.modules.knowledge.domain.review import KnowledgePublication
 
 SOURCE_HASH = "sha256:" + "a" * 64
 CHUNK_HASH = "sha256:" + "c" * 64
@@ -149,6 +150,8 @@ def _search_response(evidence: tuple[Evidence, ...]) -> SearchResponse:
 
 
 def _publication_binding() -> PublicationBinding:
+    published_at = datetime(2026, 1, 1, tzinfo=UTC)
+    expires_at = datetime(2026, 12, 31, tzinfo=UTC)
     return PublicationBinding(
         publication_id="publication-a",
         project_id="project-a",
@@ -156,7 +159,22 @@ def _publication_binding() -> PublicationBinding:
         source_revision_ids=("rev_a",),
         approved_item_ids=("item-a",),
         generation="generation-a",
-        expires_at=datetime(2026, 12, 31, tzinfo=UTC),
+        expires_at=expires_at,
+        publications=(
+            KnowledgePublication(
+                publication_id="publication-a",
+                project_id="project-a",
+                review_id="review-a",
+                review_version=1,
+                approval_digest=SOURCE_HASH,
+                source_revision_ids=("rev_a",),
+                approved_item_ids=("item-a",),
+                generation="generation-a",
+                published_by="reviewer-a",
+                published_at=published_at,
+                expires_at=expires_at,
+            ),
+        ),
     )
 
 
