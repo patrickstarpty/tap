@@ -4,22 +4,12 @@ import re
 
 from tap.modules.knowledge.ports.models import RedactionResult
 from tap.modules.knowledge.ports.redaction import RedactionUnavailable
+from tap.platform.redaction_patterns import ASSIGNMENT_CANDIDATE as _ASSIGNMENT_CANDIDATE
+from tap.platform.redaction_patterns import EMAIL as _EMAIL
+from tap.platform.redaction_patterns import PRIVATE_START as _PRIVATE_START
+from tap.platform.redaction_patterns import SECRET as _SECRET
 
 VERSION = "tapper-pattern-egress-v1"
-_PRIVATE_START = re.compile(r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----")
-_SECRET = re.compile(
-    r"(?i)(?<![\w-])(?:authorization\s*:\s*bearer\s+|"
-    r"(?P<keyquote>[\"']?)(?:api[_-]key|access_token|client_secret|password)(?P=keyquote)\s*[:=]\s*)"
-)
-_ASSIGNMENT_CANDIDATE = re.compile(
-    r"(?i)(?<![\w-])[\"']?(?:api[_-]key|access_token|client_secret|password)[\"']?\s*[:=]\s*"
-)
-_EMAIL = re.compile(
-    r"(?<![\w.+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
-    r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
-    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"
-    r"(?![\w.-])"
-)
 
 
 class PatternEgressRedactor:
