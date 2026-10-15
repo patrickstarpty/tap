@@ -1,11 +1,31 @@
 import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { it, expect } from "vitest";
+import { it, expect, vi } from "vitest";
 import { AnswerFeedback, type FeedbackValue } from "./AnswerFeedback";
 
 function Wrapper({ locale }: { locale: "en" | "zh" }) {
   const [value, setValue] = useState<FeedbackValue | null>(null);
   return <AnswerFeedback locale={locale} value={value} onChange={setValue} />;
+}
+
+function ControlledWrapper({
+  locale,
+  onChangeSpy,
+}: {
+  locale: "en" | "zh";
+  onChangeSpy: (next: FeedbackValue | null) => void;
+}) {
+  const [value, setValue] = useState<FeedbackValue | null>(null);
+  return (
+    <AnswerFeedback
+      locale={locale}
+      value={value}
+      onChange={(next) => {
+        onChangeSpy(next);
+        setValue(next);
+      }}
+    />
+  );
 }
 
 it("submits helpful feedback and highlights the button", () => {
@@ -75,4 +95,122 @@ it("hides the comment box when switching to helpful", () => {
   expect(
     screen.getByRole("button", { name: "Not helpful" }),
   ).toHaveAttribute("aria-pressed", "false");
+});
+
+it("gives each open comment box a distinct id and accessible name", () => {
+  render(
+    <>
+      <Wrapper locale="en" />
+      <Wrapper locale="en" />
+    </>,
+  );
+  const notHelpfulButtons = screen.getAllByRole("button", {
+    name: "Not helpful",
+  });
+  fireEvent.click(notHelpfulButtons[0]);
+  fireEvent.click(notHelpfulButtons[1]);
+  const textboxes = screen.getAllByRole("textbox", {
+    name: "Add a comment (optional)",
+  });
+  expect(textboxes).toHaveLength(2);
+  const ids = textboxes.map((el) => el.id);
+  expect(ids[0]).toBeTruthy();
+  expect(ids[1]).toBeTruthy();
+  expect(ids[0]).not.toBe(ids[1]);
+});
+
+it("focuses the comment textarea as soon as it opens", () => {
+  render(<Wrapper locale="en" />);
+  fireEvent.click(screen.getByRole("button", { name: "Not helpful" }));
+  expect(
+    screen.getByRole("textbox", { name: "Add a comment (optional)" }),
+  ).toHaveFocus();
+});
+
+it("returns focus to the not-helpful button after submit", () => {
+  render(<Wrapper locale="en" />);
+  const down = screen.getByRole("button", { name: "Not helpful" });
+  fireEvent.click(down);
+  fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+  expect(down).toHaveFocus();
+});
+
+it("returns focus to the not-helpful button after skip", () => {
+  render(<Wrapper locale="en" />);
+  const down = screen.getByRole("button", { name: "Not helpful" });
+  fireEvent.click(down);
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+  expect(down).toHaveFocus();
+});
+
+it("only calls onChange on actual rating changes", () => {
+  const onChangeSpy = vi.fn();
+  render(<ControlledWrapper locale="en" onChangeSpy={onChangeSpy} />);
+  const up = screen.getByRole("button", { name: "Helpful" });
+  const down = screen.getByRole("button", { name: "Not helpful" });
+
+  fireEvent.click(up);
+  expect(onChangeSpy).toHaveBeenLastCalledWith({
+    rating: "up",
+    comment: null,
+  });
+
+  fireEvent.click(up);
+  expect(onChangeSpy).toHaveBeenLastCalledWith(null);
+
+  fireEvent.click(down);
+  expect(onChangeSpy).toHaveBeenLastCalledWith({
+    rating: "down",
+    comment: null,
+  });
+
+  const textbox = screen.getByRole("textbox", {
+    name: "Add a comment (optional)",
+  });
+  fireEvent.change(textbox, { target: { value: "  needs more detail  " } });
+  fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+  expect(onChangeSpy).toHaveBeenLastCalledWith({
+    rating: "down",
+    comment: "needs more detail",
+  });
+
+  const callsAfterSubmit = onChangeSpy.mock.calls.length;
+
+  // Re-clicking an already-selected 👎 must not send onChange or wipe the
+  // saved comment; it reopens the editor prefilled with that comment.
+  fireEvent.click(down);
+  expect(onChangeSpy).toHaveBeenCalledTimes(callsAfterSubmit);
+  expect(
+    screen.getByRole("textbox", { name: "Add a comment (optional)" }),
+  ).toHaveValue("needs more detail");
+
+  // Skip must not send onChange either.
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+  expect(onChangeSpy).toHaveBeenCalledTimes(callsAfterSubmit);
+});
+
+it("submits a null comment for whitespace-only input", () => {
+  const onChangeSpy = vi.fn();
+  render(<ControlledWrapper locale="en" onChangeSpy={onChangeSpy} />);
+  fireEvent.click(screen.getByRole("button", { name: "Not helpful" }));
+  const textbox = screen.getByRole("textbox", {
+    name: "Add a comment (optional)",
+  });
+  fireEvent.change(textbox, { target: { value: "   " } });
+  fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+  expect(onChangeSpy).toHaveBeenLastCalledWith({
+    rating: "down",
+    comment: null,
+  });
+});
+
+it("styles submit as primary and skip as text", () => {
+  render(<Wrapper locale="en" />);
+  fireEvent.click(screen.getByRole("button", { name: "Not helpful" }));
+  expect(
+    screen.getByRole("button", { name: "Submit" }).className,
+  ).toContain("ant-btn-primary");
+  expect(screen.getByRole("button", { name: "Skip" }).className).toContain(
+    "ant-btn-text",
+  );
 });
