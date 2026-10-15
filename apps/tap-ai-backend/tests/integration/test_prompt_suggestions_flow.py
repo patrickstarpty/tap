@@ -105,7 +105,11 @@ def test_publish_generate_verify_and_read(owned_project_mysql):
         knowledge = KnowledgeSuggestionSources(sessions, scope=VALIDATION_SCOPE)
         usage = MysqlSuggestionUsage(sessions, scope=VALIDATION_SCOPE)
         generator = ModelGatewaySuggestionGenerator(
-            _gateway(), scope=VALIDATION_SCOPE, alias="qwen-plus", timeout_seconds=5.0
+            _gateway(),
+            scope=VALIDATION_SCOPE,
+            alias="qwen-plus",
+            timeout_seconds=5.0,
+            redact=_redact,
         )
         service = PromptSuggestionService(
             store=store,

@@ -2065,6 +2065,7 @@ def _assemble_http_services(
                 scope=embeddings.scope,
                 alias=embeddings.chat_alias,
                 timeout_seconds=embeddings.timeout_seconds,
+                redact=_redact_model_context,
             ),
             # Grounding replays the chat planner and answer pipeline, so a shown
             # suggestion is one that a click would answer with citations.

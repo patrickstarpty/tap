@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -66,11 +67,13 @@ class ModelGatewaySuggestionGenerator:
         scope: ProjectScopeContext,
         alias: str,
         timeout_seconds: float,
+        redact: Callable[[str], Awaitable[str]],
     ) -> None:
         self._gateway = gateway
         self._scope = scope
         self._alias = alias
         self._timeout_seconds = timeout_seconds
+        self._redact = redact
 
     async def generate(
         self, inputs: SuggestionInputs, locale: SuggestionLocale
@@ -97,7 +100,9 @@ class ModelGatewaySuggestionGenerator:
                 for relation in inputs.relations
             ],
         }
-        context = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        # Recent questions are free user text; the gateway rejects any context its
+        # egress redactor would still change, so redact here as the planner does.
+        context = await self._redact(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         result = await self._gateway.generate_structured(
             ModelRequest(
                 scope=self._scope,
