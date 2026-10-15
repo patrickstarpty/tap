@@ -234,3 +234,81 @@ def test_punctuation_only_alias_never_matches_as_substring() -> None:
         on_path=False,
     )
     assert not claim_mentions_both_endpoints("健康告知非常重要。", relation)
+
+
+def _edge_with_parenthetical_subject() -> RelationEvidence:
+    return RelationEvidence(
+        label="R1",
+        edge_id="e-paren",
+        subject_node_id="A",
+        subject_label="冠状动脉介入手术（非切开心包手术）",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="保险责任",
+        object_aliases=(),
+        relation_type="TRIGGERS",
+        relation_label="TRIGGERS",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(_SUPPORT,),
+        on_path=False,
+    )
+
+
+def test_claim_naming_label_without_trailing_qualifier_is_kept() -> None:
+    # The merged node's label carries a disambiguating qualifier the model's
+    # own prose typically omits -- stripping it from the label (not from the
+    # claim text) must still let the citation through.
+    relation = _edge_with_parenthetical_subject()
+    assert claim_mentions_both_endpoints("冠状动脉介入手术会触发保险责任。", relation)
+
+
+def test_claim_naming_full_width_variant_of_label_is_kept() -> None:
+    # Full-width Latin letters are a common OCR/typing variant of the same
+    # name; `normalize_key`'s NFKD/NFKC fold must resolve them to the same
+    # half-width term before the substring check runs.
+    relation = RelationEvidence(
+        label="R1",
+        edge_id="e-width",
+        subject_node_id="A",
+        subject_label="ABC医院",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="健康告知",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(_SUPPORT,),
+        on_path=False,
+    )
+    assert claim_mentions_both_endpoints("ＡＢＣ医院要求先完成健康告知。", relation)
+
+
+def test_claim_naming_unrelated_entity_is_not_kept() -> None:
+    relation = _edge_with_parenthetical_subject()
+    assert not claim_mentions_both_endpoints("体检需要空腹，报告将在三个工作日内送达。", relation)
+
+
+def test_single_character_label_is_rejected_as_a_substring_match() -> None:
+    # A real (non-punctuation) one-character label is still too weak a
+    # substring to trust: almost any sentence of reasonable length will
+    # contain that character for an unrelated reason.
+    relation = RelationEvidence(
+        label="R1",
+        edge_id="e-short",
+        subject_node_id="A",
+        subject_label="人",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="健康告知",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(_SUPPORT,),
+        on_path=False,
+    )
+    assert not claim_mentions_both_endpoints("本人已完成健康告知。", relation)

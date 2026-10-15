@@ -14,6 +14,7 @@ claim entirely only if nothing legitimate is left to cite it.
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -97,19 +98,55 @@ def reconcile_relation_claims(
     return ReconciledClaims(claims=tuple(retained), text=text, stripped=stripped, dropped=dropped)
 
 
+# A single trailing full- or half-width parenthetical group, e.g. the
+# "（非切开心包手术）" in "冠状动脉介入手术（非切开心包手术）": a merged graph
+# node's label commonly carries a disambiguating qualifier that prose naming
+# the same entity typically omits. Only the one group at the very end is a
+# candidate -- not a general bracket-stripping pass -- so a label whose
+# meaningful parenthetical content sits mid-string is left alone.
+_TRAILING_PARENTHETICAL = re.compile(r"[（(][^（）()]*[）)]\s*$")
+# A normalized key shorter than this is rejected as a match even if it
+# literally occurs in the text: a single ideograph or character (after
+# punctuation/whitespace folding) is common enough as a substring of
+# unrelated text that treating it as naming the entity is an unacceptable
+# false-positive risk (e.g. a one-character label matching any sentence that
+# happens to contain that character for an unrelated reason).
+_MIN_MATCH_KEY_LENGTH = 2
+
+
 def claim_mentions_both_endpoints(text: str, relation: RelationEvidence) -> bool:
     normalized_text = normalize_key(text)
-    subject_terms = (relation.subject_label, *relation.subject_aliases)
-    object_terms = (relation.object_label, *relation.object_aliases)
+    subject_terms = _endpoint_term_variants(relation.subject_label, relation.subject_aliases)
+    object_terms = _endpoint_term_variants(relation.object_label, relation.object_aliases)
     return _mentions_any(normalized_text, subject_terms) and _mentions_any(
         normalized_text, object_terms
     )
 
 
+def _strip_trailing_qualifier(term: str) -> str | None:
+    stripped = _TRAILING_PARENTHETICAL.sub("", term, count=1)
+    return stripped if stripped != term else None
+
+
+def _endpoint_term_variants(label: str, aliases: tuple[str, ...]) -> tuple[str, ...]:
+    """A node's label or alias, plus (when present) that same text with its
+    trailing parenthetical qualifier stripped -- either form naming the
+    entity is accepted, since `normalize_key` already folds width, case,
+    accents, whitespace and punctuation but cannot know a qualifier is
+    optional context rather than part of the name itself."""
+    variants: list[str] = []
+    for term in (label, *aliases):
+        variants.append(term)
+        stripped = _strip_trailing_qualifier(term)
+        if stripped is not None:
+            variants.append(stripped)
+    return tuple(variants)
+
+
 def _mentions_any(normalized_text: str, terms: tuple[str, ...]) -> bool:
     for term in terms:
         key = normalize_key(term) if term else ""
-        if key and key in normalized_text:
+        if len(key) >= _MIN_MATCH_KEY_LENGTH and key in normalized_text:
             return True
     return False
 
