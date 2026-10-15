@@ -389,13 +389,17 @@ class AuthorizedRetrieval:
         )
         if isinstance(prepared, AnswerResponse):
             return prepared
-        generation = await self.generate_answer(
+        # `prepare_answer` already rechecked current revision/policy and
+        # authorized just above; `generate_answer`'s own recheck exists for a
+        # *resumed* graph node picking up a checkpointed `EvidenceBundle`
+        # cold, so it must not run a second time here in the single-shot
+        # path -- that would consume an extra verifier/authorize call the
+        # caller never asked for, shifting a revocation caught on, say, the
+        # 6th call to land before the model call instead of after it.
+        generation = await self._generate_from_bundle(
             prepared,
-            policy,
-            frozen_policy=frozen_policy,
             governance=governance,
             model_alias=model_alias,
-            authorize=authorize,
         )
         return await self.verify_answer(
             prepared, generation, policy, frozen_policy=frozen_policy, authorize=authorize
@@ -629,13 +633,31 @@ class AuthorizedRetrieval:
         model_alias: str | None = None,
         authorize=None,
     ) -> AnswerGeneration:
+        """Rechecks current revision/policy and authorizes before generating.
+
+        Public entrypoint for a *resumed* graph node that picks up a
+        checkpointed `EvidenceBundle` cold -- it cannot assume the bundle's
+        authority is still fresh, so it rechecks here. The single-shot
+        `answer()` composition calls `_generate_from_bundle` directly instead,
+        since `prepare_answer` already performed this recheck immediately
+        before producing the bundle."""
         if self._publication_authority is not None and bundle.publication is not None:
             await self._publication_authority.revalidate(bundle.publication)
         current = policy if frozen_policy else await self._verify_current(policy)
         self._validate_binding(current, bundle.plan, bundle.context_snapshot)
         if authorize is not None:
             await authorize()
+        return await self._generate_from_bundle(
+            bundle, governance=governance, model_alias=model_alias
+        )
 
+    async def _generate_from_bundle(
+        self,
+        bundle: EvidenceBundle,
+        *,
+        governance=None,
+        model_alias: str | None = None,
+    ) -> AnswerGeneration:
         use_extended_answer = (
             governance is not None
             or bundle.graph_context

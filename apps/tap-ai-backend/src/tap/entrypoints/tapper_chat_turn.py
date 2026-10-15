@@ -77,6 +77,21 @@ def _evidence_checkpoint(
     return result
 
 
+_STEP_KINDS = frozenset({"prepared", "generated", "verified", "final"})
+
+
+def _require_step(state: ChatGraphState) -> ConversationAnswerStep:
+    """Narrows `state["step"]` (checkpoint-typed `dict[str, object] | None`)
+    to the `ConversationAnswerStep` TypedDict a resumed `model`/`verify`/
+    `finalize` node expects -- `seed_search` is the only node that produces
+    it, so its absence or malformed `kind` means the checkpoint was resumed
+    out of order."""
+    step = state.get("step")
+    if not isinstance(step, dict) or step.get("kind") not in _STEP_KINDS:
+        raise ValueError("chat graph state is missing a valid answer step")
+    return cast(ConversationAnswerStep, step)
+
+
 def _evidence_from_checkpoint(raw: object) -> AnswerEvidence:
     if not isinstance(raw, dict) or not isinstance(raw.get("retrievalSummary"), dict):
         raise ValueError("chat graph checkpoint lacks answer evidence")
@@ -330,7 +345,7 @@ class ChatTurnNodes:
     async def model(self, state: ChatGraphState) -> dict[str, object]:
         active_plan = self._active_plan(state)
         step = await self._steps.generate_conversation_answer(
-            state["step"],
+            _require_step(state),
             self._turn.input_snapshot.value,
             answer_plan=active_plan,
             authorize=self._require_authorized,
@@ -340,7 +355,7 @@ class ChatTurnNodes:
     async def verify(self, state: ChatGraphState) -> dict[str, object]:
         active_plan = self._active_plan(state)
         step = await self._steps.verify_conversation_answer(
-            state["step"],
+            _require_step(state),
             self._turn.input_snapshot.value,
             answer_plan=active_plan,
             authorize=self._require_authorized,
@@ -480,7 +495,7 @@ class ChatTurnNodes:
         if state.get("route") == "insights":
             return {}
         active_plan = self._active_plan(state)
-        step = state["step"]
+        step = _require_step(state)
         answered: list[Any] = []
 
         async def provider(_snapshot: object) -> ProviderResult:
