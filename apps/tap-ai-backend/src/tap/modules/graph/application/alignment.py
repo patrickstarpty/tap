@@ -11,7 +11,7 @@ import numpy as np
 import numpy.typing as npt
 
 from tap.modules.graph.domain.models import GraphEdge, GraphSnapshotDraft, RelationOrigin
-from tap.modules.graph.domain.naming import is_reference_name
+from tap.modules.graph.domain.naming import clean_alias
 from tap.modules.graph.domain.project import ProjectEdge, project_edge_id, project_node_id
 from tap.modules.graph.domain.vocabulary import normalize_key
 
@@ -34,14 +34,16 @@ def alias_keys(names: Sequence[str]) -> set[str]:
 
     A reference word or number ("本合同", "第十九条", "this Policy") means a
     different thing in every document, so it is never an alignment key, before or
-    after the trailing modifier is stripped.
+    after the trailing modifier is stripped; a clause- or interpretation-numbered
+    alias ("第二十五条 明确说明与如实告知") keys on the real term underneath instead
+    (see ``clean_alias``).
     """
 
     keys: set[str] = set()
     for name in names:
-        key = alignment_key(name)
-        if not is_reference_name(name) and not is_reference_name(key):
-            keys.add(key)
+        cleaned = clean_alias(name)
+        if cleaned is not None:
+            keys.add(alignment_key(cleaned))
     return keys
 
 
@@ -404,10 +406,11 @@ def resolve_entities(
         seen: set[str] = set()
         aliases: list[str] = []
         for text in (*cluster.labels, *cluster.model_aliases):
-            if text == label or text in seen or is_reference_name(text):
+            cleaned = clean_alias(text)
+            if cleaned is None or cleaned == label or cleaned in seen:
                 continue
-            seen.add(text)
-            aliases.append(text)
+            seen.add(cleaned)
+            aliases.append(cleaned)
         node_id = project_node_id(cluster.node_type, alignment_key(cluster.canonical_key))
         resolved.append(
             ResolvedEntity(

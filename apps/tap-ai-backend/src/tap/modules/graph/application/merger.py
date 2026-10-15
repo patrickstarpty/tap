@@ -9,6 +9,7 @@ from typing import Callable, Hashable, Iterable, Literal, Mapping, Sequence, Typ
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.application.alignment import ResolvedEntity, merge_edges, resolve_entities
+from tap.modules.graph.domain.naming import clean_alias
 from tap.modules.graph.application.communities import (
     OTHER_COMMUNITY_ID,
     OTHER_COMMUNITY_LABEL,
@@ -147,8 +148,13 @@ class ProjectGraphMerger:
         )
         edges = tuple(edge for edge, _ in merged_edges)
 
+        all_labels = {normalize_key(entity.label) for entity in entities}
         aliases = tuple(
-            alias for entity in entities for alias in _aliases_for(entity, draft_by_snapshot)
+            alias
+            for entity in entities
+            for alias in _aliases_for(
+                entity, draft_by_snapshot, all_labels - {normalize_key(entity.label)}
+            )
         )
         node_sources = tuple(
             source for entity in entities for source in _node_sources(entity, draft_by_snapshot)
@@ -179,8 +185,31 @@ class ProjectGraphMerger:
 
 
 def _aliases_for(
-    entity: ResolvedEntity, draft_by_snapshot: Mapping[str, GraphSnapshotDraft]
+    entity: ResolvedEntity,
+    draft_by_snapshot: Mapping[str, GraphSnapshotDraft],
+    other_entity_labels: frozenset[str] = frozenset(),
 ) -> tuple[Alias, ...]:
+    """Build this entity's displayed/persisted alias rows from its own label and
+    its Fragment members' labels and model aliases.
+
+    Every candidate is cleaned the same way a node's own displayed aliases are
+    (see ``alignment.resolve_entities``): a reference word, bare grade, example
+    name or pure clause/definition locator is dropped, and a clause- or
+    interpretation-numbered alias keys on the real term underneath. A model
+    alias that, after cleaning, names a *different* entity in this merge
+    outright (``other_entity_labels``, normalized) is not displayed on this
+    one either: the real-model run had a "责任免除" node whose aliases
+    absorbed concrete exclusion items ("故意杀害", "故意伤害", ...) that are
+    themselves named, evidenced entities elsewhere in the same document --
+    most likely the extractor offering a sub-item as if it were a synonym.
+
+    This only ever stops the *alias row* from being displayed; it cannot stop
+    the ALIAS-level *merge* itself when both sides are the same node type, the
+    same shape as a wanted alias-to-named-entity merge ("Underwriting"
+    aliased "核保", merging into the node actually labelled "核保") with
+    nothing structural to tell the two apart -- see the report.
+    """
+
     seen_norms: set[str] = set()
     aliases: list[Alias] = []
 
@@ -199,10 +228,13 @@ def _aliases_for(
         member_labels.append(node.label)
         member_aliases.extend(node.aliases)
     for other_label in member_labels:
-        if other_label != entity.label:
-            add(other_label, "MERGE")
+        cleaned = clean_alias(other_label)
+        if cleaned is not None and cleaned != entity.label:
+            add(cleaned, "MERGE")
     for alias_text in member_aliases:
-        add(alias_text, "MODEL")
+        cleaned = clean_alias(alias_text)
+        if cleaned is not None and normalize_key(cleaned) not in other_entity_labels:
+            add(cleaned, "MODEL")
     return tuple(aliases)
 
 
