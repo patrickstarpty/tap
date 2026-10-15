@@ -469,3 +469,57 @@ def test_r_label_without_any_s_evidence_anywhere_is_not_penalized_by_overlap_che
     assert kept.claims[0].evidence_labels == ("R1",)
     assert kept.stripped == 0
     assert relation_support_overlaps_cited_chunks(_RELATION, frozenset(), frozenset())
+
+
+def test_short_role_label_does_not_falsely_match_inside_a_longer_role_label() -> None:
+    # "保险人" (the insurer) is a literal substring of "被保险人" (the
+    # insured) -- a different role. A claim naming only "被保险人" must not
+    # also be read as naming "保险人".
+    relation = RelationEvidence(
+        label="R1",
+        edge_id="e-role-overlap",
+        subject_node_id="A",
+        subject_label="保险人",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="健康告知",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(_SUPPORT,),
+        on_path=False,
+    )
+    assert not claim_mentions_both_endpoints("被保险人的子女完成了健康告知。", relation)
+    # A genuine, standalone occurrence of the short label still matches.
+    assert claim_mentions_both_endpoints("保险人要求完成健康告知。", relation)
+
+
+def test_short_label_does_not_falsely_match_inside_the_other_endpoints_longer_term() -> None:
+    # Same false-positive risk, but driven purely by the *other* endpoint's
+    # own term rather than the fixed role triad: "甲方" is a literal
+    # substring of "乙方甲方代表" (a different, unrelated entity in this
+    # made-up pair), so an occurrence of "甲方" found only inside the
+    # object's own term must not count as naming the subject.
+    relation = RelationEvidence(
+        label="R1",
+        edge_id="e-other-endpoint-overlap",
+        subject_node_id="A",
+        subject_label="甲方",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="乙方甲方代表",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(_SUPPORT,),
+        on_path=False,
+    )
+    # The object's own term contains "甲方" as a substring, but the claim
+    # never names "甲方" outside of that occurrence.
+    assert not claim_mentions_both_endpoints("乙方甲方代表已签署协议。", relation)
+    # A genuine, standalone occurrence of the subject still matches.
+    assert claim_mentions_both_endpoints("甲方已与乙方甲方代表签署协议。", relation)

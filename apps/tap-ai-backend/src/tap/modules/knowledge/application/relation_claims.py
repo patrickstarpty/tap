@@ -151,8 +151,8 @@ def claim_mentions_both_endpoints(text: str, relation: RelationEvidence) -> bool
     normalized_text = normalize_key(text)
     subject_terms = _endpoint_term_variants(relation.subject_label, relation.subject_aliases)
     object_terms = _endpoint_term_variants(relation.object_label, relation.object_aliases)
-    return _mentions_any(normalized_text, subject_terms) and _mentions_any(
-        normalized_text, object_terms
+    return _mentions_any(normalized_text, subject_terms, object_terms) and _mentions_any(
+        normalized_text, object_terms, subject_terms
     )
 
 
@@ -176,10 +176,57 @@ def _endpoint_term_variants(label: str, aliases: tuple[str, ...]) -> tuple[str, 
     return tuple(variants)
 
 
-def _mentions_any(normalized_text: str, terms: tuple[str, ...]) -> bool:
+# Known same-domain role labels where a shorter one is textually a suffix
+# of a longer one while naming a different role: "保险人" (the insurer) is
+# a substring of "被保险人" (the insured); "投保人" (the policyholder) is
+# listed alongside them even though it happens not to contain "保险人" as a
+# substring, since it is the third member of the same commonly-confused
+# triad and a future label/alias in this family should not have to be
+# special-cased again. An occurrence of the shorter term found only inside
+# one of these longer ones must not count as naming the shorter term's own
+# entity.
+_OVERLAPPING_ROLE_LABELS: tuple[str, ...] = ("投保人", "被保险人", "保险人")
+
+
+def _excluding_longer_terms(key: str, other_terms: tuple[str, ...]) -> tuple[str, ...]:
+    """Normalized terms strictly longer than `key` and containing it as a
+    substring, drawn from the fixed overlapping-role triad plus the other
+    endpoint's own terms: an occurrence of `key` found only inside one of
+    these must not count as a match for `key` itself -- "被保险人" naming
+    the insured must never also register as a "保险人" sighting naming the
+    insurer, and symmetrically the other endpoint's own longer term must
+    never let a shorter unrelated term it happens to contain pass as a
+    mention of that shorter entity."""
+    candidates = (*_OVERLAPPING_ROLE_LABELS, *other_terms)
+    longer: list[str] = []
+    for candidate in candidates:
+        normalized_candidate = normalize_key(candidate) if candidate else ""
+        if (
+            normalized_candidate
+            and normalized_candidate != key
+            and key in normalized_candidate
+            and normalized_candidate not in longer
+        ):
+            longer.append(normalized_candidate)
+    return tuple(longer)
+
+
+def _mentions_any(
+    normalized_text: str, terms: tuple[str, ...], other_terms: tuple[str, ...] = ()
+) -> bool:
     for term in terms:
         key = normalize_key(term) if term else ""
-        if len(key) >= _MIN_MATCH_KEY_LENGTH and key in normalized_text:
+        if len(key) < _MIN_MATCH_KEY_LENGTH:
+            continue
+        longer_terms = _excluding_longer_terms(key, other_terms)
+        if not longer_terms:
+            if key in normalized_text:
+                return True
+            continue
+        reduced = normalized_text
+        for longer in longer_terms:
+            reduced = reduced.replace(longer, "\x00" * len(longer))
+        if key in reduced:
             return True
     return False
 
