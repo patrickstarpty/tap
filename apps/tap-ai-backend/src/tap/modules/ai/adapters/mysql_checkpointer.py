@@ -440,6 +440,8 @@ class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
                 )
                 .on_duplicate_key_update(
                     current_checkpoint_id=checkpoint["id"],
+                    graph_version=graph_version,
+                    state_schema_version=schema_version,
                     reasoning_mode=reasoning_mode,
                     status=status,
                     waiting_reason=waiting_reason,
@@ -577,4 +579,41 @@ class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
                 update(graph_run)
                 .where(*scope_predicates(graph_run, self._scope), graph_run.c.run_id == thread_id)
                 .values(status="CANCELLED", current_checkpoint_id=None)
+            )
+
+    async def arestart_thread(self, thread_id: str) -> None:
+        """Discard a thread's checkpoints and its `graph_run` row in one transaction.
+
+        Used when a caller is about to start a fresh run under a new graph version on
+        the same run id (e.g. `ChatGraph.discard` before resuming a legacy checkpoint).
+        Unlike `adelete_thread`, this removes the `graph_run` row entirely rather than
+        marking it CANCELLED, so the run id is never left in a state that blocks the
+        turn claim query's reclaim (which only reclaims when the row is absent or
+        RUNNING with an expired lease) if the caller crashes before the next `aput`.
+        """
+        async with _checkpoint_storage(), self._sessions() as session, session.begin():
+            await self._assert_fence(session, lock=True)
+            run = await session.scalar(
+                select(graph_run.c.run_id).where(
+                    *scope_predicates(graph_run, self._scope), graph_run.c.run_id == thread_id
+                )
+            )
+            if run is None:
+                return
+            await session.execute(
+                delete(graph_checkpoint_write).where(
+                    *scope_predicates(graph_checkpoint_write, self._scope),
+                    graph_checkpoint_write.c.run_id == thread_id,
+                )
+            )
+            await session.execute(
+                delete(graph_checkpoint).where(
+                    *scope_predicates(graph_checkpoint, self._scope),
+                    graph_checkpoint.c.run_id == thread_id,
+                )
+            )
+            await session.execute(
+                delete(graph_run).where(
+                    *scope_predicates(graph_run, self._scope), graph_run.c.run_id == thread_id
+                )
             )

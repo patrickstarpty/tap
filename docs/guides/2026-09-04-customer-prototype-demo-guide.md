@@ -422,7 +422,7 @@ TAP AI 运行页已增加待核对/阻断/全部筛选、已加载位置搜索�
 
 ## 10. 历史资料与证据使用
 
-2026-09-06 的 44 张截图仍是历史设计资料，包含旧模型名称及模拟交互，不再作为主线讲稿或当前实现证明。历史界面可从 [README 历史展示](../../README.md)查看；当前设计规则以[完整原型基准](2026-09-22-product-prototype-baseline.md)为准。
+2026-09-06 的 44 张截图仍是历史设计资料，包含旧模型名称及模拟交互，不再作为主线讲稿或当前实现证明。历史界面可从 [README 历史展示](../../README.md)查看；原型基准规则已于 2026-10-14 停用，见[完整原型基准](2026-09-22-product-prototype-baseline.md)。
 
 本组截图于 2026-09-30 基于 `main`（Tapper 猫头鹰形象）重采。图 01–09、17–18、22–23 及流程一的 PDF/Excel 格式补充从干净浏览器打开当前原型并逐步操作；图 10–15 经 `make tap-insights-e2e` 的隔离环境采集；图 16 经 `apps/tap-ai-frontend` 的 `ui:capture` 固定响应流程采集。报告样本来源见 [pytest/Allure fixture 说明](../../apps/backend/tests/fixtures/insights/pytest-allure/README.md)。本次截图没有调用真实模型，也未改变 M1–M4 真实业务 Gate 状态。
 

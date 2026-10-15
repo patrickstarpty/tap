@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol, TypedDict
 
 from tap.contracts.chat_stream import ChatEventEnvelope
+from tap.contracts.http import RetrievalAnswerResponse
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId
 
@@ -117,3 +118,61 @@ class MessagePublisher(Protocol):
 
 class Clock(Protocol):
     def now(self) -> datetime: ...
+
+
+class ConversationAnswerStep(TypedDict, total=False):
+    """A resumable, JSON-serializable snapshot of one phase of
+    `KnowledgeHttpService.answer_conversation`, checkpointed between
+    `prepare`/`generate`/`verify`/`finalize` so a LangGraph node can call each
+    phase on its own.
+
+    `kind` names the phase the step last completed: `"prepared"` (retrieval
+    ran, ready for generation), `"generated"` (a model answer was produced,
+    ready for verification), `"verified"` (a verified answer is ready to
+    persist and map to HTTP -- either from the verify phase, or directly from
+    an abstaining prepare), or `"final"` (a complete HTTP response for a
+    route that never reaches retrieval; `generate`/`verify` pass it through
+    unchanged).
+    """
+
+    kind: Literal["prepared", "generated", "verified", "final"]
+    bundle: dict[str, object]
+    generation: dict[str, object]
+    response: dict[str, object]
+
+
+class ConversationAnswerSteps(Protocol):
+    """The resumable phases of `KnowledgeHttpService.answer_conversation`;
+    `answer_conversation` is one persisted-deadline-bounded composition of
+    these four, and a LangGraph node may instead call each on its own."""
+
+    async def prepare_conversation_answer(
+        self, request, frozen_input, *, answer_plan=None, authorize=None
+    ) -> ConversationAnswerStep: ...
+
+    async def generate_conversation_answer(
+        self,
+        step: ConversationAnswerStep,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+    ) -> ConversationAnswerStep: ...
+
+    async def verify_conversation_answer(
+        self,
+        step: ConversationAnswerStep,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+    ) -> ConversationAnswerStep: ...
+
+    async def finalize_conversation_answer(
+        self,
+        step: ConversationAnswerStep,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+    ) -> RetrievalAnswerResponse: ...

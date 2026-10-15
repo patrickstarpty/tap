@@ -1460,6 +1460,98 @@ class MysqlDocumentRepository:
             raise failure from outcome.error
         return outcome.value
 
+    async def _answer_snapshot_already_saved(
+        self,
+        session: AsyncSession,
+        snapshot: AnswerSnapshot,
+        expected: tuple[ReadyDocumentRevision, ...],
+    ) -> bool:
+        """Make a resumed `save_frozen` idempotent per `trace_id`.
+
+        A checkpoint resume (after the checkpoint write following finalize raised, or
+        the worker was killed in between) replays `finalize` with the same `trace_id`.
+        `knowledge_answer_snapshot.trace_id` is the primary key, so re-running the plain
+        INSERT below would raise `IntegrityError`. If an existing row's content exactly
+        matches what this call would have written, treat it as already saved and return
+        `True`; a mismatch is a genuine conflict, so this raises `AnswerSnapshotUnavailable`
+        directly rather than letting the caller fall through to the insert.
+        """
+        existing = (
+            (
+                await session.execute(
+                    select(
+                        knowledge_answer_snapshot.c.query_hash,
+                        knowledge_answer_snapshot.c.selected_revisions_json,
+                    ).where(
+                        *scope_predicates(knowledge_answer_snapshot, self._scope),
+                        knowledge_answer_snapshot.c.trace_id == snapshot.trace_id,
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if existing is None:
+            return False
+        expected_revisions_json = [
+            {
+                "documentId": item.document_id,
+                "revisionId": item.revision_id,
+                "sourceContentHash": item.source_content_hash,
+            }
+            for item in expected
+        ]
+        existing_citation_rows = (
+            (
+                await session.execute(
+                    select(
+                        knowledge_citation_snapshot.c.citation_id,
+                        knowledge_citation_snapshot.c.chunk_id,
+                        knowledge_citation_snapshot.c.revision_id,
+                        knowledge_citation_snapshot.c.document_id,
+                        knowledge_citation_snapshot.c.source_content_hash,
+                        knowledge_citation_snapshot.c.chunk_content_hash,
+                    ).where(
+                        *scope_predicates(knowledge_citation_snapshot, self._scope),
+                        knowledge_citation_snapshot.c.trace_id == snapshot.trace_id,
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        existing_citations = {
+            (
+                row["citation_id"],
+                row["chunk_id"],
+                row["revision_id"],
+                row["document_id"],
+                row["source_content_hash"],
+                row["chunk_content_hash"],
+            )
+            for row in existing_citation_rows
+        }
+        wanted_citations = {
+            (
+                item.citation_id,
+                item.chunk_id,
+                item.revision_id,
+                item.document_id,
+                item.source_content_hash,
+                item.chunk_content_hash,
+            )
+            for item in snapshot.citations
+        }
+        if (
+            existing["query_hash"] == snapshot.query_hash
+            and list(existing["selected_revisions_json"]) == expected_revisions_json
+            and existing_citations == wanted_citations
+        ):
+            return True
+        raise AnswerSnapshotUnavailable(
+            "answer snapshot already exists with different content for this trace"
+        )
+
     async def _save_answer_snapshot(
         self,
         session: AsyncSession,
@@ -1468,6 +1560,16 @@ class MysqlDocumentRepository:
         allow_historical: bool = False,
     ) -> None:
         expected = snapshot.selected_revisions
+        # Idempotency only applies to the frozen (`allow_historical`) resumable chat-turn
+        # path, where a resumed `finalize` legitimately replays the same trace_id after a
+        # prior save already committed. The plain inline-answer path's trace_id is always
+        # freshly minted per call, so a repeat there is a genuine bug, not a resume, and
+        # must still fail loudly (see `test_trace_or_citation_conflict_rolls_back_the_
+        # whole_snapshot`).
+        if allow_historical and await self._answer_snapshot_already_saved(
+            session, snapshot, expected
+        ):
+            return
         source_rows = (
             (
                 await session.execute(

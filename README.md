@@ -1,24 +1,24 @@
 # TAP — Test Automation Platform
 
-TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能平台：Tapper 用企业知识回答问题并生成测试设计，Test Management 保存可审查的测试资产，Low Code Automation 把 BDD 映射成可录制、可执行、可追溯的 Web 自动化。V1 聚焦 TAP AI 的 5 项能力（可靠问答、知识图谱展示、图谱脉络分析、自定义与导入 Skills/Agents、对话可观测性），范围与验收见 [V1 总纲](docs/superpowers/plans/2026-09-29-v1-roadmap.md)。
+TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能平台：Tapper 用企业知识回答问题并生成测试设计，Test Management 保存可审查的测试资产，Low Code Automation 把 BDD 映射成可录制、可执行、可追溯的 Web 自动化。V1 聚焦 TAP AI 的 6 项能力（可靠问答、知识图谱展示、图谱脉络分析、自定义与导入 Skills/Agents、对话可观测性、LangGraph 编排），范围与验收见 [V1 总纲](docs/superpowers/plans/2026-09-29-v1-roadmap.md)。
 
 ## 最新版本：develop 最新，main 最稳定
 
-**`develop` 分支是集成分支，始终承载最新已合并的产品原型功能；`main` 分支承载最稳定、已通过验收的版本。** 原型变更确认后合入 `develop`；经验收后由 `develop` 合入 `main`，连同源码、资源和本节说明一起流转，不能只留在功能分支、worktree、临时目录或截图中。查看最新功能直接使用 `develop`；需要稳定版本时使用 `main`。
+**`develop` 分支是集成分支，始终承载最新已合并的功能；`main` 分支承载最稳定、已通过验收的版本。** 变更合入 `develop`；经验收后由 `develop` 合入 `main`，不能只留在功能分支、worktree、临时目录或截图中。查看最新功能直接使用 `develop`；需要稳定版本时使用 `main`。
 
-完整组合原型是持续演进的唯一设计基准，固定在 `apps/web` 的 `/prototype`，入口组件为 `apps/web/src/widgets/tap/TapProductPrototype.tsx`。从仓库根目录启动：
+完整组合原型保留在 `apps/web` 的 `/prototype`，入口组件为 `apps/web/src/widgets/tap/TapProductPrototype.tsx`，作为全模块产品设计的参考。从仓库根目录启动：
 
 ```sh
 corepack pnpm --dir apps/web dev --port 15176
 ```
 
-打开 `http://127.0.0.1:15176/prototype`。后续需求必须在此基准上增量修改，保留 Tapper（New chat、Agents、Skills、Library、Knowledge Graph）、Test Management、Test Insights、Low Code Automation、跨模块关联与悬浮助手；不得另建一套原型或因近期实施范围缩窄而删除既有模块。UI 展示拟交付产品的用户界面，不放演示开关、模拟场景控件或实现说明。模块清单、截图回归与边界见[产品原型基准规范](docs/guides/2026-09-22-product-prototype-baseline.md)。
+打开 `http://127.0.0.1:15176/prototype`。自 2026-10-14 起，新需求直接在对应应用源码中设计和实现（TAP AI 界面在 `apps/tap-ai-frontend`），不要求先修改 `/prototype`，也不要求原型截图回归；原规则见[产品原型基准规范](docs/guides/2026-09-22-product-prototype-baseline.md)（已停用）。
 
-当前原型包含 Dify 式切片配置、预览与维护（保存索引后直接可用）、原件查看、知识问答引用及其 👍/👎 回答反馈、项目维度的 Test Insights 和数据接入。`/prototype` 是完整产品设计入口；下方独立应用入口及历史截图用于各自的实现和追溯，不代替最新原型。
+当前原型包含 Dify 式切片配置、预览与维护（保存索引后直接可用）、原件查看、知识问答引用及其 👍/👎 回答反馈、项目维度的 Test Insights 和数据接入。`/prototype` 展示全部模块的设计参考；各应用的实际交互以其运行入口为准。
 
 Tapper 品牌形象自 2026-09-28 起为猫头鹰，替换原 Listening/Aha 啄木鸟；素材包见 [Tapper Owl](apps/tap-ai-frontend/assets/brand/tapper/owl/README.md)。
 
-当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [知识切片维护](docs/assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png)。实际交互以 `develop` 上运行的 `/prototype` 为准。
+当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [知识切片维护](docs/assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png)。各应用的实际交互以 `develop` 上运行的应用为准。
 
 ## 文档
 

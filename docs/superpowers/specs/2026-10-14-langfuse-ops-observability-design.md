@@ -7,7 +7,7 @@
 - 现状：OTel 埋点写入 MySQL（`trace_span`、`model_call`、`model_call_content`），产品内每条回答有调用链面板；可选 OTLP 导出到 Phoenix。缺少跨会话的运营级汇总（成本趋势、延迟分布、按模型/项目/用户统计、满意度），也没有用户反馈。
 - 数据权威：MySQL 是**业务数据**（会话、回答、引用、反馈）的权威来源。大模型链路数据不属于业务数据，但同样不得丢失。
 - 链路数据双存：MySQL 保留全部链路数据（产品面板继续读取，并作为持久缓冲与重建来源）；Langfuse 是运营展示副本，可从 MySQL 完整重建。
-- Tapper LangGraph 化路线（图重构、角色与意图、护栏、工具调用与长任务、可信知识）属于 V2，另行设计；本设计不改动 LangGraph 与聊天主链路。
+- Tapper LangGraph 化路线（图重构、角色与意图、护栏、工具调用与长任务、可信知识）属于 V2，另行设计；本设计不改动 LangGraph 与聊天主链路。（2026-10-14 后续决定：该路线已提入 V1 能力 6，见 [Tapper LangGraph 编排设计](2026-10-14-tapper-langgraph-orchestration-design.md)。）
 
 ## 目标
 

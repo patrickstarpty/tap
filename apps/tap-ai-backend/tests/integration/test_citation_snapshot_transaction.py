@@ -451,6 +451,78 @@ def test_trace_or_citation_conflict_rolls_back_the_whole_snapshot() -> None:
     asyncio.run(scenario())
 
 
+def test_frozen_snapshot_resume_with_same_trace_id_is_idempotent() -> None:
+    """`save_frozen_answer_with_citations` (the `allow_historical` path a resumed chat
+    Turn's `finalize` uses, via `AnswerService.save_frozen`) replays with the same
+    trace_id when the checkpoint write right after `finalize` raised, or the worker
+    was killed in between. A replay with identical content must be a no-op rather than
+    the duplicate `knowledge_answer_snapshot` primary-key `IntegrityError` this used to
+    raise (turning a resumable Turn into `turn.failed`)."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        await clean(engine)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        try:
+            selected = await seed_ready(engine, "a")
+            first = snapshot("trace-resume", selected, with_citation=True)
+            await repository.save_frozen_answer_with_citations(first)
+            # The resumed finalize rebuilds the identical snapshot from the same
+            # checkpointed step and calls save again.
+            await repository.save_frozen_answer_with_citations(first)
+
+            async with engine.connect() as connection:
+                counts = (
+                    await connection.scalar(text("SELECT COUNT(*) FROM knowledge_answer_snapshot")),
+                    await connection.scalar(
+                        text("SELECT COUNT(*) FROM knowledge_citation_snapshot")
+                    ),
+                )
+            assert counts == (1, 1)
+        finally:
+            await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_frozen_snapshot_resume_with_different_content_for_same_trace_id_raises() -> None:
+    """A genuine mismatch (same trace_id, different content) is not a resume -- it
+    must still surface as a conflict, same as the original duplicate-insert failure."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        await clean(engine)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        try:
+            selected = await seed_ready(engine, "a")
+            first = snapshot("trace-resume-mismatch", selected, with_citation=True)
+            await repository.save_frozen_answer_with_citations(first)
+            # Same trace_id, different citation content -- a genuine conflict, not a
+            # replay of the same finalize.
+            second = snapshot("trace-resume-mismatch", selected, with_citation=False)
+            with pytest.raises(AnswerSnapshotUnavailable):
+                await repository.save_frozen_answer_with_citations(second)
+
+            async with engine.connect() as connection:
+                counts = (
+                    await connection.scalar(text("SELECT COUNT(*) FROM knowledge_answer_snapshot")),
+                    await connection.scalar(
+                        text("SELECT COUNT(*) FROM knowledge_citation_snapshot")
+                    ),
+                )
+            assert counts == (1, 1)
+        finally:
+            await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("tamper", ["missing", "anchor", "hash"])
 def test_snapshot_rejects_citation_without_an_exact_manifest_fact(tamper: str) -> None:
     async def scenario() -> None:

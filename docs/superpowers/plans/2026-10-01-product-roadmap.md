@@ -40,7 +40,7 @@ flowchart LR
 
 ## V1：可信知识问答（进行中）
 
-退出标准：[V1 总纲](2026-09-29-v1-roadmap.md) 中 5 项能力的“工程完成”全部勾选。
+退出标准：[V1 总纲](2026-09-29-v1-roadmap.md) 中 6 项能力的“工程完成”全部勾选。
 
 | 项 | 状态 |
 | --- | --- |
@@ -50,9 +50,10 @@ flowchart LR
 | 子项目 2 可观测性（能力 5） | 已完成（#36） |
 | Langfuse 运营看板与用户反馈（能力 5 的增量） | 已完成（2026-10-15 实机验收；[spec](../specs/2026-10-14-langfuse-ops-observability-design.md)、[计划](2026-10-14-langfuse-ops-observability.md)） |
 | 推荐问题（能力 1 的一部分） | 已完成（#38、#39） |
-| 子项目 3 可靠问答（能力 1） | 未设计（推荐问题部分见上一行） |
+| 子项目 3 可靠问答（能力 1） | 未设计（推荐问题部分见上一行；链路可靠性修复并入子项目 7 ②） |
 | 子项目 4 知识图谱脉络分析（能力 2、3） | 进行中（PR 1–PR 5 与验收修复已合并到 `develop`（a7869d9），独立验收有条件通过；真实 golden set 待人工标注、真实门禁待运行） |
 | 子项目 5 Skills/Agents（能力 4） | 已设计（[spec](../specs/2026-10-11-skills-agents-design.md)、[计划](2026-10-12-skills-agents.md)；MCP 不在 V1） |
+| 子项目 7 LangGraph 编排（能力 6，② 图重构 → ③ 角色与意图 → ④ 围栏 → ⑤ 工具与长任务 → ⑥ 可信知识） | 进行中（PR 1 图骨架已合并到 `develop`（2026-10-15）；[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md)，7 个 PR；2026-10-14 由 V2 方向提入 V1；PR 1–4 先行，能力 4 在 PR 5 之前合入） |
 
 ## V2：主动 Tapper（已设计）
 
@@ -63,7 +64,6 @@ flowchart LR
 | V2.1 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
 | V2.2 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
 | V2.3 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
-| V2.4 | Tapper LangGraph 化：图重构 → 角色定义与意图识别 → 护栏 → 工具调用与长任务编排 → 可信知识 | 待设计 |
 
 退出标准：V2.1、V2.2 工程完成；在真实项目中度量提议采纳率。
 
