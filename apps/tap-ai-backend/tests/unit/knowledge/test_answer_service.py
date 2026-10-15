@@ -1776,36 +1776,52 @@ def test_edge_citation_reuses_s_chunk_fields_and_gets_r_label() -> None:
     asyncio.run(scenario())
 
 
-def test_q14_style_reworded_claim_keeps_r_citation_unrelated_one_still_stripped() -> None:
+_Q14_STYLE_GROUP_CLAUSE = (
+    "第二条 投保范围：法人、非法人组织以及其他不以购买保险为目的而组成的团体可以作为投保人；"
+    "前述团体的成员及其配偶、子女可以作为被保险人。"
+)
+# The real q-14 R5 text (report 2 §6; `/tmp/tap-real3/edge-sample.csv:177`): a
+# "医生" (doctor) definitions clause whose exclusion list names 被保险人 and,
+# among several unrelated family-member examples, 子女 -- both endpoints of a
+# 被保险人/子女 relation appear verbatim while the clause is about an entirely
+# different defined term.
+_Q14_STYLE_UNRELATED_DOCTOR_DEFINITION = (
+    "三十四、医生：指在医院内行医并拥有处方权的医生，亦指在被保险人接受诊断、医疗、处方或手术的"
+    "地区内合法注册且有行医资格的医生；但不包括被保险人本人、被保险人的代理人、合伙人、雇员或雇"
+    "主，或被保险人的家庭成员，如配偶、兄弟、姐妹、父母、子女以及其他具有类似亲密关系的人。"
+)
+
+
+def test_q14_style_group_clause_relations_kept_doctor_definition_relation_stripped() -> None:
     """End-to-end reproduction of the real-model revalidation report's q-14
-    pattern (report 2 §6): one relation whose claim names the entity without
-    the graph node's parenthetical qualifier -- previously lost verbatim
-    matching and now keeps its R citation -- alongside a second relation
-    whose claim names both endpoints but whose own supporting chunk is
-    unrelated to the relationship (the merged graph associated the edge
-    with the wrong evidence) -- still stripped, not let through on label
-    match alone."""
+    pattern (report 2 §6): 4 relations backed by the actual 团险第二条
+    clause (the chunk cited as this claim's own S evidence) keep their R
+    citations, while the 5th (被保险人 RELATED_TO 子女) -- whose only support
+    is the unrelated 医生 definitions clause from the real report, not the
+    团险第二条 clause -- is stripped even though that clause's text happens
+    to name both endpoints verbatim (the failure mode the endpoint-mention
+    checks alone cannot catch; see `relation_support_overlaps_cited_chunks`)."""
 
     async def scenario() -> None:
         search = _SequencedSearchPort(
             (
                 _relation_hit(
-                    "chunk-s1",
+                    "chunk-group-clause",
                     "rev-1",
                     item_id="item-1",
-                    content="冠状动脉介入手术（非切开心包手术）将触发保险责任给付。",
+                    content=_Q14_STYLE_GROUP_CLAUSE,
                 ),
-                # Distinct `logical_chunk_id` from chunk-s1 (whose different
-                # content would otherwise collide under `_relation_hit`'s
-                # shared default and read as the same clause disagreeing with
-                # itself -- `_has_conflicting_sources`'s own concern, not
-                # this test's).
+                # Distinct `logical_chunk_id` from the group clause (whose
+                # different content would otherwise collide under
+                # `_relation_hit`'s shared default and read as the same
+                # clause disagreeing with itself -- `_has_conflicting_sources`'s
+                # own concern, not this test's).
                 replace(
                     _relation_hit(
-                        "chunk-s2",
+                        "chunk-doctor-definition",
                         "rev-1",
                         item_id="item-2",
-                        content="体检当天需要空腹，报告将在三个工作日内送达。",
+                        content=_Q14_STYLE_UNRELATED_DOCTOR_DEFINITION,
                         local_rank=2,
                     ),
                     logical_chunk_id="h_" + "3" * 64,
@@ -1815,15 +1831,25 @@ def test_q14_style_reworded_claim_keeps_r_citation_unrelated_one_still_stripped(
         model = _RecordingModel(
             [
                 AnswerGeneration(
-                    text=("冠状动脉介入手术会触发保险责任。\n\n被保险人的子女可以作为被保险人。"),
+                    text=(
+                        "法人、非法人组织以及其他不以购买保险为目的而组成的团体可以作为投保人。"
+                        "\n\n"
+                        "法人、非法人组织以及其他不以购买保险为目的而组成的团体的成员及其配偶、"
+                        "子女可以作为被保险人。"
+                    ),
                     claims=(
                         GeneratedClaim(
-                            text="冠状动脉介入手术会触发保险责任。",
-                            evidence_labels=("R1", "S1"),
+                            text=(
+                                "法人、非法人组织以及其他不以购买保险为目的而组成的团体可以作为投保人。"
+                            ),
+                            evidence_labels=("R1", "R2", "R3", "S1"),
                         ),
                         GeneratedClaim(
-                            text="被保险人的子女可以作为被保险人。",
-                            evidence_labels=("R2", "S2"),
+                            text=(
+                                "法人、非法人组织以及其他不以购买保险为目的而组成的团体的成员及其配偶、"
+                                "子女可以作为被保险人。"
+                            ),
+                            evidence_labels=("R4", "R5", "S1"),
                         ),
                     ),
                     model_id="m-1",
@@ -1832,47 +1858,58 @@ def test_q14_style_reworded_claim_keeps_r_citation_unrelated_one_still_stripped(
                 )
             ]
         )
-        reworded_relation = RelationEvidence(
-            label="R1",
-            edge_id="e-reworded",
-            subject_node_id="A",
-            subject_label="冠状动脉介入手术（非切开心包手术）",
-            subject_aliases=(),
-            object_node_id="B",
-            object_label="保险责任",
-            object_aliases=(),
-            relation_type="TRIGGERS",
-            relation_label="TRIGGERS",
-            origin="EXTRACTED",
-            confidence=0.9,
-            support=(
-                RelationSupport(
-                    chunk_id="chunk-s1",
-                    source_revision_id="rev-1",
-                    document_revision_id="rev-1",
-                    content_digest="sha256:" + "a" * 64,
-                    anchor={"page": 1},
-                    evidence_label="S1",
+
+        def _group_clause_relation(
+            label: str, subject_label: str, object_label: str, relation_type: str
+        ) -> RelationEvidence:
+            return RelationEvidence(
+                label=label,
+                edge_id=f"e-{label}",
+                subject_node_id=f"subj-{label}",
+                subject_label=subject_label,
+                subject_aliases=(),
+                object_node_id=f"obj-{label}",
+                object_label=object_label,
+                object_aliases=(),
+                relation_type=relation_type,
+                relation_label="可作为" if relation_type == "PART_OF" else relation_type,
+                origin="EXTRACTED",
+                confidence=0.9,
+                support=(
+                    RelationSupport(
+                        chunk_id="chunk-group-clause",
+                        source_revision_id="rev-1",
+                        document_revision_id="rev-1",
+                        content_digest="sha256:" + "a" * 64,
+                        anchor={"page": 1},
+                        evidence_label="S1",
+                    ),
                 ),
-            ),
-            on_path=False,
+                on_path=False,
+            )
+
+        group_clause_relations = (
+            _group_clause_relation("R1", "法人", "投保人", "PART_OF"),
+            _group_clause_relation("R2", "非法人组织", "投保人", "PART_OF"),
+            _group_clause_relation("R3", "团体", "投保人", "PART_OF"),
+            _group_clause_relation("R4", "配偶", "被保险人", "PART_OF"),
         )
-        unrelated_evidence_relation = RelationEvidence(
-            label="R2",
-            edge_id="e-unrelated-evidence",
-            subject_node_id="C",
+        doctor_definition_relation = RelationEvidence(
+            label="R5",
+            edge_id="e-R5",
+            subject_node_id="subj-R5",
             subject_label="被保险人",
             subject_aliases=(),
-            object_node_id="D",
+            object_node_id="obj-R5",
             object_label="子女",
             object_aliases=(),
             relation_type="RELATED_TO",
-            relation_label="RELATED_TO",
+            relation_label="家庭成员",
             origin="EXTRACTED",
             confidence=0.9,
             support=(
                 RelationSupport(
-                    chunk_id="chunk-s2",
+                    chunk_id="chunk-doctor-definition",
                     source_revision_id="rev-1",
                     document_revision_id="rev-1",
                     content_digest="sha256:" + "b" * 64,
@@ -1885,7 +1922,7 @@ def test_q14_style_reworded_claim_keeps_r_citation_unrelated_one_still_stripped(
         context = RelationContext(
             status=RelationContextStatus.APPLIED,
             graph_version="7",
-            relations=(reworded_relation, unrelated_evidence_relation),
+            relations=(*group_clause_relations, doctor_definition_relation),
         )
         relation = _FakeRelationAnalysis(context)
         knowledge = _relation_retrieval(search, model, relation_analysis=relation)
@@ -1893,27 +1930,41 @@ def test_q14_style_reworded_claim_keeps_r_citation_unrelated_one_still_stripped(
 
         assert not response.abstained
         edge_citations = [citation for citation in response.citations if citation.kind == "edge"]
-        assert len(edge_citations) == 1
-        assert edge_citations[0].edge is not None
-        assert edge_citations[0].edge.relation_type == "TRIGGERS"
+        assert len(edge_citations) == 4
+        assert {citation.evidence_label for citation in edge_citations} == {
+            "R1",
+            "R2",
+            "R3",
+            "R4",
+        }
         assert "invalid-relation-citation" in response.degradation_reasons
 
-        reworded_claim = next(
-            claim for claim in response.claims if claim.text == "冠状动脉介入手术会触发保险责任。"
+        investor_claim = next(
+            claim
+            for claim in response.claims
+            if claim.text
+            == "法人、非法人组织以及其他不以购买保险为目的而组成的团体可以作为投保人。"
         )
-        unrelated_claim = next(
-            claim for claim in response.claims if claim.text == "被保险人的子女可以作为被保险人。"
+        insured_claim = next(
+            claim
+            for claim in response.claims
+            if claim.text
+            == (
+                "法人、非法人组织以及其他不以购买保险为目的而组成的团体的成员及其配偶、"
+                "子女可以作为被保险人。"
+            )
         )
-        reworded_citation_kinds = {
-            next(c.kind for c in response.citations if c.citation_id == cid)
-            for cid in reworded_claim.citation_ids
+        investor_citation_labels = {
+            next(c.evidence_label for c in response.citations if c.citation_id == cid)
+            for cid in investor_claim.citation_ids
         }
-        unrelated_citation_kinds = {
-            next(c.kind for c in response.citations if c.citation_id == cid)
-            for cid in unrelated_claim.citation_ids
+        insured_citation_labels = {
+            next(c.evidence_label for c in response.citations if c.citation_id == cid)
+            for cid in insured_claim.citation_ids
         }
-        assert "edge" in reworded_citation_kinds
-        assert "edge" not in unrelated_citation_kinds
+        assert investor_citation_labels == {"R1", "R2", "R3", "S1"}
+        # R5 was stripped from this claim; only its S1 citation (and R4) survive.
+        assert insured_citation_labels == {"R4", "S1"}
 
     asyncio.run(scenario())
 
