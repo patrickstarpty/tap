@@ -123,7 +123,7 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 ### 2.5 引用模型与校验
 
 - `Citation` 增加 `kind`：`chunk`（现状）或 `edge`。边引用字段：`edge_id`、`graph_version`、`subject`（node_id、label）、`object`（node_id、label）、`relation_type`、`relation_label`、`evidence`（支撑切片的 chunk id、来源修订、内容摘要、锚点）。边引用最终仍锚定到原文。
-- `ports/answers.py` 校验：S 标签保持 `S1..S20` 位置规则；R 标签 `R1..R20`，必须对应本次 `RelationContext` 中的边；含 R 引用的 claim 文本须包含该边两端节点的 label 或任一别名；边引用的 `graph_version` 必须等于本次使用的版本。`application/relation_claims.py` 另外校验该边自身的支持证据（已引 S 切片的原文内容，或增强补入的新鲜切片文本）是否也同时提及两端节点——仅 claim 原文点名两端、但支持证据实际与之无关（如抽取/合并把边关联到了无关段落）时同样剥离该 R 引用；无法确定支持证据原文（如 S 切片原文不在本次可核对范围内）时不因此剥离。
+- `ports/answers.py` 校验：S 标签保持 `S1..S20` 位置规则；R 标签 `R1..R20`，必须对应本次 `RelationContext` 中的边；含 R 引用的 claim 文本须包含该边两端节点的 label 或任一别名（规范化匹配：接受括注限定语省略、全半角差异，并排除"保险人/被保险人/投保人"一类短标签被长标签字面包含导致的误配）；边引用的 `graph_version` 必须等于本次使用的版本。`application/relation_claims.py` 另外校验该边自身的支持证据（已引 S 切片的原文内容，或增强补入的新鲜切片文本）是否也同时提及两端节点，但这只是必要而非充分条件——支持证据可能字面同时提及两端却另有所指（如定义条款的举例列表），因此决定性校验是该边的支撑切片是否与同一条 claim（否则退一步看整篇回答）实际引用的 S 切片有交集，没有交集则同样剥离该 R 引用；无法确定支持证据原文或没有任何 S 引用可比对时（如本次可核对范围内缺失）不因此剥离。
 - 校验失败处理：某个 claim 的 R 引用不合法时，去掉该 claim 的 R 标签后按 S 标签重新校验；仍有 S 标签则保留该 claim 并计入诊断 `invalid-relation-citation`，没有任何合法标签则丢弃该 claim；全部 claim 被丢弃才弃答。S 侧同理：文本无法与回答对齐、重复或引用未知标签的 claim 逐条丢弃，回答由剩余 claim 重建；全部丢弃时以 `insufficient_evidence` 弃答，不报服务不可用。多来源归属：S 证据带来源文档名与标题路径进入提示词；claim 文本点名某份证据文档（文件名或文档标题，多份文档共用的名称不算）而引用的 S 证据全部来自其他文档时丢弃该 claim。
 - 持久化：`citation_snapshot` 增加可空列 `citation_kind`、`graph_version`、`edge_id`、`subject_node_id`、`object_node_id`、`relation_type`、`relation_label`；历史行 `citation_kind` 默认 `chunk`。
 - 推荐问题的依据校验复用对话回答链路，自动支持 R 引用；刷新输入在"主要实体"之外加入"主要关系"（按度数与置信度取前 20 条）。
