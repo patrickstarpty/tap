@@ -8,6 +8,7 @@ import importlib
 
 import pytest
 
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tests.unit.entrypoints.test_tapper_runtime import valid_settings
 
 
@@ -25,6 +26,7 @@ async def test_suggestion_worker_runtime_uses_idle_wakeups(monkeypatch) -> None:
     class FakeHttpServices:
         prompt_suggestions = object()
         prompt_suggestion_store = object()
+        scope = VALIDATION_SCOPE
 
     class FakeApiRuntime:
         def __init__(self) -> None:
@@ -61,6 +63,7 @@ async def test_suggestion_worker_runtime_closes_api_graph_if_composition_is_unav
     class FakeHttpServices:
         prompt_suggestions = None
         prompt_suggestion_store = None
+        scope = None
 
     class FakeApiRuntime:
         def __init__(self) -> None:

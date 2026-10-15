@@ -117,7 +117,11 @@ def test_publish_generate_verify_and_read(owned_project_mysql):
             clock=lambda: NOW,
         )
         worker = SuggestionRefreshWorker(
-            store=store, service=service, worker_id="flow-worker", clock=lambda: NOW
+            store=store,
+            service=service,
+            worker_id="flow-worker",
+            clock=lambda: NOW,
+            scope=VALIDATION_SCOPE,
         )
         key = SuggestionKey(actor_id=VALIDATION_SCOPE.actor_id, locale="en")
 

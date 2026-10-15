@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.chat.adapters.memory_suggestions import InMemorySuggestionStore
 from tap.modules.chat.application.suggestion_ports import CurrentSource, SuggestionStore
 from tap.modules.chat.application.suggestions import (
@@ -392,7 +393,9 @@ async def test_failed_refresh_keeps_previous_suggestions():
     knowledge = FakeKnowledge(topics_result=topics)
     generator = FakeGenerator(candidates=(Candidate(question="Q1?", source_ids=("src-1",)),))
     service = _service(store=store, knowledge=knowledge, generator=generator)
-    worker = SuggestionRefreshWorker(store=store, service=service, worker_id="w1", clock=_clock(T0))
+    worker = SuggestionRefreshWorker(
+        store=store, service=service, worker_id="w1", clock=_clock(T0), scope=VALIDATION_SCOPE
+    )
 
     await store.request_refresh(KEY, RefreshReason.MISSING, now=T0)
     processed = await worker.run_once(limit=10)
@@ -403,7 +406,7 @@ async def test_failed_refresh_keeps_previous_suggestions():
     generator.error = RuntimeError("model timeout")
     later = T0 + timedelta(minutes=30)
     worker_later = SuggestionRefreshWorker(
-        store=store, service=service, worker_id="w1", clock=_clock(later)
+        store=store, service=service, worker_id="w1", clock=_clock(later), scope=VALIDATION_SCOPE
     )
     await store.request_refresh(KEY, RefreshReason.KNOWLEDGE_PUBLISHED, now=later)
     processed_later = await worker_later.run_once(limit=10)
@@ -420,7 +423,9 @@ async def test_ungrounded_refresh_keeps_previous_suggestions():
     knowledge = FakeKnowledge(topics_result=topics)
     generator = FakeGenerator(candidates=(Candidate(question="Q1?", source_ids=("src-1",)),))
     service = _service(store=store, knowledge=knowledge, generator=generator)
-    worker = SuggestionRefreshWorker(store=store, service=service, worker_id="w1", clock=_clock(T0))
+    worker = SuggestionRefreshWorker(
+        store=store, service=service, worker_id="w1", clock=_clock(T0), scope=VALIDATION_SCOPE
+    )
 
     await store.request_refresh(KEY, RefreshReason.MISSING, now=T0)
     processed = await worker.run_once(limit=10)
@@ -438,7 +443,11 @@ async def test_ungrounded_refresh_keeps_previous_suggestions():
         now=later,
     )
     worker_later = SuggestionRefreshWorker(
-        store=store, service=ungrounded_service, worker_id="w1", clock=_clock(later)
+        store=store,
+        service=ungrounded_service,
+        worker_id="w1",
+        clock=_clock(later),
+        scope=VALIDATION_SCOPE,
     )
     await store.request_refresh(KEY, RefreshReason.KNOWLEDGE_PUBLISHED, now=later)
     processed_later = await worker_later.run_once(limit=10)
@@ -462,7 +471,9 @@ async def test_ungrounded_first_refresh_caches_empty():
     generator = FakeGenerator(candidates=(Candidate(question="Q1?", source_ids=("src-1",)),))
     grounding = FakeGrounding(default=False)
     service = _service(store=store, knowledge=knowledge, generator=generator, grounding=grounding)
-    worker = SuggestionRefreshWorker(store=store, service=service, worker_id="w1", clock=_clock(T0))
+    worker = SuggestionRefreshWorker(
+        store=store, service=service, worker_id="w1", clock=_clock(T0), scope=VALIDATION_SCOPE
+    )
 
     await store.request_refresh(KEY, RefreshReason.MISSING, now=T0)
     processed = await worker.run_once(limit=10)
@@ -497,9 +508,50 @@ async def test_worker_marks_daily_refresh_before_claiming():
     much_later = T0 + timedelta(hours=25)
     service = _service(store=store, knowledge=knowledge, generator=generator, now=much_later)
     worker = SuggestionRefreshWorker(
-        store=store, service=service, worker_id="w1", clock=_clock(much_later)
+        store=store,
+        service=service,
+        worker_id="w1",
+        clock=_clock(much_later),
+        scope=VALIDATION_SCOPE,
     )
 
     processed = await worker.run_once(limit=10)
 
     assert processed == 1
+
+
+class _SpanningGenerator(FakeGenerator):
+    """Opens a span like the model gateway does, so the test can see its binding."""
+
+    async def generate(
+        self, inputs: SuggestionInputs, locale: SuggestionLocale
+    ) -> tuple[Candidate, ...]:
+        from tap.platform.telemetry import span
+
+        with span("chat fake-model"):
+            return await super().generate(inputs, locale)
+
+
+@pytest.mark.asyncio
+async def test_refresh_model_calls_are_scoped_to_the_claimed_actor(span_recorder):
+    store = InMemorySuggestionStore()
+    topics = (TopicSource(source_id="src-1", name="Doc 1", version="rev-1:1", headings=("A",)),)
+    generator = _SpanningGenerator(candidates=(Candidate(question="Q1?", source_ids=("src-1",)),))
+    service = _service(
+        store=store, knowledge=FakeKnowledge(topics_result=topics), generator=generator
+    )
+    worker = SuggestionRefreshWorker(
+        store=store, service=service, worker_id="w1", clock=_clock(T0), scope=VALIDATION_SCOPE
+    )
+
+    await store.request_refresh(KEY, RefreshReason.MISSING, now=T0)
+    await worker.run_once(limit=10)
+
+    spans = {item.name: item for item in span_recorder.get_finished_spans()}
+    model_span = spans["chat fake-model"]
+    root = spans["job.prompt_suggestion"]
+    for item in (model_span, root):
+        assert item.attributes["tap.scope.project_id"] == VALIDATION_SCOPE.project_id
+        assert item.attributes["tap.scope.actor_id"] == KEY.actor_id
+        assert item.attributes["tap.job_kind"] == "prompt_suggestion"
+    assert model_span.parent is not None and model_span.parent.span_id == root.context.span_id

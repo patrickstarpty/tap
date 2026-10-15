@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.application.suggestion_ports import (
+    ClaimedRefresh,
     CurrentSource,
     GroundingCheck,
     SuggestionGenerator,
@@ -25,6 +27,7 @@ from tap.modules.chat.domain.suggestions import (
     SuggestionSource,
     is_displayable_question,
 )
+from tap.platform.telemetry import bind_trace, span
 
 _PERSONAL_LIMIT = 20
 _ENTITY_LIMIT = 20
@@ -180,10 +183,12 @@ class SuggestionRefreshWorker:
         service: PromptSuggestionService,
         worker_id: str,
         clock: Callable[[], datetime],
+        scope: ProjectScopeContext,
         lease_duration: timedelta = timedelta(minutes=5),
     ) -> None:
         self._store = store
         self._service = service
+        self._scope = scope
         self._worker_id = worker_id
         self._clock = clock
         self._lease_duration = lease_duration
@@ -200,23 +205,31 @@ class SuggestionRefreshWorker:
 
         processed = 0
         for claim in claims:
-            try:
-                suggestions = await self._service.refresh(claim.key)
-            except NoGroundedCandidates:
-                previous = await self._store.load(claim.key)
-                if previous:
-                    await self._store.fail_refresh(
-                        claim, "no_grounded_candidates", now=self._clock()
-                    )
-                else:
-                    await self._store.complete_refresh(claim, (), now=self._clock())
-                processed += 1
-                continue
-            except Exception as exc:  # noqa: BLE001 - recorded as a failure code, not logged
-                await self._store.fail_refresh(claim, type(exc).__name__, now=self._clock())
-                processed += 1
-                continue
-            await self._store.complete_refresh(claim, suggestions, now=self._clock())
-            processed += 1
-
+            # Bind the claimed actor's scope so the refresh's model calls are
+            # exported to `trace_span` like every other job's, instead of
+            # leaving orphan `model_call` rows that no trace can account for.
+            with (
+                bind_trace(
+                    scope=replace(self._scope, actor_id=claim.key.actor_id),
+                    job_kind="prompt_suggestion",
+                ),
+                span("job.prompt_suggestion", {"tap.suggestion.locale": claim.key.locale}),
+            ):
+                processed += await self._process(claim)
         return processed
+
+    async def _process(self, claim: ClaimedRefresh) -> int:
+        try:
+            suggestions = await self._service.refresh(claim.key)
+        except NoGroundedCandidates:
+            previous = await self._store.load(claim.key)
+            if previous:
+                await self._store.fail_refresh(claim, "no_grounded_candidates", now=self._clock())
+            else:
+                await self._store.complete_refresh(claim, (), now=self._clock())
+            return 1
+        except Exception as exc:  # noqa: BLE001 - recorded as a failure code, not logged
+            await self._store.fail_refresh(claim, type(exc).__name__, now=self._clock())
+            return 1
+        await self._store.complete_refresh(claim, suggestions, now=self._clock())
+        return 1

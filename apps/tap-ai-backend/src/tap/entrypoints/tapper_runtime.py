@@ -1364,7 +1364,8 @@ async def create_suggestion_worker_runtime(settings: TapperSettings) -> WorkerRu
     api_runtime = await create_api_runtime(settings)
     service = api_runtime.http_services.prompt_suggestions
     store = api_runtime.http_services.prompt_suggestion_store
-    if service is None or store is None:
+    scope = api_runtime.http_services.scope
+    if service is None or store is None or scope is None:
         await api_runtime.aclose()
         raise ValueError("prompt suggestion composition is unavailable")
     worker = SuggestionRefreshWorker(
@@ -1372,6 +1373,7 @@ async def create_suggestion_worker_runtime(settings: TapperSettings) -> WorkerRu
         service=service,
         worker_id=settings.worker_id + "-suggestions",
         clock=lambda: datetime.now(UTC),
+        scope=scope,
     )
     # SuggestionRefreshWorker.run_once takes limit as keyword-only, which the
     # BoundedWorker Protocol's positional-or-keyword signature doesn't admit
