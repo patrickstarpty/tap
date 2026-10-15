@@ -240,6 +240,33 @@ async def test_an_extracted_edge_with_only_dangling_refs_is_dropped(span_recorde
 
 
 @pytest.mark.asyncio
+async def test_a_node_with_already_empty_chunks_keeps_previous_behavior():
+    # A node the model emitted with chunks=[] from the start (not emptied by
+    # stripping an out-of-batch ref) keeps its previous behavior: it is still kept,
+    # with no evidence, instead of being dropped by the new no-evidence rule.
+    output = _output()
+    output["nodes"][0] = output["nodes"][0] | {"chunks": []}
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    node = next(node for node in draft.nodes if node.node_id == "node-1")
+    assert node.evidence_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_an_extracted_edge_with_already_empty_chunks_still_fails_closed():
+    # An EXTRACTED edge the model emitted with chunks=[] from the start (not emptied
+    # by stripping an out-of-batch ref) keeps its previous behavior: it still fails
+    # the whole batch closed at GraphEdge, instead of being silently dropped by the
+    # new no-evidence rule (which only applies to evidence lost to stripping).
+    output = _output()
+    output["edges"][0] = output["edges"][0] | {"chunks": []}
+
+    with pytest.raises(ValueError, match="evidence"):
+        await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+
+@pytest.mark.asyncio
 async def test_batch_context_carries_title_and_known_entities():
     gateway = Gateway(_output())
     request = replace(

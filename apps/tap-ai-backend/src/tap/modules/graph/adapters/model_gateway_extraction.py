@@ -350,24 +350,25 @@ class ModelGatewayGraphExtraction:
                         label, aliases = aliases[0], aliases[1:]
                     if is_reference_name(canonical_key):
                         canonical_key = label
-                    cited = _cited_refs(item, refs)
-                    if not cited:
-                        # Every ref this node cited was outside the batch (dropped by
-                        # ``_strip_dangling_refs`` above): no evidence survives for
-                        # this fact, so drop the node itself rather than fail the
-                        # whole batch. Its edges follow once endpoints disappear
-                        # from ``node_ids`` below.
-                        dropped_no_evidence += 1
-                        continue
                     node = GraphNode(
                         _string(item, "id"),
                         snapshot_id,
                         label,
                         _string(item, "type"),
                         canonical_key,
-                        cited,
+                        _cited_refs(item, refs),
                         aliases,
                     )
+                    if not node.evidence_ids and item.get(_HAD_REFS_BEFORE_STRIP):
+                        # Every ref this node cited was outside the batch (dropped by
+                        # ``_strip_dangling_refs`` above): no evidence survives for
+                        # this fact, so drop the node itself rather than fail the
+                        # whole batch. Its edges follow once endpoints disappear
+                        # from ``node_ids`` below. A node the model emitted with an
+                        # already-empty ``chunks`` (the flag unset) keeps its
+                        # previous behavior instead -- kept, with no evidence.
+                        dropped_no_evidence += 1
+                        continue
                     known_id = (
                         node.node_id
                         if node.node_id in known
@@ -527,6 +528,9 @@ def _chunk_refs(request: GraphExtractionRequest) -> dict[str, Mapping[str, objec
     return {f"c{index}": chunk for index, chunk in enumerate(request.chunks, start=1)}
 
 
+_HAD_REFS_BEFORE_STRIP = "_hadRefsBeforeStrip"
+
+
 def _strip_dangling_refs(
     items: tuple[dict[str, object], ...], refs: Mapping[str, Mapping[str, object]]
 ) -> tuple[tuple[dict[str, object], ...], int]:
@@ -535,11 +539,20 @@ def _strip_dangling_refs(
     The model occasionally cites a ref from outside the current batch (for example a
     stale ``c12`` when only ``c1``-``c9`` were sent this batch); retrying the same
     input reproduces it, so failing the whole batch wastes the retry budget. A
-    dangling ref is dropped instead, here, before any fact is built from ``items``;
-    the caller drops a node or edge left with no evidence once this strips all of
-    its refs (see the node loop and ``_keep_edges`` in ``extract``). Returns the
-    cleaned items (unchanged items are returned as-is) and how many refs were
-    dropped in total.
+    dangling ref is dropped instead, here, before any fact is built from ``items``.
+
+    Each cleaned item also carries a transient ``_hadRefsBeforeStrip`` flag -- not a
+    schema field, and ignored by every downstream lookup that reads a specific key --
+    recording whether its original ``chunks`` was nonempty. A caller that finds a
+    node or edge left with no evidence after this must drop it only when that flag
+    is set: a fact that became evidence-less *because* a dangling ref was stripped
+    here is dropped silently (see the node loop and ``_keep_edges`` in ``extract``),
+    but a fact the model emitted with an already-empty ``chunks`` keeps its previous
+    behavior (a node is still kept with no evidence; an EXTRACTED edge still fails
+    the batch closed when ``GraphEdge`` rejects it for having no evidence). The flag
+    survives ``_remap_endpoints`` (a plain dict union keeps extra keys) and is OR-ed
+    together by ``_dedupe_edges`` when two raw edges under the same id/shape merge.
+    Returns the cleaned items and how many refs were dropped in total.
     """
 
     cleaned: list[dict[str, object]] = []
@@ -548,7 +561,10 @@ def _strip_dangling_refs(
         chunks = _strings(item, "chunks")
         kept = tuple(dict.fromkeys(ref for ref in chunks if ref in refs))
         dangling += len(chunks) - len(kept)
-        cleaned.append(item if len(kept) == len(chunks) else item | {"chunks": list(kept)})
+        patch: dict[str, object] = {_HAD_REFS_BEFORE_STRIP: bool(chunks)}
+        if len(kept) != len(chunks):
+            patch["chunks"] = list(kept)
+        cleaned.append(item | patch)
     return tuple(cleaned), dangling
 
 
@@ -624,14 +640,17 @@ def _keep_edges(
 
     An edge is dropped when its relationType is outside RELATION_TYPES, either endpoint
     is not among this batch's node ids, both endpoints are the same node (e.g. after a
-    duplicate node was merged into the other endpoint), or it is EXTRACTED and left with
-    no chunk refs (every ref it cited was outside the batch and was stripped by
-    ``_strip_dangling_refs`` upstream: no evidence survives for the fact, so the edge
-    is dropped rather than failing the whole batch; an INFERRED edge's chunks are
-    legitimately empty by design and is never dropped on that basis). Dropping an edge
-    also drops the provenance record that cites it (by edgeId), and any INFERRED edge
-    whose provenance lists a dropped edge id as an input fact is dropped in turn,
-    repeating until no further edge is dropped.
+    duplicate node was merged into the other endpoint), or it is EXTRACTED, left with no
+    chunk refs, and ``_HAD_REFS_BEFORE_STRIP`` is set -- meaning every ref it cited was
+    outside the batch and was stripped by ``_strip_dangling_refs`` upstream, so no
+    evidence survives for the fact and the edge is dropped rather than failing the whole
+    batch. An EXTRACTED edge the model emitted with an already-empty ``chunks`` (the flag
+    unset) is *not* dropped here: it keeps its previous behavior of failing the batch
+    closed when ``GraphEdge`` rejects it for having no evidence. An INFERRED edge's
+    chunks are legitimately empty by design and is never dropped on either basis.
+    Dropping an edge also drops the provenance record that cites it (by edgeId), and any
+    INFERRED edge whose provenance lists a dropped edge id as an input fact is dropped in
+    turn, repeating until no further edge is dropped.
     """
     provenance_by_edge: dict[object, dict[str, object]] = {
         item.get("edgeId"): item for item in provenance_raw
@@ -643,7 +662,11 @@ def _keep_edges(
         or item.get("sourceNodeId") not in node_ids
         or item.get("targetNodeId") not in node_ids
         or item.get("sourceNodeId") == item.get("targetNodeId")
-        or (item.get("origin") == "EXTRACTED" and not item.get("chunks"))
+        or (
+            item.get("origin") == "EXTRACTED"
+            and not item.get("chunks")
+            and item.get(_HAD_REFS_BEFORE_STRIP)
+        )
     }
     changed = True
     while changed:
@@ -706,6 +729,13 @@ def _dedupe_edges(
             merged["chunks"] = list(dict.fromkeys([*chunks, *extra]))
         if type(confidence) in {int, float} and type(other) in {int, float}:
             merged["confidence"] = max(cast(float, confidence), cast(float, other))
+        # Union the "had refs before stripping" flag too: if either raw edge under
+        # this id/shape originally cited a ref, the merged edge did -- relevant only
+        # when the union above still leaves ``chunks`` empty (see
+        # ``_HAD_REFS_BEFORE_STRIP`` in ``_strip_dangling_refs``).
+        merged[_HAD_REFS_BEFORE_STRIP] = bool(survivor.get(_HAD_REFS_BEFORE_STRIP)) or bool(
+            item.get(_HAD_REFS_BEFORE_STRIP)
+        )
         kept[survivor_id] = merged
     provenance: list[dict[str, object]] = []
     claimed: set[object] = set()
