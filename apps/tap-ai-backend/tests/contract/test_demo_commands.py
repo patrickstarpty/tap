@@ -687,6 +687,10 @@ LITELLM_MASTER_KEY=provider-secret
 MILVUS_READER_PASSWORD=provider-secret
 MILVUS_WRITER_PASSWORD=provider-secret
 MILVUS_PROVISIONER_PASSWORD=provider-secret
+LANGFUSE_HOST=https://provider-secret.invalid:3000
+LANGFUSE_PUBLIC_KEY=provider-secret
+LANGFUSE_SECRET_KEY=provider-secret
+TAP_TRACE_REDACTION_RULES=/provider-secret/invalid-rules.json
 preflight_only=0
 e2e_project=tap-tapper-demo
 repo_root=/provider-secret/invalid
@@ -765,6 +769,8 @@ case " $* " in
     [ "$DASHSCOPE_API_BASE" = http://127.0.0.1:14000 ] || exit 76
     [ -z "${OPENAI_API_KEY+x}${BAILIAN_API_KEY+x}${BAILIAN_API_BASE+x}" ] || exit 77
     [ -z "${LITELLM_EMBEDDING_API_KEY+x}${LITELLM_EMBEDDING_API_BASE+x}" ] || exit 78
+    [ -z "${LANGFUSE_HOST+x}${LANGFUSE_PUBLIC_KEY+x}${LANGFUSE_SECRET_KEY+x}" ] || exit 65
+    [ -z "${TAP_TRACE_REDACTION_RULES+x}" ] || exit 66
     ;;
   *" python - "*)
     printf 'uv|probe\n' >> "$TAPPER_E2E_STUB_LOG"
@@ -825,6 +831,8 @@ case " $* " in
     [ "$MILVUS_URI" = 'http://127.0.0.1:29530' ] || exit 87
     [ -z "${OPENAI_API_KEY+x}${BAILIAN_API_KEY+x}${BAILIAN_API_BASE+x}" ] || exit 89
     [ -z "${LITELLM_EMBEDDING_API_KEY+x}" ] || exit 90
+    [ -z "${LANGFUSE_HOST+x}${LANGFUSE_PUBLIC_KEY+x}${LANGFUSE_SECRET_KEY+x}" ] || exit 64
+    [ -z "${TAP_TRACE_REDACTION_RULES+x}" ] || exit 63
     [ -z "${LITELLM_EMBEDDING_API_BASE+x}" ] || exit 94
     printf 'docker|%s\n' "$*" >> "$TAPPER_E2E_STUB_LOG"
     case " $* " in
@@ -963,6 +971,8 @@ def test_demo_down_executes_only_exact_project_scoped_non_volume_argv(
             "tap-tapper-demo",
             "--profile",
             "milvus",
+            "--profile",
+            "langfuse",
             "down",
             "--remove-orphans",
         ]
@@ -1045,6 +1055,8 @@ def test_valid_reset_targets_only_exact_default_project_volumes(tmp_path: Path) 
             "tap-tapper-demo",
             "--profile",
             "milvus",
+            "--profile",
+            "langfuse",
             "down",
             "--volumes",
             "--remove-orphans",

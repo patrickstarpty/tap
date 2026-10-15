@@ -166,6 +166,67 @@ async def test_sdk_sink_maps_trace_to_sdk_calls(monkeypatch) -> None:  # type: i
 
 
 @pytest.mark.asyncio
+async def test_sdk_sink_chunks_a_large_trace_into_batches_of_at_most_100_events(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """A trace with more than 100 observations must not be sent as one
+    `ingestion.batch` call: a single oversized call can exceed the server's
+    body limit and fail forever. The trace event must lead the first batch."""
+
+    sink, client = _sink(monkeypatch)
+    observations = tuple(_span(span_id=f"span-{index}") for index in range(150))
+    trace = _trace(observations=observations)
+
+    await sink.push_trace(trace)
+
+    assert len(client.ingestion.calls) == 2
+    first, second = client.ingestion.calls
+    assert len(first) == 100
+    assert len(second) == 51
+    assert first[0].type == "trace-create"
+    assert first[0].body.id == "trace-1"
+    assert [event.body.id for event in first[1:]] == [f"span-{i}" for i in range(99)]
+    assert [event.body.id for event in second] == [f"span-{i}" for i in range(99, 150)]
+
+
+@pytest.mark.asyncio
+async def test_sdk_sink_raises_when_a_later_batch_in_a_chunked_push_errors(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """Even if only a later chunk is rejected, the whole push must fail so the
+    service records a retryable failure instead of a partially-synced trace."""
+
+    from tap.modules.ai.adapters import langfuse_sink as module
+
+    class _FailSecondCallIngestionClient:
+        def __init__(self) -> None:
+            self.calls: list[list[object]] = []
+
+        def batch(self, *, batch):  # type: ignore[no-untyped-def]
+            self.calls.append(list(batch))
+            if len(self.calls) == 2:
+                return SimpleNamespace(
+                    errors=[SimpleNamespace(id="span-149", status=400, message="bad request")],
+                    successes=[],
+                )
+            return SimpleNamespace(errors=[], successes=[])
+
+    ingestion = _FailSecondCallIngestionClient()
+    client = SimpleNamespace(ingestion=ingestion)
+    monkeypatch.setattr(module, "LangfuseAPI", lambda **_kwargs: client)
+    sink = LangfuseSdkSink(
+        host="http://127.0.0.1:23000", public_key="pk", secret_key="sk", environment="tapper-demo"
+    )
+    observations = tuple(_span(span_id=f"span-{index}") for index in range(150))
+    trace = _trace(observations=observations)
+
+    with pytest.raises(LangfuseSinkError):
+        await sink.push_trace(trace)
+
+    assert len(ingestion.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_sdk_sink_raises_when_ingestion_batch_reports_errors(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     sink, _client = _sink(
         monkeypatch, errors=[SimpleNamespace(id="trace-1", status=400, message="bad request")]

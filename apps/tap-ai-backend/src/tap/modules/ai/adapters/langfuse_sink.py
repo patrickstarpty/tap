@@ -46,6 +46,11 @@ from tap.modules.ai.ports.langfuse_sync import LangfuseSink
 
 _NOT_FOUND_STATUS = 404
 
+# The Langfuse server enforces a body size limit on `ingestion.batch`; a
+# single multi-call trace can carry far more than one call's worth of
+# observations, so the events are chunked to stay well under that limit.
+_MAX_BATCH_EVENTS = 100
+
 
 class LangfuseSinkError(RuntimeError):
     """One or more events in an `ingestion.batch` call were rejected server-side."""
@@ -59,12 +64,18 @@ class LangfuseSdkSink(LangfuseSink):
         self._environment = environment
 
     async def push_trace(self, trace: LangfuseTrace) -> None:
-        batch: list[IngestionEvent] = [_trace_event(trace)]
-        batch.extend(
+        events: list[IngestionEvent] = [_trace_event(trace)]
+        events.extend(
             _observation_event(trace.id, observation, environment=self._environment)
             for observation in trace.observations
         )
-        await asyncio.to_thread(self._send_batch, batch)
+        # Chunked so the trace event always lands in the first batch; any
+        # batch's error (including a later chunk's) must still fail the whole
+        # push so the caller records a retryable failure rather than a
+        # partially-synced trace.
+        for start in range(0, len(events), _MAX_BATCH_EVENTS):
+            chunk = events[start : start + _MAX_BATCH_EVENTS]
+            await asyncio.to_thread(self._send_batch, chunk)
 
     async def upsert_score(self, score: LangfuseScore) -> None:
         await asyncio.to_thread(

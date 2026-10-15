@@ -383,7 +383,7 @@ demo-down: ## stop only the selected Tapper project and preserve named volumes
 	project="$${TAP_TAPPER_COMPOSE_PROJECT:-tap-tapper-demo}"; \
 	case "$$project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Tapper Compose project" >&2; exit 2;; esac; \
 	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
-	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$project" --profile milvus down --remove-orphans
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$project" --profile milvus --profile langfuse down --remove-orphans
 
 demo-reset: ## explicitly remove only the default Tapper project's volumes
 	@set -eu; \
@@ -393,7 +393,7 @@ demo-reset: ## explicitly remove only the default Tapper project's volumes
 	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
 	[ "$$project" = tap-tapper-demo ] || { echo "Tapper volume reset requires exact project tap-tapper-demo" >&2; exit 2; }; \
 	[ "$$allow_reset" = 1 ] || { echo "Tapper volume reset requires TAP_ALLOW_TAPPER_VOLUME_RESET=1" >&2; exit 2; }; \
-	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$project" --profile milvus down --volumes --remove-orphans
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$project" --profile milvus --profile langfuse down --volumes --remove-orphans
 
 schema-drift: ## compare ORM metadata with an isolated migrated MySQL
 	uv run --project apps/tap-ai-backend python scripts/check-schema-drift.py
