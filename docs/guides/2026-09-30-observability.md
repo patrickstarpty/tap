@@ -12,22 +12,52 @@
 
 追踪数据不设保留期、没有清理任务；删除文档或软删除会话不会改写或级联删除已写入的追踪行（见 §4 增长风险）。可观测性写入失败只记 `logging.warning`，不影响业务请求。
 
-## 2. 启用 Phoenix（可选）
+## 2. 启用 Langfuse 运营看板（可选）
 
-Phoenix 是可选的 OTLP 追踪查看器，通过 compose profile `observability`启动，只绑定 `127.0.0.1`：
+Langfuse 是可选的运营级看板：成本趋势、延迟分布、按模型/项目/用户统计、满意度，并支持按会话、用户、项目、模型筛选后下钻到单条 trace。MySQL 仍是链路数据的权威来源，产品内的调用链面板（§1、§3）继续直接读 MySQL，不依赖 Langfuse；Langfuse 是可从 MySQL 完整重建的运营展示副本。设计细节见[运营可观测性设计](../superpowers/specs/2026-10-14-langfuse-ops-observability-design.md)。
 
 ```sh
-# 1. 在 .env 中取消注释并设置：
-OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:26006
+# 1. 启动 Langfuse（先确保 insights ClickHouse 已启动，幂等创建 ClickHouse 库/账号与 MinIO bucket）：
+make langfuse-up
 
-# 2. 启动 Phoenix（不影响默认 compose 服务）：
-docker compose --profile observability up -d phoenix
+# 2. 浏览器打开 http://127.0.0.1:${LANGFUSE_PORT:-23000}，用 .env 中
+#    LANGFUSE_INIT_USER_EMAIL / LANGFUSE_INIT_USER_PASSWORD 登录本地管理员账号。
 
-# 3. 重启 TAP AI 的 API 与 worker 进程使新配置生效，然后在浏览器打开：
-# http://127.0.0.1:26006
+# 3. 在 .env 中取消注释并设置，然后重启 TAP AI 的 API 与 worker 进程：
+LANGFUSE_HOST=http://127.0.0.1:23000
+LANGFUSE_PUBLIC_KEY=pk-lf-local-example
+LANGFUSE_SECRET_KEY=sk-lf-local-example
+
+# 4. 停止 Langfuse，保留数据卷：
+make langfuse-down
 ```
 
-不设置 `OTEL_EXPORTER_OTLP_ENDPOINT` 时，span 仍然正常写入 MySQL，只是不额外导出到 OTLP。`OTEL_EXPORTER_OTLP_ENDPOINT` 必须是 loopback URL；`PHOENIX_IMAGE`（默认 `arizephoenix/phoenix:version-20.16.0`）与 `PHOENIX_PORT`（默认 `26006`）可在 `.env` 覆盖。
+未配置 `LANGFUSE_HOST` 时，`tapper_langfuse_sync_worker` 只打一条启动日志后空转；一旦配置并重启，历史链路数据与反馈会自动补推。看板中每个 Turn 对应一条 trace，可按会话、用户、项目、模型筛选并下钻；generation 带 token 与成本；回答的 👍/👎 反馈同步为名为 `user_feedback` 的 score。
+
+发往 Langfuse 的文本一律先脱敏（凭据、邮箱、手机号、身份证、银行卡号，以及兜底的数字串规则），MySQL 中的原文不受影响；脱敏基于正则，存在漏网可能，进入共享环境前需安全复核（见设计 §4、§10）。
+
+同步 worker 按 `trace_span.recorded_at` 与 `answer_feedback.updated_at` 增量扫描，只处理早于“当前时间 − `TAP_LANGFUSE_SYNC_SETTLE_SECONDS`”（默认 60 秒）的行，避免扫到仍在写入的半条 trace；该静默窗口必须大于最长的一次 span 导出或反馈事务耗时。推送失败的条目记入 `langfuse_sync_failure`，下一轮无限重试、不阻塞其他条目或游标前进。
+
+**重推（ClickHouse 数据丢失或脱敏规则升级后使用）**：把两个游标都重置为 `1970-01-01`，worker 会在下一轮起把全部历史链路与反馈重新推送（Langfuse 按原 id 覆盖，幂等）：
+
+```sql
+INSERT INTO langfuse_sync_cursor (name, position) VALUES
+  ('trace', '1970-01-01 00:00:00'),
+  ('feedback', '1970-01-01 00:00:00')
+ON DUPLICATE KEY UPDATE position = VALUES(position);
+```
+
+**排查同步失败**：
+
+```sql
+SELECT kind, subject_id, failure_count, last_error, last_failed_at
+FROM langfuse_sync_failure
+ORDER BY last_failed_at DESC;
+```
+
+`kind` 为 `trace` 时 `subject_id` 是 `trace_id`，为 `feedback` 时是 `feedback_id`；成功重试后该行自动删除。
+
+仍可选设置通用 `OTEL_EXPORTER_OTLP_ENDPOINT`，把 span 另外导出到任意 OTLP 后端（与 Langfuse 无关、互不依赖）；该变量必须是 loopback URL。
 
 ## 3. 按 `trace_id` 排障
 
