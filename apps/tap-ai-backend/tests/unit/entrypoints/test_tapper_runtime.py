@@ -128,6 +128,11 @@ def test_settings_reject_settle_seconds_below_minimum() -> None:
         TapperSettings.from_mapping(S3_SETTINGS | {"TAP_LANGFUSE_SYNC_SETTLE_SECONDS": "9"})
 
 
+def test_settings_reject_settle_seconds_above_maximum() -> None:
+    with pytest.raises(ValueError, match="TAP_LANGFUSE_SYNC_SETTLE_SECONDS"):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAP_LANGFUSE_SYNC_SETTLE_SECONDS": "86401"})
+
+
 def test_settings_reject_missing_trace_redaction_rules_file(tmp_path: Path) -> None:
     missing = tmp_path / "does-not-exist.yaml"
     with pytest.raises(ValueError, match="TAP_TRACE_REDACTION_RULES"):
