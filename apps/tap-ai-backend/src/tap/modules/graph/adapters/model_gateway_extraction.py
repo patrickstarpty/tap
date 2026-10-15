@@ -71,10 +71,14 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                         "type": "string",
                         "enum": sorted(NODE_TYPES),
                         "description": (
-                            "Use ACTOR for people or roles, SYSTEM for named software or "
-                            "services, REQUIREMENT for requirements or controls, CONCEPT "
-                            "for abstract ideas, and ENTITY only when none of the specific "
-                            "types applies."
+                            "Use ACTOR for people, roles, or organizations -- including an "
+                            "insurance company or institution (保险公司, 某保险股份有限公司) -- "
+                            "SYSTEM only for a named software application or information "
+                            "service, never an organization or an insurance product, "
+                            "REQUIREMENT for requirements or controls, CONCEPT for abstract "
+                            "ideas including an insurance product or contract (重大疾病保险, "
+                            "保险合同), and ENTITY only when none of the specific types "
+                            "applies."
                         ),
                     },
                     "canonicalKey": {"type": "string"},
@@ -114,7 +118,55 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                     "id": {"type": "string"},
                     "sourceNodeId": {"type": "string"},
                     "targetNodeId": {"type": "string"},
-                    "relationType": {"type": "string", "enum": sorted(RELATION_TYPES)},
+                    "relationType": {
+                        "type": "string",
+                        "enum": sorted(RELATION_TYPES),
+                        "description": (
+                            "REQUIRES: the target is jointly necessary for the source (all "
+                            "stated REQUIRES conditions must hold), e.g. 重度黄疸 REQUIRES "
+                            "亚急性重症肝炎诊断; never use it for a from-N-choose-M threshold "
+                            "(下列N项中满足M项) -- use APPLIES_TO for that instead, with the "
+                            "threshold as the source and the entity or diagnosis it qualifies "
+                            "as the target (the reverse of how REQUIRES would have been "
+                            "written, since REQUIRES puts the entity first). "
+                            "PART_OF: the source is a sub-clause, sub-item, or finer grade "
+                            "of the target, its parent or whole; direction is always the "
+                            "more specific thing to the more general one, e.g. Ⅱ级 PART_OF "
+                            "心功能状态分级 (not the reverse). Use PART_OF, not EXCEPTION_OF, "
+                            "when the text lists what is 包括/含 (included), e.g. 肥厚型心肌病 "
+                            "PART_OF 心肌病. "
+                            "EXCEPTION_OF: the source is excluded from, or an exception "
+                            "carved out of, the target's coverage or rule, e.g. 责任免除事项 "
+                            "EXCEPTION_OF 保险责任; never use it for an inclusion (包括/含) -- "
+                            "that is PART_OF. "
+                            "APPLIES_TO: direction is always the rule, condition, or "
+                            "threshold (including an N-choose-M threshold) as the source, "
+                            "and the entity or population it applies to as the target, never "
+                            "the reverse, e.g. 犹豫期 APPLIES_TO 新单客户, or 六项基本日常生活"
+                            "活动中两项 APPLIES_TO 永久性神经系统功能中度障碍 for a threshold "
+                            "that qualifies a diagnosis. "
+                            "DEFINES: the source (an insurer, contract, or clause) gives the "
+                            "target its defined meaning, e.g. 重大疾病保险合同条款 DEFINES "
+                            "重度疾病. "
+                            "TRIGGERS: the source event, diagnosis, or condition brings "
+                            "about the target consequence or payout, e.g. 确诊重度疾病 "
+                            "TRIGGERS 豁免保险费. "
+                            "RESPONSIBLE_FOR: the source actor bears the target duty or "
+                            "action, e.g. 保险公司 RESPONSIBLE_FOR 合同内容的变更. "
+                            "CONFLICTS_WITH: the source and target are stated as mutually "
+                            "exclusive alternatives (e.g. a documented three-way choice); "
+                            "connect the alternatives to each other, not to the coverage or "
+                            "outcome they lead to. "
+                            "SUPERSEDES: the source provision replaces the target earlier "
+                            "provision. PRECEDES: the source step or stage happens before "
+                            "the target in a process. USES: the source actor or process "
+                            "uses the target system or resource. VALIDATED_BY: the target "
+                            "validates or confirms the source fact. "
+                            "RELATED_TO: use only when the text states an association that "
+                            "fits none of the above; when unsure, prefer a more specific "
+                            "type over RELATED_TO."
+                        ),
+                    },
                     "relationLabel": {"type": "string"},
                     "origin": {
                         "type": "string",
@@ -157,9 +209,12 @@ GRAPH_EXTRACTION_PROMPT = (
     "cite a ref that is not in this input and never copy chunk text, hashes, or anchors. Use "
     "short stable IDs: n1, n2, ... for new nodes, e1, e2, ... for edges, and p1, p2, ... for "
     "provenance. Every node must list at least one chunk ref. "
-    "Classify every person or role as ACTOR, every named software application or service "
-    "as SYSTEM, and every stated requirement or control as REQUIREMENT. Use ENTITY only "
-    "if none of ACTOR, SYSTEM, REQUIREMENT, or CONCEPT applies. Every "
+    "Classify every person, role, or organization -- including an insurance company or "
+    "institution -- as ACTOR; classify a named software application or information "
+    "service, never an organization or an insurance product, as SYSTEM; classify every "
+    "stated requirement or control as REQUIREMENT; classify an insurance product or "
+    "contract as CONCEPT. Use ENTITY only if none of ACTOR, SYSTEM, REQUIREMENT, or "
+    "CONCEPT applies. Every "
     "EXTRACTED edge must list at least one chunk ref. An INFERRED edge must have an empty "
     "chunks array and exactly one provenance item whose edgeId matches it and whose "
     "inputFactIds are nonempty existing node or edge IDs. Never emit a self-edge; "
@@ -173,8 +228,18 @@ GRAPH_EXTRACTION_PROMPT = (
     "a known entity in nodes, and never emit a new node for the same real-world thing; an "
     "edge refers to a known entity by putting its id in sourceNodeId or targetNodeId. "
     "Classify processes, steps, or workflow stages as PROCESS. "
-    "Use relationType only from the provided enum; put the document's own wording for the "
-    "relation in relationLabel (at most 64 characters). List up to five aliases for a node "
+    "Use relationType only from the provided enum, choosing the most specific type the "
+    "text supports; use RELATED_TO only for a stated association that fits none of the "
+    "other types. PART_OF points from a sub-clause, sub-item, or finer grade to its "
+    "parent or whole (the more specific thing to the more general one); use PART_OF, not "
+    "EXCEPTION_OF, when the text lists what is 包括/含 (included) rather than carving out "
+    "an exception. Use APPLIES_TO, not REQUIRES, for a from-N-choose-M threshold (下列N项"
+    "中满足M项); REQUIRES means every condition listed is jointly necessary. APPLIES_TO "
+    "always puts the rule, condition, or threshold as the source and the entity or "
+    "population it applies to as the target -- for a threshold, this is the reverse of "
+    "how REQUIRES would have put the entity first. Put the "
+    "document's own wording for the relation in relationLabel (at most 64 characters). "
+    "List up to five aliases for a node "
     "when the text names it differently. A label or alias names the entity itself, never a "
     "pronoun or a reference whose meaning depends on the document (本合同, 本公司, 该产品, "
     "this contract, the company), never a clause, section or schedule number (第十九条, 附表1, "
@@ -265,6 +330,9 @@ class ModelGatewayGraphExtraction:
                 nodes_raw = _objects(output["nodes"], "nodes")
                 edges_raw = _objects(output["edges"], "edges")
                 provenance_raw = _objects(output["provenance"], "provenance")
+                nodes_raw, node_dangling = _strip_dangling_refs(nodes_raw, refs)
+                edges_raw, edge_dangling = _strip_dangling_refs(edges_raw, refs)
+                dangling_refs = node_dangling + edge_dangling
                 snapshot_id = request.snapshot.snapshot_id
                 known = _known_entities(request)
                 known_id_by_key = {
@@ -278,6 +346,7 @@ class ModelGatewayGraphExtraction:
                 repeated_known = 0
                 duplicate_nodes = 0
                 rejected_names = 0
+                dropped_no_evidence = 0
                 for item in nodes_raw:
                     label = _string(item, "label")
                     canonical_key = _string(item, "canonicalKey")
@@ -307,7 +376,10 @@ class ModelGatewayGraphExtraction:
                     )
                     if known_id is not None:
                         # A known entity repeated in nodes: drop the copy, keep its
-                        # citations, and point its edges at the known id.
+                        # citations, and point its edges at the known id. This
+                        # remap must happen before the no-evidence check below, or
+                        # an edge in this batch that cites the copy's local id would
+                        # wrongly lose its endpoint instead of following the remap.
                         repeated_known += 1
                         node_id_remap[node.node_id] = known_id
                         known_refs.setdefault(known_id, []).extend(node.evidence_ids)
@@ -318,7 +390,8 @@ class ModelGatewayGraphExtraction:
                     )
                     if survivor_id is not None:
                         # The same node twice (same id, or same canonical key under
-                        # another id): keep the first, union citations and aliases.
+                        # another id): keep the first, union citations and aliases
+                        # (same ordering reason as the known-entity remap above).
                         duplicate_nodes += 1
                         if node.node_id != survivor_id:
                             node_id_remap[node.node_id] = survivor_id
@@ -331,6 +404,16 @@ class ModelGatewayGraphExtraction:
                             aliases=_sanitize_aliases((*survivor.aliases, *node.aliases)),
                         )
                         continue
+                    if not node.evidence_ids and item.get(_HAD_REFS_BEFORE_STRIP):
+                        # A genuinely new node: every ref it cited was outside the
+                        # batch and was stripped above, so no evidence survives for
+                        # this fact. Drop it rather than fail the whole batch; its
+                        # edges follow once this id disappears from ``node_ids``
+                        # below. A node the model emitted with an already-empty
+                        # ``chunks`` (the flag unset) keeps its previous behavior
+                        # instead -- kept, with no evidence.
+                        dropped_no_evidence += 1
+                        continue
                     new_nodes[node.node_id] = node
                     new_id_by_key.setdefault(key, node.node_id)
                 edges_raw = tuple(_remap_endpoints(item, node_id_remap) for item in edges_raw)
@@ -341,8 +424,8 @@ class ModelGatewayGraphExtraction:
                     edges_raw, provenance_raw
                 )
                 node_ids = set(new_nodes) | set(known)
-                kept_edges_raw, kept_provenance_raw, dropped = _keep_edges(
-                    edges_raw, provenance_raw, node_ids
+                kept_edges_raw, kept_provenance_raw, dropped, dropped_no_evidence_edges = (
+                    _keep_edges(edges_raw, provenance_raw, node_ids)
                 )
                 edges = tuple(
                     GraphEdge(
@@ -380,6 +463,11 @@ class ModelGatewayGraphExtraction:
             current_span.set_attribute("tap.graph.duplicate_nodes", duplicate_nodes)
             current_span.set_attribute("tap.graph.duplicate_edges", duplicate_edges)
             current_span.set_attribute("tap.graph.rejected_names", rejected_names)
+            current_span.set_attribute("tap.graph.dangling_refs", dangling_refs)
+            current_span.set_attribute("tap.graph.dropped_no_evidence_nodes", dropped_no_evidence)
+            current_span.set_attribute(
+                "tap.graph.dropped_no_evidence_edges", dropped_no_evidence_edges
+            )
         if not nodes:
             # The model grounded nothing in this batch (boilerplate chunks, no
             # facts to extract): a successful batch with nothing to contribute,
@@ -457,13 +545,54 @@ def _chunk_refs(request: GraphExtractionRequest) -> dict[str, Mapping[str, objec
     return {f"c{index}": chunk for index, chunk in enumerate(request.chunks, start=1)}
 
 
+_HAD_REFS_BEFORE_STRIP = "_hadRefsBeforeStrip"
+
+
+def _strip_dangling_refs(
+    items: tuple[dict[str, object], ...], refs: Mapping[str, Mapping[str, object]]
+) -> tuple[tuple[dict[str, object], ...], int]:
+    """Drop chunk refs outside this batch from each item's ``chunks`` field.
+
+    The model occasionally cites a ref from outside the current batch (for example a
+    stale ``c12`` when only ``c1``-``c9`` were sent this batch); retrying the same
+    input reproduces it, so failing the whole batch wastes the retry budget. A
+    dangling ref is dropped instead, here, before any fact is built from ``items``.
+
+    Each cleaned item also carries a transient ``_hadRefsBeforeStrip`` flag -- not a
+    schema field, and ignored by every downstream lookup that reads a specific key --
+    recording whether its original ``chunks`` was nonempty. A caller that finds a
+    node or edge left with no evidence after this must drop it only when that flag
+    is set: a fact that became evidence-less *because* a dangling ref was stripped
+    here is dropped silently (see the node loop and ``_keep_edges`` in ``extract``),
+    but a fact the model emitted with an already-empty ``chunks`` keeps its previous
+    behavior (a node is still kept with no evidence; an EXTRACTED edge still fails
+    the batch closed when ``GraphEdge`` rejects it for having no evidence). The flag
+    survives ``_remap_endpoints`` (a plain dict union keeps extra keys) and is OR-ed
+    together by ``_dedupe_edges`` when two raw edges under the same id/shape merge.
+    Returns the cleaned items and how many refs were dropped in total.
+    """
+
+    cleaned: list[dict[str, object]] = []
+    dangling = 0
+    for item in items:
+        chunks = _strings(item, "chunks")
+        kept = tuple(dict.fromkeys(ref for ref in chunks if ref in refs))
+        dangling += len(chunks) - len(kept)
+        patch: dict[str, object] = {_HAD_REFS_BEFORE_STRIP: bool(chunks)}
+        if len(kept) != len(chunks):
+            patch["chunks"] = list(kept)
+        cleaned.append(item | patch)
+    return tuple(cleaned), dangling
+
+
 def _cited_refs(
     value: dict[str, object], refs: Mapping[str, Mapping[str, object]]
 ) -> tuple[str, ...]:
     """The chunk refs a fact cites, deduplicated in first-cited order.
 
-    A ref outside this batch fails the whole batch closed: the model may only ground
-    facts in chunks it was actually given.
+    Callers run this only after ``_strip_dangling_refs`` has removed any ref outside
+    this batch, so the ``ValueError`` below is a defensive invariant, not the normal
+    path for a dangling ref.
     """
 
     cited: list[str] = []
@@ -523,20 +652,37 @@ def _keep_edges(
     edges_raw: tuple[dict[str, object], ...],
     provenance_raw: tuple[dict[str, object], ...],
     node_ids: set[str],
-) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int]:
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int, int]:
     """Drop edges outside the vocabulary or batch, then cascade to their provenance.
 
     An edge is dropped when its relationType is outside RELATION_TYPES, either endpoint
-    is not among this batch's node ids, or both endpoints are the same node (e.g. after
-    a duplicate node was merged into the other endpoint). Dropping an edge also drops
-    the provenance record that cites it (by edgeId), and any INFERRED edge whose
-    provenance lists a dropped edge id as an input fact is dropped in turn, repeating
-    until no further edge is dropped.
+    is not among this batch's node ids, both endpoints are the same node (e.g. after a
+    duplicate node was merged into the other endpoint), or it is EXTRACTED, left with no
+    chunk refs, and ``_HAD_REFS_BEFORE_STRIP`` is set -- meaning every ref it cited was
+    outside the batch and was stripped by ``_strip_dangling_refs`` upstream, so no
+    evidence survives for the fact and the edge is dropped rather than failing the whole
+    batch. An EXTRACTED edge the model emitted with an already-empty ``chunks`` (the flag
+    unset) is *not* dropped here: it keeps its previous behavior of failing the batch
+    closed when ``GraphEdge`` rejects it for having no evidence. An INFERRED edge's
+    chunks are legitimately empty by design and is never dropped on either basis.
+    Dropping an edge also drops the provenance record that cites it (by edgeId), and any
+    INFERRED edge whose provenance lists a dropped edge id as an input fact is dropped in
+    turn, repeating until no further edge is dropped. Returns the kept edges, the kept
+    provenance, the total number of edges dropped, and how many of those were dropped
+    specifically for the EXTRACTED-with-stripped-evidence reason above (counted
+    separately so it is distinguishable from the other drop reasons on the span).
     """
     provenance_by_edge: dict[object, dict[str, object]] = {
         item.get("edgeId"): item for item in provenance_raw
     }
-    dropped_ids: set[object] = {
+    no_evidence_ids: set[object] = {
+        item.get("id")
+        for item in edges_raw
+        if item.get("origin") == "EXTRACTED"
+        and not item.get("chunks")
+        and item.get(_HAD_REFS_BEFORE_STRIP)
+    }
+    dropped_ids: set[object] = no_evidence_ids | {
         item.get("id")
         for item in edges_raw
         if item.get("relationType") not in RELATION_TYPES
@@ -560,7 +706,7 @@ def _keep_edges(
     kept_provenance = tuple(
         item for item in provenance_raw if item.get("edgeId") not in dropped_ids
     )
-    return kept_edges, kept_provenance, len(dropped_ids)
+    return kept_edges, kept_provenance, len(dropped_ids), len(no_evidence_ids)
 
 
 def _dedupe_edges(
@@ -605,6 +751,13 @@ def _dedupe_edges(
             merged["chunks"] = list(dict.fromkeys([*chunks, *extra]))
         if type(confidence) in {int, float} and type(other) in {int, float}:
             merged["confidence"] = max(cast(float, confidence), cast(float, other))
+        # Union the "had refs before stripping" flag too: if either raw edge under
+        # this id/shape originally cited a ref, the merged edge did -- relevant only
+        # when the union above still leaves ``chunks`` empty (see
+        # ``_HAD_REFS_BEFORE_STRIP`` in ``_strip_dangling_refs``).
+        merged[_HAD_REFS_BEFORE_STRIP] = bool(survivor.get(_HAD_REFS_BEFORE_STRIP)) or bool(
+            item.get(_HAD_REFS_BEFORE_STRIP)
+        )
         kept[survivor_id] = merged
     provenance: list[dict[str, object]] = []
     claimed: set[object] = set()

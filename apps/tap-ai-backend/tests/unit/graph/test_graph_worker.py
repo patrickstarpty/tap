@@ -241,6 +241,43 @@ async def test_failed_batch_retries_with_backoff_then_partial(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
+async def test_failed_batch_logs_message_and_stack_trace(monkeypatch, caplog) -> None:
+    # A batch failure used to record only the exception class name (``RuntimeError``),
+    # with no message or stack trace anywhere -- undiagnosable once it reached a real
+    # failure like "graph extraction cites a dangling chunk ref". The worker must log
+    # the message and stack trace itself (the batch's own failure_code is unchanged).
+    jobs = InMemoryGraphJobStore()
+    await _requested_job(jobs)
+    extractor = CountingExtractor(fail_batch_indices=frozenset({0}))
+
+    async def _no_sleep(seconds: float) -> None:
+        return None
+
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=3,
+        sleep=_no_sleep,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    with caplog.at_level("WARNING"):
+        await worker.run_once(limit=1)
+
+    records = [
+        record for record in caplog.records if "graph extraction batch failed" in record.message
+    ]
+    assert records, "expected a batch failure log record"
+    assert all("synthetic batch failure" in record.message for record in records)
+    assert all("failure_code=RuntimeError" in record.message for record in records)
+    assert all(record.exc_info is not None for record in records)
+
+
+@pytest.mark.asyncio
 async def test_resume_skips_ready_batches(monkeypatch) -> None:
     jobs = InMemoryGraphJobStore()
     job = await _requested_job(jobs)
