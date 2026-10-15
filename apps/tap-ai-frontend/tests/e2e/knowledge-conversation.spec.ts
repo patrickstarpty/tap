@@ -138,6 +138,18 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     )
     .toMatch(/completed|abstained/u);
 
+  // AnswerFeedback only renders for a "completed" turn (shouldShowAnswerFeedback
+  // in TapperWorkspace.tsx); the preceding poll also accepts "abstained", so
+  // assert the stricter state explicitly here to fail fast with a clear
+  // message if the fixture produced an abstained answer instead.
+  const preFeedbackStateResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}`,
+  );
+  const preFeedbackStateBody = (await preFeedbackStateResponse.json()) as {
+    turns: Array<{ state: string }>;
+  };
+  expect(preFeedbackStateBody.turns[0]?.state).toBe("completed");
+
   const notHelpfulButton = page.getByRole("button", {
     name: /^(Not helpful|没帮助)$/u,
   });
