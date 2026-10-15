@@ -448,6 +448,8 @@ def test_trace_or_citation_conflict_rolls_back_the_whole_snapshot() -> None:
             await clean(engine)
             await engine.dispose()
 
+    asyncio.run(scenario())
+
 
 def test_frozen_snapshot_resume_with_same_trace_id_is_idempotent() -> None:
     """`save_frozen_answer_with_citations` (the `allow_historical` path a resumed chat
@@ -517,8 +519,6 @@ def test_frozen_snapshot_resume_with_different_content_for_same_trace_id_raises(
         finally:
             await clean(engine)
             await engine.dispose()
-
-    asyncio.run(scenario())
 
     asyncio.run(scenario())
 

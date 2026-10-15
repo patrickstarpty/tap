@@ -1473,8 +1473,8 @@ class MysqlDocumentRepository:
         `knowledge_answer_snapshot.trace_id` is the primary key, so re-running the plain
         INSERT below would raise `IntegrityError`. If an existing row's content exactly
         matches what this call would have written, treat it as already saved and return
-        `True`; a mismatch is a genuine conflict and the caller proceeds to the insert,
-        which fails as before.
+        `True`; a mismatch is a genuine conflict, so this raises `AnswerSnapshotUnavailable`
+        directly rather than letting the caller fall through to the insert.
         """
         existing = (
             (
