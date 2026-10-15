@@ -51,6 +51,7 @@ import {
 } from "../../features/conversations/api/queries";
 import { TracePanel } from "../../features/conversations/trace/TracePanel";
 import { ModelCallDrawer } from "../../features/conversations/trace/ModelCallDrawer";
+import { AnswerFeedback } from "../../features/conversations/feedback/AnswerFeedback";
 import {
   parseInsightsHandoff,
   type InsightsHandoff,
@@ -752,6 +753,15 @@ function AssistantResponse({
                 edgeCitationCount={edgeCitationCount}
                 graphContext={graphContext}
               />
+              {turn.status === "completed" ? (
+                <AnswerFeedback
+                  projectId={projectId}
+                  conversationId={conversationId}
+                  turnId={turn.id}
+                  locale={turn.locale}
+                  initialValue={turn.myFeedback ?? null}
+                />
+              ) : null}
               <DurableTracePanel
                 projectId={projectId}
                 conversationId={conversationId}
@@ -1533,6 +1543,13 @@ export function TapperWorkspace() {
         response: streamed?.response ?? null,
         graphContext: streamed?.graphContext ?? null,
         traceId: turn.traceId ?? null,
+        myFeedback:
+          turn.myFeedback == null
+            ? null
+            : {
+                rating: turn.myFeedback.rating,
+                comment: turn.myFeedback.comment ?? null,
+              },
         attempt: turn.attempt,
         status: ["completed", "abstained", "canceled", "failed"].includes(
           turn.state,

@@ -1,6 +1,7 @@
 import type { RetrievalAnswerResponse } from "../../../features/knowledge/api/types";
 import type { InsightsExplanationResult } from "../../../features/conversations/api/client";
 import type { GraphContextSummary } from "../../../features/conversations/model/stream";
+import type { FeedbackValue } from "../../../features/conversations/feedback/AnswerFeedback";
 
 export type Locale = "en" | "zh";
 
@@ -48,6 +49,7 @@ export interface AssistantTurn {
   response?: RetrievalAnswerResponse | null;
   graphContext?: GraphContextSummary | null;
   traceId?: string | null;
+  myFeedback?: FeedbackValue | null;
   attempt?: number;
   insightsExplanation?: InsightsExplanationResult;
   insightsQueryId?: string;
