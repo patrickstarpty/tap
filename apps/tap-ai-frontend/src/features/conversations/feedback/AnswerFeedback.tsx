@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button, Input } from "antd";
 import {
   DislikeFilled,
@@ -45,18 +45,35 @@ export function AnswerFeedback({
 }) {
   const t = (en: string, zh: string) => (locale === "zh" ? zh : en);
   const commentInputId = useId();
+  const upButtonRef = useRef<HTMLButtonElement>(null);
   const downButtonRef = useRef<HTMLButtonElement>(null);
   const [value, setValue] = useState<FeedbackValue | null>(initialValue);
   const [commentOpen, setCommentOpen] = useState(false);
   const [comment, setComment] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Which button (if any) should regain focus once the in-flight request
+  // settles. 👍/👎 are `disabled` while `busy` (fix round 1's guard
+  // against rapid clicks), and a browser blurs an element the instant it
+  // is disabled — so calling `.focus()` synchronously from a mutation's
+  // `onSuccess` (which TanStack Query v5 runs before `isPending` flips
+  // back to false) is a silent no-op and focus falls through to <body>.
+  // Requesting focus via this flag and applying it in the effect below,
+  // which only fires once `busy` is actually false, fixes that race for
+  // Submit, Skip and a retract alike.
+  const [pendingFocus, setPendingFocus] = useState<"up" | "down" | null>(null);
   const feedback = useTurnFeedback(projectId, conversationId);
   const busy = feedback.isPending;
+
+  useEffect(() => {
+    if (busy || pendingFocus === null) return;
+    (pendingFocus === "up" ? upButtonRef : downButtonRef).current?.focus();
+    setPendingFocus(null);
+  }, [busy, pendingFocus]);
 
   const closeComment = () => {
     setCommentOpen(false);
     setComment("");
-    downButtonRef.current?.focus();
+    setPendingFocus("down");
   };
 
   // Saves a rating/retraction and, on failure, restores the *entire* prior
@@ -97,6 +114,9 @@ export function AnswerFeedback({
     const snapshot = { value, commentOpen, comment };
     setCommentOpen(false);
     setComment("");
+    // 👍 never opens the comment box, so the click's own button is always
+    // the right place for focus to land back on once busy clears.
+    setPendingFocus("up");
     if (value?.rating === "up") {
       save(null, null, snapshot);
       return;
@@ -113,11 +133,18 @@ export function AnswerFeedback({
     const snapshot = { value, commentOpen, comment };
     if (value?.rating === "down") {
       // Already rated down: a second click retracts it, symmetric with 👍.
+      // The box stays closed throughout, so — like 👍 — focus belongs
+      // back on 👎 itself once the request settles.
       setCommentOpen(false);
       setComment("");
+      setPendingFocus("down");
       save(null, null, snapshot);
       return;
     }
+    // Opening the comment box hands focus to its (autoFocus) textarea, so
+    // no `pendingFocus` request here — reclaiming 👎 once this PUT
+    // settles would otherwise yank focus away from the box the user is
+    // about to type into.
     setComment("");
     setCommentOpen(true);
     save(
@@ -159,6 +186,7 @@ export function AnswerFeedback({
   return (
     <div className="tap-answer-feedback" aria-busy={busy}>
       <Button
+        ref={upButtonRef}
         type="text"
         size="small"
         disabled={busy}

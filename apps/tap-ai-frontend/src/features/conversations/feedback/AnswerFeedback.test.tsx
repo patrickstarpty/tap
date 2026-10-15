@@ -248,6 +248,64 @@ describe("AnswerFeedback", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("returns focus to the not-helpful button after a successful Submit, even though it was disabled mid-request", async () => {
+    const submitResponse = deferred<Response>();
+    let call = 0;
+    const fetcher = vi.fn(async () => {
+      call += 1;
+      if (call === 1) return json({ rating: "down", comment: null });
+      return submitResponse.promise;
+    });
+    vi.stubGlobal("fetch", fetcher);
+    renderFeedback();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Not helpful" }));
+    const textbox = await screen.findByRole("textbox", {
+      name: "Add a comment (optional)",
+    });
+    await user.type(textbox, "needs more detail");
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+
+    // While the Submit PUT is in flight, 👎 is disabled (the busy guard
+    // from fix round 1) — exercising the exact window in which calling
+    // .focus() on it is a silent no-op.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Not helpful" }),
+      ).toBeDisabled(),
+    );
+    submitResponse.resolve(
+      json({ rating: "down", comment: "needs more detail" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("textbox", { name: "Add a comment (optional)" }),
+      ).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Not helpful" })).toHaveFocus(),
+    );
+  });
+
+  it("returns focus to the not-helpful button after Skip", async () => {
+    const fetcher = vi.fn(async () => json({ rating: "down", comment: null }));
+    vi.stubGlobal("fetch", fetcher);
+    renderFeedback();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Not helpful" }));
+    await screen.findByRole("textbox", { name: "Add a comment (optional)" });
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Not helpful" })).toHaveFocus(),
+    );
+  });
+
   it("shows the Chinese error message when a request fails", async () => {
     vi.stubGlobal(
       "fetch",
