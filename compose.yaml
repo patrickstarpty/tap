@@ -246,8 +246,8 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     cpus: 2.0
-    mem_limit: 1g
-    memswap_limit: 1g
+    mem_limit: 2g
+    memswap_limit: 2g
     pids_limit: 512
     depends_on:
       langfuse-postgres:
@@ -256,6 +256,8 @@ services:
       default: {}
       langfuse-insights: {}
     environment:
+      HOSTNAME: 0.0.0.0
+      NODE_OPTIONS: "--max-old-space-size=1536"
       DATABASE_URL: postgres://${LANGFUSE_POSTGRES_USER:-tap_langfuse}:${LANGFUSE_POSTGRES_PASSWORD:-tap-local-langfuse-postgres}@langfuse-postgres:5432/${LANGFUSE_POSTGRES_DB:-langfuse}
       NEXTAUTH_URL: http://127.0.0.1:${LANGFUSE_PORT:-23000}
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-tap-local-langfuse-nextauth-secret}

@@ -4,7 +4,8 @@
 #      ClickHouse, which lives in its own Compose project (never grants
 #      access to tap_insights.*);
 #   2. create the langfuse MinIO bucket on tap-minio, which lives in the
-#      Tapper demo Compose project, via a one-off mc container.
+#      Tapper demo Compose project, through its loopback S3 port with the
+#      backend's pinned botocore (no extra container image).
 # Run via `make langfuse-up` after the insights ClickHouse is healthy and the
 # Tapper demo's redis/tap-minio are running.
 
@@ -28,7 +29,7 @@ LANGFUSE_CLICKHOUSE_USER="${LANGFUSE_CLICKHOUSE_USER:-tap_langfuse}"
 LANGFUSE_CLICKHOUSE_PASSWORD="${LANGFUSE_CLICKHOUSE_PASSWORD:-tap-local-langfuse}"
 TAPPER_S3_ACCESS_KEY="${TAPPER_S3_ACCESS_KEY:-tap-object-user}"
 TAPPER_S3_SECRET_KEY="${TAPPER_S3_SECRET_KEY:-tap-local-object-password}"
-LANGFUSE_MC_IMAGE="${LANGFUSE_MC_IMAGE:-quay.io/minio/mc:RELEASE.2025-02-04T04-57-50Z}"
+TAPPER_S3_PORT="${TAPPER_S3_PORT:-19000}"
 LANGFUSE_S3_BUCKET="langfuse"
 
 compose_file="$repo_root/compose.yaml"
@@ -68,14 +69,34 @@ if [[ -z "$(docker compose -f "$compose_file" -p "$TAP_TAPPER_COMPOSE_PROJECT" p
   echo "tap-minio is not running in Compose project $TAP_TAPPER_COMPOSE_PROJECT; run make demo-up first" >&2
   exit 1
 fi
-# tap-minio's image (deploy/minio/Dockerfile) ships only /minio and
-# /minio-health, no mc client, so the bucket is created from a one-off,
-# pinned minio/mc container on the Tapper demo project's own default
-# network (the network docker compose always creates for that project).
-docker run --rm \
-  --network "${TAP_TAPPER_COMPOSE_PROJECT}_default" \
-  -e "MC_HOST_langfuselocal=http://${TAPPER_S3_ACCESS_KEY}:${TAPPER_S3_SECRET_KEY}@tap-minio:9000" \
-  "$LANGFUSE_MC_IMAGE" \
-  mb --ignore-existing "langfuselocal/${LANGFUSE_S3_BUCKET}"
+# tap-minio's image (deploy/minio/Dockerfile) ships no mc client, and the
+# public mc images are not reliably pullable, so the bucket is created through
+# tap-minio's loopback port with the backend's pinned botocore. Credentials
+# travel in the environment, never in argv.
+TAPPER_S3_ACCESS_KEY="$TAPPER_S3_ACCESS_KEY" \
+TAPPER_S3_SECRET_KEY="$TAPPER_S3_SECRET_KEY" \
+LANGFUSE_S3_ENDPOINT="http://127.0.0.1:${TAPPER_S3_PORT}" \
+LANGFUSE_S3_BUCKET="$LANGFUSE_S3_BUCKET" \
+uv run --project "$repo_root/apps/tap-ai-backend" python - <<'PY'
+import os
+
+import botocore.session
+from botocore.config import Config
+from botocore.exceptions import ClientError
+
+client = botocore.session.get_session().create_client(
+    "s3",
+    endpoint_url=os.environ["LANGFUSE_S3_ENDPOINT"],
+    aws_access_key_id=os.environ["TAPPER_S3_ACCESS_KEY"],
+    aws_secret_access_key=os.environ["TAPPER_S3_SECRET_KEY"],
+    region_name="us-east-1",
+    config=Config(s3={"addressing_style": "path"}),
+)
+try:
+    client.create_bucket(Bucket=os.environ["LANGFUSE_S3_BUCKET"])
+except ClientError as error:
+    if error.response["Error"]["Code"] not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
+        raise
+PY
 
 echo "bootstrap: done"
