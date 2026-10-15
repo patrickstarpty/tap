@@ -15,7 +15,7 @@ from test_answer_service import (
 )
 
 from tap.modules.access.domain.policy import RetrievalPolicyContext
-from tap.modules.knowledge.application.answers import AnswerService
+from tap.modules.knowledge.application.answers import AnswerService, AnswerSnapshotUnavailable
 
 
 class PhaseKnowledge:
@@ -137,6 +137,47 @@ async def test_save_frozen_persists_snapshot_once():
     assert len(repository.snapshots) == 1
     assert len(composed_repository.snapshots) == 1
     assert repository.snapshots[0].citations == composed_repository.snapshots[0].citations
+
+
+@pytest.mark.asyncio
+async def test_save_frozen_resumed_with_same_trace_id_is_idempotent():
+    """A resumed finalize (after the checkpoint write following save raised, or the
+    worker was killed in between) replays `save_frozen` with the same trace_id; since
+    the content is unchanged, the second call must be a no-op rather than a duplicate
+    snapshot error."""
+    revisions = (ready(),)
+    policy = _frozen_policy()
+    answer_service, repository, _knowledge = _service()
+    request = request_for("doc_a")
+
+    prepared = await answer_service.prepare_frozen(request, revisions, policy, governance=None)
+    generation = await answer_service.generate_frozen(prepared, revisions, policy, governance=None)
+    response = await answer_service.verify_frozen(prepared, generation, revisions, policy)
+
+    await answer_service.save_frozen(response, request.query, revisions)
+    await answer_service.save_frozen(response, request.query, revisions)
+
+    assert len(repository.snapshots) == 1
+
+
+@pytest.mark.asyncio
+async def test_save_frozen_resumed_with_different_content_for_same_trace_id_raises():
+    """A genuine mismatch (same trace_id, different content) is not idempotency -- it
+    must still surface as a conflict, same as the original duplicate-insert failure."""
+    revisions = (ready(),)
+    policy = _frozen_policy()
+    answer_service, repository, _knowledge = _service()
+    request = request_for("doc_a")
+
+    prepared = await answer_service.prepare_frozen(request, revisions, policy, governance=None)
+    generation = await answer_service.generate_frozen(prepared, revisions, policy, governance=None)
+    response = await answer_service.verify_frozen(prepared, generation, revisions, policy)
+    await answer_service.save_frozen(response, request.query, revisions)
+
+    with pytest.raises(AnswerSnapshotUnavailable, match="different content"):
+        await answer_service.save_frozen(response, "a materially different question", revisions)
+
+    assert len(repository.snapshots) == 1
 
 
 @pytest.mark.asyncio
