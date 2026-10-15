@@ -339,10 +339,16 @@ def _ambiguous_alias_keys(
 
     The distinction is who *owns* the key: at most one distinct canonical
     entity may hold it as its own (normalized) label -- the key's "real" name,
-    if any -- with any number of others free to alias to that one owner. A key
-    no entity owns, but that more than one distinct canonical entity glosses
-    only as an alias, has no real anchor and is ambiguous; so is a key more
-    than one distinct canonical entity owns as its own label.
+    if any -- with at most one *other* distinct canonical entity free to alias
+    to that one owner (the ordinary, wanted case: "Underwriting" aliased "核
+    保", merging into the entity actually labelled "核保"). A key more than
+    one distinct canonical entity owns as its own label is ambiguous; so is a
+    key more than one distinct canonical entity glosses as an alias, whether
+    or not one of them also owns it outright -- an owner does not make a key
+    shared by several unrelated entities safe to merge on, it just means one
+    of the several happens to be named that (e.g. a generic "心肌病" node
+    would not rescue three distinct cardiomyopathies that all alias it: none
+    of them may attach, the owner's own cluster included).
     """
 
     owners: dict[tuple[str, tuple[str, ...], str], set[str]] = {}
@@ -362,7 +368,7 @@ def _ambiguous_alias_keys(
         if len(canonicals) > 1:
             ambiguous.add(owner_key)
     for aliaser_key, canonicals in aliasers.items():
-        if aliaser_key not in owners and len(canonicals) > 1:
+        if len(canonicals) > 1:
             ambiguous.add(aliaser_key)
     return frozenset(ambiguous)
 

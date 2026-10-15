@@ -705,6 +705,49 @@ def test_an_alias_shared_by_three_distinct_entities_in_one_document_does_not_mer
     assert all(len(entity.members) == 1 for entity in entities)
 
 
+def test_an_owned_alias_still_does_not_absorb_two_or_more_distinct_aliasers():
+    # A generic "心肌病" node (the key's own owner) does not rescue the shared
+    # alias either: three distinct cardiomyopathies all glossing "心肌病" is
+    # exactly as ambiguous whether or not something else really is named that.
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("n0", "心肌病", "CONCEPT", "心肌病"),
+            ("n1", "扩张型心肌病", "CONCEPT", "扩张型心肌病", ("心肌病",)),
+            ("n2", "肥厚型心肌病", "CONCEPT", "肥厚型心肌病", ("心肌病",)),
+            ("n3", "限制型心肌病", "CONCEPT", "限制型心肌病", ("心肌病",)),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert {entity.label for entity in entities} == {
+        "心肌病",
+        "扩张型心肌病",
+        "肥厚型心肌病",
+        "限制型心肌病",
+    }
+    assert all(len(entity.members) == 1 for entity in entities)
+
+
+def test_an_owned_alias_still_merges_its_one_legitimate_aliaser():
+    # Exactly one distinct aliaser attaching to the key's owner is the ordinary,
+    # wanted case and must keep working regardless of this guard.
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("a1", "Underwriting", "CONCEPT", "underwriting", ("核保",)),
+            ("a2", "核保", "CONCEPT", "核保"),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert len(entities) == 1
+    assert entities[0].rule == "ALIAS"
+    assert len(entities[0].members) == 2
+
+
 def test_an_alias_shared_by_two_grades_in_one_document_does_not_merge_them():
     # Real-model run: an NYHA heart-function grade and an unrelated rheumatoid-
     # arthritis functional grade were both glossed "IV 级"/"Ⅳ级" in the same filing.
