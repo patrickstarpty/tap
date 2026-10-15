@@ -237,6 +237,7 @@ async def test_an_extracted_edge_with_only_dangling_refs_is_dropped(span_recorde
     ]
     assert spans[0].attributes["tap.graph.dangling_refs"] == 1
     assert spans[0].attributes["tap.graph.dropped_edges"] == 1
+    assert spans[0].attributes["tap.graph.dropped_no_evidence_edges"] == 1
 
 
 @pytest.mark.asyncio

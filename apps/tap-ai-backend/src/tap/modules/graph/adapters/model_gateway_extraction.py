@@ -414,8 +414,8 @@ class ModelGatewayGraphExtraction:
                     edges_raw, provenance_raw
                 )
                 node_ids = set(new_nodes) | set(known)
-                kept_edges_raw, kept_provenance_raw, dropped = _keep_edges(
-                    edges_raw, provenance_raw, node_ids
+                kept_edges_raw, kept_provenance_raw, dropped, dropped_no_evidence_edges = (
+                    _keep_edges(edges_raw, provenance_raw, node_ids)
                 )
                 edges = tuple(
                     GraphEdge(
@@ -455,6 +455,9 @@ class ModelGatewayGraphExtraction:
             current_span.set_attribute("tap.graph.rejected_names", rejected_names)
             current_span.set_attribute("tap.graph.dangling_refs", dangling_refs)
             current_span.set_attribute("tap.graph.dropped_no_evidence_nodes", dropped_no_evidence)
+            current_span.set_attribute(
+                "tap.graph.dropped_no_evidence_edges", dropped_no_evidence_edges
+            )
         if not nodes:
             # The model grounded nothing in this batch (boilerplate chunks, no
             # facts to extract): a successful batch with nothing to contribute,
@@ -639,7 +642,7 @@ def _keep_edges(
     edges_raw: tuple[dict[str, object], ...],
     provenance_raw: tuple[dict[str, object], ...],
     node_ids: set[str],
-) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int]:
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int, int]:
     """Drop edges outside the vocabulary or batch, then cascade to their provenance.
 
     An edge is dropped when its relationType is outside RELATION_TYPES, either endpoint
@@ -654,23 +657,28 @@ def _keep_edges(
     chunks are legitimately empty by design and is never dropped on either basis.
     Dropping an edge also drops the provenance record that cites it (by edgeId), and any
     INFERRED edge whose provenance lists a dropped edge id as an input fact is dropped in
-    turn, repeating until no further edge is dropped.
+    turn, repeating until no further edge is dropped. Returns the kept edges, the kept
+    provenance, the total number of edges dropped, and how many of those were dropped
+    specifically for the EXTRACTED-with-stripped-evidence reason above (counted
+    separately so it is distinguishable from the other drop reasons on the span).
     """
     provenance_by_edge: dict[object, dict[str, object]] = {
         item.get("edgeId"): item for item in provenance_raw
     }
-    dropped_ids: set[object] = {
+    no_evidence_ids: set[object] = {
+        item.get("id")
+        for item in edges_raw
+        if item.get("origin") == "EXTRACTED"
+        and not item.get("chunks")
+        and item.get(_HAD_REFS_BEFORE_STRIP)
+    }
+    dropped_ids: set[object] = no_evidence_ids | {
         item.get("id")
         for item in edges_raw
         if item.get("relationType") not in RELATION_TYPES
         or item.get("sourceNodeId") not in node_ids
         or item.get("targetNodeId") not in node_ids
         or item.get("sourceNodeId") == item.get("targetNodeId")
-        or (
-            item.get("origin") == "EXTRACTED"
-            and not item.get("chunks")
-            and item.get(_HAD_REFS_BEFORE_STRIP)
-        )
     }
     changed = True
     while changed:
@@ -688,7 +696,7 @@ def _keep_edges(
     kept_provenance = tuple(
         item for item in provenance_raw if item.get("edgeId") not in dropped_ids
     )
-    return kept_edges, kept_provenance, len(dropped_ids)
+    return kept_edges, kept_provenance, len(dropped_ids), len(no_evidence_ids)
 
 
 def _dedupe_edges(
