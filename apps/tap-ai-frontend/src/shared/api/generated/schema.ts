@@ -206,6 +206,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Turn Feedback */
+        put: operations["conversation_put_turn_feedback"];
+        post?: never;
+        /** Delete Turn Feedback */
+        delete: operations["conversation_delete_turn_feedback"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/trace": {
         parameters: {
             query?: never;
@@ -1417,6 +1435,29 @@ export interface components {
             text: string;
         };
         /**
+         * AnswerFeedbackRequest
+         * @description Owner-only up/down rating on a completed Turn; comment is down-only.
+         */
+        AnswerFeedbackRequest: {
+            /** Comment */
+            comment?: string | null;
+            /**
+             * Rating
+             * @enum {string}
+             */
+            rating: "up" | "down";
+        };
+        /** AnswerFeedbackView */
+        AnswerFeedbackView: {
+            /** Comment */
+            comment?: string | null;
+            /**
+             * Rating
+             * @enum {string}
+             */
+            rating: "up" | "down";
+        };
+        /**
          * AnswerMode
          * @enum {string}
          */
@@ -1866,6 +1907,7 @@ export interface components {
             input: components["schemas"]["ConversationTurnInputView"];
             /** Inputsnapshotdigest */
             inputSnapshotDigest: string;
+            myFeedback?: components["schemas"]["AnswerFeedbackView"] | null;
             /**
              * State
              * @enum {string}
@@ -3113,7 +3155,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-integrity" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-fact-not-found" | "https://tap.example/problems/graph-job-busy" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/graph-version-mismatch" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-projection-not-ready" | "https://tap.example/problems/knowledge-review-not-found" | "https://tap.example/problems/knowledge-review-state-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-not-selectable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
+            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-integrity" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/feedback-not-allowed" | "https://tap.example/problems/graph-fact-not-found" | "https://tap.example/problems/graph-job-busy" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/graph-version-mismatch" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-projection-not-ready" | "https://tap.example/problems/knowledge-review-not-found" | "https://tap.example/problems/knowledge-review-state-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-not-selectable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
         } & ({
             /** @constant */
             detail?: "The grounded answer could not be committed atomically.";
@@ -3348,6 +3390,19 @@ export interface components {
             title?: "Execution provider unavailable";
             /** @constant */
             type?: "https://tap.example/problems/execution-provider-unavailable";
+        } | {
+            /** @constant */
+            detail?: "Feedback is only accepted for a completed Turn.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Feedback not allowed";
+            /** @constant */
+            type?: "https://tap.example/problems/feedback-not-allowed";
         } | {
             /** @constant */
             detail?: "The graph fact is unavailable in this Project snapshot.";
@@ -6162,6 +6217,119 @@ export interface operations {
             };
             /** @description Citation evidence unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_put_turn_feedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                turn_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnswerFeedbackView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation or Turn not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Turn is not completed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_delete_turn_feedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                turn_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation or Turn not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

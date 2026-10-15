@@ -158,6 +158,14 @@
       "type": "https://tap.example/problems/execution-provider-unavailable"
     },
     {
+      "code": "feedback-not-allowed",
+      "detail": "Feedback is only accepted for a completed Turn.",
+      "retryable": false,
+      "status": 409,
+      "title": "Feedback not allowed",
+      "type": "https://tap.example/problems/feedback-not-allowed"
+    },
+    {
       "code": "graph-fact-not-found",
       "detail": "The graph fact is unavailable in this Project snapshot.",
       "retryable": false,

@@ -30,6 +30,7 @@ from tap.modules.chat.application.conversations import (
     ConversationNotFound,
     InvalidConversationCursor,
 )
+from tap.modules.chat.application.feedback import FeedbackNotAllowed
 from tap.modules.graph.domain.jobs import GraphJobBusy
 from tap.modules.graph.ports.project_store import (
     ProjectGraphVersionMismatch as StoreProjectGraphVersionMismatch,
@@ -279,6 +280,12 @@ def register_problem_handlers(app: FastAPI) -> None:
         request: Request, error: InvalidConversationCursor
     ) -> JSONResponse:
         return problem_response("request-validation", request)
+
+    @app.exception_handler(FeedbackNotAllowed)
+    async def feedback_not_allowed_problem(
+        request: Request, _error: FeedbackNotAllowed
+    ) -> JSONResponse:
+        return problem_response("feedback-not-allowed", request)
 
     @app.exception_handler(SourceCommandPending)
     async def source_pending(request: Request, error: SourceCommandPending) -> JSONResponse:

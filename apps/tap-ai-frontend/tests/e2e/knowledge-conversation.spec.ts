@@ -138,6 +138,56 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     )
     .toMatch(/completed|abstained/u);
 
+  // AnswerFeedback only renders for a "completed" turn (shouldShowAnswerFeedback
+  // in TapperWorkspace.tsx); the preceding poll also accepts "abstained", so
+  // assert the stricter state explicitly here to fail fast with a clear
+  // message if the fixture produced an abstained answer instead.
+  const preFeedbackStateResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}`,
+  );
+  const preFeedbackStateBody = (await preFeedbackStateResponse.json()) as {
+    turns: Array<{ state: string }>;
+  };
+  expect(preFeedbackStateBody.turns[0]?.state).toBe("completed");
+
+  const notHelpfulButton = page.getByRole("button", {
+    name: /^(Not helpful|没帮助)$/u,
+  });
+  await expect(notHelpfulButton).toBeVisible();
+  await notHelpfulButton.click();
+  const feedbackComment = `feedback comment ${Date.now()}`;
+  await page
+    .getByRole("textbox", {
+      name: /^(Add a comment \(optional\)|补充说明（可选）)$/u,
+    })
+    .fill(feedbackComment);
+  const feedbackSubmitted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      new URL(response.url()).pathname ===
+        `${root}/conversations/${accepted.conversationId}/turns/${accepted.turnId}/feedback`,
+  );
+  await page.getByRole("button", { name: /^(Submit|提交)$/u }).click();
+  expect((await feedbackSubmitted).status()).toBe(200);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: /^(Not helpful|没帮助)$/u }),
+  ).toHaveAttribute("aria-pressed", "true");
+  const feedbackCheckResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}`,
+  );
+  const feedbackCheckBody = (await feedbackCheckResponse.json()) as {
+    turns: Array<{
+      turnId: string;
+      myFeedback: { rating: string; comment: string | null } | null;
+    }>;
+  };
+  const feedbackTurn = feedbackCheckBody.turns.find(
+    (turn) => turn.turnId === accepted.turnId,
+  );
+  expect(feedbackTurn?.myFeedback?.rating).toBe("down");
+  expect(feedbackTurn?.myFeedback?.comment).toBe(feedbackComment);
+
   const traceResponse = await page.request.get(
     `${root}/conversations/${accepted.conversationId}/turns/${accepted.turnId}/trace`,
   );

@@ -7,7 +7,7 @@ export TAP_INSIGHTS_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
 .PHONY: schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset quality-graph-relations quality-graph-relations-real graph-sample-export graph-bench
-.PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check
+.PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check langfuse-up langfuse-down
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
@@ -242,6 +242,35 @@ quality-test-design-real: ## evaluate existing real outputs after authorized nam
 	@[ -f "$(TAP_QUALITY_TEST_OBSERVATIONS)" ] || { echo "quality-test-design-real requires existing reviewed observations" >&2; exit 2; }
 	uv run --project apps/tap-ai-backend python scripts/evaluate-quality-test-design.py "$(TAP_QUALITY_TEST_OBSERVATIONS)" --report "$(TAP_QUALITY_TEST_REPORT)" --real
 
+langfuse-up: ## start insights ClickHouse, bootstrap langfuse's db/bucket, then start langfuse in the Tapper demo project
+	@set -eu; \
+	tapper_demo_project="$${TAP_TAPPER_COMPOSE_PROJECT:-tap-tapper-demo}"; \
+	case "$$tapper_demo_project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Tapper Compose project" >&2; exit 2;; esac; \
+	[ "$${#tapper_demo_project}" -ge 3 ] && [ "$${#tapper_demo_project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
+	tapper_insights_project="$${TAP_INSIGHTS_COMPOSE_PROJECT:-tap-insights-local}"; \
+	printf '%s' "$$tapper_insights_project" | grep -Eq '^tap-insights-[a-z0-9][a-z0-9_-]{2,48}$$' || { echo "invalid owned TAP Insights Compose project" >&2; exit 2; }; \
+	readonly tapper_demo_project tapper_insights_project; \
+	if [ -f "$(TAP_REPO_ROOT)/.env" ]; then set -a; . "$(TAP_REPO_ROOT)/.env"; set +a; fi; \
+	export TAP_TAPPER_COMPOSE_PROJECT="$$tapper_demo_project"; \
+	export TAP_INSIGHTS_COMPOSE_PROJECT="$$tapper_insights_project"; \
+	if [ -z "$$(docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" ps -q redis)" ]; then \
+		echo "redis is not running in Compose project $$tapper_demo_project; run make demo-up first" >&2; exit 1; \
+	fi; \
+	if [ -z "$$(docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" ps -q tap-minio)" ]; then \
+		echo "tap-minio is not running in Compose project $$tapper_demo_project; run make demo-up first" >&2; exit 1; \
+	fi; \
+	$(MAKE) tap-insights-up TAP_INSIGHTS_COMPOSE_PROJECT="$$tapper_insights_project"; \
+	bash "$(TAP_REPO_ROOT)/deploy/local/langfuse/bootstrap.sh"; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile langfuse up -d --wait --wait-timeout 180 langfuse-postgres langfuse-web langfuse-worker
+
+langfuse-down: ## stop only langfuse containers in the Tapper demo project and preserve named volumes
+	@set -eu; \
+	tapper_demo_project="$${TAP_TAPPER_COMPOSE_PROJECT:-tap-tapper-demo}"; \
+	case "$$tapper_demo_project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Tapper Compose project" >&2; exit 2;; esac; \
+	[ "$${#tapper_demo_project}" -ge 3 ] && [ "$${#tapper_demo_project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile langfuse stop langfuse-web langfuse-worker langfuse-postgres; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile langfuse rm -f langfuse-web langfuse-worker langfuse-postgres
+
 milvus-preflight: ## require Docker with at least 2 vCPU and 8 GiB memory
 	@set -eu; \
 	resources="$$(docker info --format '{{.NCPU}} {{.MemTotal}}')"; \
@@ -354,7 +383,7 @@ demo-down: ## stop only the selected Tapper project and preserve named volumes
 	project="$${TAP_TAPPER_COMPOSE_PROJECT:-tap-tapper-demo}"; \
 	case "$$project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Tapper Compose project" >&2; exit 2;; esac; \
 	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
-	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$project" --profile milvus down --remove-orphans
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$project" --profile milvus --profile langfuse down --remove-orphans
 
 demo-reset: ## explicitly remove only the default Tapper project's volumes
 	@set -eu; \
@@ -364,7 +393,7 @@ demo-reset: ## explicitly remove only the default Tapper project's volumes
 	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
 	[ "$$project" = tap-tapper-demo ] || { echo "Tapper volume reset requires exact project tap-tapper-demo" >&2; exit 2; }; \
 	[ "$$allow_reset" = 1 ] || { echo "Tapper volume reset requires TAP_ALLOW_TAPPER_VOLUME_RESET=1" >&2; exit 2; }; \
-	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$project" --profile milvus down --volumes --remove-orphans
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$project" --profile milvus --profile langfuse down --volumes --remove-orphans
 
 schema-drift: ## compare ORM metadata with an isolated migrated MySQL
 	uv run --project apps/tap-ai-backend python scripts/check-schema-drift.py

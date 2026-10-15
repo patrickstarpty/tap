@@ -25,7 +25,7 @@
 | `governance` | 审计 |
 | `test_management` | 测试方案生成、校验与发布（V1 冻结） |
 
-HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform/{db,messaging,storage}`。进程入口位于 `entrypoints/`：`tapper_api`（API）、`relay_reconciler`（Outbox → Redis Stream 中继），以及 ingestion、parser、graph、generation、test design、prompt suggestion 六个 worker。`legacy_litellm.py` 与 `legacy_loopback_answer_runtime.py` 为遗留路径。
+HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform/{db,messaging,storage}`。进程入口位于 `entrypoints/`：`tapper_api`（API）、`relay_reconciler`（Outbox → Redis Stream 中继），以及 ingestion、parser、graph、generation、test design、prompt suggestion、Langfuse 同步（`tapper_langfuse_sync_worker`，未配置 `LANGFUSE_HOST` 时空转）八个 worker。`legacy_litellm.py` 与 `legacy_loopback_answer_runtime.py` 为遗留路径。
 
 ## 3. 基础设施
 
@@ -40,7 +40,7 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 | `tap-parser` | 隔离的文档解析 |
 | `tap-minio` | 唯一对象存储：原件与中间产物（S3 API） |
 | `clickhouse` | Test Insights 指标（`apps/backend`，不在 V1 交付路径） |
-| `phoenix`（可选，profile `observability`） | OTLP 追踪查看器，仅在设置 `OTEL_EXPORTER_OTLP_ENDPOINT` 时接收导出的 span |
+| `langfuse-web` / `langfuse-worker` / `langfuse-postgres`（可选，profile `langfuse`） | 运营级可观测性看板（成本、延迟、用量、满意度），运行在 Tapper demo compose project 内；复用 insights 的 `clickhouse`（独立库/账号）、主 `redis`（独立 db）与 `tap-minio`（独立 bucket），`make langfuse-up` 先确保 insights ClickHouse 已启动 |
 
 ## 4. 主要数据流
 
@@ -82,7 +82,8 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 
 1. API 处理请求时开启 `turn.request` span 并生成 traceparent，写入 `chat_turn.traceparent` 随 Outbox/Redis Stream 传给 worker。
 2. worker 用同一 traceparent 开启 `turn.execute` span，检索、图谱扩展、模型调用、工具调用各自开子 span；span 结束经 `MysqlSpanExporter` 写入 `trace_span`，每次模型调用同时由 `MysqlModelCallRecorder` 写入 `model_call` 与 `model_call_content`；只要网关收到了响应，token 用量与 LiteLLM 费用（`x-litellm-response-cost`，按列精度 DECIMAL(18,10) 四舍五入）都会记录，包括截断或输出不合 schema 的失败调用。
-3. 若配置了 `OTEL_EXPORTER_OTLP_ENDPOINT`，`BatchSpanProcessor` 同时把 span 导出到该 OTLP 端点（本地为 Phoenix）；未配置时仅写 MySQL。
+3. 若配置了 `OTEL_EXPORTER_OTLP_ENDPOINT`，`BatchSpanProcessor` 同时把 span 导出到该 OTLP 端点；未配置时仅写 MySQL。
+4. `tapper_langfuse_sync_worker` 独立轮询 MySQL（`trace_span.recorded_at`、`answer_feedback.updated_at` 两个游标，`langfuse_sync_cursor` 记录位置），脱敏后把链路数据与反馈推送到可选的本地 Langfuse 运营看板；业务进程不感知该 worker，推送失败记入 `langfuse_sync_failure` 并无限重试，不阻塞游标前进。见[运营可观测性设计](superpowers/specs/2026-10-14-langfuse-ops-observability-design.md)、[可观测性指南](guides/2026-09-30-observability.md)。
 
 ## 5. 与 V1 目标的已知差距
 

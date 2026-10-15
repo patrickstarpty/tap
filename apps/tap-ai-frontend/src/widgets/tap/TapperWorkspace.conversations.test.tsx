@@ -84,6 +84,8 @@ function completedConversation({
   extraSpans = [],
   api = fakeKnowledgeClient(),
   graphContextEvent,
+  state = "completed",
+  myFeedback = null,
   resolvedResources = [
     {
       documentId: "document-1",
@@ -98,6 +100,8 @@ function completedConversation({
   extraSpans?: readonly Record<string, unknown>[];
   api?: ReturnType<typeof fakeKnowledgeClient>;
   graphContextEvent?: Record<string, unknown>;
+  state?: "completed" | "abstained" | "canceled" | "failed";
+  myFeedback?: { rating: "up" | "down"; comment?: string | null } | null;
   resolvedResources?: readonly Record<string, unknown>[];
 }) {
   const events = [
@@ -153,9 +157,10 @@ function completedConversation({
         turns: [
           {
             turnId: "turn-1",
-            state: "completed",
+            state,
             attempt: 1,
             traceId,
+            myFeedback,
             inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
             answerEvidenceSnapshotDigest: null,
             input: {
@@ -255,6 +260,46 @@ it("falls back to activity when traceId is null", async () => {
     screen.queryByRole("button", { name: /^Trace:/u }),
   ).not.toBeInTheDocument();
   expect(screen.getByText(/^Searched/u)).toBeInTheDocument();
+});
+
+it("shows feedback controls restored from myFeedback for a completed, traced turn", async () => {
+  completedConversation({
+    traceId: "trace-1",
+    myFeedback: { rating: "down", comment: "missing a citation" },
+  });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  const up = await screen.findByRole("button", { name: "Helpful" });
+  const down = screen.getByRole("button", { name: "Not helpful" });
+  expect(up).toHaveAttribute("aria-pressed", "false");
+  expect(down).toHaveAttribute("aria-pressed", "true");
+});
+
+it("shows feedback controls for a completed turn with no traceId", async () => {
+  // traceId is nullable and the backend accepts feedback without a trace,
+  // so the AnswerActivity fallback branch must offer rating too, not only
+  // the DurableTracePanel branch.
+  completedConversation({ traceId: null });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    await screen.findByRole("button", { name: "Helpful" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Not helpful" }),
+  ).toBeInTheDocument();
+});
+
+it("does not render feedback controls for a non-completed terminal turn", async () => {
+  completedConversation({ traceId: "trace-1", state: "abstained" });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    screen.queryByRole("button", { name: "Helpful" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Not helpful" }),
+  ).not.toBeInTheDocument();
 });
 
 it("replays a persisted graph.context_ready event and shows the summary line", async () => {
