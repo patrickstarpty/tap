@@ -28,8 +28,41 @@ ALIGNMENT_SUFFIXES: tuple[str, ...] = (
     "clause",
 )
 
+# The model's overlapping categories for an organization or participant: the
+# real-model run split one insurer into a "保险公司" ACTOR node and a "保险公司"
+# SYSTEM node under the identical canonical key. An EXACT match on that key
+# merges across these three regardless of which the batch that minted it
+# picked; every other node type still requires a literal match.
+ORG_PARTICIPANT_TYPES: frozenset[str] = frozenset({"ACTOR", "SYSTEM", "ENTITY"})
 
-def alias_keys(names: Sequence[str]) -> set[str]:
+# One trailing corporate-entity suffix, longest first, dropped only for an
+# organization/participant node so a company's full registered name and its
+# short name key the same ("友邦人寿保险有限公司" and "友邦人寿" both key to
+# "友邦人寿"). A generic role noun such as "保险公司" never ends in one of
+# these (it is shorter than even the shortest suffix below), so it is left
+# alone -- whether a generic term should merge with a specific company is a
+# separate, harder problem this does not attempt (see the report).
+_ORG_NAME_SUFFIXES: tuple[str, ...] = (
+    "保险股份有限公司",
+    "保险有限公司",
+    "股份有限公司",
+    "有限公司",
+)
+
+
+def _merge_type_bucket(node_type: str) -> str:
+    """EXACT-level type bucket for the same canonical key."""
+    return "ORG_PARTICIPANT" if node_type in ORG_PARTICIPANT_TYPES else node_type
+
+
+def _strip_org_suffix(key: str) -> str:
+    for suffix in sorted(_ORG_NAME_SUFFIXES, key=len, reverse=True):
+        if len(key) > len(suffix) and key.endswith(suffix):
+            return key[: -len(suffix)]
+    return key
+
+
+def alias_keys(names: Sequence[str], node_type: str | None = None) -> set[str]:
     """Level-2 (ALIAS) keys of a node's label and aliases.
 
     A reference word or number ("本合同", "第十九条", "this Policy") means a
@@ -43,16 +76,22 @@ def alias_keys(names: Sequence[str]) -> set[str]:
     for name in names:
         cleaned = clean_alias(name)
         if cleaned is not None:
-            keys.add(alignment_key(cleaned))
+            keys.add(alignment_key(cleaned, node_type))
     return keys
 
 
-def alignment_key(text: str) -> str:
-    """Normalize text to a comparison key, stripping one trailing modifier word."""
+def alignment_key(text: str, node_type: str | None = None) -> str:
+    """Normalize text to a comparison key, stripping one trailing modifier word
+    and, for an organization/participant node (``node_type`` in
+    ``ORG_PARTICIPANT_TYPES``), one trailing corporate-entity suffix.
+    """
     key = normalize_key(text)
     for suffix in ALIGNMENT_SUFFIXES:
         if len(key) > len(suffix) and key.endswith(suffix):
-            return key[: -len(suffix)]
+            key = key[: -len(suffix)]
+            break
+    if node_type in ORG_PARTICIPANT_TYPES:
+        key = _strip_org_suffix(key)
     return key
 
 
@@ -78,6 +117,10 @@ class _Cluster:
     labels: list[str] = field(default_factory=list)
     model_aliases: list[str] = field(default_factory=list)
     rule: Literal["EXACT", "ALIAS", "EMBEDDING"] = "EXACT"
+    # Each member's own node type and evidence count: the published type an EXACT
+    # merge across ORG_PARTICIPANT_TYPES settles on is whichever type the most
+    # evidence actually supports, not merely the first batch's guess.
+    type_votes: list[tuple[str, int]] = field(default_factory=list)
 
 
 def _cosine_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> float:
@@ -258,6 +301,26 @@ def _majority(values: Sequence[str]) -> str:
     raise AssertionError("unreachable: values is nonempty")
 
 
+def _majority_type(weighted: Sequence[tuple[str, int]]) -> str:
+    """Pick a cluster's published node type: the type with the most evidence
+    across its merged members, ties broken by first occurrence. An EXACT merge
+    across ``ORG_PARTICIPANT_TYPES`` publishes whichever type's members
+    actually carry the most grounding, not merely the first batch's guess.
+    """
+    totals: dict[str, int] = {}
+    order: list[str] = []
+    for node_type, weight in weighted:
+        if node_type not in totals:
+            order.append(node_type)
+            totals[node_type] = 0
+        totals[node_type] += weight
+    best = max(totals.values())
+    for node_type in order:
+        if totals[node_type] == best:
+            return node_type
+    raise AssertionError("unreachable: weighted is nonempty")
+
+
 def _ambiguous_alias_keys(
     ordered_fragments: Sequence[GraphSnapshotDraft],
 ) -> frozenset[tuple[str, tuple[str, ...], str]]:
@@ -287,11 +350,11 @@ def _ambiguous_alias_keys(
     for fragment in ordered_fragments:
         source = fragment.snapshot.source_revision_ids
         for node in fragment.nodes:
-            canonical = alignment_key(node.canonical_key)
-            label_keys = alias_keys((node.label,))
+            canonical = alignment_key(node.canonical_key, node.node_type)
+            label_keys = alias_keys((node.label,), node.node_type)
             for key in label_keys:
                 owners.setdefault((node.node_type, source, key), set()).add(canonical)
-            for key in alias_keys(node.aliases) - label_keys:
+            for key in alias_keys(node.aliases, node.node_type) - label_keys:
                 aliasers.setdefault((node.node_type, source, key), set()).add(canonical)
 
     ambiguous: set[tuple[str, tuple[str, ...], str]] = set()
@@ -338,14 +401,14 @@ def resolve_entities(
         snapshot_id = fragment.snapshot.snapshot_id
         source = fragment.snapshot.source_revision_ids
         for node in fragment.nodes:
-            key1 = alignment_key(node.canonical_key)
-            label_keys = alias_keys((node.label,))
-            keys2 = alias_keys((node.label, *node.aliases))
+            key1 = alignment_key(node.canonical_key, node.node_type)
+            label_keys = alias_keys((node.label,), node.node_type)
+            keys2 = alias_keys((node.label, *node.aliases), node.node_type)
 
             target: _Cluster | None = None
             rule_used: Literal["EXACT", "ALIAS", "EMBEDDING"] | None = None
 
-            exact_match = exact_index.get((node.node_type, key1))
+            exact_match = exact_index.get((_merge_type_bucket(node.node_type), key1))
             if exact_match is not None:
                 target, rule_used = exact_match, "EXACT"
 
@@ -381,10 +444,11 @@ def resolve_entities(
                 rule_used = "EXACT"
 
             target.members.append(node_key)
+            target.type_votes.append((node.node_type, len(node.evidence_ids)))
             if aligner is not None:
                 aligner.place(node.node_type, node_key, target)
             target.level1_keys.add(key1)
-            exact_index.setdefault((node.node_type, key1), target)
+            exact_index.setdefault((_merge_type_bucket(node.node_type), key1), target)
             target.level2_keys |= keys2
             for key in label_keys:
                 known_position = label_index.get((node.node_type, key))
@@ -403,6 +467,7 @@ def resolve_entities(
     resolved: list[ResolvedEntity] = []
     for cluster in clusters:
         label = _majority(cluster.labels)
+        node_type = _majority_type(cluster.type_votes)
         seen: set[str] = set()
         aliases: list[str] = []
         for text in (*cluster.labels, *cluster.model_aliases):
@@ -411,12 +476,12 @@ def resolve_entities(
                 continue
             seen.add(cleaned)
             aliases.append(cleaned)
-        node_id = project_node_id(cluster.node_type, alignment_key(cluster.canonical_key))
+        node_id = project_node_id(node_type, alignment_key(cluster.canonical_key, node_type))
         resolved.append(
             ResolvedEntity(
                 node_id=node_id,
                 label=label,
-                node_type=cluster.node_type,
+                node_type=node_type,
                 canonical_key=cluster.canonical_key,
                 aliases=tuple(aliases),
                 members=tuple(cluster.members),

@@ -74,6 +74,78 @@ def test_exact_key_merges_across_fragments_and_keeps_majority_label():
     assert len(entity.members) == 3
 
 
+def _evidenced_node(
+    node_id: str, snapshot_id: str, label: str, node_type: str, canonical_key: str, evidence_count: int
+) -> tuple[GraphNode, tuple[Evidence, ...]]:
+    evidence = tuple(
+        Evidence(
+            evidence_id=f"ev-{node_id}-{i}",
+            snapshot_id=snapshot_id,
+            source_revision_id=f"{snapshot_id}-source",
+            document_revision_id=f"{snapshot_id}-document",
+            chunk_id=f"chunk-{node_id}-{i}",
+            anchor={"kind": "text", "start": 0, "end": 4},
+            content_digest=_digest(f"ev-{node_id}-{i}"),
+        )
+        for i in range(evidence_count)
+    )
+    node = GraphNode(
+        node_id, snapshot_id, label, node_type, canonical_key, tuple(e.evidence_id for e in evidence)
+    )
+    return node, evidence
+
+
+def test_actor_system_and_entity_merge_on_the_same_canonical_key():
+    # Real-model run: the same insurer, same canonical key, split into a
+    # "保险公司" ACTOR node (degree 144) and a "保险公司" SYSTEM node across batches.
+    actor_node, actor_evidence = _evidenced_node("n1", "frag-a", "保险公司", "ACTOR", "保险公司", 1)
+    system_node, system_evidence = _evidenced_node("n2", "frag-a", "保险公司", "SYSTEM", "保险公司", 3)
+    fragment = GraphSnapshotDraft(
+        _snapshot("frag-a"),
+        (actor_node, system_node),
+        (),
+        actor_evidence + system_evidence,
+        (),
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert len(entities) == 1
+    entity = entities[0]
+    assert entity.rule == "EXACT"
+    assert len(entity.members) == 2
+    # The SYSTEM copy carries the most evidence, so the merge publishes SYSTEM.
+    assert entity.node_type == "SYSTEM"
+
+
+def test_a_concept_and_a_requirement_still_require_the_same_type_to_merge():
+    # ORG_PARTICIPANT_TYPES only covers ACTOR/SYSTEM/ENTITY; every other type
+    # still requires a literal match -- unchanged from before this feature.
+    a = _fragment("frag-a", [("n1", "免责条款", "CONCEPT", "免责条款")])
+    b = _fragment("frag-b", [("n1", "免责条款", "REQUIREMENT", "免责条款")])
+    assert len(resolve_entities([a, b])) == 2
+
+
+def test_a_company_full_name_and_short_name_merge_by_org_suffix():
+    full_name = _fragment("frag-a", [("n1", "友邦人寿保险有限公司", "ACTOR", "友邦人寿保险有限公司")])
+    short_name = _fragment("frag-b", [("n1", "友邦人寿", "ACTOR", "友邦人寿")])
+
+    entities = resolve_entities([full_name, short_name])
+
+    assert len(entities) == 1
+    assert entities[0].rule == "EXACT"
+    assert len(entities[0].members) == 2
+
+
+def test_a_generic_role_noun_does_not_merge_with_a_specific_company_name():
+    # "保险公司" is a role noun, not a specific company -- it must not merge with
+    # a real insurer's name just because both are ACTOR-typed.
+    generic = _fragment("frag-a", [("n1", "保险公司", "ACTOR", "保险公司")])
+    specific = _fragment("frag-b", [("n1", "友邦人寿", "ACTOR", "友邦人寿")])
+
+    assert len(resolve_entities([generic, specific])) == 2
+
+
 def test_same_key_different_type_stays_separate():
     a = _fragment("frag-a", [("n1", "保单", "ENTITY", "保单")])
     b = _fragment("frag-b", [("n1", "保单", "REQUIREMENT", "保单")])
