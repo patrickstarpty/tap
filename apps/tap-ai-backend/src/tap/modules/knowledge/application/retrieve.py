@@ -619,11 +619,13 @@ class AuthorizedRetrieval:
         s_citations = [self._citation(item) for item in run.response.evidence]
         if relation is not None:
             evidence_content = {item.chunk_id: item.content for item in run.response.evidence}
+            label_chunk_ids = {item.evidence_label: item.chunk_id for item in run.response.evidence}
             reconciled = reconcile_relation_claims(
                 generation,
                 relation,
                 graph_version=relation.graph_version,
                 evidence_content=evidence_content,
+                label_chunk_ids=label_chunk_ids,
             )
             stripped = reconciled.stripped
             if reconciled.claims == () and generation.claims:

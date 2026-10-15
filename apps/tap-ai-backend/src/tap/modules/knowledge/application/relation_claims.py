@@ -3,12 +3,19 @@
 The model may cite an `R` label without the claim text actually naming both
 endpoints of that edge, cite a label that does not exist in this turn's
 `RelationContext`, cite one minted under a stale graph version, or cite a
-relation whose own supporting evidence text never actually discusses both
-endpoints together (the merged graph can associate an edge with a chunk that
-only happens to share surface terms with the edge's labels, e.g. an
-unrelated definitions clause). This module re-checks every `R` label on
-every claim after generation and strips what does not hold, dropping a
-claim entirely only if nothing legitimate is left to cite it.
+relation whose own supporting chunk is not among the S chunks actually
+cited for that claim (the merged graph can associate an edge with a chunk
+that happens to name both endpoints -- e.g. an unrelated definitions clause
+that merely lists one endpoint among several examples -- without that chunk
+having anything to do with the claim being made). This module re-checks
+every `R` label on every claim after generation and strips what does not
+hold, dropping a claim entirely only if nothing legitimate is left to cite
+it. The endpoint-mention text checks (`claim_mentions_both_endpoints`,
+`relation_support_mentions_both_endpoints`) are necessary but not
+sufficient on their own -- a chunk can name both endpoints verbatim while
+being about something else entirely -- so the decisive check is that the
+relation's own supporting chunk(s) overlap the chunk(s) actually cited as
+this claim's (or, failing that, the answer's) S evidence.
 """
 
 from __future__ import annotations
@@ -33,6 +40,7 @@ __all__ = [
     "claim_mentions_both_endpoints",
     "reconcile_relation_claims",
     "relation_support_mentions_both_endpoints",
+    "relation_support_overlaps_cited_chunks",
 ]
 
 
@@ -50,6 +58,7 @@ def reconcile_relation_claims(
     *,
     graph_version: str | None,
     evidence_content: Mapping[str, str] = MappingProxyType({}),
+    label_chunk_ids: Mapping[str, str] = MappingProxyType({}),
 ) -> ReconciledClaims:
     """`evidence_content` maps a chunk ID to its text, for every chunk the
     current turn's S evidence selection resolved (i.e. `Evidence.content`
@@ -60,16 +69,37 @@ def reconcile_relation_claims(
     text and needs no lookup. A chunk missing from the mapping is treated as
     unverifiable, not invalid, so omitting this argument (or passing a
     partial mapping) cannot strip a citation that the stricter check below
-    was never given the means to evaluate."""
+    was never given the means to evaluate.
+
+    `label_chunk_ids` maps an S evidence label to its chunk ID (i.e.
+    `Evidence.chunk_id` keyed by `Evidence.evidence_label`). It drives the
+    decisive overlap check: a relation's own supporting chunk(s) must
+    overlap the chunk(s) this specific claim cites as S evidence, or --
+    when the claim cites no S evidence at all -- the chunk(s) cited as S
+    evidence anywhere in the answer. Omitting it (or passing a partial
+    mapping) degrades to "no S evidence to compare against" for the labels
+    it is missing, which `relation_support_overlaps_cited_chunks` treats as
+    unverifiable, not invalid."""
     by_label = (
         context.by_label()
         if context is not None and context.status is RelationContextStatus.APPLIED
         else {}
     )
+    answer_s_chunk_ids = frozenset(
+        label_chunk_ids[label]
+        for claim in generation.claims
+        for label in claim.evidence_labels
+        if label.startswith("S") and label in label_chunk_ids
+    )
     retained: list[GeneratedClaim] = []
     stripped = 0
     dropped = 0
     for claim in generation.claims:
+        claim_s_chunk_ids = frozenset(
+            label_chunk_ids[label]
+            for label in claim.evidence_labels
+            if label.startswith("S") and label in label_chunk_ids
+        )
         kept_labels: list[str] = []
         for label in claim.evidence_labels:
             if not label.startswith("R"):
@@ -82,6 +112,9 @@ def reconcile_relation_claims(
                 and context.graph_version == graph_version
                 and claim_mentions_both_endpoints(claim.text, relation)
                 and relation_support_mentions_both_endpoints(relation, evidence_content)
+                and relation_support_overlaps_cited_chunks(
+                    relation, claim_s_chunk_ids, answer_s_chunk_ids
+                )
             )
             if is_valid:
                 kept_labels.append(label)
@@ -183,3 +216,29 @@ def relation_support_mentions_both_endpoints(
     if not texts:
         return True
     return any(claim_mentions_both_endpoints(text, relation) for text in texts)
+
+
+def relation_support_overlaps_cited_chunks(
+    relation: RelationEvidence,
+    claim_s_chunk_ids: frozenset[str],
+    answer_s_chunk_ids: frozenset[str],
+) -> bool:
+    """The decisive grounding check: a relation's own supporting chunk(s)
+    must be among the chunks actually cited as S evidence -- by this same
+    claim when it cites any, otherwise by the answer as a whole -- not
+    merely a chunk that happens to name both endpoints in passing. A merged
+    graph can hand a relation support whose chunk is a wholly unrelated
+    definitions clause that lists an endpoint among several unrelated
+    examples (e.g. an exclusion list naming "被保险人的家庭成员，如配偶、
+    ……子女" for an entirely different defined term); the endpoint-mention
+    text checks alone cannot tell that apart from a chunk that actually
+    states the relationship, since both literally contain the endpoint
+    text. Chunk identity can. When neither `claim_s_chunk_ids` nor
+    `answer_s_chunk_ids` has anything to compare against (no S evidence
+    cited anywhere), this does not penalize the relation -- there is
+    nothing here to contradict it."""
+    target = claim_s_chunk_ids or answer_s_chunk_ids
+    if not target:
+        return True
+    support_chunk_ids = {support.chunk_id for support in relation.support}
+    return bool(support_chunk_ids & target)

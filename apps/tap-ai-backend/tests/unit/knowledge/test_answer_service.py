@@ -2036,7 +2036,14 @@ def test_citations_cap_renumbers_surviving_s_citations_contiguously() -> None:
             status=RelationContextStatus.APPLIED,
             graph_version="7",
             relations=(
-                _relation_evidence_for("R1", support_label="S1", support_chunk_id=hits[0].chunk_id),
+                # Points at the chunk cited as "S20" (the other claim's own S
+                # evidence) rather than an uncited one: R1's claim cites no S
+                # evidence of its own, so the overlap check falls back to
+                # whatever the answer cites anywhere, and this fixture must
+                # give it something to overlap with.
+                _relation_evidence_for(
+                    "R1", support_label="S20", support_chunk_id=hits[19].chunk_id
+                ),
             ),
         )
         relation = _FakeRelationAnalysis(context)
