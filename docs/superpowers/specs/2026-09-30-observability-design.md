@@ -13,7 +13,7 @@
 ## 非目标
 
 - 终端用户视角的"答案由来"说明与角色权限区分。
-- 后台任务的前端 trace 界面（数据照常写入，可查 MySQL 或 Phoenix）。
+- 后台任务的前端 trace 界面（数据照常写入，可查 MySQL；运营看板见 [Langfuse 运营可观测性设计](2026-10-14-langfuse-ops-observability-design.md)）。
 - 引入或扩展 LangGraph；现有 `classify → admit → execute` 图的去留由子项目 5 决定。埋点在应用层函数上，不依赖 LangGraph。
 - 流式输出、重试退避（子项目 3）。
 - 按文档清除追踪原文（未来合规需求再做）。
@@ -143,7 +143,7 @@ worker 发出的 `context.assembled`、`stage.completed` 事件字段与严格�
 - 前端：汇总行、瀑布图树形组装、attempt 切换、抽屉按需加载。
 - E2E：隔离旅程中打开一条回答的调用链，核对存在 `turn.execute`、`retrieval.search`、模型调用 span 与 token 汇总（假模型返回确定 usage）。
 - `make check`、`make test`、`make demo-e2e` 通过。
-- 文档：新增 `docs/guides/2026-09-30-observability.md`（数据表、启用 Phoenix、按 trace_id 排障）；更新 `docs/architecture.md`；总纲能力 5 工程完成项在满足后勾选。
+- 文档：新增 `docs/guides/2026-09-30-observability.md`（数据表、启用 Phoenix（已由 [Langfuse 运营可观测性设计](2026-10-14-langfuse-ops-observability-design.md)取代）、按 trace_id 排障）；更新 `docs/architecture.md`；总纲能力 5 工程完成项在满足后勾选。
 
 ## 8. 风险
 
