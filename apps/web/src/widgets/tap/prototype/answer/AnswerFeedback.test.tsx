@@ -64,14 +64,17 @@ it("reveals the Chinese comment box after not helpful", () => {
   expect(screen.getByRole("button", { name: /^跳\s*过$/ })).toBeVisible();
 });
 
-it("hides the comment box after submit or skip", () => {
+it("hides the comment box after submit", () => {
   render(<Wrapper locale="en" />);
   fireEvent.click(screen.getByRole("button", { name: "Not helpful" }));
   fireEvent.click(screen.getByRole("button", { name: "Submit" }));
   expect(
     screen.queryByRole("textbox", { name: "Add a comment (optional)" }),
   ).not.toBeInTheDocument();
+});
 
+it("hides the comment box after skip", () => {
+  render(<Wrapper locale="en" />);
   fireEvent.click(screen.getByRole("button", { name: "Not helpful" }));
   fireEvent.click(screen.getByRole("button", { name: "Skip" }));
   expect(
@@ -143,7 +146,18 @@ it("returns focus to the not-helpful button after skip", () => {
   expect(down).toHaveFocus();
 });
 
-it("only calls onChange on actual rating changes", () => {
+it("retracts not helpful feedback on a second click", () => {
+  render(<Wrapper locale="en" />);
+  const down = screen.getByRole("button", { name: "Not helpful" });
+  fireEvent.click(down);
+  fireEvent.click(down);
+  expect(down).toHaveAttribute("aria-pressed", "false");
+  expect(
+    screen.queryByRole("textbox", { name: "Add a comment (optional)" }),
+  ).not.toBeInTheDocument();
+});
+
+it("only calls onChange on actual rating changes, including retracting a down rating", () => {
   const onChangeSpy = vi.fn();
   render(<ControlledWrapper locale="en" onChangeSpy={onChangeSpy} />);
   const up = screen.getByRole("button", { name: "Helpful" });
@@ -174,19 +188,35 @@ it("only calls onChange on actual rating changes", () => {
     comment: "needs more detail",
   });
 
-  const callsAfterSubmit = onChangeSpy.mock.calls.length;
-
-  // Re-clicking an already-selected 👎 must not send onChange or wipe the
-  // saved comment; it reopens the editor prefilled with that comment.
+  // Re-clicking an already-selected 👎 retracts it, symmetric with 👍, and
+  // closes the comment box.
   fireEvent.click(down);
-  expect(onChangeSpy).toHaveBeenCalledTimes(callsAfterSubmit);
+  expect(onChangeSpy).toHaveBeenLastCalledWith(null);
+  expect(down).toHaveAttribute("aria-pressed", "false");
   expect(
-    screen.getByRole("textbox", { name: "Add a comment (optional)" }),
-  ).toHaveValue("needs more detail");
+    screen.queryByRole("textbox", { name: "Add a comment (optional)" }),
+  ).not.toBeInTheDocument();
 
-  // Skip must not send onChange either.
+  // Switching from down to up still fires a change (not just none<->up).
+  fireEvent.click(down);
+  expect(onChangeSpy).toHaveBeenLastCalledWith({
+    rating: "down",
+    comment: null,
+  });
+  fireEvent.click(up);
+  expect(onChangeSpy).toHaveBeenLastCalledWith({
+    rating: "up",
+    comment: null,
+  });
+});
+
+it("does not call onChange on skip", () => {
+  const onChangeSpy = vi.fn();
+  render(<ControlledWrapper locale="en" onChangeSpy={onChangeSpy} />);
+  fireEvent.click(screen.getByRole("button", { name: "Not helpful" }));
+  onChangeSpy.mockClear();
   fireEvent.click(screen.getByRole("button", { name: "Skip" }));
-  expect(onChangeSpy).toHaveBeenCalledTimes(callsAfterSubmit);
+  expect(onChangeSpy).not.toHaveBeenCalled();
 });
 
 it("submits a null comment for whitespace-only input", () => {

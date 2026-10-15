@@ -44,10 +44,10 @@ export function AnswerFeedback({
 
   const handleDown = () => {
     if (value?.rating === "down") {
-      // Already rated down: reopen the comment editor without sending a
-      // change or discarding the previously saved comment.
-      setComment(value.comment ?? "");
-      setCommentOpen(true);
+      // Already rated down: a second click retracts it, symmetric with 👍.
+      setCommentOpen(false);
+      setComment("");
+      onChange(null);
       return;
     }
     onChange({ rating: "down", comment: null });
