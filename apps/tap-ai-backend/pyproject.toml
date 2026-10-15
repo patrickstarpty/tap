@@ -42,6 +42,7 @@ dev = [
   "pyyaml==6.0.3",
   "reportlab==5.0.1",
   "ruff==0.12.10",
+  "types-pyyaml>=6.0.12.20260906",
 ]
 
 [build-system]

@@ -589,6 +589,7 @@ async def put_turn_feedback(
     except AuthorizationDenied:
         # Do not reveal that the Conversation exists but belongs to another actor.
         raise ConversationNotFound from None
+    assert feedback.rating is not None  # submit() always stores a non-null rating
     return AnswerFeedbackView(rating=feedback.rating, comment=feedback.comment)
 
 

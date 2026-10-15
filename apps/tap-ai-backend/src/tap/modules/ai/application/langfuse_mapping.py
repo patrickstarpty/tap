@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from uuid import NAMESPACE_URL, uuid5
 
 from tap.modules.ai.application.export_redaction import REDACTION_VERSION, ExportRedactor
@@ -22,6 +23,12 @@ from tap.modules.ai.domain.langfuse_sync import (
 )
 
 _ERROR_STATUS = "error"
+
+ObservationLevel = Literal["DEFAULT", "ERROR"]
+
+
+def _level_for(status: str) -> ObservationLevel:
+    return "ERROR" if status == _ERROR_STATUS else "DEFAULT"
 
 
 def feedback_score_id(turn_id: str, actor_id: str) -> str:
@@ -62,7 +69,7 @@ def _observation_for(
     )
 
     if call is None:
-        level = "ERROR" if span.status == _ERROR_STATUS else "DEFAULT"
+        level = _level_for(span.status)
         return LangfuseObservation(
             id=span.span_id,
             parent_id=span.parent_span_id,
@@ -80,7 +87,7 @@ def _observation_for(
             metadata=metadata,
         )
 
-    level = "ERROR" if call.status == _ERROR_STATUS else "DEFAULT"
+    level = _level_for(call.status)
     usage_details: dict[str, int] = {}
     if call.input_tokens is not None:
         usage_details["input"] = call.input_tokens
