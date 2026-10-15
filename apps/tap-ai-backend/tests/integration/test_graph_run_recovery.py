@@ -710,17 +710,36 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
         authority = PublishedKnowledgeAuthority(review)
 
         class Knowledge(KnowledgeHttpService):
+            """Overrides every resumable step directly (rather than just
+            `answer_conversation`) so `answer_steps()` sees this double as
+            already implementing `ConversationAnswerSteps` and uses it as-is,
+            without running the real retrieval/governance steps it inherits
+            from `KnowledgeHttpService` against the synthetic `knowledge=
+            object()` wired into `AnswerService` below."""
+
             calls = 0
 
-            async def answer_conversation(self, *_args, **_kwargs):
+            async def prepare_conversation_answer(self, *_args, **_kwargs):
                 self.calls += 1
-                return SimpleNamespace(
-                    answer="grounded secret",
-                    citations=(),
-                    abstained=False,
-                    trace_id="trace-recovery",
-                    model_dump=lambda **_: {"answer": "grounded secret", "citations": []},
-                )
+                return {
+                    "kind": "final",
+                    "response": SimpleNamespace(
+                        answer="grounded secret",
+                        citations=(),
+                        abstained=False,
+                        trace_id="trace-recovery",
+                        model_dump=lambda **_: {"answer": "grounded secret", "citations": []},
+                    ),
+                }
+
+            async def generate_conversation_answer(self, step, *_args, **_kwargs):
+                return step
+
+            async def verify_conversation_answer(self, step, *_args, **_kwargs):
+                return step
+
+            async def finalize_conversation_answer(self, step, *_args, **_kwargs):
+                return step["response"]
 
         knowledge = Knowledge(
             documents=documents,
