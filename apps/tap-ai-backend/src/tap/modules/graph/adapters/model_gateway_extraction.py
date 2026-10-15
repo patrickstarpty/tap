@@ -71,10 +71,14 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                         "type": "string",
                         "enum": sorted(NODE_TYPES),
                         "description": (
-                            "Use ACTOR for people or roles, SYSTEM for named software or "
-                            "services, REQUIREMENT for requirements or controls, CONCEPT "
-                            "for abstract ideas, and ENTITY only when none of the specific "
-                            "types applies."
+                            "Use ACTOR for people, roles, or organizations -- including an "
+                            "insurance company or institution (保险公司, 某保险股份有限公司) -- "
+                            "SYSTEM only for a named software application or information "
+                            "service, never an organization or an insurance product, "
+                            "REQUIREMENT for requirements or controls, CONCEPT for abstract "
+                            "ideas including an insurance product or contract (重大疾病保险, "
+                            "保险合同), and ENTITY only when none of the specific types "
+                            "applies."
                         ),
                     },
                     "canonicalKey": {"type": "string"},
@@ -114,7 +118,48 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                     "id": {"type": "string"},
                     "sourceNodeId": {"type": "string"},
                     "targetNodeId": {"type": "string"},
-                    "relationType": {"type": "string", "enum": sorted(RELATION_TYPES)},
+                    "relationType": {
+                        "type": "string",
+                        "enum": sorted(RELATION_TYPES),
+                        "description": (
+                            "REQUIRES: the target is jointly necessary for the source (all "
+                            "stated REQUIRES conditions must hold), e.g. 重度黄疸 REQUIRES "
+                            "亚急性重症肝炎诊断; never use it for a from-N-choose-M threshold "
+                            "(下列N项中满足M项) -- use APPLIES_TO for that instead. "
+                            "PART_OF: the source is a sub-clause, sub-item, or finer grade "
+                            "of the target, its parent or whole; direction is always the "
+                            "more specific thing to the more general one, e.g. Ⅱ级 PART_OF "
+                            "心功能状态分级 (not the reverse). Use PART_OF, not EXCEPTION_OF, "
+                            "when the text lists what is 包括/含 (included), e.g. 肥厚型心肌病 "
+                            "PART_OF 心肌病. "
+                            "EXCEPTION_OF: the source is excluded from, or an exception "
+                            "carved out of, the target's coverage or rule, e.g. 责任免除事项 "
+                            "EXCEPTION_OF 保险责任; never use it for an inclusion (包括/含) -- "
+                            "that is PART_OF. "
+                            "APPLIES_TO: a rule, condition, or threshold (including an "
+                            "N-choose-M threshold) applies to the target entity or "
+                            "population, e.g. 犹豫期 APPLIES_TO 新单客户. "
+                            "DEFINES: the source (an insurer, contract, or clause) gives the "
+                            "target its defined meaning, e.g. 保险公司 DEFINES 重度疾病. "
+                            "TRIGGERS: the source event, diagnosis, or condition brings "
+                            "about the target consequence or payout, e.g. 确诊重度疾病 "
+                            "TRIGGERS 豁免保险费. "
+                            "RESPONSIBLE_FOR: the source actor bears the target duty or "
+                            "action, e.g. 保险公司 RESPONSIBLE_FOR 合同内容的变更. "
+                            "CONFLICTS_WITH: the source and target are stated as mutually "
+                            "exclusive alternatives (e.g. a documented three-way choice); "
+                            "connect the alternatives to each other, not to the coverage or "
+                            "outcome they lead to. "
+                            "SUPERSEDES: the source provision replaces the target earlier "
+                            "provision. PRECEDES: the source step or stage happens before "
+                            "the target in a process. USES: the source actor or process "
+                            "uses the target system or resource. VALIDATED_BY: the target "
+                            "validates or confirms the source fact. "
+                            "RELATED_TO: use only when the text states an association that "
+                            "fits none of the above; when unsure, prefer a more specific "
+                            "type over RELATED_TO."
+                        ),
+                    },
                     "relationLabel": {"type": "string"},
                     "origin": {
                         "type": "string",
@@ -157,9 +202,12 @@ GRAPH_EXTRACTION_PROMPT = (
     "cite a ref that is not in this input and never copy chunk text, hashes, or anchors. Use "
     "short stable IDs: n1, n2, ... for new nodes, e1, e2, ... for edges, and p1, p2, ... for "
     "provenance. Every node must list at least one chunk ref. "
-    "Classify every person or role as ACTOR, every named software application or service "
-    "as SYSTEM, and every stated requirement or control as REQUIREMENT. Use ENTITY only "
-    "if none of ACTOR, SYSTEM, REQUIREMENT, or CONCEPT applies. Every "
+    "Classify every person, role, or organization -- including an insurance company or "
+    "institution -- as ACTOR; classify a named software application or information "
+    "service, never an organization or an insurance product, as SYSTEM; classify every "
+    "stated requirement or control as REQUIREMENT; classify an insurance product or "
+    "contract as CONCEPT. Use ENTITY only if none of ACTOR, SYSTEM, REQUIREMENT, or "
+    "CONCEPT applies. Every "
     "EXTRACTED edge must list at least one chunk ref. An INFERRED edge must have an empty "
     "chunks array and exactly one provenance item whose edgeId matches it and whose "
     "inputFactIds are nonempty existing node or edge IDs. Never emit a self-edge; "
@@ -173,8 +221,15 @@ GRAPH_EXTRACTION_PROMPT = (
     "a known entity in nodes, and never emit a new node for the same real-world thing; an "
     "edge refers to a known entity by putting its id in sourceNodeId or targetNodeId. "
     "Classify processes, steps, or workflow stages as PROCESS. "
-    "Use relationType only from the provided enum; put the document's own wording for the "
-    "relation in relationLabel (at most 64 characters). List up to five aliases for a node "
+    "Use relationType only from the provided enum, choosing the most specific type the "
+    "text supports; use RELATED_TO only for a stated association that fits none of the "
+    "other types. PART_OF points from a sub-clause, sub-item, or finer grade to its "
+    "parent or whole (the more specific thing to the more general one); use PART_OF, not "
+    "EXCEPTION_OF, when the text lists what is 包括/含 (included) rather than carving out "
+    "an exception. Use APPLIES_TO, not REQUIRES, for a from-N-choose-M threshold (下列N项"
+    "中满足M项); REQUIRES means every condition listed is jointly necessary. Put the "
+    "document's own wording for the relation in relationLabel (at most 64 characters). "
+    "List up to five aliases for a node "
     "when the text names it differently. A label or alias names the entity itself, never a "
     "pronoun or a reference whose meaning depends on the document (本合同, 本公司, 该产品, "
     "this contract, the company), never a clause, section or schedule number (第十九条, 附表1, "

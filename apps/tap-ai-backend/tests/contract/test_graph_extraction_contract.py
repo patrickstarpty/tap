@@ -142,15 +142,20 @@ async def test_model_gateway_extraction_defines_specific_types_before_entity_fal
     node_schema = gateway.requests[0].schema["properties"]["nodes"]["items"]
     type_schema = node_schema["properties"]["type"]
     assert type_schema["description"] == (
-        "Use ACTOR for people or roles, SYSTEM for named software or services, "
-        "REQUIREMENT for requirements or controls, CONCEPT for abstract ideas, and "
-        "ENTITY only when none of the specific types applies."
+        "Use ACTOR for people, roles, or organizations -- including an insurance "
+        "company or institution (保险公司, 某保险股份有限公司) -- SYSTEM only for a named "
+        "software application or information service, never an organization or an "
+        "insurance product, REQUIREMENT for requirements or controls, CONCEPT for "
+        "abstract ideas including an insurance product or contract (重大疾病保险, "
+        "保险合同), and ENTITY only when none of the specific types applies."
     )
     assert (
-        "Classify every person or role as ACTOR, every named software application or "
-        "service as SYSTEM, and every stated requirement or control as REQUIREMENT. "
-        "Use ENTITY only if none of ACTOR, SYSTEM, REQUIREMENT, or CONCEPT applies."
-        in gateway.requests[0].prompt
+        "Classify every person, role, or organization -- including an insurance "
+        "company or institution -- as ACTOR; classify a named software application or "
+        "information service, never an organization or an insurance product, as "
+        "SYSTEM; classify every stated requirement or control as REQUIREMENT; "
+        "classify an insurance product or contract as CONCEPT. Use ENTITY only if "
+        "none of ACTOR, SYSTEM, REQUIREMENT, or CONCEPT applies." in gateway.requests[0].prompt
     )
 
 
