@@ -275,6 +275,21 @@ it("shows feedback controls restored from myFeedback for a completed, traced tur
   expect(down).toHaveAttribute("aria-pressed", "true");
 });
 
+it("shows feedback controls for a completed turn with no traceId", async () => {
+  // traceId is nullable and the backend accepts feedback without a trace,
+  // so the AnswerActivity fallback branch must offer rating too, not only
+  // the DurableTracePanel branch.
+  completedConversation({ traceId: null });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    await screen.findByRole("button", { name: "Helpful" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Not helpful" }),
+  ).toBeInTheDocument();
+});
+
 it("does not render feedback controls for a non-completed terminal turn", async () => {
   completedConversation({ traceId: "trace-1", state: "abstained" });
 

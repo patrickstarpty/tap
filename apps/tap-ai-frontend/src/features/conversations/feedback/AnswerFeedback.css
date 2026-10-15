@@ -10,9 +10,9 @@
 }
 .tap-answer-feedback-error {
   flex: 1 1 100%;
-  margin: 0;
+  margin: 4px 0 0;
   font-size: 12px;
-  color: var(--tap-danger, #cf1322);
+  color: var(--tap-danger, #9b2c2c);
 }
 .tap-answer-feedback-comment {
   flex: 1 1 100%;

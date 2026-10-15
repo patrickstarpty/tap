@@ -51,6 +51,7 @@ export function AnswerFeedback({
   const [comment, setComment] = useState("");
   const [error, setError] = useState<string | null>(null);
   const feedback = useTurnFeedback(projectId, conversationId);
+  const busy = feedback.isPending;
 
   const closeComment = () => {
     setCommentOpen(false);
@@ -58,10 +59,18 @@ export function AnswerFeedback({
     downButtonRef.current?.focus();
   };
 
+  // Saves a rating/retraction and, on failure, restores the *entire* prior
+  // UI snapshot (rating, comment box open/closed, draft text) — not just
+  // the rating — so a failed 👎 (which optimistically opens the comment
+  // box) closes it again instead of leaving a now-unrated box open.
   const save = (
     requestValue: AnswerFeedbackRequest | null,
-    previous: FeedbackValue | null,
     next: FeedbackValue | null,
+    snapshot: {
+      value: FeedbackValue | null;
+      commentOpen: boolean;
+      comment: string;
+    },
   ) => {
     setError(null);
     setValue(next);
@@ -69,7 +78,9 @@ export function AnswerFeedback({
       { turnId, value: requestValue },
       {
         onError: () => {
-          setValue(previous);
+          setValue(snapshot.value);
+          setCommentOpen(snapshot.commentOpen);
+          setComment(snapshot.comment);
           setError(
             t(
               "Could not save your feedback. Try again.",
@@ -82,57 +93,75 @@ export function AnswerFeedback({
   };
 
   const handleUp = () => {
-    const previous = value;
+    if (busy) return;
+    const snapshot = { value, commentOpen, comment };
     setCommentOpen(false);
     setComment("");
     if (value?.rating === "up") {
-      save(null, previous, null);
+      save(null, null, snapshot);
       return;
     }
-    save({ rating: "up", comment: null }, previous, {
-      rating: "up",
-      comment: null,
-    });
+    save(
+      { rating: "up", comment: null },
+      { rating: "up", comment: null },
+      snapshot,
+    );
   };
 
   const handleDown = () => {
-    const previous = value;
+    if (busy) return;
+    const snapshot = { value, commentOpen, comment };
     if (value?.rating === "down") {
       // Already rated down: a second click retracts it, symmetric with 👍.
       setCommentOpen(false);
       setComment("");
-      save(null, previous, null);
+      save(null, null, snapshot);
       return;
     }
-    save({ rating: "down", comment: null }, previous, {
-      rating: "down",
-      comment: null,
-    });
     setComment("");
     setCommentOpen(true);
+    save(
+      { rating: "down", comment: null },
+      { rating: "down", comment: null },
+      snapshot,
+    );
   };
 
   const submitComment = () => {
-    const previous = value;
+    if (busy) return;
+    const previousValue = value;
     const trimmed = comment.trim();
     const nextComment = trimmed.length > 0 ? trimmed : null;
-    save({ rating: "down", comment: nextComment }, previous, {
-      rating: "down",
-      comment: nextComment,
-    });
-    closeComment();
+    const next = { rating: "down" as const, comment: nextComment };
+    setError(null);
+    setValue(next);
+    feedback.mutate(
+      { turnId, value: next },
+      {
+        onSuccess: () => closeComment(),
+        onError: () => {
+          // Unlike a failed rating click, a failed Submit must not lose the
+          // user's draft or close the box — only the rating value (which
+          // was already saved as "down" before the box opened) reverts, so
+          // the user can edit and retry.
+          setValue(previousValue);
+          setError(
+            t(
+              "Could not save your feedback. Try again.",
+              "反馈保存失败，请重试。",
+            ),
+          );
+        },
+      },
+    );
   };
 
   return (
-    <div className="tap-answer-feedback">
-      {error === null ? null : (
-        <p role="alert" className="tap-answer-feedback-error">
-          {error}
-        </p>
-      )}
+    <div className="tap-answer-feedback" aria-busy={busy}>
       <Button
         type="text"
         size="small"
+        disabled={busy}
         aria-label={t("Helpful", "有帮助")}
         aria-pressed={value?.rating === "up"}
         icon={value?.rating === "up" ? <LikeFilled /> : <LikeOutlined />}
@@ -142,6 +171,7 @@ export function AnswerFeedback({
         ref={downButtonRef}
         type="text"
         size="small"
+        disabled={busy}
         aria-label={t("Not helpful", "没帮助")}
         aria-pressed={value?.rating === "down"}
         icon={
@@ -162,7 +192,12 @@ export function AnswerFeedback({
             onChange={(event) => setComment(event.target.value)}
           />
           <div className="tap-answer-feedback-comment-actions">
-            <Button type="primary" size="small" onClick={submitComment}>
+            <Button
+              type="primary"
+              size="small"
+              disabled={busy}
+              onClick={submitComment}
+            >
               {t("Submit", "提交")}
             </Button>
             <Button type="text" size="small" onClick={closeComment}>
@@ -171,6 +206,11 @@ export function AnswerFeedback({
           </div>
         </div>
       ) : null}
+      {error === null ? null : (
+        <p role="alert" className="tap-answer-feedback-error">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

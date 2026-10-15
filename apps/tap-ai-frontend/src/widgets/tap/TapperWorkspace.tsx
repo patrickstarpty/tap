@@ -263,6 +263,22 @@ function AnswerGraphSummary(props: {
   );
 }
 
+/**
+ * The rating control only makes sense once a Turn's answer is durably
+ * final (not merely terminal — an abstained/canceled/failed Turn has
+ * nothing to rate) and persisted under a real conversation (not the local
+ * "draft" placeholder used before the backend accepts the first message,
+ * which has no feedback endpoint to call). `traceId` is deliberately not
+ * part of this gate: it is nullable and the backend accepts feedback on a
+ * completed Turn with no trace.
+ */
+export function shouldShowAnswerFeedback(
+  turn: { status?: AssistantTurn["status"] },
+  conversationId: string | undefined,
+): boolean {
+  return turn.status === "completed" && conversationId !== undefined;
+}
+
 export function AnswerActivity({
   events,
   locale,
@@ -742,6 +758,15 @@ function AssistantResponse({
         (TERMINAL_TURN_STATUSES as readonly string[]).includes(turn.status);
       return (
         <>
+          {shouldShowAnswerFeedback(turn, conversationId) ? (
+            <AnswerFeedback
+              projectId={projectId}
+              conversationId={conversationId!}
+              turnId={turn.id}
+              locale={turn.locale}
+              initialValue={turn.myFeedback ?? null}
+            />
+          ) : null}
           {isTerminalTurn &&
           turn.traceId != null &&
           conversationId !== undefined ? (
@@ -753,15 +778,6 @@ function AssistantResponse({
                 edgeCitationCount={edgeCitationCount}
                 graphContext={graphContext}
               />
-              {turn.status === "completed" ? (
-                <AnswerFeedback
-                  projectId={projectId}
-                  conversationId={conversationId}
-                  turnId={turn.id}
-                  locale={turn.locale}
-                  initialValue={turn.myFeedback ?? null}
-                />
-              ) : null}
               <DurableTracePanel
                 projectId={projectId}
                 conversationId={conversationId}

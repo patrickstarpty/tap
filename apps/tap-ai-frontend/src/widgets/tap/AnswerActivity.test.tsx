@@ -2,7 +2,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 
-import { AnswerActivity, AnswerProgress } from "./TapperWorkspace";
+import {
+  AnswerActivity,
+  AnswerProgress,
+  shouldShowAnswerFeedback,
+} from "./TapperWorkspace";
 
 it("shows the answer summary line and expands event details on click", async () => {
   render(
@@ -191,5 +195,20 @@ it("describes a running answer using only its selected source snapshot", () => {
   render(<AnswerProgress locale="en" sourceCount={2} />);
   expect(screen.getByRole("status")).toHaveTextContent(
     "Using 2 selected sources · Generating answer…",
+  );
+});
+
+it("gates the answer feedback control to a completed turn with a durable conversation", () => {
+  expect(
+    shouldShowAnswerFeedback({ status: "completed" }, "conversation-1"),
+  ).toBe(true);
+  expect(
+    shouldShowAnswerFeedback({ status: "running" }, "conversation-1"),
+  ).toBe(false);
+  expect(shouldShowAnswerFeedback({ status: "queued" }, "conversation-1")).toBe(
+    false,
+  );
+  expect(shouldShowAnswerFeedback({ status: "completed" }, undefined)).toBe(
+    false,
   );
 });

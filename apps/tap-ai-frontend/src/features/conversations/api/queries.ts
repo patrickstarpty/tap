@@ -397,9 +397,7 @@ export function useTurnFeedback(
       if (client === null || conversationId === null)
         throw new Error("Conversation is unavailable.");
       return value === null
-        ? client
-            .deleteFeedback(conversationId, turnId)
-            .then((): null => null)
+        ? client.deleteFeedback(conversationId, turnId).then((): null => null)
         : client.putFeedback(conversationId, turnId, value);
     },
     onSuccess: (result, { turnId }) => {
