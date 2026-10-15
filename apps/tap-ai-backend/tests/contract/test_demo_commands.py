@@ -524,6 +524,7 @@ case " $* " in
   *" tap.entrypoints.tapper_ingestion_worker "*) exec tapper-child worker ;;
   *" tap.entrypoints.tapper_graph_worker "*) exec tapper-child graph ;;
   *" tap.entrypoints.tapper_suggestion_worker "*) exec tapper-child suggestion ;;
+  *" tap.entrypoints.tapper_langfuse_sync_worker "*) exec tapper-child langfuse ;;
   *" tap.entrypoints.tapper_test_design_worker "*) exec tapper-child test-design ;;
   *" tap.entrypoints.tapper_generation_worker "*) exec tapper-child generation ;;
 esac
@@ -2612,6 +2613,7 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
         "worker",
         "graph",
         "suggestion",
+        "langfuse",
         "test-design",
         "generation",
         "web",
@@ -2622,6 +2624,7 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
         "worker",
         "graph",
         "suggestion",
+        "langfuse",
         "test-design",
         "generation",
         "web",
@@ -2668,7 +2671,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
     )
 
     assert completed.returncode == 17, completed.stderr
-    assert len(_started_child_pids(log)) == 9
+    assert len(_started_child_pids(log)) == 10
     _assert_processes_are_gone(_started_child_pids(log))
     assert "provider-secret" not in completed.stdout + completed.stderr
 
@@ -2689,14 +2692,14 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
     while time.monotonic() < deadline:
         if log.exists():
             current_events = log.read_text(encoding="utf-8").splitlines()
-            if len([line for line in current_events if line.startswith("start ")]) == 9 and any(
+            if len([line for line in current_events if line.startswith("start ")]) == 10 and any(
                 line.startswith("curl-argv ") for line in current_events
             ):
                 break
         time.sleep(0.05)
     else:
         process.kill()
-        raise AssertionError("supervisor did not start all nine children")
+        raise AssertionError("supervisor did not start all ten children")
 
     process.terminate()
     time.sleep(0.1)
@@ -2720,6 +2723,7 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
         "worker",
         "graph",
         "suggestion",
+        "langfuse",
         "test-design",
         "generation",
         "web",
@@ -2777,6 +2781,7 @@ DASHSCOPE_API_BASE=https://provider-secret.invalid/dashscope-api
         "worker",
         "graph",
         "suggestion",
+        "langfuse",
         "test-design",
         "generation",
         "web",
@@ -2878,7 +2883,7 @@ def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
     # Start the shortened readiness window only after the stubs can record TERM.
     # This barrier is bounded separately and remains inside the 10-second cap.
     stub_barrier = """stub_deadline=$(( SECONDS + 5 ))
-while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 8 ]; do
+while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 9 ]; do
   [ "$SECONDS" -lt "$stub_deadline" ] || exit 1
   sleep 0.05
 done
@@ -2914,6 +2919,7 @@ ready_deadline=$(( SECONDS + 2 ))"""
         "worker",
         "graph",
         "suggestion",
+        "langfuse",
         "test-design",
         "generation",
         "web",

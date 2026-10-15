@@ -172,6 +172,12 @@ class TapperSettings:
     insights_expires_at: str = ""
     insights_max_micros_per_token: int = 0
     otel_exporter_otlp_endpoint: str | None = None
+    langfuse_host: str | None = None
+    langfuse_public_key: str | None = field(default=None, repr=False)
+    langfuse_secret_key: str | None = field(default=None, repr=False)
+    langfuse_environment: str = "local"
+    langfuse_sync_settle_seconds: int = 60
+    trace_redaction_rules: Path | None = None
 
     def __post_init__(self) -> None:
         # A deadline too short for the output budget turns a detectable truncation
@@ -385,6 +391,43 @@ class TapperSettings:
             else None
         )
 
+        langfuse_host_raw = values.get("LANGFUSE_HOST", "")
+        if not isinstance(langfuse_host_raw, str):
+            raise ValueError("LANGFUSE_HOST must be a string")
+        langfuse_host = (
+            _loopback_url(
+                values,
+                "LANGFUSE_HOST",
+                langfuse_host_raw,
+                schemes=frozenset({"http"}),
+                allow_userinfo=False,
+                root_only=True,
+            )
+            if langfuse_host_raw
+            else None
+        )
+        langfuse_public_key = _value(values, "LANGFUSE_PUBLIC_KEY", "") or None
+        langfuse_secret_key = _value(values, "LANGFUSE_SECRET_KEY", "") or None
+        if langfuse_host is not None and (not langfuse_public_key or not langfuse_secret_key):
+            raise ValueError(
+                "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required when LANGFUSE_HOST is set"
+            )
+        langfuse_environment = _identity(values, "TAP_LANGFUSE_ENVIRONMENT", "local")
+        langfuse_sync_settle_seconds = _integer(
+            values,
+            "TAP_LANGFUSE_SYNC_SETTLE_SECONDS",
+            60,
+            minimum=10,
+            maximum=86400,
+        )
+        trace_redaction_rules_raw = _value(values, "TAP_TRACE_REDACTION_RULES", "")
+        trace_redaction_rules: Path | None = None
+        if trace_redaction_rules_raw:
+            candidate = Path(trace_redaction_rules_raw)
+            if not candidate.is_file():
+                raise ValueError("TAP_TRACE_REDACTION_RULES must point to an existing file")
+            trace_redaction_rules = candidate
+
         return cls(
             api_host=api_host,
             parser_socket=_value(
@@ -540,6 +583,12 @@ class TapperSettings:
             insights_expires_at=values.get("TAP_INSIGHTS_DELEGATED_EXPIRES_AT", ""),
             insights_max_micros_per_token=price,
             otel_exporter_otlp_endpoint=otel_exporter_otlp_endpoint,
+            langfuse_host=langfuse_host,
+            langfuse_public_key=langfuse_public_key,
+            langfuse_secret_key=langfuse_secret_key,
+            langfuse_environment=langfuse_environment,
+            langfuse_sync_settle_seconds=langfuse_sync_settle_seconds,
+            trace_redaction_rules=trace_redaction_rules,
         )
 
 

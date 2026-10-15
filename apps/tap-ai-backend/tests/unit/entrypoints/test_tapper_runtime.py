@@ -76,6 +76,75 @@ def test_otlp_endpoint_accepts_loopback() -> None:
     assert settings.otel_exporter_otlp_endpoint == "http://127.0.0.1:26006"
 
 
+def test_langfuse_settings_default_to_disabled_and_local() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert settings.langfuse_host is None
+    assert settings.langfuse_public_key is None
+    assert settings.langfuse_secret_key is None
+    assert settings.langfuse_environment == "local"
+    assert settings.langfuse_sync_settle_seconds == 60
+    assert settings.trace_redaction_rules is None
+
+
+def test_settings_reject_non_loopback_langfuse_host() -> None:
+    with pytest.raises(ValueError, match="LANGFUSE_HOST"):
+        TapperSettings.from_mapping(
+            S3_SETTINGS
+            | {
+                "LANGFUSE_HOST": "http://10.0.0.5:23000",
+                "LANGFUSE_PUBLIC_KEY": "pk-lf-local",
+                "LANGFUSE_SECRET_KEY": "sk-lf-local",
+            }
+        )
+
+
+def test_settings_require_keys_when_host_set() -> None:
+    with pytest.raises(ValueError, match="LANGFUSE_PUBLIC_KEY"):
+        TapperSettings.from_mapping(S3_SETTINGS | {"LANGFUSE_HOST": "http://127.0.0.1:23000"})
+
+
+def test_settings_accept_loopback_langfuse_host_with_keys() -> None:
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "LANGFUSE_HOST": "http://127.0.0.1:23000",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-local",
+            "LANGFUSE_SECRET_KEY": "sk-lf-local",
+            "TAP_LANGFUSE_ENVIRONMENT": "tapper-demo",
+            "TAP_LANGFUSE_SYNC_SETTLE_SECONDS": "90",
+        }
+    )
+
+    assert settings.langfuse_host == "http://127.0.0.1:23000"
+    assert settings.langfuse_public_key == "pk-lf-local"
+    assert settings.langfuse_secret_key == "sk-lf-local"
+    assert settings.langfuse_environment == "tapper-demo"
+    assert settings.langfuse_sync_settle_seconds == 90
+
+
+def test_settings_reject_settle_seconds_below_minimum() -> None:
+    with pytest.raises(ValueError, match="TAP_LANGFUSE_SYNC_SETTLE_SECONDS"):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAP_LANGFUSE_SYNC_SETTLE_SECONDS": "9"})
+
+
+def test_settings_reject_missing_trace_redaction_rules_file(tmp_path: Path) -> None:
+    missing = tmp_path / "does-not-exist.yaml"
+    with pytest.raises(ValueError, match="TAP_TRACE_REDACTION_RULES"):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAP_TRACE_REDACTION_RULES": str(missing)})
+
+
+def test_settings_accept_existing_trace_redaction_rules_file(tmp_path: Path) -> None:
+    rules_path = tmp_path / "custom-rules.yaml"
+    rules_path.write_text("rules: []\n", encoding="utf-8")
+
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAP_TRACE_REDACTION_RULES": str(rules_path)}
+    )
+
+    assert settings.trace_redaction_rules == rules_path
+
+
 def test_settings_read_model_roles() -> None:
     settings = TapperSettings.from_mapping(
         S3_SETTINGS
