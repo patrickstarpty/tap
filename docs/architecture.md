@@ -81,7 +81,7 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 **可观测性**
 
 1. API 处理请求时开启 `turn.request` span 并生成 traceparent，写入 `chat_turn.traceparent` 随 Outbox/Redis Stream 传给 worker。
-2. worker 用同一 traceparent 开启 `turn.execute` span，检索、图谱扩展、模型调用、工具调用各自开子 span；span 结束经 `MysqlSpanExporter` 写入 `trace_span`，每次模型调用同时由 `MysqlModelCallRecorder` 写入 `model_call` 与 `model_call_content`；只要网关收到了响应，token 用量与 LiteLLM 费用（`x-litellm-response-cost`，按列精度 DECIMAL(18,10) 四舍五入）都会记录，包括截断或输出不合 schema 的失败调用。
+2. worker 用同一 traceparent 开启 `turn.execute` span，检索、图谱扩展、模型调用、工具调用各自开子 span；span 结束经 `MysqlSpanExporter` 写入 `trace_span`，每次模型调用同时由 `MysqlModelCallRecorder` 写入 `model_call` 与 `model_call_content`；只要网关收到了响应，token 用量与 LiteLLM 费用（`x-litellm-response-cost`，按列精度 DECIMAL(18,10) 四舍五入）都会记录，包括截断或输出不合 schema 的失败调用。共用的 `tap.platform.telemetry.span()` 在异常时把 `trace_span.status_message` 设为 `"ClassName: message"`（消息为空时退化为纯类名，整体截断到 200 字符），而不只是异常类名，让同一异常类下不同原因的失败可区分；`record_exception` 仍附带完整异常事件（含堆栈）。
 3. 若配置了 `OTEL_EXPORTER_OTLP_ENDPOINT`，`BatchSpanProcessor` 同时把 span 导出到该 OTLP 端点（本地为 Phoenix）；未配置时仅写 MySQL。
 
 ## 5. 与 V1 目标的已知差距
