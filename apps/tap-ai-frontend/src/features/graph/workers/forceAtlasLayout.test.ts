@@ -47,6 +47,12 @@ describe("computeForceAtlasPositions", () => {
     }).not.toThrow();
   });
 
+  // Guard, not a repro: graphology's directed-edge uniqueness check is
+  // direction-sensitive even without `multi: true` (confirmed separately —
+  // `addEdgeWithKey("e2", "n2", "n1")` after `addEdgeWithKey("e1", "n1",
+  // "n2")` never throws), so this case never reproduced the crash. Kept to
+  // document that reversed edges between the same pair stay correctly
+  // handled alongside the `multi: true` change.
   it("does not throw when the same pair also has a reversed edge", () => {
     const edges = [edge("e1", "n1", "n2"), edge("e2", "n2", "n1")];
 

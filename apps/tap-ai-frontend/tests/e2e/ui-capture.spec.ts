@@ -514,6 +514,58 @@ test("keeps the graph canvas inside the first screen when a project has many top
   expect(communitiesScrollable).toBe(true);
 });
 
+// Narrow-viewport regression for the fix above: below 821px,
+// `.tap-graph-inspector` becomes an in-flow `grid-row: 3` under the canvas
+// (`TapperWorkspace.css`'s `max-width: 820px` rule), not an overlay — so
+// capping `.tap-graph-workspace`'s height there (as the ≥821px-only fix
+// does not) would leave too little room for the canvas, the caption and the
+// stacked inspector together once a node's detail panel is open. This must
+// keep the pre-fix `min-height` (grow-to-fit) behaviour at 800x900.
+test("keeps the graph canvas and detail panel readable on a narrow viewport with the detail panel open", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 800, height: 900 });
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("tab", { name: "Knowledge Graph" }).click();
+  // Below 820px the community column starts collapsed (`KnowledgeGraph.tsx`
+  // seeds `communitiesOpen` from the same breakpoint) -- wait on the canvas
+  // itself, not the (hidden) community checkboxes.
+  await expect(page.locator(".tap-graph-canvas")).toBeVisible();
+  await waitForGraphLayoutSettled(page);
+
+  await page.getByRole("button", { name: /Health disclosure/u }).click();
+  const nodeDetails = page.getByRole("region", { name: "Node details" });
+  await expect(nodeDetails).toContainText("Aliases");
+
+  // The canvas keeps its unsqueezed (CSS min-height) size at this viewport
+  // both before and after the fix -- it is the *inspector* and the
+  // canvas/inspector overlap below that actually regressed, not the canvas
+  // itself.
+  const canvasBox = await page.locator(".tap-graph-canvas").boundingBox();
+  expect(canvasBox).not.toBeNull();
+  expect(canvasBox!.height).toBeGreaterThanOrEqual(400);
+
+  // The canvas and the stacked detail panel occupy disjoint vertical space
+  // -- the canvas does not overflow onto the panel below it.
+  const inspectorBox = await page.locator(".tap-graph-inspector").boundingBox();
+  expect(inspectorBox).not.toBeNull();
+  expect(canvasBox!.y + canvasBox!.height).toBeLessThanOrEqual(
+    inspectorBox!.y + 1,
+  );
+
+  // The overview caption below the canvas is present and not clipped to
+  // zero height by an over-eager container cap.
+  const caption = page.locator("#tap-library-graph-caption");
+  await expect(caption).toBeVisible();
+  const captionBox = await caption.boundingBox();
+  expect(captionBox).not.toBeNull();
+  expect(captionBox!.height).toBeGreaterThan(0);
+
+  // The detail panel itself has real room -- not squeezed down to a sliver
+  // by a height cap meant for the ≥821px overlay layout.
+  expect(inspectorBox!.height).toBeGreaterThanOrEqual(400);
+});
+
 test("captures the graph overview, node detail, edge citations and highlight", async ({
   page,
 }) => {

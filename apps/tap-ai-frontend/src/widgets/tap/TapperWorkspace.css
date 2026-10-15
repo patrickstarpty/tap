@@ -3280,17 +3280,7 @@
   grid-template-columns: var(--graph-communities-width) minmax(0, 1fr) var(
       --graph-inspector-width
     );
-  /* A bound, not just a floor: with only `min-height`, a community or
-     relation list taller than this (e.g. a project with many topic groups)
-     stretches the whole row past it via `align-items: stretch`, pushing the
-     canvas — and the graph inside it — below the viewport ("the graph
-     appears below the first screen", real-model revalidation report 2 §9
-     Important 1/§5). `height` caps the row at this size regardless of
-     sibling content; `.tap-graph-communities`/`.tap-graph-inspector` scroll
-     their own overflow instead of growing it (see `min-height: 0` below —
-     required for a stretched grid item to actually shrink to fit and
-     scroll rather than reverting to its content size). */
-  height: max(440px, calc(100dvh - 270px));
+  min-height: max(440px, calc(100dvh - 270px));
   gap: 0;
 }
 .tap-graph-workspace[data-communities-open="false"] {
@@ -3301,22 +3291,50 @@
 }
 .tap-graph-communities {
   grid-column: 1;
-  min-height: 0;
   margin-right: 12px;
-  overflow-y: auto;
 }
 .tap-knowledge-graph {
   grid-column: 2;
   display: flex;
   flex-direction: column;
-  min-height: 0;
 }
 .tap-graph-inspector {
   grid-column: 3;
   grid-row: 1;
-  min-height: 0;
   margin-left: 12px;
-  overflow-y: auto;
+}
+/* A bound, not just a floor: with only `min-height`, a community or relation
+   list taller than this (e.g. a project with many topic groups) stretches
+   the whole row past it via `align-items: stretch`, pushing the canvas — and
+   the graph inside it — below the viewport ("the graph appears below the
+   first screen", real-model revalidation report 2 §9 Important 1/§5).
+   `height` caps the row at this size regardless of sibling content;
+   `.tap-graph-communities`/`.tap-graph-inspector` scroll their own overflow
+   instead of growing it (`min-height: 0` lets a stretched grid item actually
+   shrink to fit and scroll, rather than reverting to its content size).
+   Scoped to ≥821px: below that, `.tap-graph-inspector` becomes an in-flow
+   `grid-row: 3` under the canvas instead of an overlay (see the `max-width:
+   820px` rule further down) — stacking it inside a height-capped row leaves
+   too little room for the canvas, the caption and the inspector together
+   (confirmed with a 800x900/node-detail-open capture: canvas squeezed to
+   293px, caption clipped, inspector 325px tall). Only a *minimum* height is
+   safe there, matching the pre-fix behaviour: the workspace is free to grow
+   so the stacked inspector has room, same as before this change. */
+@media (min-width: 821px) {
+  .tap-graph-workspace {
+    height: max(440px, calc(100dvh - 270px));
+  }
+  .tap-graph-communities {
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .tap-knowledge-graph {
+    min-height: 0;
+  }
+  .tap-graph-inspector {
+    min-height: 0;
+    overflow-y: auto;
+  }
 }
 .tap-graph-communities[hidden],
 .tap-graph-inspector[hidden] {
