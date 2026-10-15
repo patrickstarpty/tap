@@ -20,6 +20,7 @@ from tap.modules.ai.adapters.mysql_checkpointer import (
     graph_run,
     graph_settlement,
 )
+from tap.modules.ai.application.chat_graph import CHAT_GRAPH_VERSION, CHAT_STATE_SCHEMA_VERSION
 from tap.modules.ai.application.interaction_graph import (
     GraphVersionConflict,
     InteractionGraph,
@@ -1218,5 +1219,173 @@ async def test_chat_checkpoint_is_fenced_and_cancel_releases_graph_lease(
                 )
                 == 1
             )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_checkpoint_restart_survives_a_crash_right_after_discard(
+    owned_project_mysql, monkeypatch
+) -> None:
+    """A Turn with a legacy `fast-chat-v1` checkpoint is reclaimed and restarted on
+    `tapper-chat-v2`: the `graph_run` row must end up recording the new graph version,
+    and a simulated crash right after `discard` (before the first new checkpoint
+    write lands) must not strand the Turn -- it must stay reclaimable and complete on
+    the next `run_once`."""
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+        )
+        await conversations.create(
+            "chat-legacy-restart", "turn-legacy-restart", "request-legacy-restart", _input()
+        )
+        claimed = (await conversations.repository.claim_queued(limit=1))[0][1]
+
+        async def authorized() -> bool:
+            return True
+
+        async def classify(_state):
+            return {"reasoning_mode": "direct"}
+
+        async def admit(_state):
+            return {"admitted": True}
+
+        async def execute(_state):
+            raise GraphCheckpointRetryable("legacy run interrupted before completion")
+
+        with pytest.raises(GraphCheckpointRetryable):
+            await InteractionGraph(
+                graph_version="fast-chat-v1",
+                state_schema_version=1,
+                checkpointer=conversations.repository.graph_checkpointer(claimed),
+                classify=classify,
+                admit=admit,
+                execute=execute,
+                authorize=authorized,
+            ).start(
+                run_id=claimed.turn_id,
+                payload={"turnId": claimed.turn_id},
+                execution_mode="inline",
+            )
+
+        async with sessions() as session, session.begin():
+            legacy_row = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == "turn-legacy-restart")
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert legacy_row["graph_version"] == "fast-chat-v1"
+            assert legacy_row["status"] == "RUNNING"
+            await session.execute(
+                update(chat_turn)
+                .where(chat_turn.c.turn_id == "turn-legacy-restart")
+                .values(
+                    processing_lease_expires_at=func.utc_timestamp() - text("INTERVAL 1 SECOND")
+                )
+            )
+            await session.execute(
+                update(graph_run)
+                .where(graph_run.c.run_id == "turn-legacy-restart")
+                .values(lease_until=func.utc_timestamp() - text("INTERVAL 1 SECOND"))
+            )
+
+        class Knowledge:
+            calls = 0
+
+            async def answer(self, request):
+                self.calls += 1
+                return SimpleNamespace(
+                    answer="grounded after restart",
+                    citations=(),
+                    abstained=False,
+                    trace_id="trace-legacy-restart",
+                    model_dump=lambda **_: {"answer": "grounded after restart", "citations": []},
+                )
+
+        knowledge = Knowledge()
+        worker = GenerationWorker(conversations, knowledge)
+
+        original_aput = MysqlGraphCheckpointer.aput
+
+        async def fail_every_aput_after_discard(
+            self, config, checkpoint, metadata_value, new_versions
+        ):
+            # Every checkpoint write after discard fails -- simulating the worker
+            # being killed (or losing its connection) before any new checkpoint for
+            # the restarted run lands, not just the first one.
+            raise GraphCheckpointRetryable("connection lost right after discard")
+
+        monkeypatch.setattr(MysqlGraphCheckpointer, "aput", fail_every_aput_after_discard)
+
+        # First run_once: reclaims the legacy Turn, discards its stale checkpoint, and
+        # then every checkpoint write for the fresh `tapper-chat-v2` run fails -- no
+        # new checkpoint ever lands.
+        assert await worker.run_once(limit=1) == 1
+        stranded = (await conversations.load("chat-legacy-restart")).turns[0]
+        assert stranded.state == "running"
+        assert knowledge.calls == 0
+
+        async with sessions() as session:
+            after_crash_row = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == "turn-legacy-restart")
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        # The old `adelete_thread`-based discard left a `CANCELLED` row behind, which
+        # the claim query's reclaim condition (absent, or `RUNNING` with an expired
+        # lease) never matches -- stranding the Turn. After this crash the row must
+        # either be gone entirely or `RUNNING` (reclaimable either way), and if present
+        # it must never carry the discarded legacy `graph_version`.
+        if after_crash_row is not None:
+            assert after_crash_row["status"] == "RUNNING"
+            assert after_crash_row["graph_version"] == CHAT_GRAPH_VERSION
+
+        monkeypatch.setattr(MysqlGraphCheckpointer, "aput", original_aput)
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(chat_turn)
+                .where(chat_turn.c.turn_id == "turn-legacy-restart")
+                .values(
+                    processing_lease_expires_at=func.utc_timestamp() - text("INTERVAL 1 SECOND")
+                )
+            )
+            if after_crash_row is not None:
+                await session.execute(
+                    update(graph_run)
+                    .where(graph_run.c.run_id == "turn-legacy-restart")
+                    .values(lease_until=func.utc_timestamp() - text("INTERVAL 1 SECOND"))
+                )
+
+        # Second run_once: the Turn is still reclaimable (no stale `graph_run` row
+        # blocks it) and the retried start now completes.
+        assert await worker.run_once(limit=1) == 1
+        completed = (await conversations.load("chat-legacy-restart")).turns[0]
+        assert completed.state == "completed"
+        assert knowledge.calls == 1
+
+        async with sessions() as session:
+            final_row = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == "turn-legacy-restart")
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert final_row["graph_version"] == CHAT_GRAPH_VERSION
+        assert final_row["state_schema_version"] == CHAT_STATE_SCHEMA_VERSION
+        assert final_row["status"] == "SUCCEEDED"
     finally:
         await engine.dispose()

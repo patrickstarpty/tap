@@ -174,4 +174,14 @@ class ChatGraph:
         return await self._runner.stored_version(run_id=run_id)
 
     async def discard(self, *, run_id: str) -> None:
-        await self._checkpointer.adelete_thread(run_id)
+        """Discard a stale checkpoint (e.g. from a superseded graph version) before a
+        fresh `start`. Prefers the checkpointer's `arestart_thread`, which leaves the
+        run id in a state that stays reclaimable if the caller crashes before the next
+        checkpoint write; falls back to `adelete_thread` for savers without it (e.g.
+        `InMemorySaver`, which has no stranding-prone backing row to begin with).
+        """
+        restart = getattr(self._checkpointer, "arestart_thread", None)
+        if restart is not None:
+            await restart(run_id)
+        else:
+            await self._checkpointer.adelete_thread(run_id)
