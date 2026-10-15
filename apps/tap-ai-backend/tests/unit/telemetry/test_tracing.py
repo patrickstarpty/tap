@@ -78,9 +78,21 @@ def test_span_marks_error_and_reraises(span_recorder) -> None:
     assert len(spans) == 1
     recorded = spans[0]
     assert recorded.status.status_code == StatusCode.ERROR
-    assert recorded.status.description == "ValueError"
+    # The status carries the message, not just the class name: two failures of the
+    # same exception type for different reasons must be distinguishable from the
+    # span alone.
+    assert recorded.status.description == "ValueError: bad"
     exception_events = [event for event in recorded.events if event.name == "exception"]
     assert len(exception_events) == 1
+
+
+def test_span_status_message_is_bounded_and_falls_back_to_class_name() -> None:
+    from tap.platform.telemetry import error_status_message
+
+    assert error_status_message(ValueError()) == "ValueError"
+    assert error_status_message(ValueError("   ")) == "ValueError"
+    bounded = error_status_message(ValueError("x" * 500))
+    assert bounded == f"ValueError: {'x' * 200}"
 
 
 def test_traceparent_round_trip(span_recorder) -> None:

@@ -36,7 +36,7 @@
 
 - graph job 仍由 `MysqlGraphReadyProjection` 在文档 READY 事务内创建，每个修订一个 job。
 - worker 把修订的切片按顺序切成批次，每批以字符预算 `TAPPER_GRAPH_BATCH_CHARS`（默认 3000 字，超长的单个切片单独成批）为主、块数上限 `TAPPER_GRAPH_BATCH_SIZE`（默认 100）为辅，每批一次 `generate_structured` 调用。每批输出有界：schema 与提示词限定至多 40 个节点、60 条边（按每个节点约 35–60、每条边约 45–60 输出 token 估算，约 6000 token，在 8192 token 预算内），只输出本批原文中出现的实体与关系。解析阶段丢弃重复节点与重复边并计数；响应被截断（`finish_reason=length`、JSON 不完整或顶层 nodes/edges/provenance 超出数组上限；别名超过 5 个由服务端截取前 5 个，不触发拆批）时，对本批做一次二分重试（拆成两半各自抽取），某一半仍失败则保留另一半、该批计入 PARTIAL，两半都失败才记失败，截断不原样重试。调用上下文包含：文档标题、本批切片、**本修订此前批次已抽出、且在本批原文中字面出现的实体清单**（id、label、type、canonicalKey；按出现次数取前 50 个），要求模型的边直接引用已知实体 id，不得在 nodes 中重复输出已知实体；服务端丢弃模型重抄的已知实体（按 id 或 canonical key 识别）并计数，按请求中的已知实体回填被边引用的节点，保证同一文档内 canonical key 稳定。
-- 批次幂等键为（修订 id、批次号、抽取档案摘要）。批次失败按退避重试，`TAPPER_GRAPH_BATCH_RETRIES`（默认 3）次后标记该批失败并继续后续批次。全部批次成功时片段状态 READY；有失败批次时 PARTIAL，仍可合并；全部失败时 FAILED。
+- 批次幂等键为（修订 id、批次号、抽取档案摘要）。批次失败按退避重试，`TAPPER_GRAPH_BATCH_RETRIES`（默认 3）次后标记该批失败并继续后续批次。全部批次成功时片段状态 READY；有失败批次时 PARTIAL，仍可合并；全部失败时 FAILED。批次 `failure_code` 仍是异常类名；worker 额外用 `logger.warning` 记录异常消息与堆栈（不含原文与凭据），抽取 span 的 status 描述带异常消息摘要（`ClassName: message`，截断到 200 字符），用于区分同一异常类名下的不同原因。
 - 批次结果合入同一修订的片段图（现有单文档快照表继续承载，称为**片段图**）；片段图的 `snapshot_id` 不变，批次表记录每批的状态、失败码、重试次数。
 - 节点类型：现有 ACTOR、SYSTEM、REQUIREMENT、CONCEPT、ENTITY 之外增加 PROCESS（流程、步骤、环节）。
 - 关系类型受控词表：REQUIRES、APPLIES_TO、PART_OF、EXCEPTION_OF、SUPERSEDES、TRIGGERS、PRECEDES、VALIDATED_BY、RESPONSIBLE_FOR、USES、DEFINES、CONFLICTS_WITH，兜底 RELATED_TO。模型同时输出自由文本 `relationLabel`（原文表述，≤64 字）供展示；`relation_type` 不在词表内的输出整条边作废并计入批次诊断。
