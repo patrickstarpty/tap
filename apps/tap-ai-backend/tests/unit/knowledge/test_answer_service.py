@@ -1776,6 +1776,148 @@ def test_edge_citation_reuses_s_chunk_fields_and_gets_r_label() -> None:
     asyncio.run(scenario())
 
 
+def test_q14_style_reworded_claim_keeps_r_citation_unrelated_one_still_stripped() -> None:
+    """End-to-end reproduction of the real-model revalidation report's q-14
+    pattern (report 2 §6): one relation whose claim names the entity without
+    the graph node's parenthetical qualifier -- previously lost verbatim
+    matching and now keeps its R citation -- alongside a second relation
+    whose claim names both endpoints but whose own supporting chunk is
+    unrelated to the relationship (the merged graph associated the edge
+    with the wrong evidence) -- still stripped, not let through on label
+    match alone."""
+
+    async def scenario() -> None:
+        search = _SequencedSearchPort(
+            (
+                _relation_hit(
+                    "chunk-s1",
+                    "rev-1",
+                    item_id="item-1",
+                    content="冠状动脉介入手术（非切开心包手术）将触发保险责任给付。",
+                ),
+                # Distinct `logical_chunk_id` from chunk-s1 (whose different
+                # content would otherwise collide under `_relation_hit`'s
+                # shared default and read as the same clause disagreeing with
+                # itself -- `_has_conflicting_sources`'s own concern, not
+                # this test's).
+                replace(
+                    _relation_hit(
+                        "chunk-s2",
+                        "rev-1",
+                        item_id="item-2",
+                        content="体检当天需要空腹，报告将在三个工作日内送达。",
+                        local_rank=2,
+                    ),
+                    logical_chunk_id="h_" + "3" * 64,
+                ),
+            ),
+        )
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text=("冠状动脉介入手术会触发保险责任。\n\n被保险人的子女可以作为被保险人。"),
+                    claims=(
+                        GeneratedClaim(
+                            text="冠状动脉介入手术会触发保险责任。",
+                            evidence_labels=("R1", "S1"),
+                        ),
+                        GeneratedClaim(
+                            text="被保险人的子女可以作为被保险人。",
+                            evidence_labels=("R2", "S2"),
+                        ),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+        reworded_relation = RelationEvidence(
+            label="R1",
+            edge_id="e-reworded",
+            subject_node_id="A",
+            subject_label="冠状动脉介入手术（非切开心包手术）",
+            subject_aliases=(),
+            object_node_id="B",
+            object_label="保险责任",
+            object_aliases=(),
+            relation_type="TRIGGERS",
+            relation_label="TRIGGERS",
+            origin="EXTRACTED",
+            confidence=0.9,
+            support=(
+                RelationSupport(
+                    chunk_id="chunk-s1",
+                    source_revision_id="rev-1",
+                    document_revision_id="rev-1",
+                    content_digest="sha256:" + "a" * 64,
+                    anchor={"page": 1},
+                    evidence_label="S1",
+                ),
+            ),
+            on_path=False,
+        )
+        unrelated_evidence_relation = RelationEvidence(
+            label="R2",
+            edge_id="e-unrelated-evidence",
+            subject_node_id="C",
+            subject_label="被保险人",
+            subject_aliases=(),
+            object_node_id="D",
+            object_label="子女",
+            object_aliases=(),
+            relation_type="RELATED_TO",
+            relation_label="RELATED_TO",
+            origin="EXTRACTED",
+            confidence=0.9,
+            support=(
+                RelationSupport(
+                    chunk_id="chunk-s2",
+                    source_revision_id="rev-1",
+                    document_revision_id="rev-1",
+                    content_digest="sha256:" + "b" * 64,
+                    anchor={"page": 1},
+                    evidence_label="S2",
+                ),
+            ),
+            on_path=False,
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(reworded_relation, unrelated_evidence_relation),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        edge_citations = [citation for citation in response.citations if citation.kind == "edge"]
+        assert len(edge_citations) == 1
+        assert edge_citations[0].edge is not None
+        assert edge_citations[0].edge.relation_type == "TRIGGERS"
+        assert "invalid-relation-citation" in response.degradation_reasons
+
+        reworded_claim = next(
+            claim for claim in response.claims if claim.text == "冠状动脉介入手术会触发保险责任。"
+        )
+        unrelated_claim = next(
+            claim for claim in response.claims if claim.text == "被保险人的子女可以作为被保险人。"
+        )
+        reworded_citation_kinds = {
+            next(c.kind for c in response.citations if c.citation_id == cid)
+            for cid in reworded_claim.citation_ids
+        }
+        unrelated_citation_kinds = {
+            next(c.kind for c in response.citations if c.citation_id == cid)
+            for cid in unrelated_claim.citation_ids
+        }
+        assert "edge" in reworded_citation_kinds
+        assert "edge" not in unrelated_citation_kinds
+
+    asyncio.run(scenario())
+
+
 def _deep_revision_request() -> AnswerRequest:
     return AnswerRequest(
         query="核保流程与健康告知的关系是什么？",
