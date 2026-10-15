@@ -195,7 +195,7 @@ async def test_turn_with_model_absent_from_catalog_is_model_unavailable() -> Non
     sent: list[str] = []
     service = _catalog_backed_service(sent)
 
-    with pytest.raises(AnswerUnavailable, match="^model-unavailable$"):
+    with pytest.raises(AnswerUnavailable, match="^model-rejected$"):
         await service.answer_conversation(
             RetrievalAnswerRequest(query="Hello"), _model_only_turn("removed-model")
         )

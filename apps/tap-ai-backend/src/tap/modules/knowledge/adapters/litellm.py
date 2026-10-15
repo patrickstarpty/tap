@@ -12,6 +12,7 @@ from tap.modules.ai.domain.models import (
     ModelGatewayRejected,
     ModelGatewayUnavailable,
     ModelOperation,
+    ModelOutputTruncated,
     ModelRequest,
     schema_digest,
     text_digest,
@@ -26,7 +27,12 @@ from tap.modules.knowledge.application.relation_analysis import (
 from tap.modules.knowledge.domain.flowchart_paths import flowchart_evidence_record
 from tap.modules.knowledge.domain.models import DocumentAnchor, Evidence
 from tap.modules.knowledge.ports.documents import EmbeddingArtifact
-from tap.modules.knowledge.ports.errors import AnswerUnavailable, ModelUnavailable
+from tap.modules.knowledge.ports.errors import (
+    AnswerRejected,
+    AnswerUnavailable,
+    ModelRejected,
+    ModelUnavailable,
+)
 from tap.modules.knowledge.ports.models import AnswerGeneration, Embedding, EmbeddingUsage
 
 _TAPPER_PLATFORM_INSTRUCTION = (
@@ -261,7 +267,9 @@ class KnowledgeModelGateway:
                 gateway_call_id=result.gateway_call_id,
                 provider_model_id=result.actual_model,
             )
-        except (ModelGatewayRejected, ModelGatewayUnavailable):
+        except (ModelGatewayRejected, ModelOutputTruncated):
+            raise AnswerRejected("model-rejected") from None
+        except ModelGatewayUnavailable:
             raise AnswerUnavailable("model-unavailable") from None
 
     async def embed(self, query: str) -> Embedding:
@@ -301,7 +309,9 @@ class KnowledgeModelGateway:
                 provider_model_id=result.actual_model,
                 usage=usage,
             )
-        except (ModelGatewayRejected, ModelGatewayUnavailable):
+        except (ModelGatewayRejected, ModelOutputTruncated):
+            raise ModelRejected("model-rejected") from None
+        except ModelGatewayUnavailable:
             raise ModelUnavailable("model-unavailable") from None
 
     async def embed_documents(
@@ -449,7 +459,9 @@ class KnowledgeModelGateway:
             )
         except ValueError as error:
             raise AnswerUnavailable(str(error)) from None
-        except (ModelGatewayRejected, ModelGatewayUnavailable):
+        except (ModelGatewayRejected, ModelOutputTruncated):
+            raise AnswerRejected("model-rejected") from None
+        except ModelGatewayUnavailable:
             raise AnswerUnavailable("model-unavailable") from None
 
     async def _evidence_payload(self, item: Evidence) -> dict[str, object]:
