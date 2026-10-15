@@ -90,7 +90,11 @@ _RELATION_ANSWER_PROMPT = (
     "labels of its supporting sources. Never state a relationship that no R record supports; "
     "if the records mention only one of the entities, answer from S evidence alone or return "
     "an empty answer and empty claims. Name both entities in a claim that cites an R label "
-    "exactly as they appear in the record's subject and object. When the query asks about a "
+    "using the record's own subject and object text verbatim, not a paraphrase or shortened "
+    "form of either name -- copy that exact text into the claim. Cite a relation's R label "
+    "only when that specific relation (its subject, object and relationLabel together) "
+    "directly answers what the query asks; a record's mere presence in the supplied evidence "
+    "is not by itself a reason to cite it. When the query asks about a "
     "relationship and no relation evidence is supplied, do not write a claim about the missing "
     "relationship; answer only what the S evidence states."
 )
