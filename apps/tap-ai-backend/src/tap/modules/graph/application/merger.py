@@ -9,7 +9,6 @@ from typing import Callable, Hashable, Iterable, Literal, Mapping, Sequence, Typ
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.application.alignment import ResolvedEntity, merge_edges, resolve_entities
-from tap.modules.graph.domain.naming import clean_alias
 from tap.modules.graph.application.communities import (
     OTHER_COMMUNITY_ID,
     OTHER_COMMUNITY_LABEL,
@@ -17,6 +16,7 @@ from tap.modules.graph.application.communities import (
     propagate_labels,
 )
 from tap.modules.graph.domain.models import GraphNode, GraphSnapshotDraft
+from tap.modules.graph.domain.naming import clean_alias
 from tap.modules.graph.domain.project import (
     Alias,
     Community,
@@ -153,7 +153,7 @@ class ProjectGraphMerger:
             alias
             for entity in entities
             for alias in _aliases_for(
-                entity, draft_by_snapshot, all_labels - {normalize_key(entity.label)}
+                entity, draft_by_snapshot, frozenset(all_labels - {normalize_key(entity.label)})
             )
         )
         node_sources = tuple(

@@ -358,12 +358,12 @@ def _ambiguous_alias_keys(
                 aliasers.setdefault((node.node_type, source, key), set()).add(canonical)
 
     ambiguous: set[tuple[str, tuple[str, ...], str]] = set()
-    for key, canonicals in owners.items():
+    for owner_key, canonicals in owners.items():
         if len(canonicals) > 1:
-            ambiguous.add(key)
-    for key, canonicals in aliasers.items():
-        if key not in owners and len(canonicals) > 1:
-            ambiguous.add(key)
+            ambiguous.add(owner_key)
+    for aliaser_key, canonicals in aliasers.items():
+        if aliaser_key not in owners and len(canonicals) > 1:
+            ambiguous.add(aliaser_key)
     return frozenset(ambiguous)
 
 
