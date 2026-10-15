@@ -265,6 +265,9 @@ class ModelGatewayGraphExtraction:
                 nodes_raw = _objects(output["nodes"], "nodes")
                 edges_raw = _objects(output["edges"], "edges")
                 provenance_raw = _objects(output["provenance"], "provenance")
+                nodes_raw, node_dangling = _strip_dangling_refs(nodes_raw, refs)
+                edges_raw, edge_dangling = _strip_dangling_refs(edges_raw, refs)
+                dangling_refs = node_dangling + edge_dangling
                 snapshot_id = request.snapshot.snapshot_id
                 known = _known_entities(request)
                 known_id_by_key = {
@@ -278,6 +281,7 @@ class ModelGatewayGraphExtraction:
                 repeated_known = 0
                 duplicate_nodes = 0
                 rejected_names = 0
+                dropped_no_evidence = 0
                 for item in nodes_raw:
                     label = _string(item, "label")
                     canonical_key = _string(item, "canonicalKey")
@@ -291,13 +295,22 @@ class ModelGatewayGraphExtraction:
                         label, aliases = aliases[0], aliases[1:]
                     if is_reference_name(canonical_key):
                         canonical_key = label
+                    cited = _cited_refs(item, refs)
+                    if not cited:
+                        # Every ref this node cited was outside the batch (dropped by
+                        # ``_strip_dangling_refs`` above): no evidence survives for
+                        # this fact, so drop the node itself rather than fail the
+                        # whole batch. Its edges follow once endpoints disappear
+                        # from ``node_ids`` below.
+                        dropped_no_evidence += 1
+                        continue
                     node = GraphNode(
                         _string(item, "id"),
                         snapshot_id,
                         label,
                         _string(item, "type"),
                         canonical_key,
-                        _cited_refs(item, refs),
+                        cited,
                         aliases,
                     )
                     known_id = (
@@ -380,6 +393,8 @@ class ModelGatewayGraphExtraction:
             current_span.set_attribute("tap.graph.duplicate_nodes", duplicate_nodes)
             current_span.set_attribute("tap.graph.duplicate_edges", duplicate_edges)
             current_span.set_attribute("tap.graph.rejected_names", rejected_names)
+            current_span.set_attribute("tap.graph.dangling_refs", dangling_refs)
+            current_span.set_attribute("tap.graph.dropped_no_evidence_nodes", dropped_no_evidence)
         if not nodes:
             # The model grounded nothing in this batch (boilerplate chunks, no
             # facts to extract): a successful batch with nothing to contribute,
@@ -457,13 +472,39 @@ def _chunk_refs(request: GraphExtractionRequest) -> dict[str, Mapping[str, objec
     return {f"c{index}": chunk for index, chunk in enumerate(request.chunks, start=1)}
 
 
+def _strip_dangling_refs(
+    items: tuple[dict[str, object], ...], refs: Mapping[str, Mapping[str, object]]
+) -> tuple[tuple[dict[str, object], ...], int]:
+    """Drop chunk refs outside this batch from each item's ``chunks`` field.
+
+    The model occasionally cites a ref from outside the current batch (for example a
+    stale ``c12`` when only ``c1``-``c9`` were sent this batch); retrying the same
+    input reproduces it, so failing the whole batch wastes the retry budget. A
+    dangling ref is dropped instead, here, before any fact is built from ``items``;
+    the caller drops a node or edge left with no evidence once this strips all of
+    its refs (see the node loop and ``_keep_edges`` in ``extract``). Returns the
+    cleaned items (unchanged items are returned as-is) and how many refs were
+    dropped in total.
+    """
+
+    cleaned: list[dict[str, object]] = []
+    dangling = 0
+    for item in items:
+        chunks = _strings(item, "chunks")
+        kept = tuple(dict.fromkeys(ref for ref in chunks if ref in refs))
+        dangling += len(chunks) - len(kept)
+        cleaned.append(item if len(kept) == len(chunks) else item | {"chunks": list(kept)})
+    return tuple(cleaned), dangling
+
+
 def _cited_refs(
     value: dict[str, object], refs: Mapping[str, Mapping[str, object]]
 ) -> tuple[str, ...]:
     """The chunk refs a fact cites, deduplicated in first-cited order.
 
-    A ref outside this batch fails the whole batch closed: the model may only ground
-    facts in chunks it was actually given.
+    Callers run this only after ``_strip_dangling_refs`` has removed any ref outside
+    this batch, so the ``ValueError`` below is a defensive invariant, not the normal
+    path for a dangling ref.
     """
 
     cited: list[str] = []
@@ -527,11 +568,15 @@ def _keep_edges(
     """Drop edges outside the vocabulary or batch, then cascade to their provenance.
 
     An edge is dropped when its relationType is outside RELATION_TYPES, either endpoint
-    is not among this batch's node ids, or both endpoints are the same node (e.g. after
-    a duplicate node was merged into the other endpoint). Dropping an edge also drops
-    the provenance record that cites it (by edgeId), and any INFERRED edge whose
-    provenance lists a dropped edge id as an input fact is dropped in turn, repeating
-    until no further edge is dropped.
+    is not among this batch's node ids, both endpoints are the same node (e.g. after a
+    duplicate node was merged into the other endpoint), or it is EXTRACTED and left with
+    no chunk refs (every ref it cited was outside the batch and was stripped by
+    ``_strip_dangling_refs`` upstream: no evidence survives for the fact, so the edge
+    is dropped rather than failing the whole batch; an INFERRED edge's chunks are
+    legitimately empty by design and is never dropped on that basis). Dropping an edge
+    also drops the provenance record that cites it (by edgeId), and any INFERRED edge
+    whose provenance lists a dropped edge id as an input fact is dropped in turn,
+    repeating until no further edge is dropped.
     """
     provenance_by_edge: dict[object, dict[str, object]] = {
         item.get("edgeId"): item for item in provenance_raw
@@ -543,6 +588,7 @@ def _keep_edges(
         or item.get("sourceNodeId") not in node_ids
         or item.get("targetNodeId") not in node_ids
         or item.get("sourceNodeId") == item.get("targetNodeId")
+        or (item.get("origin") == "EXTRACTED" and not item.get("chunks"))
     }
     changed = True
     while changed:

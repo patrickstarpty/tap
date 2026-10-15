@@ -167,20 +167,6 @@ async def test_model_gateway_extraction_defines_specific_types_before_entity_fal
         ),
         (
             lambda value: value
-            | {
-                "nodes": [
-                    value["nodes"][0] | {"chunks": ["c2"]},
-                    value["nodes"][1],
-                ]
-            },
-            "dangling",
-        ),
-        (
-            lambda value: value | {"edges": [value["edges"][0] | {"chunks": ["chunk-1"]}]},
-            "dangling",
-        ),
-        (
-            lambda value: value
             | {"edges": [value["edges"][0] | {"origin": "INFERRED", "chunks": []}]},
             "provenance",
         ),
@@ -189,6 +175,63 @@ async def test_model_gateway_extraction_defines_specific_types_before_entity_fal
 async def test_invalid_model_facts_fail_closed(mutate, message):
     with pytest.raises(ValueError, match=message):
         await ModelGatewayGraphExtraction(Gateway(mutate(_output()))).extract(_request())
+
+
+@pytest.mark.asyncio
+async def test_a_dangling_ref_is_dropped_not_fatal(span_recorder):
+    # The model occasionally cites a ref from outside the batch (e.g. a stale c12
+    # when only c1 was sent); the extra ref is dropped and the fact keeps whatever
+    # evidence remains instead of failing the whole batch closed.
+    output = _output()
+    output["nodes"][0] = output["nodes"][0] | {"chunks": ["c1", "c2"]}
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    node = next(node for node in draft.nodes if node.node_id == "node-1")
+    assert node.evidence_ids == ("c1",)
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dangling_refs"] == 1
+    assert spans[0].attributes["tap.graph.dropped_no_evidence_nodes"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_node_with_no_surviving_evidence_is_dropped_with_its_edges(span_recorder):
+    # Every ref node-1 cited was dangling: no evidence survives for the fact, so the
+    # node is dropped, and the edge that depended on it follows once its endpoint is
+    # gone -- the batch still succeeds instead of failing closed.
+    output = _output()
+    output["nodes"][0] = output["nodes"][0] | {"chunks": ["c2"]}
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    assert "node-1" not in {node.node_id for node in draft.nodes}
+    assert draft.edges == ()
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dangling_refs"] == 1
+    assert spans[0].attributes["tap.graph.dropped_no_evidence_nodes"] == 1
+    assert spans[0].attributes["tap.graph.dropped_edges"] == 1
+
+
+@pytest.mark.asyncio
+async def test_an_extracted_edge_with_only_dangling_refs_is_dropped(span_recorder):
+    # The edge itself cited only a dangling ref; its endpoints are untouched, so only
+    # the edge (and, had one existed, its provenance) is dropped.
+    output = _output()
+    output["edges"][0] = output["edges"][0] | {"chunks": ["chunk-1"]}
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    assert draft.edges == ()
+    assert {node.node_id for node in draft.nodes} == {"node-1", "node-2"}
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dangling_refs"] == 1
+    assert spans[0].attributes["tap.graph.dropped_edges"] == 1
 
 
 @pytest.mark.asyncio
@@ -484,6 +527,55 @@ async def test_repeated_known_entities_are_dropped_and_counted(span_recorder):
         item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
     ]
     assert spans[0].attributes["tap.graph.repeated_known_entities"] == 2
+
+
+def _real_youxiang_dangling_ref_replay():
+    from pathlib import Path
+
+    sample = json.loads(
+        (Path(__file__).parents[1] / "fixtures/graph/real_extraction_replay.json").read_text()
+    )["youxiangChangban2025Batch3DanglingRef"]
+    request = replace(
+        _request(),
+        batch_index=sample["batchIndex"],
+        chunks=tuple(
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": f"chunk-{chunk['ref']}",
+                "content": chunk["content"],
+                "anchor": {"kind": "text", "start": 0, "end": 1},
+                "contentDigest": "sha256:" + "a" * 64,
+            }
+            for chunk in sample["chunks"]
+        ),
+        document_title=sample["documentTitle"],
+    )
+    return request, {
+        "nodes": sample["nodes"],
+        "edges": sample["edges"],
+        "provenance": sample["provenance"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_real_dangling_ref_batch_succeeds_instead_of_failing_closed(span_recorder):
+    # Replay of the real batch that used to raise "graph extraction cites a dangling
+    # chunk ref" and fail the whole batch: node n22 ("ICD-10") cited c4, c5 and an
+    # out-of-batch c12 (only c1-c9 were sent). The batch must now succeed, keeping
+    # n22 with its remaining evidence instead of losing all 40 nodes / 60 edges.
+    request, output = _real_youxiang_dangling_ref_replay()
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(request)
+
+    assert draft is not None
+    icd10 = next(node for node in draft.nodes if node.node_id == "n22")
+    assert icd10.evidence_ids == ("c4", "c5")
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dangling_refs"] == 1
+    assert spans[0].attributes["tap.graph.dropped_no_evidence_nodes"] == 0
 
 
 @pytest.mark.asyncio

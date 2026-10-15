@@ -1913,5 +1913,1282 @@
     }
    ]
   }
- ]
+ ],
+ "youxiangChangban2025Batch3DanglingRef": {
+  "_about": "Real qwen-plus output for youxiang-changban-2025 batch 3 (2026-10-14 revalidation), replayed via replay_valueerror.py after the original _cited_refs raised on node n22's dangling c12 ref. Only the model's JSON output was captured by the diagnostic replay, not the original document text, so `chunks` below carries placeholder content (not the source clauses) -- the batch's 9 real chunk refs (c1-c9) are preserved; the model's node n22 (\"ICD-10\") cites an out-of-batch c12 alongside c4/c5.",
+  "documentTitle": "aia-cn-youxiang-changban-2025-terms.pdf",
+  "batchIndex": 3,
+  "chunks": [
+   {
+    "ref": "c1",
+    "content": "placeholder clause text c1"
+   },
+   {
+    "ref": "c2",
+    "content": "placeholder clause text c2"
+   },
+   {
+    "ref": "c3",
+    "content": "placeholder clause text c3"
+   },
+   {
+    "ref": "c4",
+    "content": "placeholder clause text c4"
+   },
+   {
+    "ref": "c5",
+    "content": "placeholder clause text c5"
+   },
+   {
+    "ref": "c6",
+    "content": "placeholder clause text c6"
+   },
+   {
+    "ref": "c7",
+    "content": "placeholder clause text c7"
+   },
+   {
+    "ref": "c8",
+    "content": "placeholder clause text c8"
+   },
+   {
+    "ref": "c9",
+    "content": "placeholder clause text c9"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "n1",
+    "label": "严重咀嚼吞咽功能障碍",
+    "type": "CONCEPT",
+    "canonicalKey": "严重咀嚼吞咽功能障碍",
+    "chunks": [
+     "c1"
+    ],
+    "aliases": [
+     "严重咀嚼吞咽功能障碍"
+    ]
+   },
+   {
+    "id": "n2",
+    "label": "呼吸肌麻痹",
+    "type": "CONCEPT",
+    "canonicalKey": "呼吸肌麻痹",
+    "chunks": [
+     "c1"
+    ],
+    "aliases": [
+     "呼吸肌麻痹"
+    ]
+   },
+   {
+    "id": "n3",
+    "label": "自主生活能力完全丧失",
+    "type": "CONCEPT",
+    "canonicalKey": "自主生活能力完全丧失",
+    "chunks": [
+     "c1"
+    ],
+    "aliases": [
+     "自主生活能力完全丧失"
+    ]
+   },
+   {
+    "id": "n4",
+    "label": "六项基本日常生活活动",
+    "type": "CONCEPT",
+    "canonicalKey": "六项基本日常生活活动",
+    "chunks": [
+     "c1",
+     "c8"
+    ],
+    "aliases": [
+     "六项基本日常生活活动"
+    ]
+   },
+   {
+    "id": "n5",
+    "label": "重大疾病保险的疾病定义使用规范（2020年修订版）",
+    "type": "SYSTEM",
+    "canonicalKey": "重大疾病保险的疾病定义使用规范（2020年修订版）",
+    "chunks": [
+     "c1"
+    ],
+    "aliases": [
+     "《重大疾病保险的疾病定义使用规范（2020年修订版）》"
+    ]
+   },
+   {
+    "id": "n6",
+    "label": "意外事故",
+    "type": "CONCEPT",
+    "canonicalKey": "意外事故",
+    "chunks": [
+     "c1",
+     "c2",
+     "c4"
+    ],
+    "aliases": [
+     "意外事故"
+    ]
+   },
+   {
+    "id": "n7",
+    "label": "专科医生",
+    "type": "ACTOR",
+    "canonicalKey": "专科医生",
+    "chunks": [
+     "c1"
+    ],
+    "aliases": [
+     "专科医生"
+    ]
+   },
+   {
+    "id": "n8",
+    "label": "医师资格证书",
+    "type": "REQUIREMENT",
+    "canonicalKey": "医师资格证书",
+    "chunks": [
+     "c1"
+    ],
+    "aliases": [
+     "《医师资格证书》"
+    ]
+   },
+   {
+    "id": "n9",
+    "label": "医师执业证书",
+    "type": "REQUIREMENT",
+    "canonicalKey": "医师执业证书",
+    "chunks": [
+     "c1"
+    ],
+    "aliases": [
+     "《医师执业证书》"
+    ]
+   },
+   {
+    "id": "n10",
+    "label": "医师职称证书",
+    "type": "REQUIREMENT",
+    "canonicalKey": "医师职称证书",
+    "chunks": [
+     "c1"
+    ],
+    "aliases": [
+     "《医师职称证书》"
+    ]
+   },
+   {
+    "id": "n11",
+    "label": "医院分级管理标准",
+    "type": "SYSTEM",
+    "canonicalKey": "医院分级管理标准",
+    "chunks": [
+     "c1"
+    ],
+    "aliases": [
+     "《医院分级管理标准》"
+    ]
+   },
+   {
+    "id": "n12",
+    "label": "伤残评定标准",
+    "type": "SYSTEM",
+    "canonicalKey": "伤残评定标准",
+    "chunks": [
+     "c2",
+     "c4"
+    ],
+    "aliases": [
+     "伤残评定标准"
+    ]
+   },
+   {
+    "id": "n13",
+    "label": "现金价值",
+    "type": "CONCEPT",
+    "canonicalKey": "现金价值",
+    "chunks": [
+     "c2"
+    ],
+    "aliases": [
+     "现金价值"
+    ]
+   },
+   {
+    "id": "n14",
+    "label": "毒品",
+    "type": "CONCEPT",
+    "canonicalKey": "毒品",
+    "chunks": [
+     "c2"
+    ],
+    "aliases": [
+     "毒品"
+    ]
+   },
+   {
+    "id": "n15",
+    "label": "酒后驾驶",
+    "type": "CONCEPT",
+    "canonicalKey": "酒后驾驶",
+    "chunks": [
+     "c2"
+    ],
+    "aliases": [
+     "酒后驾驶"
+    ]
+   },
+   {
+    "id": "n16",
+    "label": "无合法有效驾驶证驾驶",
+    "type": "CONCEPT",
+    "canonicalKey": "无合法有效驾驶证驾驶",
+    "chunks": [
+     "c2",
+     "c3"
+    ],
+    "aliases": [
+     "无合法有效驾驶证驾驶"
+    ]
+   },
+   {
+    "id": "n17",
+    "label": "无合法有效行驶证",
+    "type": "CONCEPT",
+    "canonicalKey": "无合法有效行驶证",
+    "chunks": [
+     "c3"
+    ],
+    "aliases": [
+     "无合法有效行驶证"
+    ]
+   },
+   {
+    "id": "n18",
+    "label": "艾滋病病毒",
+    "type": "CONCEPT",
+    "canonicalKey": "艾滋病病毒",
+    "chunks": [
+     "c4"
+    ],
+    "aliases": [
+     "HIV",
+     "艾滋病病毒"
+    ]
+   },
+   {
+    "id": "n19",
+    "label": "艾滋病",
+    "type": "CONCEPT",
+    "canonicalKey": "艾滋病",
+    "chunks": [
+     "c4"
+    ],
+    "aliases": [
+     "AIDS",
+     "艾滋病"
+    ]
+   },
+   {
+    "id": "n20",
+    "label": "遗传性疾病",
+    "type": "CONCEPT",
+    "canonicalKey": "遗传性疾病",
+    "chunks": [
+     "c4"
+    ],
+    "aliases": [
+     "遗传性疾病"
+    ]
+   },
+   {
+    "id": "n21",
+    "label": "先天性畸形、变形或染色体异常",
+    "type": "CONCEPT",
+    "canonicalKey": "先天性畸形、变形或染色体异常",
+    "chunks": [
+     "c4",
+     "c5"
+    ],
+    "aliases": [
+     "先天性畸形、变形或染色体异常"
+    ]
+   },
+   {
+    "id": "n22",
+    "label": "ICD-10",
+    "type": "SYSTEM",
+    "canonicalKey": "ICD-10",
+    "chunks": [
+     "c4",
+     "c5",
+     "c12"
+    ],
+    "aliases": [
+     "《疾病和有关健康问题的国际统计分类》第十次修订版",
+     "《疾病和有关健康问题的国际统计分类（ICD-10）》"
+    ]
+   },
+   {
+    "id": "n23",
+    "label": "潜水",
+    "type": "CONCEPT",
+    "canonicalKey": "潜水",
+    "chunks": [
+     "c5"
+    ],
+    "aliases": [
+     "潜水"
+    ]
+   },
+   {
+    "id": "n24",
+    "label": "攀岩运动",
+    "type": "CONCEPT",
+    "canonicalKey": "攀岩运动",
+    "chunks": [
+     "c5"
+    ],
+    "aliases": [
+     "攀岩运动"
+    ]
+   },
+   {
+    "id": "n25",
+    "label": "探险活动",
+    "type": "CONCEPT",
+    "canonicalKey": "探险活动",
+    "chunks": [
+     "c5"
+    ],
+    "aliases": [
+     "探险活动"
+    ]
+   },
+   {
+    "id": "n26",
+    "label": "特技",
+    "type": "CONCEPT",
+    "canonicalKey": "特技",
+    "chunks": [
+     "c5"
+    ],
+    "aliases": [
+     "特技"
+    ]
+   },
+   {
+    "id": "n27",
+    "label": "精神和行为障碍",
+    "type": "CONCEPT",
+    "canonicalKey": "精神和行为障碍",
+    "chunks": [
+     "c5"
+    ],
+    "aliases": [
+     "精神和行为障碍"
+    ]
+   },
+   {
+    "id": "n28",
+    "label": "管制药物",
+    "type": "CONCEPT",
+    "canonicalKey": "管制药物",
+    "chunks": [
+     "c5"
+    ],
+    "aliases": [
+     "管制药物"
+    ]
+   },
+   {
+    "id": "n29",
+    "label": "岁",
+    "type": "CONCEPT",
+    "canonicalKey": "岁",
+    "chunks": [
+     "c6"
+    ],
+    "aliases": [
+     "岁"
+    ]
+   },
+   {
+    "id": "n30",
+    "label": "利息",
+    "type": "CONCEPT",
+    "canonicalKey": "利息",
+    "chunks": [
+     "c6"
+    ],
+    "aliases": [
+     "利息"
+    ]
+   },
+   {
+    "id": "n31",
+    "label": "犹豫期",
+    "type": "CONCEPT",
+    "canonicalKey": "犹豫期",
+    "chunks": [
+     "c6"
+    ],
+    "aliases": [
+     "犹豫期"
+    ]
+   },
+   {
+    "id": "n32",
+    "label": "医院",
+    "type": "ACTOR",
+    "canonicalKey": "医院",
+    "chunks": [
+     "c6"
+    ],
+    "aliases": [
+     "医院"
+    ]
+   },
+   {
+    "id": "n33",
+    "label": "申请人",
+    "type": "ACTOR",
+    "canonicalKey": "申请人",
+    "chunks": [
+     "c6"
+    ],
+    "aliases": [
+     "申请人"
+    ]
+   },
+   {
+    "id": "n34",
+    "label": "疾病身故保险金的受领人",
+    "type": "ACTOR",
+    "canonicalKey": "疾病身故保险金的受领人",
+    "chunks": [
+     "c6"
+    ],
+    "aliases": [
+     "疾病身故保险金的受领人"
+    ]
+   },
+   {
+    "id": "n35",
+    "label": "肢体",
+    "type": "CONCEPT",
+    "canonicalKey": "肢体",
+    "chunks": [
+     "c7"
+    ],
+    "aliases": [
+     "肢体"
+    ]
+   },
+   {
+    "id": "n36",
+    "label": "肌力",
+    "type": "CONCEPT",
+    "canonicalKey": "肌力",
+    "chunks": [
+     "c7"
+    ],
+    "aliases": [
+     "肌力"
+    ]
+   },
+   {
+    "id": "n37",
+    "label": "语言能力完全丧失",
+    "type": "CONCEPT",
+    "canonicalKey": "语言能力完全丧失",
+    "chunks": [
+     "c7"
+    ],
+    "aliases": [
+     "语言能力完全丧失"
+    ]
+   },
+   {
+    "id": "n38",
+    "label": "永久不可逆",
+    "type": "CONCEPT",
+    "canonicalKey": "永久不可逆",
+    "chunks": [
+     "c8",
+     "c9"
+    ],
+    "aliases": [
+     "永久不可逆"
+    ]
+   },
+   {
+    "id": "n39",
+    "label": "NYHA心功能状态分级",
+    "type": "SYSTEM",
+    "canonicalKey": "NYHA心功能状态分级",
+    "chunks": [
+     "c8",
+     "c9"
+    ],
+    "aliases": [
+     "美国纽约心脏病学会心功能状态分级",
+     "NYHA"
+    ]
+   },
+   {
+    "id": "n40",
+    "label": "心脏病",
+    "type": "CONCEPT",
+    "canonicalKey": "心脏病",
+    "chunks": [
+     "c8",
+     "c9"
+    ],
+    "aliases": [
+     "心脏病"
+    ]
+   }
+  ],
+  "edges": [
+   {
+    "id": "e1",
+    "sourceNodeId": "n1",
+    "targetNodeId": "b0-n8",
+    "relationType": "RELATED_TO",
+    "relationLabel": "属于特定疾病",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1"
+    ]
+   },
+   {
+    "id": "e2",
+    "sourceNodeId": "n2",
+    "targetNodeId": "b0-n8",
+    "relationType": "RELATED_TO",
+    "relationLabel": "属于特定疾病",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1"
+    ]
+   },
+   {
+    "id": "e3",
+    "sourceNodeId": "n3",
+    "targetNodeId": "b0-n8",
+    "relationType": "RELATED_TO",
+    "relationLabel": "属于特定疾病",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1"
+    ]
+   },
+   {
+    "id": "e4",
+    "sourceNodeId": "n4",
+    "targetNodeId": "b2-n12",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "不适用于0-3周岁幼儿",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c8"
+    ]
+   },
+   {
+    "id": "e5",
+    "sourceNodeId": "n5",
+    "targetNodeId": "b0-n8",
+    "relationType": "DEFINES",
+    "relationLabel": "定义特定疾病",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1"
+    ]
+   },
+   {
+    "id": "e6",
+    "sourceNodeId": "n6",
+    "targetNodeId": "b0-n9",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "导致伤残",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e7",
+    "sourceNodeId": "n7",
+    "targetNodeId": "b2-n10",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "应同时满足四项资格条件",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1"
+    ]
+   },
+   {
+    "id": "e8",
+    "sourceNodeId": "n8",
+    "targetNodeId": "n7",
+    "relationType": "REQUIRES",
+    "relationLabel": "需具有",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1"
+    ]
+   },
+   {
+    "id": "e9",
+    "sourceNodeId": "n9",
+    "targetNodeId": "n7",
+    "relationType": "REQUIRES",
+    "relationLabel": "需具有",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1"
+    ]
+   },
+   {
+    "id": "e10",
+    "sourceNodeId": "n10",
+    "targetNodeId": "n7",
+    "relationType": "REQUIRES",
+    "relationLabel": "需具有",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1"
+    ]
+   },
+   {
+    "id": "e11",
+    "sourceNodeId": "n11",
+    "targetNodeId": "b2-n11",
+    "relationType": "DEFINES",
+    "relationLabel": "定义二级或二级以上医院",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1"
+    ]
+   },
+   {
+    "id": "e12",
+    "sourceNodeId": "n12",
+    "targetNodeId": "b0-n10",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "用于确定伤残",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e13",
+    "sourceNodeId": "n13",
+    "targetNodeId": "b0-n12",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "体现为解除合同时退还金额",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e14",
+    "sourceNodeId": "n14",
+    "targetNodeId": "b0-n14",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指刑法规定的毒品",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e15",
+    "sourceNodeId": "n15",
+    "targetNodeId": "b0-n15",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指血液酒精含量达标的驾驶",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c2"
+    ]
+   },
+   {
+    "id": "e16",
+    "sourceNodeId": "n16",
+    "targetNodeId": "b0-n16",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指无驾驶资格等情形",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c2",
+     "c3"
+    ]
+   },
+   {
+    "id": "e17",
+    "sourceNodeId": "n17",
+    "targetNodeId": "b0-n17",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指注销登记或未通过检验",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c3"
+    ]
+   },
+   {
+    "id": "e18",
+    "sourceNodeId": "n18",
+    "targetNodeId": "n19",
+    "relationType": "RELATED_TO",
+    "relationLabel": "引起艾滋病",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c4"
+    ]
+   },
+   {
+    "id": "e19",
+    "sourceNodeId": "n20",
+    "targetNodeId": "b0-n20",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指遗传物质突变引起的疾病",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c4"
+    ]
+   },
+   {
+    "id": "e20",
+    "sourceNodeId": "n21",
+    "targetNodeId": "b0-n21",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指出生时具有的异常",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c4",
+     "c5"
+    ]
+   },
+   {
+    "id": "e21",
+    "sourceNodeId": "n22",
+    "targetNodeId": "n21",
+    "relationType": "DEFINES",
+    "relationLabel": "确定先天性畸形等",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c4",
+     "c5"
+    ]
+   },
+   {
+    "id": "e22",
+    "sourceNodeId": "n22",
+    "targetNodeId": "n27",
+    "relationType": "DEFINES",
+    "relationLabel": "确定精神和行为障碍范围",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c5"
+    ]
+   },
+   {
+    "id": "e23",
+    "sourceNodeId": "n23",
+    "targetNodeId": "b0-n23",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指使用辅助呼吸器材的水下运动",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c5"
+    ]
+   },
+   {
+    "id": "e24",
+    "sourceNodeId": "n24",
+    "targetNodeId": "b0-n24",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指攀登悬崖等运动",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c5"
+    ]
+   },
+   {
+    "id": "e25",
+    "sourceNodeId": "n25",
+    "targetNodeId": "b0-n25",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指故意置身危险的行为",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c5"
+    ]
+   },
+   {
+    "id": "e26",
+    "sourceNodeId": "n26",
+    "targetNodeId": "b0-n26",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指从事马术等特殊技能",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c5"
+    ]
+   },
+   {
+    "id": "e27",
+    "sourceNodeId": "n28",
+    "targetNodeId": "b0-n28",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指麻醉药品等",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c5"
+    ]
+   },
+   {
+    "id": "e28",
+    "sourceNodeId": "n29",
+    "targetNodeId": "b0-n29",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指满一年为一岁",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e29",
+    "sourceNodeId": "n30",
+    "targetNodeId": "b1-n35",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "按借款利率计算",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e30",
+    "sourceNodeId": "n31",
+    "targetNodeId": "b1-n16",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指收到合同起十五日",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e31",
+    "sourceNodeId": "n32",
+    "targetNodeId": "b2-n8",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "需符合三项条件",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e32",
+    "sourceNodeId": "n33",
+    "targetNodeId": "b2-n1",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指受益人等自然人",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e33",
+    "sourceNodeId": "n34",
+    "targetNodeId": "b2-n3",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指受益人等自然人",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e34",
+    "sourceNodeId": "n35",
+    "targetNodeId": "b2-n25",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指包括肩关节的整个上肢等",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e35",
+    "sourceNodeId": "n36",
+    "targetNodeId": "b2-n26",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "划分为0-5级",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e36",
+    "sourceNodeId": "n37",
+    "targetNodeId": "b2-n27",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指无法发出三种语音等",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e37",
+    "sourceNodeId": "n38",
+    "targetNodeId": "b0-n38",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "指确诊或伤害后180天仍无法恢复",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c8",
+     "c9"
+    ]
+   },
+   {
+    "id": "e38",
+    "sourceNodeId": "n39",
+    "targetNodeId": "b0-n39",
+    "relationType": "EXCEPTION_OF",
+    "relationLabel": "将心功能分为四级",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c8",
+     "c9"
+    ]
+   },
+   {
+    "id": "e39",
+    "sourceNodeId": "n40",
+    "targetNodeId": "n39",
+    "relationType": "RELATED_TO",
+    "relationLabel": "NYHA分级对象",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c8",
+     "c9"
+    ]
+   },
+   {
+    "id": "e40",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n37",
+    "relationType": "RELATED_TO",
+    "relationLabel": "与语言能力完全丧失并列",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e41",
+    "sourceNodeId": "n36",
+    "targetNodeId": "n1",
+    "relationType": "RELATED_TO",
+    "relationLabel": "严重咀嚼吞咽功能障碍对应肌力0级",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e42",
+    "sourceNodeId": "n36",
+    "targetNodeId": "n37",
+    "relationType": "RELATED_TO",
+    "relationLabel": "语言能力完全丧失对应肌力0级",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e43",
+    "sourceNodeId": "n36",
+    "targetNodeId": "n38",
+    "relationType": "RELATED_TO",
+    "relationLabel": "永久不可逆对应肌力0级",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c8"
+    ]
+   },
+   {
+    "id": "e44",
+    "sourceNodeId": "n39",
+    "targetNodeId": "n40",
+    "relationType": "RELATED_TO",
+    "relationLabel": "NYHA分级针对心脏病",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c8",
+     "c9"
+    ]
+   },
+   {
+    "id": "e45",
+    "sourceNodeId": "n32",
+    "targetNodeId": "n7",
+    "relationType": "RELATED_TO",
+    "relationLabel": "专科医生须在医院临床工作三年以上",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1"
+    ]
+   },
+   {
+    "id": "e46",
+    "sourceNodeId": "n32",
+    "targetNodeId": "n33",
+    "relationType": "RELATED_TO",
+    "relationLabel": "申请人可向医院提交材料",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e47",
+    "sourceNodeId": "n32",
+    "targetNodeId": "n34",
+    "relationType": "RELATED_TO",
+    "relationLabel": "受领人可向医院申请保险金",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c6"
+    ]
+   },
+   {
+    "id": "e48",
+    "sourceNodeId": "n35",
+    "targetNodeId": "n36",
+    "relationType": "RELATED_TO",
+    "relationLabel": "肢体功能依赖肌力",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e49",
+    "sourceNodeId": "n35",
+    "targetNodeId": "n37",
+    "relationType": "RELATED_TO",
+    "relationLabel": "语言能力完全丧失影响肢体功能",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e50",
+    "sourceNodeId": "n35",
+    "targetNodeId": "n38",
+    "relationType": "RELATED_TO",
+    "relationLabel": "永久不可逆影响肢体功能",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c8"
+    ]
+   },
+   {
+    "id": "e51",
+    "sourceNodeId": "n35",
+    "targetNodeId": "n39",
+    "relationType": "RELATED_TO",
+    "relationLabel": "NYHA分级影响肢体活动能力",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c8",
+     "c9"
+    ]
+   },
+   {
+    "id": "e52",
+    "sourceNodeId": "n36",
+    "targetNodeId": "n38",
+    "relationType": "RELATED_TO",
+    "relationLabel": "肌力0级属永久不可逆",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7",
+     "c8"
+    ]
+   },
+   {
+    "id": "e53",
+    "sourceNodeId": "n37",
+    "targetNodeId": "n38",
+    "relationType": "RELATED_TO",
+    "relationLabel": "语言能力完全丧失属永久不可逆",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7",
+     "c8"
+    ]
+   },
+   {
+    "id": "e54",
+    "sourceNodeId": "n1",
+    "targetNodeId": "n38",
+    "relationType": "RELATED_TO",
+    "relationLabel": "严重咀嚼吞咽功能障碍属永久不可逆",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1",
+     "c8"
+    ]
+   },
+   {
+    "id": "e55",
+    "sourceNodeId": "n2",
+    "targetNodeId": "n38",
+    "relationType": "RELATED_TO",
+    "relationLabel": "呼吸肌麻痹属永久不可逆",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1",
+     "c8"
+    ]
+   },
+   {
+    "id": "e56",
+    "sourceNodeId": "n3",
+    "targetNodeId": "n38",
+    "relationType": "RELATED_TO",
+    "relationLabel": "自主生活能力完全丧失属永久不可逆",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1",
+     "c8"
+    ]
+   },
+   {
+    "id": "e57",
+    "sourceNodeId": "n4",
+    "targetNodeId": "n38",
+    "relationType": "RELATED_TO",
+    "relationLabel": "六项基本日常生活活动能力丧失属永久不可逆",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c1",
+     "c8"
+    ]
+   },
+   {
+    "id": "e58",
+    "sourceNodeId": "n36",
+    "targetNodeId": "n37",
+    "relationType": "RELATED_TO",
+    "relationLabel": "肌力0级导致语言能力完全丧失",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e59",
+    "sourceNodeId": "n36",
+    "targetNodeId": "n1",
+    "relationType": "RELATED_TO",
+    "relationLabel": "肌力0级导致严重咀嚼吞咽功能障碍",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   },
+   {
+    "id": "e60",
+    "sourceNodeId": "n36",
+    "targetNodeId": "n2",
+    "relationType": "RELATED_TO",
+    "relationLabel": "肌力0级导致呼吸肌麻痹",
+    "origin": "EXTRACTED",
+    "confidence": 1,
+    "chunks": [
+     "c7"
+    ]
+   }
+  ],
+  "provenance": []
+ }
 }
