@@ -1,6 +1,6 @@
 # Langfuse 运营可观测性 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 自托管 Langfuse 作为运营看板，由同步 worker 从 MySQL 增量推送已脱敏的链路数据与新增的用户反馈。
 
@@ -45,25 +45,25 @@
 **Interfaces:**
 - Produces: 本地 Langfuse `http://127.0.0.1:${LANGFUSE_PORT:-23000}`，预建项目与 API key（`LANGFUSE_INIT_*`），供 Task 2 与手工验收使用。
 
-- [ ] **Step 1: 写 compose 服务**
+- [x] **Step 1: 写 compose 服务**
 
   镜像固定 tag（以 Task 2 确认的版本为准，先取当前最新 v3 稳定版）。`langfuse-web` 端口 `127.0.0.1:${LANGFUSE_PORT:-23000}:3000`；`langfuse-worker` 不暴露端口；`langfuse-postgres` 用 `postgres:17-alpine`，`mem_limit: 256m`，卷 `langfuse-postgres-data`。三者沿用 `clickhouse` 服务的 `cap_drop`/`security_opt`/资源限制写法。环境：`CLICKHOUSE_URL=http://clickhouse:8123`、`CLICKHOUSE_MIGRATION_URL=clickhouse://clickhouse:9000`、`CLICKHOUSE_DB=langfuse`、`CLICKHOUSE_USER/PASSWORD=${LANGFUSE_CLICKHOUSE_USER:-tap_langfuse}/${LANGFUSE_CLICKHOUSE_PASSWORD:-tap-local-langfuse}`、`CLICKHOUSE_CLUSTER_ENABLED=false`、`REDIS_CONNECTION_STRING=redis://redis:6379/1`、`LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse`、`LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://tap-minio:9000`、`LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE=true`、凭据取 `TAPPER_S3_ACCESS_KEY/SECRET_KEY`、`TELEMETRY_ENABLED=false`、`LANGFUSE_INIT_ORG_ID/PROJECT_ID/PROJECT_PUBLIC_KEY/PROJECT_SECRET_KEY/USER_EMAIL/USER_PASSWORD`（本地示例值，从 `.env` 覆盖）。
 
-- [ ] **Step 2: 写 `deploy/local/langfuse/bootstrap.sh`**
+- [x] **Step 2: 写 `deploy/local/langfuse/bootstrap.sh`**
 
   `docker compose exec clickhouse clickhouse-client` 执行 `CREATE DATABASE IF NOT EXISTS langfuse`、`CREATE USER IF NOT EXISTS ... IDENTIFIED BY ...`、`GRANT ALL ON langfuse.* TO ...`；不授予 `tap_insights.*`。MinIO bucket 用一次性 `minio/mc` 容器（固定 tag，`--network` 为 compose 网络）执行 `mc mb --ignore-existing`。
 
-- [ ] **Step 3: Makefile 目标**
+- [x] **Step 3: Makefile 目标**
 
   `langfuse-up`：`docker compose --profile insights up -d clickhouse` → 等待 healthy → `bash deploy/local/langfuse/bootstrap.sh` → `docker compose --profile langfuse up -d`。`langfuse-down`：`docker compose --profile langfuse stop` 后 `rm -f` 三个容器，不加 `-v`。
 
-- [ ] **Step 4: 验证**
+- [x] **Step 4: 验证**
 
   Run: `docker compose config --profiles >/dev/null && docker compose --profile langfuse config | grep -c '127.0.0.1'`
   Expected: 配置合法；`phoenix` 不再出现（`docker compose config | grep -c phoenix` 输出 0）。
   在有 Docker 的本机执行 `make langfuse-up`，浏览器打开 `http://127.0.0.1:23000` 能用 `.env.example` 中的示例账号登录；`clickhouse-client --user tap_insights_reader ... -q 'SHOW TABLES FROM langfuse'` 报权限错误。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add compose.yaml deploy/local/langfuse Makefile .env.example
@@ -80,15 +80,15 @@ git commit -m "feat: add local langfuse on shared middleware and drop phoenix"
 **Interfaces:**
 - Produces: spec §8 结论，决定 Task 7 的 `LangfuseSdkSink` 用 SDK 还是 OTLP 推 trace。
 
-- [ ] **Step 1:** 对 Task 1 的 Langfuse 运行 spike 脚本，逐项验证并记录：
+- [x] **Step 1:** 对 Task 1 的 Langfuse 运行 spike 脚本，逐项验证并记录：
   1. 能否以指定 32 位 hex trace id、16 位 hex span id 与历史 `start_time`/`end_time` 创建 span 与 generation；
   2. 同 id 重推是否覆盖而不重复；
   3. generation 的 `usage_details`、`cost_details` 是否进入看板成本统计；
   4. 指定 id 创建、覆盖、删除 score；对尚未入库 trace 的 score 是否接受；
   5. `CLICKHOUSE_DB=langfuse`、Redis `/1`、MinIO path-style 运行正常（Task 1 已启动即证明）。
-- [ ] **Step 2:** 把结论、Langfuse 镜像 tag 与 SDK 版本写入 spec §8；若第 1 项不满足，写明“trace 走 OTLP `/api/public/otel/v1/traces`，SDK 只用于 score”。修正 Task 1 镜像 tag（如需）。
-- [ ] **Step 3:** `uv add --project apps/tap-ai-backend langfuse==<版本>`；`uv run --project apps/tap-ai-backend python -c "import langfuse"` 成功。
-- [ ] **Step 4: Commit**
+- [x] **Step 2:** 把结论、Langfuse 镜像 tag 与 SDK 版本写入 spec §8；若第 1 项不满足，写明“trace 走 OTLP `/api/public/otel/v1/traces`，SDK 只用于 score”。修正 Task 1 镜像 tag（如需）。
+- [x] **Step 3:** `uv add --project apps/tap-ai-backend langfuse==<版本>`；`uv run --project apps/tap-ai-backend python -c "import langfuse"` 成功。
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/tap-ai-backend/pyproject.toml uv.lock docs/superpowers/specs/2026-10-14-langfuse-ops-observability-design.md compose.yaml
@@ -111,7 +111,7 @@ git commit -m "chore: pin langfuse sdk and record capability findings"
   - `def load_custom_rules(path: Path | None) -> tuple[CustomRule, ...]`（YAML `rules: [{name, pattern}]`；`name` 仅 `[a-z0-9_]+`，否则 `ValueError`）
   - `class ExportRedactor: __init__(self, custom_rules: Sequence[CustomRule] = ()); redact(self, text: str | None) -> str | None; redact_value(self, value: object) -> object`（递归处理 dict/list 中的字符串）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_pii_is_masked():
@@ -148,13 +148,13 @@ def test_none_passthrough():
     assert ExportRedactor().redact(None) is None
 ```
 
-- [ ] **Step 2:** Run `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/ai/test_export_redaction.py -q`；Expected: FAIL（模块不存在）。
-- [ ] **Step 3: 实现**
+- [x] **Step 2:** Run `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/ai/test_export_redaction.py -q`；Expected: FAIL（模块不存在）。
+- [x] **Step 3: 实现**
 
   先做全角→半角归一后匹配（只用于匹配，替换作用于原文对应区间：逐字符归一不改变长度，可直接复用下标）。顺序：私钥块 → 凭据赋值 → 邮箱 → 身份证（内地 18 位校验位 ISO 7064 MOD 11-2；香港 `[A-Z]{1,2}\d{6}\(?[0-9A]\)?`）→ 卡号（13–19 位数字，允许空格/横线分组，Luhn）→ 手机（内地 `(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d{4}){2}`；香港 `(?:\+?852[\s-]?)?[2-9]\d{3}[\s-]?\d{4}`，仅在带 `+852` 或前后为非数字时）→ 自定义规则 → 截断。私钥起始无结束标记时返回 `[REDACTION_FAILED]`。
 
-- [ ] **Step 4:** 同 Step 2 命令，Expected: PASS；再跑 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/knowledge -q -k redact` 确认原脱敏器不变。
-- [ ] **Step 5: Commit**
+- [x] **Step 4:** 同 Step 2 命令，Expected: PASS；再跑 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/knowledge -q -k redact` 确认原脱敏器不变。
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/tap-ai-backend/src/tap/platform/redaction_patterns.py apps/tap-ai-backend/src/tap/modules/knowledge/adapters/pattern_redaction.py apps/tap-ai-backend/src/tap/modules/ai/application/export_redaction.py apps/tap-ai-backend/tests/unit/ai/test_export_redaction.py deploy/local/redaction
@@ -185,7 +185,7 @@ git commit -m "feat: add trace export redaction with pii rules"
   - HTTP：`PUT /api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/feedback`（body `{rating, comment?}` → `AnswerFeedbackView{rating, comment}`，operation_id `conversation_put_turn_feedback`）；`DELETE` 同路径 → 204（`conversation_delete_turn_feedback`）。
 - 表列见 spec §2，`chat_id` 列名改用 `conversation_id`，与 API 一致；`trace_id` 由 `trace_id_of(turn.traceparent)` 填充。
 
-- [ ] **Step 1: 写失败测试（服务层，内存仓库）**
+- [x] **Step 1: 写失败测试（服务层，内存仓库）**
 
 ```python
 async def test_submit_requires_completed_owned_turn(...):
@@ -200,10 +200,10 @@ async def test_mine_returns_only_active_feedback(...):
 
   集成测试（`owned_project_database_url`）：`upsert` 同 `(project_id, turn_id, actor_id)` 只一行；`for_turns` 批量查询。HTTP 测试：PUT 两次幂等返回同一结果；DELETE 后 GET 会话的 turn `myFeedback` 为 null；未完成 Turn → 409；他人会话 → 404；`comment` 501 字 → 422。
 
-- [ ] **Step 2:** Run `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/chat/test_feedback_service.py apps/tap-ai-backend/tests/integration/test_answer_feedback_mysql.py apps/tap-ai-backend/tests/integration/test_answer_feedback_http.py -q`；Expected: FAIL。
-- [ ] **Step 3:** 实现迁移（`down_revision = "0031_cost_usd_precision"`；唯一键 `(turn_id, actor_id)` 经 `augment_project_table` 前缀为 project；索引 `(project_id, updated_at)`）、领域、仓库、服务、路由与装配。会话归属沿用 `ConversationService._owned`；只允许 `state == "completed"`，否则抛 `FeedbackNotAllowed` → 409 problem。`_turn()` 增加可选参数 `feedback: AnswerFeedback | None`，会话详情路由先 `mine()` 再映射。
-- [ ] **Step 4:** 同 Step 2 命令 PASS；`make contracts` 后 `git diff --stat contracts apps/tap-ai-frontend/src/shared/api/generated` 只含新增反馈类型；`uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/architecture apps/tap-ai-backend/tests/contract -q` PASS。
-- [ ] **Step 5: Commit**
+- [x] **Step 2:** Run `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/chat/test_feedback_service.py apps/tap-ai-backend/tests/integration/test_answer_feedback_mysql.py apps/tap-ai-backend/tests/integration/test_answer_feedback_http.py -q`；Expected: FAIL。
+- [x] **Step 3:** 实现迁移（`down_revision = "0031_cost_usd_precision"`；唯一键 `(turn_id, actor_id)` 经 `augment_project_table` 前缀为 project；索引 `(project_id, updated_at)`）、领域、仓库、服务、路由与装配。会话归属沿用 `ConversationService._owned`；只允许 `state == "completed"`，否则抛 `FeedbackNotAllowed` → 409 problem。`_turn()` 增加可选参数 `feedback: AnswerFeedback | None`，会话详情路由先 `mine()` 再映射。
+- [x] **Step 4:** 同 Step 2 命令 PASS；`make contracts` 后 `git diff --stat contracts apps/tap-ai-frontend/src/shared/api/generated` 只含新增反馈类型；`uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/architecture apps/tap-ai-backend/tests/contract -q` PASS。
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/tap-ai-backend contracts apps/tap-ai-frontend/src/shared/api/generated
@@ -237,7 +237,7 @@ git commit -m "feat: record answer feedback per turn"
   - `async record_failure(self, kind: SyncKind, subject_id: str, error: str) -> None`（`failure_count += 1`，`last_error` 截断 1000）
   - `async clear_failure(self, kind: SyncKind, subject_id: str) -> None`
 
-- [ ] **Step 1: 写失败集成测试**
+- [x] **Step 1: 写失败集成测试**
 
 ```python
 async def test_scan_traces_respects_cursor_and_cutoff(store, insert_span):
@@ -250,10 +250,10 @@ async def test_failures_roundtrip(...)  # record 两次 → failure_count 2；cl
 async def test_migration_backfills_recorded_at_from_started_at(...)
 ```
 
-- [ ] **Step 2:** Run `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_mysql_langfuse_sync_store.py -q`；Expected: FAIL。
-- [ ] **Step 3:** 实现迁移、schema 与适配器。`recorded_at` 用 `server_default=sa.text("CURRENT_TIMESTAMP(6)")`；`MysqlSpanExporter` 不需改动。游标表不存在行时视为 `1970-01-01`。
-- [ ] **Step 4:** 同 Step 2 PASS；`make schema-drift migration-check`（或 `uv run ... pytest apps/tap-ai-backend/tests/architecture/test_migration_metadata.py -q`）PASS。
-- [ ] **Step 5: Commit**
+- [x] **Step 2:** Run `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_mysql_langfuse_sync_store.py -q`；Expected: FAIL。
+- [x] **Step 3:** 实现迁移、schema 与适配器。`recorded_at` 用 `server_default=sa.text("CURRENT_TIMESTAMP(6)")`；`MysqlSpanExporter` 不需改动。游标表不存在行时视为 `1970-01-01`。
+- [x] **Step 4:** 同 Step 2 PASS；`make schema-drift migration-check`（或 `uv run ... pytest apps/tap-ai-backend/tests/architecture/test_migration_metadata.py -q`）PASS。
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/tap-ai-backend
@@ -280,7 +280,7 @@ git commit -m "feat: add langfuse sync cursor and trace store"
   - `@dataclass class SyncReport: traces_ok: int; traces_failed: int; feedback_ok: int; feedback_failed: int`
   - `class LangfuseSyncService: __init__(self, store, sink, redactor, *, environment: str, settle_seconds: int = 60, batch_size: int = 200, clock: Callable[[], datetime]); async run_once(self) -> SyncReport`
 
-- [ ] **Step 1: 写失败测试（映射）**
+- [x] **Step 1: 写失败测试（映射）**
 
 ```python
 def test_trace_identity_and_tags():
@@ -299,7 +299,7 @@ def test_span_times_and_parents_preserved(): ...  # end_time = started_at + dura
 def test_string_attributes_are_redacted(): ...
 ```
 
-- [ ] **Step 2: 写失败测试（服务，FakeStore + FakeSink）**
+- [x] **Step 2: 写失败测试（服务，FakeStore + FakeSink）**
 
 ```python
 async def test_unsettled_traces_are_not_pushed(): ...
@@ -314,10 +314,10 @@ async def test_feedback_up_down_and_retract_map_to_scores():
 async def test_one_bad_trace_does_not_block_others(): ...
 ```
 
-- [ ] **Step 3:** Run `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/ai/test_langfuse_mapping.py apps/tap-ai-backend/tests/unit/ai/test_langfuse_sync.py -q`；Expected: FAIL。
-- [ ] **Step 4:** 实现。`run_once`：`cutoff = clock() - settle`；先重试 `failures("trace")`，再 `scan_traces` → 逐条 `load_trace` → 映射 → `push_trace`（成功 `clear_failure`，异常 `record_failure`）→ `advance("trace", max)`；反馈同理（`rating is None` 走 `delete_score`）。`load_trace` 返回 None（已不存在）时清除失败记录。`request_json` 能 `json.loads` 时以对象脱敏（`redact_value`），否则按字符串。
-- [ ] **Step 5:** 同 Step 3 PASS。
-- [ ] **Step 6: Commit**
+- [x] **Step 3:** Run `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/ai/test_langfuse_mapping.py apps/tap-ai-backend/tests/unit/ai/test_langfuse_sync.py -q`；Expected: FAIL。
+- [x] **Step 4:** 实现。`run_once`：`cutoff = clock() - settle`；先重试 `failures("trace")`，再 `scan_traces` → 逐条 `load_trace` → 映射 → `push_trace`（成功 `clear_failure`，异常 `record_failure`）→ `advance("trace", max)`；反馈同理（`rating is None` 走 `delete_score`）。`load_trace` 返回 None（已不存在）时清除失败记录。`request_json` 能 `json.loads` 时以对象脱敏（`redact_value`），否则按字符串。
+- [x] **Step 5:** 同 Step 3 PASS。
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/tap-ai-backend
@@ -341,7 +341,7 @@ git commit -m "feat: map mysql traces and feedback to langfuse"
   - `class LangfuseSdkSink(LangfuseSink): __init__(self, *, host: str, public_key: str, secret_key: str)`
   - worker `main(environment: Mapping[str, str] | None = None) -> None`、`cli(...) -> int`，service name `tap-ai-worker-langfuse-sync`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_settings_reject_non_loopback_langfuse_host(): ...      # http://10.0.0.5:23000 → ValueError
@@ -351,10 +351,10 @@ async def test_worker_loop_survives_run_once_exception(): ...   # 抛异常后�
 def test_sdk_sink_maps_trace_to_sdk_calls(fake_langfuse_client): ...  # 断言 id、时间戳、usage/cost、score id 透传
 ```
 
-- [ ] **Step 2:** Run `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/entrypoints/test_langfuse_sync_worker.py apps/tap-ai-backend/tests/unit/entrypoints/test_tapper_runtime.py apps/tap-ai-backend/tests/unit/ai/test_langfuse_sink.py -q`；Expected: FAIL。
-- [ ] **Step 3:** 实现。worker 循环：`run_once` → `sleep(5)`，异常记 `logger.exception` 后继续；SIGTERM 时退出。sink 按 Task 2 结论使用 SDK（或 OTLP + SDK score），每次 `push_trace` 后 `flush()` 以便把失败暴露为异常。`run-tapper-dev.sh` 以 `python -m tap.entrypoints.tapper_langfuse_sync_worker` 启动。
-- [ ] **Step 4:** 同 Step 2 PASS；`bash -n scripts/run-tapper-dev.sh` 无输出。
-- [ ] **Step 5: Commit**
+- [x] **Step 2:** Run `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/entrypoints/test_langfuse_sync_worker.py apps/tap-ai-backend/tests/unit/entrypoints/test_tapper_runtime.py apps/tap-ai-backend/tests/unit/ai/test_langfuse_sink.py -q`；Expected: FAIL。
+- [x] **Step 3:** 实现。worker 循环：`run_once` → `sleep(5)`，异常记 `logger.exception` 后继续；SIGTERM 时退出。sink 按 Task 2 结论使用 SDK（或 OTLP + SDK score），每次 `push_trace` 后 `flush()` 以便把失败暴露为异常。`run-tapper-dev.sh` 以 `python -m tap.entrypoints.tapper_langfuse_sync_worker` 启动。
+- [x] **Step 4:** 同 Step 2 PASS；`bash -n scripts/run-tapper-dev.sh` 无输出。
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/tap-ai-backend scripts/run-tapper-dev.sh .env.example
@@ -371,11 +371,11 @@ git commit -m "feat: run langfuse sync worker with loopback settings"
 **Interfaces:**
 - Produces: `AnswerFeedback({ locale: "en" | "zh", value: FeedbackValue | null, onChange(next: FeedbackValue | null): void })`，`type FeedbackValue = { rating: "up" | "down"; comment: string | null }`。原型内用本地 state；同一组件结构供 Task 9 参照（不共享代码，见原型即设计稿约定）。
 
-- [ ] **Step 1: 写失败测试**：点 👍 → `aria-pressed="true"`，再点恢复；点 👎 → 出现 `textbox`（`maxLength=500`，label “补充说明（可选）”/“Add a comment (optional)”）与“提交”“跳过”；切换 👍 时评论框消失。按钮 `aria-label`：“有帮助”/“Helpful”、“没帮助”/“Not helpful”。
-- [ ] **Step 2:** Run `corepack pnpm --filter @tap/web exec vitest run src/widgets/tap/prototype/answer/AnswerFeedback.test.tsx`；Expected: FAIL。
-- [ ] **Step 3:** 实现，使用 antd `Button` 与 `@ant-design/icons` 的 `LikeOutlined`/`DislikeOutlined`（及 Filled 变体表示选中），无演示开关或说明文字。
-- [ ] **Step 4:** 同 Step 2 PASS；`corepack pnpm --filter @tap/web run test` PASS；启动 `apps/web`，在 `/prototype` 截取 Tapper 回答改动前后截图，并点击 Tapper / Test Management / Test Insights / Low Code Automation 导航与浮动助手确认无回归。
-- [ ] **Step 5: Commit**
+- [x] **Step 1: 写失败测试**：点 👍 → `aria-pressed="true"`，再点恢复；点 👎 → 出现 `textbox`（`maxLength=500`，label “补充说明（可选）”/“Add a comment (optional)”）与“提交”“跳过”；切换 👍 时评论框消失。按钮 `aria-label`：“有帮助”/“Helpful”、“没帮助”/“Not helpful”。
+- [x] **Step 2:** Run `corepack pnpm --filter @tap/web exec vitest run src/widgets/tap/prototype/answer/AnswerFeedback.test.tsx`；Expected: FAIL。
+- [x] **Step 3:** 实现，使用 antd `Button` 与 `@ant-design/icons` 的 `LikeOutlined`/`DislikeOutlined`（及 Filled 变体表示选中），无演示开关或说明文字。
+- [x] **Step 4:** 同 Step 2 PASS；`corepack pnpm --filter @tap/web run test` PASS；启动 `apps/web`，在 `/prototype` 截取 Tapper 回答改动前后截图，并点击 Tapper / Test Management / Test Insights / Low Code Automation 导航与浮动助手确认无回归。
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/widgets/tap/prototype/answer
@@ -396,11 +396,11 @@ git commit -m "feat: add answer feedback to the prototype"
 - Consumes: Task 4 生成类型 `components["schemas"]["AnswerFeedbackRequest" | "AnswerFeedbackView"]`；交互同 Task 8。
 - Produces: `ConversationClient.putFeedback(conversationId, turnId, body: AnswerFeedbackRequest, signal?) -> Promise<AnswerFeedbackView>`；`deleteFeedback(conversationId, turnId, signal?) -> Promise<void>`。
 
-- [ ] **Step 1: 写失败测试**：client 发出正确方法与路径；组件用初始 `myFeedback` 恢复选中态；👍 调 `putFeedback({rating:"up"})`；👎 先 `putFeedback({rating:"down"})`，提交评论再 `putFeedback({rating:"down", comment})`；再点已选中按钮调 `deleteFeedback`；请求失败时恢复原状态并显示错误提示；`abstained`/`failed`/`running` 的 turn 不渲染。
-- [ ] **Step 2:** Run `corepack pnpm --filter @tap/ai-frontend exec vitest run src/features/conversations`；Expected: FAIL。
-- [ ] **Step 3:** 实现；视觉与 Task 8 原型一致。
-- [ ] **Step 4:** 同 Step 2 PASS；`corepack pnpm --filter @tap/ai-frontend exec tsc --noEmit` 无错误。
-- [ ] **Step 5: Commit**
+- [x] **Step 1: 写失败测试**：client 发出正确方法与路径；组件用初始 `myFeedback` 恢复选中态；👍 调 `putFeedback({rating:"up"})`；👎 先 `putFeedback({rating:"down"})`，提交评论再 `putFeedback({rating:"down", comment})`；再点已选中按钮调 `deleteFeedback`；请求失败时恢复原状态并显示错误提示；`abstained`/`failed`/`running` 的 turn 不渲染。
+- [x] **Step 2:** Run `corepack pnpm --filter @tap/ai-frontend exec vitest run src/features/conversations`；Expected: FAIL。
+- [x] **Step 3:** 实现；视觉与 Task 8 原型一致。
+- [x] **Step 4:** 同 Step 2 PASS；`corepack pnpm --filter @tap/ai-frontend exec tsc --noEmit` 无错误。
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/tap-ai-frontend/src
@@ -412,9 +412,9 @@ git commit -m "feat: let users rate tapper answers"
 **Files:**
 - Modify: `apps/tap-ai-frontend/tests/e2e/knowledge-conversation.spec.ts`
 
-- [ ] **Step 1:** 在已有“得到完成回答”的步骤后追加：点“没帮助”，填写评论并提交，`page.reload()` 后该按钮 `aria-pressed="true"`；通过 API `GET` 会话详情断言该 turn `myFeedback.rating === "down"` 且 comment 一致。
-- [ ] **Step 2:** Run `make demo-e2e`；Expected: 全部通过（E2E 不启动 Langfuse）。
-- [ ] **Step 3: Commit**
+- [x] **Step 1:** 在已有“得到完成回答”的步骤后追加：点“没帮助”，填写评论并提交，`page.reload()` 后该按钮 `aria-pressed="true"`；通过 API `GET` 会话详情断言该 turn `myFeedback.rating === "down"` 且 comment 一致。
+- [x] **Step 2:** Run `make demo-e2e`；Expected: 全部通过（E2E 不启动 Langfuse）。
+- [x] **Step 3: Commit**
 
 ```bash
 git add apps/tap-ai-frontend/tests/e2e/knowledge-conversation.spec.ts
@@ -431,9 +431,9 @@ git commit -m "test: cover answer feedback in the conversation journey"
 - Modify: `docs/architecture.md`（进程列表加入同步 worker；数据流加入 MySQL → Langfuse；中间件复用说明）
 - Modify: `README.md`（仅当其中提到 Phoenix 时同步修改）
 
-- [ ] **Step 1:** 完成上述修改；`grep -rn -i phoenix docs README.md .env.example compose.yaml apps/tap-ai-backend/src` 只剩历史 plan 文件中的记录。
-- [ ] **Step 2:** `git diff --check` 无输出；预览修改过的 Markdown 与 Mermaid。
-- [ ] **Step 3: Commit**
+- [x] **Step 1:** 完成上述修改；`grep -rn -i phoenix docs README.md .env.example compose.yaml apps/tap-ai-backend/src` 只剩历史 plan 文件中的记录。
+- [x] **Step 2:** `git diff --check` 无输出；预览修改过的 Markdown 与 Mermaid。
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs README.md
@@ -444,9 +444,9 @@ git commit -m "docs: document langfuse ops dashboard and v2 langgraph route"
 
 由主会话或人工在有 `.env` 的主工作区执行，不派给子代理。
 
-- [ ] **Step 1:** `make check` 与 `make test` 全部通过。
-- [ ] **Step 2:** 在有 `.env` 的主工作区按 spec §7 手工验收 1–5 项：`make langfuse-up`、`make demo-dev`、若干轮对话与赞/踩；Langfuse 中按会话/用户/项目筛选、generation 的 token 与成本、输入输出脱敏（虚构手机号与邮箱）、score 带评论、内置看板可见成本/延迟/用量/满意度；停止 Langfuse 继续对话再启动，数据补齐；产品内调用链面板正常。
-- [ ] **Step 3:** 结果记入 PR 描述；V1 总纲能力 5 新工程项在全部满足后勾选并提交：
+- [x] **Step 1:** `make check` 与 `make test` 全部通过。
+- [x] **Step 2:** 在有 `.env` 的主工作区按 spec §7 手工验收 1–5 项：`make langfuse-up`、`make demo-dev`、若干轮对话与赞/踩；Langfuse 中按会话/用户/项目筛选、generation 的 token 与成本、输入输出脱敏（虚构手机号与邮箱）、score 带评论、内置看板可见成本/延迟/用量/满意度；停止 Langfuse 继续对话再启动，数据补齐；产品内调用链面板正常。
+- [x] **Step 3:** 结果记入 PR 描述；V1 总纲能力 5 新工程项在全部满足后勾选并提交：
 
 ```bash
 git add docs/superpowers/plans/2026-09-29-v1-roadmap.md
