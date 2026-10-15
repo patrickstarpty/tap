@@ -190,6 +190,77 @@ class KnowledgeAPI:
                 authorize=authorize,
             )
 
+    async def prepare_frozen(
+        self,
+        request,
+        policy,
+        *,
+        governance=None,
+        graph_context=(),
+        answer_execution=None,
+        authorize=None,
+    ):
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.prepare_answer(
+                request,
+                policy,
+                frozen_policy=True,
+                governance=governance,
+                graph_context=graph_context,
+                answer_execution=answer_execution,
+                authorize=authorize,
+            )
+
+    async def generate_frozen(
+        self,
+        bundle,
+        policy,
+        *,
+        governance=None,
+        model_alias=None,
+        answer_execution=None,
+        authorize=None,
+    ):
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.generate_answer(
+                bundle,
+                policy,
+                frozen_policy=True,
+                governance=governance,
+                model_alias=model_alias,
+                authorize=authorize,
+            )
+
+    async def verify_frozen(
+        self,
+        bundle,
+        generation,
+        policy,
+        *,
+        answer_execution=None,
+        authorize=None,
+    ):
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.verify_answer(
+                bundle,
+                generation,
+                policy,
+                frozen_policy=True,
+                authorize=authorize,
+            )
+
 
 def search_request_from_http(request: HttpSearchRequest) -> SearchRequest:
     """Map the Pydantic browser DTO into a framework-free application request."""

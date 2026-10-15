@@ -45,6 +45,7 @@ from tap.modules.access.domain.policy import RetrievalPolicyContext
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
+from tap.modules.chat.application.feedback import FeedbackService
 from tap.modules.chat.application.suggestion_ports import SuggestionStore
 from tap.modules.chat.application.suggestions import PromptSuggestionService
 from tap.modules.graph.application.jobs import GraphJobStore
@@ -229,6 +230,7 @@ class HttpServices:
     model_catalog: ModelCatalogHttpService | None = None
     asset_catalog: AssetCatalogHttpService | None = None
     conversations: ConversationService | None = None
+    feedback: FeedbackService | None = None
     prompt_suggestions: PromptSuggestionService | None = None
     prompt_suggestion_store: SuggestionStore | None = None
     traces: TraceHttpService | None = None
@@ -354,6 +356,14 @@ def asset_catalog_service(request: Request) -> AssetCatalogHttpService:
 def conversation_service(request: Request) -> ConversationService:
     services = getattr(request.app.state, "http_services", None)
     service = services.conversations if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def feedback_service(request: Request) -> FeedbackService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.feedback if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service

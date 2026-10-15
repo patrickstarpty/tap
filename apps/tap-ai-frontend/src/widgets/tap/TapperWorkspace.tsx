@@ -51,6 +51,7 @@ import {
 } from "../../features/conversations/api/queries";
 import { TracePanel } from "../../features/conversations/trace/TracePanel";
 import { ModelCallDrawer } from "../../features/conversations/trace/ModelCallDrawer";
+import { AnswerFeedback } from "../../features/conversations/feedback/AnswerFeedback";
 import {
   parseInsightsHandoff,
   type InsightsHandoff,
@@ -260,6 +261,22 @@ function AnswerGraphSummary(props: {
       </ol>
     </details>
   );
+}
+
+/**
+ * The rating control only makes sense once a Turn's answer is durably
+ * final (not merely terminal — an abstained/canceled/failed Turn has
+ * nothing to rate) and persisted under a real conversation (not the local
+ * "draft" placeholder used before the backend accepts the first message,
+ * which has no feedback endpoint to call). `traceId` is deliberately not
+ * part of this gate: it is nullable and the backend accepts feedback on a
+ * completed Turn with no trace.
+ */
+export function shouldShowAnswerFeedback(
+  turn: { status?: AssistantTurn["status"] },
+  conversationId: string | undefined,
+): boolean {
+  return turn.status === "completed" && conversationId !== undefined;
 }
 
 export function AnswerActivity({
@@ -741,6 +758,15 @@ function AssistantResponse({
         (TERMINAL_TURN_STATUSES as readonly string[]).includes(turn.status);
       return (
         <>
+          {shouldShowAnswerFeedback(turn, conversationId) ? (
+            <AnswerFeedback
+              projectId={projectId}
+              conversationId={conversationId!}
+              turnId={turn.id}
+              locale={turn.locale}
+              initialValue={turn.myFeedback ?? null}
+            />
+          ) : null}
           {isTerminalTurn &&
           turn.traceId != null &&
           conversationId !== undefined ? (
@@ -1533,6 +1559,13 @@ export function TapperWorkspace() {
         response: streamed?.response ?? null,
         graphContext: streamed?.graphContext ?? null,
         traceId: turn.traceId ?? null,
+        myFeedback:
+          turn.myFeedback == null
+            ? null
+            : {
+                rating: turn.myFeedback.rating,
+                comment: turn.myFeedback.comment ?? null,
+              },
         attempt: turn.attempt,
         status: ["completed", "abstained", "canceled", "failed"].includes(
           turn.state,

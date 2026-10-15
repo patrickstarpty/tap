@@ -46,9 +46,13 @@ class FakeGateway:
         return SimpleNamespace(output=self._output)
 
 
-def _generator(gateway) -> ModelGatewaySuggestionGenerator:
+async def _identity(text: str) -> str:
+    return text
+
+
+def _generator(gateway, redact=_identity) -> ModelGatewaySuggestionGenerator:
     return ModelGatewaySuggestionGenerator(
-        gateway, scope=VALIDATION_SCOPE, alias="qwen-plus", timeout_seconds=3.0
+        gateway, scope=VALIDATION_SCOPE, alias="qwen-plus", timeout_seconds=3.0, redact=redact
     )
 
 
@@ -144,3 +148,21 @@ async def test_deterministic_gateway_answers_suggestion_schema():
         Candidate("What does Onboarding cover?", ("src_a",)),
         Candidate("What does Billing cover?", ("src_b",)),
     )
+
+
+@pytest.mark.asyncio
+async def test_generator_redacts_context_before_the_gateway_sees_it():
+    """The gateway rejects any context its egress redactor would change, so a recent
+    question containing an email must be masked here or every refresh fails."""
+
+    async def mask_email(text: str) -> str:
+        return text.replace("user@example.com", "[REDACTED_EMAIL]")
+
+    gateway = FakeGateway({"suggestions": []})
+    await _generator(gateway, redact=mask_email).generate(
+        inputs(personal_questions=("Email me at user@example.com",)), "en"
+    )
+
+    context = gateway.requests[0].context
+    assert "user@example.com" not in context
+    assert json.loads(context)["recentQuestions"] == ["Email me at [REDACTED_EMAIL]"]

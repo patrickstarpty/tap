@@ -13,14 +13,14 @@
 ## 非目标
 
 - 终端用户视角的"答案由来"说明与角色权限区分。
-- 后台任务的前端 trace 界面（数据照常写入，可查 MySQL 或 Phoenix）。
+- 后台任务的前端 trace 界面（数据照常写入，可查 MySQL；运营看板见 [Langfuse 运营可观测性设计](2026-10-14-langfuse-ops-observability-design.md)）。
 - 引入或扩展 LangGraph；现有 `classify → admit → execute` 图的去留由子项目 5 决定。埋点在应用层函数上，不依赖 LangGraph。
 - 流式输出、重试退避（子项目 3）。
 - 按文档清除追踪原文（未来合规需求再做）。
 
 ## 1. 方案
 
-OpenTelemetry 埋点，属性遵循 OTel GenAI 语义约定；MySQL 为权威存储，前端面板只读 MySQL；可选 OTLP 导出到 Phoenix（或任何 OTLP 后端）。不部署 Langfuse。
+OpenTelemetry 埋点，属性遵循 OTel GenAI 语义约定；MySQL 为权威存储，前端面板只读 MySQL；可选 OTLP 导出到任何 OTLP 后端。运营级看板（成本、延迟、按用户/会话筛选）与用户反馈见 [Langfuse 运营可观测性设计](2026-10-14-langfuse-ops-observability-design.md)，该设计同步修订了本节此前“不部署 Langfuse”的决策。
 
 ## 2. 追踪边界
 
@@ -79,7 +79,7 @@ OpenTelemetry 埋点，属性遵循 OTel GenAI 语义约定；MySQL 为权威存
 - 新依赖：`opentelemetry-api`、`opentelemetry-sdk`、`opentelemetry-exporter-otlp-proto-http`（锁定版本）。
 - 新模块 `apps/tap-ai-backend/src/tap/platform/telemetry/`：进程初始化 `configure_tracing(service_name)`、上下文工具 `span(name, **attributes)`、`inject_traceparent()` / `extract_traceparent(value)`、`MysqlSpanExporter`。
 - 每个进程（API、各 worker）初始化一个 TracerProvider；`BatchSpanProcessor` → `MysqlSpanExporter`（每 5 秒或 512 个 span 刷新）；Turn 或任务结束时 `force_flush`。
-- 设置 `OTEL_EXPORTER_OTLP_ENDPOINT` 时追加 OTLP/HTTP 导出。compose 新增可选服务 `phoenix`（profile `observability`，仅 loopback 端口）。
+- 设置 `OTEL_EXPORTER_OTLP_ENDPOINT` 时追加 OTLP/HTTP 导出，指向任意 OTLP 后端。
 
 ### 埋点位置
 
@@ -143,7 +143,7 @@ worker 发出的 `context.assembled`、`stage.completed` 事件字段与严格�
 - 前端：汇总行、瀑布图树形组装、attempt 切换、抽屉按需加载。
 - E2E：隔离旅程中打开一条回答的调用链，核对存在 `turn.execute`、`retrieval.search`、模型调用 span 与 token 汇总（假模型返回确定 usage）。
 - `make check`、`make test`、`make demo-e2e` 通过。
-- 文档：新增 `docs/guides/2026-09-30-observability.md`（数据表、启用 Phoenix、按 trace_id 排障）；更新 `docs/architecture.md`；总纲能力 5 工程完成项在满足后勾选。
+- 文档：新增 `docs/guides/2026-09-30-observability.md`（数据表、启用 Phoenix（已由 [Langfuse 运营可观测性设计](2026-10-14-langfuse-ops-observability-design.md)取代）、按 trace_id 排障）；更新 `docs/architecture.md`；总纲能力 5 工程完成项在满足后勾选。
 
 ## 8. 风险
 

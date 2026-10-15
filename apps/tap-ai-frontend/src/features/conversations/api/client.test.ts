@@ -368,4 +368,54 @@ describe("ConversationClient", () => {
       "/api/v1/projects/project-1/model-calls/call-1",
     );
   });
+
+  it("PUTs turn feedback to the feedback path and returns the saved view", async () => {
+    const fetcher = vi.fn(async (request: Request) => {
+      void request;
+      return new Response(
+        JSON.stringify({ rating: "down", comment: "needs detail" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const client = createConversationClient({
+      projectId: "project-1",
+      fetch: fetcher,
+    });
+
+    const saved = await client.putFeedback("conversation-1", "turn-1", {
+      rating: "down",
+      comment: "needs detail",
+    });
+
+    expect(saved).toEqual({ rating: "down", comment: "needs detail" });
+    const request = fetcher.mock.calls[0]?.[0] as Request;
+    expect(request.method).toBe("PUT");
+    expect(request.url).toContain(
+      "/projects/project-1/conversations/conversation-1/turns/turn-1/feedback",
+    );
+    expect(await request.json()).toEqual({
+      rating: "down",
+      comment: "needs detail",
+    });
+  });
+
+  it("DELETEs turn feedback and resolves with no value on 204", async () => {
+    const fetcher = vi.fn(async (request: Request) => {
+      void request;
+      return new Response(null, { status: 204 });
+    });
+    const client = createConversationClient({
+      projectId: "project-1",
+      fetch: fetcher,
+    });
+
+    await expect(
+      client.deleteFeedback("conversation-1", "turn-1"),
+    ).resolves.toBeUndefined();
+    const request = fetcher.mock.calls[0]?.[0] as Request;
+    expect(request.method).toBe("DELETE");
+    expect(request.url).toContain(
+      "/projects/project-1/conversations/conversation-1/turns/turn-1/feedback",
+    );
+  });
 });

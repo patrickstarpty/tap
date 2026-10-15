@@ -9,9 +9,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createConversationClient,
+  type AnswerFeedbackRequest,
+  type AnswerFeedbackView,
   type ConversationCitationPreview,
   type ConversationClient,
   type ConversationCreateRequest,
+  type ConversationDetail,
   ConversationClientError,
 } from "./client";
 import { createStreamState, reduceStreamEvent } from "../model/stream";
@@ -367,6 +370,52 @@ export function useCancelTurn(
       cache.invalidateQueries({
         queryKey: conversationKeys.detail(projectId, conversationId),
       }),
+  });
+}
+
+/**
+ * Puts or retracts the owner's up/down rating on a completed Turn's answer.
+ * Pass `value: null` to retract (DELETE); otherwise the rating (and, for a
+ * down rating, an optional comment) is saved (PUT). On success the turn's
+ * `myFeedback` is updated in place in the conversation detail cache so the
+ * `AnswerFeedback` control re-syncs without a refetch.
+ */
+export function useTurnFeedback(
+  projectId: string | null,
+  conversationId: string | null,
+) {
+  const client = useConversationClient(projectId);
+  const cache = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      turnId,
+      value,
+    }: {
+      turnId: string;
+      value: AnswerFeedbackRequest | null;
+    }): Promise<AnswerFeedbackView | null> => {
+      if (client === null || conversationId === null)
+        throw new Error("Conversation is unavailable.");
+      return value === null
+        ? client.deleteFeedback(conversationId, turnId).then((): null => null)
+        : client.putFeedback(conversationId, turnId, value);
+    },
+    onSuccess: (result, { turnId }) => {
+      cache.setQueryData(
+        conversationKeys.detail(projectId, conversationId),
+        (current: ConversationDetail | undefined) =>
+          current === undefined
+            ? current
+            : {
+                ...current,
+                turns: current.turns.map((turn) =>
+                  turn.turnId === turnId
+                    ? { ...turn, myFeedback: result }
+                    : turn,
+                ),
+              },
+      );
+    },
   });
 }
 

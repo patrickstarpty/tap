@@ -12,6 +12,7 @@ from tap.modules.chat.adapters.mysql_conversations import (
     turn_artifact_link,
     turn_input_snapshot,
 )
+from tap.modules.chat.adapters.mysql_feedback import answer_feedback
 from tap.modules.chat.adapters.mysql_suggestions import prompt_suggestion, prompt_suggestion_refresh
 from tap.modules.governance.adapters.schema import project_audit
 from tap.modules.graph.adapters.mysql import GRAPH_TABLES
@@ -41,7 +42,19 @@ from tap.modules.knowledge.adapters.mysql_projection import (
 from tap.modules.knowledge.adapters.mysql_review import KNOWLEDGE_REVIEW_TABLES
 from tap.modules.test_management.adapters.mysql import TEST_MANAGEMENT_TABLES
 from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
-from tap.platform.telemetry.schema import model_call, model_call_content, trace_span
+from tap.platform.telemetry.schema import (
+    langfuse_sync_cursor,
+    langfuse_sync_failure,
+    model_call,
+    model_call_content,
+    trace_span,
+)
+
+# Unscoped system tables owned by the Langfuse sync worker: it reads across every
+# Project, so these never carry the enterprise/project/actor scope columns that
+# `test_all_business_metadata_requires_project_scope_and_parent_consistency` requires
+# of BUSINESS_TABLES below.
+UNSCOPED_SYSTEM_TABLES = (langfuse_sync_cursor, langfuse_sync_failure)
 
 # Explicit Project business inventory, separate from identity-registry ownership.
 # Adapter-local declarations carry the scope contract before they are copied.
@@ -61,6 +74,7 @@ BUSINESS_TABLES = (
     turn_input_snapshot,
     turn_answer_evidence_snapshot,
     turn_artifact_link,
+    answer_feedback,
     prompt_suggestion_refresh,
     prompt_suggestion,
     knowledge_document,
@@ -96,6 +110,12 @@ BUSINESS_TABLES = (
 def load_authoritative_metadata() -> MetaData:
     """Return registered identities and scoped business tables in a fresh registry."""
     authoritative = MetaData()
-    for table in (enterprise, project, actor_principal, *BUSINESS_TABLES):
+    for table in (
+        enterprise,
+        project,
+        actor_principal,
+        *UNSCOPED_SYSTEM_TABLES,
+        *BUSINESS_TABLES,
+    ):
         table.to_metadata(authoritative)
     return authoritative

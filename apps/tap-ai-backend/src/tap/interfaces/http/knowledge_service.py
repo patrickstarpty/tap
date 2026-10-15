@@ -67,6 +67,14 @@ class AnswerOperations(Protocol):
 
     async def answer_frozen(self, *args, **kwargs) -> AnswerResponse: ...
 
+    async def prepare_frozen(self, *args, **kwargs): ...
+
+    async def generate_frozen(self, *args, **kwargs): ...
+
+    async def verify_frozen(self, *args, **kwargs) -> AnswerResponse: ...
+
+    async def save_frozen(self, *args, **kwargs) -> None: ...
+
     async def authorize_frozen_selection(self, revisions) -> None: ...
 
     async def resolve_conversation_selection(self, revision_ids): ...
@@ -214,13 +222,26 @@ class KnowledgeHttpService:
     async def answer_conversation(
         self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None
     ):
-        remaining = None if answer_plan is None else answer_plan.deadline_at - time.time()
-        if remaining is not None and remaining <= 0:
-            raise TimeoutError("persisted answer budget exhausted")
-        async with asyncio.timeout(remaining):
+        async with self._plan_deadline(answer_plan):
             return await self._answer_conversation(
                 request, frozen_input, answer_plan=answer_plan, authorize=authorize
             )
+
+    @staticmethod
+    def _plan_deadline(answer_plan):
+        """One shared deadline guard used by `answer_conversation` and every
+        resumable phase below: raises `TimeoutError` immediately if the plan's
+        persisted deadline has already passed (before any work, including
+        `_authorized_frozen_context`), else returns an `asyncio.timeout`
+        context scoped to the time left. `answer_plan.deadline_at` is an
+        absolute timestamp, so recomputing it fresh at the start of every
+        phase -- rather than passing a single captured budget along -- keeps
+        nested uses of this guard safe: each nested call only ever tightens
+        the remaining time, never resets it."""
+        remaining = None if answer_plan is None else answer_plan.deadline_at - time.time()
+        if remaining is not None and remaining <= 0:
+            raise TimeoutError("persisted answer budget exhausted")
+        return asyncio.timeout(remaining)
 
     async def authorize_planning(self, snapshot) -> None:
         from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
@@ -291,6 +312,176 @@ class KnowledgeHttpService:
     async def _answer_conversation(
         self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None
     ):
+        """The reference composition of the four resumable phases below,
+        inside the one persisted-deadline guard `answer_conversation` opened."""
+        step = await self.prepare_conversation_answer(
+            request, frozen_input, answer_plan=answer_plan, authorize=authorize
+        )
+        step = await self.generate_conversation_answer(
+            step, frozen_input, answer_plan=answer_plan, authorize=authorize
+        )
+        step = await self.verify_conversation_answer(
+            step, frozen_input, answer_plan=answer_plan, authorize=authorize
+        )
+        return await self.finalize_conversation_answer(
+            step, frozen_input, answer_plan=answer_plan, authorize=authorize
+        )
+
+    async def prepare_conversation_answer(
+        self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None
+    ):
+        """Resumable prepare phase: retrieval (or a non-retrieval route's
+        complete answer) only, re-deriving and re-checking authority from
+        `frozen_input`, bounded by the plan's persisted deadline from the
+        start -- including the non-retrieval model call, which otherwise has
+        no time limit of its own."""
+        async with self._plan_deadline(answer_plan):
+            context = await self._authorized_frozen_context(
+                original_question=request.query,
+                frozen_input=frozen_input,
+                answer_plan=answer_plan,
+                authorize=authorize,
+            )
+            if isinstance(context, RetrievalAnswerResponse):
+                return {
+                    "kind": "final",
+                    "response": context.model_dump(mode="json", by_alias=True),
+                }
+            revisions, policy, governance = context
+            answer_execution = self._execution(answer_plan) if answer_plan is not None else None
+            from tap.modules.knowledge.application.evidence_bundle import encode_bundle
+            from tap.platform.serialization.dataclass_json import to_json
+
+            domain_request = answer_request_from_http(request)
+            prepared = await self._answers.prepare_frozen(
+                domain_request,
+                revisions,
+                policy,
+                governance=governance,
+                answer_execution=answer_execution,
+                authorize=authorize,
+            )
+            if isinstance(prepared, AnswerResponse):
+                return {"kind": "verified", "response": to_json(prepared)}
+            return {"kind": "prepared", "bundle": encode_bundle(prepared)}
+
+    async def generate_conversation_answer(
+        self, step, frozen_input, *, answer_plan=None, authorize=None
+    ):
+        """Resumable generate phase: only acts on a `"prepared"` step,
+        re-authorizing from `frozen_input` before the model call, bounded by
+        the plan's persisted deadline from the start; any other step is
+        returned unchanged."""
+        async with self._plan_deadline(answer_plan):
+            if step.get("kind") != "prepared":
+                return step
+            answer_execution = self._execution(answer_plan) if answer_plan is not None else None
+            from tap.modules.knowledge.application.evidence_bundle import decode_bundle
+            from tap.platform.serialization.dataclass_json import to_json
+
+            context = await self._authorized_frozen_context(
+                original_question=frozen_input.message,
+                frozen_input=frozen_input,
+                answer_plan=answer_plan,
+                authorize=authorize,
+            )
+            if isinstance(context, RetrievalAnswerResponse):
+                raise ValueError("resumed step no longer matches a retrieval route")
+            revisions, policy, governance = context
+            bundle = decode_bundle(step["bundle"])
+            generation = await self._answers.generate_frozen(
+                bundle,
+                revisions,
+                policy,
+                governance=governance,
+                model_alias=frozen_input.model_alias,
+                answer_execution=answer_execution,
+                authorize=authorize,
+            )
+            return {
+                "kind": "generated",
+                "bundle": step["bundle"],
+                "generation": to_json(generation),
+            }
+
+    async def verify_conversation_answer(
+        self, step, frozen_input, *, answer_plan=None, authorize=None
+    ):
+        """Resumable verify phase: only acts on a `"generated"` step,
+        re-authorizing from `frozen_input` before verification, bounded by
+        the plan's persisted deadline from the start; any other step is
+        returned unchanged."""
+        async with self._plan_deadline(answer_plan):
+            if step.get("kind") != "generated":
+                return step
+            answer_execution = self._execution(answer_plan) if answer_plan is not None else None
+            from tap.modules.knowledge.application.evidence_bundle import decode_bundle
+            from tap.modules.knowledge.ports.models import AnswerGeneration
+            from tap.platform.serialization.dataclass_json import from_json, to_json
+
+            context = await self._authorized_frozen_context(
+                original_question=frozen_input.message,
+                frozen_input=frozen_input,
+                answer_plan=answer_plan,
+                authorize=authorize,
+            )
+            if isinstance(context, RetrievalAnswerResponse):
+                raise ValueError("resumed step no longer matches a retrieval route")
+            revisions, policy, _governance = context
+            bundle = decode_bundle(step["bundle"])
+            generation = from_json(AnswerGeneration, step["generation"])
+            response = await self._answers.verify_frozen(
+                bundle,
+                generation,
+                revisions,
+                policy,
+                answer_execution=answer_execution,
+                authorize=authorize,
+            )
+            return {"kind": "verified", "response": to_json(response)}
+
+    async def finalize_conversation_answer(
+        self, step, frozen_input, *, answer_plan=None, authorize=None
+    ):
+        """Resumable finalize phase: a `"final"` step maps straight to HTTP; a
+        `"verified"` step (from `verify`, or an abstaining `prepare`) is
+        persisted through `save_frozen` before the HTTP mapping -- all bounded
+        by the plan's persisted deadline from the start (`save_frozen` itself
+        takes no execution-budget parameter)."""
+        async with self._plan_deadline(answer_plan):
+            if step.get("kind") == "final":
+                return RetrievalAnswerResponse.model_validate(step["response"])
+            if step.get("kind") != "verified":
+                raise ValueError("conversation answer step is not ready to finalize")
+            from tap.platform.serialization.dataclass_json import from_json
+
+            context = await self._authorized_frozen_context(
+                original_question=frozen_input.message,
+                frozen_input=frozen_input,
+                answer_plan=answer_plan,
+                authorize=authorize,
+            )
+            if isinstance(context, RetrievalAnswerResponse):
+                raise ValueError("resumed step no longer matches a retrieval route")
+            revisions, _policy, _governance = context
+            response = from_json(AnswerResponse, step["response"])
+            await self._answers.save_frozen(response, frozen_input.message, revisions)
+            return answer_response_to_http(response)
+
+    async def _authorized_frozen_context(
+        self,
+        *,
+        original_question: str,
+        frozen_input,
+        answer_plan=None,
+        authorize=None,
+    ):
+        """Re-derive revisions, governance and the `RetrievalPolicyContext`
+        from `frozen_input` and re-check their digests; every resumable phase
+        calls this independently, which also serves as its authorization
+        recheck on resume. Returns either `(revisions, policy, governance)`
+        for a route that still requires retrieval, or a complete
+        `RetrievalAnswerResponse` for a route that never reaches it."""
         from tap.modules.chat.domain.conversations import content_digest
         from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
         from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
@@ -325,7 +516,7 @@ class KnowledgeHttpService:
                     ),
                     acl_digest=frozen_input.acl_digest,
                     policy_digest=frozen_input.retrieval_policy_digest,
-                    original_question=request.query,
+                    original_question=original_question,
                     model_alias=frozen_input.model_alias,
                     source_ids=tuple(item.source_id for item in frozen_input.resolved_resources),
                 )
@@ -360,7 +551,7 @@ class KnowledgeHttpService:
             if answer_plan is not None and answer_plan.route != "direct":
                 return self._stopped_answer(answer_plan, answer_input)
             generation = await self._models.chat(
-                request.query,
+                original_question,
                 model_alias=frozen_input.model_alias,
                 governance=governance,
                 **(
@@ -403,7 +594,7 @@ class KnowledgeHttpService:
             if self._models is None:
                 raise ValueError("direct answer model is unavailable")
             generation = await self._models.chat(
-                request.query,
+                original_question,
                 model_alias=frozen_input.model_alias,
                 governance=governance,
                 answer_plan_id=answer_plan.plan_id,
@@ -424,20 +615,7 @@ class KnowledgeHttpService:
                 citations=[],
                 graph_context_status="NOT_SELECTED",
             )
-        domain_request = answer_request_from_http(request)
-        response = await self._answers.answer_frozen(
-            domain_request,
-            revisions,
-            policy,
-            governance=governance,
-            model_alias=frozen_input.model_alias,
-            **(
-                {"answer_execution": self._execution(answer_plan), "authorize": authorize}
-                if answer_plan is not None
-                else {}
-            ),
-        )
-        return answer_response_to_http(response)
+        return revisions, policy, governance
 
     @staticmethod
     def _execution(plan):

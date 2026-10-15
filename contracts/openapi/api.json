@@ -161,6 +161,67 @@
         "title": "AnswerDeltaPayload",
         "type": "object"
       },
+      "AnswerFeedbackRequest": {
+        "additionalProperties": false,
+        "description": "Owner-only up/down rating on a completed Turn; comment is down-only.",
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "rating": {
+            "enum": [
+              "up",
+              "down"
+            ],
+            "title": "Rating",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rating"
+        ],
+        "title": "AnswerFeedbackRequest",
+        "type": "object"
+      },
+      "AnswerFeedbackView": {
+        "additionalProperties": false,
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "rating": {
+            "enum": [
+              "up",
+              "down"
+            ],
+            "title": "Rating",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rating"
+        ],
+        "title": "AnswerFeedbackView",
+        "type": "object"
+      },
       "AnswerMode": {
         "enum": [
           "quick",
@@ -1571,6 +1632,16 @@
             "pattern": "^sha256:[0-9a-f]{64}$",
             "title": "Inputsnapshotdigest",
             "type": "string"
+          },
+          "myFeedback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnswerFeedbackView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "state": {
             "enum": [
@@ -5850,6 +5921,28 @@
           {
             "properties": {
               "detail": {
+                "const": "Feedback is only accepted for a completed Turn."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 409
+              },
+              "title": {
+                "const": "Feedback not allowed"
+              },
+              "type": {
+                "const": "https://tap.example/problems/feedback-not-allowed"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
                 "const": "The graph fact is unavailable in this Project snapshot."
               },
               "failureStage": {
@@ -6480,6 +6573,7 @@
               "https://tap.example/problems/embedding-unavailable",
               "https://tap.example/problems/empty-document",
               "https://tap.example/problems/execution-provider-unavailable",
+              "https://tap.example/problems/feedback-not-allowed",
               "https://tap.example/problems/graph-fact-not-found",
               "https://tap.example/problems/graph-job-busy",
               "https://tap.example/problems/graph-unavailable",
@@ -12848,6 +12942,181 @@
           }
         },
         "summary": "Citation",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/feedback": {
+      "delete": {
+        "operationId": "conversation_delete_turn_feedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conversation or Turn not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Delete Turn Feedback",
+        "tags": [
+          "conversations"
+        ]
+      },
+      "put": {
+        "operationId": "conversation_put_turn_feedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerFeedbackView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conversation or Turn not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Turn is not completed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Put Turn Feedback",
         "tags": [
           "conversations"
         ]

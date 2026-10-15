@@ -211,6 +211,18 @@ class MemoryAnswerRepository:
             raise DocumentStateChanged("selected revision changed")
         if self.fail_save:
             raise RuntimeError("mysql://root:secret@localhost")
+        existing = next(
+            (item for item in self.snapshots if item.trace_id == snapshot.trace_id), None
+        )
+        if existing is not None:
+            # Mirrors `MysqlDocumentRepository`'s idempotent-per-trace_id `save_frozen`:
+            # a resumed finalize replays with the same trace_id, so matching content is
+            # a no-op and only a genuine mismatch is a conflict.
+            if existing == snapshot:
+                return
+            raise AnswerSnapshotUnavailable(
+                "answer snapshot already exists with different content for this trace"
+            )
         self.snapshots.append(snapshot)
 
 

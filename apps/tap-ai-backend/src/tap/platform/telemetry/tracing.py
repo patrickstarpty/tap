@@ -150,6 +150,25 @@ class TraceBindingProcessor(SpanProcessor):
         return True
 
 
+# Bounds the status description below: long enough to tell apart same-class
+# failures with different causes, short enough that a message echoing part of a
+# document or a credential-bearing URL cannot bloat the span's status.
+_STATUS_MESSAGE_MAX = 200
+
+
+def error_status_message(exc: BaseException) -> str:
+    """A bounded "ClassName: message" summary for a span's error status.
+
+    Class name alone (the previous behavior) cannot tell apart two failures of the
+    same type for a different reason; the message is appended, truncated, so a
+    status description never grows past ``_STATUS_MESSAGE_MAX`` characters.
+    """
+    message = str(exc).strip()
+    if not message:
+        return type(exc).__name__
+    return f"{type(exc).__name__}: {message[:_STATUS_MESSAGE_MAX]}"
+
+
 @contextmanager
 def span(
     name: str,
@@ -169,7 +188,7 @@ def span(
         try:
             yield current_span
         except Exception as exc:
-            current_span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+            current_span.set_status(Status(StatusCode.ERROR, error_status_message(exc)))
             current_span.record_exception(exc)
             raise
 

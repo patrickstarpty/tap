@@ -105,7 +105,11 @@ def test_publish_generate_verify_and_read(owned_project_mysql):
         knowledge = KnowledgeSuggestionSources(sessions, scope=VALIDATION_SCOPE)
         usage = MysqlSuggestionUsage(sessions, scope=VALIDATION_SCOPE)
         generator = ModelGatewaySuggestionGenerator(
-            _gateway(), scope=VALIDATION_SCOPE, alias="qwen-plus", timeout_seconds=5.0
+            _gateway(),
+            scope=VALIDATION_SCOPE,
+            alias="qwen-plus",
+            timeout_seconds=5.0,
+            redact=_redact,
         )
         service = PromptSuggestionService(
             store=store,
@@ -117,7 +121,11 @@ def test_publish_generate_verify_and_read(owned_project_mysql):
             clock=lambda: NOW,
         )
         worker = SuggestionRefreshWorker(
-            store=store, service=service, worker_id="flow-worker", clock=lambda: NOW
+            store=store,
+            service=service,
+            worker_id="flow-worker",
+            clock=lambda: NOW,
+            scope=VALIDATION_SCOPE,
         )
         key = SuggestionKey(actor_id=VALIDATION_SCOPE.actor_id, locale="en")
 

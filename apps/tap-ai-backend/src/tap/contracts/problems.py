@@ -312,6 +312,14 @@ PROBLEM_REGISTRY = MappingProxyType(
                 None,
             ),
             ProblemDefinition(
+                "feedback-not-allowed",
+                "Feedback not allowed",
+                409,
+                "Feedback is only accepted for a completed Turn.",
+                False,
+                None,
+            ),
+            ProblemDefinition(
                 "graph-fact-not-found",
                 "Graph fact not found",
                 404,

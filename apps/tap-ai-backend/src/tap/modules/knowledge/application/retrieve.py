@@ -25,6 +25,7 @@ from tap.modules.access.domain.policy import (
 from tap.modules.ai.application.agents.protocol import AgentContext
 from tap.modules.ai.application.agents.registry import AgentRegistry
 from tap.modules.knowledge.application.answer_templates import assemble_answer
+from tap.modules.knowledge.application.evidence_bundle import EvidenceBundle
 from tap.modules.knowledge.application.planned_answer import AuthorizedAnswerExecution
 from tap.modules.knowledge.application.publication import (
     FlowchartPublicationGate,
@@ -377,8 +378,47 @@ class AuthorizedRetrieval:
         answer_execution: AuthorizedAnswerExecution | None = None,
         authorize=None,
     ) -> AnswerResponse:
+        prepared = await self.prepare_answer(
+            request,
+            policy,
+            frozen_policy=frozen_policy,
+            governance=governance,
+            graph_context=graph_context,
+            answer_execution=answer_execution,
+            authorize=authorize,
+        )
+        if isinstance(prepared, AnswerResponse):
+            return prepared
+        # `prepare_answer` already rechecked current revision/policy and
+        # authorized just above; `generate_answer`'s own recheck exists for a
+        # *resumed* graph node picking up a checkpointed `EvidenceBundle`
+        # cold, so it must not run a second time here in the single-shot
+        # path -- that would consume an extra verifier/authorize call the
+        # caller never asked for, shifting a revocation caught on, say, the
+        # 6th call to land before the model call instead of after it.
+        generation = await self._generate_from_bundle(
+            prepared,
+            governance=governance,
+            model_alias=model_alias,
+        )
+        return await self.verify_answer(
+            prepared, generation, policy, frozen_policy=frozen_policy, authorize=authorize
+        )
+
+    async def prepare_answer(
+        self,
+        request: AnswerRequest,
+        policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool = False,
+        governance=None,
+        graph_context: tuple[Mapping[str, object], ...] = (),
+        answer_execution: AuthorizedAnswerExecution | None = None,
+        authorize=None,
+    ) -> AnswerResponse | EvidenceBundle:
         answer_input = None
         missing = False
+        evidence_map = {}
         if authorize is not None:
             await authorize()
         if answer_execution is None:
@@ -567,46 +607,112 @@ class AuthorizedRetrieval:
             if answer_execution is not None
             else run.plan.sanitized_query
         )
+        return EvidenceBundle(
+            request=request,
+            generation_query=generation_query,
+            response=run.response,
+            plan=run.plan,
+            context_snapshot=run.context_snapshot,
+            publication=run.publication,
+            relation=relation,
+            answer_input=answer_input,
+            evidence_map=evidence_map,
+            graph_context=graph_context,
+            flow_context=flow_context,
+            missing=missing,
+            relation_first=relation_first,
+        )
+
+    async def generate_answer(
+        self,
+        bundle: EvidenceBundle,
+        policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool = False,
+        governance=None,
+        model_alias: str | None = None,
+        authorize=None,
+    ) -> AnswerGeneration:
+        """Rechecks current revision/policy and authorizes before generating.
+
+        Public entrypoint for a *resumed* graph node that picks up a
+        checkpointed `EvidenceBundle` cold -- it cannot assume the bundle's
+        authority is still fresh, so it rechecks here. The single-shot
+        `answer()` composition calls `_generate_from_bundle` directly instead,
+        since `prepare_answer` already performed this recheck immediately
+        before producing the bundle."""
+        if self._publication_authority is not None and bundle.publication is not None:
+            await self._publication_authority.revalidate(bundle.publication)
+        current = policy if frozen_policy else await self._verify_current(policy)
+        self._validate_binding(current, bundle.plan, bundle.context_snapshot)
+        if authorize is not None:
+            await authorize()
+        return await self._generate_from_bundle(
+            bundle, governance=governance, model_alias=model_alias
+        )
+
+    async def _generate_from_bundle(
+        self,
+        bundle: EvidenceBundle,
+        *,
+        governance=None,
+        model_alias: str | None = None,
+    ) -> AnswerGeneration:
         use_extended_answer = (
             governance is not None
-            or graph_context
+            or bundle.graph_context
             or model_alias is not None
-            or answer_input is not None
-            or relation is not None
+            or bundle.answer_input is not None
+            or bundle.relation is not None
         )
         generation = (
             await cast(Any, self._answers).answer(
-                generation_query,
-                run.response.evidence,
-                run.response.retrieval_profile_id.value,
+                bundle.generation_query,
+                bundle.response.evidence,
+                bundle.response.retrieval_profile_id.value,
                 governance=governance,
-                graph_context=graph_context,
+                graph_context=bundle.graph_context,
                 model_alias=model_alias,
-                relation_context=relation,
-                relation_first=relation_first,
-                **({"answer_input": answer_input} if answer_input is not None else {}),
+                relation_context=bundle.relation,
+                relation_first=bundle.relation_first,
+                **(
+                    {"answer_input": bundle.answer_input} if bundle.answer_input is not None else {}
+                ),
             )
             if use_extended_answer
             else await self._answers.answer(
-                run.plan.sanitized_query,
-                run.response.evidence,
-                run.response.retrieval_profile_id.value,
+                bundle.generation_query,
+                bundle.response.evidence,
+                bundle.response.retrieval_profile_id.value,
             )
         )
-        current = current if frozen_policy else await self._verify_current(current)
+        return generation
+
+    async def verify_answer(
+        self,
+        bundle: EvidenceBundle,
+        generation: AnswerGeneration,
+        policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool = False,
+        authorize=None,
+    ) -> AnswerResponse:
+        current = policy if frozen_policy else await self._verify_current(policy)
         if authorize is not None:
             await authorize()
-        self._validate_binding(current, run.plan, run.context_snapshot)
-        if self._publication_authority is not None and run.publication is not None:
-            await self._publication_authority.revalidate(run.publication)
-        if flow_context and any(
-            not flowchart_claim_is_consistent(claim.evidence_labels, flow_context)
+        self._validate_binding(current, bundle.plan, bundle.context_snapshot)
+        if self._publication_authority is not None and bundle.publication is not None:
+            await self._publication_authority.revalidate(bundle.publication)
+        if bundle.flow_context and any(
+            not flowchart_claim_is_consistent(
+                claim.evidence_labels, cast(dict[str, Any], bundle.flow_context)
+            )
             for claim in generation.claims
         ):
             return self._abstain(
-                run.response,
+                bundle.response,
                 AbstentionReason.INSUFFICIENT_EVIDENCE,
-                relation=self._baseline_relation_outcome(relation),
+                relation=self._baseline_relation_outcome(bundle.relation),
             )
 
         relation_outcome: RelationOutcome | None = None
@@ -616,15 +722,16 @@ class AuthorizedRetrieval:
         dropped_for_cap = 0
         extra_citation_ids: dict[str, str] = {}
         edge_citations: tuple[Citation, ...] = ()
-        s_citations = [self._citation(item) for item in run.response.evidence]
-        if relation is not None:
+        s_citations = [self._citation(item) for item in bundle.response.evidence]
+        if bundle.relation is not None:
+            relation = bundle.relation
             reconciled = reconcile_relation_claims(
                 generation, relation, graph_version=relation.graph_version
             )
             stripped = reconciled.stripped
             if reconciled.claims == () and generation.claims:
                 return self._abstain(
-                    run.response,
+                    bundle.response,
                     AbstentionReason.INSUFFICIENT_EVIDENCE,
                     relation=self._baseline_relation_outcome(relation),
                 )
@@ -637,9 +744,9 @@ class AuthorizedRetrieval:
                 all_resolved: dict[str, Citation | None] = {
                     relation_evidence.label: self._edge_citation_for_relation(
                         relation_evidence,
-                        run.response.evidence,
+                        bundle.response.evidence,
                         relation.graph_version or "",
-                        run.plan.resources,
+                        bundle.plan.resources,
                     )
                     for relation_evidence in relation.relations
                 }
@@ -726,7 +833,7 @@ class AuthorizedRetrieval:
                     )
                     if not final_claims and reconciled.claims:
                         return self._abstain(
-                            run.response,
+                            bundle.response,
                             AbstentionReason.INSUFFICIENT_EVIDENCE,
                             relation=self._baseline_relation_outcome(relation),
                         )
@@ -758,17 +865,17 @@ class AuthorizedRetrieval:
 
         claims = _resolve_generated_claims(
             generation,
-            run.response.evidence,
+            bundle.response.evidence,
             id_factory=self._id_factory,
             extra_citation_ids=extra_citation_ids,
         )
         if claims is None:
             return self._abstain(
-                run.response, AbstentionReason.INSUFFICIENT_EVIDENCE, relation=relation_outcome
+                bundle.response, AbstentionReason.INSUFFICIENT_EVIDENCE, relation=relation_outcome
             )
         if not generation.text and not claims:
             return self._abstain(
-                run.response, AbstentionReason.INSUFFICIENT_EVIDENCE, relation=relation_outcome
+                bundle.response, AbstentionReason.INSUFFICIENT_EVIDENCE, relation=relation_outcome
             )
 
         cited_citation_ids = {citation_id for claim in claims for citation_id in claim.citation_ids}
@@ -778,7 +885,7 @@ class AuthorizedRetrieval:
         degradation_reasons = tuple(
             reason
             for reason, present in (
-                ("partial-evidence", missing),
+                ("partial-evidence", bundle.missing),
                 ("invalid-relation-citation", stripped > 0),
                 # Only relations a claim actually cites can degrade the answer;
                 # an unresolvable relation that no claim cited never reached
@@ -789,11 +896,11 @@ class AuthorizedRetrieval:
             if present
         )
         return AnswerResponse(
-            trace_id=run.response.trace_id,
-            query_plan_id=run.response.query_plan_id,
-            context_snapshot_id=run.response.context_snapshot_id,
-            corpus_version=run.response.corpus_version,
-            retrieval_profile_id=run.response.retrieval_profile_id,
+            trace_id=bundle.response.trace_id,
+            query_plan_id=bundle.response.query_plan_id,
+            context_snapshot_id=bundle.response.context_snapshot_id,
+            corpus_version=bundle.response.corpus_version,
+            retrieval_profile_id=bundle.response.retrieval_profile_id,
             answer=generation.text,
             abstained=False,
             claims=claims,
@@ -801,9 +908,9 @@ class AuthorizedRetrieval:
                 *s_citations,
                 *used_edge_citations,
             ),
-            embedding_provenance=run.response.embedding_provenance,
+            embedding_provenance=bundle.response.embedding_provenance,
             answer_provenance=self._generation_provenance(generation),
-            degraded_mode=missing or stripped > 0 or unresolvable_cited > 0,
+            degraded_mode=bundle.missing or stripped > 0 or unresolvable_cited > 0,
             degradation_reasons=degradation_reasons,
             relation=relation_outcome,
         )

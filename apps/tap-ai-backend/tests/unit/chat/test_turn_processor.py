@@ -119,7 +119,7 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
     )
     checkpoint = await checkpointer.aget_tuple({"configurable": {"thread_id": "turn-1"}})
     assert checkpoint is not None
-    assert checkpoint.checkpoint["channel_values"]["graph_version"] == "fast-chat-v1"
+    assert checkpoint.checkpoint["channel_values"]["graph_version"] == "tapper-chat-v2"
     assert knowledge.requests[0].resource_refs[0].source_id == "src_" + "1" * 32
     assert knowledge.requests[0].resource_refs[0].mode.value == "scope"
     assert conversations.events[0] == (
@@ -967,7 +967,11 @@ async def test_generation_worker_rechecks_turn_lease_before_provider_call():
 
         async def renew_processing_lease(self, *_args, **_kwargs):
             self.validations += 1
-            if self.validations >= 3:
+            # `tapper-chat-v2` authorize-gates `guard_in` (1st) then
+            # `seed_search` (2nd) before the provider-calling step runs, so
+            # the 2nd renewal is the last chance to lose the lease before
+            # the provider would otherwise be invoked.
+            if self.validations >= 2:
                 raise ConversationConflict("generation lease lost")
 
     class Conversations:
