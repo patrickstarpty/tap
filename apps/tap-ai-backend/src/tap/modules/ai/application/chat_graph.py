@@ -9,6 +9,7 @@ from typing import Any, Literal, TypedDict, cast
 from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
+from opentelemetry.trace import Status, StatusCode
 
 from tap.modules.ai.application.interaction_graph import VersionedGraphRunner
 from tap.platform.telemetry import span
@@ -127,7 +128,7 @@ class ChatGraph:
         async def run(state: ChatGraphState) -> dict[str, Any]:
             if not await self._authorize():
                 raise PermissionError("graph run authorization changed")
-            with span(f"graph.node.{name}", {"tap.graph.version": CHAT_GRAPH_VERSION}):
+            with span(f"graph.node.{name}", {"tap.graph.version": CHAT_GRAPH_VERSION}) as node_span:
                 try:
                     return await node(state)
                 except PermissionError:
@@ -137,6 +138,8 @@ class ChatGraph:
                 except Exception as exc:
                     if not capture_failure:
                         raise
+                    node_span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+                    node_span.record_exception(exc)
                     return {"failure": {"node": name, "error": type(exc).__name__}}
 
         return run

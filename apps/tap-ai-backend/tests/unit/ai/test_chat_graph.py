@@ -297,6 +297,59 @@ async def test_nodes_emit_spans(span_recorder) -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_node_span_has_error_status(span_recorder) -> None:
+    from opentelemetry.trace import StatusCode
+
+    calls: list[str] = []
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("guard_in")
+        return {}
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("seed_search")
+        return {}
+
+    async def model(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("model")
+        raise RuntimeError("model exploded")
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("verify must not run after a model failure")
+
+    async def finalize(state: ChatGraphState) -> dict[str, object]:
+        calls.append("finalize")
+        return {"result": {"answer": "degraded"}}
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run on the chat route")
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=_always_authorized(),
+    )
+
+    await graph.start(run_id="run-failed-span", payload={}, route="chat")
+
+    spans_by_name = {
+        recorded.name: recorded
+        for recorded in span_recorder.get_finished_spans()
+        if recorded.name.startswith("graph.node.")
+    }
+    assert spans_by_name["graph.node.model"].status.status_code == StatusCode.ERROR
+    assert spans_by_name["graph.node.guard_in"].status.status_code != StatusCode.ERROR
+    assert spans_by_name["graph.node.seed_search"].status.status_code != StatusCode.ERROR
+
+
+@pytest.mark.asyncio
 async def test_authorization_loss_raises_permission_error() -> None:
     calls: list[str] = []
     allowed = True
