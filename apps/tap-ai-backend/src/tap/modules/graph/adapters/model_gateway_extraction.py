@@ -359,16 +359,6 @@ class ModelGatewayGraphExtraction:
                         _cited_refs(item, refs),
                         aliases,
                     )
-                    if not node.evidence_ids and item.get(_HAD_REFS_BEFORE_STRIP):
-                        # Every ref this node cited was outside the batch (dropped by
-                        # ``_strip_dangling_refs`` above): no evidence survives for
-                        # this fact, so drop the node itself rather than fail the
-                        # whole batch. Its edges follow once endpoints disappear
-                        # from ``node_ids`` below. A node the model emitted with an
-                        # already-empty ``chunks`` (the flag unset) keeps its
-                        # previous behavior instead -- kept, with no evidence.
-                        dropped_no_evidence += 1
-                        continue
                     known_id = (
                         node.node_id
                         if node.node_id in known
@@ -376,7 +366,10 @@ class ModelGatewayGraphExtraction:
                     )
                     if known_id is not None:
                         # A known entity repeated in nodes: drop the copy, keep its
-                        # citations, and point its edges at the known id.
+                        # citations, and point its edges at the known id. This
+                        # remap must happen before the no-evidence check below, or
+                        # an edge in this batch that cites the copy's local id would
+                        # wrongly lose its endpoint instead of following the remap.
                         repeated_known += 1
                         node_id_remap[node.node_id] = known_id
                         known_refs.setdefault(known_id, []).extend(node.evidence_ids)
@@ -387,7 +380,8 @@ class ModelGatewayGraphExtraction:
                     )
                     if survivor_id is not None:
                         # The same node twice (same id, or same canonical key under
-                        # another id): keep the first, union citations and aliases.
+                        # another id): keep the first, union citations and aliases
+                        # (same ordering reason as the known-entity remap above).
                         duplicate_nodes += 1
                         if node.node_id != survivor_id:
                             node_id_remap[node.node_id] = survivor_id
@@ -399,6 +393,16 @@ class ModelGatewayGraphExtraction:
                             ),
                             aliases=_sanitize_aliases((*survivor.aliases, *node.aliases)),
                         )
+                        continue
+                    if not node.evidence_ids and item.get(_HAD_REFS_BEFORE_STRIP):
+                        # A genuinely new node: every ref it cited was outside the
+                        # batch and was stripped above, so no evidence survives for
+                        # this fact. Drop it rather than fail the whole batch; its
+                        # edges follow once this id disappears from ``node_ids``
+                        # below. A node the model emitted with an already-empty
+                        # ``chunks`` (the flag unset) keeps its previous behavior
+                        # instead -- kept, with no evidence.
+                        dropped_no_evidence += 1
                         continue
                     new_nodes[node.node_id] = node
                     new_id_by_key.setdefault(key, node.node_id)

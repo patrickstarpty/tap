@@ -267,6 +267,53 @@ async def test_an_extracted_edge_with_already_empty_chunks_still_fails_closed():
 
 
 @pytest.mark.asyncio
+async def test_a_known_entity_copy_with_only_a_dangling_ref_is_still_remapped(span_recorder):
+    # The copy of a known entity cites only an out-of-batch ref. It must still be
+    # remapped to the known id -- dropping it instead (as a naive no-evidence rule
+    # would) would orphan the edge that cites its local id.
+    output = _output()
+    output["nodes"][0] = output["nodes"][0] | {"chunks": ["c12"]}
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_known_policy_request())
+
+    by_id = {node.node_id: node for node in draft.nodes}
+    assert set(by_id) == {"b0-n1", "node-2"}
+    assert [(edge.source_node_id, edge.target_node_id) for edge in draft.edges] == [
+        ("b0-n1", "node-2")
+    ]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.repeated_known_entities"] == 1
+    assert spans[0].attributes["tap.graph.dropped_no_evidence_nodes"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_node_with_only_a_dangling_ref_is_still_remapped(span_recorder):
+    # A duplicate of node-1 under a different local id cites only an out-of-batch
+    # ref. It must still be merged into the survivor -- dropping it instead would
+    # orphan the edge that cites its local id.
+    output = _output()
+    output["nodes"].append(output["nodes"][0] | {"id": "node-1b", "chunks": ["c12"]})
+    output["edges"].append(
+        output["edges"][0] | {"id": "edge-2", "sourceNodeId": "node-1b", "relationType": "USES"}
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+
+    assert [node.node_id for node in draft.nodes] == ["node-1", "node-2"]
+    assert {(edge.edge_id, edge.source_node_id) for edge in draft.edges} == {
+        ("edge-1", "node-1"),
+        ("edge-2", "node-1"),
+    }
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.duplicate_nodes"] == 1
+    assert spans[0].attributes["tap.graph.dropped_no_evidence_nodes"] == 0
+
+
+@pytest.mark.asyncio
 async def test_batch_context_carries_title_and_known_entities():
     gateway = Gateway(_output())
     request = replace(
