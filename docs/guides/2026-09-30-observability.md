@@ -34,6 +34,8 @@ make langfuse-down
 
 未配置 `LANGFUSE_HOST` 时，`tapper_langfuse_sync_worker` 只打一条启动日志后空转；一旦配置并重启，历史链路数据与反馈会自动补推。看板中每个 Turn 对应一条 trace，可按会话、用户、项目、模型筛选并下钻；generation 带 token 与成本；回答的 👍/👎 反馈同步为名为 `user_feedback` 的 score。
 
+`LANGFUSE_HOST`、`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` 与 `TAP_TRACE_REDACTION_RULES` 均由共享的 `TapperSettings` 在启动时校验：`LANGFUSE_HOST` 配置但缺少任一 key，或 `TAP_TRACE_REDACTION_RULES` 指向不存在的文件，都会在配置解析阶段报错，导致 API、Relay、worker 等全部 TAP AI 进程无法启动，而不是仅 Langfuse 相关进程失败；修改这三个变量后请先确认路径存在、key 成对配置，再重启进程。
+
 发往 Langfuse 的文本一律先脱敏（凭据、邮箱、手机号、身份证、银行卡号，以及兜底的数字串规则），MySQL 中的原文不受影响；脱敏基于正则，存在漏网可能，进入共享环境前需安全复核（见设计 §4、§10）。
 
 同步 worker 按 `trace_span.recorded_at` 与 `answer_feedback.updated_at` 增量扫描，只处理早于“当前时间 − `TAP_LANGFUSE_SYNC_SETTLE_SECONDS`”（默认 60 秒）的行，避免扫到仍在写入的半条 trace；该静默窗口必须大于最长的一次 span 导出或反馈事务耗时。推送失败的条目记入 `langfuse_sync_failure`，下一轮无限重试、不阻塞其他条目或游标前进。
