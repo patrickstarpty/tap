@@ -75,7 +75,12 @@ def test_exact_key_merges_across_fragments_and_keeps_majority_label():
 
 
 def _evidenced_node(
-    node_id: str, snapshot_id: str, label: str, node_type: str, canonical_key: str, evidence_count: int
+    node_id: str,
+    snapshot_id: str,
+    label: str,
+    node_type: str,
+    canonical_key: str,
+    evidence_count: int,
 ) -> tuple[GraphNode, tuple[Evidence, ...]]:
     evidence = tuple(
         Evidence(
@@ -90,7 +95,12 @@ def _evidenced_node(
         for i in range(evidence_count)
     )
     node = GraphNode(
-        node_id, snapshot_id, label, node_type, canonical_key, tuple(e.evidence_id for e in evidence)
+        node_id,
+        snapshot_id,
+        label,
+        node_type,
+        canonical_key,
+        tuple(e.evidence_id for e in evidence),
     )
     return node, evidence
 
@@ -99,7 +109,9 @@ def test_actor_system_and_entity_merge_on_the_same_canonical_key():
     # Real-model run: the same insurer, same canonical key, split into a
     # "保险公司" ACTOR node (degree 144) and a "保险公司" SYSTEM node across batches.
     actor_node, actor_evidence = _evidenced_node("n1", "frag-a", "保险公司", "ACTOR", "保险公司", 1)
-    system_node, system_evidence = _evidenced_node("n2", "frag-a", "保险公司", "SYSTEM", "保险公司", 3)
+    system_node, system_evidence = _evidenced_node(
+        "n2", "frag-a", "保险公司", "SYSTEM", "保险公司", 3
+    )
     fragment = GraphSnapshotDraft(
         _snapshot("frag-a"),
         (actor_node, system_node),
@@ -127,7 +139,9 @@ def test_a_concept_and_a_requirement_still_require_the_same_type_to_merge():
 
 
 def test_a_company_full_name_and_short_name_merge_by_org_suffix():
-    full_name = _fragment("frag-a", [("n1", "友邦人寿保险有限公司", "ACTOR", "友邦人寿保险有限公司")])
+    full_name = _fragment(
+        "frag-a", [("n1", "友邦人寿保险有限公司", "ACTOR", "友邦人寿保险有限公司")]
+    )
     short_name = _fragment("frag-b", [("n1", "友邦人寿", "ACTOR", "友邦人寿")])
 
     entities = resolve_entities([full_name, short_name])
@@ -378,7 +392,8 @@ def _linear_scan_clusters(
             key1 = alignment_key(node.canonical_key)
             label_keys = names((node.label,))
             keys2 = {
-                key for key in names((node.label, *node.aliases))
+                key
+                for key in names((node.label, *node.aliases))
                 if (node.node_type, source, key) not in ambiguous
             }
             target = None
@@ -697,7 +712,13 @@ def test_an_alias_shared_by_two_grades_in_one_document_does_not_merge_them():
         "frag-a",
         [
             ("n1", "心功能分级Ⅳ级", "CONCEPT", "心功能分级Ⅳ级", ("Ⅳ级",)),
-            ("n2", "类风湿性关节炎功能分类IV级", "CONCEPT", "类风湿性关节炎功能分类IV级", ("IV 级",)),
+            (
+                "n2",
+                "类风湿性关节炎功能分类IV级",
+                "CONCEPT",
+                "类风湿性关节炎功能分类IV级",
+                ("IV 级",),
+            ),
         ],
     )
 

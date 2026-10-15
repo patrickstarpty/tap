@@ -189,7 +189,8 @@ def test_merge_cleans_the_persisted_alias_list():
     node, evidence = _node_with_evidence(
         "n1", "frag-a", "全残", "CONCEPT", "全残", ("全残（释义七）", "王先生")
     )
-    record = _record("frag-a", GraphSnapshotDraft(_snapshot("frag-a"), (node,), (), (evidence,), ()))
+    fragment = GraphSnapshotDraft(_snapshot("frag-a"), (node,), (), (evidence,), ())
+    record = _record("frag-a", fragment)
 
     draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, [record])
 

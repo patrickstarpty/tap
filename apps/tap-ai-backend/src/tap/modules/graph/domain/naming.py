@@ -203,9 +203,7 @@ def usable_alias(text: str) -> bool:
 # the raw text rather than ``key`` so the readable remainder keeps its own spacing.
 _LEADING_ARTICLE = re.compile(rf"^第[{_NUMERAL}]+[条章节款项部篇编目段页点]\s*")
 # A trailing interpretation-note parenthetical ("（释义七）", "(释义3)").
-_TRAILING_DEFINITION_NOTE = re.compile(
-    r"[（(]\s*释义[0-9〇零一二三四五六七八九十百]+\s*[）)]\s*$"
-)
+_TRAILING_DEFINITION_NOTE = re.compile(r"[（(]\s*释义[0-9〇零一二三四五六七八九十百]+\s*[）)]\s*$")
 
 
 def clean_alias(text: str) -> str | None:
