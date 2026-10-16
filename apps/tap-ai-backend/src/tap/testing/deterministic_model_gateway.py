@@ -248,13 +248,12 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 ]
                 content = json.dumps({"suggestions": suggestions})
             elif request.operation is ModelOperation.STRUCTURED:
-                claims = _grounded_claims_from_context(request.context)
-                output = (
-                    {"answer": "\n\n".join(item["text"] for item in claims), "claims": claims}
-                    if claims
-                    else {"answer": "Grounded"}
-                )
-                content = json.dumps(output)
+                # Baseline conformance for any other structured schema (test
+                # design, graph extraction, chat planning, ...): a minimal,
+                # schema-agnostic completion. Grounded answers no longer request
+                # STRUCTURED output at all (PR 3 streams inline-marked Markdown
+                # instead, handled below), so this never needs evidence/relations.
+                content = json.dumps({"answer": "Grounded"})
             elif _is_grounded_answer_context(request.context):
                 # `KnowledgeModelGateway.answer` (PR 3) now streams a Markdown chat
                 # answer with inline `[S1]`/`[R1]` markers instead of requesting the

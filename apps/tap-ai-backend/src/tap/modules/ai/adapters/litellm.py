@@ -446,7 +446,12 @@ class LiteLLMModelGateway:
             or (
                 governed
                 and (
-                    operation is not ModelOperation.STRUCTURED
+                    # A governed request may run as STRUCTURED (closed JSON schema,
+                    # e.g. the test-design/Insights capability) or as CHAT with no
+                    # schema (PR 3: a governed/pinned-template grounded answer
+                    # streams Markdown with inline `[S1]`/`[R1]` markers instead of
+                    # requesting JSON) -- never any other operation.
+                    operation not in (ModelOperation.STRUCTURED, ModelOperation.CHAT)
                     or "knowledge.answer" not in request.tool_allowlist
                     or not request.governance_digests
                 )

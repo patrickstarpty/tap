@@ -294,15 +294,20 @@ def _resolve_generated_claims(
         )
         if not citation_ids or len(citation_ids) != len(generated_claim.evidence_labels):
             return None
-        if "\n\n" in generated_claim.text:
+        if "\n\n" in generated_claim.text or not generated_claim.text:
             return None
+        # A claim is a cited sentence, not necessarily a whole paragraph (LangGraph
+        # PR 3: inline `[S1]`/`[R1]` markers can cite one sentence inside a
+        # Markdown list/paragraph that also carries uncited prose) -- it just has
+        # to be locatable at exactly one offset in the answer.
         spans: list[tuple[int, int]] = []
-        start = 0
-        for paragraph in generation.text.split("\n\n"):
-            end = start + len(paragraph)
-            if paragraph == generated_claim.text:
-                spans.append((start, end))
-            start = end + 2
+        search_from = 0
+        while True:
+            found = generation.text.find(generated_claim.text, search_from)
+            if found == -1:
+                break
+            spans.append((found, found + len(generated_claim.text)))
+            search_from = found + len(generated_claim.text)
         if len(spans) != 1:
             return None
         claims.append(

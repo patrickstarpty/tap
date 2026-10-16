@@ -126,6 +126,54 @@ def test_plain_text_without_any_marker_abstains() -> None:
     assert _parse("INSUFFICIENT_EVIDENCE", (evidence(label="S1"),)) == ("", ())
 
 
+def test_markdown_headings_and_list_markup_are_preserved_in_the_answer() -> None:
+    """Ruling (2026-10-16 review): the parser must not flatten Markdown -- the
+    heading and the list bullets stay in the returned answer verbatim; only
+    the marker syntax itself is removed. Claim text drops the list prefix."""
+    answer, claims = _parse(
+        "## 结论\n\n- 退款需两人审批[S1]。\n- 材料包括身份证明[S2]。",
+        (evidence(label="S1"), evidence(label="S2")),
+    )
+
+    assert answer == "## 结论\n\n- 退款需两人审批。\n- 材料包括身份证明。"
+    assert [claim.text for claim in claims] == ["退款需两人审批。", "材料包括身份证明。"]
+    assert claims[0].evidence_labels == ("S1",)
+    assert claims[1].evidence_labels == ("S2",)
+
+
+def test_uncited_sentences_stay_visible_in_the_answer() -> None:
+    """Ruling: an uncited sentence (here, one whose only marker names a label
+    that was never supplied) is not hidden from the answer -- only the
+    sentence that actually grounds becomes a claim."""
+    answer, claims = _parse(
+        "合同效力中止[S1]。无依据[S7]。",
+        (evidence(label="S1"),),
+    )
+
+    assert answer == "合同效力中止。无依据。"
+    assert [claim.text for claim in claims] == ["合同效力中止。"]
+
+
+@pytest.mark.parametrize(
+    ("text", "literal"),
+    [
+        ("参见[docs](https://example.com)获取详情[S1]。", "[docs](https://example.com)"),
+        ("勾选[x]表示完成[S1]。", "[x]"),
+        ("数组下标 a[0] 为首元素[S1]。", "a[0]"),
+    ],
+    ids=("markdown-link", "checkbox", "array-index"),
+)
+def test_marker_grammar_ignores_non_citation_bracket_syntax(text: str, literal: str) -> None:
+    """Ruling: `_MARKER` must match only `[S<n>]`/`[R<n>]`; a Markdown link, a
+    task-list checkbox, or an unrelated array-index bracket must survive in
+    the answer untouched (not be mistaken for, or swallowed as, a marker) while
+    the real `[S1]` marker elsewhere in the same sentence still grounds it."""
+    answer, claims = _parse(text, (evidence(label="S1"),))
+
+    assert literal in answer
+    assert claims[0].evidence_labels == ("S1",)
+
+
 def _answer_gateway(stream_gateway) -> KnowledgeModelGateway:
     async def redact(text: str) -> str:
         return text
@@ -162,6 +210,15 @@ def _result(output: str) -> ModelResult:
     )
 
 
+def test_unrelated_internal_spacing_is_never_rewritten() -> None:
+    """Ruling: dropped the space-before-punctuation rewrite because it could
+    mangle ordinary text such as a version number; "v 1.2" must survive."""
+    answer, claims = _parse("当前版本为 v 1.2[S1]。", (evidence(label="S1"),))
+
+    assert "v 1.2" in answer
+    assert claims[0].evidence_labels == ("S1",)
+
+
 @pytest.mark.asyncio
 async def test_insufficient_evidence_sentinel_abstains() -> None:
     class InsufficientEvidenceGateway:
@@ -171,6 +228,80 @@ async def test_insufficient_evidence_sentinel_abstains() -> None:
 
     generation = await _answer_gateway(InsufficientEvidenceGateway()).answer(
         "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.text == ""
+    assert generation.claims == ()
+
+
+@pytest.mark.asyncio
+async def test_plan_bound_answer_streams_via_on_text_and_parses_inline() -> None:
+    """Critical review finding (2026-10-16): every production retrieval turn
+    carries `answer_input` (the answer planner), so it is this plan-bound path
+    -- not just the ungoverned one -- that must actually stream and parse
+    inline markers."""
+    from tap.modules.knowledge.application.answer_templates import assemble_answer, get_template
+
+    chunks = ["理赔需在 30 日内提交", "[S1]。"]
+
+    class PlanBoundStreamGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            for chunk in chunks:
+                yield ModelTextDelta(chunk)
+            yield _result("".join(chunks))
+
+    selected = get_template("general", "1")
+    assembled = assemble_answer(
+        template_id="general",
+        template_version="1",
+        template_digest=selected.digest,
+        original_question="query",
+        standalone_question="query",
+        evidence_map={"q1": ("S1",)},
+    )
+    received: list[str] = []
+
+    async def on_text(text: str) -> None:
+        received.append(text)
+
+    generation = await _answer_gateway(PlanBoundStreamGateway()).answer(
+        "query",
+        (evidence(label="S1"),),
+        "quick-hybrid-v1",
+        answer_input=assembled,
+        on_text=on_text,
+    )
+
+    assert received == chunks
+    assert generation.text == "理赔需在 30 日内提交。"
+    assert generation.claims[0].evidence_labels == ("S1",)
+
+
+@pytest.mark.asyncio
+async def test_plan_bound_answer_abstains_as_insufficient_evidence_on_the_sentinel() -> None:
+    """Critical review finding: the plan-bound (governed) path must abstain the
+    same way the ungoverned path does when the model has nothing groundable --
+    `AnswerGeneration(text="", claims=())` is what callers downstream
+    (`AuthorizedRetrieval`) key off to set `AbstentionReason.INSUFFICIENT_EVIDENCE`."""
+    from tap.modules.knowledge.application.answer_templates import assemble_answer, get_template
+
+    class InsufficientEvidenceGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta("INSUFFICIENT_EVIDENCE")
+            yield _result("INSUFFICIENT_EVIDENCE")
+
+    selected = get_template("general", "1")
+    assembled = assemble_answer(
+        template_id="general",
+        template_version="1",
+        template_digest=selected.digest,
+        original_question="query",
+        standalone_question="query",
+        evidence_map={"q1": ("S1",)},
+    )
+
+    generation = await _answer_gateway(InsufficientEvidenceGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1", answer_input=assembled
     )
 
     assert generation.text == ""

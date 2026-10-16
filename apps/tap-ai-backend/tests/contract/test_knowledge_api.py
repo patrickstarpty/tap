@@ -129,12 +129,19 @@ def test_generated_claim_resolution_maps_citations_and_orders_complete_paragraph
     )
 
 
-def test_generated_claim_resolution_uses_equal_paragraphs_not_substrings() -> None:
+def test_generated_claim_resolution_rejects_an_ambiguously_repeated_claim_text() -> None:
+    """LangGraph PR 3 review ruling (2026-10-16): a claim is a cited sentence, not
+    necessarily a whole paragraph, so resolution now locates it by unique
+    substring offset rather than requiring an exact whole-paragraph match. That
+    means a claim text occurring twice -- once as its own paragraph, once
+    embedded at the end of a longer, uncited paragraph -- is genuinely
+    ambiguous and must be rejected rather than silently resolved to the first
+    (paragraph-exact) occurrence, as the retired paragraph-only rule did."""
     generation = AnswerGeneration(
         text="Claim exact.\n\nAnother paragraph mentions Claim exact.",
         claims=(GeneratedClaim(text="Claim exact.", evidence_labels=("S1",)),),
         model_id="answer-model",
-        profile_id="grounded-answer-v1",
+        profile_id="grounded-answer-v2",
         provider_request_id=None,
     )
 
@@ -144,15 +151,7 @@ def test_generated_claim_resolution_uses_equal_paragraphs_not_substrings() -> No
         id_factory=lambda: "claim-id",
     )
 
-    assert resolved == (
-        Claim(
-            claim_id="claim-id",
-            text="Claim exact.",
-            answer_start=0,
-            answer_end=12,
-            citation_ids=("citation-source-1",),
-        ),
-    )
+    assert resolved is None
 
 
 @pytest.mark.parametrize(

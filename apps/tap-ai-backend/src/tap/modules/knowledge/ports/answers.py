@@ -402,7 +402,6 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
         or not isinstance(response.answer_provenance, ModelCallProvenance)
     ):
         raise ValueError("gateway grounded answer shape is inconsistent")
-    paragraphs = _paragraph_spans(response.answer)
     previous_end = 0
     claim_ids: set[str] = set()
     for claim in response.claims:
@@ -410,9 +409,11 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
         if claim.claim_id in claim_ids:
             raise ValueError("gateway claim IDs must be unique")
         claim_ids.add(claim.claim_id)
-        matches = tuple(
-            span for span in paragraphs if response.answer[span[0] : span[1]] == claim.text
-        )
+        # A claim is a cited sentence, not necessarily a whole paragraph (LangGraph
+        # PR 3: inline `[S1]`/`[R1]` markers can cite one sentence inside a Markdown
+        # list/paragraph that also carries uncited prose) -- it just has to be
+        # locatable at exactly one offset in the answer.
+        matches = _text_occurrences(response.answer, claim.text)
         if (
             not claim.text
             or "\n\n" in claim.text
@@ -432,13 +433,21 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
         previous_end = claim.answer_end
 
 
-def _paragraph_spans(answer: str) -> tuple[tuple[int, int], ...]:
-    start = 0
+def _text_occurrences(answer: str, text: str) -> tuple[tuple[int, int], ...]:
+    """Every non-overlapping `[start, end)` span where `answer[start:end] ==
+    text`; empty `text` never occurs, matching `_bounded`'s "nonblank" rule
+    for claim text."""
+
+    if not text:
+        return ()
     spans: list[tuple[int, int]] = []
-    for paragraph in answer.split("\n\n"):
-        end = start + len(paragraph)
-        spans.append((start, end))
-        start = end + 2
+    start = 0
+    while True:
+        found = answer.find(text, start)
+        if found == -1:
+            break
+        spans.append((found, found + len(text)))
+        start = found + len(text)
     return tuple(spans)
 
 

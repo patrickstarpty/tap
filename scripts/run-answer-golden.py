@@ -188,7 +188,29 @@ async def _answer_scoped(
             "claimCount": 0,
         }
 
-    generation = await gateway.answer(case.question, tuple(evidence), _PROFILE_ID)
+    # Every production retrieval turn carries a plan-bound `answer_input`
+    # (`tap.modules.knowledge.application.retrieve` always runs the answer
+    # planner when `answer_execution` is set) -- so the fake gate must drive
+    # `KnowledgeModelGateway.answer` the same way, or it never exercises the
+    # streamed inline-marker path real turns actually take (LangGraph PR 3
+    # review ruling, 2026-10-16).
+    from tap.modules.knowledge.application.answer_templates import (
+        assemble_answer,
+        get_template,
+    )
+
+    template = get_template("general", "1")
+    answer_input = assemble_answer(
+        template_id="general",
+        template_version="1",
+        template_digest=template.digest,
+        original_question=case.question,
+        standalone_question=case.question,
+        evidence_map={"q1": tuple(label_sources)},
+    )
+    generation = await gateway.answer(
+        case.question, tuple(evidence), _PROFILE_ID, answer_input=answer_input
+    )
     claims = [
         {"text": claim.text, "evidenceLabels": list(claim.evidence_labels)}
         for claim in generation.claims

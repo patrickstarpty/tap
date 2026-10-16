@@ -70,10 +70,13 @@ def parse_grounded_answer_payload(
 
 
 _CODE_SPAN = re.compile(r"```.*?```|`[^`\n]*`", re.DOTALL)
-_MARKER = re.compile(r"\[([A-Za-z0-9_-]{1,64})\]")
+# Label grammar only (`S1`..`S999`, `R1`..`R999`; the real allow-list below bounds
+# this further to the evidence/relation labels actually in play) so a Markdown
+# link (`[docs](url)`), a literal `[x]`, or an unrelated `a[0]` index is never
+# mistaken for a citation marker.
+_MARKER = re.compile(r"\[([SR][1-9][0-9]{0,2})\]")
 _SENTENCE_DELIMITER = "。！？.!?\n"
-_HORIZONTAL_SPACE = re.compile(r"[ \t]{2,}")
-_SPACE_BEFORE_PUNCTUATION = re.compile(r"[ \t]+([。！？.!?])")
+_LIST_OR_HEADING_PREFIX = re.compile(r"^[ \t]*(?:[-*+][ \t]+|\d+\.[ \t]+|#{1,6}[ \t]+)")
 
 
 def _masked_for_markers(text: str) -> str:
@@ -119,12 +122,28 @@ def _sentence_spans(text: str, masked: str) -> list[tuple[int, int]]:
     return spans
 
 
-def _strip_markers(
+def _strip_real_markers(text: str, masked: str) -> str:
+    """`text` with every real (non-code-span) marker's characters removed and
+    everything else -- whitespace, newlines, Markdown headings/lists -- left
+    exactly as written. This is the only transformation applied to produce the
+    answer body: no whitespace collapsing, so a stray double space left behind
+    where a marker was removed is accepted rather than risking a rewrite of
+    unrelated text (e.g. "v 1.2")."""
+
+    chars = list(text)
+    for match in _MARKER.finditer(masked):
+        for index in range(match.start(), match.end()):
+            chars[index] = ""
+    return "".join(chars)
+
+
+def _claim_text_and_labels(
     segment: str, masked_segment: str, allowed_labels: set[str]
 ) -> tuple[str, list[str]]:
-    """Remove every marker token in `segment` (using `masked_segment` to find
-    real, non-code-span markers) and return the cleaned text alongside the
-    labels found, in first-seen order, deduplicated, restricted to
+    """For one sentence span: strip its real markers and any leading Markdown
+    list/heading prefix (`- `, `* `, `1. `, `#`) to get the quoted claim text
+    (this does not affect the answer body, which keeps that markup), and
+    return the labels found, in first-seen order, deduplicated, restricted to
     `allowed_labels` -- an unknown label is dropped from the label list but its
     token is still removed from the text like any other marker."""
 
@@ -138,10 +157,9 @@ def _strip_markers(
         if label in allowed_labels and label not in seen:
             seen.add(label)
             labels.append(label)
-    cleaned = "".join(chars)
-    cleaned = _HORIZONTAL_SPACE.sub(" ", cleaned)
-    cleaned = _SPACE_BEFORE_PUNCTUATION.sub(r"\1", cleaned)
-    return cleaned.strip(), labels
+    cleaned = "".join(chars).strip()
+    cleaned = _LIST_OR_HEADING_PREFIX.sub("", cleaned).strip()
+    return cleaned, labels
 
 
 def parse_inline_answer(
@@ -159,9 +177,13 @@ def parse_inline_answer(
     produces for the closed JSON schema. A claim is a sentence (split on
     `。！？.!?` or a newline) that carries at least one marker resolving to an
     evidence or relation label; markers inside a fenced or inline code span are
-    not markers. The returned answer is the input with every real marker
-    removed; when no sentence yields a valid claim, the caller abstains exactly
-    as it does for an empty-claims JSON payload."""
+    not markers. The returned answer is `text` with every real marker removed
+    and everything else -- whitespace, headings, list markup -- preserved
+    verbatim; an uncited sentence (no marker, an unknown label, or a candidate
+    later dropped as a duplicate/too-long/borrowed-document) stays visible in
+    the answer, it just is not one of the returned claims. When no sentence
+    yields a valid claim at all, the caller abstains exactly as it does for an
+    empty-claims JSON payload."""
 
     if not isinstance(text, str) or not text.strip():
         return "", ()
@@ -173,32 +195,30 @@ def parse_inline_answer(
     masked = _masked_for_markers(text)
     spans = _sentence_spans(text, masked)
 
-    cleaned_sentences: list[str] = []
     candidates: list[tuple[str, list[str]]] = []
     for start, end in spans:
-        cleaned, labels = _strip_markers(text[start:end], masked[start:end], allowed_labels)
-        cleaned_sentences.append(cleaned)
-        if labels:
-            candidates.append((cleaned, labels))
+        claim_text, labels = _claim_text_and_labels(
+            text[start:end], masked[start:end], allowed_labels
+        )
+        if claim_text and labels:
+            candidates.append((claim_text, labels))
 
     if not candidates:
         return "", ()
     if len(candidates) > max_claims:
         raise ValueError("claim count is outside the closed bound")
 
-    full_body = _HORIZONTAL_SPACE.sub(
-        " ", " ".join(part for part in cleaned_sentences if part)
-    ).strip()
-    if not _bounded_utf8_string(full_body, maximum=max_answer_chars):
+    answer = _strip_real_markers(text, masked)
+    if not _bounded_utf8_string(answer, maximum=max_answer_chars):
         raise ValueError("answer is outside the closed bound")
-    answer_paragraphs = full_body.split("\n\n")
+    answer_paragraphs = answer.split("\n\n")
 
     claims: list[GeneratedClaim] = []
     seen_claims: set[str] = set()
-    for sentence_text, labels in candidates:
+    for claim_text, labels in candidates:
         claim = _grounded_claim(
-            {"text": sentence_text, "evidenceLabels": labels},
-            full_body,
+            {"text": claim_text, "evidenceLabels": labels},
+            answer,
             answer_paragraphs,
             allowed_labels,
             seen_claims,
@@ -211,12 +231,6 @@ def parse_inline_answer(
         claims.append(claim)
     if not claims:
         return "", ()
-    # Every sentence in the text became a claim: the full stripped body is shown
-    # as-is. Otherwise some sentence was never citable (no marker, an unknown
-    # label, or a marker that was later dropped as a duplicate, too long, or
-    # borrowing another document) -- never surface an uncited sentence, so the
-    # answer is rebuilt from only the claims that survived.
-    answer = full_body if len(claims) == len(spans) else " ".join(claim.text for claim in claims)
     return answer, tuple(claims)
 
 
