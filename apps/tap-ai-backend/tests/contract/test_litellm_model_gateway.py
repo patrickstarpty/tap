@@ -404,6 +404,64 @@ async def test_governed_authority_survives_validation_transport_and_audit() -> N
 
 
 @pytest.mark.asyncio
+async def test_governed_chat_stream_rejects_a_schema_or_a_missing_knowledge_answer_tool() -> None:
+    """LangGraph PR 3 review ruling (2026-10-16, round 2): a governed answer
+    (`KnowledgeModelGateway.answer`, governance or plan-bound) now streams over
+    `ModelOperation.CHAT` with no schema, so `_validate` must still reject (a)
+    a governed CHAT request that carries a schema -- this path never asks the
+    model for JSON -- and (b) a governed CHAT request missing `knowledge.answer`
+    from its `tool_allowlist`, exactly as it already did for STRUCTURED."""
+    from tap.modules.ai.domain.models import schema_digest
+
+    sent = []
+
+    def handler(incoming):
+        sent.append(incoming)
+        body = _sse_body(
+            [
+                {
+                    "model": "dashscope/qwen-plus",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Grounded"}, "finish_reason": "stop"}
+                    ],
+                },
+                {"model": "dashscope/qwen-plus", "choices": [], "usage": {}},
+            ]
+        )
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    gateway = configured_gateway(handler)
+    authority = (digest("agent-revision"), digest("agent-instruction"), digest("skill-template"))
+    governed_chat = replace(
+        request(ModelOperation.CHAT),
+        tool_allowlist=frozenset({"knowledge.answer", "knowledge.search"}),
+        governance_digests=authority,
+    )
+
+    async for _ in gateway.chat_stream(governed_chat):
+        pass
+    assert len(sent) == 1
+
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    with_schema = replace(governed_chat, schema=schema, schema_digest=schema_digest(schema))
+    with pytest.raises(ValueError):
+        async for _ in gateway.chat_stream(with_schema):
+            pass
+
+    missing_tool = replace(governed_chat, tool_allowlist=frozenset({"knowledge.search"}))
+    with pytest.raises(ValueError):
+        async for _ in gateway.chat_stream(missing_tool):
+            pass
+
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
 async def test_retry_is_bounded_and_preserves_idempotency():
     sent = []
 
@@ -931,7 +989,11 @@ async def test_plan_bound_grounded_answer_passes_the_real_gateway_governance_che
     from test_knowledge_api import _claim_resolution_evidence
 
     from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
-    from tap.modules.knowledge.application.answer_templates import assemble_answer, get_template
+    from tap.modules.knowledge.application.answer_templates import (
+        assemble_answer,
+        get_template,
+        latest_template_version,
+    )
 
     sent = []
 
@@ -964,10 +1026,11 @@ async def test_plan_bound_grounded_answer_passes_the_real_gateway_governance_che
         )
         return httpx.Response(200, json=response)
 
-    selected = get_template("procedural", "1")
+    procedural_version = latest_template_version("procedural")
+    selected = get_template("procedural", procedural_version)
     assembled = assemble_answer(
         template_id="procedural",
-        template_version="1",
+        template_version=procedural_version,
         template_digest=selected.digest,
         original_question="query",
         standalone_question="query",
@@ -992,10 +1055,11 @@ async def test_plan_bound_grounded_answer_passes_the_real_gateway_governance_che
     assert sent[0]["metadata"]["tool_allowlist"] == ["knowledge.answer"]
     assert sent[0]["metadata"]["governance_digests"]
 
+    general_version = latest_template_version("general")
     no_evidence = assemble_answer(
         template_id="general",
-        template_version="1",
-        template_digest=get_template("general", "1").digest,
+        template_version=general_version,
+        template_digest=get_template("general", general_version).digest,
         original_question="hello",
         standalone_question="hello",
         evidence_map={},

@@ -154,6 +154,40 @@ def test_generated_claim_resolution_rejects_an_ambiguously_repeated_claim_text()
     assert resolved is None
 
 
+def test_generated_claim_resolution_drops_only_the_ambiguous_claim() -> None:
+    """Review ruling (2026-10-16, round 2): an ambiguously repeated claim text
+    drops only itself -- it must never abstain an answer that also carries
+    other, cleanly resolvable claims."""
+    base = _claim_resolution_evidence()
+    second = replace(base, evidence_label="S2", citation_id="citation-source-2")
+    generation = AnswerGeneration(
+        text="Contract takes effect.Note: Contract takes effect. Immediately. Second fact.",
+        claims=(
+            GeneratedClaim(text="Contract takes effect.", evidence_labels=("S1",)),
+            GeneratedClaim(text="Second fact.", evidence_labels=("S2",)),
+        ),
+        model_id="answer-model",
+        profile_id="grounded-answer-v2",
+        provider_request_id=None,
+    )
+
+    resolved = retrieval_application._resolve_generated_claims(
+        generation,
+        (base, second),
+        id_factory=lambda: "claim-id",
+    )
+
+    assert resolved == (
+        Claim(
+            claim_id="claim-id",
+            text="Second fact.",
+            answer_start=64,
+            answer_end=76,
+            citation_ids=("citation-source-2",),
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     "generation",
     [

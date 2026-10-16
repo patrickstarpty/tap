@@ -75,8 +75,30 @@ _CODE_SPAN = re.compile(r"```.*?```|`[^`\n]*`", re.DOTALL)
 # link (`[docs](url)`), a literal `[x]`, or an unrelated `a[0]` index is never
 # mistaken for a citation marker.
 _MARKER = re.compile(r"\[([SR][1-9][0-9]{0,2})\]")
-_SENTENCE_DELIMITER = "。！？.!?\n"
+# CJK terminators always end a sentence; a newline always does (so a Markdown
+# list item/heading line is its own sentence). An ASCII `.!?` only ends a
+# sentence when whitespace, end of text, or a citation marker follows --
+# never mid-token, so "v 1.2", a decimal, or a period inside a URL/Markdown
+# link target (e.g. "example.com/robots.txt") never splits (review ruling,
+# 2026-10-16 round 2).
+_CJK_TERMINATORS = "。！？"
+_ASCII_TERMINATORS = ".!?"
 _LIST_OR_HEADING_PREFIX = re.compile(r"^[ \t]*(?:[-*+][ \t]+|\d+\.[ \t]+|#{1,6}[ \t]+)")
+
+
+def _sentence_delimiter_at(masked: str, index: int) -> bool:
+    character = masked[index]
+    if character == "\n" or character in _CJK_TERMINATORS:
+        return True
+    if character not in _ASCII_TERMINATORS:
+        return False
+    next_index = index + 1
+    if next_index >= len(masked):
+        return True
+    next_character = masked[next_index]
+    if next_character in " \t\n":
+        return True
+    return _MARKER.match(masked, next_index) is not None
 
 
 def _masked_for_markers(text: str) -> str:
@@ -102,7 +124,7 @@ def _sentence_spans(text: str, masked: str) -> list[tuple[int, int]]:
     sentence_start = 0
     index = 0
     while index < length:
-        if masked[index] in _SENTENCE_DELIMITER:
+        if _sentence_delimiter_at(masked, index):
             end = index + 1
             while True:
                 probe = end

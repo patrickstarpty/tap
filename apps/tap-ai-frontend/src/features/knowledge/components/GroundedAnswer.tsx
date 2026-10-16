@@ -1,4 +1,5 @@
 import { Alert, Button } from "antd";
+import { createContext, useContext, useMemo } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
@@ -106,18 +107,6 @@ function hasValidCitationIdentities(
   return true;
 }
 
-function isParagraphBoundary(
-  points: readonly string[],
-  start: number,
-  end: number,
-): boolean {
-  const startsAtBoundary =
-    start === 0 || (points[start - 2] === "\n" && points[start - 1] === "\n");
-  const endsAtBoundary =
-    end === points.length || (points[end] === "\n" && points[end + 1] === "\n");
-  return startsAtBoundary && endsAtBoundary;
-}
-
 function validateAnswerGraph(
   response: RetrievalAnswerResponse,
   numbering: "source-order" | "shown-order",
@@ -162,6 +151,12 @@ function validateAnswerGraph(
     }
   }
 
+  // LangGraph PR 3 review ruling (2026-10-16): claims cite a sentence, not
+  // necessarily a whole paragraph, so a claim span no longer has to start/end
+  // on a `\n\n` boundary (mirrors `contracts/http.py`'s
+  // `RetrievalAnswerResponse.validate_claim_spans`). The only shape rule left
+  // is that spans are non-overlapping, in increasing order and therefore
+  // unique -- `start < previousEnd` below rejects any overlap or duplicate.
   let previousEnd = 0;
   const claimIds = new Set<string>();
   for (const claim of response.claims) {
@@ -182,7 +177,6 @@ function validateAnswerGraph(
       typeof claim.text !== "string" ||
       claim.text.includes("\n\n") ||
       points.slice(start, end).join("") !== claim.text ||
-      !isParagraphBoundary(points, start, end) ||
       !Array.isArray(claim.citationIds) ||
       claim.citationIds.length === 0 ||
       new Set(claim.citationIds).size !== claim.citationIds.length ||
@@ -226,30 +220,50 @@ function validateAnswerGraph(
   };
 }
 
-function SafeMarkdown({
-  children,
-  trailing,
-}: {
-  children: string;
-  trailing?: ReactNode;
-}) {
+function SafeMarkdown({ children }: { children: string }) {
   if (children.length === 0) return null;
   return (
-    <div
-      className={`tapper-markdown${trailing ? " tapper-markdown--with-citation" : ""}`}
-    >
+    <div className="tapper-markdown">
       <ReactMarkdown
         rehypePlugins={[[rehypeSanitize, answerSchema]]}
         components={{ a: ({ children: label }) => <span>{label}</span> }}
       >
         {children}
       </ReactMarkdown>
-      {trailing}
     </div>
   );
 }
 
-function CitedClaim({
+// A claim's citation badges are spliced into the single Markdown document as
+// an inline code span carrying this sentinel wrapper around the claim ID
+// (U+0001, never legitimate answer prose) immediately after the claim's own
+// text, so `CitedAnswerMarkdown`'s `code` override can find and replace it --
+// this is what lets badges land inline right after an arbitrary mid-paragraph
+// or mid-list-item offset without a custom remark/rehype plugin, while lists,
+// headings and multi-claim paragraphs still parse as one normal document
+// (LangGraph PR 3 review ruling, 2026-10-16, round 2).
+const CITATION_PLACEHOLDER_MARK = "\u0001";
+const CITATION_PLACEHOLDER_PATTERN = /^\u0001([^\u0001]+)\u0001$/;
+
+function citationPlaceholder(claimId: string): string {
+  return `\`${CITATION_PLACEHOLDER_MARK}${claimId}${CITATION_PLACEHOLDER_MARK}\``;
+}
+
+/** The whole answer, verbatim, with one inline citation-badge placeholder
+ * spliced in right after each claim's `answerEnd` offset. */
+function citedAnswerMarkdown(graph: ValidAnswerGraph): string {
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const claim of graph.claims) {
+    parts.push(graph.points.slice(cursor, claim.answerEnd).join(""));
+    parts.push(citationPlaceholder(claim.claimId));
+    cursor = claim.answerEnd;
+  }
+  parts.push(graph.points.slice(cursor).join(""));
+  return parts.join("");
+}
+
+function CitationBadges({
   claim,
   graph,
   onOpenCitation,
@@ -267,9 +281,10 @@ function CitedClaim({
   onPreviewCitation?: (citationId: string) => void;
 }) {
   const text = locale === "zh" ? COPY : CITATION_EN;
-  const citations = (
+  return (
     <span
       className="tapper-claim-citations"
+      data-claim-id={claim.claimId}
       aria-label={locale === "zh" ? "本段引用" : "Sources for this paragraph"}
     >
       {claim.citationIds.map((citationId) => {
@@ -306,49 +321,129 @@ function CitedClaim({
       })}
     </span>
   );
+}
+
+interface CitedMarkdownContextValue {
+  claimById: ReadonlyMap<string, RetrievalClaim>;
+  graph: ValidAnswerGraph;
+  onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
+  locale: AnswerLocale;
+  historicalCitationQueryFor?: (
+    citationId: string,
+  ) => HistoricalCitationQuery | undefined;
+  onPreviewCitation?: (citationId: string) => void;
+}
+
+// `ReactMarkdown`'s `components` map supplies the React *component type*
+// rendered at each slot; if that function were created fresh on every render
+// (e.g. an inline arrow closing over per-render props), React would see a
+// different type at the citation badge's slot each time `GroundedAnswer`
+// re-renders for an unrelated reason (e.g. opening the citation panel) and
+// remount it, destroying the very button `LegacyTapperWorkspace` is about to
+// restore focus to. `CITED_MARKDOWN_COMPONENTS` is therefore a module-level
+// constant -- the same two function references for the lifetime of the
+// app -- and reads the per-render data (claims, callbacks, locale) through
+// `CitedMarkdownContext` instead of closures (round 2 of the LangGraph PR 3
+// review ruling, 2026-10-16).
+const CitedMarkdownContext = createContext<CitedMarkdownContextValue | null>(
+  null,
+);
+
+function CitedMarkdownLink({ children }: { children?: ReactNode }) {
+  return <span>{children}</span>;
+}
+
+function CitedMarkdownCode({
+  children,
+  className,
+}: {
+  children?: ReactNode;
+  className?: string;
+}) {
+  const context = useContext(CitedMarkdownContext);
+  const content =
+    typeof children === "string"
+      ? children
+      : Array.isArray(children) &&
+          children.every((child) => typeof child === "string")
+        ? children.join("")
+        : null;
+  const match =
+    content === null ? null : CITATION_PLACEHOLDER_PATTERN.exec(content);
+  const claim =
+    context !== null && match !== null
+      ? context.claimById.get(match[1]!)
+      : undefined;
+  if (context === null || claim === undefined) {
+    return <code className={className}>{children}</code>;
+  }
   return (
-    <div className="tapper-grounded-claim">
-      <SafeMarkdown trailing={citations}>{claim.text}</SafeMarkdown>
-    </div>
+    <CitationBadges
+      claim={claim}
+      graph={context.graph}
+      onOpenCitation={context.onOpenCitation}
+      locale={context.locale}
+      historicalCitationQueryFor={context.historicalCitationQueryFor}
+      onPreviewCitation={context.onPreviewCitation}
+    />
   );
 }
 
-function groundedSegments(
-  graph: ValidAnswerGraph,
-  onOpenCitation: (citationId: string, trigger: HTMLElement) => void,
-  locale: AnswerLocale,
+const CITED_MARKDOWN_COMPONENTS = {
+  a: CitedMarkdownLink,
+  code: CitedMarkdownCode,
+};
+
+function CitedAnswerMarkdown({
+  graph,
+  onOpenCitation,
+  locale,
+  historicalCitationQueryFor,
+  onPreviewCitation,
+}: {
+  graph: ValidAnswerGraph;
+  onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
+  locale: AnswerLocale;
   historicalCitationQueryFor?: (
     citationId: string,
-  ) => HistoricalCitationQuery | undefined,
-  onPreviewCitation?: (citationId: string) => void,
-): ReactNode[] {
-  const segments: ReactNode[] = [];
-  let cursor = 0;
-  for (const claim of graph.claims) {
-    const before = graph.points.slice(cursor, claim.answerStart).join("");
-    if (before.length > 0) {
-      segments.push(
-        <SafeMarkdown key={`before-${String(cursor)}`}>{before}</SafeMarkdown>,
-      );
-    }
-    segments.push(
-      <CitedClaim
-        key={claim.claimId}
-        claim={claim}
-        graph={graph}
-        onOpenCitation={onOpenCitation}
-        locale={locale}
-        historicalCitationQueryFor={historicalCitationQueryFor}
-        onPreviewCitation={onPreviewCitation}
-      />,
-    );
-    cursor = claim.answerEnd;
-  }
-  const after = graph.points.slice(cursor).join("");
-  if (after.length > 0) {
-    segments.push(<SafeMarkdown key="after-claims">{after}</SafeMarkdown>);
-  }
-  return segments;
+  ) => HistoricalCitationQuery | undefined;
+  onPreviewCitation?: (citationId: string) => void;
+}) {
+  const claimById = useMemo(
+    () => new Map(graph.claims.map((claim) => [claim.claimId, claim])),
+    [graph],
+  );
+  const markdown = useMemo(() => citedAnswerMarkdown(graph), [graph]);
+  const contextValue = useMemo<CitedMarkdownContextValue>(
+    () => ({
+      claimById,
+      graph,
+      onOpenCitation,
+      locale,
+      historicalCitationQueryFor,
+      onPreviewCitation,
+    }),
+    [
+      claimById,
+      graph,
+      onOpenCitation,
+      locale,
+      historicalCitationQueryFor,
+      onPreviewCitation,
+    ],
+  );
+  return (
+    <div className="tapper-markdown tapper-grounded-claim">
+      <CitedMarkdownContext.Provider value={contextValue}>
+        <ReactMarkdown
+          rehypePlugins={[[rehypeSanitize, answerSchema]]}
+          components={CITED_MARKDOWN_COMPONENTS}
+        >
+          {markdown}
+        </ReactMarkdown>
+      </CitedMarkdownContext.Provider>
+    </div>
+  );
 }
 
 export function GroundedAnswer({
@@ -449,13 +544,13 @@ export function GroundedAnswer({
           title={ANSWER_COPY[locale].degraded}
         />
       ) : null}
-      {groundedSegments(
-        graph,
-        onOpenCitation,
-        locale,
-        historicalCitationQueryFor,
-        onPreviewCitation,
-      )}
+      <CitedAnswerMarkdown
+        graph={graph}
+        onOpenCitation={onOpenCitation}
+        locale={locale}
+        historicalCitationQueryFor={historicalCitationQueryFor}
+        onPreviewCitation={onPreviewCitation}
+      />
     </div>
   );
 }

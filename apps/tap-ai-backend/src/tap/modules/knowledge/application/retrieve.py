@@ -299,7 +299,12 @@ def _resolve_generated_claims(
         # A claim is a cited sentence, not necessarily a whole paragraph (LangGraph
         # PR 3: inline `[S1]`/`[R1]` markers can cite one sentence inside a
         # Markdown list/paragraph that also carries uncited prose) -- it just has
-        # to be locatable at exactly one offset in the answer.
+        # to be locatable at exactly one offset in the answer. A short claim can
+        # legitimately occur as a substring of a longer, unrelated sentence
+        # elsewhere in the answer (e.g. claim "Contract takes effect." inside a
+        # longer "This contract takes effect."); that ambiguity drops only this
+        # one claim (review ruling, 2026-10-16 round 2) -- it must never abstain
+        # the whole answer when every other claim resolved cleanly.
         spans: list[tuple[int, int]] = []
         search_from = 0
         while True:
@@ -309,7 +314,7 @@ def _resolve_generated_claims(
             spans.append((found, found + len(generated_claim.text)))
             search_from = found + len(generated_claim.text)
         if len(spans) != 1:
-            return None
+            continue
         claims.append(
             Claim(
                 claim_id=id_factory(),

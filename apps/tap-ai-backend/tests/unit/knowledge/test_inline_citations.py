@@ -167,10 +167,14 @@ def test_marker_grammar_ignores_non_citation_bracket_syntax(text: str, literal: 
     """Ruling: `_MARKER` must match only `[S<n>]`/`[R<n>]`; a Markdown link, a
     task-list checkbox, or an unrelated array-index bracket must survive in
     the answer untouched (not be mistaken for, or swallowed as, a marker) while
-    the real `[S1]` marker elsewhere in the same sentence still grounds it."""
+    the real `[S1]` marker elsewhere in the same sentence still grounds it.
+    Round 2: the claim text itself (not just the answer) must still carry the
+    literal -- the sentence splitter must not fragment on a non-terminating
+    `.`/`?` inside it (a URL's dot, here)."""
     answer, claims = _parse(text, (evidence(label="S1"),))
 
     assert literal in answer
+    assert literal in claims[0].text
     assert claims[0].evidence_labels == ("S1",)
 
 
@@ -212,10 +216,13 @@ def _result(output: str) -> ModelResult:
 
 def test_unrelated_internal_spacing_is_never_rewritten() -> None:
     """Ruling: dropped the space-before-punctuation rewrite because it could
-    mangle ordinary text such as a version number; "v 1.2" must survive."""
+    mangle ordinary text such as a version number; "v 1.2" must survive intact
+    in the claim text itself (round 2), not just somewhere in the answer --
+    the `.` inside "1.2" must never split the sentence."""
     answer, claims = _parse("当前版本为 v 1.2[S1]。", (evidence(label="S1"),))
 
     assert "v 1.2" in answer
+    assert claims[0].text == "当前版本为 v 1.2。"
     assert claims[0].evidence_labels == ("S1",)
 
 
@@ -240,7 +247,11 @@ async def test_plan_bound_answer_streams_via_on_text_and_parses_inline() -> None
     carries `answer_input` (the answer planner), so it is this plan-bound path
     -- not just the ungoverned one -- that must actually stream and parse
     inline markers."""
-    from tap.modules.knowledge.application.answer_templates import assemble_answer, get_template
+    from tap.modules.knowledge.application.answer_templates import (
+        assemble_answer,
+        get_template,
+        latest_template_version,
+    )
 
     chunks = ["理赔需在 30 日内提交", "[S1]。"]
 
@@ -250,10 +261,11 @@ async def test_plan_bound_answer_streams_via_on_text_and_parses_inline() -> None
                 yield ModelTextDelta(chunk)
             yield _result("".join(chunks))
 
-    selected = get_template("general", "1")
+    version = latest_template_version("general")
+    selected = get_template("general", version)
     assembled = assemble_answer(
         template_id="general",
-        template_version="1",
+        template_version=version,
         template_digest=selected.digest,
         original_question="query",
         standalone_question="query",
@@ -283,17 +295,22 @@ async def test_plan_bound_answer_abstains_as_insufficient_evidence_on_the_sentin
     same way the ungoverned path does when the model has nothing groundable --
     `AnswerGeneration(text="", claims=())` is what callers downstream
     (`AuthorizedRetrieval`) key off to set `AbstentionReason.INSUFFICIENT_EVIDENCE`."""
-    from tap.modules.knowledge.application.answer_templates import assemble_answer, get_template
+    from tap.modules.knowledge.application.answer_templates import (
+        assemble_answer,
+        get_template,
+        latest_template_version,
+    )
 
     class InsufficientEvidenceGateway:
         async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
             yield ModelTextDelta("INSUFFICIENT_EVIDENCE")
             yield _result("INSUFFICIENT_EVIDENCE")
 
-    selected = get_template("general", "1")
+    version = latest_template_version("general")
+    selected = get_template("general", version)
     assembled = assemble_answer(
         template_id="general",
-        template_version="1",
+        template_version=version,
         template_digest=selected.digest,
         original_question="query",
         standalone_question="query",

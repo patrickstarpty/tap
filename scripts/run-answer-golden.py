@@ -197,12 +197,14 @@ async def _answer_scoped(
     from tap.modules.knowledge.application.answer_templates import (
         assemble_answer,
         get_template,
+        latest_template_version,
     )
 
-    template = get_template("general", "1")
+    version = latest_template_version("general")
+    template = get_template("general", version)
     answer_input = assemble_answer(
         template_id="general",
-        template_version="1",
+        template_version=version,
         template_digest=template.digest,
         original_question=case.question,
         standalone_question=case.question,

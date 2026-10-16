@@ -564,20 +564,26 @@ describe("LegacyTapperWorkspace claim and citation integrity", () => {
       { api: fakeKnowledgeClient() },
     );
 
-    const claims = globalThis.document.querySelectorAll(
-      ".tapper-grounded-claim",
+    // The whole answer renders as one Markdown document (round 2 of the
+    // 2026-10-16 review ruling): each claim's citation badges are their own
+    // `.tapper-claim-citations` span, inserted inline right after that
+    // claim's own text, in claim order -- so they are still "claim-local"
+    // even though there is no longer a per-claim wrapper element.
+    const badgeGroups = globalThis.document.querySelectorAll(
+      ".tapper-claim-citations",
     );
-    expect(claims).toHaveLength(2);
+    expect(badgeGroups).toHaveLength(2);
+    expect(badgeGroups[0]).toHaveAttribute("data-claim-id", "claim-a");
+    expect(badgeGroups[1]).toHaveAttribute("data-claim-id", "claim-b");
+    expect(screen.getByText("😀退款需要两人审批。")).toBeVisible();
+    expect(screen.getByText("额度为五万元。")).toBeVisible();
     expect(
-      within(claims[0] as HTMLElement).getByText("😀退款需要两人审批。"),
-    ).toBeVisible();
-    expect(
-      within(claims[0] as HTMLElement)
+      within(badgeGroups[0] as HTMLElement)
         .getAllByRole("button")
         .map((button) => button.textContent),
     ).toEqual(["[2]", "[1]"]);
     expect(
-      within(claims[1] as HTMLElement)
+      within(badgeGroups[1] as HTMLElement)
         .getAllByRole("button")
         .map((button) => button.textContent),
     ).toEqual(["[1]"]);

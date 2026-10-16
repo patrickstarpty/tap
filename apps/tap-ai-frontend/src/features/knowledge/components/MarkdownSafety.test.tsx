@@ -102,6 +102,56 @@ describe("GroundedAnswer Markdown safety", () => {
     expect(pre).not.toBeNull();
     expect(pre?.textContent).toContain(code);
   });
+
+  it("renders a heading and list sentence-level claims as one normal Markdown document", () => {
+    // Round 2 of the 2026-10-16 review ruling: a claim cites one sentence
+    // inside a list item that also carries a heading above it -- neither
+    // claim starts/ends on a `\n\n` paragraph boundary, so the whole answer
+    // must still render as a single heading + two-item list, with each
+    // claim's citation badge inline right after its own sentence.
+    const { container } = render(
+      <GroundedAnswer
+        response={answerResponse({
+          answer: "## 结论\n\n- 退款需两人审批。\n- 材料包括身份证明。",
+          claims: [
+            {
+              claimId: "claim-refund",
+              text: "退款需两人审批。",
+              answerStart: 9,
+              answerEnd: 17,
+              citationIds: ["citation-a"],
+            },
+            {
+              claimId: "claim-id",
+              text: "材料包括身份证明。",
+              answerStart: 20,
+              answerEnd: 29,
+              citationIds: ["citation-b"],
+            },
+          ],
+          citations: [
+            retrievalCitation("citation-a"),
+            retrievalCitation("citation-b", { chunkId: "chunk-b" }),
+          ],
+        })}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "结论", level: 2 }),
+    ).toBeVisible();
+    const items = container.querySelectorAll(".tapper-markdown li");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent(/退款需两人审批。\s*\[1\]/u);
+    expect(items[1]).toHaveTextContent(/材料包括身份证明。\s*\[2\]/u);
+    expect(
+      screen.getByRole("button", { name: "打开来源引用 1" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "打开来源引用 2" }),
+    ).toBeVisible();
+  });
 });
 
 it("renders an English answer with compact inline source references", () => {
@@ -148,9 +198,12 @@ it("keeps references at the end of their paragraph and numbers only visible sour
   const citation = screen.getByRole("button", {
     name: "Open source citation 1",
   });
-  expect(citation.closest(".tapper-markdown--with-citation")).toHaveTextContent(
+  expect(citation.closest(".tapper-markdown")).toHaveTextContent(
     /Age 17 is rejected at submission\.\s*\[1\]/u,
   );
+  // The whole answer renders as one Markdown document (round 2 of the
+  // 2026-10-16 review ruling); the citation badge is inline inside the
+  // claim's own paragraph, never a direct child of the claim wrapper.
   expect(
     container.querySelector(".tapper-grounded-claim > .tapper-claim-citations"),
   ).toBeNull();
