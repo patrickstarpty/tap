@@ -885,11 +885,18 @@ async def test_knowledge_query_document_and_answer_calls_use_one_gateway():
         sent.append(incoming)
         if incoming.url.path.endswith("embeddings"):
             return success(incoming)
-        response = success(incoming).json()
-        response["choices"][0]["message"]["content"] = json.dumps(
-            {"answer": "Grounded", "claims": [{"text": "Grounded", "evidenceLabels": ["S1"]}]}
+        body = _sse_body(
+            [
+                {
+                    "model": "dashscope/qwen-plus",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Grounded[S1]"}, "finish_reason": "stop"}
+                    ],
+                },
+                {"model": "dashscope/qwen-plus", "choices": [], "usage": {}},
+            ]
         )
-        return httpx.Response(200, json=response)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
 
     gateway = configured_gateway(handler)
     models = KnowledgeModelGateway(
@@ -989,14 +996,12 @@ async def test_flowchart_evidence_reaches_the_model_as_records_not_quotable_sent
     captured = []
 
     class CapturingGateway:
-        async def generate_structured(self, request):
+        async def chat_stream(self, request):
             captured.append(request)
-            sentence = "A low-risk application goes to Automatic approval."
-            return ModelResult(
-                output={
-                    "answer": sentence,
-                    "claims": [{"text": sentence, "evidenceLabels": ["S1"]}],
-                },
+            sentence = "A low-risk application goes to Automatic approval.[S1]"
+            yield ModelTextDelta(sentence)
+            yield ModelResult(
+                output=sentence,
                 actual_model="qwen-plus",
                 usage=ModelUsage(),
                 actual_provider="dashscope",
@@ -1061,10 +1066,10 @@ def _capturing_model_gateway():
     captured = []
 
     class CapturingGateway:
-        async def generate_structured(self, request):
+        async def chat_stream(self, request):
             captured.append(request)
-            return ModelResult(
-                output={"answer": "", "claims": []},
+            yield ModelResult(
+                output="",
                 actual_model="qwen-plus",
                 usage=ModelUsage(),
                 actual_provider="dashscope",
@@ -1099,10 +1104,10 @@ def _answering_model_gateway(output):
     from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 
     class AnsweringGateway:
-        async def generate_structured(self, request):
+        async def chat_stream(self, request):
             if isinstance(output, Exception):
                 raise output
-            return ModelResult(
+            yield ModelResult(
                 output=output,
                 actual_model="qwen-plus",
                 usage=ModelUsage(),
@@ -1136,20 +1141,15 @@ def _answering_model_gateway(output):
 @pytest.mark.parametrize(
     "output",
     [
-        {
-            "answer": "合同效力中止。\n\n合同效力中止。",
-            "claims": [
-                {"text": "合同效力中止", "evidenceLabels": ["S1"]},
-                {"text": "合同效力中止", "evidenceLabels": ["S1"]},
-            ],
-        },
-        {"answer": "合同效力中止。", "claims": [{"text": "合同效力中止。"}]},
-        {"answer": "合同效力中止。"},
+        "合同效力中止。",
+        "合同效力中止[S9]。",
+        "见 `[S1]` 示例。",
     ],
-    ids=("claims-misaligned-and-duplicated", "claim-without-labels", "open-schema"),
+    ids=("no-marker", "unknown-label", "marker-inside-code-span"),
 )
 async def test_ungroundable_answer_output_abstains_instead_of_failing(output):
-    """A model that answered but could not be grounded is an abstention, not an outage."""
+    """A model that answered but could not be grounded is an abstention, not an outage:
+    no sentence carries a usable `[S1]`-shaped marker for evidence label S1 here."""
     from test_knowledge_api import _claim_resolution_evidence
 
     generation = await _answering_model_gateway(output).answer(
@@ -1163,15 +1163,9 @@ async def test_ungroundable_answer_output_abstains_instead_of_failing(output):
 async def test_partly_grounded_answer_output_keeps_the_grounded_claims():
     from test_knowledge_api import _claim_resolution_evidence
 
-    generation = await _answering_model_gateway(
-        {
-            "answer": "合同效力中止。\n\n无依据",
-            "claims": [
-                {"text": "合同效力中止。", "evidenceLabels": ["S1"]},
-                {"text": "无依据", "evidenceLabels": ["S7"]},
-            ],
-        }
-    ).answer("query", (_claim_resolution_evidence(),), "quick-hybrid-v1")
+    generation = await _answering_model_gateway("合同效力中止[S1]。无依据[S7]。").answer(
+        "query", (_claim_resolution_evidence(),), "quick-hybrid-v1"
+    )
 
     assert generation.text == "合同效力中止。"
     assert tuple(claim.text for claim in generation.claims) == ("合同效力中止。",)
@@ -1536,13 +1530,10 @@ async def test_knowledge_answer_routes_an_approved_alternate_chat_model():
     captured = []
 
     class CapturingGateway:
-        async def generate_structured(self, request):
+        async def chat_stream(self, request):
             captured.append(request)
-            return ModelResult(
-                output={
-                    "answer": "Grounded",
-                    "claims": [{"text": "Grounded", "evidenceLabels": ["S1"]}],
-                },
+            yield ModelResult(
+                output="Grounded[S1]",
                 actual_model="qwen-flash",
                 usage=ModelUsage(),
                 actual_provider="dashscope",

@@ -85,6 +85,88 @@ def _cancellation_requested(context: str) -> bool:
     return isinstance(context, str) and _CANCELLATION_QUERY_SUFFIX in context
 
 
+def _is_grounded_answer_context(context: str) -> bool:
+    """True only for `KnowledgeModelGateway.answer`'s context shape (PR 4's
+    `untrusted_context` always nests evidence under `untrusted.evidence`); a
+    direct model-only `chat()` call -- with or without a governed template --
+    never has an `untrusted` key, so it is never mistaken for a grounded
+    answer here."""
+
+    try:
+        parsed = json.loads(context)
+    except (ValueError, TypeError):
+        return False
+    return (
+        isinstance(parsed, dict)
+        and isinstance(parsed.get("untrusted"), dict)
+        and "evidence" in parsed["untrusted"]
+    )
+
+
+def _grounded_claims_from_context(context: str) -> list[dict[str, Any]]:
+    """Fabricate the same cited claims this fake has always produced from the
+    `untrusted.evidence`/`untrusted.relations` records, shared by the closed
+    JSON `{answer, claims}` (STRUCTURED) path and the inline-marker Markdown
+    (CHAT, PR 3) path."""
+
+    try:
+        parsed_context = json.loads(context)
+        untrusted = parsed_context.get("untrusted", {})
+        evidence = untrusted.get("evidence", [])
+        relations = untrusted.get("relations", [])
+    except (ValueError, AttributeError):
+        evidence = []
+        relations = []
+    claims: list[dict[str, Any]] = []
+    used: set[str] = set()
+    # A relation question's fake answer must still cite the edge
+    # (`R1`), not only chunk evidence, or the `R`-label reconciliation
+    # in `relation_claims.py` strips every edge citation and the
+    # conversation never shows a relation citation chip. The claim
+    # text names both endpoints verbatim -- the minimum
+    # `claim_mentions_both_endpoints` requires to keep the label.
+    #
+    # The relation sentence built below can come out byte-identical
+    # to the first sentence of the S-labeled chunk the relation's
+    # own evidence resolved to in this turn (rule extraction keeps
+    # case and articles, so e.g. "Underwriting review requires
+    # health disclosure." matches verbatim) -- `used` then makes
+    # the evidence loop below skip that S label's claim entirely,
+    # silently dropping a citation for a chunk that *did* ground
+    # the answer. Folding every such S label directly onto the
+    # relation claim's `evidenceLabels` keeps the citation even
+    # when its own paragraph is suppressed as a duplicate.
+    if relations:
+        first_relation = relations[0]
+        relation_label = (
+            first_relation.get("relationLabel")
+            or first_relation.get("relationType")
+            or "relates to"
+        )
+        sentence = f"{first_relation['subject']} {relation_label} {first_relation['object']}."
+        used.add(sentence)
+        evidence_label_ids = {item["label"] for item in evidence}
+        relation_s_labels = dict.fromkeys(
+            entry["label"]
+            for entry in first_relation.get("evidence", [])
+            if "label" in entry and entry["label"] in evidence_label_ids
+        )
+        claims.append(
+            {
+                "text": sentence,
+                "evidenceLabels": [first_relation["label"], *relation_s_labels],
+            }
+        )
+    for item in evidence:
+        sentence = _first_evidence_sentence(item["content"])
+        if sentence and sentence not in used:
+            used.add(sentence)
+            claims.append({"text": sentence, "evidenceLabels": [item["label"]]})
+        if len(claims) == 5:
+            break
+    return claims
+
+
 class DeterministicModelGateway(LiteLLMModelGateway):
     def __init__(
         self,
@@ -166,69 +248,31 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 ]
                 content = json.dumps({"suggestions": suggestions})
             elif request.operation is ModelOperation.STRUCTURED:
-                try:
-                    parsed_context = json.loads(request.context)
-                    untrusted = parsed_context.get("untrusted", {})
-                    evidence = untrusted.get("evidence", [])
-                    relations = untrusted.get("relations", [])
-                except (ValueError, AttributeError):
-                    evidence = []
-                    relations = []
-                claims: list[dict[str, Any]] = []
-                used = set()
-                # A relation question's fake answer must still cite the edge
-                # (`R1`), not only chunk evidence, or the `R`-label reconciliation
-                # in `relation_claims.py` strips every edge citation and the
-                # conversation never shows a relation citation chip. The claim
-                # text names both endpoints verbatim -- the minimum
-                # `claim_mentions_both_endpoints` requires to keep the label.
-                #
-                # The relation sentence built below can come out byte-identical
-                # to the first sentence of the S-labeled chunk the relation's
-                # own evidence resolved to in this turn (rule extraction keeps
-                # case and articles, so e.g. "Underwriting review requires
-                # health disclosure." matches verbatim) -- `used` then makes
-                # the evidence loop below skip that S label's claim entirely,
-                # silently dropping a citation for a chunk that *did* ground
-                # the answer. Folding every such S label directly onto the
-                # relation claim's `evidenceLabels` keeps the citation even
-                # when its own paragraph is suppressed as a duplicate.
-                if relations:
-                    first_relation = relations[0]
-                    relation_label = (
-                        first_relation.get("relationLabel")
-                        or first_relation.get("relationType")
-                        or "relates to"
-                    )
-                    sentence = (
-                        f"{first_relation['subject']} {relation_label} {first_relation['object']}."
-                    )
-                    used.add(sentence)
-                    evidence_label_ids = {item["label"] for item in evidence}
-                    relation_s_labels = dict.fromkeys(
-                        entry["label"]
-                        for entry in first_relation.get("evidence", [])
-                        if "label" in entry and entry["label"] in evidence_label_ids
-                    )
-                    claims.append(
-                        {
-                            "text": sentence,
-                            "evidenceLabels": [first_relation["label"], *relation_s_labels],
-                        }
-                    )
-                for item in evidence:
-                    sentence = _first_evidence_sentence(item["content"])
-                    if sentence and sentence not in used:
-                        used.add(sentence)
-                        claims.append({"text": sentence, "evidenceLabels": [item["label"]]})
-                    if len(claims) == 5:
-                        break
+                claims = _grounded_claims_from_context(request.context)
                 output = (
                     {"answer": "\n\n".join(item["text"] for item in claims), "claims": claims}
                     if claims
                     else {"answer": "Grounded"}
                 )
                 content = json.dumps(output)
+            elif _is_grounded_answer_context(request.context):
+                # `KnowledgeModelGateway.answer` (PR 3) now streams a Markdown chat
+                # answer with inline `[S1]`/`[R1]` markers instead of requesting the
+                # closed `{answer, claims}` JSON schema; build the same claims this
+                # fake has always produced from evidence/relations, but render them
+                # as inline-marked sentences so `parse_inline_answer` grounds them
+                # exactly as the JSON path used to. A plain `chat()` (model-only,
+                # no retrieval) never carries `untrusted.evidence`, so it still gets
+                # the unchanged plain "Grounded" answer below.
+                claims = _grounded_claims_from_context(request.context)
+                content = (
+                    " ".join(
+                        item["text"] + "".join(f"[{label}]" for label in item["evidenceLabels"])
+                        for item in claims
+                    )
+                    if claims
+                    else "INSUFFICIENT_EVIDENCE"
+                )
             body = {
                 "model": "fake/deterministic-chat-v1",
                 "choices": [{"message": {"content": content}}],
