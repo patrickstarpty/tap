@@ -195,7 +195,7 @@ PROBLEM_REGISTRY = MappingProxyType(
                 "budget-exhausted",
                 "Answer budget exhausted",
                 422,
-                "The answer stopped because its time or model-call budget ran out.",
+                "The answer stopped because its time, model-call or cost budget ran out.",
                 False,
                 "answer",
             ),

@@ -3236,7 +3236,7 @@ export interface components {
             type?: "https://tap.example/problems/automation-mapping-required";
         } | {
             /** @constant */
-            detail?: "The answer stopped because its time or model-call budget ran out.";
+            detail?: "The answer stopped because its time, model-call or cost budget ran out.";
             /** @constant */
             failureStage: "answer";
             /** @constant */

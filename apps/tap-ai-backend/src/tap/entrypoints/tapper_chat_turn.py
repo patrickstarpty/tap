@@ -343,12 +343,16 @@ class ChatTurnNodes:
             return None
         plan = AnswerPlan.from_dict(raw)
         if state.get("plan_attempt") != self._turn.attempt and self._attempt_started_at is not None:
-            return dataclasses.replace(
-                plan,
-                deadline_at=max(
-                    plan.deadline_at, self._attempt_started_at + plan.remaining_seconds
-                ),
-            )
+            deadline_at = max(plan.deadline_at, self._attempt_started_at + plan.remaining_seconds)
+            # Never rebase past the turn's own wall-clock end: otherwise a
+            # turn whose budget is nearly exhausted would still hand a fresh
+            # attempt a full new plan window, making the turn budget's
+            # wall-clock exhaustion effectively unreachable (I2).
+            budget = state.get("budget")
+            if budget:
+                turn_end = budget.get("startedAtMs", 0) / 1000 + budget.get("maxSeconds", 0.0)
+                deadline_at = min(deadline_at, turn_end)
+            return dataclasses.replace(plan, deadline_at=deadline_at)
         return plan
 
     async def guard_in(self, _state: ChatGraphState) -> dict[str, object]:
@@ -564,7 +568,7 @@ class ChatTurnNodes:
         )
         problem_type = (
             "budget-exhausted"
-            if failure.get("error") == "TurnBudgetExhausted"
+            if failure.get("error") in ("TurnBudgetExhausted", "AnswerBudgetExhausted")
             else "answer-unavailable"
         )
         return {

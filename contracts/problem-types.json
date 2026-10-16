@@ -61,7 +61,7 @@
     },
     {
       "code": "budget-exhausted",
-      "detail": "The answer stopped because its time or model-call budget ran out.",
+      "detail": "The answer stopped because its time, model-call or cost budget ran out.",
       "failureStage": "answer",
       "retryable": false,
       "status": 422,

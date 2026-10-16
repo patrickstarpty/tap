@@ -433,6 +433,32 @@ def test_same_attempt_keeps_persisted_plan_deadline() -> None:
     assert active_plan.deadline_at == deadline_at
 
 
+def test_rebased_plan_deadline_is_capped_at_the_turn_wall_clock_end() -> None:
+    """I2: a fresh attempt's rebased plan deadline (normally
+    `attempt_started_at + remaining_seconds`, e.g. +30s) must never reach
+    past the turn's own `budget.startedAtMs/1000 + budget.maxSeconds` --
+    otherwise a turn whose 180s budget is nearly exhausted would still hand
+    an answer phase a full fresh 30s, making the turn budget's own
+    wall-clock exhaustion effectively unreachable."""
+    plan = _plan(deadline_at=time.time() - 60, remaining_seconds=30)
+    turn = _turn(attempt=2)
+    attempt_started_at = time.time()
+    turn_started_at = attempt_started_at - 175
+    nodes = _nodes(turn=turn, attempt_started_at=attempt_started_at)
+
+    state = {
+        "answer_plan": plan.to_dict(),
+        "plan_attempt": 1,
+        "budget": {"startedAtMs": int(turn_started_at * 1000), "maxSeconds": 180},
+    }
+    active_plan = nodes._active_plan(state)
+
+    assert active_plan is not None
+    turn_end = turn_started_at + 180
+    assert active_plan.deadline_at <= turn_end + 0.01
+    assert active_plan.deadline_at < attempt_started_at + 30 - 0.01
+
+
 class _DeferCapturingRepository(_Repository):
     def __init__(self, turn) -> None:
         super().__init__(turn)
@@ -582,6 +608,42 @@ async def test_budget_exhausted_turn_emits_budget_problem() -> None:
         checkpointer=InMemorySaver(),
         turn_budget=TurnBudget(max_model_calls=1),
     )
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
+    assert evidence.outcome == "failed"
+    event_type, payload = kwargs["terminal_event"]
+    assert event_type == "turn.failed"
+    assert payload["problem"]["type"].endswith("budget-exhausted")
+
+
+class _PlanDeadlineExpiredKnowledge(_StepsKnowledge):
+    """`generate_conversation_answer` raises `AnswerBudgetExhausted` the way
+    `KnowledgeHttpService._plan_deadline` does when the plan's persisted
+    deadline has already passed at phase start -- a plan-deadline exhaustion
+    found at the very start of a phase, not a mid-phase timeout."""
+
+    async def generate_conversation_answer(
+        self, step, frozen_input, *, answer_plan=None, authorize=None
+    ):
+        from tap.interfaces.http.knowledge_service import AnswerBudgetExhausted
+
+        raise AnswerBudgetExhausted("persisted answer budget exhausted")
+
+
+@pytest.mark.asyncio
+async def test_plan_deadline_expired_at_phase_start_emits_budget_problem() -> None:
+    """I2: `AnswerBudgetExhausted` raised because the plan deadline had
+    already passed at phase start must map to the same `budget-exhausted`
+    problem as `TurnBudgetExhausted` -- not `answer-unavailable` -- since it
+    genuinely means the turn ran out of budget, not an ordinary generation
+    failure."""
+    turn = _turn()
+    conversations = _Conversations(turn)
+    knowledge = _PlanDeadlineExpiredKnowledge()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
 
     assert await worker.run_once(limit=1) == 1
 

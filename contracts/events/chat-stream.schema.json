@@ -1038,7 +1038,7 @@
         {
           "properties": {
             "detail": {
-              "const": "The answer stopped because its time or model-call budget ran out."
+              "const": "The answer stopped because its time, model-call or cost budget ran out."
             },
             "failureStage": {
               "const": "answer"
