@@ -495,8 +495,17 @@ async def test_server_backfills_evidence_from_cited_refs_only():
     output = _output()
     output["nodes"][0]["chunks"] = ["c2", "c1", "c2"]
     output["edges"][0]["chunks"] = ["c2"]
+    # chunk-2's own text must name both endpoints (Policy, Claim) for the edge to
+    # clear the unsupported-evidence check and reach the evidence backfill under
+    # test; chunk-1's "Policy governs claims." would not do, since the edge now
+    # cites chunk-2 only.
+    request = _two_chunk_request()
+    request = replace(
+        request,
+        chunks=(request.chunks[0], request.chunks[1] | {"content": "Policy requires Claim."}),
+    )
 
-    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_two_chunk_request())
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(request)
 
     by_id = {item.evidence_id: item for item in draft.evidence}
     assert [item.evidence_id for item in draft.evidence] == ["c1", "c2"]
@@ -551,6 +560,31 @@ def test_schema_and_prompt_bound_each_batch_output():
     assert "at most 40 nodes and at most 60 edges" in GRAPH_EXTRACTION_PROMPT
     assert "only entities and relations stated in this batch's chunks" in GRAPH_EXTRACTION_PROMPT
     assert "at most one edge per source, relationType and target" in GRAPH_EXTRACTION_PROMPT
+
+
+def test_relation_type_guidance_gives_triggers_and_defines_their_own_worked_examples():
+    # rv3 regression: a prompt revision that over-corrected APPLIES_TO/PART_OF left
+    # TRIGGERS and DEFINES with only one example each and no repetition in the main
+    # prompt body (unlike APPLIES_TO/PART_OF, which got reinforced twice), and the
+    # model all but stopped using them (130->2 and 400->0 edges in a real snapshot).
+    # Each of the two must have its own worked example in both the schema enum
+    # description and the main prompt body, and the prompt must tell the model to
+    # prefer TRIGGERS over APPLIES_TO for a causal event-to-consequence link.
+    from tap.modules.graph.adapters.model_gateway_extraction import (
+        GRAPH_EXTRACTION_PROMPT,
+        GRAPH_EXTRACTION_SCHEMA,
+    )
+
+    relation_description = GRAPH_EXTRACTION_SCHEMA["properties"]["edges"]["items"]["properties"][
+        "relationType"
+    ]["description"]
+    assert "TRIGGERS 豁免保险费" in relation_description
+    assert relation_description.count("TRIGGERS") >= 2
+    assert "DEFINES 重度疾病" in relation_description
+    assert relation_description.count("DEFINES") >= 2
+    assert "Prefer TRIGGERS over APPLIES_TO" in relation_description
+    assert "TRIGGERS 豁免保险费" in GRAPH_EXTRACTION_PROMPT
+    assert "DEFINES 到达年龄" in GRAPH_EXTRACTION_PROMPT
 
 
 def _known_policy_request():
@@ -709,7 +743,13 @@ async def test_real_repeated_edge_loop_is_deduplicated_and_counted(span_recorder
     # This batch also names a node "王先生" ("n11"): a brochure's illustrative
     # example person, rejected as a graph name since naming.is_reference_name
     # covers it (shared with alignment), which drops its one non-duplicate edge
-    # (e10, n11->n12) along with it.
+    # (e10, n11->n12) along with it. Two more real edges (e12, e19) cite a chunk
+    # that only paraphrases their target (一次性交纳保费 for 趸缴保险费; a dividend
+    # clause with no literal 现金红利 but most of its characters) -- the
+    # unsupported-evidence check's character-overlap-ratio design (rather than a
+    # literal substring requirement) is exactly what keeps both: the rv3 false-drop
+    # audit used this real batch to confirm paraphrased, non-adjacent-mislink edges
+    # like these clear the check.
     kept = [(e.source_node_id, e.relation_type, e.target_node_id) for e in draft.edges]
     assert len(kept) == len(set(kept)) == len(set(shapes)) - 1
     assert not any(node.node_id == "n11" for node in draft.nodes)
@@ -779,8 +819,15 @@ async def test_reference_words_never_become_aliases_or_names(span_recorder):
     output["edges"].append(
         output["edges"][0] | {"id": "edge-2", "sourceNodeId": "node-3", "targetNodeId": "node-4"}
     )
+    # edge-1's evidence must actually name both real (post-reference-resolution)
+    # endpoints for it to clear the unsupported-evidence check below.
+    request = _request()
+    request = replace(
+        request,
+        chunks=(request.chunks[0] | {"content": "友邦尊享智选康惠团体医疗保险由友邦保险承保。"},),
+    )
 
-    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_request())
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(request)
 
     by_id = {node.node_id: node for node in draft.nodes}
     assert set(by_id) == {"node-1", "node-2", "node-4"}
@@ -827,3 +874,246 @@ async def test_an_edge_to_a_known_id_not_sent_in_this_request_is_dropped():
 
     assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
     assert "b0-n9" not in {node.node_id for node in draft.nodes}
+
+
+def _adjacent_entries_request():
+    return replace(
+        _request(),
+        chunks=(
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": "chunk-1",
+                "content": "6）重度黄疸\n指血清总胆红素超过标准值并持续恶化的严重肝损伤。",
+                "anchor": {"kind": "text", "start": 0, "end": 10},
+                "contentDigest": "sha256:" + "a" * 64,
+            },
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": "chunk-2",
+                "content": "7）多个肢体缺失\n指因疾病或意外导致两个以上肢体完全性断离。",
+                "anchor": {"kind": "text", "start": 10, "end": 20},
+                "contentDigest": "sha256:" + "b" * 64,
+            },
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_adjacent_entry_mislink_edge_is_dropped_as_unsupported(span_recorder):
+    # The real rv3 failure mode: two neighboring clause entries (here, two unrelated
+    # disease definitions) get connected to each other, but the edge's own cited
+    # chunk (c1, 重度黄疸's clause) never mentions the other endpoint (多个肢体缺失) --
+    # it is grounded in the wrong place, the same shape as report-3's "硬化性胆管炎
+    # RELATED_TO 毒品" and "严重自身免疫性肝炎 PART_OF 严重慢性复发性胰腺炎" edges.
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "重度黄疸",
+                "type": "CONCEPT",
+                "canonicalKey": "重度黄疸",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": "多个肢体缺失",
+                "type": "CONCEPT",
+                "canonicalKey": "多个肢体缺失",
+                "chunks": ["c2"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": "RELATED_TO",
+                "relationLabel": "相关",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_adjacent_entries_request())
+
+    assert draft.edges == ()
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 1
+
+
+@pytest.mark.asyncio
+async def test_unsupported_edge_check_does_not_drop_a_correctly_grounded_edge(span_recorder):
+    # The same two entries, correctly related to themselves: an edge cannot be a
+    # self-edge, so this checks a same-clause relation (the disease to its own
+    # alias) is not mass false-dropped by the new check.
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "重度黄疸",
+                "type": "CONCEPT",
+                "canonicalKey": "重度黄疸",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": "血清总胆红素",
+                "type": "CONCEPT",
+                "canonicalKey": "血清总胆红素",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": "REQUIRES",
+                "relationLabel": "指血清总胆红素超过标准值",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_adjacent_entries_request())
+
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 0
+
+
+@pytest.mark.asyncio
+async def test_actor_and_system_endpoints_are_exempt_from_the_unsupported_edge_check(
+    span_recorder,
+):
+    # The insurer and the contract are routinely referred to in their own clause
+    # only by a pronoun (本公司, 本附加合同), never by their real name, because
+    # ``usable_alias`` deliberately keeps such references out of every node's
+    # aliases. Requiring the literal name here would drop a large share of
+    # genuinely grounded ACTOR/SYSTEM facts, not just adjacent-entry mislinks, so
+    # these two types are exempt.
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "友邦保险",
+                "type": "ACTOR",
+                "canonicalKey": "友邦保险",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": "身故保险金",
+                "type": "CONCEPT",
+                "canonicalKey": "身故保险金",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": "RESPONSIBLE_FOR",
+                "relationLabel": "本公司将给付身故保险金",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+    request = replace(
+        _request(),
+        chunks=(
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": "chunk-1",
+                "content": "若被保险人身故，本公司将给付身故保险金予受益人。",
+                "anchor": {"kind": "text", "start": 0, "end": 10},
+                "contentDigest": "sha256:" + "a" * 64,
+            },
+        ),
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(request)
+
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 0
+
+
+@pytest.mark.asyncio
+async def test_inferred_edge_is_never_checked_against_evidence_text(span_recorder):
+    # An INFERRED edge is grounded by its provenance's input facts, not by its own
+    # (deliberately empty) chunks array, so the unsupported-evidence check never
+    # applies to it even when its endpoints are unrelated to the batch's text.
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "重度黄疸",
+                "type": "CONCEPT",
+                "canonicalKey": "重度黄疸",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": "多个肢体缺失",
+                "type": "CONCEPT",
+                "canonicalKey": "多个肢体缺失",
+                "chunks": ["c2"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": "RELATED_TO",
+                "relationLabel": "inferred",
+                "origin": "INFERRED",
+                "confidence": 1.0,
+                "chunks": [],
+            }
+        ],
+        "provenance": [
+            {
+                "id": "p1",
+                "edgeId": "edge-1",
+                "inputFactIds": ["node-1", "node-2"],
+                "ruleDigest": "sha256:" + "c" * 64,
+            }
+        ],
+    }
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_adjacent_entries_request())
+
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 0
