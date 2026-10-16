@@ -2070,6 +2070,7 @@ def _assemble_http_services(
         corpus_version=corpus_version,
         models=embeddings,
         answer_planner=_answer_planner(embeddings),
+        redactor=redactor,
     )
     prompt_suggestions = None
     prompt_suggestion_store = None

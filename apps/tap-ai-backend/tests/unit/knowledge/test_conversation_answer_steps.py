@@ -27,6 +27,7 @@ from tap.modules.knowledge.application.evidence_bundle import EvidenceBundle
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
     AnswerRequest,
+    Claim,
     ContextLayer,
     ContextLayerKind,
     ContextSnapshot,
@@ -248,12 +249,15 @@ async def _direct_route() -> tuple[TurnInput, object]:
     return frozen, plan
 
 
-def _service(answers: PhaseAnswers | None = None, *, models=None) -> KnowledgeHttpService:
+def _service(
+    answers: PhaseAnswers | None = None, *, models=None, redactor=None
+) -> KnowledgeHttpService:
     return KnowledgeHttpService(
         documents=Scoped(),
         answers=answers or PhaseAnswers(),
         citations=Scoped(),
         models=models,
+        redactor=redactor,
     )
 
 
@@ -398,3 +402,58 @@ async def test_non_retrieval_route_returns_final_step() -> None:
         unchanged_after_verify, frozen, answer_plan=plan
     )
     assert result.answer == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_output_redaction_keeps_claims_locatable() -> None:
+    """`finalize_conversation_answer` must redact the answer body and every
+    claim's text with the same egress redactor before `save_frozen` --
+    the saved snapshot and the returned response must agree, and each
+    claim's (now-redacted) text must still be a complete paragraph of the
+    (now-redacted) answer."""
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.platform.serialization.dataclass_json import to_json
+
+    frozen, plan = await _retrieve_route()
+    base = answer_response()
+    citation_id = base.citations[0].citation_id
+    claim_one = "联系电话 13812345678 请尽快回复。"
+    claim_two = "另一段落没有敏感信息。"
+    answer_text = f"{claim_one}\n\n{claim_two}"
+    response = replace(
+        base,
+        answer=answer_text,
+        claims=(
+            Claim(
+                claim_id="claim-a",
+                text=claim_one,
+                answer_start=0,
+                answer_end=len(claim_one),
+                citation_ids=(citation_id,),
+            ),
+            Claim(
+                claim_id="claim-b",
+                text=claim_two,
+                answer_start=len(claim_one) + 2,
+                answer_end=len(claim_one) + 2 + len(claim_two),
+                citation_ids=(citation_id,),
+            ),
+        ),
+    )
+    step = {"kind": "verified", "response": to_json(response)}
+
+    answers = PhaseAnswers()
+    service = _service(answers, redactor=PatternEgressRedactor())
+
+    result = await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert result.abstained is False
+    assert "13812345678" not in result.answer
+    assert "[REDACTED_PHONE]" in result.answer
+    assert result.claims[0].text in result.answer
+    assert result.claims[1].text in result.answer
+    assert result.claims[1].text == claim_two
+
+    saved = answers.save_calls[0]
+    assert saved.answer == result.answer
+    assert [claim.text for claim in saved.claims] == [claim.text for claim in result.claims]

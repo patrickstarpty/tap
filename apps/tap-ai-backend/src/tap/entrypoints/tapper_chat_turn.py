@@ -333,6 +333,18 @@ class ChatTurnNodes:
         return plan
 
     async def guard_in(self, _state: ChatGraphState) -> dict[str, object]:
+        # Trace-only: the message saved on the Turn stays as-is (existing
+        # rules), and the retrieval/generation paths already redact what
+        # they send the model (`retrieve.py`); this just records whether the
+        # incoming message itself carried redactable content.
+        redaction_report = getattr(self._knowledge, "redaction_report", None)
+        if redaction_report is not None:
+            input_hits = await redaction_report(self._turn.input_snapshot.value.message)
+            if input_hits:
+                audit_span = self._turn_span if self._turn_span is not None else get_current_span()
+                audit_span.set_attribute(
+                    "tap.guard.redaction.input_hits", json.dumps(dict(input_hits))
+                )
         if self._insights_query_id is not None:
             return {"route": "insights", "reasoning_mode": "workflow"}
         if self._planner is None:

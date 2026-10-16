@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import json
 import time
+from collections.abc import Mapping
 from typing import Any, Protocol
 from uuid import uuid4
+
+from opentelemetry.trace import get_current_span
 
 from tap.contracts.http import (
     CitationPreview,
@@ -116,6 +121,7 @@ class KnowledgeHttpService:
         corpus_version: str = "tapper-demo-v1",
         models: Any | None = None,
         answer_planner: Any | None = None,
+        redactor: Any | None = None,
     ) -> None:
         if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
             raise ValueError("unsupported projection corpus")
@@ -127,6 +133,16 @@ class KnowledgeHttpService:
         self._corpus_version = corpus_version
         self._models = models
         self.answer_planner = answer_planner
+        self._redactor = redactor
+
+    async def redaction_report(self, text: str) -> Mapping[str, int]:
+        """Egress-redaction hit counts for `text`, by pattern kind; empty
+        when no redactor is composed or the redactor exposes no report."""
+        report = getattr(self._redactor, "redact_with_report", None)
+        if report is None:
+            return {}
+        _sanitized, counts = await report(text)
+        return counts
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -470,8 +486,55 @@ class KnowledgeHttpService:
                 raise ValueError("resumed step no longer matches a retrieval route")
             revisions, _policy, _governance = context
             response = from_json(AnswerResponse, step["response"])
+            response = await self._redact_answer_response(response)
             await self._answers.save_frozen(response, frozen_input.message, revisions)
             return answer_response_to_http(response)
+
+    async def _redact_answer_response(self, response: AnswerResponse) -> AnswerResponse:
+        """Redact `response.answer` and every claim's text with the same
+        egress redactor before the frozen snapshot is built/saved, so a
+        claim's text stays an exact (now-redacted) paragraph of the (now-
+        redacted) answer. The abstained path has an empty answer, so there
+        is nothing to redact. Total hits across the answer body and every
+        claim land on the current span; no hits means nothing is written."""
+        report = getattr(self._redactor, "redact_with_report", None)
+        if report is None or not response.answer:
+            return response
+        redacted_answer, answer_hits = await report(response.answer)
+        total_hits: dict[str, int] = dict(answer_hits)
+
+        paragraphs: list[tuple[str, int, int]] = []
+        start = 0
+        for paragraph in redacted_answer.split("\n\n"):
+            end = start + len(paragraph)
+            paragraphs.append((paragraph, start, end))
+            start = end + 2
+        available = list(paragraphs)
+
+        new_claims = []
+        for claim in response.claims:
+            redacted_text, claim_hits = await report(claim.text)
+            for kind, count in claim_hits.items():
+                total_hits[kind] = total_hits.get(kind, 0) + count
+            match_index = next(
+                (index for index, (text, _s, _e) in enumerate(available) if text == redacted_text),
+                None,
+            )
+            if match_index is None:
+                new_claims.append(dataclasses.replace(claim, text=redacted_text))
+                continue
+            _text, claim_start, claim_end = available.pop(match_index)
+            new_claims.append(
+                dataclasses.replace(
+                    claim, text=redacted_text, answer_start=claim_start, answer_end=claim_end
+                )
+            )
+
+        if total_hits:
+            get_current_span().set_attribute(
+                "tap.guard.redaction.output_hits", json.dumps(total_hits)
+            )
+        return dataclasses.replace(response, answer=redacted_answer, claims=tuple(new_claims))
 
     async def _authorized_frozen_context(
         self,
