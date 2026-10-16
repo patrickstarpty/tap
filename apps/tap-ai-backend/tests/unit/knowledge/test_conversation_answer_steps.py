@@ -12,10 +12,11 @@ from datetime import UTC, datetime
 import pytest
 from test_answer_service import answer_response, ready
 
-from tap.contracts.http import RetrievalAnswerRequest
+from tap.contracts.http import AbstentionReason, RetrievalAnswerRequest
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.chat.application.plan_answer import AnswerPlanner, PlanningInput, planning_input
+from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import (
     FrozenResource,
     TurnInput,
@@ -249,6 +250,37 @@ async def _direct_route() -> tuple[TurnInput, object]:
     return frozen, plan
 
 
+def _out_of_scope_plan() -> AnswerPlan:
+    """An admitted `out_of_scope` plan, as `guard_in` would persist it after a
+    planner suggestion -- `refuse_out_of_scope` never retrieves or calls a
+    model, so the plan's own digests need not bind to any particular
+    `frozen_input`."""
+    digest = "sha256:" + "a" * 64
+    return AnswerPlan(
+        plan_id="plan-out-of-scope",
+        project_id=VALIDATION_SCOPE.project_id,
+        turn_id="turn-out-of-scope",
+        input_digest=digest,
+        acl_digest=digest,
+        policy_digest=digest,
+        model_alias="qwen-plus",
+        original_question="What's the weather today?",
+        intent="out_of_scope",
+        route="direct",
+        confidence=0.9,
+        standalone_query="What's the weather today?",
+        constraints=(),
+        missing=(),
+        queries=(),
+        source_ids=(),
+        template_id="template-1",
+        template_version="v1",
+        template_digest=digest,
+        deadline_at=time.time() + 30,
+        remaining_seconds=30,
+    )
+
+
 def _service(
     answers: PhaseAnswers | None = None, *, models=None, redactor=None
 ) -> KnowledgeHttpService:
@@ -402,6 +434,35 @@ async def test_non_retrieval_route_returns_final_step() -> None:
         unchanged_after_verify, frozen, answer_plan=plan
     )
     assert result.answer == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_refuse_out_of_scope_abstains_without_retrieval_or_generation() -> None:
+    """`KnowledgeHttpService.refuse_out_of_scope` must produce a closed,
+    abstained `RetrievalAnswerResponse` keyed on the plan's own identity,
+    the same way `_stopped_answer` does for other non-retrieval routes --
+    without calling a model or touching retrieval."""
+
+    class Models:
+        async def chat(self, *args, **kwargs):
+            raise AssertionError("refuse_out_of_scope must never call the chat model")
+
+    frozen, _unused_plan = await _direct_route()
+    plan = _out_of_scope_plan()
+    service = _service(PhaseAnswers(), models=Models())
+
+    response = await service.refuse_out_of_scope(frozen, answer_plan=plan)
+
+    assert response.answer == ""
+    assert response.abstained is True
+    assert response.abstention_reason == AbstentionReason.OUT_OF_SCOPE
+    assert response.claims == []
+    assert response.citations == []
+    assert response.trace_id == plan.plan_id
+    assert response.query_plan_id == plan.plan_id
+    assert response.context_snapshot_id == plan.plan_id
+    assert response.retrieval_profile_id == "direct-chat-v1"
+    assert response.graph_context_status == "NOT_SELECTED"
 
 
 @pytest.mark.asyncio

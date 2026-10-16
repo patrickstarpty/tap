@@ -145,6 +145,7 @@ async def test_model_out_of_scope_intent_requires_direct_route_without_queries()
     assert plan.intent == "out_of_scope"
     assert plan.route == "direct"
     assert plan.queries == ()
+    assert plan.degradation_reason is None
 
     async def retrieve_model(_input, _timeout):
         return suggestion(intent="out_of_scope", route="retrieve")

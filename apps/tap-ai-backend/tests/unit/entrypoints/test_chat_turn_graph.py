@@ -659,6 +659,7 @@ async def test_out_of_scope_turn_abstains_without_retrieval_or_generation() -> N
 
     assert knowledge.prepare_calls == 0
     assert knowledge.generate_calls == 0
+    assert knowledge.refuse_calls == 1
     assert knowledge.answer_planner.calls == 1
     assert len(conversations.completed) == 1
     _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
@@ -666,6 +667,15 @@ async def test_out_of_scope_turn_abstains_without_retrieval_or_generation() -> N
     terminal_type, terminal_payload = kwargs["terminal_event"]
     assert terminal_type == "turn.abstained"
     assert terminal_payload["answer"]["abstentionReason"] == "out_of_scope"
+    stage_payload = next(
+        payload
+        for event_type, payload in kwargs["stream_events"]
+        if event_type == "stage.completed"
+    )
+    assert stage_payload["durationMs"] < 60_000
+    assert [event_type for event_type, _payload in kwargs["stream_events"]].count(
+        "retrieval.hits_ready"
+    ) == 0
 
 
 @pytest.mark.asyncio

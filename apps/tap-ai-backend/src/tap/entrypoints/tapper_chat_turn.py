@@ -127,6 +127,7 @@ def stream_events(
     turn: Any,
     answer_response: Any | None,
     graph_context_payload: dict[str, object] | None,
+    retrieval_performed: bool = True,
 ) -> list[dict[str, object]]:
     if evidence.outcome == "failed":
         return []
@@ -143,7 +144,7 @@ def stream_events(
             "payload": {"stage": "knowledge.answer", "durationMs": duration_ms},
         },
     ]
-    if evidence.retrieval_summary.trace_id is not None:
+    if retrieval_performed and evidence.retrieval_summary.trace_id is not None:
         events.append(
             {
                 "type": "retrieval.hits_ready",
@@ -386,12 +387,20 @@ class ChatTurnNodes:
         )
         plan = await self._planner.plan(planning_input(self._turn.input_snapshot, history=history))
         route = "out_of_scope" if plan.intent == "out_of_scope" else "chat"
-        return {
+        result: dict[str, object] = {
             "route": route,
             "reasoning_mode": "direct",
             "answer_plan": plan.to_dict(),
             "plan_attempt": self._turn.attempt,
         }
+        if route == "out_of_scope":
+            # `seed_search` never runs on this route, so it never stamps
+            # `started_at_ms` the way it does for the chat route; without this,
+            # `finalize`'s `duration_ms` would be measured against the epoch
+            # (`state.get("started_at_ms") or 0`), producing a huge bogus
+            # `stage.completed` duration.
+            result["started_at_ms"] = int(time.time() * 1000)
+        return result
 
     async def seed_search(self, state: ChatGraphState) -> dict[str, object]:
         active_plan = self._active_plan(state)
@@ -669,6 +678,7 @@ class ChatTurnNodes:
                     turn=self._turn,
                     answer_response=answer_response,
                     graph_context_payload=graph_context_payload,
+                    retrieval_performed=not out_of_scope,
                 ),
             }
         }
