@@ -5,14 +5,17 @@ outcomes) must be unchanged."""
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
+from tap.entrypoints.tapper_chat_turn import ChatTurnNodes
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
+from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
 
 
@@ -234,3 +237,79 @@ async def test_single_shot_knowledge_still_answers() -> None:
         "answer.delta",
     ]
     assert knowledge.calls == 1
+
+
+def _digest(label: str) -> str:
+    return "sha256:" + label.rjust(64, "0")
+
+
+def _plan(*, deadline_at: float, remaining_seconds: float) -> AnswerPlan:
+    return AnswerPlan(
+        plan_id="plan-1",
+        project_id="project-1",
+        turn_id="turn-1",
+        input_digest=_digest("1"),
+        acl_digest=_digest("2"),
+        policy_digest=_digest("3"),
+        model_alias="gpt-test",
+        original_question="hello",
+        intent="general_chat",
+        route="direct",
+        confidence=0.9,
+        standalone_query="hello",
+        constraints=(),
+        missing=(),
+        queries=(),
+        source_ids=(),
+        template_id="template-1",
+        template_version="v1",
+        template_digest=_digest("4"),
+        deadline_at=deadline_at,
+        remaining_seconds=remaining_seconds,
+    )
+
+
+def _nodes(*, turn, attempt_started_at: float | None) -> ChatTurnNodes:
+    conversations = _Conversations(turn)
+
+    async def require_authorized() -> None:
+        return None
+
+    return ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations,
+        steps=_StepsKnowledge(),
+        planner=object(),
+        knowledge=object(),
+        insights_explanation=None,
+        require_authorized=require_authorized,
+        attempt_started_at=attempt_started_at,
+    )
+
+
+def test_new_attempt_rebases_plan_deadline() -> None:
+    plan = _plan(deadline_at=time.time() - 60, remaining_seconds=30)
+    turn = _turn(attempt=2)
+    attempt_started_at = time.time()
+    nodes = _nodes(turn=turn, attempt_started_at=attempt_started_at)
+
+    state = {"answer_plan": plan.to_dict(), "plan_attempt": 1}
+    active_plan = nodes._active_plan(state)
+
+    assert active_plan is not None
+    assert active_plan.deadline_at >= attempt_started_at + 30 - 0.01
+
+
+def test_same_attempt_keeps_persisted_plan_deadline() -> None:
+    deadline_at = time.time() - 60
+    plan = _plan(deadline_at=deadline_at, remaining_seconds=30)
+    turn = _turn(attempt=1)
+    attempt_started_at = time.time()
+    nodes = _nodes(turn=turn, attempt_started_at=attempt_started_at)
+
+    state = {"answer_plan": plan.to_dict(), "plan_attempt": 1}
+    active_plan = nodes._active_plan(state)
+
+    assert active_plan is not None
+    assert active_plan.deadline_at == deadline_at

@@ -26,6 +26,7 @@ class ChatGraphState(TypedDict, total=False):
     payload: dict[str, object]
     route: Literal["chat", "insights"]
     answer_plan: dict[str, Any] | None
+    plan_attempt: int
     step: dict[str, object] | None
     started_at_ms: int
     failure: dict[str, str] | None
@@ -61,9 +62,11 @@ class ChatGraph:
         nodes: ChatGraphNodes,
         authorize: AuthorizationCheck,
         propagate: tuple[type[BaseException], ...] = (),
+        retryable: Callable[[BaseException], bool] = lambda _error: False,
     ) -> None:
         self._authorize = authorize
         self._propagate = propagate
+        self._retryable = retryable
         self._checkpointer = checkpointer
 
         builder = StateGraph(ChatGraphState)
@@ -136,6 +139,10 @@ class ChatGraph:
                 except self._propagate:
                     raise
                 except Exception as exc:
+                    if self._retryable(exc):
+                        node_span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+                        node_span.record_exception(exc)
+                        raise
                     if not capture_failure:
                         raise
                     node_span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
