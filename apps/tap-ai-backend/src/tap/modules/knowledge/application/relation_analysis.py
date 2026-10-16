@@ -601,11 +601,9 @@ def _query_relevance(
         return 0
     subject = nodes_by_id.get(edge.source_node_id)
     obj = nodes_by_id.get(edge.target_node_id)
-    text = " ".join(
-        part
-        for part in (edge.relation_label, subject.label if subject else "", obj.label if obj else "")
-        if part
-    )
+    subject_label = subject.label if subject else ""
+    object_label = obj.label if obj else ""
+    text = " ".join(part for part in (edge.relation_label, subject_label, object_label) if part)
     if not text:
         return 0
     return len(query_bigrams & _bigrams(text))
