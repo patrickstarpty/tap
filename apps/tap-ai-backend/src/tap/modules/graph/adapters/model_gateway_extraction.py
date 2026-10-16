@@ -427,6 +427,16 @@ class ModelGatewayGraphExtraction:
                 kept_edges_raw, kept_provenance_raw, dropped, dropped_no_evidence_edges = (
                     _keep_edges(edges_raw, provenance_raw, node_ids)
                 )
+                label_lookup = {
+                    node_id: (node.label, node.aliases, node.node_type)
+                    for node_id, node in new_nodes.items()
+                } | {
+                    entity_id: (entity["label"], (), entity["type"])
+                    for entity_id, entity in known.items()
+                }
+                kept_edges_raw, kept_provenance_raw, dropped_unsupported_edges = (
+                    _drop_unsupported_edges(kept_edges_raw, kept_provenance_raw, label_lookup, refs)
+                )
                 edges = tuple(
                     GraphEdge(
                         _string(item, "id"),
@@ -467,6 +477,9 @@ class ModelGatewayGraphExtraction:
             current_span.set_attribute("tap.graph.dropped_no_evidence_nodes", dropped_no_evidence)
             current_span.set_attribute(
                 "tap.graph.dropped_no_evidence_edges", dropped_no_evidence_edges
+            )
+            current_span.set_attribute(
+                "tap.graph.dropped_unsupported_edges", dropped_unsupported_edges
             )
         if not nodes:
             # The model grounded nothing in this batch (boilerplate chunks, no
@@ -707,6 +720,128 @@ def _keep_edges(
         item for item in provenance_raw if item.get("edgeId") not in dropped_ids
     )
     return kept_edges, kept_provenance, len(dropped_ids), len(no_evidence_ids)
+
+
+_UNCHECKED_ENDPOINT_TYPES = frozenset({"ACTOR", "SYSTEM"})
+# A real, grounded-but-paraphrased endpoint keeps at least this fraction of its
+# characters in the cited text (measured empirically: the lowest-scoring genuine
+# paraphrase found in a production replay audit was 0.93; every true adjacent-entry
+# mislink in that same audit scored 0.0-0.33). 0.6 keeps a wide margin above the
+# former and well above the latter.
+_UNSUPPORTED_EDGE_OVERLAP_MIN = 0.6
+
+
+def _char_overlap_ratio(label: str, text: str) -> float:
+    """The fraction of ``label``'s normalized characters that also occur in ``text``.
+
+    A multiset comparison (via ``collections.Counter``), not a substring check: order
+    and contiguity do not matter, only how many of the label's characters the text
+    also contains (each text character usable once per matching label character).
+    An empty, already-normalized label (e.g. punctuation-only) trivially scores 1.0
+    rather than dividing by zero -- there is nothing for the text to be missing.
+    """
+
+    from collections import Counter
+
+    label_chars = list(label)
+    if not label_chars:
+        return 1.0
+    text_counts = Counter(text)
+    label_counts = Counter(label_chars)
+    matched = sum(min(count, text_counts.get(char, 0)) for char, count in label_counts.items())
+    return matched / len(label_chars)
+
+
+def _drop_unsupported_edges(
+    edges_raw: tuple[dict[str, object], ...],
+    provenance_raw: tuple[dict[str, object], ...],
+    label_lookup: Mapping[str, tuple[str, tuple[str, ...], str]],
+    refs: Mapping[str, Mapping[str, object]],
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int]:
+    """Drop an EXTRACTED edge whose endpoints are not both named in its own evidence.
+
+    The model cites which chunks state each fact; a genuinely grounded edge's
+    endpoint name shares nearly all of its characters with that text, even when
+    the model paraphrases a multi-clause bullet (dropping a middle clause,
+    rewording "少于1%" as "<1%", or dropping a trailing "术"/"的" the clause
+    itself omits). An edge whose endpoint shares *none* of its characters with
+    the cited text is instead almost always a real rv3 failure mode: two
+    adjacent clause entries (e.g. two neighboring disease definitions) connected
+    to each other instead of to what the cited text actually relates. So this
+    checks, per endpoint, the fraction of the label's (or its best-matching
+    alias's) characters -- normalized the same way ``canonical_key`` is -- that
+    also occur in the cited text (as a multiset, not requiring contiguity or
+    order); an edge is dropped only when that fraction is below
+    ``_UNSUPPORTED_EDGE_OVERLAP_MIN`` for either endpoint, rather than published
+    as a plausible-looking but ungrounded link.
+
+    An ACTOR or SYSTEM endpoint is never checked: the insurer or the contract
+    itself is routinely referred to in its own clause only by a document-relative
+    pronoun (本公司, 本合同, 本附加合同) -- which ``usable_alias`` deliberately keeps
+    out of every node's aliases (see the prompt's alias rule) -- so requiring its
+    real name to appear literally would drop a large share of genuinely grounded
+    facts about the insurer or the contract itself, not just the adjacent-entry
+    mislinks this check targets. An INFERRED edge has no chunks by design (its
+    grounding is its provenance's input facts, not text) and is never checked. An
+    edge whose endpoint id is not in ``label_lookup``, or whose own ``chunks`` is
+    empty, is left to ``_keep_edges`` and ``GraphEdge`` to judge instead of being
+    dropped here. Dropping an edge cascades to its own provenance record and to
+    any INFERRED edge whose provenance names it as an input fact, the same cascade
+    ``_keep_edges`` uses. Returns the kept edges, kept provenance, and how many
+    edges were dropped.
+    """
+
+    def supported(item: dict[str, object]) -> bool:
+        if item.get("origin") != "EXTRACTED":
+            return True
+        chunks = item.get("chunks")
+        if not isinstance(chunks, list) or not chunks:
+            return True
+        text = normalize_key(
+            "".join(
+                str(refs[ref]["content"]) for ref in chunks if isinstance(ref, str) and ref in refs
+            )
+        )
+        for endpoint in (item.get("sourceNodeId"), item.get("targetNodeId")):
+            names = label_lookup.get(endpoint) if isinstance(endpoint, str) else None
+            if names is None:
+                continue
+            label, aliases, node_type = names
+            if node_type in _UNCHECKED_ENDPOINT_TYPES:
+                continue
+            best = max(
+                (
+                    _char_overlap_ratio(normalize_key(name), text)
+                    for name in (label, *aliases)
+                    if name
+                ),
+                default=1.0,
+            )
+            if best < _UNSUPPORTED_EDGE_OVERLAP_MIN:
+                return False
+        return True
+
+    provenance_by_edge: dict[object, dict[str, object]] = {
+        item.get("edgeId"): item for item in provenance_raw
+    }
+    dropped_ids: set[object] = {item.get("id") for item in edges_raw if not supported(item)}
+    changed = True
+    while changed:
+        changed = False
+        for item in edges_raw:
+            edge_id = item.get("id")
+            if edge_id in dropped_ids or item.get("origin") != "INFERRED":
+                continue
+            provenance_item = provenance_by_edge.get(edge_id)
+            input_facts = provenance_item.get("inputFactIds") if provenance_item else None
+            if isinstance(input_facts, list) and dropped_ids.intersection(input_facts):
+                dropped_ids.add(edge_id)
+                changed = True
+    kept_edges = tuple(item for item in edges_raw if item.get("id") not in dropped_ids)
+    kept_provenance = tuple(
+        item for item in provenance_raw if item.get("edgeId") not in dropped_ids
+    )
+    return kept_edges, kept_provenance, len(dropped_ids)
 
 
 def _dedupe_edges(
