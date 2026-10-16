@@ -127,8 +127,16 @@ class Index:
         self.fenced: set[str] = set()
         self.purges: list[tuple[str, str | None]] = []
         self.purge_failures_remaining = 0
+        # Optional pause point, mirroring Embeddings.entered/release, so a test
+        # can hold a prepare pass paused inside the Milvus upsert itself
+        # rather than only inside embedding.
+        self.entered = None
+        self.release = None
 
     async def upsert_revision(self, work, chunks, embeddings, *, index_version):
+        if self.entered is not None:
+            self.entered.set()
+            await self.release.wait()
         if self.fail:
             raise RuntimeError("injected index failure")
         if work.revision_id in self.fenced:
@@ -764,6 +772,392 @@ def test_source_delete_survives_a_managed_revision_published_after_its_snapshot(
                     )
                     == "deleting"
                 )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_edit_during_prepare_completes_fast_and_stale_publish_is_abandoned(owned_project_mysql):
+    async def run():
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        artifacts, embeddings, index = Artifacts(), Embeddings(), Index()
+        try:
+            content = "Original alpha paragraph.\n\nSecond beta paragraph."
+            source_hash = canonical_sha256(content.encode())
+            artifacts.values["artifact:original"] = content.encode()
+            reserved = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="edit-race.md",
+                    media_type="text/markdown",
+                    source_content_hash=source_hash,
+                    size=len(content),
+                    now=datetime.now(),
+                    staging_key="stage:edit-race",
+                    chunk_settings=asdict(ChunkSettings()),
+                )
+            )
+            await repository.activate_upload(reserved, ArtifactLocator("artifact:original"))
+            document_id = reserved.document_id
+            async with sessions() as session:
+                document = (
+                    (
+                        await session.execute(
+                            select(knowledge_document).where(
+                                knowledge_document.c.document_id == document_id
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            revision_id = document["current_revision_id"]
+            normalized = NormalizedArtifact(
+                "edit-race.md",
+                MediaType.MARKDOWN,
+                source_hash,
+                (NormalizedBlock("b1", "paragraph", content, (), None, 0, 0, len(content)),),
+                DocumentId(document_id),
+                RevisionId(revision_id),
+            )
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_document_revision)
+                    .where(knowledge_document_revision.c.revision_id == revision_id)
+                    .values(
+                        normalized_blob_locator=await artifacts.write_normalized(
+                            revision_id, normalized
+                        ),
+                        chunks_blob_locator=await artifacts.write_chunks(
+                            revision_id, StructuralChunker().chunk(normalized)
+                        ),
+                    )
+                )
+                await session.execute(
+                    update(knowledge_document)
+                    .where(knowledge_document.c.document_id == document_id)
+                    .values(status="ready", stage="ready", chunk_count=1)
+                )
+            manager = MysqlManagedChunks(
+                sessions=sessions,
+                repository=repository,
+                scope=VALIDATION_SCOPE,
+                artifacts=artifacts,
+                embeddings=embeddings,
+                index=index,
+                embedding_model_alias="test",
+                embedding_dimension=2,
+                index_version="test-v1",
+            )
+            # reserve_upload's chunk_settings already registered a managed row
+            # in "waiting_ingestion"; run it once to reach a "ready" baseline
+            # before racing an in-flight generation below.
+            assert await manager.run_pending() == 1
+            chunk = (await manager.list_chunks(document_id))["items"][0]
+            first_edit = await manager.change(
+                document_id, chunk["chunkId"], chunk["version"], content="First version"
+            )
+
+            # Pause the stale (pre-edit) run inside embedding, where the fix
+            # holds no row lock: a concurrent edit must not wait on it.
+            embeddings.entered, embeddings.release = asyncio.Event(), asyncio.Event()
+            processing = asyncio.create_task(manager.process_document(document_id))
+            await asyncio.wait_for(embeddings.entered.wait(), timeout=5)
+
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            edited = await asyncio.wait_for(
+                manager.change(
+                    document_id,
+                    first_edit["chunkId"],
+                    first_edit["version"],
+                    content="Second version",
+                ),
+                timeout=1,
+            )
+            assert loop.time() - started < 1
+            assert edited["indexStatus"] == "pending"
+            edited_version = (await manager.settings(document_id))["version"]
+
+            embeddings.release.set()
+            await asyncio.wait_for(processing, timeout=10)
+            embeddings.entered = None
+
+            # The stale run's publish must have been abandoned: the second
+            # edit stays current, not overwritten back to "ready" by the stale
+            # first-edit result it was indexing.
+            state = await manager.settings(document_id)
+            assert state["version"] == edited_version
+            listed = (await manager.list_chunks(document_id))["items"][0]
+            assert listed["content"] == "Second version"
+            assert listed["indexStatus"] == "pending"
+
+            assert await manager.run_pending() == 1
+            listed_ready = (await manager.list_chunks(document_id))["items"][0]
+            assert listed_ready["indexStatus"] == "ready"
+            assert any("Second version" in c.content for c in index.chunks)
+            async with sessions() as session:
+                current_revision_id = await session.scalar(
+                    select(knowledge_document.c.current_revision_id).where(
+                        knowledge_document.c.document_id == document_id
+                    )
+                )
+            ready = await repository.load_ready_revisions((document_id,))
+            assert ready[0].revision_id == current_revision_id
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_delete_during_prepare_completes_fast_and_stale_publish_is_abandoned(
+    owned_project_mysql, caplog
+):
+    async def run():
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        artifacts, embeddings, index = Artifacts(), Embeddings(), Index()
+        try:
+            content = "Original alpha paragraph.\n\nSecond beta paragraph."
+            source_hash = canonical_sha256(content.encode())
+            artifacts.values["artifact:original"] = content.encode()
+            reserved = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="delete-race.md",
+                    media_type="text/markdown",
+                    source_content_hash=source_hash,
+                    size=len(content),
+                    now=datetime.now(),
+                    staging_key="stage:delete-race",
+                    chunk_settings=asdict(ChunkSettings()),
+                )
+            )
+            await repository.activate_upload(reserved, ArtifactLocator("artifact:original"))
+            document_id = reserved.document_id
+            async with sessions() as session:
+                document = (
+                    (
+                        await session.execute(
+                            select(knowledge_document).where(
+                                knowledge_document.c.document_id == document_id
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            revision_id = document["current_revision_id"]
+            normalized = NormalizedArtifact(
+                "delete-race.md",
+                MediaType.MARKDOWN,
+                source_hash,
+                (NormalizedBlock("b1", "paragraph", content, (), None, 0, 0, len(content)),),
+                DocumentId(document_id),
+                RevisionId(revision_id),
+            )
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_document_revision)
+                    .where(knowledge_document_revision.c.revision_id == revision_id)
+                    .values(
+                        normalized_blob_locator=await artifacts.write_normalized(
+                            revision_id, normalized
+                        ),
+                        chunks_blob_locator=await artifacts.write_chunks(
+                            revision_id, StructuralChunker().chunk(normalized)
+                        ),
+                    )
+                )
+                await session.execute(
+                    update(knowledge_document)
+                    .where(knowledge_document.c.document_id == document_id)
+                    .values(status="ready", stage="ready", chunk_count=1)
+                )
+            manager = MysqlManagedChunks(
+                sessions=sessions,
+                repository=repository,
+                scope=VALIDATION_SCOPE,
+                artifacts=artifacts,
+                embeddings=embeddings,
+                index=index,
+                embedding_model_alias="test",
+                embedding_dimension=2,
+                index_version="test-v1",
+            )
+            # reserve_upload's chunk_settings already registered a managed row
+            # in "waiting_ingestion"; run it once to reach a "ready" baseline
+            # before racing an in-flight generation below.
+            assert await manager.run_pending() == 1
+            chunk = (await manager.list_chunks(document_id))["items"][0]
+            await manager.change(
+                document_id, chunk["chunkId"], chunk["version"], content="Delete in flight"
+            )
+
+            # Pause the stale run inside the Milvus upsert itself -- further
+            # along than embedding -- still holding no row lock: a concurrent
+            # delete must not wait on it either.
+            index.entered, index.release = asyncio.Event(), asyncio.Event()
+            processing = asyncio.create_task(manager.process_document(document_id))
+            await asyncio.wait_for(index.entered.wait(), timeout=5)
+
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            await asyncio.wait_for(repository.delete_source(document["source_id"]), timeout=1)
+            assert loop.time() - started < 1
+
+            index.release.set()
+            await asyncio.wait_for(processing, timeout=10)
+            index.entered = None
+
+            assert "knowledge.managed_index_failed" not in caplog.text
+            assert await repository.get_document(document_id) is None
+            assert await repository.load_ready_revisions((document_id,)) == ()
+            async with sessions() as session:
+                status = await session.scalar(
+                    select(knowledge_document.c.status).where(
+                        knowledge_document.c.document_id == document_id
+                    )
+                )
+            assert status == "deleting"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_prepare_failure_after_concurrent_edit_does_not_mark_newer_version_as_error(
+    owned_project_mysql,
+):
+    async def run():
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        artifacts, embeddings, index = Artifacts(), Embeddings(), Index()
+        try:
+            content = "Original alpha paragraph.\n\nSecond beta paragraph."
+            source_hash = canonical_sha256(content.encode())
+            artifacts.values["artifact:original"] = content.encode()
+            reserved = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="failure-race.md",
+                    media_type="text/markdown",
+                    source_content_hash=source_hash,
+                    size=len(content),
+                    now=datetime.now(),
+                    staging_key="stage:failure-race",
+                    chunk_settings=asdict(ChunkSettings()),
+                )
+            )
+            await repository.activate_upload(reserved, ArtifactLocator("artifact:original"))
+            document_id = reserved.document_id
+            async with sessions() as session:
+                document = (
+                    (
+                        await session.execute(
+                            select(knowledge_document).where(
+                                knowledge_document.c.document_id == document_id
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            revision_id = document["current_revision_id"]
+            normalized = NormalizedArtifact(
+                "failure-race.md",
+                MediaType.MARKDOWN,
+                source_hash,
+                (NormalizedBlock("b1", "paragraph", content, (), None, 0, 0, len(content)),),
+                DocumentId(document_id),
+                RevisionId(revision_id),
+            )
+            async with sessions() as session, session.begin():
+                await session.execute(
+                    update(knowledge_document_revision)
+                    .where(knowledge_document_revision.c.revision_id == revision_id)
+                    .values(
+                        normalized_blob_locator=await artifacts.write_normalized(
+                            revision_id, normalized
+                        ),
+                        chunks_blob_locator=await artifacts.write_chunks(
+                            revision_id, StructuralChunker().chunk(normalized)
+                        ),
+                    )
+                )
+                await session.execute(
+                    update(knowledge_document)
+                    .where(knowledge_document.c.document_id == document_id)
+                    .values(status="ready", stage="ready", chunk_count=1)
+                )
+            manager = MysqlManagedChunks(
+                sessions=sessions,
+                repository=repository,
+                scope=VALIDATION_SCOPE,
+                artifacts=artifacts,
+                embeddings=embeddings,
+                index=index,
+                embedding_model_alias="test",
+                embedding_dimension=2,
+                index_version="test-v1",
+            )
+            # reserve_upload's chunk_settings already registered a managed row
+            # in "waiting_ingestion"; run it once to reach a "ready" baseline
+            # before racing an in-flight generation below.
+            assert await manager.run_pending() == 1
+            chunk = (await manager.list_chunks(document_id))["items"][0]
+            first_edit = await manager.change(
+                document_id, chunk["chunkId"], chunk["version"], content="First version"
+            )
+
+            embeddings.entered, embeddings.release = asyncio.Event(), asyncio.Event()
+            processing = asyncio.create_task(manager.process_document(document_id))
+            await asyncio.wait_for(embeddings.entered.wait(), timeout=5)
+            await asyncio.wait_for(
+                manager.change(
+                    document_id,
+                    first_edit["chunkId"],
+                    first_edit["version"],
+                    content="Edited during failure",
+                ),
+                timeout=1,
+            )
+            edited_version = (await manager.settings(document_id))["version"]
+            # The stale run's eventual index upsert fails after it resumes.
+            index.fail = True
+            embeddings.release.set()
+            await asyncio.wait_for(processing, timeout=10)
+            embeddings.entered = None
+
+            # A newer edit exists: the stale failure must not be recorded
+            # over it as index_status="error"/document status="failed".
+            state = await manager.settings(document_id)
+            assert state["version"] == edited_version
+            listed = (await manager.list_chunks(document_id))["items"][0]
+            assert listed["indexStatus"] == "pending"
+            async with sessions() as session:
+                status = await session.scalar(
+                    select(knowledge_document.c.status).where(
+                        knowledge_document.c.document_id == document_id
+                    )
+                )
+            assert status == "processing"
+
+            index.fail = False
+            assert await manager.run_pending() == 1
+            listed_ready = (await manager.list_chunks(document_id))["items"][0]
+            assert listed_ready["indexStatus"] == "ready"
         finally:
             await engine.dispose()
 
