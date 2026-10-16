@@ -457,3 +457,140 @@ async def test_output_redaction_keeps_claims_locatable() -> None:
     saved = answers.save_calls[0]
     assert saved.answer == result.answer
     assert [claim.text for claim in saved.claims] == [claim.text for claim in result.claims]
+
+
+@pytest.mark.asyncio
+async def test_output_redaction_hits_land_on_current_span(monkeypatch) -> None:
+    """Only the answer-body hit counts land on `tap.guard.redaction.output_hits`
+    -- a claim is always a verbatim paragraph of the answer, so counting its
+    hits too (on top of the answer-level count that already covers the same
+    match) would double-count."""
+    import tap.interfaces.http.knowledge_service as knowledge_service_module
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.platform.serialization.dataclass_json import to_json
+
+    class _RecordingSpan:
+        def __init__(self) -> None:
+            self.attributes: dict[str, object] = {}
+
+        def set_attribute(self, key: str, value: object) -> None:
+            self.attributes[key] = value
+
+    span = _RecordingSpan()
+    monkeypatch.setattr(knowledge_service_module, "get_current_span", lambda: span)
+
+    frozen, plan = await _retrieve_route()
+    base = answer_response()
+    citation_id = base.citations[0].citation_id
+    claim_text = "联系电话 13812345678 请尽快回复。"
+    response = replace(
+        base,
+        answer=claim_text,
+        claims=(
+            Claim(
+                claim_id="claim-a",
+                text=claim_text,
+                answer_start=0,
+                answer_end=len(claim_text),
+                citation_ids=(citation_id,),
+            ),
+        ),
+    )
+    step = {"kind": "verified", "response": to_json(response)}
+    service = _service(PhaseAnswers(), redactor=PatternEgressRedactor())
+
+    await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert span.attributes["tap.guard.redaction.output_hits"] == json.dumps({"phone": 1})
+
+
+@pytest.mark.asyncio
+async def test_output_redaction_handles_answers_over_eight_thousand_chars() -> None:
+    """The output redactor composed for `finalize_conversation_answer` must be
+    bounded like `_redact_model_context` (262144 chars), not the smaller
+    8,000-char query-only default `PatternEgressRedactor()` -- a saved answer
+    can be as long as `litellm.py`'s `max_answer_chars=16000`, which would
+    otherwise make `finalize` raise `RedactionUnavailable` on every long
+    answer."""
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.platform.serialization.dataclass_json import to_json
+
+    frozen, plan = await _retrieve_route()
+    base = answer_response()
+    citation_id = base.citations[0].citation_id
+    long_answer = "无敏感信息的长段落。" * 1000
+    assert len(long_answer) > 8000
+    response = replace(
+        base,
+        answer=long_answer,
+        claims=(
+            Claim(
+                claim_id="claim-a",
+                text=long_answer,
+                answer_start=0,
+                answer_end=len(long_answer),
+                citation_ids=(citation_id,),
+            ),
+        ),
+    )
+    step = {"kind": "verified", "response": to_json(response)}
+
+    answers = PhaseAnswers()
+    service = _service(answers, redactor=PatternEgressRedactor(max_chars=262144))
+
+    result = await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert result.answer == long_answer
+    assert answers.save_calls[0].answer == long_answer
+
+
+@pytest.mark.asyncio
+async def test_final_route_answer_is_redacted() -> None:
+    """The direct/model-only `"final"` step bypasses `save_frozen` entirely,
+    but still returns the answer straight to the caller -- it must be
+    redacted the same as the `save_frozen` path."""
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+
+    class Models:
+        async def chat(self, *args, **kwargs):
+            return AnswerGeneration(
+                "联系电话 13812345678 请回复。", (), "qwen-plus", "direct-chat-v1", None
+            )
+
+    frozen, plan = await _direct_route()
+    request = RetrievalAnswerRequest(query=frozen.message)
+    service = _service(PhaseAnswers(), models=Models(), redactor=PatternEgressRedactor())
+
+    step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    assert step["kind"] == "final"
+
+    result = await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert "13812345678" not in result.answer
+    assert "[REDACTED_PHONE]" in result.answer
+
+
+@pytest.mark.asyncio
+async def test_final_route_redaction_failure_propagates() -> None:
+    """Fail-closed: if the direct/model-only answer can't be redacted (an
+    unterminated credential-looking value, here), `RedactionUnavailable`
+    must propagate out of `finalize_conversation_answer`, not be swallowed
+    or return the unredacted answer."""
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.modules.knowledge.ports.redaction import RedactionUnavailable
+
+    class Models:
+        async def chat(self, *args, **kwargs):
+            return AnswerGeneration(
+                'password="unterminated', (), "qwen-plus", "direct-chat-v1", None
+            )
+
+    frozen, plan = await _direct_route()
+    request = RetrievalAnswerRequest(query=frozen.message)
+    service = _service(PhaseAnswers(), models=Models(), redactor=PatternEgressRedactor())
+
+    step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    assert step["kind"] == "final"
+
+    with pytest.raises(RedactionUnavailable):
+        await service.finalize_conversation_answer(step, frozen, answer_plan=plan)

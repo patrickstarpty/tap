@@ -471,7 +471,8 @@ class KnowledgeHttpService:
         takes no execution-budget parameter)."""
         async with self._plan_deadline(answer_plan):
             if step.get("kind") == "final":
-                return RetrievalAnswerResponse.model_validate(step["response"])
+                final_response = RetrievalAnswerResponse.model_validate(step["response"])
+                return await self._redact_final_response(final_response)
             if step.get("kind") != "verified":
                 raise ValueError("conversation answer step is not ready to finalize")
             from tap.platform.serialization.dataclass_json import from_json
@@ -486,36 +487,48 @@ class KnowledgeHttpService:
                 raise ValueError("resumed step no longer matches a retrieval route")
             revisions, _policy, _governance = context
             response = from_json(AnswerResponse, step["response"])
+            # Fail-closed: if `report()` raises `RedactionUnavailable` (e.g. an
+            # unterminated credential value, or the answer exceeds the
+            # redactor's bound), it propagates out of `finalize` uncaught --
+            # nothing before `verify` is checked, so the turn must not save or
+            # return an unredacted answer. `classify_turn_failure` treats it as
+            # deterministic (not retryable).
             response = await self._redact_answer_response(response)
             await self._answers.save_frozen(response, frozen_input.message, revisions)
             return answer_response_to_http(response)
+
+    @staticmethod
+    def _paragraph_offsets(text: str) -> list[tuple[str, int, int]]:
+        """Split `text` on `"\\n\\n"`, returning each paragraph with its
+        `(start, end)` offset into `text` -- the same boundary a claim's
+        text is validated against when claims are first generated
+        (`retrieve.py`'s `_resolve_generated_claims`)."""
+        paragraphs: list[tuple[str, int, int]] = []
+        start = 0
+        for paragraph in text.split("\n\n"):
+            end = start + len(paragraph)
+            paragraphs.append((paragraph, start, end))
+            start = end + 2
+        return paragraphs
 
     async def _redact_answer_response(self, response: AnswerResponse) -> AnswerResponse:
         """Redact `response.answer` and every claim's text with the same
         egress redactor before the frozen snapshot is built/saved, so a
         claim's text stays an exact (now-redacted) paragraph of the (now-
         redacted) answer. The abstained path has an empty answer, so there
-        is nothing to redact. Total hits across the answer body and every
-        claim land on the current span; no hits means nothing is written."""
+        is nothing to redact. Only the answer-body hit counts land on the
+        current span -- a claim is always a verbatim paragraph of the
+        answer, so counting its hits too would double-count the same match;
+        no hits means nothing is written."""
         report = getattr(self._redactor, "redact_with_report", None)
         if report is None or not response.answer:
             return response
-        redacted_answer, answer_hits = await report(response.answer)
-        total_hits: dict[str, int] = dict(answer_hits)
-
-        paragraphs: list[tuple[str, int, int]] = []
-        start = 0
-        for paragraph in redacted_answer.split("\n\n"):
-            end = start + len(paragraph)
-            paragraphs.append((paragraph, start, end))
-            start = end + 2
-        available = list(paragraphs)
+        redacted_answer, hits = await report(response.answer)
+        available = self._paragraph_offsets(redacted_answer)
 
         new_claims = []
         for claim in response.claims:
-            redacted_text, claim_hits = await report(claim.text)
-            for kind, count in claim_hits.items():
-                total_hits[kind] = total_hits.get(kind, 0) + count
+            redacted_text, _claim_hits = await report(claim.text)
             match_index = next(
                 (index for index, (text, _s, _e) in enumerate(available) if text == redacted_text),
                 None,
@@ -530,11 +543,47 @@ class KnowledgeHttpService:
                 )
             )
 
-        if total_hits:
-            get_current_span().set_attribute(
-                "tap.guard.redaction.output_hits", json.dumps(total_hits)
-            )
+        if hits:
+            get_current_span().set_attribute("tap.guard.redaction.output_hits", json.dumps(hits))
         return dataclasses.replace(response, answer=redacted_answer, claims=tuple(new_claims))
+
+    async def _redact_final_response(
+        self, response: RetrievalAnswerResponse
+    ) -> RetrievalAnswerResponse:
+        """Same redaction as `_redact_answer_response`, for the direct/
+        model-only `"final"` step: that route never reaches `save_frozen`,
+        but still returns the answer straight to the caller, so it must be
+        redacted and counted the same way."""
+        report = getattr(self._redactor, "redact_with_report", None)
+        if report is None or not response.answer:
+            return response
+        redacted_answer, hits = await report(response.answer)
+        available = self._paragraph_offsets(redacted_answer)
+
+        new_claims = []
+        for claim in response.claims:
+            redacted_text, _claim_hits = await report(claim.text)
+            match_index = next(
+                (index for index, (text, _s, _e) in enumerate(available) if text == redacted_text),
+                None,
+            )
+            if match_index is None:
+                new_claims.append(claim.model_copy(update={"text": redacted_text}))
+                continue
+            _text, claim_start, claim_end = available.pop(match_index)
+            new_claims.append(
+                claim.model_copy(
+                    update={
+                        "text": redacted_text,
+                        "answer_start": claim_start,
+                        "answer_end": claim_end,
+                    }
+                )
+            )
+
+        if hits:
+            get_current_span().set_attribute("tap.guard.redaction.output_hits", json.dumps(hits))
+        return response.model_copy(update={"answer": redacted_answer, "claims": new_claims})
 
     async def _authorized_frozen_context(
         self,

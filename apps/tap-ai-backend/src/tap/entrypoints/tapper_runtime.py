@@ -2070,7 +2070,11 @@ def _assemble_http_services(
         corpus_version=corpus_version,
         models=embeddings,
         answer_planner=_answer_planner(embeddings),
-        redactor=redactor,
+        # Bounded like `_redact_model_context`, not the smaller query-only
+        # `redactor` above: a saved answer (and its `redaction_report` use
+        # for an incoming chat message) can be far longer than an 8,000-char
+        # retrieval query -- up to `litellm.py`'s `max_answer_chars=16000`.
+        redactor=PatternEgressRedactor(max_chars=262144),
     )
     prompt_suggestions = None
     prompt_suggestion_store = None

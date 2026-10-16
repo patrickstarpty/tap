@@ -42,6 +42,7 @@ from tap.modules.knowledge.ports.errors import (
     ModelUnavailable,
     SearchUnavailable,
 )
+from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 from tap.platform.budget import CallBudgetExhausted, TurnBudgetExhausted
 
 _CLASSIFICATION_TABLE: tuple[tuple[BaseException, str], ...] = (
@@ -79,6 +80,7 @@ _CLASSIFICATION_TABLE: tuple[tuple[BaseException, str], ...] = (
     (GraphCheckpointUnavailable("x"), "deterministic"),
     (ValueError("x"), "deterministic"),
     (RuntimeError("x"), "deterministic"),
+    (RedactionUnavailable("x"), "deterministic"),
 )
 
 

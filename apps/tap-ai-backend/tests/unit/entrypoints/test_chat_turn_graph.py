@@ -5,6 +5,7 @@ outcomes) must be unchanged."""
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from types import SimpleNamespace
 
@@ -180,6 +181,102 @@ async def test_oversized_bundle_fails_turn() -> None:
     event_type, payload = kwargs["terminal_event"]
     assert event_type == "turn.failed"
     assert payload["problem"]["type"].endswith("answer-unavailable")
+
+
+@pytest.mark.asyncio
+async def test_output_redaction_failure_fails_turn() -> None:
+    """`RedactionUnavailable` from `finalize_conversation_answer`'s output
+    redaction step must propagate out of the graph instead of being
+    swallowed, and -- being fail-closed and non-retryable -- must land the
+    turn on `turn.failed`, the same terminal shape as any other
+    deterministic answer failure (`test_oversized_bundle_fails_turn`)."""
+    from tap.modules.knowledge.ports.redaction import RedactionUnavailable
+
+    class _FinalizeRedactionFailsKnowledge(_StepsKnowledge):
+        async def finalize_conversation_answer(
+            self, step, frozen_input, *, answer_plan=None, authorize=None
+        ):
+            raise RedactionUnavailable("output redaction rejected the final answer")
+
+    turn = _turn()
+    conversations = _Conversations(turn)
+    knowledge = _FinalizeRedactionFailsKnowledge()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
+    assert evidence.outcome == "failed"
+    event_type, _payload = kwargs["terminal_event"]
+    assert event_type == "turn.failed"
+
+
+class _RecordingSpan:
+    """A minimal `set_attribute`-recording double standing in for the real
+    OTEL span `guard_in` writes `tap.guard.redaction.*` attributes onto."""
+
+    def __init__(self) -> None:
+        self.attributes: dict[str, object] = {}
+
+    def set_attribute(self, key: str, value: object) -> None:
+        self.attributes[key] = value
+
+
+def _guard_in_nodes(*, knowledge: object, turn_span: _RecordingSpan) -> ChatTurnNodes:
+    turn = _turn()
+    conversations = _Conversations(turn)
+
+    async def require_authorized() -> None:
+        return None
+
+    return ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations,
+        steps=_StepsKnowledge(),
+        planner=None,
+        knowledge=knowledge,
+        insights_explanation=None,
+        require_authorized=require_authorized,
+        turn_span=turn_span,
+    )
+
+
+@pytest.mark.asyncio
+async def test_guard_in_records_input_redaction_hits() -> None:
+    class _ReportingKnowledge:
+        async def redaction_report(self, _text: str) -> dict[str, int]:
+            return {"phone": 1}
+
+    span = _RecordingSpan()
+    nodes = _guard_in_nodes(knowledge=_ReportingKnowledge(), turn_span=span)
+
+    result = await nodes.guard_in({})
+
+    assert result == {"route": "chat", "reasoning_mode": "direct"}
+    assert span.attributes["tap.guard.redaction.input_hits"] == json.dumps({"phone": 1})
+    assert "tap.guard.redaction.input_hits_unavailable" not in span.attributes
+
+
+@pytest.mark.asyncio
+async def test_guard_in_input_redaction_failure_does_not_fail_turn() -> None:
+    """A message the redactor cannot parse (over its bound, an unterminated
+    credential-looking value, ...) on *any* route must never fail the turn
+    over a trace-only attribute: `guard_in` swallows the exception and
+    records `tap.guard.redaction.input_hits_unavailable` instead."""
+
+    class _FailingKnowledge:
+        async def redaction_report(self, _text: str) -> dict[str, int]:
+            raise RuntimeError("redactor exploded")
+
+    span = _RecordingSpan()
+    nodes = _guard_in_nodes(knowledge=_FailingKnowledge(), turn_span=span)
+
+    result = await nodes.guard_in({})
+
+    assert result == {"route": "chat", "reasoning_mode": "direct"}
+    assert span.attributes.get("tap.guard.redaction.input_hits_unavailable") is True
+    assert "tap.guard.redaction.input_hits" not in span.attributes
 
 
 @pytest.mark.asyncio
