@@ -197,16 +197,17 @@ def test_known_entities_keep_the_newest_two_hundred() -> None:
 
 
 def test_assemble_fragment_truncates_oversized_merges_to_the_draft_caps() -> None:
-    # 520 distinct nodes across two drafts, each individually within the 500-node
-    # cap but exceeding it once merged. One edge's target falls in the dropped tail
-    # and must be dropped with it; one edge stays fully within the kept nodes.
+    # 1520 distinct nodes across two drafts, each individually within the
+    # 1500-node cap but exceeding it once merged. One edge's target falls in the
+    # dropped tail and must be dropped with it; one edge stays fully within the
+    # kept nodes.
     first_nodes = tuple(
         GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
-        for i in range(500)
+        for i in range(1500)
     )
     extra_nodes = tuple(
         GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
-        for i in range(500, 520)
+        for i in range(1500, 1520)
     )
     evidence_1 = _evidence("evidence-1", "chunk-0")
     evidence_2 = _evidence("evidence-2", "chunk-1")
@@ -223,8 +224,8 @@ def test_assemble_fragment_truncates_oversized_merges_to_the_draft_caps() -> Non
     edge_touches_dropped = GraphEdge(
         "edge-dropped",
         SNAPSHOT.snapshot_id,
-        "node-500",
-        "node-510",
+        "node-1500",
+        "node-1510",
         "GOVERNS",
         RelationOrigin.EXTRACTED,
         1.0,
@@ -235,14 +236,14 @@ def test_assemble_fragment_truncates_oversized_merges_to_the_draft_caps() -> Non
 
     fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
 
-    assert len(fragment.nodes) == 500
-    assert {node.node_id for node in fragment.nodes} == {f"node-{i}" for i in range(500)}
+    assert len(fragment.nodes) == 1500
+    assert {node.node_id for node in fragment.nodes} == {f"node-{i}" for i in range(1500)}
     assert [edge.edge_id for edge in fragment.edges] == ["edge-within"]
 
 
-def test_assemble_fragment_caps_merged_edges_at_two_thousand() -> None:
-    # Two drafts, 1001 distinct edges each (2002 total merged) among 50 shared nodes
-    # that stay well within the node cap, so only the 2000-edge cap is exercised.
+def test_assemble_fragment_caps_merged_edges_at_six_thousand() -> None:
+    # Two drafts, 3001 distinct edges each (6002 total merged) among 50 shared nodes
+    # that stay well within the node cap, so only the 6000-edge cap is exercised.
     nodes = tuple(
         GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
         for i in range(50)
@@ -266,18 +267,18 @@ def test_assemble_fragment_caps_merged_edges_at_two_thousand() -> None:
     evidence_1 = _evidence("evidence-1", "chunk-0")
     evidence_2 = _evidence("evidence-2", "chunk-1")
     draft_1 = GraphSnapshotDraft(
-        SNAPSHOT, nodes, _edges("a", 1001, evidence_id="evidence-1"), (evidence_1,), ()
+        SNAPSHOT, nodes, _edges("a", 3001, evidence_id="evidence-1"), (evidence_1,), ()
     )
     draft_2 = GraphSnapshotDraft(
-        SNAPSHOT, nodes, _edges("b", 1001, evidence_id="evidence-2"), (evidence_2,), ()
+        SNAPSHOT, nodes, _edges("b", 3001, evidence_id="evidence-2"), (evidence_2,), ()
     )
 
     fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
 
-    assert len(fragment.edges) == 2000
+    assert len(fragment.edges) == 6000
     kept_ids = [edge.edge_id for edge in fragment.edges]
-    assert kept_ids[:1001] == [f"a-edge-{i}" for i in range(1001)]
-    assert kept_ids[1001:] == [f"b-edge-{i}" for i in range(999)]
+    assert kept_ids[:3001] == [f"a-edge-{i}" for i in range(3001)]
+    assert kept_ids[3001:] == [f"b-edge-{i}" for i in range(2999)]
 
 
 def _truncation_records(caplog) -> list:
@@ -292,11 +293,11 @@ def _truncation_records(caplog) -> list:
 def test_assemble_fragment_logs_how_many_nodes_and_edges_the_node_cap_dropped(caplog) -> None:
     first_nodes = tuple(
         GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
-        for i in range(500)
+        for i in range(1500)
     )
     extra_nodes = tuple(
         GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
-        for i in range(500, 520)
+        for i in range(1500, 1520)
     )
     evidence_1 = _evidence("evidence-1", "chunk-0")
     evidence_2 = _evidence("evidence-2", "chunk-1")
@@ -323,7 +324,7 @@ def test_assemble_fragment_logs_how_many_nodes_and_edges_the_node_cap_dropped(ca
     draft_2 = GraphSnapshotDraft(
         SNAPSHOT,
         extra_nodes,
-        (_edge("edge-dropped", "node-500", "node-510", "evidence-2"),),
+        (_edge("edge-dropped", "node-1500", "node-1510", "evidence-2"),),
         (evidence_2,),
         (),
     )
@@ -337,6 +338,8 @@ def test_assemble_fragment_logs_how_many_nodes_and_edges_the_node_cap_dropped(ca
     assert f"snapshot_id={SNAPSHOT.snapshot_id}" in message
     assert "dropped_nodes=20" in message
     assert "dropped_edges=1" in message
+    assert records[0].__dict__["tap.graph_fragment.dropped_nodes"] == 20
+    assert records[0].__dict__["tap.graph_fragment.dropped_edges"] == 1
 
 
 def test_assemble_fragment_logs_edges_dropped_by_the_edge_cap(caplog) -> None:
@@ -357,7 +360,7 @@ def test_assemble_fragment_logs_edges_dropped_by_the_edge_cap(caplog) -> None:
                 1.0,
                 (evidence_id,),
             )
-            for i in range(1001)
+            for i in range(3001)
         )
 
     draft_1 = GraphSnapshotDraft(
@@ -370,11 +373,12 @@ def test_assemble_fragment_logs_edges_dropped_by_the_edge_cap(caplog) -> None:
     with caplog.at_level("WARNING", logger="tap.modules.graph.application.fragments"):
         fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
 
-    assert len(fragment.edges) == 2000
+    assert len(fragment.edges) == 6000
     records = _truncation_records(caplog)
     assert len(records) == 1
     assert "dropped_nodes=0" in records[0].getMessage()
     assert "dropped_edges=2" in records[0].getMessage()
+    assert records[0].__dict__["tap.graph_fragment.total_edges"] == 6002
 
 
 def test_assemble_fragment_within_the_caps_logs_no_truncation(caplog) -> None:
@@ -507,9 +511,11 @@ def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() 
     # raises on a dangling input fact.
     early_nodes = tuple(
         GraphNode(f"node-{i}", SNAPSHOT.snapshot_id, f"Entity {i}", "CONCEPT", f"entity-{i}")
-        for i in range(500)
+        for i in range(1500)
     )
-    late_node = GraphNode("node-510", SNAPSHOT.snapshot_id, "Entity 510", "CONCEPT", "entity-510")
+    late_node = GraphNode(
+        "node-1510", SNAPSHOT.snapshot_id, "Entity 1510", "CONCEPT", "entity-1510"
+    )
     inferred_edge = GraphEdge(
         "edge-inferred",
         SNAPSHOT.snapshot_id,
@@ -524,7 +530,7 @@ def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() 
         "prov-1",
         SNAPSHOT.snapshot_id,
         "edge-inferred",
-        ("node-510",),
+        ("node-1510",),
         "sha256:" + "c" * 64,
     )
     # An unrelated EXTRACTED edge between two other kept early nodes, so the
@@ -553,7 +559,7 @@ def test_assemble_fragment_cascades_provenance_whose_inputs_fall_past_the_cap() 
 
     fragment = assemble_fragment(SNAPSHOT, (draft_1, draft_2))
 
-    assert len(fragment.nodes) == 500
+    assert len(fragment.nodes) == 1500
     assert {edge.edge_id for edge in fragment.edges} == {"edge-unrelated"}
     assert fragment.provenance == ()
 

@@ -18,6 +18,18 @@ from tap.modules.graph.domain.models import GraphSnapshotDraft, RelationOrigin
 # relation analysis or reach suggestion prompts.
 STRUCTURAL_NODE_KEY_PREFIXES = ("document:", "chunk:")
 
+# Bumped whenever the alignment/merge rules themselves change (entity resolution,
+# alias filtering/normalization, type-bucket or org-suffix handling, edge merging,
+# community assignment -- anything in alignment.py/merger.py/communities.py that
+# changes what one merge of the same fragments produces). fragment_digest folds
+# this in precisely so that a deploy that only changes these rules, with no new
+# extraction, still changes the digest: mysql_merge.py only republishes a new
+# project version when the digest moves, so without this a rule fix would sit
+# unapplied on every already-merged project until its fragments happened to be
+# re-extracted for an unrelated reason. Bump this, and only this, on such a change
+# -- do not also change FragmentRecord/GraphSnapshotDraft identity for it.
+MERGE_RULES_VERSION = 1
+
 
 @dataclass(frozen=True, slots=True)
 class ProjectGraphVersion:
@@ -167,8 +179,16 @@ class FragmentRecord:
 
 
 def fragment_digest(records: Iterable[FragmentRecord]) -> str:
+    """Pin a merge to its inputs *and* to the rules that interpret them.
+
+    Folding in ``MERGE_RULES_VERSION`` means the same fragments digest
+    differently after a rules-only deploy (no re-extraction involved), which
+    is what makes mysql_merge.py's "republish only when the digest moves"
+    check actually pick up the new rules on the next merge instead of leaving
+    every already-merged project on its old, pre-deploy version indefinitely.
+    """
     ordered = sorted((record.snapshot_id, record.content_digest) for record in records)
-    material = json.dumps(ordered, separators=(",", ":"))
+    material = json.dumps([MERGE_RULES_VERSION, ordered], separators=(",", ":"))
     return "sha256:" + hashlib.sha256(material.encode()).hexdigest()
 
 

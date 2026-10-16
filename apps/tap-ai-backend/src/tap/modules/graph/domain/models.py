@@ -19,7 +19,22 @@ from tap.modules.graph.domain.vocabulary import (
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 MAX_GRAPH_DEPTH = 2
+# The public query bound (search/neighbor/path ``node_limit``): how many nodes one
+# API response may return. Unrelated to how many facts a Fragment draft may hold --
+# see MAX_FRAGMENT_NODES below -- the two happened to share this constant only
+# because they were both originally 500.
 MAX_GRAPH_NODES = 500
+# How many nodes/edges a GraphSnapshotDraft (one document's Fragment, or one
+# extraction batch) may hold. The real-model run's largest single document
+# (18 batches) merged to 516 nodes/2,036 edges, just over the previous 500/2,000
+# bound shared with MAX_GRAPH_NODES above; the merge truncated it, silently
+# dropping 16 nodes and 36 edges from the published graph. 3x headroom over that
+# document covers real growth without a per-document cap in sight; the
+# node/edge-count validation this bounds is linear in each (dict/set operations
+# keyed by id), so CPU cost for an actually-oversized document scales the same
+# 3x, not worse.
+MAX_FRAGMENT_NODES = 1_500
+MAX_FRAGMENT_EDGES = 6_000
 
 
 def _identifier(name: str, value: str) -> None:
@@ -276,7 +291,11 @@ class GraphSnapshotDraft:
         evidence_ids = {item.evidence_id for item in self.evidence}
         edge_ids = {item.edge_id for item in self.edges}
         provenance_ids = {item.provenance_id for item in self.provenance}
-        if not self.nodes or len(self.nodes) > MAX_GRAPH_NODES or len(self.edges) > 2_000:
+        if (
+            not self.nodes
+            or len(self.nodes) > MAX_FRAGMENT_NODES
+            or len(self.edges) > MAX_FRAGMENT_EDGES
+        ):
             raise ValueError("graph snapshot exceeds fact bounds")
         if (
             len(node_ids) != len(self.nodes)

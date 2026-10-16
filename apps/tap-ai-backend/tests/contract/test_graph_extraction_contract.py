@@ -706,8 +706,13 @@ async def test_real_repeated_edge_loop_is_deduplicated_and_counted(span_recorder
 
     draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(request)
 
+    # This batch also names a node "王先生" ("n11"): a brochure's illustrative
+    # example person, rejected as a graph name since naming.is_reference_name
+    # covers it (shared with alignment), which drops its one non-duplicate edge
+    # (e10, n11->n12) along with it.
     kept = [(e.source_node_id, e.relation_type, e.target_node_id) for e in draft.edges]
-    assert len(kept) == len(set(kept)) == len(set(shapes))
+    assert len(kept) == len(set(kept)) == len(set(shapes)) - 1
+    assert not any(node.node_id == "n11" for node in draft.nodes)
     loop = next(e for e in draft.edges if (e.source_node_id, e.target_node_id) == ("n1", "n15"))
     assert loop.relation_type == "DEFINES"
     spans = [
