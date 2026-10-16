@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import json
 import logging
 import math
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -122,14 +123,21 @@ def _resolve_actual_model(returned: object, upstream_model: str | None) -> tuple
     return actual, provider
 
 
-def _chunk_delta_content(chunk: dict[str, Any]) -> str | None:
-    """The text delta of one SSE chunk's first choice, or ``None`` when absent."""
+def _chunk_delta(chunk: dict[str, Any]) -> dict[str, Any] | None:
+    """The first choice's ``delta`` object of one SSE chunk, or ``None`` when absent."""
 
     choices = chunk.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         return None
     delta = choices[0].get("delta")
-    content = delta.get("content") if isinstance(delta, dict) else None
+    return delta if isinstance(delta, dict) else None
+
+
+def _chunk_delta_content(chunk: dict[str, Any]) -> str | None:
+    """The text delta of one SSE chunk's first choice, or ``None`` when absent."""
+
+    delta = _chunk_delta(chunk)
+    content = delta.get("content") if delta is not None else None
     return content if isinstance(content, str) and content else None
 
 
@@ -139,6 +147,85 @@ def _chunk_finish_reason(chunk: dict[str, Any]) -> str | None:
         return None
     reason = choices[0].get("finish_reason")
     return reason if isinstance(reason, str) else None
+
+
+def _validate_usage_tokens(usage: dict[str, Any]) -> tuple[int | None, int | None]:
+    """Shared by `_normalize` and `chat_stream`: usage token fields must be bounded ints
+    or absent; any other type or out-of-range value makes the whole call unavailable."""
+
+    tokens = (usage.get("prompt_tokens"), usage.get("completion_tokens"))
+    if any(
+        value is not None and (type(value) is not int or not 0 <= value <= 1000000)
+        for value in tokens
+    ):
+        raise ModelGatewayUnavailable()
+    return tokens  # type: ignore[return-value]
+
+
+def _safe_header(headers: httpx.Headers, name: str) -> str | None:
+    """A header value safe to persist/audit: a bounded, printable-ASCII identifier."""
+
+    value = headers.get(name)
+    return (
+        value
+        if value is not None and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", value)
+        else None
+    )
+
+
+class _SSEDone(Exception):
+    """Internal control-flow signal: the SSE body reached a ``data: [DONE]`` line."""
+
+
+def _parse_sse_line(line: str) -> dict[str, Any] | None:
+    """One line of an SSE body: a parsed chunk, ``None`` for a line to ignore, or
+    `_SSEDone` raised for the ``data: [DONE]`` terminator."""
+
+    stripped = line.strip()
+    if not stripped or not stripped.startswith("data:"):
+        return None
+    data = stripped[len("data:") :].strip()
+    if data == "[DONE]":
+        raise _SSEDone()
+    try:
+        chunk = json.loads(data)
+    except json.JSONDecodeError:
+        raise ModelGatewayUnavailable() from None
+    if not isinstance(chunk, dict):
+        raise ModelGatewayUnavailable()
+    return chunk
+
+
+@dataclass(slots=True)
+class _ErrorCode:
+    value: str | None = None
+
+
+@contextlib.contextmanager
+def _translate_model_errors(error_holder: _ErrorCode):
+    """Shared by `_execute` and `chat_stream`: classify a raised exception into the
+    `ModelCallRecord.error_code` written in their `finally` blocks, converting any
+    unexpected provider/transport/parsing failure into `ModelGatewayUnavailable`."""
+
+    try:
+        yield
+    except ModelGatewayRejected as exc:
+        error_holder.value = str(exc)
+        raise
+    except ModelGatewayUnavailable as exc:
+        error_holder.value = str(exc)
+        raise
+    except (
+        TimeoutError,
+        httpx.HTTPError,
+        ValueError,
+        TypeError,
+        KeyError,
+        IndexError,
+        OverflowError,
+    ):
+        error_holder.value = "model-unavailable"
+        raise ModelGatewayUnavailable() from None
 
 
 def _request_json_for_record(
@@ -402,6 +489,28 @@ class LiteLLMModelGateway:
             raise ModelGatewayRejected()
         return model
 
+    def _ensure_client(self) -> httpx.AsyncClient:
+        """The lazily-created transport shared by `_post` and `_post_stream`."""
+
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=self._config.timeout_seconds,
+                limits=httpx.Limits(
+                    max_connections=self._config.max_concurrency,
+                    max_keepalive_connections=self._config.max_concurrency,
+                ),
+                transport=httpx.AsyncHTTPTransport(retries=0),
+            )
+        return self._client
+
+    def _encode_payload(self, payload: dict[str, Any], *, size_limit: int) -> bytes:
+        encoded = json.dumps(
+            payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        ).encode()
+        if len(encoded) > size_limit:
+            raise ModelGatewayRejected()
+        return encoded
+
     def _check_timeout_seconds(self, request: ModelRequest) -> None:
         if (
             type(request.timeout_seconds) not in {int, float}
@@ -593,7 +702,7 @@ class LiteLLMModelGateway:
         input_tokens: int | None = None
         output_tokens: int | None = None
         status: str = "error"
-        error_code: str | None = None
+        error_holder = _ErrorCode()
 
         with span(
             f"{span_kind} {request.alias}",
@@ -604,65 +713,55 @@ class LiteLLMModelGateway:
             },
         ) as current_span:
             try:
-                # Includes redaction, queue time, transport, retry, and parsing in one deadline.
-                self._check_timeout_seconds(request)
-                async with asyncio.timeout(request.timeout_seconds):
-                    request, payload = await self._prepare(request, operation)
-                    body, headers = await self._post(request, payload, attempts)
-                    cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
-                    input_tokens, output_tokens = _reported_usage(body)
-                    result = self._normalize(request, body, headers, self._upstream_model(headers))
-                    gateway_call_id = result.gateway_call_id
-                    provider_request_id = result.provider_request_id
-                    upstream_model = result.actual_model
-                    provider = result.actual_provider
-                    input_tokens = result.usage.input_tokens
-                    output_tokens = result.usage.output_tokens
-                    if operation is ModelOperation.EMBED:
-                        rows = body.get("data")
-                        if isinstance(rows, list):
-                            vector = rows[0].get("embedding") if isinstance(rows[0], dict) else None
-                            if isinstance(vector, list):
-                                response_text = json.dumps(
-                                    {"dimension": len(vector), "count": len(rows)}
+                with _translate_model_errors(error_holder):
+                    # Includes redaction, queue time, transport, retry, and parsing in one
+                    # deadline.
+                    self._check_timeout_seconds(request)
+                    async with asyncio.timeout(request.timeout_seconds):
+                        request, payload = await self._prepare(request, operation)
+                        body, headers = await self._post(request, payload, attempts)
+                        cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
+                        input_tokens, output_tokens = _reported_usage(body)
+                        result = self._normalize(
+                            request, body, headers, self._upstream_model(headers)
+                        )
+                        gateway_call_id = result.gateway_call_id
+                        provider_request_id = result.provider_request_id
+                        upstream_model = result.actual_model
+                        provider = result.actual_provider
+                        input_tokens = result.usage.input_tokens
+                        output_tokens = result.usage.output_tokens
+                        if operation is ModelOperation.EMBED:
+                            rows = body.get("data")
+                            if isinstance(rows, list):
+                                vector = (
+                                    rows[0].get("embedding") if isinstance(rows[0], dict) else None
                                 )
-                    else:
-                        message = body["choices"][0]["message"]
-                        content = message.get("content")
-                        if isinstance(content, str):
-                            response_text = content
-                        reasoning = message.get("reasoning_content")
-                        if isinstance(reasoning, str):
-                            reasoning_text = reasoning
-                    current_span.set_attribute("gen_ai.response.model", result.actual_model)
-                    current_span.set_attribute("gen_ai.provider.name", result.actual_provider)
-                    if input_tokens is not None:
-                        current_span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
-                    if output_tokens is not None:
-                        current_span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
-                    binding = current_binding()
-                    binding.usage.input_tokens += input_tokens or 0
-                    binding.usage.output_tokens += output_tokens or 0
-                    status = "ok"
-                    return replace(result, call_id=call_id, cost_usd=cost_usd)
-            except ModelGatewayRejected as exc:
-                error_code = str(exc)
-                raise
-            except ModelGatewayUnavailable as exc:
-                error_code = str(exc)
-                raise
-            except (
-                TimeoutError,
-                httpx.HTTPError,
-                ValueError,
-                TypeError,
-                KeyError,
-                IndexError,
-                OverflowError,
-            ):
-                error_code = "model-unavailable"
-                raise ModelGatewayUnavailable() from None
+                                if isinstance(vector, list):
+                                    response_text = json.dumps(
+                                        {"dimension": len(vector), "count": len(rows)}
+                                    )
+                        else:
+                            message = body["choices"][0]["message"]
+                            content = message.get("content")
+                            if isinstance(content, str):
+                                response_text = content
+                            reasoning = message.get("reasoning_content")
+                            if isinstance(reasoning, str):
+                                reasoning_text = reasoning
+                        current_span.set_attribute("gen_ai.response.model", result.actual_model)
+                        current_span.set_attribute("gen_ai.provider.name", result.actual_provider)
+                        if input_tokens is not None:
+                            current_span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
+                        if output_tokens is not None:
+                            current_span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
+                        binding = current_binding()
+                        binding.usage.input_tokens += input_tokens or 0
+                        binding.usage.output_tokens += output_tokens or 0
+                        status = "ok"
+                        return replace(result, call_id=call_id, cost_usd=cost_usd)
             finally:
+                error_code = error_holder.value
                 self._settle_meter(meter, attempts, cost_usd)
                 record = self._build_record(
                     call_id=call_id,
@@ -689,12 +788,23 @@ class LiteLLMModelGateway:
     async def chat_stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """Stream chat text deltas, ending with the full `ModelResult`.
 
-        Shares pre-flight validation/payload-building (`_prepare`) and the metering
-        and `ModelCallRecord` bookkeeping (`_settle_meter`/`_build_record`/
-        `_write_record`) with `_execute`. Retries (`_post_stream`) are only attempted
-        before the first content delta is yielded to the caller; once streaming has
-        started, any interruption raises `ModelGatewayUnavailable` without retrying,
-        and the `finally` below still records exactly one `ModelCallRecord`.
+        Shares pre-flight validation/payload-building (`_prepare`), exception
+        classification (`_translate_model_errors`), and the metering and
+        `ModelCallRecord` bookkeeping (`_settle_meter`/`_build_record`/
+        `_write_record`) with `_execute`. Retries (`_post_stream`) are only
+        attempted before the first content delta is yielded to the caller; once
+        streaming has started, any interruption raises `ModelGatewayUnavailable`
+        without retrying, and the `finally` below still records exactly one
+        `ModelCallRecord`.
+
+        The deadline is one absolute instant (`asyncio.timeout_at`), applied only
+        around this generator's own awaits (`_prepare`, each `anext` of the inner
+        SSE stream) -- never across a `yield` -- so a timeout here can only mean
+        the provider stalled, not that the consumer was slow between chunks. The
+        inner stream is driven through `contextlib.aclosing` so that an early
+        consumer exit (`aclose()`/`break`) or the consumer's task being cancelled
+        still closes the HTTP response and releases the concurrency slot
+        immediately, rather than waiting on garbage collection.
         """
 
         operation = ModelOperation.CHAT
@@ -715,7 +825,7 @@ class LiteLLMModelGateway:
         input_tokens: int | None = None
         output_tokens: int | None = None
         status: str = "error"
-        error_code: str | None = None
+        error_holder = _ErrorCode()
 
         with span(
             f"chat {request.alias}",
@@ -726,37 +836,55 @@ class LiteLLMModelGateway:
             },
         ) as current_span:
             try:
-                self._check_timeout_seconds(request)
-                async with asyncio.timeout(request.timeout_seconds):
-                    request, payload = await self._prepare(request, operation)
+                with _translate_model_errors(error_holder):
+                    self._check_timeout_seconds(request)
+                    deadline = asyncio.get_running_loop().time() + request.timeout_seconds
+
+                    async with asyncio.timeout_at(deadline):
+                        request, payload = await self._prepare(request, operation)
                     payload["stream"] = True
                     payload["stream_options"] = {"include_usage": True}
 
                     chunks: list[str] = []
                     returned_model: str | None = None
                     finish_reason: str | None = None
+                    rejected_delta = False
                     headers = httpx.Headers()
-                    async for chunk, chunk_headers in self._post_stream(request, payload, attempts):
-                        headers = chunk_headers
-                        model_field = chunk.get("model")
-                        if returned_model is None and isinstance(model_field, str):
-                            returned_model = model_field
-                        delta_text = _chunk_delta_content(chunk)
-                        if delta_text is not None:
-                            chunks.append(delta_text)
-                            yield ModelTextDelta(delta_text)
-                        reason = _chunk_finish_reason(chunk)
-                        if reason is not None:
-                            finish_reason = reason
-                        usage_field = chunk.get("usage")
-                        if isinstance(usage_field, dict):
-                            input_tokens, output_tokens = _reported_usage({"usage": usage_field})
+
+                    post_stream = self._post_stream(request, payload, attempts)
+                    async with contextlib.aclosing(post_stream):
+                        while True:
+                            try:
+                                async with asyncio.timeout_at(deadline):
+                                    chunk, chunk_headers = await anext(post_stream)
+                            except StopAsyncIteration:
+                                break
+                            headers = chunk_headers
+                            model_field = chunk.get("model")
+                            if returned_model is None and isinstance(model_field, str):
+                                returned_model = model_field
+                            delta = _chunk_delta(chunk)
+                            if delta is not None:
+                                content = delta.get("content")
+                                if isinstance(content, str) and content:
+                                    chunks.append(content)
+                                    yield ModelTextDelta(content)
+                                if delta.get("tool_calls") or delta.get("refusal"):
+                                    rejected_delta = True
+                            reason = _chunk_finish_reason(chunk)
+                            if reason is not None:
+                                finish_reason = reason
+                            usage_field = chunk.get("usage")
+                            if isinstance(usage_field, dict):
+                                input_tokens, output_tokens = _validate_usage_tokens(usage_field)
 
                     full_text = "".join(chunks)
-                    if not full_text.strip():
+                    if not full_text.strip() or rejected_delta:
                         raise ModelGatewayUnavailable()
                     if finish_reason == "length":
                         raise ModelOutputTruncated()
+                    if finish_reason is not None and finish_reason != "stop":
+                        raise ModelGatewayUnavailable()
                     response_text = full_text
                     cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
                     upstream_model = self._upstream_model(headers)
@@ -776,18 +904,8 @@ class LiteLLMModelGateway:
                         tool_allowlist=request.tool_allowlist,
                         governance_digests=request.governance_digests,
                     )
-
-                    def safe_header(name: str) -> str | None:
-                        value = headers.get(name)
-                        return (
-                            value
-                            if value is not None
-                            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", value)
-                            else None
-                        )
-
-                    gateway_call_id = safe_header("x-litellm-call-id")
-                    provider_request_id = safe_header("x-request-id")
+                    gateway_call_id = _safe_header(headers, "x-litellm-call-id")
+                    provider_request_id = _safe_header(headers, "x-request-id")
                     current_span.set_attribute("gen_ai.response.model", actual)
                     current_span.set_attribute("gen_ai.provider.name", provider)
                     if input_tokens is not None:
@@ -809,24 +927,8 @@ class LiteLLMModelGateway:
                         call_id,
                         cost_usd,
                     )
-            except ModelGatewayRejected as exc:
-                error_code = str(exc)
-                raise
-            except ModelGatewayUnavailable as exc:
-                error_code = str(exc)
-                raise
-            except (
-                TimeoutError,
-                httpx.HTTPError,
-                ValueError,
-                TypeError,
-                KeyError,
-                IndexError,
-                OverflowError,
-            ):
-                error_code = "model-unavailable"
-                raise ModelGatewayUnavailable() from None
             finally:
+                error_code = error_holder.value
                 self._settle_meter(meter, attempts, cost_usd)
                 record = self._build_record(
                     call_id=call_id,
@@ -852,35 +954,25 @@ class LiteLLMModelGateway:
 
     async def _post_stream(
         self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
-    ) -> AsyncIterator[tuple[dict[str, Any], httpx.Headers]]:
+    ) -> AsyncGenerator[tuple[dict[str, Any], httpx.Headers], None]:
         """Parse the OpenAI-compatible SSE body: ``data: {...}`` lines terminated by
         ``data: [DONE]``. Retries a retryable status (5xx/408/429) or a transport
         error only before any content delta has reached the caller; once streaming
-        has started, any interruption raises `ModelGatewayUnavailable` immediately."""
+        has started, any interruption raises `ModelGatewayUnavailable` immediately.
+        A body that ends without a terminating ``data: [DONE]`` line is itself an
+        interruption and also raises `ModelGatewayUnavailable`."""
 
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=self._config.timeout_seconds,
-                limits=httpx.Limits(
-                    max_connections=self._config.max_concurrency,
-                    max_keepalive_connections=self._config.max_concurrency,
-                ),
-                transport=httpx.AsyncHTTPTransport(retries=0),
-            )
-        encoded = json.dumps(
-            payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
-        ).encode()
-        if len(encoded) > 262144:
-            raise ModelGatewayRejected()
+        client = self._ensure_client()
+        encoded = self._encode_payload(payload, size_limit=262144)
         max_retries = self._config.max_retries if request.allow_retries else 0
         content_yielded = False
-        total_bytes = 0
         for attempt in range(max_retries + 1):
             attempts.count += 1
+            total_bytes = 0
             try:
                 async with (
                     self._slots,
-                    self._client.stream(
+                    client.stream(
                         "POST",
                         self._config.base_url.rstrip("/") + "/v1/chat/completions",
                         headers={
@@ -898,29 +990,31 @@ class LiteLLMModelGateway:
                     response.raise_for_status()
                     headers = response.headers
                     buffer = ""
-                    async for raw in response.aiter_text():
-                        total_bytes += len(raw.encode())
-                        if total_bytes > 1048576:
-                            raise ModelGatewayUnavailable()
-                        buffer += raw
-                        while "\n" in buffer:
-                            line, buffer = buffer.split("\n", 1)
-                            line = line.strip()
-                            if not line or not line.startswith("data:"):
-                                continue
-                            data = line[len("data:") :].strip()
-                            if data == "[DONE]":
-                                return
-                            try:
-                                chunk = json.loads(data)
-                            except json.JSONDecodeError:
-                                raise ModelGatewayUnavailable() from None
-                            if not isinstance(chunk, dict):
+                    try:
+                        async for raw in response.aiter_text():
+                            total_bytes += len(raw.encode())
+                            if total_bytes > 1048576:
                                 raise ModelGatewayUnavailable()
-                            if _chunk_delta_content(chunk) is not None:
-                                content_yielded = True
-                            yield chunk, headers
-                    return
+                            buffer += raw
+                            while "\n" in buffer:
+                                line, buffer = buffer.split("\n", 1)
+                                chunk = _parse_sse_line(line)
+                                if chunk is None:
+                                    continue
+                                if _chunk_delta_content(chunk) is not None:
+                                    content_yielded = True
+                                yield chunk, headers
+                        trailing = buffer.strip()
+                        if trailing:
+                            chunk = _parse_sse_line(trailing)
+                            if chunk is not None:
+                                if _chunk_delta_content(chunk) is not None:
+                                    content_yielded = True
+                                yield chunk, headers
+                    except _SSEDone:
+                        return
+                    # The body ended without a terminating `data: [DONE]` line.
+                    raise ModelGatewayUnavailable()
             except httpx.TransportError:
                 if content_yielded or attempt == max_retries:
                     raise ModelGatewayUnavailable() from None
@@ -930,20 +1024,10 @@ class LiteLLMModelGateway:
     async def _post(
         self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
     ) -> tuple[dict[str, Any], httpx.Headers]:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=self._config.timeout_seconds,
-                limits=httpx.Limits(
-                    max_connections=self._config.max_concurrency,
-                    max_keepalive_connections=self._config.max_concurrency,
-                ),
-                transport=httpx.AsyncHTTPTransport(retries=0),
-            )
-        encoded = json.dumps(
-            payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
-        ).encode()
-        if len(encoded) > (6 * 1024 * 1024 if request.image_bytes is not None else 262144):
-            raise ModelGatewayRejected()
+        client = self._ensure_client()
+        encoded = self._encode_payload(
+            payload, size_limit=6 * 1024 * 1024 if request.image_bytes is not None else 262144
+        )
         path = (
             "v1/embeddings" if request.operation is ModelOperation.EMBED else "v1/chat/completions"
         )
@@ -953,7 +1037,7 @@ class LiteLLMModelGateway:
             try:
                 async with (
                     self._slots,
-                    self._client.stream(
+                    client.stream(
                         "POST",
                         self._config.base_url.rstrip("/") + "/" + path,
                         headers={
@@ -1004,13 +1088,7 @@ class LiteLLMModelGateway:
         usage = body.get("usage", {})
         if not isinstance(usage, dict):
             raise ModelGatewayUnavailable()
-        tokens = (usage.get("prompt_tokens"), usage.get("completion_tokens"))
-        if any(
-            value is not None and (type(value) is not int or not 0 <= value <= 1000000)
-            for value in tokens
-        ):
-            raise ModelGatewayUnavailable()
-        normalized_usage = ModelUsage(*tokens)
+        normalized_usage = ModelUsage(*_validate_usage_tokens(usage))
         output: str | tuple[float, ...] | dict[str, object]
         if request.operation is ModelOperation.EMBED:
             rows = body["data"]
@@ -1090,20 +1168,12 @@ class LiteLLMModelGateway:
             ),
         )
 
-        def safe_header(name: str) -> str | None:
-            value = headers.get(name)
-            return (
-                value
-                if value is not None and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", value)
-                else None
-            )
-
         return ModelResult(
             output,
             actual,
             normalized_usage,
             provider,
             audit,
-            safe_header("x-request-id"),
-            safe_header("x-litellm-call-id"),
+            _safe_header(headers, "x-request-id"),
+            _safe_header(headers, "x-litellm-call-id"),
         )

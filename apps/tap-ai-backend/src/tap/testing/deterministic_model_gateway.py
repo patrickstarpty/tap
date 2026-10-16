@@ -60,6 +60,13 @@ class StaticLiteLLMCatalog(LiteLLMCatalog):
         return None
 
 
+def _chunk_into(text: str, size: int = 8) -> list[str]:
+    """Split `text` into `size`-character pieces, in order, covering every character
+    exactly once (the last piece may be shorter)."""
+
+    return [text[index : index + size] for index in range(0, len(text), size)]
+
+
 def _cancellation_requested(context: str) -> bool:
     """`KnowledgeModelGateway.answer` carries the question under the JSON `query` key
     (`src/tap/modules/knowledge/adapters/litellm.py`); match the E2E cancel marker there
@@ -110,8 +117,8 @@ class DeterministicModelGateway(LiteLLMModelGateway):
 
         result = await self.chat(request)
         text = result.output if isinstance(result.output, str) else ""
-        for index in range(0, len(text), 8):
-            yield ModelTextDelta(text[index : index + 8])
+        for piece in _chunk_into(text):
+            yield ModelTextDelta(piece)
             await asyncio.sleep(0.02)
         yield result
 

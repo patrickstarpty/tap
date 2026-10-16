@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -2719,3 +2720,194 @@ async def test_chat_stream_is_metered_once():
             pass
 
     assert meter.calls == 1
+
+
+class _TrackingByteStream(httpx.AsyncByteStream):
+    """Yields the given chunks, then hangs (simulating a provider that never sends
+    its next chunk), tracking whether `aclose()` was ever called on it."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self._chunks:
+            yield chunk
+        await asyncio.Event().wait()
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def _lines(events: list[dict[str, object]]) -> list[bytes]:
+    return [f"data: {json.dumps(event)}\n\n".encode() for event in events]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_slow_consumer_between_chunks_is_not_cancelled():
+    """The deadline must bound only the generator's own awaits, never the time the
+    consumer spends between chunks -- otherwise a normal slow consumer would see a
+    spurious `ModelGatewayUnavailable` despite the provider responding instantly."""
+
+    def respond(incoming):
+        body = _sse_body(_stream_events(incoming))
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    gateway = configured_gateway(respond)
+    slow_request = replace(request(), timeout_seconds=0.05)
+
+    events = []
+    async for event in gateway.chat_stream(slow_request):
+        events.append(event)
+        if isinstance(event, ModelTextDelta) and len(events) == 1:
+            # Far longer than the request's deadline -- but this is consumer-side
+            # work between chunks, not a provider wait, so it must not be cancelled.
+            await asyncio.sleep(0.2)
+
+    results = [event for event in events if isinstance(event, ModelResult)]
+    assert len(results) == 1
+    assert results[0].output == "Hello, world!"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_stalled_provider_past_deadline_raises_unavailable():
+    """Once content has been yielded, a provider that then stalls past the deadline
+    must raise `ModelGatewayUnavailable` (no retry), not hang or raise a raw
+    `CancelledError` into the consumer."""
+
+    tracking = _TrackingByteStream(_lines(_stream_events(None)[:1]))
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=tracking)
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+    stalled_request = replace(request(), timeout_seconds=0.05)
+
+    collected = []
+    with pytest.raises(ModelGatewayUnavailable):
+        async for event in gateway.chat_stream(stalled_request):
+            collected.append(event)
+
+    assert any(isinstance(event, ModelTextDelta) for event in collected)
+    assert tracking.closed
+    assert len(recorder.records) == 1
+    assert recorder.records[0].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_closed_early_releases_the_slot_and_records_once():
+    """A consumer that `break`s and `aclose()`s the generator after the first delta
+    must not leave the HTTP response or the concurrency slot held open."""
+    from tap.platform.budget import CallMeter, metered
+
+    tracking = _TrackingByteStream(_lines(_stream_events(None)[:1]))
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=tracking)
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+    meter = CallMeter(remaining_calls=5, remaining_cost_micros=None)
+
+    with metered(meter):
+        agen = gateway.chat_stream(request())
+        first = await anext(agen)
+        assert isinstance(first, ModelTextDelta)
+        await agen.aclose()
+
+    assert tracking.closed
+    assert gateway._slots._value == gateway._config.max_concurrency
+    assert meter.calls == 1
+    assert len(recorder.records) == 1
+    assert recorder.records[0].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_cancelled_consumer_task_releases_the_slot_and_records_once():
+    """Cancelling the task that is awaiting the generator's next chunk must still
+    close the HTTP response, release the concurrency slot, and record exactly once --
+    the same cleanup as an explicit `aclose()`, triggered by cancellation instead."""
+    from tap.platform.budget import CallMeter, metered
+
+    tracking = _TrackingByteStream(_lines(_stream_events(None)[:1]))
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=tracking)
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+    meter = CallMeter(remaining_calls=5, remaining_cost_micros=None)
+    collected: list[object] = []
+
+    async def consume() -> None:
+        with metered(meter):
+            async for event in gateway.chat_stream(request()):
+                collected.append(event)
+                # After the first delta, the loop re-enters the generator asking
+                # for the next chunk, which hangs on `tracking`'s unfinished
+                # stream -- so cancellation below lands inside the generator's
+                # own await, matching a real "user clicked stop" cancellation.
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert any(isinstance(event, ModelTextDelta) for event in collected)
+    assert tracking.closed
+    assert gateway._slots._value == gateway._config.max_concurrency
+    assert meter.calls == 1
+    assert len(recorder.records) == 1
+    assert recorder.records[0].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_eof_without_done_raises_unavailable():
+    """A body that ends without a terminating `data: [DONE]` line is an
+    interruption, even though every chunk received so far was well-formed."""
+
+    events = _stream_events(None)
+    body = "".join(f"data: {json.dumps(event)}\n\n" for event in events).encode()
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+
+    with pytest.raises(ModelGatewayUnavailable):
+        async for _ in gateway.chat_stream(request()):
+            pass
+
+    assert len(recorder.records) == 1
+    assert recorder.records[0].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_non_stop_finish_reason_raises_unavailable():
+    """A `finish_reason` other than `stop` (and not the already-handled `length`)
+    must reject the call, mirroring `_normalize`'s non-streaming check."""
+
+    events = _stream_events(None)
+    events[2]["choices"][0]["finish_reason"] = "content_filter"
+    body = _sse_body(events)
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+
+    with pytest.raises(ModelGatewayUnavailable):
+        async for _ in gateway.chat_stream(request()):
+            pass
+
+    assert len(recorder.records) == 1
+    assert recorder.records[0].status == "error"
