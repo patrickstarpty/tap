@@ -192,6 +192,14 @@ PROBLEM_REGISTRY = MappingProxyType(
                 "answer",
             ),
             ProblemDefinition(
+                "budget-exhausted",
+                "Answer budget exhausted",
+                422,
+                "The answer stopped because its time or model-call budget ran out.",
+                False,
+                "answer",
+            ),
+            ProblemDefinition(
                 "citation-stale",
                 "Citation stale",
                 404,

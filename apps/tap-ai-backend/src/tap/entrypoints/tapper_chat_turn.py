@@ -299,7 +299,22 @@ class ChatTurnNodes:
             model=self.model,
             verify=self.verify,
             finalize=self.finalize,
+            ingress=self.ingress,
         )
+
+    async def ingress(self, state: ChatGraphState) -> dict[str, object]:
+        budget = dict(state.get("budget") or {})
+        result: dict[str, object] = {}
+        if "startedAtMs" not in budget:
+            budget["startedAtMs"] = int(time.time() * 1000)
+            result["budget"] = budget
+            result["budget_used"] = {"modelCalls": 0, "costMicros": 0, "toolRounds": 0}
+        audit_span = self._turn_span if self._turn_span is not None else get_current_span()
+        audit_span.set_attribute("tap.budget.max_model_calls", int(budget.get("maxModelCalls", 0)))
+        audit_span.set_attribute("tap.budget.max_seconds", float(budget.get("maxSeconds", 0.0)))
+        audit_span.set_attribute("tap.budget.max_tool_rounds", int(budget.get("maxToolRounds", 0)))
+        audit_span.set_attribute("tap.budget.max_cost_micros", int(budget.get("maxCostMicros", 0)))
+        return result
 
     def _active_plan(self, state: ChatGraphState) -> AnswerPlan | None:
         if self._planner is None:
@@ -495,9 +510,14 @@ class ChatTurnNodes:
             }
         }
 
-    def _failed_result(self) -> dict[str, object]:
+    def _failed_result(self, failure: dict[str, object]) -> dict[str, object]:
         evidence = AnswerEvidence(
             "", "failed", RetrievalSummary("failed"), GraphContextStatus.FAILED
+        )
+        problem_type = (
+            "budget-exhausted"
+            if failure.get("error") == "TurnBudgetExhausted"
+            else "answer-unavailable"
         )
         return {
             "result": {
@@ -506,7 +526,7 @@ class ChatTurnNodes:
                     "type": "turn.failed",
                     "payload": {
                         "problem": build_problem(
-                            "answer-unavailable", correlation_id=self._turn.turn_id
+                            problem_type, correlation_id=self._turn.turn_id
                         ).model_dump(mode="json", by_alias=True)
                     },
                 },
@@ -515,8 +535,9 @@ class ChatTurnNodes:
         }
 
     async def finalize(self, state: ChatGraphState) -> dict[str, object]:
-        if state.get("failure"):
-            return self._failed_result()
+        failure = state.get("failure")
+        if failure:
+            return self._failed_result(failure)
         if state.get("route") == "insights":
             return {}
         active_plan = self._active_plan(state)

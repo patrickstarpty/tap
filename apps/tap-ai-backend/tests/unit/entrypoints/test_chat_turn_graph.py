@@ -20,6 +20,7 @@ from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
 from tap.modules.knowledge.ports.answers import AnswerSnapshotUnavailable
+from tap.platform.budget import TurnBudget, current_meter
 
 
 def _turn(*, turn_id: str = "turn-1", lease_token: str = "lease-1", attempt: int = 1):
@@ -436,3 +437,43 @@ async def test_plain_authorization_denial_after_graph_fails_turn() -> None:
     _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
     assert evidence.outcome == "failed"
     assert kwargs["terminal_event"][0] == "turn.failed"
+
+
+class _BudgetSpendingKnowledge(_StepsKnowledge):
+    """No `answer_planner` (so `guard_in` stays a no-op); `prepare_conversation_answer`
+    (the `seed_search` node's body) spends the turn's one allowed model call, so the
+    following `model` node must then hit the exhausted model-call budget before its
+    own body runs."""
+
+    async def prepare_conversation_answer(
+        self, request, frozen_input, *, answer_plan=None, authorize=None
+    ):
+        meter = current_meter()
+        assert meter is not None
+        meter.before_call()
+        meter.after_call(0)
+        return await super().prepare_conversation_answer(
+            request, frozen_input, answer_plan=answer_plan, authorize=authorize
+        )
+
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_turn_emits_budget_problem() -> None:
+    turn = _turn()
+    conversations = _Conversations(turn)
+    knowledge = _BudgetSpendingKnowledge()
+    worker = GenerationWorker(
+        conversations,
+        knowledge,
+        checkpointer=InMemorySaver(),
+        turn_budget=TurnBudget(max_model_calls=1),
+    )
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
+    assert evidence.outcome == "failed"
+    event_type, payload = kwargs["terminal_event"]
+    assert event_type == "turn.failed"
+    assert payload["problem"]["type"].endswith("budget-exhausted")

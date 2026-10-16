@@ -5651,6 +5651,31 @@
           {
             "properties": {
               "detail": {
+                "const": "The answer stopped because its time or model-call budget ran out."
+              },
+              "failureStage": {
+                "const": "answer"
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 422
+              },
+              "title": {
+                "const": "Answer budget exhausted"
+              },
+              "type": {
+                "const": "https://tap.example/problems/budget-exhausted"
+              }
+            },
+            "required": [
+              "failureStage"
+            ]
+          },
+          {
+            "properties": {
+              "detail": {
                 "const": "The citation no longer resolves to its exact source revision."
               },
               "failureStage": {
@@ -6561,6 +6586,7 @@
               "https://tap.example/problems/association-conflict",
               "https://tap.example/problems/authorization-denied",
               "https://tap.example/problems/automation-mapping-required",
+              "https://tap.example/problems/budget-exhausted",
               "https://tap.example/problems/citation-stale",
               "https://tap.example/problems/citation-unavailable",
               "https://tap.example/problems/conversation-integrity",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -1498,20 +1499,19 @@ class MysqlConversationRepository:
                 .values(lease_until=_naive(now), updated_at=_naive(now))
             )
 
-    def graph_checkpointer(self, turn: ConversationTurn):
+    def graph_checkpointer(
+        self, turn: ConversationTurn, *, budget: Mapping[str, object] | None = None
+    ):
         if not turn.lease_token:
             raise ConversationConflict("generation lease lost")
         from tap.modules.ai.adapters.mysql_checkpointer import GraphFence, MysqlGraphCheckpointer
+        from tap.platform.budget import TurnBudget
 
         return MysqlGraphCheckpointer(
             self.sessions,
             scope=self.scope,
             defer_completion=True,
-            budget={
-                "maxModelCalls": 1,
-                "maxSeconds": 60,
-                "maxCostMicros": 3_000_000 if turn.input_snapshot.value.insights_query_id else 0,
-            },
+            budget=dict(budget) if budget is not None else TurnBudget().to_dict(),
             fence=GraphFence(
                 table=chat_turn,
                 identity_column=chat_turn.c.turn_id,

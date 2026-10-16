@@ -42,8 +42,11 @@ from tap.modules.knowledge.ports.errors import (
     ModelUnavailable,
     SearchUnavailable,
 )
+from tap.platform.budget import CallBudgetExhausted, TurnBudgetExhausted
 
 _CLASSIFICATION_TABLE: tuple[tuple[BaseException, str], ...] = (
+    (TurnBudgetExhausted("wall-clock"), "deterministic"),
+    (CallBudgetExhausted(), "deterministic"),
     (InsightsAuthorizationChanged("x"), "deterministic"),
     (AuthorizationDenied("x"), "deterministic"),
     (ModelGatewayRejected(), "deterministic"),

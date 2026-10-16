@@ -55,6 +55,7 @@ from tap.modules.knowledge.ports.errors import (
     ModelUnavailable,
     SearchUnavailable,
 )
+from tap.platform.budget import CallBudgetExhausted, TurnBudgetExhausted
 
 TurnFailureClass = Literal["transient", "deterministic", "ownership"]
 
@@ -78,7 +79,15 @@ def classify_turn_failure(error: BaseException) -> TurnFailureClass:
     cause itself classifies as transient, the denial is transient too (retry
     re-runs the recheck, so it stays fail-closed); a plain denial with no
     cause, or a cause that is not transient, stays deterministic.
+
+    `TurnBudgetExhausted`/`CallBudgetExhausted` are checked first and always
+    classify as `deterministic`: a wall-clock `TurnBudgetExhausted` wraps a
+    `TimeoutError`-shaped failure that would otherwise read as transient (see
+    `ChatGraph._wrap`), and retrying either exhaustion kind cannot help since
+    the same input will exhaust the same budget again.
     """
+    if isinstance(error, (TurnBudgetExhausted, CallBudgetExhausted)):
+        return "deterministic"
     if isinstance(error, AuthorizationDenied):
         cause = error.__cause__
         if cause is not None and classify_turn_failure(cause) == "transient":

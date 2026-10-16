@@ -560,7 +560,7 @@ async def test_generation_worker_uses_turn_scoped_persistent_checkpointer_factor
                 ),
             )
 
-        def graph_checkpointer(self, turn):
+        def graph_checkpointer(self, turn, *, budget=None):
             self.checkpoint_claims.append((turn.turn_id, turn.lease_token))
             return checkpointer
 
@@ -622,7 +622,7 @@ async def test_generation_worker_recovers_after_one_transient_checkpoint_failure
                 ),
             )
 
-        def graph_checkpointer(self, _turn):
+        def graph_checkpointer(self, _turn, *, budget=None):
             return checkpointer
 
     class Conversations:
@@ -698,7 +698,7 @@ async def test_generation_worker_terminalizes_permanent_checkpoint_error_and_con
             assert limit == 2
             return turns
 
-        def graph_checkpointer(self, turn):
+        def graph_checkpointer(self, turn, *, budget=None):
             return PermanentlyUnavailableCheckpointer()
 
     class Conversations:
@@ -755,7 +755,7 @@ async def test_generation_worker_terminalizes_transient_checkpoint_failure_at_re
             assert limit == 1
             return (("conversation-1", turn),)
 
-        def graph_checkpointer(self, _turn):
+        def graph_checkpointer(self, _turn, *, budget=None):
             return RetryableFailureCheckpointer()
 
     class Conversations:
@@ -808,7 +808,7 @@ async def test_retryable_exit_marks_execute_span_deferred(span_recorder):
             assert limit == 1
             return (("conversation-1", turn),)
 
-        def graph_checkpointer(self, _turn):
+        def graph_checkpointer(self, _turn, *, budget=None):
             return RetryableFailureCheckpointer()
 
         async def defer_turn(
@@ -860,7 +860,7 @@ async def test_generation_worker_respects_lease_loss_during_checkpoint_failure_s
             assert limit == 1
             return (("conversation-1", turn),)
 
-        def graph_checkpointer(self, _turn):
+        def graph_checkpointer(self, _turn, *, budget=None):
             return PermanentFailureCheckpointer()
 
     class Conversations:
