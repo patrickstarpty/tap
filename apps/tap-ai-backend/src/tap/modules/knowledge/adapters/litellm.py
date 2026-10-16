@@ -85,7 +85,10 @@ _ANSWER_PROMPT = (
     "separately before answering; when documents disagree on that value, state each "
     "document's own value in its own claim naming that product, even if most documents share "
     "one value and only one differs -- never write a single generalized claim for a value "
-    "that is not identical across every document it is about."
+    "that is not identical across every document it is about. When a selected document's own "
+    "evidence does not state the value the query asks about, say in your claim that this "
+    "document does not state it; never infer that value or borrow another document's value "
+    "for it."
 )
 _RELATION_ANSWER_PROMPT = (
     "Relation evidence items are structured records labelled R1..R20 with subject, "

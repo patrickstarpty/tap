@@ -1136,18 +1136,35 @@ async def test_document_evidence_names_its_source_document_for_attribution():
     assert _ANSWER_PROMPT in captured[0].prompt
 
 
-def test_answer_prompt_requires_per_document_values_when_documents_disagree():
+@pytest.mark.asyncio
+async def test_answer_prompt_requires_per_document_values_when_documents_disagree():
     """A question answerable from several documents whose own value for the
     same fact differs (e.g. a grace period of 15 days for most products but
     10 days for one) must not be generalized into one claim; the prompt must
     say so explicitly, not rely only on the "name the document" instruction
     above, which a model satisfied by naming a document without noticing the
-    other documents' values actually differ."""
+    other documents' values actually differ. A document whose own evidence
+    never states the queried value at all must be called out as silent on
+    it, not have another document's value borrowed for it."""
+    from test_knowledge_api import _claim_resolution_evidence
+
     from tap.modules.knowledge.adapters.litellm import _ANSWER_PROMPT
 
     assert "when documents disagree on that value" in _ANSWER_PROMPT
     assert "state each document's own value in its own claim" in _ANSWER_PROMPT
     assert "even if most documents share one value and only one differs" in _ANSWER_PROMPT
+    assert "does not state the value the query asks about" in _ANSWER_PROMPT
+    assert "never infer that value or borrow another document's value" in _ANSWER_PROMPT
+
+    base = _claim_resolution_evidence()
+    other_document = replace(base, title="其它产品条款.pdf", evidence_label="S2")
+    models, captured = _capturing_model_gateway()
+
+    await models.answer("犹豫期是多久？", (base, other_document), "quick-hybrid-v1")
+
+    assert _ANSWER_PROMPT in captured[0].prompt
+    assert "when documents disagree on that value" in captured[0].prompt
+    assert "does not state the value the query asks about" in captured[0].prompt
 
 
 def test_relation_answer_prompt_requires_checking_every_record_against_the_query():
