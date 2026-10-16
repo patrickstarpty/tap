@@ -588,15 +588,50 @@ def _bigrams(text: str) -> frozenset[str]:
     return frozenset(normalized[index : index + 2] for index in range(len(normalized) - 1))
 
 
+# Bigrams of these high-frequency domain terms are ignored by `_query_relevance`:
+# almost every question and almost every edge in this corpus mentions "保险"/
+# "合同"/"投保人"/"被保险人" etc., so overlap on *only* these generic bigrams
+# says nothing about whether an edge is actually on-topic -- it would let an
+# edge that merely shares this common vocabulary outrank one that doesn't,
+# with no signal either way about the specific thing asked. A small fixed
+# list (not a general stopword model) keeps this deterministic and auditable.
+_GENERIC_DOMAIN_TERMS: tuple[str, ...] = (
+    "保险",
+    "合同",
+    "投保人",
+    "被保险人",
+    "保险人",
+    "保险金",
+    "保险费",
+    "本合同",
+    "本公司",
+    "责任",
+    "条款",
+    "公司",
+    # Common adjacent-word junctions (e.g. "...责任条款..." -> "任条"): a
+    # junction bigram straddling two already-generic words is itself still
+    # generic, but is not covered by either word's own bigram set alone.
+    "责任条款",
+    "合同责任",
+    "保险责任",
+    "保险合同",
+)
+_GENERIC_BIGRAMS: frozenset[str] = frozenset(
+    bigram for term in _GENERIC_DOMAIN_TERMS for bigram in _bigrams(term)
+)
+
+
 def _query_relevance(
     edge: ProjectEdge, query_bigrams: frozenset[str], nodes_by_id: Mapping[str, ProjectNode]
 ) -> int:
     """How many of the query's own bigrams also appear in this edge's own
-    text (its `relation_label` plus its endpoints' labels) -- a tie-breaker
-    so an edge whose text actually echoes the question's wording surfaces
-    ahead of an edge that is merely confidence/seed-adjacency-favored but
-    textually unrelated to what was asked. Zero when `query_bigrams` is
-    empty (no query text was supplied), leaving prior ordering untouched."""
+    text (its `relation_label` plus its endpoints' labels), excluding
+    `_GENERIC_BIGRAMS` -- a tie-breaker so an edge whose text actually
+    echoes the question's *specific* wording surfaces ahead of an edge that
+    is merely confidence/seed-adjacency-favored but textually unrelated,
+    without letting shared generic domain vocabulary alone count as
+    relevance. Zero when `query_bigrams` is empty (no query text was
+    supplied), leaving prior ordering untouched."""
     if not query_bigrams:
         return 0
     subject = nodes_by_id.get(edge.source_node_id)
@@ -606,7 +641,8 @@ def _query_relevance(
     text = " ".join(part for part in (edge.relation_label, subject_label, object_label) if part)
     if not text:
         return 0
-    return len(query_bigrams & _bigrams(text))
+    overlap = (query_bigrams & _bigrams(text)) - _GENERIC_BIGRAMS
+    return len(overlap)
 
 
 def rank_edges(
@@ -625,13 +661,17 @@ def rank_edges(
     just because both sources happened to return it.
 
     `query` (optional, defaults to `""`) adds a lexical-overlap tie-breaker
-    (`_query_relevance`) between path/non-path groups and the existing
-    confidence x seed-adjacency score: among edges with the same on-path
-    status, one whose own label text overlaps the question's wording ranks
-    ahead of one that does not, so a genuinely on-topic edge is less likely
-    to be crowded out of the `limit`-sized result (or buried near its end)
-    by edges that only won on confidence or seed adjacency. Omitting `query`
-    reproduces the prior ordering exactly."""
+    (`_query_relevance`) strictly *within* the same on-path-status and
+    seed-adjacency-vs-zero group, ranked ahead of the existing confidence x
+    seed-adjacency score: among edges that are equally "adjacent to a seed"
+    (both > 0, or both == 0), one whose own label text overlaps the
+    question's wording (beyond shared generic domain vocabulary, see
+    `_GENERIC_BIGRAMS`) ranks ahead of one that does not. Text overlap never
+    promotes an edge with zero seed adjacency above one with positive seed
+    adjacency -- that grouping is checked before relevance, not after --
+    so a textually-coincidental but structurally unconnected edge cannot
+    outrank a genuinely seed-adjacent one. Omitting `query` reproduces the
+    prior ordering exactly."""
     edges_by_id: dict[str, ProjectEdge] = {edge.edge_id: edge for edge in subgraph.edges}
     for edge in extra_edges:
         edges_by_id.setdefault(edge.edge_id, edge)
@@ -644,13 +684,14 @@ def rank_edges(
 
     query_bigrams = _bigrams(query)
 
-    def sort_key(edge: ProjectEdge) -> tuple[int, int, int, float, str]:
+    def sort_key(edge: ProjectEdge) -> tuple[int, int, int, int, float, str]:
         on_path = edge.edge_id in path_positions
         adjacency = len({edge.source_node_id, edge.target_node_id} & seed_ids)
         relevance = _query_relevance(edge, query_bigrams, nodes_by_id)
         return (
             0 if on_path else 1,
             path_positions.get(edge.edge_id, 0) if on_path else 0,
+            0 if adjacency > 0 else 1,
             -relevance,
             -edge.confidence * adjacency,
             edge.edge_id,
