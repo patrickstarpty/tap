@@ -108,6 +108,19 @@ class ModelResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelTextDelta:
+    """A partial chunk of streamed chat text; not itself billed or recorded."""
+
+    text: str
+
+
+# The last event of a `chat_stream` is always the complete `ModelResult` (full text,
+# usage, actual_model, cost_usd, gateway_call_id) -- identical in shape to `chat`'s
+# non-streaming return value.
+ModelStreamEvent = ModelTextDelta | ModelResult
+
+
+@dataclass(frozen=True, slots=True)
 class ModelCallAudit:
     scope: ProjectScopeContext
     alias: str

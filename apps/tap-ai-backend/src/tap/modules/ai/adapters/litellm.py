@@ -10,7 +10,7 @@ import logging
 import math
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -42,6 +42,8 @@ from tap.modules.ai.domain.models import (
     ModelOutputTruncated,
     ModelRequest,
     ModelResult,
+    ModelStreamEvent,
+    ModelTextDelta,
     ModelUsage,
     schema_digest,
     text_digest,
@@ -102,6 +104,41 @@ def _reported_usage(body: dict[str, Any]) -> tuple[int | None, int | None]:
         return value if type(value) is int and 0 <= value <= 1000000 else None
 
     return count(usage.get("prompt_tokens")), count(usage.get("completion_tokens"))
+
+
+def _resolve_actual_model(returned: object, upstream_model: str | None) -> tuple[str, str]:
+    """Shared by streaming and non-streaming parsing: the deployment header's mapped
+    upstream model wins; the provider-echoed ``model`` field must still be a valid,
+    bounded identifier even when the header already resolved one."""
+
+    if not isinstance(returned, str) or not returned.strip():
+        raise ModelGatewayUnavailable()
+    actual = upstream_model if upstream_model is not None else returned
+    if ACTUAL_MODEL_PATTERN.fullmatch(actual) is None:
+        raise ModelGatewayUnavailable()
+    provider = actual.split("/", 1)[0] if "/" in actual else "unknown"
+    if not provider:
+        raise ModelGatewayUnavailable()
+    return actual, provider
+
+
+def _chunk_delta_content(chunk: dict[str, Any]) -> str | None:
+    """The text delta of one SSE chunk's first choice, or ``None`` when absent."""
+
+    choices = chunk.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    delta = choices[0].get("delta")
+    content = delta.get("content") if isinstance(delta, dict) else None
+    return content if isinstance(content, str) and content else None
+
+
+def _chunk_finish_reason(chunk: dict[str, Any]) -> str | None:
+    choices = chunk.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    reason = choices[0].get("finish_reason")
+    return reason if isinstance(reason, str) else None
 
 
 def _request_json_for_record(
@@ -365,6 +402,173 @@ class LiteLLMModelGateway:
             raise ModelGatewayRejected()
         return model
 
+    def _check_timeout_seconds(self, request: ModelRequest) -> None:
+        if (
+            type(request.timeout_seconds) not in {int, float}
+            or not math.isfinite(request.timeout_seconds)
+            or not 0 < request.timeout_seconds <= self._config.timeout_seconds
+        ):
+            raise ModelGatewayRejected()
+
+    async def _prepare(
+        self, request: ModelRequest, operation: ModelOperation
+    ) -> tuple[ModelRequest, dict[str, Any]]:
+        """Validate (incl. redaction) and build the provider payload; shared by the
+        non-streaming and streaming call paths."""
+
+        # Callers cannot mutate the schema after its digest is checked.
+        if request.schema is not None:
+            snapshot = json.dumps(request.schema, allow_nan=False)
+            if len(snapshot.encode()) > 262144:
+                raise ModelGatewayRejected()
+            request = replace(request, schema=json.loads(snapshot))
+        await self._validate(request, operation)
+        payload: dict[str, Any] = {
+            "model": request.alias,
+            "metadata": {
+                "enterprise_id": request.scope.enterprise_id,
+                "project_id": request.scope.project_id,
+                "operation": operation.value,
+                "prompt_digest": request.prompt_digest,
+                "context_digest": text_digest(request.context),
+                "schema_digest": request.schema_digest,
+                "idempotency_key": request.idempotency_key,
+                "tool_allowlist": sorted(request.tool_allowlist),
+                "governance_digests": list(request.governance_digests),
+                "image_digest": (
+                    None
+                    if request.image_bytes is None
+                    else "sha256:" + hashlib.sha256(request.image_bytes).hexdigest()
+                ),
+            },
+        }
+        if operation is ModelOperation.EMBED:
+            payload.update(
+                input=request.context,
+                dimensions=self._config.embedding_dimension,
+                encoding_format="float",
+            )
+        else:
+            user_content: str | list[dict[str, Any]] = request.context
+            if request.image_bytes is not None:
+                user_content = [
+                    {"type": "text", "text": request.context},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:"
+                            + str(request.image_media_type)
+                            + ";base64,"
+                            + base64.b64encode(request.image_bytes).decode("ascii")
+                        },
+                    },
+                ]
+            system_prompt = request.prompt
+            if request.image_bytes is not None:
+                # JSON-object mode guarantees JSON, not the caller's schema.
+                # Send the validated snapshot explicitly for vision providers.
+                system_prompt += (
+                    "\nReturn one JSON object conforming exactly to this JSON schema; "
+                    "include all required fields and no additional fields:\n"
+                    + json.dumps(request.schema, sort_keys=True, separators=(",", ":"))
+                )
+            payload.update(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                max_tokens=(
+                    request.max_output_tokens
+                    if request.max_output_tokens is not None
+                    else VISION_OUTPUT_TOKENS
+                    if request.image_bytes is not None
+                    else DEFAULT_OUTPUT_TOKENS
+                ),
+            )
+            if operation is ModelOperation.STRUCTURED:
+                payload["temperature"] = 0
+                payload["response_format"] = (
+                    {"type": "json_object"}
+                    if request.image_bytes is not None
+                    else {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "governed_output",
+                            "schema": request.schema,
+                            "strict": True,
+                        },
+                    }
+                )
+        return request, payload
+
+    def _settle_meter(
+        self, meter: Any, attempts: GatewayAttempts, cost_usd: Decimal | None
+    ) -> None:
+        if meter is not None and attempts.count > 0:
+            cost_micros = (
+                int((cost_usd * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
+                if cost_usd is not None
+                else 0
+            )
+            meter.after_call(cost_micros)
+
+    def _build_record(
+        self,
+        *,
+        call_id: str,
+        request: ModelRequest,
+        operation: ModelOperation,
+        current_span: Any,
+        started: float,
+        attempts: GatewayAttempts,
+        status: str,
+        error_code: str | None,
+        upstream_model: str | None,
+        provider: str | None,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cost_usd: Decimal | None,
+        gateway_call_id: str | None,
+        provider_request_id: str | None,
+        payload: dict[str, Any] | None,
+        response_text: str | None,
+        reasoning_text: str | None,
+    ) -> ModelCallRecord:
+        span_context = current_span.get_span_context()
+        binding = current_binding()
+        return ModelCallRecord(
+            call_id=call_id,
+            scope=request.scope,
+            trace_id=(format(span_context.trace_id, "032x") if span_context.is_valid else None),
+            span_id=(format(span_context.span_id, "016x") if span_context.is_valid else None),
+            turn_id=binding.turn_id,
+            job_id=binding.job_id,
+            operation=operation,
+            model_name=request.alias,
+            upstream_model=upstream_model,
+            provider=provider,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            attempts=attempts.count,
+            status=status,  # type: ignore[arg-type]
+            error_code=error_code,
+            gateway_call_id=gateway_call_id,
+            provider_request_id=provider_request_id,
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            request_json=_request_json_for_record(payload, request, operation),
+            response_text=response_text,
+            reasoning_text=reasoning_text,
+        )
+
+    async def _write_record(self, record: ModelCallRecord) -> None:
+        if self._recorder is not None:
+            try:
+                await self._recorder.record(record)
+            except Exception:
+                logger.warning("failed to record model call", exc_info=True)
+
     async def _execute(self, request: ModelRequest, operation: ModelOperation) -> ModelResult:
         meters_this_call = operation in (ModelOperation.CHAT, ModelOperation.STRUCTURED)
         meter = current_meter() if meters_this_call else None
@@ -401,96 +605,9 @@ class LiteLLMModelGateway:
         ) as current_span:
             try:
                 # Includes redaction, queue time, transport, retry, and parsing in one deadline.
-                if (
-                    type(request.timeout_seconds) not in {int, float}
-                    or not math.isfinite(request.timeout_seconds)
-                    or not 0 < request.timeout_seconds <= self._config.timeout_seconds
-                ):
-                    raise ModelGatewayRejected()
+                self._check_timeout_seconds(request)
                 async with asyncio.timeout(request.timeout_seconds):
-                    # Callers cannot mutate the schema after its digest is checked.
-                    if request.schema is not None:
-                        snapshot = json.dumps(request.schema, allow_nan=False)
-                        if len(snapshot.encode()) > 262144:
-                            raise ModelGatewayRejected()
-                        request = replace(request, schema=json.loads(snapshot))
-                    await self._validate(request, operation)
-                    payload = {
-                        "model": request.alias,
-                        "metadata": {
-                            "enterprise_id": request.scope.enterprise_id,
-                            "project_id": request.scope.project_id,
-                            "operation": operation.value,
-                            "prompt_digest": request.prompt_digest,
-                            "context_digest": text_digest(request.context),
-                            "schema_digest": request.schema_digest,
-                            "idempotency_key": request.idempotency_key,
-                            "tool_allowlist": sorted(request.tool_allowlist),
-                            "governance_digests": list(request.governance_digests),
-                            "image_digest": (
-                                None
-                                if request.image_bytes is None
-                                else "sha256:" + hashlib.sha256(request.image_bytes).hexdigest()
-                            ),
-                        },
-                    }
-                    if operation is ModelOperation.EMBED:
-                        payload.update(
-                            input=request.context,
-                            dimensions=self._config.embedding_dimension,
-                            encoding_format="float",
-                        )
-                    else:
-                        user_content: str | list[dict[str, Any]] = request.context
-                        if request.image_bytes is not None:
-                            user_content = [
-                                {"type": "text", "text": request.context},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": "data:"
-                                        + str(request.image_media_type)
-                                        + ";base64,"
-                                        + base64.b64encode(request.image_bytes).decode("ascii")
-                                    },
-                                },
-                            ]
-                        system_prompt = request.prompt
-                        if request.image_bytes is not None:
-                            # JSON-object mode guarantees JSON, not the caller's schema.
-                            # Send the validated snapshot explicitly for vision providers.
-                            system_prompt += (
-                                "\nReturn one JSON object conforming exactly to this JSON schema; "
-                                "include all required fields and no additional fields:\n"
-                                + json.dumps(request.schema, sort_keys=True, separators=(",", ":"))
-                            )
-                        payload.update(
-                            messages=[
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_content},
-                            ],
-                            max_tokens=(
-                                request.max_output_tokens
-                                if request.max_output_tokens is not None
-                                else VISION_OUTPUT_TOKENS
-                                if request.image_bytes is not None
-                                else DEFAULT_OUTPUT_TOKENS
-                            ),
-                        )
-                        if operation is ModelOperation.STRUCTURED:
-                            payload["temperature"] = 0
-                            payload["response_format"] = (
-                                {"type": "json_object"}
-                                if request.image_bytes is not None
-                                else {
-                                    "type": "json_schema",
-                                    "json_schema": {
-                                        "name": "governed_output",
-                                        "schema": request.schema,
-                                        "strict": True,
-                                    },
-                                }
-                            )
+                    request, payload = await self._prepare(request, operation)
                     body, headers = await self._post(request, payload, attempts)
                     cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
                     input_tokens, output_tokens = _reported_usage(body)
@@ -546,49 +663,269 @@ class LiteLLMModelGateway:
                 error_code = "model-unavailable"
                 raise ModelGatewayUnavailable() from None
             finally:
-                if meter is not None and attempts.count > 0:
-                    cost_micros = (
-                        int((cost_usd * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
-                        if cost_usd is not None
-                        else 0
-                    )
-                    meter.after_call(cost_micros)
-                span_context = current_span.get_span_context()
-                binding = current_binding()
-                record = ModelCallRecord(
+                self._settle_meter(meter, attempts, cost_usd)
+                record = self._build_record(
                     call_id=call_id,
-                    scope=request.scope,
-                    trace_id=(
-                        format(span_context.trace_id, "032x") if span_context.is_valid else None
-                    ),
-                    span_id=(
-                        format(span_context.span_id, "016x") if span_context.is_valid else None
-                    ),
-                    turn_id=binding.turn_id,
-                    job_id=binding.job_id,
+                    request=request,
                     operation=operation,
-                    model_name=request.alias,
+                    current_span=current_span,
+                    started=started,
+                    attempts=attempts,
+                    status=status,
+                    error_code=error_code,
                     upstream_model=upstream_model,
                     provider=provider,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     cost_usd=cost_usd,
-                    latency_ms=int((time.monotonic() - started) * 1000),
-                    attempts=attempts.count,
-                    status=status,  # type: ignore[arg-type]
-                    error_code=error_code,
                     gateway_call_id=gateway_call_id,
                     provider_request_id=provider_request_id,
-                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                    request_json=_request_json_for_record(payload, request, operation),
+                    payload=payload,
                     response_text=response_text,
                     reasoning_text=reasoning_text,
                 )
-                if self._recorder is not None:
-                    try:
-                        await self._recorder.record(record)
-                    except Exception:
-                        logger.warning("failed to record model call", exc_info=True)
+                await self._write_record(record)
+
+    async def chat_stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+        """Stream chat text deltas, ending with the full `ModelResult`.
+
+        Shares pre-flight validation/payload-building (`_prepare`) and the metering
+        and `ModelCallRecord` bookkeeping (`_settle_meter`/`_build_record`/
+        `_write_record`) with `_execute`. Retries (`_post_stream`) are only attempted
+        before the first content delta is yielded to the caller; once streaming has
+        started, any interruption raises `ModelGatewayUnavailable` without retrying,
+        and the `finally` below still records exactly one `ModelCallRecord`.
+        """
+
+        operation = ModelOperation.CHAT
+        meter = current_meter()
+        if meter is not None:
+            meter.before_call()
+
+        call_id = str(uuid4())
+        attempts = GatewayAttempts()
+        started = time.monotonic()
+        payload: dict[str, Any] | None = None
+        response_text: str | None = None
+        cost_usd: Decimal | None = None
+        gateway_call_id: str | None = None
+        provider_request_id: str | None = None
+        upstream_model: str | None = None
+        provider: str | None = None
+        input_tokens: int | None = None
+        output_tokens: int | None = None
+        status: str = "error"
+        error_code: str | None = None
+
+        with span(
+            f"chat {request.alias}",
+            {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.request.model": request.alias,
+                "tap.model_call_id": call_id,
+            },
+        ) as current_span:
+            try:
+                self._check_timeout_seconds(request)
+                async with asyncio.timeout(request.timeout_seconds):
+                    request, payload = await self._prepare(request, operation)
+                    payload["stream"] = True
+                    payload["stream_options"] = {"include_usage": True}
+
+                    chunks: list[str] = []
+                    returned_model: str | None = None
+                    finish_reason: str | None = None
+                    headers = httpx.Headers()
+                    async for chunk, chunk_headers in self._post_stream(request, payload, attempts):
+                        headers = chunk_headers
+                        model_field = chunk.get("model")
+                        if returned_model is None and isinstance(model_field, str):
+                            returned_model = model_field
+                        delta_text = _chunk_delta_content(chunk)
+                        if delta_text is not None:
+                            chunks.append(delta_text)
+                            yield ModelTextDelta(delta_text)
+                        reason = _chunk_finish_reason(chunk)
+                        if reason is not None:
+                            finish_reason = reason
+                        usage_field = chunk.get("usage")
+                        if isinstance(usage_field, dict):
+                            input_tokens, output_tokens = _reported_usage({"usage": usage_field})
+
+                    full_text = "".join(chunks)
+                    if not full_text.strip():
+                        raise ModelGatewayUnavailable()
+                    if finish_reason == "length":
+                        raise ModelOutputTruncated()
+                    response_text = full_text
+                    cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
+                    upstream_model = self._upstream_model(headers)
+                    actual, provider = _resolve_actual_model(returned_model, upstream_model)
+                    normalized_usage = ModelUsage(input_tokens, output_tokens)
+                    audit = ModelCallAudit(
+                        request.scope,
+                        request.alias,
+                        operation,
+                        request.prompt_digest,
+                        request.schema_digest,
+                        text_digest(request.context),
+                        request.idempotency_key,
+                        provider,
+                        actual,
+                        normalized_usage,
+                        tool_allowlist=request.tool_allowlist,
+                        governance_digests=request.governance_digests,
+                    )
+
+                    def safe_header(name: str) -> str | None:
+                        value = headers.get(name)
+                        return (
+                            value
+                            if value is not None
+                            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", value)
+                            else None
+                        )
+
+                    gateway_call_id = safe_header("x-litellm-call-id")
+                    provider_request_id = safe_header("x-request-id")
+                    current_span.set_attribute("gen_ai.response.model", actual)
+                    current_span.set_attribute("gen_ai.provider.name", provider)
+                    if input_tokens is not None:
+                        current_span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
+                    if output_tokens is not None:
+                        current_span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
+                    binding = current_binding()
+                    binding.usage.input_tokens += input_tokens or 0
+                    binding.usage.output_tokens += output_tokens or 0
+                    status = "ok"
+                    yield ModelResult(
+                        full_text,
+                        actual,
+                        normalized_usage,
+                        provider,
+                        audit,
+                        provider_request_id,
+                        gateway_call_id,
+                        call_id,
+                        cost_usd,
+                    )
+            except ModelGatewayRejected as exc:
+                error_code = str(exc)
+                raise
+            except ModelGatewayUnavailable as exc:
+                error_code = str(exc)
+                raise
+            except (
+                TimeoutError,
+                httpx.HTTPError,
+                ValueError,
+                TypeError,
+                KeyError,
+                IndexError,
+                OverflowError,
+            ):
+                error_code = "model-unavailable"
+                raise ModelGatewayUnavailable() from None
+            finally:
+                self._settle_meter(meter, attempts, cost_usd)
+                record = self._build_record(
+                    call_id=call_id,
+                    request=request,
+                    operation=operation,
+                    current_span=current_span,
+                    started=started,
+                    attempts=attempts,
+                    status=status,
+                    error_code=error_code,
+                    upstream_model=upstream_model,
+                    provider=provider,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost_usd=cost_usd,
+                    gateway_call_id=gateway_call_id,
+                    provider_request_id=provider_request_id,
+                    payload=payload,
+                    response_text=response_text,
+                    reasoning_text=None,
+                )
+                await self._write_record(record)
+
+    async def _post_stream(
+        self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
+    ) -> AsyncIterator[tuple[dict[str, Any], httpx.Headers]]:
+        """Parse the OpenAI-compatible SSE body: ``data: {...}`` lines terminated by
+        ``data: [DONE]``. Retries a retryable status (5xx/408/429) or a transport
+        error only before any content delta has reached the caller; once streaming
+        has started, any interruption raises `ModelGatewayUnavailable` immediately."""
+
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=self._config.timeout_seconds,
+                limits=httpx.Limits(
+                    max_connections=self._config.max_concurrency,
+                    max_keepalive_connections=self._config.max_concurrency,
+                ),
+                transport=httpx.AsyncHTTPTransport(retries=0),
+            )
+        encoded = json.dumps(
+            payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        ).encode()
+        if len(encoded) > 262144:
+            raise ModelGatewayRejected()
+        max_retries = self._config.max_retries if request.allow_retries else 0
+        content_yielded = False
+        total_bytes = 0
+        for attempt in range(max_retries + 1):
+            attempts.count += 1
+            try:
+                async with (
+                    self._slots,
+                    self._client.stream(
+                        "POST",
+                        self._config.base_url.rstrip("/") + "/v1/chat/completions",
+                        headers={
+                            "authorization": f"Bearer {self._config.api_key}",
+                            "content-type": "application/json",
+                            "idempotency-key": request.idempotency_key,
+                        },
+                        content=encoded,
+                        timeout=request.timeout_seconds,
+                    ) as response,
+                ):
+                    if response.status_code in {408, 429} or response.status_code >= 500:
+                        if attempt < max_retries and not content_yielded:
+                            continue
+                    response.raise_for_status()
+                    headers = response.headers
+                    buffer = ""
+                    async for raw in response.aiter_text():
+                        total_bytes += len(raw.encode())
+                        if total_bytes > 1048576:
+                            raise ModelGatewayUnavailable()
+                        buffer += raw
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            line = line.strip()
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data = line[len("data:") :].strip()
+                            if data == "[DONE]":
+                                return
+                            try:
+                                chunk = json.loads(data)
+                            except json.JSONDecodeError:
+                                raise ModelGatewayUnavailable() from None
+                            if not isinstance(chunk, dict):
+                                raise ModelGatewayUnavailable()
+                            if _chunk_delta_content(chunk) is not None:
+                                content_yielded = True
+                            yield chunk, headers
+                    return
+            except httpx.TransportError:
+                if content_yielded or attempt == max_retries:
+                    raise ModelGatewayUnavailable() from None
+                continue
+        raise ModelGatewayUnavailable()
 
     async def _post(
         self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
@@ -663,15 +1000,7 @@ class LiteLLMModelGateway:
         upstream_model: str | None = None,
     ) -> ModelResult:
         # LiteLLM may echo the model without its provider prefix; the deployment id is exact.
-        returned = body["model"]
-        if not isinstance(returned, str) or not returned.strip():
-            raise ModelGatewayUnavailable()
-        actual = upstream_model if upstream_model is not None else returned
-        if ACTUAL_MODEL_PATTERN.fullmatch(actual) is None:
-            raise ModelGatewayUnavailable()
-        provider = actual.split("/", 1)[0] if "/" in actual else "unknown"
-        if not provider:
-            raise ModelGatewayUnavailable()
+        actual, provider = _resolve_actual_model(body["model"], upstream_model)
         usage = body.get("usage", {})
         if not isinstance(usage, dict):
             raise ModelGatewayUnavailable()

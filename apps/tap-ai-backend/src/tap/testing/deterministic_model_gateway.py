@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -16,7 +17,12 @@ from tap.modules.ai.adapters.litellm import (
     Redact,
 )
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, LiteLLMModel, LiteLLMRoutes
-from tap.modules.ai.domain.models import ModelOperation, ModelRequest
+from tap.modules.ai.domain.models import (
+    ModelOperation,
+    ModelRequest,
+    ModelStreamEvent,
+    ModelTextDelta,
+)
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.testing.deterministic_model import (
     _ANSWER_DELAY_SECONDS,
@@ -96,6 +102,18 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         ):
             raise ValueError("deterministic E2E answer delay must be zero to five seconds")
         self._answer_delay_seconds = float(answer_delay_seconds)
+
+    async def chat_stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+        """Chunk the deterministic non-streaming chat answer into 8-character pieces,
+        pacing them with a short sleep so the fake E2E profile can observe a draft
+        forming incrementally. Metering and recording happen in `chat` itself."""
+
+        result = await self.chat(request)
+        text = result.output if isinstance(result.output, str) else ""
+        for index in range(0, len(text), 8):
+            yield ModelTextDelta(text[index : index + 8])
+            await asyncio.sleep(0.02)
+        yield result
 
     async def _post(
         self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts

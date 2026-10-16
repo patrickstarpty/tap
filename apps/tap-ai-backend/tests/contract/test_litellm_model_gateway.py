@@ -24,6 +24,8 @@ from tap.modules.ai.domain.models import (
     ModelGatewayUnavailable,
     ModelOperation,
     ModelRequest,
+    ModelResult,
+    ModelTextDelta,
 )
 
 
@@ -2580,3 +2582,140 @@ async def test_injection_flag_reaches_span(span_recorder):
     test_span = finished["test.answer.injection"]
     assert test_span.attributes["tap.guard.injection.count"] == 1
     assert test_span.attributes["tap.guard.injection.flagged"] == "S1"
+
+
+class _InterruptedByteStream(httpx.AsyncByteStream):
+    """Yields the given chunks, then simulates a dropped connection."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self):
+        for chunk in self._chunks:
+            yield chunk
+        raise httpx.ReadError("connection dropped mid-stream")
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _sse_body(events: list[dict[str, object]]) -> bytes:
+    lines = [f"data: {json.dumps(event)}\n\n" for event in events]
+    lines.append("data: [DONE]\n\n")
+    return "".join(lines).encode()
+
+
+def _stream_events(request_json) -> list[dict[str, object]]:
+    del request_json
+    return [
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [{"index": 0, "delta": {"content": "Hello, "}, "finish_reason": None}],
+        },
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [{"index": 0, "delta": {"content": "world"}, "finish_reason": None}],
+        },
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [{"index": 0, "delta": {"content": "!"}, "finish_reason": "stop"}],
+        },
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 3},
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_yields_deltas_then_result_with_usage_and_upstream_model():
+    def respond(incoming):
+        body = _sse_body(_stream_events(incoming))
+        return httpx.Response(
+            200,
+            headers={
+                "content-type": "text/event-stream",
+                "x-litellm-model-id": "deployment-qwen-plus",
+                "x-litellm-response-cost": "0.0012",
+                "x-litellm-call-id": "gw-stream-1",
+                "x-request-id": "req-stream-1",
+            },
+            content=body,
+        )
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+
+    events = []
+    async for event in gateway.chat_stream(request()):
+        events.append(event)
+
+    deltas = [event for event in events if isinstance(event, ModelTextDelta)]
+    results = [event for event in events if isinstance(event, ModelResult)]
+    assert [delta.text for delta in deltas] == ["Hello, ", "world", "!"]
+    assert len(results) == 1
+    result = results[0]
+    assert result.output == "Hello, world!"
+    assert result.actual_model == "dashscope/qwen-plus"
+    assert result.actual_provider == "dashscope"
+    assert result.usage.input_tokens == 4
+    assert result.usage.output_tokens == 3
+    assert result.cost_usd == Decimal("0.0012000000")
+    assert result.gateway_call_id == "gw-stream-1"
+    assert result.provider_request_id == "req-stream-1"
+
+    assert len(recorder.records) == 1
+    record = recorder.records[0]
+    assert record.status == "ok"
+    assert record.response_text == "Hello, world!"
+    assert record.input_tokens == 4
+    assert record.output_tokens == 3
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_interrupted_raises_unavailable_and_still_records():
+    events = _stream_events(None)[:2]
+    lines = [f"data: {json.dumps(event)}\n\n".encode() for event in events]
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_InterruptedByteStream(lines),
+        )
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+
+    collected = []
+    with pytest.raises(ModelGatewayUnavailable):
+        async for event in gateway.chat_stream(request()):
+            collected.append(event)
+
+    assert any(isinstance(event, ModelTextDelta) for event in collected)
+    assert len(recorder.records) == 1
+    assert recorder.records[0].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_is_metered_once():
+    from tap.platform.budget import CallMeter, metered
+
+    def respond(incoming):
+        body = _sse_body(_stream_events(incoming))
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=body,
+        )
+
+    gateway = configured_gateway(respond)
+    meter = CallMeter(remaining_calls=1, remaining_cost_micros=None)
+
+    with metered(meter):
+        async for _ in gateway.chat_stream(request()):
+            pass
+
+    assert meter.calls == 1
