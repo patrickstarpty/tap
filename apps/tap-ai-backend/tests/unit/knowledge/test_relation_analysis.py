@@ -655,6 +655,55 @@ def test_rank_edges_merges_extra_edges_deduped_by_edge_id() -> None:
     assert len(ranked) == 2
 
 
+def test_rank_edges_breaks_ties_by_query_text_overlap() -> None:
+    """Among edges with the same on-path status, one whose own text (its
+    `relation_label` plus endpoint labels) overlaps the question's wording
+    must outrank one that only wins on confidence x seed adjacency, so a
+    genuinely on-topic edge is not crowded out of the top of the list by an
+    unrelated but higher-scoring one."""
+    on_topic = ProjectEdge(
+        edge_id="e-on-topic",
+        source_node_id="A",
+        target_node_id="B",
+        relation_type="REQUIRES",
+        relation_label="核保审核须提交健康告知",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.5,
+    )
+    off_topic = ProjectEdge(
+        edge_id="e-off-topic",
+        source_node_id="A",
+        target_node_id="C",
+        relation_type="RELATED_TO",
+        relation_label="理赔流程说明",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    subgraph = ProjectSubgraph(
+        version=1,
+        nodes=(_NODE_A, _NODE_B, _NODE_C),
+        edges=(on_topic, off_topic),
+    )
+    seed_ids = frozenset({"A"})
+
+    # Without a query, the higher confidence x adjacency edge wins, as before.
+    ranked_without_query = rank_edges(subgraph, (), seed_ids)
+    assert [edge.edge_id for edge, _on_path in ranked_without_query] == [
+        "e-off-topic",
+        "e-on-topic",
+    ]
+
+    # With a query that echoes the on-topic edge's own wording, it outranks
+    # the off-topic edge despite its lower confidence x adjacency score.
+    ranked_with_query = rank_edges(
+        subgraph, (), seed_ids, query="核保审核需要提交哪些健康告知材料？"
+    )
+    assert [edge.edge_id for edge, _on_path in ranked_with_query] == [
+        "e-on-topic",
+        "e-off-topic",
+    ]
+
+
 def test_assemble_reuses_s_label_without_snippet() -> None:
     nodes_by_id = {"A": _NODE_A, "B": _NODE_B, "C": _NODE_C}
     ranked = (
