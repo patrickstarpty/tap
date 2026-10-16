@@ -675,6 +675,138 @@ async def test_model_call_budget_exhaustion_fails_turn_without_calling_node() ->
 
 
 @pytest.mark.asyncio
+async def test_in_node_call_budget_exhaustion_maps_to_model_calls_reason() -> None:
+    """M6: a node that itself spends more model calls than remain (not the
+    `_run_budgeted` pre-check) raises `CallBudgetExhausted` from the meter;
+    `_run_budgeted` must still map that to `TurnBudgetExhausted("model-calls")`
+    when the meter's own call count is what's exhausted."""
+    calls: list[str] = []
+    captured: dict[str, object] = {}
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("guard_in")
+        return {}
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("seed_search")
+        meter = current_meter()
+        assert meter is not None
+        meter.before_call()
+        meter.after_call(0)
+        # A second call within the same node, with only one call's worth of
+        # budget remaining: the meter itself refuses it, mid-node.
+        meter.before_call()
+        raise AssertionError("unreachable: before_call above must raise first")
+
+    async def model(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("model must not run once the in-node budget is exhausted")
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("verify must not run once the in-node budget is exhausted")
+
+    async def finalize(state: ChatGraphState) -> dict[str, object]:
+        calls.append("finalize")
+        captured["failure"] = state.get("failure")
+        return {"result": {"answer": "degraded"}}
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run on the chat route")
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=_always_authorized(),
+    )
+
+    await graph.start(
+        run_id="run-in-node-model-calls",
+        payload={},
+        route="chat",
+        budget=TurnBudget(max_model_calls=1),
+    )
+
+    assert calls == ["guard_in", "seed_search", "finalize"]
+    assert captured["failure"] == {
+        "node": "seed_search",
+        "error": "TurnBudgetExhausted",
+        "reason": "model-calls",
+    }
+
+
+@pytest.mark.asyncio
+async def test_in_node_call_budget_exhaustion_maps_to_cost_reason() -> None:
+    """M6: when a node's calls are still within `max_model_calls` but the
+    meter's cost is exhausted, `_run_budgeted` must map the in-node
+    `CallBudgetExhausted` to `TurnBudgetExhausted("cost")`, not
+    `"model-calls"`."""
+    calls: list[str] = []
+    captured: dict[str, object] = {}
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("guard_in")
+        return {}
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("seed_search")
+        meter = current_meter()
+        assert meter is not None
+        meter.before_call()
+        meter.after_call(100)
+        # Plenty of model calls remain (max_model_calls=5), but the cost
+        # spent above already exhausts the turn's cost budget.
+        meter.before_call()
+        raise AssertionError("unreachable: before_call above must raise first")
+
+    async def model(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("model must not run once the in-node budget is exhausted")
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("verify must not run once the in-node budget is exhausted")
+
+    async def finalize(state: ChatGraphState) -> dict[str, object]:
+        calls.append("finalize")
+        captured["failure"] = state.get("failure")
+        return {"result": {"answer": "degraded"}}
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run on the chat route")
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=_always_authorized(),
+    )
+
+    await graph.start(
+        run_id="run-in-node-cost",
+        payload={},
+        route="chat",
+        budget=TurnBudget(max_model_calls=5, max_cost_micros=100),
+    )
+
+    assert calls == ["guard_in", "seed_search", "finalize"]
+    assert captured["failure"] == {
+        "node": "seed_search",
+        "error": "TurnBudgetExhausted",
+        "reason": "cost",
+    }
+
+
+@pytest.mark.asyncio
 async def test_wall_clock_expiry_mid_node_fails_with_budget_exhausted() -> None:
     calls: list[str] = []
     captured: dict[str, object] = {}
