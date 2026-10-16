@@ -37,16 +37,26 @@ ORG_PARTICIPANT_TYPES: frozenset[str] = frozenset({"ACTOR", "SYSTEM", "ENTITY"})
 
 # One trailing corporate-entity suffix, longest first, dropped only for an
 # organization/participant node so a company's full registered name and its
-# short name key the same ("友邦人寿保险有限公司" and "友邦人寿" both key to
-# "友邦人寿"). A generic role noun such as "保险公司" never ends in one of
-# these (it is shorter than even the shortest suffix below), so it is left
-# alone -- whether a generic term should merge with a specific company is a
-# separate, harder problem this does not attempt (see the report).
+# short name key the same ("<Insurer>人寿保险有限公司" and "<Insurer>人寿" both
+# key to "<Insurer>人寿"). A generic role noun such as "保险公司" never ends in
+# one of these (it is shorter than even the shortest suffix below), so it is
+# left alone -- whether a generic term should merge with a specific company is
+# a separate, harder problem this does not attempt (see the report).
 _ORG_NAME_SUFFIXES: tuple[str, ...] = (
     "保险股份有限公司",
     "保险有限公司",
     "股份有限公司",
     "有限公司",
+)
+
+# A suffix strip is only trusted when what is left is itself distinctive --
+# at least two characters and not, on its own, a generic word for the
+# industry. Without this, "人寿保险有限公司" (a company literally named "Life
+# Insurance Co., Ltd.", no distinguishing brand) would strip to "人寿" or
+# "保险", either of which is shared by many unrelated insurers' names and
+# would merge them all together under one specific-looking key.
+_GENERIC_INDUSTRY_WORDS = frozenset(
+    {"保险", "人寿", "财险", "产险", "寿险", "人寿保险", "财产保险"}
 )
 
 
@@ -58,7 +68,9 @@ def _merge_type_bucket(node_type: str) -> str:
 def _strip_org_suffix(key: str) -> str:
     for suffix in sorted(_ORG_NAME_SUFFIXES, key=len, reverse=True):
         if len(key) > len(suffix) and key.endswith(suffix):
-            return key[: -len(suffix)]
+            core = key[: -len(suffix)]
+            if len(core) >= 2 and core not in _GENERIC_INDUSTRY_WORDS:
+                return core
     return key
 
 

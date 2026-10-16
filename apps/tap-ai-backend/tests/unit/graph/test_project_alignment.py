@@ -8,6 +8,7 @@ from typing import Sequence
 
 from tap.modules.graph.application.alignment import (
     _ambiguous_alias_keys,
+    _merge_type_bucket,
     alignment_key,
     merge_edges,
     resolve_entities,
@@ -158,6 +159,21 @@ def test_a_generic_role_noun_does_not_merge_with_a_specific_company_name():
     specific = _fragment("frag-b", [("n1", "友邦人寿", "ACTOR", "友邦人寿")])
 
     assert len(resolve_entities([generic, specific])) == 2
+
+
+def test_a_fully_generic_company_name_is_not_stripped_to_an_industry_word():
+    # "人寿保险有限公司" ("Life Insurance Co., Ltd.") has no distinguishing brand;
+    # stripping its suffix would otherwise reduce it to "人寿" or "保险", either
+    # of which many unrelated insurers' names also contain, merging them all.
+    generic_company = _fragment("frag-a", [("n1", "人寿保险有限公司", "ACTOR", "人寿保险有限公司")])
+    another_insurer = _fragment(
+        "frag-b", [("n1", "太平人寿保险有限公司", "ACTOR", "太平人寿保险有限公司")]
+    )
+    bare_generic_word = _fragment("frag-c", [("n1", "人寿", "ACTOR", "人寿")])
+
+    entities = resolve_entities([generic_company, another_insurer, bare_generic_word])
+
+    assert len(entities) == 3
 
 
 def test_same_key_different_type_stays_separate():
@@ -377,47 +393,71 @@ def _linear_scan_clusters(
     """
     clusters: list[dict[str, object]] = []
     ambiguous = _ambiguous_alias_keys(sorted(fragments, key=lambda item: item.snapshot.snapshot_id))
+    # These three mirror the indexed resolver's own exact_index/label_index/
+    # alias_index dicts exactly (first-wins, never overwritten) rather than
+    # scanning each cluster's own accumulated key sets: once EXACT matching can
+    # cross a node-type bucket (ACTOR/SYSTEM/ENTITY), a cluster can hold members
+    # of different literal node types, and a per-cluster set would conflate a
+    # key contributed by one member's type with a lookup under another
+    # member's -- production's indices are keyed by the *contributing* node's
+    # own literal type, not the cluster's, both when writing and when reading.
+    exact_owner: dict[tuple[str, str], dict[str, object]] = {}
+    label_owner: dict[tuple[str, str], dict[str, object]] = {}
+    alias_owner: dict[tuple[str, tuple[str, ...], str], dict[str, object]] = {}
 
-    def names(texts):
+    def names(texts, node_type):
         return {
-            alignment_key(name)
+            alignment_key(name, node_type)
             for name in texts
-            if not is_reference_name(name) and not is_reference_name(alignment_key(name))
+            if not is_reference_name(name) and not is_reference_name(alignment_key(name, node_type))
         }
 
     for fragment in sorted(fragments, key=lambda item: item.snapshot.snapshot_id):
         snapshot_id = fragment.snapshot.snapshot_id
         source = fragment.snapshot.source_revision_ids
         for node in fragment.nodes:
-            key1 = alignment_key(node.canonical_key)
-            label_keys = names((node.label,))
+            key1 = alignment_key(node.canonical_key, node.node_type)
+            label_keys = names((node.label,), node.node_type)
             keys2 = {
                 key
-                for key in names((node.label, *node.aliases))
+                for key in names((node.label, *node.aliases), node.node_type)
                 if (node.node_type, source, key) not in ambiguous
             }
             target = None
             rule = None
-            for cluster in clusters:
-                if cluster["type"] == node.node_type and key1 in cluster["l1"]:
-                    target, rule = cluster, "EXACT"
-                    break
+            bucket = _merge_type_bucket(node.node_type)
+            exact_match = exact_owner.get((bucket, key1))
+            if exact_match is not None:
+                target, rule = exact_match, "EXACT"
             if target is None:
                 # Names match across documents; aliases only within one document.
-                for cluster in clusters:
-                    if cluster["type"] == node.node_type and (
-                        cluster["labels"] & label_keys or cluster["l2"].get(source, set()) & keys2
-                    ):
-                        target, rule = cluster, "ALIAS"
-                        break
+                # Mirrors the indexed resolver exactly: collect every matching
+                # key's cluster (label_keys and keys2 can each point at a
+                # different one) and take the earliest-created.
+                candidates = [
+                    label_owner[(node.node_type, key)]
+                    for key in label_keys
+                    if (node.node_type, key) in label_owner
+                ] + [
+                    alias_owner[(node.node_type, source, key)]
+                    for key in keys2
+                    if (node.node_type, source, key) in alias_owner
+                ]
+                if candidates:
+                    target, rule = min(candidates, key=lambda c: c["position"]), "ALIAS"
             if target is None and embeddings:
                 vector = embeddings.get((snapshot_id, node.node_id))
                 if vector is not None:
                     best, best_score = None, -1.0
                     for cluster in clusters:
-                        if cluster["type"] != node.node_type:
-                            continue
-                        for member in cluster["members"]:
+                        # Matches a same-type *member*, not a same-type cluster: a
+                        # member joining later via the ORG_PARTICIPANT_TYPES EXACT
+                        # bucket can be a different literal type than the one
+                        # that created the cluster, and still be the right
+                        # embedding match for a query of that member's own type.
+                        for member, member_type in zip(cluster["members"], cluster["member_types"]):
+                            if member_type != node.node_type:
+                                continue
                             other = embeddings.get(member)
                             if other is None:
                                 continue
@@ -433,18 +473,24 @@ def _linear_scan_clusters(
             if target is None:
                 target = {
                     "type": node.node_type,
-                    "l1": set(),
-                    "labels": set(),
-                    "l2": {},
+                    "position": len(clusters),
                     "members": [],
+                    "member_types": [],
                     "rule": "EXACT",
                 }
                 clusters.append(target)
                 rule = "EXACT"
             target["members"].append((snapshot_id, node.node_id))
-            target["l1"].add(key1)
-            target["labels"] |= label_keys
-            target["l2"].setdefault(source, set()).update(keys2)
+            target["member_types"].append(node.node_type)
+            exact_owner.setdefault((bucket, key1), target)
+            for key in label_keys:
+                known = label_owner.get((node.node_type, key))
+                if known is None or target["position"] < known["position"]:
+                    label_owner[(node.node_type, key)] = target
+            for key in keys2:
+                known = alias_owner.get((node.node_type, source, key))
+                if known is None or target["position"] < known["position"]:
+                    alias_owner[(node.node_type, source, key)] = target
             target["rule"] = rule
     return [
         (str(cluster["type"]), tuple(cluster["members"]), str(cluster["rule"]))
@@ -455,9 +501,23 @@ def _linear_scan_clusters(
 def test_indexed_alignment_matches_a_full_cluster_scan_on_overlapping_fragments():
     import random
 
-    words = ["核保", "理赔", "保单", "退保", "refund", "claim", "policy holder", "agent"]
-    suffixes = ["", "", "规则", "流程", " policy", " rule"]
-    node_types = ["CONCEPT", "ENTITY", "PROCESS"]
+    words = [
+        "核保",
+        "理赔",
+        "保单",
+        "退保",
+        "refund",
+        "claim",
+        "policy holder",
+        "agent",
+        # Org/participant-shaped words: exercise the ACTOR/SYSTEM/ENTITY EXACT
+        # type bucket and the corporate-suffix normalization together.
+        "友邦人寿",
+        "太平人寿",
+        "人寿保险",
+    ]
+    suffixes = ["", "", "规则", "流程", " policy", " rule", "有限公司", "保险有限公司"]
+    node_types = ["CONCEPT", "ENTITY", "PROCESS", "ACTOR", "SYSTEM"]
     directions = [(1.0, 0.0), (0.0, 1.0), (0.96, 0.28), (0.7, 0.7)]
 
     for seed in range(40):
