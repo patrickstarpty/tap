@@ -1090,7 +1090,12 @@ def _relation_hit(
     chunk_id: str,
     revision: str,
     *,
-    content: str = "relation evidence content",
+    # Names both `_relation_evidence_for`'s default subject/object labels
+    # ("核保流程"/"健康告知") so this chunk doubles as valid support content
+    # for `relation_support_mentions_both_endpoints` wherever a test reuses
+    # it as an R citation's S-backed support, without needing every call
+    # site to pass an explicit, label-matching `content`.
+    content: str = "核保流程需要先完成健康告知，relation evidence content",
     item_id: str,
     generation: str = "gen-1",
     local_rank: int = 1,
@@ -1141,7 +1146,9 @@ def _real_formula_hit(index: int, *, revision: str = "rev-1") -> SearchHit:
         separators=(",", ":"),
         sort_keys=True,
     )
-    content = f"relation evidence content {index}"
+    # See `_relation_hit`'s content default: also names both of
+    # `_relation_evidence_for`'s default labels for the same reason.
+    content = f"核保流程需要先完成健康告知，relation evidence content {index}"
     content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
     chunk_id = str(chunk_id_for(RevisionId(revision), anchor_json, content_hash))
     logical_chunk_id = "h_" + str(
@@ -1781,6 +1788,272 @@ def test_edge_citation_reuses_s_chunk_fields_and_gets_r_label() -> None:
     asyncio.run(scenario())
 
 
+_Q14_STYLE_GROUP_CLAUSE = (
+    "第二条 投保范围：法人、非法人组织以及其他不以购买保险为目的而组成的团体可以作为投保人；"
+    "前述团体的成员及其配偶、子女可以作为被保险人。"
+)
+# The real q-14 R5 text (report 2 §6; `/tmp/tap-real3/edge-sample.csv:177`): a
+# "医生" (doctor) definitions clause whose exclusion list names 被保险人 and,
+# among several unrelated family-member examples, 子女 -- both endpoints of a
+# 被保险人/子女 relation appear verbatim while the clause is about an entirely
+# different defined term.
+_Q14_STYLE_UNRELATED_DOCTOR_DEFINITION = (
+    "三十四、医生：指在医院内行医并拥有处方权的医生，亦指在被保险人接受诊断、医疗、处方或手术的"
+    "地区内合法注册且有行医资格的医生；但不包括被保险人本人、被保险人的代理人、合伙人、雇员或雇"
+    "主，或被保险人的家庭成员，如配偶、兄弟、姐妹、父母、子女以及其他具有类似亲密关系的人。"
+)
+
+
+def test_q14_style_group_clause_relations_kept_doctor_definition_relation_stripped() -> None:
+    """End-to-end reproduction of the real-model revalidation report's q-14
+    pattern (report 2 §6): 4 relations backed by the actual 团险第二条
+    clause (the chunk cited as this claim's own S evidence) keep their R
+    citations, a 6th whose only support is a fresh (not yet S-cited) snippet
+    from the *same section* of that same clause also keeps its R citation,
+    while the 5th (被保险人 RELATED_TO 子女) -- whose only support is the
+    unrelated 医生 definitions clause from the real report, a different
+    section entirely -- is stripped even though that clause's text happens
+    to name both endpoints verbatim (the failure mode the endpoint-mention
+    checks alone cannot catch; see `relation_support_is_grounded_for_claim`)."""
+
+    async def scenario() -> None:
+        group_clause_hit = _relation_hit(
+            "chunk-group-clause",
+            "rev-1",
+            item_id="item-1",
+            content=_Q14_STYLE_GROUP_CLAUSE,
+        )
+        group_clause_hit = replace(
+            group_clause_hit,
+            source=replace(
+                group_clause_hit.source,
+                anchor=replace(group_clause_hit.source.anchor, heading_path=("第二条 投保范围",)),
+            ),
+        )
+        search = _SequencedSearchPort(
+            (
+                group_clause_hit,
+                # Distinct `logical_chunk_id` from the group clause (whose
+                # different content would otherwise collide under
+                # `_relation_hit`'s shared default and read as the same
+                # clause disagreeing with itself -- `_has_conflicting_sources`'s
+                # own concern, not this test's).
+                replace(
+                    _relation_hit(
+                        "chunk-doctor-definition",
+                        "rev-1",
+                        item_id="item-2",
+                        content=_Q14_STYLE_UNRELATED_DOCTOR_DEFINITION,
+                        local_rank=2,
+                    ),
+                    logical_chunk_id="h_" + "3" * 64,
+                ),
+            ),
+        )
+        model = _RecordingModel(
+            [
+                AnswerGeneration(
+                    text=(
+                        "法人、非法人组织以及其他不以购买保险为目的而组成的团体可以作为投保人。"
+                        "\n\n"
+                        "法人、非法人组织以及其他不以购买保险为目的而组成的团体的成员及其配偶、"
+                        "子女可以作为被保险人。"
+                    ),
+                    claims=(
+                        GeneratedClaim(
+                            text=(
+                                "法人、非法人组织以及其他不以购买保险为目的而组成的团体可以作为投保人。"
+                            ),
+                            evidence_labels=("R1", "R2", "R3", "R6", "S1"),
+                        ),
+                        GeneratedClaim(
+                            text=(
+                                "法人、非法人组织以及其他不以购买保险为目的而组成的团体的成员及其配偶、"
+                                "子女可以作为被保险人。"
+                            ),
+                            evidence_labels=("R4", "R5", "S1"),
+                        ),
+                    ),
+                    model_id="m-1",
+                    profile_id="grounded-answer-v1",
+                    provider_request_id="req-1",
+                )
+            ]
+        )
+
+        def _group_clause_relation(
+            label: str, subject_label: str, object_label: str, relation_type: str
+        ) -> RelationEvidence:
+            return RelationEvidence(
+                label=label,
+                edge_id=f"e-{label}",
+                subject_node_id=f"subj-{label}",
+                subject_label=subject_label,
+                subject_aliases=(),
+                object_node_id=f"obj-{label}",
+                object_label=object_label,
+                object_aliases=(),
+                relation_type=relation_type,
+                relation_label="可作为" if relation_type == "PART_OF" else relation_type,
+                origin="EXTRACTED",
+                confidence=0.9,
+                support=(
+                    RelationSupport(
+                        chunk_id="chunk-group-clause",
+                        source_revision_id="rev-1",
+                        document_revision_id="rev-1",
+                        content_digest="sha256:" + "a" * 64,
+                        anchor={"page": 1, "headingPath": ["第二条 投保范围"]},
+                        evidence_label="S1",
+                    ),
+                ),
+                on_path=False,
+            )
+
+        group_clause_relations = (
+            _group_clause_relation("R1", "法人", "投保人", "PART_OF"),
+            _group_clause_relation("R2", "非法人组织", "投保人", "PART_OF"),
+            _group_clause_relation("R3", "团体", "投保人", "PART_OF"),
+            _group_clause_relation("R4", "配偶", "被保险人", "PART_OF"),
+        )
+        doctor_definition_relation = RelationEvidence(
+            label="R5",
+            edge_id="e-R5",
+            subject_node_id="subj-R5",
+            subject_label="被保险人",
+            subject_aliases=(),
+            object_node_id="obj-R5",
+            object_label="子女",
+            object_aliases=(),
+            relation_type="RELATED_TO",
+            relation_label="家庭成员",
+            origin="EXTRACTED",
+            confidence=0.9,
+            support=(
+                RelationSupport(
+                    chunk_id="chunk-doctor-definition",
+                    source_revision_id="rev-1",
+                    document_revision_id="rev-1",
+                    content_digest="sha256:" + "b" * 64,
+                    anchor={"page": 1, "headingPath": ["医生"]},
+                    evidence_label="S2",
+                ),
+            ),
+            on_path=False,
+        )
+        # A 6th relation whose only support is a fresh snippet from a
+        # different sub-paragraph of the *same* 投保范围 clause (same
+        # section, same revision), not yet cited as any S label -- the real
+        # report's R6 shape. `_edge_citation_for_relation`'s snippet-only
+        # path recomputes the chunk identity from the anchor + content
+        # digest and requires it to match `support.chunk_id`, so this must
+        # be the real formula, not an arbitrary string.
+        _r6_anchor = DocumentAnchor(
+            heading_path=("第二条 投保范围",), start_offset=20, end_offset=30
+        )
+        _r6_anchor_json = json.dumps(
+            {
+                "endOffset": _r6_anchor.end_offset,
+                "headingPath": list(_r6_anchor.heading_path),
+                "startOffset": _r6_anchor.start_offset,
+                "type": "document",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        _r6_content_digest = "sha256:" + "c" * 64
+        _r6_chunk_id = str(chunk_id_for(RevisionId("rev-1"), _r6_anchor_json, _r6_content_digest))
+        group_clause_snippet_relation = RelationEvidence(
+            label="R6",
+            edge_id="e-R6",
+            subject_node_id="subj-R6",
+            subject_label="团体",
+            subject_aliases=(),
+            object_node_id="obj-R6",
+            object_label="投保人",
+            object_aliases=(),
+            relation_type="PART_OF",
+            relation_label="可作为",
+            origin="EXTRACTED",
+            confidence=0.9,
+            support=(
+                RelationSupport(
+                    chunk_id=_r6_chunk_id,
+                    source_revision_id="rev-1",
+                    document_revision_id="rev-1",
+                    content_digest=_r6_content_digest,
+                    anchor={
+                        "type": "document",
+                        "startOffset": _r6_anchor.start_offset,
+                        "endOffset": _r6_anchor.end_offset,
+                        "headingPath": list(_r6_anchor.heading_path),
+                    },
+                    snippet="团体可以作为投保人。",
+                    document_id=_SRC_ID,
+                ),
+            ),
+            on_path=False,
+        )
+        context = RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(
+                *group_clause_relations,
+                doctor_definition_relation,
+                group_clause_snippet_relation,
+            ),
+        )
+        relation = _FakeRelationAnalysis(context)
+        knowledge = _relation_retrieval(search, model, relation_analysis=relation)
+        response = await knowledge.answer(_single_revision_request(), _single_revision_policy())
+
+        assert not response.abstained
+        # Surviving R labels are renumbered sequentially (R1..Rn in original
+        # rank order) once R5 is stripped, so R6 displays as whatever
+        # sequential label fills its slot -- identity is checked by chunk ID
+        # (unique per relation here) rather than by the original R-number.
+        edge_citations = [citation for citation in response.citations if citation.kind == "edge"]
+        assert len(edge_citations) == 5
+        edge_chunk_ids = [citation.chunk_id for citation in edge_citations]
+        assert edge_chunk_ids.count("chunk-group-clause") == 4  # R1-R4
+        assert edge_chunk_ids.count(_r6_chunk_id) == 1
+        assert "chunk-doctor-definition" not in edge_chunk_ids  # R5 stripped
+        assert "invalid-relation-citation" in response.degradation_reasons
+
+        investor_claim = next(
+            claim
+            for claim in response.claims
+            if claim.text
+            == "法人、非法人组织以及其他不以购买保险为目的而组成的团体可以作为投保人。"
+        )
+        insured_claim = next(
+            claim
+            for claim in response.claims
+            if claim.text
+            == (
+                "法人、非法人组织以及其他不以购买保险为目的而组成的团体的成员及其配偶、"
+                "子女可以作为被保险人。"
+            )
+        )
+        investor_citation_chunk_ids = {
+            next(c for c in response.citations if c.citation_id == cid).chunk_id
+            for cid in investor_claim.citation_ids
+        }
+        insured_citation_chunk_ids = {
+            next(c for c in response.citations if c.citation_id == cid).chunk_id
+            for cid in insured_claim.citation_ids
+        }
+        # R1-R3 (chunk-group-clause) and R6's fresh snippet (its own chunk)
+        # all survive on the investor claim, alongside its own S1.
+        assert investor_citation_chunk_ids == {"chunk-group-clause", _r6_chunk_id}
+        # R5 was stripped from this claim; only its S1 citation (and R4,
+        # also chunk-group-clause) survive.
+        assert insured_citation_chunk_ids == {"chunk-group-clause"}
+
+    asyncio.run(scenario())
+
+
 def _deep_revision_request() -> AnswerRequest:
     return AnswerRequest(
         query="核保流程与健康告知的关系是什么？",
@@ -2145,16 +2418,24 @@ def _snippet_only_relation_evidence(
 def test_snippet_only_support_is_resolved_into_a_citable_edge_citation() -> None:
     """A relation support that never became an `S` label (snippet-only) is
     still reconstructed into a citable edge citation from its own fields plus
-    the matching selected revision."""
+    the matching selected revision -- grounded here via the claim's own S1
+    citation sharing the snippet's section (`_SNIPPET_ANCHOR`'s "H" heading),
+    since a claim citing no S at all needs the support itself to be part of
+    the answer's retrieved context (see `relation_support_is_grounded_for_claim`),
+    which a pure, never-retrieved snippet by definition is not."""
 
     async def scenario() -> None:
-        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        hit = _relation_hit("chunk-s1", "rev-1", item_id="item-1")
+        hit = replace(
+            hit, source=replace(hit.source, anchor=replace(hit.source.anchor, heading_path=("H",)))
+        )
+        search = _SequencedSearchPort((hit,))
         model = _RecordingModel(
             [
                 AnswerGeneration(
                     text="核保流程需要健康告知。",
                     claims=(
-                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1",)),
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1", "S1")),
                     ),
                     model_id="m-1",
                     profile_id="grounded-answer-v1",

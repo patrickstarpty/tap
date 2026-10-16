@@ -123,7 +123,7 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 ### 2.5 引用模型与校验
 
 - `Citation` 增加 `kind`：`chunk`（现状）或 `edge`。边引用字段：`edge_id`、`graph_version`、`subject`（node_id、label）、`object`（node_id、label）、`relation_type`、`relation_label`、`evidence`（支撑切片的 chunk id、来源修订、内容摘要、锚点）。边引用最终仍锚定到原文。
-- `ports/answers.py` 校验：S 标签保持 `S1..S20` 位置规则；R 标签 `R1..R20`，必须对应本次 `RelationContext` 中的边；含 R 引用的 claim 文本须包含该边两端节点的 label 或任一别名；边引用的 `graph_version` 必须等于本次使用的版本。
+- `ports/answers.py` 校验：S 标签保持 `S1..S20` 位置规则；R 标签 `R1..R20`，必须对应本次 `RelationContext` 中的边；含 R 引用的 claim 文本须包含该边两端节点的 label 或任一别名（规范化匹配：接受括注限定语省略、全半角差异，并排除"保险人/被保险人/投保人"一类短标签被长标签字面包含导致的误配）；边引用的 `graph_version` 必须等于本次使用的版本。`application/relation_claims.py` 另外校验该边自身的支持证据（已引 S 切片的原文内容，或增强补入的新鲜切片文本）是否也同时提及两端节点，但这只是必要而非充分条件——支持证据可能字面同时提及两端却另有所指（如定义条款的举例列表）。决定性校验按该条 claim 是否自带 S 引用分支：claim 已引用 S 时，该边的支撑切片须是其中之一，或与其中之一同来源修订且同小节（最近标题）——不看该 claim 之外、答案里其他 claim 引用的 S 切片；共享的最近标题若本身是释义/定义类小节（标题以"释义""定义""名词解释"结尾，或标题路径上有这样的祖先标题）则不算同小节命中，只认精确命中同一 chunk（这类小节常见多个无关词条共用一个小节标题，真实 q-14 的"第二十七条 释义"即是此形）。claim 未引用任何 S 时，该边的支撑须本身是本轮已检索的切片（即其 `evidence_label` 已被标记为检索命中的 S 标签，不论这条 claim 是否引用它），仅凭前述端点与支持文字校验、支撑却是从未检索过的新鲜 snippet 不足以自证，直接剥离。无法确定支持证据原文时不因此剥离。
 - 校验失败处理：某个 claim 的 R 引用不合法时，去掉该 claim 的 R 标签后按 S 标签重新校验；仍有 S 标签则保留该 claim 并计入诊断 `invalid-relation-citation`，没有任何合法标签则丢弃该 claim；全部 claim 被丢弃才弃答。S 侧同理：文本无法与回答对齐、重复或引用未知标签的 claim 逐条丢弃，回答由剩余 claim 重建；全部丢弃时以 `insufficient_evidence` 弃答，不报服务不可用。多来源归属：S 证据带来源文档名与标题路径进入提示词；claim 文本点名某份证据文档（文件名或文档标题，多份文档共用的名称不算）而引用的 S 证据全部来自其他文档时丢弃该 claim。
 - 持久化：`citation_snapshot` 增加可空列 `citation_kind`、`graph_version`、`edge_id`、`subject_node_id`、`object_node_id`、`relation_type`、`relation_label`；历史行 `citation_kind` 默认 `chunk`。
 - 推荐问题的依据校验复用对话回答链路，自动支持 R 引用；刷新输入在"主要实体"之外加入"主要关系"（按度数与置信度取前 20 条）。
