@@ -15,10 +15,11 @@ from tap.modules.knowledge.application.relation_analysis import (
     RelationSupport,
 )
 from tap.modules.knowledge.application.relation_claims import (
+    ClaimChunkSection,
     claim_mentions_both_endpoints,
     reconcile_relation_claims,
+    relation_support_is_grounded_for_claim,
     relation_support_mentions_both_endpoints,
-    relation_support_overlaps_cited_chunks,
 )
 from tap.modules.knowledge.ports.models import AnswerGeneration, GeneratedClaim
 
@@ -321,8 +322,8 @@ def test_single_character_label_is_rejected_as_a_substring_match() -> None:
 # literally mentions both endpoints of a 被保险人/子女 relation while being
 # about an entirely different defined term. Both `claim_mentions_both_endpoints`
 # and `relation_support_mentions_both_endpoints` pass on this text alone;
-# only chunk identity (`relation_support_overlaps_cited_chunks`) can tell it
-# apart from a chunk that actually states the relationship.
+# only the claim-shaped check (`relation_support_is_grounded_for_claim`) can
+# tell it apart from a chunk that actually states the relationship.
 _UNRELATED_DOCTOR_DEFINITION = (
     "三十四、医生：指在医院内行医并拥有处方权的医生，亦指在被保险人接受诊断、医疗、处方或手术的"
     "地区内合法注册且有行医资格的医生；但不包括被保险人本人、被保险人的代理人、合伙人、雇员或雇"
@@ -334,9 +335,10 @@ def test_support_text_naming_both_endpoints_in_passing_does_not_satisfy_endpoint
     None
 ):
     """Documents the real q-14 R5 failure mode directly against the two
-    text-only endpoint checks, before the overlap check is even involved:
-    both pass on the unrelated doctor-definition text, which is exactly why
-    chunk-identity overlap (tested below) has to be the decisive gate."""
+    text-only endpoint checks, before the claim-shaped check is even
+    involved: both pass on the unrelated doctor-definition text, which is
+    exactly why `relation_support_is_grounded_for_claim` (tested below) has
+    to be the decisive gate."""
     relation = RelationEvidence(
         label="R1",
         edge_id="e-doctor-definition",
@@ -356,7 +358,7 @@ def test_support_text_naming_both_endpoints_in_passing_does_not_satisfy_endpoint
                 source_revision_id="rev-1",
                 document_revision_id="doc-1",
                 content_digest="digest-doctor",
-                anchor={"page": 1},
+                anchor={"page": 1, "headingPath": ["医生"]},
                 evidence_label="S9",
             ),
         ),
@@ -368,50 +370,64 @@ def test_support_text_naming_both_endpoints_in_passing_does_not_satisfy_endpoint
     )
 
 
-def test_r_label_whose_support_chunk_is_not_the_claims_cited_s_chunk_is_stripped() -> None:
-    """The decisive fix: even with both endpoint checks passing (previous
-    test), the R label is stripped when its support's chunk is not among
-    the chunks actually cited as S evidence for this claim."""
-    relation = RelationEvidence(
-        label="R1",
-        edge_id="e-doctor-definition",
-        subject_node_id="A",
-        subject_label="被保险人",
-        subject_aliases=(),
-        object_node_id="B",
-        object_label="子女",
-        object_aliases=(),
-        relation_type="RELATED_TO",
-        relation_label="RELATED_TO",
-        origin="EXTRACTED",
-        confidence=0.9,
-        support=(
-            RelationSupport(
-                chunk_id="chunk-doctor",
-                source_revision_id="rev-1",
-                document_revision_id="doc-1",
-                content_digest="digest-doctor",
-                anchor={"page": 1},
-                evidence_label="S9",
-            ),
+_DOCTOR_DEFINITION_RELATION = RelationEvidence(
+    label="R1",
+    edge_id="e-doctor-definition",
+    subject_node_id="A",
+    subject_label="被保险人",
+    subject_aliases=(),
+    object_node_id="B",
+    object_label="子女",
+    object_aliases=(),
+    relation_type="RELATED_TO",
+    relation_label="RELATED_TO",
+    origin="EXTRACTED",
+    confidence=0.9,
+    support=(
+        RelationSupport(
+            chunk_id="chunk-doctor",
+            source_revision_id="rev-1",
+            document_revision_id="doc-1",
+            content_digest="digest-doctor",
+            anchor={"page": 1, "headingPath": ["医生"]},
+            evidence_label="S9",
         ),
-        on_path=False,
-    )
-    context = RelationContext(
-        status=RelationContextStatus.APPLIED, graph_version="7", relations=(relation,)
-    )
+    ),
+    on_path=False,
+)
+
+_GROUP_CLAUSE_CLAIM_SECTION = ClaimChunkSection(
+    chunk_id="chunk-group-medical-clause-2",
+    source_revision_id="rev-1",
+    heading="第二条 投保范围",
+)
+
+
+def test_r_label_whose_support_chunk_is_not_the_claims_cited_s_chunk_or_section_is_stripped() -> (
+    None
+):
+    """The decisive fix: even with both endpoint checks passing (previous
+    test), the R label is stripped when its support is neither one of the
+    chunks this claim cites as S evidence, nor in the same revision and
+    section as one of them -- the real q-14 R5 case, whose support is a
+    different chunk (different section, "医生" vs "第二条 投保范围") from
+    the claim's own S1."""
     claim = GeneratedClaim(text="被保险人的子女可以作为被保险人。", evidence_labels=("R1", "S1"))
     result = reconcile_relation_claims(
         _generation((claim,)),
-        context,
+        RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(_DOCTOR_DEFINITION_RELATION,),
+        ),
         graph_version="7",
         evidence_content={"chunk-doctor": _UNRELATED_DOCTOR_DEFINITION},
-        label_chunk_ids={"S9": "chunk-doctor", "S1": "chunk-group-medical-clause-2"},
+        label_chunk_sections={"S1": _GROUP_CLAUSE_CLAIM_SECTION},
     )
     assert result.claims[0].evidence_labels == ("S1",)
     assert result.stripped == 1
-    assert not relation_support_overlaps_cited_chunks(
-        relation, frozenset({"chunk-group-medical-clause-2"}), frozenset()
+    assert not relation_support_is_grounded_for_claim(
+        _DOCTOR_DEFINITION_RELATION, (_GROUP_CLAUSE_CLAIM_SECTION,)
     )
 
 
@@ -436,7 +452,7 @@ def test_r_label_whose_support_chunk_matches_claims_cited_s_chunk_is_kept() -> N
                 document_revision_id="doc-1",
                 content_digest="digest-group",
                 evidence_label="S1",
-                anchor={"page": 1},
+                anchor={"page": 1, "headingPath": ["第二条 投保范围"]},
             ),
         ),
         on_path=False,
@@ -450,17 +466,120 @@ def test_r_label_whose_support_chunk_matches_claims_cited_s_chunk_is_kept() -> N
         context,
         graph_version="7",
         evidence_content={"chunk-group-medical-clause-2": "团体可以作为投保人。"},
-        label_chunk_ids={"S1": "chunk-group-medical-clause-2"},
+        label_chunk_sections={"S1": _GROUP_CLAUSE_CLAIM_SECTION},
     )
     assert result.claims[0].evidence_labels == ("R1", "S1")
     assert result.stripped == 0
+    assert relation_support_is_grounded_for_claim(relation, (_GROUP_CLAUSE_CLAIM_SECTION,))
 
 
-def test_r_label_without_any_s_evidence_anywhere_is_not_penalized_by_overlap_check() -> None:
-    # No claim in the answer cites any S label at all: there is nothing to
-    # compare chunk identity against, so the overlap check must not be the
-    # thing that strips this otherwise-valid R-only citation (same
-    # benefit-of-doubt stance as the other two guards).
+def test_r_label_whose_support_is_a_fresh_snippet_in_the_claims_same_section_is_kept() -> None:
+    """The real-model R6 case: a fresh (not yet S-cited) snippet from the
+    same 投保范围 clause as the claim's own S1 -- different chunk ID (a
+    different sub-paragraph of the same section), same revision and
+    section -- must still ground the R citation, not just an exact chunk
+    match."""
+    relation = RelationEvidence(
+        label="R1",
+        edge_id="e-group-clause-snippet",
+        subject_node_id="A",
+        subject_label="非法人组织",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="投保人",
+        object_aliases=(),
+        relation_type="PART_OF",
+        relation_label="可作为投保人",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(
+            RelationSupport(
+                chunk_id="chunk-group-medical-clause-2-part-b",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                content_digest="digest-group-b",
+                anchor={"page": 1, "headingPath": ["第二条 投保范围"]},
+                snippet="非法人组织可以作为投保人。",
+            ),
+        ),
+        on_path=False,
+    )
+    context = RelationContext(
+        status=RelationContextStatus.APPLIED, graph_version="7", relations=(relation,)
+    )
+    claim = GeneratedClaim(text="非法人组织可以作为投保人。", evidence_labels=("R1", "S1"))
+    result = reconcile_relation_claims(
+        _generation((claim,)),
+        context,
+        graph_version="7",
+        label_chunk_sections={"S1": _GROUP_CLAUSE_CLAIM_SECTION},
+    )
+    assert result.claims[0].evidence_labels == ("R1", "S1")
+    assert result.stripped == 0
+    assert relation_support_is_grounded_for_claim(relation, (_GROUP_CLAUSE_CLAIM_SECTION,))
+
+
+def test_r_label_matching_a_different_claims_s_chunk_is_still_stripped() -> None:
+    """Per-claim isolation: a chunk cited as S only by some *other* claim in
+    the same answer must not ground this claim's R citation -- judging a
+    claim's R labels against the whole answer's S set (tried and reverted)
+    both let unrelated support through when any other claim cited S, and
+    stripped a legitimate R-only claim whenever some other claim's S chunk
+    did not happen to overlap."""
+    other_claim_section = ClaimChunkSection(
+        chunk_id="chunk-other-claim-s1", source_revision_id="rev-1", heading="第三条 保险责任"
+    )
+    relation = RelationEvidence(
+        label="R1",
+        edge_id="e-other-claim-chunk",
+        subject_node_id="A",
+        subject_label="团体",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="投保人",
+        object_aliases=(),
+        relation_type="PART_OF",
+        relation_label="可作为投保人",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(
+            RelationSupport(
+                chunk_id="chunk-other-claim-s1",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                content_digest="digest-other",
+                evidence_label="S2",
+                anchor={"page": 1, "headingPath": ["第三条 保险责任"]},
+            ),
+        ),
+        on_path=False,
+    )
+    context = RelationContext(
+        status=RelationContextStatus.APPLIED, graph_version="7", relations=(relation,)
+    )
+    claims = (
+        GeneratedClaim(text="已付保险费的情况说明。", evidence_labels=("S2",)),
+        GeneratedClaim(text="团体可以作为投保人。", evidence_labels=("R1", "S1")),
+    )
+    result = reconcile_relation_claims(
+        _generation(claims),
+        context,
+        graph_version="7",
+        label_chunk_sections={
+            "S1": _GROUP_CLAUSE_CLAIM_SECTION,
+            "S2": other_claim_section,
+        },
+    )
+    second_claim = next(claim for claim in result.claims if "团体" in claim.text)
+    assert second_claim.evidence_labels == ("S1",)
+    assert result.stripped == 1
+
+
+def test_r_label_without_any_s_evidence_in_this_claim_self_evidences() -> None:
+    # This claim cites no S label at all: there is nothing from the claim
+    # itself to check support against, so the citation falls back to pure
+    # self-evidencing via the endpoint-mention checks only (this module's
+    # original behavior), independent of chunk identity or section.
     kept = reconcile_relation_claims(
         _generation((GeneratedClaim(text="核保需要健康告知。", evidence_labels=("R1",)),)),
         _CONTEXT,
@@ -468,7 +587,7 @@ def test_r_label_without_any_s_evidence_anywhere_is_not_penalized_by_overlap_che
     )
     assert kept.claims[0].evidence_labels == ("R1",)
     assert kept.stripped == 0
-    assert relation_support_overlaps_cited_chunks(_RELATION, frozenset(), frozenset())
+    assert relation_support_is_grounded_for_claim(_RELATION, ())
 
 
 def test_short_role_label_does_not_falsely_match_inside_a_longer_role_label() -> None:

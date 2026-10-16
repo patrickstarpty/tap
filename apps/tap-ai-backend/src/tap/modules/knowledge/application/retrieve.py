@@ -38,7 +38,11 @@ from tap.modules.knowledge.application.relation_analysis import (
     RelationContextStatus,
     RelationEvidence,
 )
-from tap.modules.knowledge.application.relation_claims import reconcile_relation_claims
+from tap.modules.knowledge.application.relation_claims import (
+    ClaimChunkSection,
+    nearest_heading,
+    reconcile_relation_claims,
+)
 from tap.modules.knowledge.domain.documents import (
     DocumentId,
     RevisionId,
@@ -619,13 +623,24 @@ class AuthorizedRetrieval:
         s_citations = [self._citation(item) for item in run.response.evidence]
         if relation is not None:
             evidence_content = {item.chunk_id: item.content for item in run.response.evidence}
-            label_chunk_ids = {item.evidence_label: item.chunk_id for item in run.response.evidence}
+            label_chunk_sections = {
+                item.evidence_label: ClaimChunkSection(
+                    chunk_id=item.chunk_id,
+                    source_revision_id=item.source.revision,
+                    heading=(
+                        nearest_heading(item.source.anchor.heading_path)
+                        if isinstance(item.source.anchor, DocumentAnchor)
+                        else None
+                    ),
+                )
+                for item in run.response.evidence
+            }
             reconciled = reconcile_relation_claims(
                 generation,
                 relation,
                 graph_version=relation.graph_version,
                 evidence_content=evidence_content,
-                label_chunk_ids=label_chunk_ids,
+                label_chunk_sections=label_chunk_sections,
             )
             stripped = reconciled.stripped
             if reconciled.claims == () and generation.claims:

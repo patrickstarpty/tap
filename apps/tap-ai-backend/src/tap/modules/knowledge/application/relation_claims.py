@@ -3,25 +3,35 @@
 The model may cite an `R` label without the claim text actually naming both
 endpoints of that edge, cite a label that does not exist in this turn's
 `RelationContext`, cite one minted under a stale graph version, or cite a
-relation whose own supporting chunk is not among the S chunks actually
-cited for that claim (the merged graph can associate an edge with a chunk
-that happens to name both endpoints -- e.g. an unrelated definitions clause
-that merely lists one endpoint among several examples -- without that chunk
-having anything to do with the claim being made). This module re-checks
-every `R` label on every claim after generation and strips what does not
-hold, dropping a claim entirely only if nothing legitimate is left to cite
-it. The endpoint-mention text checks (`claim_mentions_both_endpoints`,
+relation whose own support is not actually grounded for this claim. The
+endpoint-mention text checks (`claim_mentions_both_endpoints`,
 `relation_support_mentions_both_endpoints`) are necessary but not
 sufficient on their own -- a chunk can name both endpoints verbatim while
-being about something else entirely -- so the decisive check is that the
-relation's own supporting chunk(s) overlap the chunk(s) actually cited as
-this claim's (or, failing that, the answer's) S evidence.
+being about something else entirely (e.g. an unrelated definitions clause
+that merely lists one endpoint among several examples) -- so a further,
+claim-shaped check applies:
+
+- When the claim cites its own S evidence, a relation's support must either
+  be one of those same chunks, or -- for a snippet/other, not-yet-cited
+  chunk -- share both the source revision and the section (nearest heading)
+  of one of them. An S-cited chunk elsewhere in the answer, or no section
+  information at all, does not establish this.
+- When the claim cites no S evidence at all, there is nothing from the
+  claim itself to check support against; the relation's own support still
+  has to pass the endpoint-mention checks, which is the original,
+  self-evidencing behavior this module had before the claim-shaped check
+  was added.
+
+This module re-checks every `R` label on every claim after generation and
+strips what does not hold, dropping a claim entirely only if nothing
+legitimate is left to cite it.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -36,12 +46,28 @@ from tap.modules.knowledge.application.relation_analysis import (
 from tap.modules.knowledge.ports.models import AnswerGeneration, GeneratedClaim
 
 __all__ = [
+    "ClaimChunkSection",
     "ReconciledClaims",
     "claim_mentions_both_endpoints",
+    "nearest_heading",
     "reconcile_relation_claims",
+    "relation_support_is_grounded_for_claim",
     "relation_support_mentions_both_endpoints",
-    "relation_support_overlaps_cited_chunks",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimChunkSection:
+    """One S-cited chunk's identity and location, as needed to judge
+    whether a relation's support shares its section: `chunk_id` for the
+    exact-chunk check, `source_revision_id` and `heading` (the chunk's
+    nearest heading, already normalized by `_nearest_heading`, or `None`
+    when the chunk carries no heading path) for the same-section
+    fallback."""
+
+    chunk_id: str
+    source_revision_id: str
+    heading: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +84,7 @@ def reconcile_relation_claims(
     *,
     graph_version: str | None,
     evidence_content: Mapping[str, str] = MappingProxyType({}),
-    label_chunk_ids: Mapping[str, str] = MappingProxyType({}),
+    label_chunk_sections: Mapping[str, ClaimChunkSection] = MappingProxyType({}),
 ) -> ReconciledClaims:
     """`evidence_content` maps a chunk ID to its text, for every chunk the
     current turn's S evidence selection resolved (i.e. `Evidence.content`
@@ -71,34 +97,31 @@ def reconcile_relation_claims(
     partial mapping) cannot strip a citation that the stricter check below
     was never given the means to evaluate.
 
-    `label_chunk_ids` maps an S evidence label to its chunk ID (i.e.
-    `Evidence.chunk_id` keyed by `Evidence.evidence_label`). It drives the
-    decisive overlap check: a relation's own supporting chunk(s) must
-    overlap the chunk(s) this specific claim cites as S evidence, or --
-    when the claim cites no S evidence at all -- the chunk(s) cited as S
-    evidence anywhere in the answer. Omitting it (or passing a partial
-    mapping) degrades to "no S evidence to compare against" for the labels
-    it is missing, which `relation_support_overlaps_cited_chunks` treats as
-    unverifiable, not invalid."""
+    `label_chunk_sections` maps an S evidence label to its `ClaimChunkSection`
+    (i.e. built from `Evidence.chunk_id`/`.source.revision`/`.source.anchor`,
+    keyed by `Evidence.evidence_label`). It drives `relation_support_is_grounded_for_claim`:
+    a relation's support must match one of *this claim's own* S citations by
+    chunk ID or by (revision, section) -- a chunk cited as S only by some
+    other claim in the answer does not count, by design (see that function's
+    docstring for why "cited somewhere in the answer" was tried and
+    reverted). Omitting this argument (or passing a partial mapping)
+    degrades to "no section information for this label," which is treated
+    as not matching, not as unverifiable -- unlike `evidence_content`, there
+    is no claim-independent default here that would not risk hiding the
+    same false-positive the claim-shaped check exists to catch."""
     by_label = (
         context.by_label()
         if context is not None and context.status is RelationContextStatus.APPLIED
         else {}
     )
-    answer_s_chunk_ids = frozenset(
-        label_chunk_ids[label]
-        for claim in generation.claims
-        for label in claim.evidence_labels
-        if label.startswith("S") and label in label_chunk_ids
-    )
     retained: list[GeneratedClaim] = []
     stripped = 0
     dropped = 0
     for claim in generation.claims:
-        claim_s_chunk_ids = frozenset(
-            label_chunk_ids[label]
+        claim_sections = tuple(
+            label_chunk_sections[label]
             for label in claim.evidence_labels
-            if label.startswith("S") and label in label_chunk_ids
+            if label.startswith("S") and label in label_chunk_sections
         )
         kept_labels: list[str] = []
         for label in claim.evidence_labels:
@@ -112,9 +135,7 @@ def reconcile_relation_claims(
                 and context.graph_version == graph_version
                 and claim_mentions_both_endpoints(claim.text, relation)
                 and relation_support_mentions_both_endpoints(relation, evidence_content)
-                and relation_support_overlaps_cited_chunks(
-                    relation, claim_s_chunk_ids, answer_s_chunk_ids
-                )
+                and relation_support_is_grounded_for_claim(relation, claim_sections)
             )
             if is_valid:
                 kept_labels.append(label)
@@ -265,27 +286,68 @@ def relation_support_mentions_both_endpoints(
     return any(claim_mentions_both_endpoints(text, relation) for text in texts)
 
 
-def relation_support_overlaps_cited_chunks(
+def nearest_heading(headings: object) -> str | None:
+    """The normalized last heading in a `headingPath`-shaped list, or
+    `None` when there is none to normalize. Mirrors `retrieve.py`'s
+    `_clause_heading` normalization (NFKC, casefold, whitespace-fold) so a
+    claim-side heading (from `Evidence.source.anchor`, a `DocumentAnchor`'s
+    `heading_path`) and a support-side heading (from `RelationSupport.anchor`,
+    a raw `Mapping`'s `headingPath` key) compare equal whenever they name the
+    same section, regardless of which shape they came from. Exported so
+    `retrieve.py` can build matching `ClaimChunkSection.heading` values from
+    the claim side with the exact same normalization used here for the
+    support side."""
+    if not isinstance(headings, (list, tuple)) or not headings:
+        return None
+    last = headings[-1]
+    if not isinstance(last, str):
+        return None
+    normalized = " ".join(unicodedata.normalize("NFKC", last).casefold().split())
+    return normalized or None
+
+
+def _support_heading(support: RelationSupport) -> str | None:
+    return nearest_heading(support.anchor.get("headingPath"))
+
+
+def relation_support_is_grounded_for_claim(
     relation: RelationEvidence,
-    claim_s_chunk_ids: frozenset[str],
-    answer_s_chunk_ids: frozenset[str],
+    claim_sections: tuple[ClaimChunkSection, ...],
 ) -> bool:
-    """The decisive grounding check: a relation's own supporting chunk(s)
-    must be among the chunks actually cited as S evidence -- by this same
-    claim when it cites any, otherwise by the answer as a whole -- not
-    merely a chunk that happens to name both endpoints in passing. A merged
-    graph can hand a relation support whose chunk is a wholly unrelated
-    definitions clause that lists an endpoint among several unrelated
-    examples (e.g. an exclusion list naming "被保险人的家庭成员，如配偶、
-    ……子女" for an entirely different defined term); the endpoint-mention
-    text checks alone cannot tell that apart from a chunk that actually
-    states the relationship, since both literally contain the endpoint
-    text. Chunk identity can. When neither `claim_s_chunk_ids` nor
-    `answer_s_chunk_ids` has anything to compare against (no S evidence
-    cited anywhere), this does not penalize the relation -- there is
-    nothing here to contradict it."""
-    target = claim_s_chunk_ids or answer_s_chunk_ids
-    if not target:
+    """The claim-shaped grounding check: when the claim cites its own S
+    evidence (`claim_sections` non-empty), a relation's support must be one
+    of those same chunks, or -- for a snippet/other chunk not yet cited --
+    share both the source revision and the section (nearest heading) of one
+    of them; a chunk cited as S only by some *other* claim in the answer, or
+    with no section information on either side, does not establish this.
+    ("Cited anywhere in the answer" was tried first and reverted: it let an
+    unrelated support through whenever the answer happened to cite S
+    evidence elsewhere, and -- backwards -- stripped a legitimate R-only
+    claim whenever any other claim's S chunk did not happen to overlap,
+    while an answer with no S evidence anywhere passed everything. Judging
+    each claim only against its own S evidence removes both.)
+
+    When the claim cites no S evidence at all (`claim_sections` empty),
+    there is nothing from the claim itself to check support against; this
+    does not penalize the relation -- `claim_mentions_both_endpoints` and
+    `relation_support_mentions_both_endpoints` are the only grounding this
+    citation needs or gets, matching this module's original,
+    self-evidencing behavior before the claim-shaped check existed."""
+    if not claim_sections:
         return True
+    claim_chunk_ids = {section.chunk_id for section in claim_sections}
     support_chunk_ids = {support.chunk_id for support in relation.support}
-    return bool(support_chunk_ids & target)
+    if support_chunk_ids & claim_chunk_ids:
+        return True
+    claim_locations = {
+        (section.source_revision_id, section.heading)
+        for section in claim_sections
+        if section.heading is not None
+    }
+    if not claim_locations:
+        return False
+    for support in relation.support:
+        heading = _support_heading(support)
+        if heading is not None and (support.source_revision_id, heading) in claim_locations:
+            return True
+    return False
