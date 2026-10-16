@@ -329,6 +329,14 @@ _UNRELATED_DOCTOR_DEFINITION = (
     "地区内合法注册且有行医资格的医生；但不包括被保险人本人、被保险人的代理人、合伙人、雇员或雇"
     "主，或被保险人的家庭成员，如配偶、兄弟、姐妹、父母、子女以及其他具有类似亲密关系的人。"
 )
+# The real heading path of the chunk that carries that text (per
+# `/tmp/tap-real3/qa-q-04.json`'s resolved citation for the same revision's
+# `h_a86a9c…` glossary chunk): a document title plus "第二十七条 释义" --
+# a definitions section whose many distinct glossary entries, in the real
+# answer, share this exact nearest heading (the real S3 citation did too,
+# which is how R5 slipped through the section-match fallback before the
+# definitions-section tightening below).
+_DEFINITIONS_SECTION_HEADING_PATH = ("友邦尊享智选康惠团体医疗保险", "第二十七条 释义")
 
 
 def test_support_text_naming_both_endpoints_in_passing_does_not_satisfy_endpoint_checks_alone() -> (
@@ -358,7 +366,7 @@ def test_support_text_naming_both_endpoints_in_passing_does_not_satisfy_endpoint
                 source_revision_id="rev-1",
                 document_revision_id="doc-1",
                 content_digest="digest-doctor",
-                anchor={"page": 1, "headingPath": ["医生"]},
+                anchor={"page": 1, "headingPath": list(_DEFINITIONS_SECTION_HEADING_PATH)},
                 evidence_label="S9",
             ),
         ),
@@ -389,7 +397,7 @@ _DOCTOR_DEFINITION_RELATION = RelationEvidence(
             source_revision_id="rev-1",
             document_revision_id="doc-1",
             content_digest="digest-doctor",
-            anchor={"page": 1, "headingPath": ["医生"]},
+            anchor={"page": 1, "headingPath": list(_DEFINITIONS_SECTION_HEADING_PATH)},
             evidence_label="S9",
         ),
     ),
@@ -399,7 +407,7 @@ _DOCTOR_DEFINITION_RELATION = RelationEvidence(
 _GROUP_CLAUSE_CLAIM_SECTION = ClaimChunkSection(
     chunk_id="chunk-group-medical-clause-2",
     source_revision_id="rev-1",
-    heading="第二条 投保范围",
+    heading_path=("第二条 投保范围",),
 )
 
 
@@ -410,8 +418,8 @@ def test_r_label_whose_support_chunk_is_not_the_claims_cited_s_chunk_or_section_
     test), the R label is stripped when its support is neither one of the
     chunks this claim cites as S evidence, nor in the same revision and
     section as one of them -- the real q-14 R5 case, whose support is a
-    different chunk (different section, "医生" vs "第二条 投保范围") from
-    the claim's own S1."""
+    different chunk in a different section ("第二十七条 释义" vs "第二条
+    投保范围") from the claim's own S1."""
     claim = GeneratedClaim(text="被保险人的子女可以作为被保险人。", evidence_labels=("R1", "S1"))
     result = reconcile_relation_claims(
         _generation((claim,)),
@@ -527,7 +535,9 @@ def test_r_label_matching_a_different_claims_s_chunk_is_still_stripped() -> None
     stripped a legitimate R-only claim whenever some other claim's S chunk
     did not happen to overlap."""
     other_claim_section = ClaimChunkSection(
-        chunk_id="chunk-other-claim-s1", source_revision_id="rev-1", heading="第三条 保险责任"
+        chunk_id="chunk-other-claim-s1",
+        source_revision_id="rev-1",
+        heading_path=("第三条 保险责任",),
     )
     relation = RelationEvidence(
         label="R1",
@@ -575,11 +585,13 @@ def test_r_label_matching_a_different_claims_s_chunk_is_still_stripped() -> None
     assert result.stripped == 1
 
 
-def test_r_label_without_any_s_evidence_in_this_claim_self_evidences() -> None:
-    # This claim cites no S label at all: there is nothing from the claim
-    # itself to check support against, so the citation falls back to pure
-    # self-evidencing via the endpoint-mention checks only (this module's
-    # original behavior), independent of chunk identity or section.
+def test_r_label_without_any_s_evidence_in_this_claim_but_support_is_retrieved_is_kept() -> None:
+    # This claim cites no S label at all, but the relation's only support
+    # (`_SUPPORT`) carries `evidence_label="S1"` -- it is part of the
+    # answer's retrieved context, cited by some claim or not (the real
+    # report's R7 shape: support = a retrieved-but-uncited S chunk). No
+    # chunk/section comparison applies; the endpoint-mention checks
+    # (exercised elsewhere) are the only other gate.
     kept = reconcile_relation_claims(
         _generation((GeneratedClaim(text="核保需要健康告知。", evidence_labels=("R1",)),)),
         _CONTEXT,
@@ -588,6 +600,121 @@ def test_r_label_without_any_s_evidence_in_this_claim_self_evidences() -> None:
     assert kept.claims[0].evidence_labels == ("R1",)
     assert kept.stripped == 0
     assert relation_support_is_grounded_for_claim(_RELATION, ())
+
+
+def test_r_only_claim_with_unretrieved_snippet_support_is_stripped() -> None:
+    """The real q-14 R5 shape as an R-only citation: the claim cites no S
+    evidence, and the relation's only support is a snippet never retrieved
+    this turn (no `evidence_label` -- known only through the merged graph's
+    own fragment evidence, not this turn's search/augmentation). There is
+    no S anchor in this claim to fall back on, so the citation is stripped
+    even though the snippet's text names both endpoints (see the earlier
+    `test_support_text_naming_both_endpoints_in_passing_does_not_satisfy_endpoint_checks_alone`-
+    style text check, which would have passed this on text alone before
+    this fix)."""
+    snippet_only_relation = RelationEvidence(
+        label="R1",
+        edge_id="e-doctor-definition-snippet",
+        subject_node_id="A",
+        subject_label="被保险人",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="子女",
+        object_aliases=(),
+        relation_type="RELATED_TO",
+        relation_label="RELATED_TO",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(
+            RelationSupport(
+                chunk_id="chunk-doctor-snippet",
+                source_revision_id="rev-1",
+                document_revision_id="doc-1",
+                content_digest="digest-doctor-snippet",
+                anchor={"page": 1, "headingPath": list(_DEFINITIONS_SECTION_HEADING_PATH)},
+                snippet=_UNRELATED_DOCTOR_DEFINITION,
+            ),
+        ),
+        on_path=False,
+    )
+    context = RelationContext(
+        status=RelationContextStatus.APPLIED, graph_version="7", relations=(snippet_only_relation,)
+    )
+    claim = GeneratedClaim(text="被保险人的子女可以作为被保险人。", evidence_labels=("R1",))
+    result = reconcile_relation_claims(_generation((claim,)), context, graph_version="7")
+    assert result.claims == ()
+    assert result.dropped == 1
+    assert not relation_support_is_grounded_for_claim(snippet_only_relation, ())
+
+
+def test_shared_definitions_section_heading_does_not_ground_without_exact_chunk_match() -> None:
+    """The real report's actual failure (reviewer's re-review, not just the
+    earlier "different section" test above): the claim's own S chunk and
+    R5's support chunk share the *exact same* nearest heading, "第二十七条
+    释义" -- the real S3 citation and R5's doctor-definition chunk both sit
+    in that glossary section. A shared nearest heading is too coarse a
+    signal there, since many unrelated glossary entries share it; only an
+    exact chunk match grounds a citation in a definitions section."""
+    claim_in_definitions_section = ClaimChunkSection(
+        chunk_id="chunk-s3-glossary-entry",
+        source_revision_id="rev-1",
+        heading_path=_DEFINITIONS_SECTION_HEADING_PATH,
+    )
+    assert not relation_support_is_grounded_for_claim(
+        _DOCTOR_DEFINITION_RELATION, (claim_in_definitions_section,)
+    )
+    claim = GeneratedClaim(text="被保险人的子女可以作为被保险人。", evidence_labels=("R1", "S1"))
+    result = reconcile_relation_claims(
+        _generation((claim,)),
+        RelationContext(
+            status=RelationContextStatus.APPLIED,
+            graph_version="7",
+            relations=(_DOCTOR_DEFINITION_RELATION,),
+        ),
+        graph_version="7",
+        evidence_content={"chunk-doctor": _UNRELATED_DOCTOR_DEFINITION},
+        label_chunk_sections={"S1": claim_in_definitions_section},
+    )
+    assert result.claims[0].evidence_labels == ("S1",)
+    assert result.stripped == 1
+
+
+def test_shared_non_definitions_section_heading_still_grounds_a_fresh_snippet() -> None:
+    # Control for the previous test: the same shared-nearest-heading
+    # fallback must still work when the shared heading is *not* a
+    # definitions section (R6's real shape -- see
+    # `test_r_label_whose_support_is_a_fresh_snippet_in_the_claims_same_section_is_kept`
+    # for the full scenario; this re-asserts the same guarantee directly
+    # against the helper so the two code paths (definitions vs not) are
+    # each covered by their own direct assertion).
+    assert relation_support_is_grounded_for_claim(
+        RelationEvidence(
+            label="R1",
+            edge_id="e-group-clause-snippet-direct",
+            subject_node_id="A",
+            subject_label="非法人组织",
+            subject_aliases=(),
+            object_node_id="B",
+            object_label="投保人",
+            object_aliases=(),
+            relation_type="PART_OF",
+            relation_label="可作为投保人",
+            origin="EXTRACTED",
+            confidence=0.9,
+            support=(
+                RelationSupport(
+                    chunk_id="chunk-group-medical-clause-2-part-b",
+                    source_revision_id="rev-1",
+                    document_revision_id="doc-1",
+                    content_digest="digest-group-b",
+                    anchor={"page": 1, "headingPath": ["第二条 投保范围"]},
+                    snippet="非法人组织可以作为投保人。",
+                ),
+            ),
+            on_path=False,
+        ),
+        (_GROUP_CLAUSE_CLAIM_SECTION,),
+    )
 
 
 def test_short_role_label_does_not_falsely_match_inside_a_longer_role_label() -> None:

@@ -2406,16 +2406,24 @@ def _snippet_only_relation_evidence(
 def test_snippet_only_support_is_resolved_into_a_citable_edge_citation() -> None:
     """A relation support that never became an `S` label (snippet-only) is
     still reconstructed into a citable edge citation from its own fields plus
-    the matching selected revision."""
+    the matching selected revision -- grounded here via the claim's own S1
+    citation sharing the snippet's section (`_SNIPPET_ANCHOR`'s "H" heading),
+    since a claim citing no S at all needs the support itself to be part of
+    the answer's retrieved context (see `relation_support_is_grounded_for_claim`),
+    which a pure, never-retrieved snippet by definition is not."""
 
     async def scenario() -> None:
-        search = _SequencedSearchPort((_relation_hit("chunk-s1", "rev-1", item_id="item-1"),))
+        hit = _relation_hit("chunk-s1", "rev-1", item_id="item-1")
+        hit = replace(
+            hit, source=replace(hit.source, anchor=replace(hit.source.anchor, heading_path=("H",)))
+        )
+        search = _SequencedSearchPort((hit,))
         model = _RecordingModel(
             [
                 AnswerGeneration(
                     text="核保流程需要健康告知。",
                     claims=(
-                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1",)),
+                        GeneratedClaim(text="核保流程需要健康告知。", evidence_labels=("R1", "S1")),
                     ),
                     model_id="m-1",
                     profile_id="grounded-answer-v1",

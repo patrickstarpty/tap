@@ -40,7 +40,7 @@ from tap.modules.knowledge.application.relation_analysis import (
 )
 from tap.modules.knowledge.application.relation_claims import (
     ClaimChunkSection,
-    nearest_heading,
+    normalized_heading_path,
     reconcile_relation_claims,
 )
 from tap.modules.knowledge.domain.documents import (
@@ -627,10 +627,10 @@ class AuthorizedRetrieval:
                 item.evidence_label: ClaimChunkSection(
                     chunk_id=item.chunk_id,
                     source_revision_id=item.source.revision,
-                    heading=(
-                        nearest_heading(item.source.anchor.heading_path)
+                    heading_path=(
+                        normalized_heading_path(item.source.anchor.heading_path)
                         if isinstance(item.source.anchor, DocumentAnchor)
-                        else None
+                        else ()
                     ),
                 )
                 for item in run.response.evidence

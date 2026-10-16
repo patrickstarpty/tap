@@ -15,12 +15,20 @@ claim-shaped check applies:
   be one of those same chunks, or -- for a snippet/other, not-yet-cited
   chunk -- share both the source revision and the section (nearest heading)
   of one of them. An S-cited chunk elsewhere in the answer, or no section
-  information at all, does not establish this.
+  information at all, does not establish this. A shared nearest heading is
+  not trusted, however, when that heading is itself a definitions section
+  (ends with 释义/定义/名词解释, or the chunk's full heading path contains
+  one): such a section's chunks commonly share one heading while each
+  defining an unrelated term, so only an exact chunk match grounds a
+  citation there.
 - When the claim cites no S evidence at all, there is nothing from the
-  claim itself to check support against; the relation's own support still
-  has to pass the endpoint-mention checks, which is the original,
-  self-evidencing behavior this module had before the claim-shaped check
-  was added.
+  claim itself to check support against. The relation's support must then
+  be part of the answer's own retrieved context (an S-labelled chunk, cited
+  by this claim or not) rather than a snippet never retrieved this turn --
+  a fresh snippet with no S anchor in this same claim has nothing to ground
+  it. This, together with the endpoint-mention checks, replaces this
+  module's earlier purely self-evidencing behavior for claims with no S,
+  which let an unrelated snippet-only support through on text alone.
 
 This module re-checks every `R` label on every claim after generation and
 strips what does not hold, dropping a claim entirely only if nothing
@@ -50,6 +58,7 @@ __all__ = [
     "ReconciledClaims",
     "claim_mentions_both_endpoints",
     "nearest_heading",
+    "normalized_heading_path",
     "reconcile_relation_claims",
     "relation_support_is_grounded_for_claim",
     "relation_support_mentions_both_endpoints",
@@ -60,14 +69,16 @@ __all__ = [
 class ClaimChunkSection:
     """One S-cited chunk's identity and location, as needed to judge
     whether a relation's support shares its section: `chunk_id` for the
-    exact-chunk check, `source_revision_id` and `heading` (the chunk's
-    nearest heading, already normalized by `_nearest_heading`, or `None`
-    when the chunk carries no heading path) for the same-section
-    fallback."""
+    exact-chunk check; `source_revision_id` and `heading_path` (the
+    chunk's full heading path, each entry already normalized by
+    `normalized_heading_path`, or `()` when the chunk carries no heading
+    path) for the same-section fallback -- the *full* path, not just the
+    nearest heading, because detecting a definitions section can require
+    an ancestor heading the chunk's own nearest heading does not repeat."""
 
     chunk_id: str
     source_revision_id: str
-    heading: str | None
+    heading_path: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,28 +297,56 @@ def relation_support_mentions_both_endpoints(
     return any(claim_mentions_both_endpoints(text, relation) for text in texts)
 
 
+def normalized_heading_path(headings: object) -> tuple[str, ...]:
+    """Every entry of a `headingPath`-shaped list, each normalized (NFKC,
+    casefold, whitespace-fold) the same way `retrieve.py`'s `_clause_heading`
+    normalizes a chunk's last heading -- except here the *whole* path is
+    kept, not just the last entry, because detecting a definitions section
+    (`_heading_path_has_definitions_section`) can require an ancestor
+    heading a chunk's own nearest heading does not repeat (e.g. a specific
+    glossary entry's nearest heading is its own term, while its section
+    heading two levels up is "...释义"). Exported so `retrieve.py` can build
+    matching `ClaimChunkSection.heading_path` values from the claim side
+    with the exact same normalization used here for the support side."""
+    if not isinstance(headings, (list, tuple)):
+        return ()
+    normalized: list[str] = []
+    for item in headings:
+        if not isinstance(item, str):
+            continue
+        value = " ".join(unicodedata.normalize("NFKC", item).casefold().split())
+        if value:
+            normalized.append(value)
+    return tuple(normalized)
+
+
 def nearest_heading(headings: object) -> str | None:
     """The normalized last heading in a `headingPath`-shaped list, or
-    `None` when there is none to normalize. Mirrors `retrieve.py`'s
-    `_clause_heading` normalization (NFKC, casefold, whitespace-fold) so a
-    claim-side heading (from `Evidence.source.anchor`, a `DocumentAnchor`'s
-    `heading_path`) and a support-side heading (from `RelationSupport.anchor`,
-    a raw `Mapping`'s `headingPath` key) compare equal whenever they name the
-    same section, regardless of which shape they came from. Exported so
-    `retrieve.py` can build matching `ClaimChunkSection.heading` values from
-    the claim side with the exact same normalization used here for the
-    support side."""
-    if not isinstance(headings, (list, tuple)) or not headings:
-        return None
-    last = headings[-1]
-    if not isinstance(last, str):
-        return None
-    normalized = " ".join(unicodedata.normalize("NFKC", last).casefold().split())
-    return normalized or None
+    `None` when there is none to normalize. A thin convenience wrapper over
+    `normalized_heading_path` for a caller that only needs the nearest
+    heading, not the full path."""
+    path = normalized_heading_path(headings)
+    return path[-1] if path else None
 
 
-def _support_heading(support: RelationSupport) -> str | None:
-    return nearest_heading(support.anchor.get("headingPath"))
+# A heading ending in one of these names a definitions/glossary section
+# whose entries commonly share one heading while each defining an unrelated
+# term (the real report's "第二十七条 释义" is exactly this shape: many
+# distinct glossary chunks, one shared section heading). A shared nearest
+# heading is too coarse a signal there; see
+# `relation_support_is_grounded_for_claim`.
+_DEFINITIONS_HEADING_SUFFIXES = ("释义", "定义", "名词解释")
+
+
+def _is_definitions_heading(heading: str) -> bool:
+    return heading.endswith(_DEFINITIONS_HEADING_SUFFIXES)
+
+
+def _heading_path_has_definitions_section(heading_path: tuple[str, ...]) -> bool:
+    """Whether any heading in the path -- not just the nearest one -- names
+    a definitions section, so a shared nearest heading elsewhere in the
+    same path still gets caught."""
+    return any(_is_definitions_heading(heading) for heading in heading_path)
 
 
 def relation_support_is_grounded_for_claim(
@@ -318,36 +357,54 @@ def relation_support_is_grounded_for_claim(
     evidence (`claim_sections` non-empty), a relation's support must be one
     of those same chunks, or -- for a snippet/other chunk not yet cited --
     share both the source revision and the section (nearest heading) of one
-    of them; a chunk cited as S only by some *other* claim in the answer, or
-    with no section information on either side, does not establish this.
-    ("Cited anywhere in the answer" was tried first and reverted: it let an
-    unrelated support through whenever the answer happened to cite S
-    evidence elsewhere, and -- backwards -- stripped a legitimate R-only
-    claim whenever any other claim's S chunk did not happen to overlap,
-    while an answer with no S evidence anywhere passed everything. Judging
-    each claim only against its own S evidence removes both.)
+    of them, unless that shared heading is itself a definitions section (see
+    `_heading_path_has_definitions_section`), in which case only the exact-
+    chunk match above counts. A chunk cited as S only by some *other* claim
+    in the answer, or with no section information on either side, does not
+    establish this. ("Cited anywhere in the answer" was tried first and
+    reverted: it let an unrelated support through whenever the answer
+    happened to cite S evidence elsewhere, and -- backwards -- stripped a
+    legitimate R-only claim whenever any other claim's S chunk did not
+    happen to overlap, while an answer with no S evidence anywhere passed
+    everything. Judging each claim only against its own S evidence removes
+    both.)
 
     When the claim cites no S evidence at all (`claim_sections` empty),
-    there is nothing from the claim itself to check support against; this
-    does not penalize the relation -- `claim_mentions_both_endpoints` and
-    `relation_support_mentions_both_endpoints` are the only grounding this
-    citation needs or gets, matching this module's original,
-    self-evidencing behavior before the claim-shaped check existed."""
+    there is nothing from the claim itself to check support against, so the
+    relation's support must instead be part of the answer's own retrieved
+    context -- i.e. an S-labelled chunk (`RelationSupport.evidence_label`
+    set, meaning it matched one of the chunks this turn's retrieval or
+    augmentation actually surfaced; see `relation_analysis.py`'s
+    `_resolve_support` and `RelationContext.rebind`), cited by this claim or
+    not. A snippet-only support (never retrieved this turn, known only
+    through the merged graph's own fragment evidence) has no S anchor to
+    fall back on in this claim and is not grounded, regardless of what its
+    text says -- `claim_mentions_both_endpoints` and
+    `relation_support_mentions_both_endpoints` alone previously let such a
+    support through on text-only grounds; this closes that gap."""
     if not claim_sections:
-        return True
+        return any(support.evidence_label is not None for support in relation.support)
     claim_chunk_ids = {section.chunk_id for section in claim_sections}
     support_chunk_ids = {support.chunk_id for support in relation.support}
     if support_chunk_ids & claim_chunk_ids:
         return True
     claim_locations = {
-        (section.source_revision_id, section.heading)
+        (section.source_revision_id, section.heading_path[-1]): section.heading_path
         for section in claim_sections
-        if section.heading is not None
+        if section.heading_path
     }
     if not claim_locations:
         return False
     for support in relation.support:
-        heading = _support_heading(support)
-        if heading is not None and (support.source_revision_id, heading) in claim_locations:
-            return True
+        support_path = normalized_heading_path(support.anchor.get("headingPath"))
+        if not support_path:
+            continue
+        claim_path = claim_locations.get((support.source_revision_id, support_path[-1]))
+        if claim_path is None:
+            continue
+        if _heading_path_has_definitions_section(
+            claim_path
+        ) or _heading_path_has_definitions_section(support_path):
+            continue
+        return True
     return False
