@@ -1167,11 +1167,17 @@ async def test_answer_prompt_requires_per_document_values_when_documents_disagre
     assert "does not state the value the query asks about" in captured[0].prompt
 
 
-def test_relation_answer_prompt_requires_checking_every_record_against_the_query():
+@pytest.mark.asyncio
+async def test_relation_answer_prompt_requires_checking_every_record_against_the_query():
     """The relation prompt must tell the model to actively check every R
     record against the query before answering, not only warn it against
     over-citing -- a purely restrictive prompt left the model free to never
-    cite R at all, even when a record did state the queried relationship."""
+    cite R at all, even when a record did state the queried relationship.
+    Asserting the sentence is in the constant alone does not prove it ever
+    reaches the model, so this also exercises a real `answer()` call and
+    checks the sentence is actually in the sent prompt."""
+    from test_knowledge_api import _claim_resolution_evidence
+
     from tap.modules.knowledge.adapters.litellm import _RELATION_ANSWER_PROMPT
 
     assert (
@@ -1180,6 +1186,19 @@ def test_relation_answer_prompt_requires_checking_every_record_against_the_query
     )
     assert "even when" in _RELATION_ANSWER_PROMPT
     assert "not an optional extra" in _RELATION_ANSWER_PROMPT
+
+    context = _relation_context()
+    models, captured = _capturing_model_gateway()
+
+    await models.answer(
+        "query", (_claim_resolution_evidence(),), "quick-hybrid-v1", relation_context=context
+    )
+
+    assert _RELATION_ANSWER_PROMPT in captured[0].prompt
+    assert (
+        "Before writing the final answer, check every supplied relation record's subject, "
+        "relationLabel and object text against what the query asks" in captured[0].prompt
+    )
 
 
 def _relation_context():
