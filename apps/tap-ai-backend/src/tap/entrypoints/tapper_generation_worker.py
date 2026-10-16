@@ -8,6 +8,7 @@ import os
 import random
 import signal
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -290,6 +291,37 @@ class GenerationWorker:
             turn_span.set_attribute("tap.outcome", outcome)
 
 
+async def _wait_or_stop(stop: asyncio.Event, timeout: float) -> None:
+    try:
+        await asyncio.wait_for(stop.wait(), timeout=timeout)
+    except TimeoutError:
+        pass
+
+
+async def run_worker_loop(
+    worker: GenerationWorker,
+    stop: asyncio.Event,
+    *,
+    batch_size: int,
+    poll_seconds: float,
+    wait: Callable[[asyncio.Event, float], Awaitable[None]] = _wait_or_stop,
+) -> None:
+    backoff = 1.0
+    while not stop.is_set():
+        try:
+            processed = await worker.run_once(limit=batch_size)
+        except Exception as error:  # noqa: BLE001 - keep the loop alive across run errors
+            _LOGGER.exception("generation worker run_once failed")
+            with span("worker.loop_error", {"tap.error": type(error).__name__}):
+                pass
+            await wait(stop, backoff)
+            backoff = min(30.0, backoff * 2)
+            continue
+        backoff = 1.0
+        if processed == 0:
+            await wait(stop, poll_seconds)
+
+
 async def main() -> None:
     from tap.entrypoints.tapper_runtime import TapperSettings, create_api_runtime
     from tap.entrypoints.tracing_setup import start_tracing
@@ -317,13 +349,12 @@ async def main() -> None:
         except NotImplementedError:
             pass
     try:
-        while not stop.is_set():
-            processed = await worker.run_once(limit=settings.job_batch_size)
-            if processed == 0:
-                try:
-                    await asyncio.wait_for(stop.wait(), timeout=settings.poll_seconds)
-                except TimeoutError:
-                    pass
+        await run_worker_loop(
+            worker,
+            stop,
+            batch_size=settings.job_batch_size,
+            poll_seconds=settings.poll_seconds,
+        )
     finally:
         await runtime.aclose()
 
