@@ -155,6 +155,17 @@ def test_aliases_are_short_names_not_sentences():
         ("全残（释义七）", "全残"),
         ("全残(释义7)", "全残"),
         ("第9条 保险事故通知", "保险事故通知"),
+        # "部分" is a two-character counter word ("第一部分" = "Part One"); a leading
+        # article match must consume it whole, not strand "分" on the remainder.
+        ("第一部分 总则", "总则"),
+        # An article number immediately followed by its own parenthetical term
+        # (not a trailing locator note) unwraps to the bare term.
+        ("第十九条（责任免除）", "责任免除"),
+        # A definition-note parenthetical generalizes beyond "释义N" to
+        # "疾病定义N(.M)?" and "条款释义N", wherever it trails a real term.
+        ("严重非恶性颅内肿瘤（疾病定义一.9）", "严重非恶性颅内肿瘤"),
+        ("单目失明（疾病定义三.20）", "单目失明"),
+        ("保险事故通知（条款释义4）", "保险事故通知"),
         # A real term with no such affix passes through unchanged.
         ("保险事故通知（第十条）", "保险事故通知（第十条）"),
         ("友邦保险", "友邦保险"),
@@ -169,8 +180,11 @@ def test_clean_alias_strips_clause_and_definition_affixes(text, expected):
     [
         # A pure locator has no term left once its affix is gone.
         "疾病定义一.9",
+        "疾病定义一.52",
+        "（疾病定义一.52）",
         "释义七",
         "第二十五条",
+        "第一部分",
         # Nothing to strip, and the whole text is itself a reference name.
         "王先生",
         "十日",

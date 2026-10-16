@@ -96,6 +96,11 @@ _CHINESE_POSITIONAL = re.compile(
 )
 # Digit by digit with a zero (二〇二五, 一〇一).
 _CHINESE_DIGIT_RUN = re.compile(rf"[{_CHINESE_DIGIT}零〇]*[零〇][{_CHINESE_DIGIT}零〇]*")
+# A clause/article counter word: "部分" is two characters (第一部分, "Part One"), so
+# it must be tried before the single-character class or "部" alone would match and
+# strand "分" on the remainder ("第一部分 总则" would cut to "分 总则" instead of
+# "总则").
+_ARTICLE_COUNTER = r"(?:部分|[条章节款项部篇编目段页点])"
 _PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
@@ -103,8 +108,8 @@ _PATTERNS = tuple(
         r"(本|该|此|上述|前述|下述)(主|附加)?(保险)?"
         r"(合同|条款|保险|产品|计划|公司|协议|保单|险种|条|款|项|章|节|附表|附件|附录"
         r"|文件|规定|办法|细则|约定|内容|情形)",
-        # 第十九条, 第3章, 第二节, ...
-        rf"第[{_NUMERAL}]+[条章节款项部篇编目段页点]",
+        # 第十九条, 第3章, 第二节, 第一部分, ...
+        rf"第[{_NUMERAL}]+{_ARTICLE_COUNTER}",
         # 附表1, 附件二, 释义四, 条款, ...
         rf"(附表|附件|附录|释义|条款|章节|条|款|项|表|图)[{_NUMERAL}a-z]*",
         # this contract, the policy, said agreement, ...
@@ -199,30 +204,46 @@ def usable_alias(text: str) -> bool:
     return len(text.strip()) <= ALIAS_LENGTH_MAX and not is_reference_name(text)
 
 
-# A leading clause/article number ("第二十五条 ", "第9章"), matched (and stripped) on
-# the raw text rather than ``key`` so the readable remainder keeps its own spacing.
-_LEADING_ARTICLE = re.compile(rf"^第[{_NUMERAL}]+[条章节款项部篇编目段页点]\s*")
-# A trailing interpretation-note parenthetical ("（释义七）", "(释义3)").
-_TRAILING_DEFINITION_NOTE = re.compile(r"[（(]\s*释义[0-9〇零一二三四五六七八九十百]+\s*[）)]\s*$")
+# A leading clause/article number ("第二十五条 ", "第9章", "第一部分 "), matched (and
+# stripped) on the raw text rather than ``key`` so the readable remainder keeps its
+# own spacing.
+_LEADING_ARTICLE = re.compile(rf"^第[{_NUMERAL}]+{_ARTICLE_COUNTER}\s*")
+# A trailing interpretation/definition-note parenthetical: "（释义七）", "(释义3)",
+# "（疾病定义一.52）", "（条款释义4）". The locator word itself is a generic category
+# label ("释义"/"疾病定义"/"条款释义"), never a real term, so unlike the leading
+# article number above there is no case where keeping it makes sense.
+_TRAILING_DEFINITION_NOTE = re.compile(
+    r"[（(]\s*(疾病定义|条款释义|释义)[0-9〇零一二三四五六七八九十百]+(\.[0-9]+)?\s*[）)]\s*$"
+)
+# The entire remainder, after the above, wrapped in one matching pair of parens
+# ("第十九条（责任免除）" strips to "（责任免除）", not yet "责任免除"): a term cited by
+# article number this way is written as the article's own parenthetical, not a
+# locator note, so unwrap it instead of leaving the parens on display.
+_FULLY_PARENTHESIZED = re.compile(r"^[（(](?P<inner>.+)[）)]$")
 
 
 def clean_alias(text: str) -> str | None:
     """Return ``text`` usable as a displayed or merge-key alias, or ``None``.
 
     A clause-numbered or interpretation-noted alias ("第二十五条 明确说明与如实
-    告知", "全残（释义七）") carries a real term; only the affix around it is a
-    reference. Stripping it first -- before falling back to the plain
-    ``usable_alias`` check -- turns both into their real term ("明确说明与如实
-    告知", "全残") instead of leaving the affix on display or keying alignment
-    on a string two documents would spell differently. A pure locator with no
-    term attached ("疾病定义一.9", "释义七" on its own) has nothing left once the
-    affix is gone and is rejected outright by ``usable_alias`` already.
+    告知", "全残（释义七）", "第十九条（责任免除）") carries a real term; only the
+    affix around it is a reference. Stripping it first -- before falling back to
+    the plain ``usable_alias`` check -- turns all of them into their real term
+    ("明确说明与如实告知", "全残", "责任免除") instead of leaving the affix on
+    display or keying alignment on a string two documents would spell
+    differently. A pure locator with no term attached ("疾病定义一.9", "释义七" on
+    its own) has nothing left once the affix is gone and is rejected outright by
+    ``usable_alias`` already.
     """
 
     stripped = text.strip()
     if not stripped:
         return None
-    core = _TRAILING_DEFINITION_NOTE.sub("", _LEADING_ARTICLE.sub("", stripped, count=1), count=1)
+    core = _LEADING_ARTICLE.sub("", stripped, count=1)
+    core = _TRAILING_DEFINITION_NOTE.sub("", core, count=1)
+    wrapped = _FULLY_PARENTHESIZED.fullmatch(core)
+    if wrapped:
+        core = wrapped.group("inner")
     core = core.strip()
     if core and core != stripped and usable_alias(core):
         return core
