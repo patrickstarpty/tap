@@ -244,6 +244,24 @@ class SingleShotAnswerSteps:
     ):
         return step["response"]
 
+    async def refuse_out_of_scope(self, frozen_input, *, answer_plan):
+        from tap.contracts.http import AbstentionReason, RetrievalAnswerResponse
+
+        return RetrievalAnswerResponse(
+            trace_id=answer_plan.plan_id,
+            query_plan_id=answer_plan.plan_id,
+            context_snapshot_id=answer_plan.plan_id,
+            corpus_version="unversioned",
+            retrieval_profile_id="direct-chat-v1",
+            degraded_mode=False,
+            answer="",
+            abstained=True,
+            abstention_reason=AbstentionReason.OUT_OF_SCOPE,
+            claims=[],
+            citations=[],
+            graph_context_status="NOT_SELECTED",
+        )
+
 
 class ChatTurnNodes:
     """Binds one claimed chat Turn's resumable answer phases, Insights
@@ -367,8 +385,9 @@ class ChatTurnNodes:
             else tuple(item.input_snapshot for item in (await load(self._conversation_id)).turns)
         )
         plan = await self._planner.plan(planning_input(self._turn.input_snapshot, history=history))
+        route = "out_of_scope" if plan.intent == "out_of_scope" else "chat"
         return {
-            "route": "chat",
+            "route": route,
             "reasoning_mode": "direct",
             "answer_plan": plan.to_dict(),
             "plan_attempt": self._turn.attempt,
@@ -561,16 +580,25 @@ class ChatTurnNodes:
         if state.get("route") == "insights":
             return {}
         active_plan = self._active_plan(state)
-        step = _require_step(state)
+        out_of_scope = state.get("route") == "out_of_scope"
+        if out_of_scope:
+            audit_span = self._turn_span if self._turn_span is not None else get_current_span()
+            audit_span.set_attribute("tap.plan.intent", "out_of_scope")
+        step = None if out_of_scope else _require_step(state)
         answered: list[Any] = []
 
         async def provider(_snapshot: object) -> ProviderResult:
-            answer = await self._steps.finalize_conversation_answer(
-                step,
-                self._turn.input_snapshot.value,
-                answer_plan=active_plan,
-                authorize=self._require_authorized,
-            )
+            if out_of_scope:
+                answer = await self._steps.refuse_out_of_scope(
+                    self._turn.input_snapshot.value, answer_plan=active_plan
+                )
+            else:
+                answer = await self._steps.finalize_conversation_answer(
+                    step,
+                    self._turn.input_snapshot.value,
+                    answer_plan=active_plan,
+                    authorize=self._require_authorized,
+                )
             answered.append(answer)
             citations = (
                 await self._conversations.repository.resolve_citations(

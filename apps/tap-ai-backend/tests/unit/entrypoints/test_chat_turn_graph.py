@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +20,7 @@ from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
 from tap.modules.chat.domain.answer_plan import AnswerPlan
+from tap.modules.chat.domain.conversations import TurnInput, TurnInputSnapshot
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
 from tap.modules.knowledge.ports.answers import AnswerSnapshotUnavailable
 from tap.platform.budget import TurnBudget, current_meter
@@ -98,6 +100,21 @@ class _StepsKnowledge:
         self, step, frozen_input, *, answer_plan=None, authorize=None
     ):
         return _answer()
+
+    async def refuse_out_of_scope(self, frozen_input, *, answer_plan):
+        self.refuse_calls = getattr(self, "refuse_calls", 0) + 1
+        return SimpleNamespace(
+            answer="",
+            citations=(),
+            abstained=True,
+            trace_id=answer_plan.plan_id,
+            model_dump=lambda **_: {
+                "answer": "",
+                "citations": [],
+                "abstained": True,
+                "abstentionReason": "out_of_scope",
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -574,3 +591,108 @@ async def test_budget_exhausted_turn_emits_budget_problem() -> None:
     event_type, payload = kwargs["terminal_event"]
     assert event_type == "turn.failed"
     assert payload["problem"]["type"].endswith("budget-exhausted")
+
+
+def _frozen_turn_for_planning(
+    *, turn_id: str = "turn-oos", message: str = "What's the weather today?", **turn_input_kwargs
+):
+    frozen = TurnInput(message, "actor-a", "validation", "qwen-plus", **turn_input_kwargs)
+    snapshot = TurnInputSnapshot.create(
+        snapshot_id=f"snapshot-{turn_id}",
+        project_id="project-a",
+        turn_id=turn_id,
+        value=frozen,
+        now=datetime.now(UTC),
+    )
+    return SimpleNamespace(
+        turn_id=turn_id,
+        lease_token=f"lease-{turn_id}",
+        attempt=1,
+        input_snapshot=snapshot,
+    )
+
+
+def _out_of_scope_plan() -> AnswerPlan:
+    return AnswerPlan(
+        plan_id="plan-oos",
+        project_id="project-a",
+        turn_id="turn-oos",
+        input_digest=_digest("1"),
+        acl_digest=_digest("2"),
+        policy_digest=_digest("3"),
+        model_alias="qwen-plus",
+        original_question="What's the weather today?",
+        intent="out_of_scope",
+        route="direct",
+        confidence=0.9,
+        standalone_query="What's the weather today?",
+        constraints=(),
+        missing=(),
+        queries=(),
+        source_ids=(),
+        template_id="template-1",
+        template_version="v1",
+        template_digest=_digest("4"),
+        deadline_at=time.time() + 30,
+        remaining_seconds=30,
+    )
+
+
+class _OutOfScopePlanner:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def plan(self, _value, *, previous_plan_id=None):
+        self.calls += 1
+        return _out_of_scope_plan()
+
+
+@pytest.mark.asyncio
+async def test_out_of_scope_turn_abstains_without_retrieval_or_generation() -> None:
+    turn = _frozen_turn_for_planning()
+    conversations = _Conversations(turn)
+    knowledge = _StepsKnowledge()
+    knowledge.answer_planner = _OutOfScopePlanner()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert knowledge.prepare_calls == 0
+    assert knowledge.generate_calls == 0
+    assert knowledge.answer_planner.calls == 1
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
+    assert evidence.outcome == "abstained"
+    terminal_type, terminal_payload = kwargs["terminal_event"]
+    assert terminal_type == "turn.abstained"
+    assert terminal_payload["answer"]["abstentionReason"] == "out_of_scope"
+
+
+@pytest.mark.asyncio
+async def test_insights_route_never_out_of_scope() -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-insights",
+        insights_query_id="insights-1",
+        insights_report_refs=("report-1",),
+    )
+    conversations = _Conversations(turn)
+    planner = _OutOfScopePlanner()
+
+    async def require_authorized() -> None:
+        return None
+
+    nodes = ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations,
+        steps=_StepsKnowledge(),
+        planner=planner,
+        knowledge=object(),
+        insights_explanation=None,
+        require_authorized=require_authorized,
+    )
+
+    result = await nodes.guard_in({})
+
+    assert result == {"route": "insights", "reasoning_mode": "workflow"}
+    assert planner.calls == 0

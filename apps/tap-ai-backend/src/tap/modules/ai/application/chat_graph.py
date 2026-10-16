@@ -33,7 +33,7 @@ class ChatGraphState(TypedDict, total=False):
     execution_mode: Literal["inline", "durable"]
     reasoning_mode: Literal["direct", "workflow", "agentic"]
     payload: dict[str, object]
-    route: Literal["chat", "insights"]
+    route: Literal["chat", "insights", "out_of_scope"]
     answer_plan: dict[str, Any] | None
     plan_attempt: int
     step: dict[str, object] | None
@@ -154,8 +154,11 @@ class ChatGraph:
     def _route_after_guard(state: ChatGraphState) -> str:
         if state.get("failure"):
             return "finalize"
-        if state.get("route") == "insights":
+        route = state.get("route")
+        if route == "insights":
             return "insights"
+        if route == "out_of_scope":
+            return "finalize"
         return "chat"
 
     @staticmethod

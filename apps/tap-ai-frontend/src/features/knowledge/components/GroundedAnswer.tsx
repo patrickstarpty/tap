@@ -47,6 +47,8 @@ const ANSWER_COPY = {
     conflicting_sources:
       "The selected sources conflict, so a reliable answer is unavailable.",
     revision_mismatch: "A source revision changed. Submit the question again.",
+    out_of_scope:
+      "This request is outside what Tapper can help with. Tapper answers questions from this project's authorized knowledge sources.",
     degraded:
       "Some retrieval capabilities are unavailable. Only verified evidence is shown.",
     citation: (number: number) => `Open source citation ${number}`,
@@ -57,6 +59,8 @@ const ANSWER_COPY = {
     insufficient_evidence: "所选来源中没有足够证据回答这个问题。",
     conflicting_sources: "所选来源之间存在冲突，暂时无法给出可靠回答。",
     revision_mismatch: "来源版本已经变化，请重新提交问题。",
+    out_of_scope:
+      "这个问题超出了 Tapper 的服务范围。Tapper 只基于当前项目已授权的知识来源回答问题。",
     degraded: "部分检索能力暂时受限，回答仍仅显示已核验依据。",
     citation: (number: number) => `打开来源引用 ${number}`,
   },
@@ -399,7 +403,10 @@ export function GroundedAnswer({
     const message =
       ANSWER_COPY[locale][
         reason as
-          "insufficient_evidence" | "conflicting_sources" | "revision_mismatch"
+          | "insufficient_evidence"
+          | "conflicting_sources"
+          | "revision_mismatch"
+          | "out_of_scope"
       ];
     return <Alert type="info" showIcon title={message} />;
   }

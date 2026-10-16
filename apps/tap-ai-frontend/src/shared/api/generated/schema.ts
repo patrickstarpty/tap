@@ -1386,7 +1386,7 @@ export interface components {
          * AbstentionReason
          * @enum {string}
          */
-        AbstentionReason: "insufficient_evidence" | "conflicting_sources" | "revision_mismatch";
+        AbstentionReason: "insufficient_evidence" | "conflicting_sources" | "revision_mismatch" | "out_of_scope";
         /** AiAgentRevisionPage */
         AiAgentRevisionPage: {
             /** Items */

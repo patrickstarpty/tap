@@ -5,7 +5,8 @@
         "enum": [
           "insufficient_evidence",
           "conflicting_sources",
-          "revision_mismatch"
+          "revision_mismatch",
+          "out_of_scope"
         ],
         "title": "AbstentionReason",
         "type": "string"

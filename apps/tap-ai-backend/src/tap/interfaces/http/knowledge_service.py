@@ -13,6 +13,7 @@ from uuid import uuid4
 from opentelemetry.trace import get_current_span
 
 from tap.contracts.http import (
+    AbstentionReason,
     CitationPreview,
     DocumentAccepted,
     DocumentAnchor,
@@ -754,6 +755,22 @@ class KnowledgeHttpService:
             degraded_mode=False,
             answer=answer,
             abstained=False,
+            claims=[],
+            citations=[],
+            graph_context_status="NOT_SELECTED",
+        )
+
+    async def refuse_out_of_scope(self, frozen_input, *, answer_plan):
+        return RetrievalAnswerResponse(
+            trace_id=answer_plan.plan_id,
+            query_plan_id=answer_plan.plan_id,
+            context_snapshot_id=answer_plan.plan_id,
+            corpus_version=self._corpus_version,
+            retrieval_profile_id="direct-chat-v1",
+            degraded_mode=False,
+            answer="",
+            abstained=True,
+            abstention_reason=AbstentionReason.OUT_OF_SCOPE,
             claims=[],
             citations=[],
             graph_context_status="NOT_SELECTED",

@@ -87,6 +87,53 @@ async def test_insights_route_skips_answer_nodes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_out_of_scope_route_goes_straight_to_finalize() -> None:
+    calls: list[str] = []
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("guard_in")
+        return {"route": "out_of_scope"}
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run on the out_of_scope route")
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("seed_search must not run on the out_of_scope route")
+
+    async def model(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("model must not run on the out_of_scope route")
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("verify must not run on the out_of_scope route")
+
+    async def finalize(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("finalize")
+        return {"result": {"answer": "refused"}}
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=_always_authorized(),
+    )
+
+    await graph.start(run_id="run-out-of-scope", payload={}, route="chat")
+
+    assert calls == ["guard_in", "finalize"]
+    assert calls.count("seed_search") == 0
+    assert calls.count("model") == 0
+    assert calls.count("verify") == 0
+    assert calls.count("insights_explain") == 0
+    assert calls.count("finalize") == 1
+
+
+@pytest.mark.asyncio
 async def test_guard_in_failure_on_insights_route_skips_insights_explain() -> None:
     calls: list[str] = []
     captured: dict[str, object] = {}

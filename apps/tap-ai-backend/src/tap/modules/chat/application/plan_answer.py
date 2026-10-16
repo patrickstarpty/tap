@@ -90,6 +90,7 @@ _TEMPLATE = {
     "procedural": "procedural",
     "clarification": "clarification",
     "relation": "explanation",
+    "out_of_scope": "general",
 }
 
 
@@ -277,8 +278,12 @@ class AnswerPlanner:
                     "queries",
                 }:
                     raise ValueError("invalid planning schema")
-                if raw["route"] not in {"retrieve", "graph", "clarify"}:
+                if raw["route"] not in {"retrieve", "graph", "clarify", "direct"}:
                     raise ValueError("model cannot authorize direct or capability routes")
+                if raw["route"] == "direct" and raw["intent"] != "out_of_scope":
+                    raise ValueError("model cannot authorize direct route for this intent")
+                if raw["intent"] == "out_of_scope" and (raw["route"] != "direct" or raw["queries"]):
+                    raise ValueError("out of scope intent requires direct route without queries")
                 if (raw["intent"] == "relation") != (raw["route"] == "graph"):
                     raise ValueError("relation intent and graph route must pair")
                 if (
