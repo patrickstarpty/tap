@@ -237,9 +237,13 @@ class MysqlConversationRepository:
         sessions: async_sessionmaker[AsyncSession],
         *,
         scope: ProjectScopeContext,
+        max_turn_attempts: int = 3,
     ):
+        if not 1 <= max_turn_attempts <= 10:
+            raise ValueError("max_turn_attempts must be within 1..10")
         self.sessions = sessions
         self.scope = require_project_scope(scope)
+        self.max_turn_attempts = max_turn_attempts
 
     async def resolve_citations(
         self, trace_id: str, citation_ids: tuple[str, ...]
@@ -1147,6 +1151,10 @@ class MysqlConversationRepository:
                         .where(
                             *scope_predicates(chat_turn, self.scope),
                             or_(
+                                chat_turn.c.next_attempt_at.is_(None),
+                                chat_turn.c.next_attempt_at <= candidate_now,
+                            ),
+                            or_(
                                 and_(
                                     chat_turn.c.state == "queued",
                                     graph_run.c.run_id.is_(None),
@@ -1199,12 +1207,16 @@ class MysqlConversationRepository:
                     .one_or_none()
                 )
                 now = datetime.now(timezone.utc)
-                if row is None or not (
-                    row["state"] == "queued"
-                    or (
-                        row["state"] == "running"
-                        and row["processing_lease_expires_at"] is not None
-                        and row["processing_lease_expires_at"] < _naive(now)
+                if (
+                    row is None
+                    or not (row["next_attempt_at"] is None or row["next_attempt_at"] <= _naive(now))
+                    or not (
+                        row["state"] == "queued"
+                        or (
+                            row["state"] == "running"
+                            and row["processing_lease_expires_at"] is not None
+                            and row["processing_lease_expires_at"] < _naive(now)
+                        )
                     )
                 ):
                     continue
@@ -1234,7 +1246,25 @@ class MysqlConversationRepository:
                             continue
                 if not await self._has_input_snapshot(session, row["turn_id"]):
                     # A permanent fault: settle the Turn instead of wedging every claim batch.
-                    await self._fail_integrity_turn(session, row, graph is not None, now)
+                    await self._fail_unclaimable_turn(
+                        session,
+                        row,
+                        graph is not None,
+                        now,
+                        problem_type="conversation-integrity",
+                        reason="input-snapshot-missing",
+                    )
+                    continue
+                if row["processing_attempt"] >= self.max_turn_attempts:
+                    # Exhausted its retry budget: settle it instead of reclaiming forever.
+                    await self._fail_unclaimable_turn(
+                        session,
+                        row,
+                        graph is not None,
+                        now,
+                        problem_type="answer-unavailable",
+                        reason="attempts-exhausted",
+                    )
                     continue
                 lease_token = uuid4().hex
                 lease_until = _naive(now + timedelta(seconds=60))
@@ -1274,6 +1304,7 @@ class MysqlConversationRepository:
                         processing_attempt=row["processing_attempt"] + 1,
                         processing_lease_token=lease_token,
                         processing_lease_expires_at=lease_until,
+                        next_attempt_at=None,
                     )
                 )
                 if graph is not None:
@@ -1311,13 +1342,33 @@ class MysqlConversationRepository:
             )
         ) is not None
 
-    async def _fail_integrity_turn(self, session, row, has_graph: bool, now: datetime) -> None:
+    async def _fail_unclaimable_turn(
+        self,
+        session,
+        row,
+        has_graph: bool,
+        now: datetime,
+        *,
+        problem_type: str,
+        reason: str,
+    ) -> None:
         from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
+        last_failure = row["last_failure"] or "lease-expired"
         _LOGGER.warning(
             "conversation turn failed integrity check",
-            extra={"turn_id": row["turn_id"], "reason": "input-snapshot-missing"},
+            extra={
+                "turn_id": row["turn_id"],
+                "reason": reason,
+                "last_failure": last_failure,
+            },
         )
+        if problem_type == "answer-unavailable":
+            with span(
+                "turn.attempts_exhausted",
+                {"tap.turn_id": row["turn_id"], "tap.failure.last": last_failure},
+            ):
+                pass
         event = await self._next_event(
             session,
             row["chat_id"],
@@ -1327,7 +1378,7 @@ class MysqlConversationRepository:
                 "turn.failed",
                 {
                     "problem": build_problem(
-                        "conversation-integrity", correlation_id=row["turn_id"]
+                        problem_type, correlation_id=row["turn_id"]
                     ).model_dump(mode="json", by_alias=True)
                 },
                 now,
@@ -1404,6 +1455,46 @@ class MysqlConversationRepository:
                     lease_until=_naive(now + lease_duration),
                     updated_at=_naive(now),
                 )
+            )
+
+    async def defer_turn(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        lease_token: str,
+        *,
+        next_attempt_at: datetime,
+        failure: str,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        async with self.sessions() as session, session.begin():
+            result = await session.execute(
+                update(chat_turn)
+                .where(
+                    *scope_predicates(chat_turn, self.scope),
+                    chat_turn.c.chat_id == conversation_id,
+                    chat_turn.c.turn_id == turn_id,
+                    chat_turn.c.state == "running",
+                    chat_turn.c.processing_lease_token == lease_token,
+                )
+                .values(
+                    processing_lease_expires_at=_naive(now),
+                    next_attempt_at=_naive(next_attempt_at),
+                    last_failure=failure[:128],
+                )
+            )
+            if result.rowcount != 1:
+                raise ConversationConflict("generation lease lost")
+            from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+
+            await session.execute(
+                update(graph_run)
+                .where(
+                    *scope_predicates(graph_run, self.scope),
+                    graph_run.c.run_id == turn_id,
+                    graph_run.c.lease_token == lease_token,
+                )
+                .values(lease_until=_naive(now))
             )
 
     def graph_checkpointer(self, turn: ConversationTurn):

@@ -60,6 +60,8 @@ chat_turn = Table(
     Column("processing_attempt", Integer, nullable=False, server_default="0"),
     Column("processing_lease_token", String(64)),
     Column("processing_lease_expires_at", DATETIME(fsp=6)),
+    Column("next_attempt_at", DATETIME(fsp=6), nullable=True),
+    Column("last_failure", String(128), nullable=True),
     Column("last_sequence", BigInteger, nullable=False, server_default="0"),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     Column("traceparent", String(55), nullable=True),

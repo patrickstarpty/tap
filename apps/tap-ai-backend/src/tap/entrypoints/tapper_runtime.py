@@ -179,6 +179,7 @@ class TapperSettings:
     langfuse_environment: str = "local"
     langfuse_sync_settle_seconds: int = 60
     trace_redaction_rules: Path | None = None
+    turn_max_attempts: int = 3
 
     def __post_init__(self) -> None:
         # A deadline too short for the output budget turns a detectable truncation
@@ -421,6 +422,13 @@ class TapperSettings:
             minimum=10,
             maximum=86400,
         )
+        turn_max_attempts = _integer(
+            values,
+            "TAPPER_TURN_MAX_ATTEMPTS",
+            3,
+            minimum=1,
+            maximum=10,
+        )
         trace_redaction_rules_raw = _value(values, "TAP_TRACE_REDACTION_RULES", "")
         trace_redaction_rules: Path | None = None
         if trace_redaction_rules_raw:
@@ -593,6 +601,7 @@ class TapperSettings:
             langfuse_environment=langfuse_environment,
             langfuse_sync_settle_seconds=langfuse_sync_settle_seconds,
             trace_redaction_rules=trace_redaction_rules,
+            turn_max_attempts=turn_max_attempts,
         )
 
 
@@ -900,6 +909,7 @@ async def create_api_runtime(
             graph_overview_limit=settings.graph_overview_limit,
             graph_retrieval_augment=settings.graph_retrieval_augment,
             graph_reasoning=settings.graph_reasoning,
+            turn_max_attempts=settings.turn_max_attempts,
         )
         services = replace(services, chunk_manager=chunk_manager)
         if settings.insights_base_url:
@@ -1816,6 +1826,7 @@ def _assemble_http_services(
     graph_overview_limit: int = 150,
     graph_retrieval_augment: bool = True,
     graph_reasoning: bool = True,
+    turn_max_attempts: int = 3,
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -1953,6 +1964,7 @@ def _assemble_http_services(
             MysqlConversationRepository(
                 conversation_sessions,  # type: ignore[arg-type]
                 scope=repository.scope,
+                max_turn_attempts=turn_max_attempts,
             ),
             scope=repository.scope,
         )
