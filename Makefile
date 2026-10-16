@@ -6,7 +6,7 @@ TAP_INSIGHTS_COMPOSE_PROJECT ?= tap-insights-local
 export TAP_INSIGHTS_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset quality-graph-relations quality-graph-relations-real graph-sample-export graph-bench quality-answers quality-answers-real
+.PHONY: schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset quality-graph-relations quality-graph-relations-real graph-sample-export graph-bench quality-answers quality-answers-corpus quality-answers-real
 .PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check langfuse-up langfuse-down
 
 bootstrap: ## install frozen Python and Node dependencies
@@ -207,6 +207,7 @@ quality-graph-relations-real: ## evaluate the human-labeled relation golden set 
 
 TAP_ANSWERS_GOLDEN ?= apps/tap-ai-backend/tests/fixtures/quality/answers/golden-v1.json
 TAP_ANSWERS_CORPUS_DIR ?= apps/tap-ai-backend/tests/fixtures/quality/answers
+TAP_QUALITY_ANSWERS_CORPUS ?= .local/quality-answers/corpus.json
 TAP_QUALITY_ANSWERS_OBSERVATIONS ?= .local/quality-answers/observations.json
 TAP_QUALITY_ANSWERS_BASELINE ?= .local/quality-answers/baseline-observations.json
 TAP_QUALITY_ANSWERS_REPORT ?= .local/quality-answers/report.json
@@ -215,11 +216,18 @@ quality-answers: ## run the answer golden set end to end with the deterministic 
 	uv run --project apps/tap-ai-backend python scripts/run-answer-golden.py --mode fake --golden "$(TAP_ANSWERS_GOLDEN)" --corpus-dir "$(TAP_ANSWERS_CORPUS_DIR)" --observations .local/quality-answers/fixture-observations.json
 	uv run --project apps/tap-ai-backend python scripts/evaluate-answer-golden.py --golden "$(TAP_ANSWERS_GOLDEN)" --observations .local/quality-answers/fixture-observations.json --report .local/quality-answers/fixture-report.json
 
+quality-answers-corpus: ## upload the fixture answer corpus to a running Tapper API stack as knowledge sources (opt-in)
+	@if [ "$${TAP_RUN_QUALITY_ANSWERS:-}" != "1" ]; then echo "quality-answers-corpus requires TAP_RUN_QUALITY_ANSWERS=1" >&2; exit 2; fi
+	uv run --project apps/tap-ai-backend python scripts/run-answer-golden.py --mode corpus --corpus-dir "$(TAP_ANSWERS_CORPUS_DIR)" --output "$(TAP_QUALITY_ANSWERS_CORPUS)"
+
 quality-answers-real: ## evaluate the answer golden set against the real model and gate against a prior baseline (opt-in)
 	@if [ "$${TAP_RUN_QUALITY_ANSWERS:-}" != "1" ]; then echo "quality-answers-real requires TAP_RUN_QUALITY_ANSWERS=1" >&2; exit 2; fi
 	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-answers-real requires explicit model execution authorization" >&2; exit 2;; esac
+	@[ -f "$(TAP_QUALITY_ANSWERS_CORPUS)" ] || { echo "quality-answers-real requires a corpus manifest at $(TAP_QUALITY_ANSWERS_CORPUS) (run: make quality-answers-corpus)" >&2; exit 2; }
+	uv run --project apps/tap-ai-backend python scripts/run-answer-golden.py --mode validate-corpus --corpus-dir "$(TAP_ANSWERS_CORPUS_DIR)" --corpus "$(TAP_QUALITY_ANSWERS_CORPUS)"
+	@[ -f "$(TAP_QUALITY_ANSWERS_BASELINE)" ] || echo "quality-answers-real: no baseline at $(TAP_QUALITY_ANSWERS_BASELINE) yet -- to produce the first baseline, run scripts/run-answer-golden.py --mode real with the current (pre-switch) answer format and copy its --observations output there" >&2
 	@[ -f "$(TAP_QUALITY_ANSWERS_BASELINE)" ] || { echo "quality-answers-real requires an existing baseline at $(TAP_QUALITY_ANSWERS_BASELINE)" >&2; exit 2; }
-	uv run --project apps/tap-ai-backend python scripts/run-answer-golden.py --mode real --golden "$(TAP_ANSWERS_GOLDEN)" --observations "$(TAP_QUALITY_ANSWERS_OBSERVATIONS)"
+	uv run --project apps/tap-ai-backend python scripts/run-answer-golden.py --mode real --golden "$(TAP_ANSWERS_GOLDEN)" --corpus-dir "$(TAP_ANSWERS_CORPUS_DIR)" --corpus "$(TAP_QUALITY_ANSWERS_CORPUS)" --observations "$(TAP_QUALITY_ANSWERS_OBSERVATIONS)"
 	uv run --project apps/tap-ai-backend python scripts/evaluate-answer-golden.py --golden "$(TAP_ANSWERS_GOLDEN)" --observations "$(TAP_QUALITY_ANSWERS_OBSERVATIONS)" --baseline-observations "$(TAP_QUALITY_ANSWERS_BASELINE)" --report "$(TAP_QUALITY_ANSWERS_REPORT)" --real
 
 graph-sample-export: ## export 50 edges and 30 cross-source merged entities for human review (opt-in)

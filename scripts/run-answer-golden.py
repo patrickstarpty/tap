@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Produce `answer-golden-observations-v1` observations for the capability-1
-answer golden set, in two modes:
+answer golden set, in two modes, plus a `corpus`/`validate-corpus` pair of
+real-mode setup commands.
 
 - `fake` (default CI path, no external services): chunk each `*.md` document
   under `--corpus-dir` into paragraphs, scope the candidate paragraphs to each
@@ -12,10 +13,23 @@ answer golden set, in two modes:
   about real-model answer quality; this commit is the run point for a later
   real-model baseline of the current JSON answer format (see
   `evaluate-answer-golden.py`'s `--real` gate).
-- `real` (opt-in, requires `TAP_RUN_QUALITY_ANSWERS=1` and a running Tapper
-  API stack): dry-runs each question through the real chat answer pipeline
-  via `ConversationGroundingCheck.dry_run_answer`, mirroring
+- `corpus` (opt-in, requires a running Tapper API stack): uploads the fixture
+  `*.md` documents as knowledge sources and writes a `{stem: sourceId}`
+  manifest to `--output` (default `.local/quality-answers/corpus.json`),
+  mirroring `scripts/load-graph-real-corpus.py upload`. `expectedSources` in
+  the golden set are corpus document stems, not server-assigned source IDs,
+  so `real` mode needs this manifest to translate between the two.
+- `validate-corpus` checks a previously produced corpus manifest is
+  structurally valid and covers every golden case's `expectedSources`,
+  without touching any running service.
+- `real` (opt-in, requires `TAP_RUN_QUALITY_ANSWERS=1`, a running Tapper API
+  stack and `--corpus` from a prior `corpus` run): dry-runs each question
+  through the real chat answer pipeline via
+  `ConversationGroundingCheck.dry_run_answer`, mirroring
   `scripts/run-graph-relations-candidate.py`'s real-mode refusal shape.
+  `dry_run_answer` returns `None` when a cited source is not ready or the
+  pipeline produced an unusable answer -- never a legitimate abstention --
+  so that case is recorded `invalid: true`, not `abstained: true`.
 """
 
 from __future__ import annotations
@@ -24,145 +38,31 @@ import argparse
 import asyncio
 import hashlib
 import json
+import mimetypes
 import os
-import re
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+import time
+import urllib.error
+import urllib.request
+import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
-OBSERVATIONS_SCHEMA_VERSION = "answer-golden-observations-v1"
+from tap.quality.answer_golden import (
+    OBSERVATIONS_SCHEMA_VERSION,
+    GoldenCase,
+    chunk_document,
+    cited_sources_from_claims,
+    rank_paragraphs,
+    validate_golden,
+)
+
 _PROFILE_ID = "quick-hybrid-v1"
-_KINDS = ("answerable", "abstain", "false_premise")
-_DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
-_MAX_EVIDENCE = 6
-
-
-# --- Golden set schema (duplicated in evaluate-answer-golden.py; each script
-# stays a self-contained thin CLI over its own pure functions) -------------
-
-
-@dataclass(frozen=True)
-class GoldenCase:
-    id: str
-    question: str
-    locale: str
-    kind: str
-    expected_sources: tuple[str, ...]
-    expected_facts: tuple[str, ...]
-    forbidden_facts: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class GoldenSet:
-    schema_version: str
-    labeled_by: str
-    labeled_at: str
-    cases: tuple[GoldenCase, ...]
-
-
-def _mapping(value: object, name: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{name} must be an object")
-    return value
-
-
-def _array(value: object, name: str) -> list[Any]:
-    if not isinstance(value, list):
-        raise ValueError(f"{name} must be an array")
-    return value
-
-
-def _nonblank_string(value: object, name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{name} must be a nonblank string")
-    return value
-
-
-def _string_array(value: object, name: str) -> tuple[str, ...]:
-    return tuple(_nonblank_string(item, f"{name} item") for item in _array(value, name))
-
-
-def _case(value: object) -> GoldenCase:
-    case = _mapping(value, "golden case")
-    case_id = _nonblank_string(case.get("id"), "case id")
-    question = _nonblank_string(case.get("question"), f"case {case_id} question")
-    locale = case.get("locale")
-    if locale not in ("zh", "en"):
-        raise ValueError(f"case {case_id} locale must be 'zh' or 'en'")
-    kind = case.get("kind")
-    if kind not in _KINDS:
-        raise ValueError(f"case {case_id} kind must be one of {_KINDS}")
-    expected_sources = _string_array(
-        case.get("expectedSources"), f"case {case_id} expectedSources"
-    )
-    if not expected_sources:
-        raise ValueError(f"case {case_id} requires at least one expected source")
-    expected_facts = (
-        _string_array(case.get("expectedFacts"), f"case {case_id} expectedFacts")
-        if "expectedFacts" in case
-        else ()
-    )
-    forbidden_facts = (
-        _string_array(case.get("forbiddenFacts"), f"case {case_id} forbiddenFacts")
-        if "forbiddenFacts" in case
-        else ()
-    )
-    return GoldenCase(
-        id=case_id,
-        question=question,
-        locale=locale,
-        kind=kind,
-        expected_sources=expected_sources,
-        expected_facts=expected_facts,
-        forbidden_facts=forbidden_facts,
-    )
-
-
-def validate_golden(
-    value: object, *, known_sources: frozenset[str] | None = None
-) -> GoldenSet:
-    """Validate an `answer-golden-v1` document; pure, no I/O."""
-    document = _mapping(value, "golden set")
-    if document.get("schemaVersion") != "answer-golden-v1":
-        raise ValueError("unsupported answer golden set schema")
-    labeled_by = _nonblank_string(document.get("labeledBy"), "labeledBy")
-    labeled_at = document.get("labeledAt")
-    if not isinstance(labeled_at, str) or _DATE.fullmatch(labeled_at) is None:
-        raise ValueError("labeledAt must match YYYY-MM-DD")
-    cases_raw = _array(document.get("cases"), "cases")
-    if not cases_raw:
-        raise ValueError("golden set requires at least one case")
-    seen_ids: set[str] = set()
-    cases: list[GoldenCase] = []
-    for raw in cases_raw:
-        case = _case(raw)
-        if case.id in seen_ids:
-            raise ValueError(f"case id {case.id} is not unique")
-        seen_ids.add(case.id)
-        if known_sources is not None:
-            unknown = [
-                source
-                for source in case.expected_sources
-                if source not in known_sources
-            ]
-            if unknown:
-                raise ValueError(
-                    f"case {case.id} expectedSources must be corpus document names: {unknown}"
-                )
-        cases.append(case)
-    return GoldenSet(
-        schema_version="answer-golden-v1",
-        labeled_by=labeled_by,
-        labeled_at=labeled_at,
-        cases=tuple(cases),
-    )
-
-
-# --- Fake-mode chunking and candidate selection (pure) ---------------------
+_MAX_UPLOAD_BYTES = 1 * 1024 * 1024
+_POLL_INTERVAL_SECONDS = 2
 
 
 def _digest(text: str) -> str:
@@ -178,52 +78,52 @@ def _now_iso() -> str:
     )
 
 
-def chunk_document(text: str) -> tuple[str, ...]:
-    """Split on blank lines into nonblank paragraphs; pure, no I/O."""
-    return tuple(
-        paragraph.strip()
-        for paragraph in re.split(r"\n\s*\n", text)
-        if paragraph.strip()
+def _load_documents(corpus_dir: Path) -> dict[str, str]:
+    documents_paths = sorted(corpus_dir.glob("*.md"))
+    if not documents_paths:
+        raise ValueError(f"found no *.md documents under {corpus_dir}")
+    return {path.stem: path.read_text(encoding="utf-8") for path in documents_paths}
+
+
+def corpus_manifest_digest(documents: Mapping[str, str]) -> str:
+    """Bind a corpus manifest to the exact fixture document content it was
+    uploaded from; pure, no I/O."""
+    material = json.dumps(
+        {stem: documents[stem] for stem in sorted(documents)},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
+    return _digest(material)
 
 
-def char_bigrams(text: str) -> frozenset[str]:
-    """Character bigrams of `text`, ignoring whitespace; pure, no I/O."""
-    compact = "".join(text.split())
-    return frozenset(compact[index : index + 2] for index in range(len(compact) - 1))
+def _git_short_sha() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
 
 
-def rank_paragraphs(
-    question: str, paragraphs: Sequence[tuple[str, str]], *, limit: int = _MAX_EVIDENCE
-) -> tuple[tuple[str, str], ...]:
-    """Rank `(source, paragraph)` pairs by character-bigram overlap with `question`,
-    descending, stable on ties; pure, no I/O. Returns the top `limit`."""
-    question_bigrams = char_bigrams(question)
-    scored = [
-        (len(question_bigrams & char_bigrams(paragraph)), index, source, paragraph)
-        for index, (source, paragraph) in enumerate(paragraphs)
-    ]
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return tuple(
-        (source, paragraph) for _score, _index, source, paragraph in scored[:limit]
-    )
+def _git_dirty() -> bool:
+    """Whether the working tree has uncommitted changes, recorded next to
+    `build` so a candidate observation can be told apart from a clean-tree
+    run even when `build`'s short SHA matches a prior one."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
+        )
+        return bool(result.stdout.strip())
+    except (OSError, subprocess.CalledProcessError):
+        return True
 
 
-def cited_sources_from_claims(
-    claims: Sequence[Mapping[str, Any]], label_sources: Mapping[str, str]
-) -> tuple[str, ...]:
-    """Unique source document names cited by `claims`' evidence labels, in first-seen
-    order; pure, no I/O."""
-    seen: list[str] = []
-    for claim in claims:
-        labels = claim.get("evidenceLabels", ())
-        if not isinstance(labels, Sequence) or isinstance(labels, (str, bytes)):
-            continue
-        for label in labels:
-            source = label_sources.get(str(label))
-            if source is not None and source not in seen:
-                seen.append(source)
-    return tuple(seen)
+# --- fake mode ---------------------------------------------------------------
 
 
 async def _answer_scoped(
@@ -318,14 +218,7 @@ async def run_fake(*, golden: Path, corpus_dir: Path) -> dict[str, Any]:
 
     started_at = _now_iso()
     golden_json = json.loads(golden.read_text(encoding="utf-8"))
-
-    documents_paths = sorted(corpus_dir.glob("*.md"))
-    if not documents_paths:
-        raise ValueError(f"fake run found no *.md documents under {corpus_dir}")
-    documents = {
-        path.stem: path.read_text(encoding="utf-8") for path in documents_paths
-    }
-
+    documents = _load_documents(corpus_dir)
     golden_set = validate_golden(golden_json, known_sources=frozenset(documents))
 
     async def _redact(text: str) -> str:
@@ -358,39 +251,164 @@ async def run_fake(*, golden: Path, corpus_dir: Path) -> dict[str, Any]:
         "schemaVersion": OBSERVATIONS_SCHEMA_VERSION,
         "mode": "fake",
         "build": "fake",
+        "dirty": False,
         "observations": observations,
         "startedAt": started_at,
         "finishedAt": _now_iso(),
     }
 
 
-def _git_short_sha() -> str:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
+# --- corpus upload (real-mode setup) ----------------------------------------
+
+
+def _multipart_body(
+    field_name: str, filename: str, content: bytes
+) -> tuple[bytes, str]:
+    boundary = f"answer-golden-{uuid.uuid4().hex}"
+    content_type = mimetypes.guess_type(filename)[0] or "text/markdown"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="{field_name}"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode("utf-8")
+    body += content
+    body += f"\r\n--{boundary}--\r\n".encode("utf-8")
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _runtime_project_id(api: str) -> str:
+    request = urllib.request.Request(f"{api}/api/v1/runtime-mode")  # noqa: S310
+    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+        body = json.loads(response.read().decode("utf-8"))
+    return str(body["projectId"])
+
+
+def _upload_source(api: str, project_id: str, stem: str, content: bytes) -> str:
+    filename = f"{stem}.md"
+    body, content_type = _multipart_body("upload", filename, content)
+    idempotency_key = f"answer-golden-{stem}-{_digest(content.decode('utf-8'))[:12]}"
+    url = f"{api}/api/v1/projects/{project_id}/knowledge/sources"
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": content_type, "Idempotency-Key": idempotency_key},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+        accepted = json.loads(response.read().decode("utf-8"))
+    return str(accepted["source"]["sourceId"])
+
+
+def _source_documents(
+    api: str, project_id: str, source_id: str
+) -> list[dict[str, Any]]:
+    url = f"{api}/api/v1/projects/{project_id}/knowledge/sources/{source_id}?limit=50"
+    request = urllib.request.Request(url)  # noqa: S310
+    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+        body = json.loads(response.read().decode("utf-8"))
+    documents = body.get("documents", {})
+    items = documents.get("items", []) if isinstance(documents, dict) else []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _poll_ready(
+    api: str, project_id: str, source_ids: list[str], deadline: float
+) -> None:
+    pending = set(source_ids)
+    while pending:
+        for source_id in sorted(pending):
+            ready = any(
+                str(item.get("status", "")).lower() == "ready"
+                for item in _source_documents(api, project_id, source_id)
+            )
+            if ready:
+                pending.discard(source_id)
+        if not pending:
+            return
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                "knowledge documents did not become ready before the deadline"
+            )
+        time.sleep(_POLL_INTERVAL_SECONDS)
+
+
+def run_corpus_upload(
+    *, corpus_dir: Path, api: str, project_id: str | None, timeout_seconds: float
+) -> dict[str, Any]:
+    """Upload every `*.md` fixture document as a knowledge source and return the
+    `{stem: sourceId}` manifest `real` mode needs to translate the golden set's
+    `expectedSources` (document stems) into server-assigned source IDs."""
+    documents = _load_documents(corpus_dir)
+    resolved_project_id = project_id or _runtime_project_id(api)
+    deadline = time.monotonic() + timeout_seconds
+
+    sources: dict[str, str] = {}
+    for stem, text in documents.items():
+        content = text.encode("utf-8")
+        if len(content) > _MAX_UPLOAD_BYTES:
+            raise ValueError(f"{stem}.md exceeds {_MAX_UPLOAD_BYTES} bytes")
+        sources[stem] = _upload_source(api, resolved_project_id, stem, content)
+
+    _poll_ready(api, resolved_project_id, list(sources.values()), deadline)
+
+    return {
+        "schemaVersion": "answer-golden-corpus-v1",
+        "manifestDigest": corpus_manifest_digest(documents),
+        "projectId": resolved_project_id,
+        "sources": sources,
+    }
+
+
+def validate_corpus_file(
+    corpus: Mapping[str, Any], *, known_sources: frozenset[str]
+) -> dict[str, str]:
+    """Validate a previously produced corpus manifest; pure, no I/O. Returns the
+    `{stem: sourceId}` mapping."""
+    if corpus.get("schemaVersion") != "answer-golden-corpus-v1":
+        raise ValueError("unsupported answer golden corpus schema")
+    sources_raw = corpus.get("sources")
+    if not isinstance(sources_raw, dict) or not sources_raw:
+        raise ValueError("corpus manifest requires a nonempty sources object")
+    sources: dict[str, str] = {}
+    for stem, source_id in sources_raw.items():
+        if not isinstance(stem, str) or not isinstance(source_id, str) or not source_id:
+            raise ValueError(
+                "corpus manifest sources must map document stems to source IDs"
+            )
+        sources[stem] = source_id
+    missing = known_sources - set(sources)
+    if missing:
+        raise ValueError(
+            f"corpus manifest is missing sources for document stems: {sorted(missing)}"
         )
-        return result.stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
+    return sources
 
 
-async def run_real(*, golden: Path, actor_id: str) -> dict[str, Any]:
+# --- real mode ----------------------------------------------------------------
+
+
+async def run_real(
+    *, golden: Path, corpus: Mapping[str, Any], actor_id: str, corpus_dir: Path
+) -> dict[str, Any]:
     from tap.entrypoints.prompt_suggestion_knowledge import ConversationGroundingCheck
     from tap.entrypoints.tapper_runtime import TapperSettings, create_api_runtime
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.knowledge.adapters.mysql_ready_sources import MysqlReadySources
     from tap.modules.knowledge.api import answer_response_to_http
+    from tap.modules.knowledge.domain.models import AnswerResponse
     from tap.platform.db.session import create_engine_and_session_factory
+
+    from contextlib import AsyncExitStack
 
     started_at = _now_iso()
     settings = TapperSettings.from_mapping(dict(os.environ))
     golden_json = json.loads(golden.read_text(encoding="utf-8"))
-    golden_set = validate_golden(golden_json)
-
-    from contextlib import AsyncExitStack
+    documents = _load_documents(corpus_dir)
+    golden_set = validate_golden(golden_json, known_sources=frozenset(documents))
+    source_ids = validate_corpus_file(corpus, known_sources=frozenset(documents))
+    if corpus.get("manifestDigest") != corpus_manifest_digest(documents):
+        raise ValueError("corpus manifest does not match the current fixture documents")
+    stems_by_source_id = {value: key for key, value in source_ids.items()}
 
     async with AsyncExitStack() as stack:
         runtime = await create_api_runtime(settings)
@@ -409,29 +427,38 @@ async def run_real(*, golden: Path, actor_id: str) -> dict[str, Any]:
 
         observations: list[dict[str, Any]] = []
         for case in golden_set.cases:
+            case_source_ids = tuple(source_ids[stem] for stem in case.expected_sources)
             answer = await check.dry_run_answer(
-                actor_id, case.question, tuple(case.expected_sources)
+                actor_id, case.question, case_source_ids
             )
             if answer is None:
+                # `dry_run_answer` returns `None` when a cited source is not ready, or
+                # the pipeline produced an unusable answer -- never a legitimate
+                # abstention. Recording this as `abstained: true` would let a broken
+                # pipeline masquerade as a model that correctly declines to answer.
                 observations.append(
                     {
                         "id": case.id,
-                        "abstained": True,
+                        "invalid": True,
+                        "abstained": False,
                         "answer": "",
                         "citedSources": [],
                         "claimCount": 0,
                     }
                 )
                 continue
-            from tap.modules.knowledge.domain.models import AnswerResponse
-
             http_answer = answer_response_to_http(cast(AnswerResponse, answer))
             cited_sources = sorted(
-                {citation.source.source_id for citation in http_answer.citations}
+                {
+                    stems_by_source_id[citation.source.source_id]
+                    for citation in http_answer.citations
+                    if citation.source.source_id in stems_by_source_id
+                }
             )
             observations.append(
                 {
                     "id": case.id,
+                    "invalid": False,
                     "abstained": bool(http_answer.abstained),
                     "answer": http_answer.answer,
                     "citedSources": cited_sources,
@@ -443,6 +470,7 @@ async def run_real(*, golden: Path, actor_id: str) -> dict[str, Any]:
             "schemaVersion": OBSERVATIONS_SCHEMA_VERSION,
             "mode": "real",
             "build": _git_short_sha(),
+            "dirty": _git_dirty(),
             "observations": observations,
             "startedAt": started_at,
             "finishedAt": _now_iso(),
@@ -451,33 +479,93 @@ async def run_real(*, golden: Path, actor_id: str) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("fake", "real"), required=True)
-    parser.add_argument("--golden", type=Path, required=True)
-    parser.add_argument("--observations", type=Path, required=True)
+    parser.add_argument(
+        "--mode", choices=("fake", "real", "corpus", "validate-corpus"), required=True
+    )
+    parser.add_argument("--golden", type=Path)
+    parser.add_argument("--observations", type=Path)
     parser.add_argument("--corpus-dir", type=Path, default=None)
+    parser.add_argument(
+        "--corpus", type=Path, default=Path(".local/quality-answers/corpus.json")
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path(".local/quality-answers/corpus.json")
+    )
+    parser.add_argument("--api", default="http://localhost:8000")
+    parser.add_argument("--project-id", default=None)
+    parser.add_argument("--timeout-seconds", type=float, default=1800.0)
     parser.add_argument("--actor-id", default="validation-actor")
     arguments = parser.parse_args()
 
     try:
         if arguments.mode == "fake":
-            if arguments.corpus_dir is None:
-                parser.error("--mode fake requires --corpus-dir")
-            observations = asyncio.run(
+            if (
+                arguments.golden is None
+                or arguments.observations is None
+                or arguments.corpus_dir is None
+            ):
+                parser.error(
+                    "--mode fake requires --golden, --observations and --corpus-dir"
+                )
+            result: dict[str, Any] = asyncio.run(
                 run_fake(golden=arguments.golden, corpus_dir=arguments.corpus_dir)
             )
+        elif arguments.mode == "corpus":
+            if arguments.corpus_dir is None:
+                parser.error("--mode corpus requires --corpus-dir")
+            result = run_corpus_upload(
+                corpus_dir=arguments.corpus_dir,
+                api=arguments.api,
+                project_id=arguments.project_id,
+                timeout_seconds=arguments.timeout_seconds,
+            )
+            arguments.output.parent.mkdir(parents=True, exist_ok=True)
+            arguments.output.write_text(
+                json.dumps(result, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            return 0
+        elif arguments.mode == "validate-corpus":
+            if arguments.corpus_dir is None:
+                parser.error("--mode validate-corpus requires --corpus-dir")
+            documents = _load_documents(arguments.corpus_dir)
+            corpus_value = json.loads(arguments.corpus.read_text(encoding="utf-8"))
+            sources = validate_corpus_file(
+                corpus_value, known_sources=frozenset(documents)
+            )
+            if corpus_value.get("manifestDigest") != corpus_manifest_digest(documents):
+                raise ValueError(
+                    "corpus manifest does not match the current fixture documents"
+                )
+            print(f"corpus manifest valid: {len(sources)} sources")
+            return 0
         else:
             if os.environ.get("TAP_RUN_QUALITY_ANSWERS") != "1":
                 raise ValueError("--mode real requires TAP_RUN_QUALITY_ANSWERS=1")
-            observations = asyncio.run(
-                run_real(golden=arguments.golden, actor_id=arguments.actor_id)
+            if (
+                arguments.golden is None
+                or arguments.observations is None
+                or arguments.corpus_dir is None
+            ):
+                parser.error(
+                    "--mode real requires --golden, --observations and --corpus-dir"
+                )
+            corpus_value = json.loads(arguments.corpus.read_text(encoding="utf-8"))
+            result = asyncio.run(
+                run_real(
+                    golden=arguments.golden,
+                    corpus=corpus_value,
+                    actor_id=arguments.actor_id,
+                    corpus_dir=arguments.corpus_dir,
+                )
             )
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, TimeoutError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 
     arguments.observations.parent.mkdir(parents=True, exist_ok=True)
     arguments.observations.write_text(
-        json.dumps(observations, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return 0
 

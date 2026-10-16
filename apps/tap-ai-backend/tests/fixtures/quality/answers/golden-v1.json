@@ -144,7 +144,7 @@
       "locale": "zh",
       "kind": "answerable",
       "expectedSources": ["policy-servicing", "claims-handling"],
-      "expectedFacts": ["手机APP", "30日"],
+      "expectedFacts": ["受益人变更", "30日"],
       "forbiddenFacts": []
     },
     {
@@ -212,7 +212,7 @@
     },
     {
       "id": "b-004",
-      "question": "犹豫期内退保是否需要本人亲自到营业网点办理？",
+      "question": "保单贷款是否需要共同借款人签字？",
       "locale": "zh",
       "kind": "abstain",
       "expectedSources": ["policy-servicing"],
@@ -244,7 +244,7 @@
       "kind": "false_premise",
       "expectedSources": ["policy-servicing"],
       "expectedFacts": ["15日"],
-      "forbiddenFacts": ["30天为犹豫期"]
+      "forbiddenFacts": [["犹豫期是30天", "犹豫期为30天", "30天的犹豫期"]]
     },
     {
       "id": "c-002",
@@ -253,7 +253,7 @@
       "kind": "false_premise",
       "expectedSources": ["policy-servicing"],
       "expectedFacts": ["80%"],
-      "forbiddenFacts": ["额度上限为100%"]
+      "forbiddenFacts": [["贷款额度上限是保单现金价值的100%", "额度上限为100%", "现金价值的100%"]]
     },
     {
       "id": "c-003",
@@ -262,7 +262,7 @@
       "kind": "false_premise",
       "expectedSources": ["test-environment-guide"],
       "expectedFacts": ["123456"],
-      "forbiddenFacts": ["验证码每次都不同"]
+      "forbiddenFacts": [["验证码每次登录都不一样", "验证码每次都不同", "验证码是随机生成的"]]
     },
     {
       "id": "c-004",
@@ -271,7 +271,7 @@
       "kind": "false_premise",
       "expectedSources": ["claims-handling"],
       "expectedFacts": ["15个工作日"],
-      "forbiddenFacts": ["7个工作日内作出理赔决定"]
+      "forbiddenFacts": [["理赔决定的常规时限是7个工作日", "7个工作日内作出理赔决定", "常规时限为7个工作日"]]
     }
   ]
 }
