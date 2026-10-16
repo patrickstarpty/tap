@@ -49,7 +49,7 @@
 
 | 表 | 主要列 | 说明 |
 | --- | --- | --- |
-| `graph_project_version` | project_id、version、status（MERGING/READY/FAILED）、fragment_digest、node_count、edge_count、merged_at | 每次合并产生一个版本；`fragment_digest` 为参与合并的片段集合摘要 |
+| `graph_project_version` | project_id、version、status（MERGING/READY/FAILED）、fragment_digest、node_count、edge_count、merged_at | 每次合并产生一个版本；`fragment_digest` 为参与合并的片段集合摘要与 `MERGE_RULES_VERSION`（对齐/合并规则版本号，规则变更时手动递增）折算的摘要——同一片段集合在规则变更前后得到不同摘要，使只改规则、不重新抽取的发布也能在下次合并时生效 |
 | `graph_project_node` | project_id、version、node_id、label、node_type、canonical_key、degree、community_id | 主键（project_id、version、node_id）；索引（project_id、version、canonical_key）、（project_id、version、community_id） |
 | `graph_project_edge` | project_id、version、edge_id、source_node_id、target_node_id、relation_type、relation_label、origin、confidence | 索引（project_id、version、source_node_id）、（project_id、version、target_node_id） |
 | `graph_project_node_source` | project_id、version、node_id、source_revision_id、document_revision_id、chunk_id、anchor_json、fragment_node_id | 节点在每个来源中的证据，用于授权过滤与"打开原件" |

@@ -4,6 +4,7 @@ import hashlib
 
 import pytest
 
+import tap.modules.graph.domain.project as project_domain
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.graph.application.alignment import alignment_key
 from tap.modules.graph.application.merger import ProjectGraphMerger
@@ -129,6 +130,24 @@ def test_merge_produces_stable_ids_degrees_communities_and_log():
     assert any(entry.rule == "EXACT" and len(entry.merged_from) == 2 for entry in draft.merge_log)
     policy_node = next(n for n in draft.nodes if n.canonical_key == "保单")
     assert policy_node.degree == 2
+
+
+def test_fragment_digest_changes_with_the_merge_rules_version(monkeypatch):
+    # mysql_merge.py only republishes a new project version when fragment_digest
+    # moves (ProjectGraphMergeStore.complete compares it against the current
+    # READY version's own digest); a rules-only deploy touches no fragment, so
+    # without folding MERGE_RULES_VERSION into the digest, every already-merged
+    # project would stay on its pre-deploy version until something re-extracts.
+    draft_a = _draft("frag-a", [("a1", "保单", "ENTITY", "保单")], [])
+    records = [_record("frag-a", draft_a)]
+
+    before = fragment_digest(records)
+    monkeypatch.setattr(
+        project_domain, "MERGE_RULES_VERSION", project_domain.MERGE_RULES_VERSION + 1
+    )
+    after = fragment_digest(records)
+
+    assert before != after
 
 
 def test_merge_of_no_fragments_is_an_empty_draft():
