@@ -15,7 +15,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
 from opentelemetry.trace import get_current_span
@@ -562,7 +562,7 @@ class ChatTurnNodes:
             }
         }
 
-    def _failed_result(self, failure: dict[str, object]) -> dict[str, object]:
+    def _failed_result(self, failure: Mapping[str, object]) -> dict[str, object]:
         evidence = AnswerEvidence(
             "", "failed", RetrievalSummary("failed"), GraphContextStatus.FAILED
         )
@@ -606,6 +606,7 @@ class ChatTurnNodes:
                     self._turn.input_snapshot.value, answer_plan=active_plan
                 )
             else:
+                assert step is not None
                 answer = await self._steps.finalize_conversation_answer(
                     step,
                     self._turn.input_snapshot.value,

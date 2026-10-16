@@ -198,7 +198,7 @@ class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
         scope: ProjectScopeContext,
         fence: GraphFence | None = None,
         defer_completion: bool = False,
-        budget: dict[str, int] | None = None,
+        budget: dict[str, int | float] | None = None,
     ) -> None:
         super().__init__(serde=JsonPlusSerializer(allowed_msgpack_modules=None))
         self._sessions = sessions

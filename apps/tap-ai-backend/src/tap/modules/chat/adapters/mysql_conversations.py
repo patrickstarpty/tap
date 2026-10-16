@@ -1500,7 +1500,7 @@ class MysqlConversationRepository:
             )
 
     def graph_checkpointer(
-        self, turn: ConversationTurn, *, budget: Mapping[str, object] | None = None
+        self, turn: ConversationTurn, *, budget: Mapping[str, int | float] | None = None
     ):
         if not turn.lease_token:
             raise ConversationConflict("generation lease lost")

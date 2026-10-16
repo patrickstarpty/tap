@@ -40,7 +40,7 @@ class ChatGraphState(TypedDict, total=False):
     started_at_ms: int
     failure: dict[str, str] | None
     result: dict[str, object]
-    budget: dict[str, object]
+    budget: dict[str, int | float]
     budget_used: dict[str, int]
 
 

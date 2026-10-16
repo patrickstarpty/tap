@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from xml.etree import ElementTree
@@ -338,7 +338,7 @@ class ConfiguredInsightsExplanation:
                 "asOf": metrics.query.as_of.isoformat(),
                 "facts": [asdict(fact) for fact in facts],
             }
-            untrusted_sections: dict[str, object] = {
+            untrusted_sections: dict[str, Sequence[Mapping[str, object]] | Mapping[str, object]] = {
                 "evidence": [
                     {"citationId": item.citation_id, "excerpt": item.excerpt} for item in evidence
                 ]

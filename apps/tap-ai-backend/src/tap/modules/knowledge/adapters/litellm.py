@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from uuid import uuid4
 
 from opentelemetry import trace
@@ -352,7 +352,7 @@ class KnowledgeModelGateway:
         if self.chat_aliases is not None and alias not in self.chat_aliases:
             raise AnswerRejected("model-rejected")
         # Redact copies only; canonical evidence, hashes and citation authority stay intact.
-        relation_records: list[object] | None = None
+        relation_records: list[Mapping[str, object]] | None = None
         if relation_context is not None:
             relation_records = json.loads(
                 await self._redact(
@@ -360,7 +360,7 @@ class KnowledgeModelGateway:
                 )
             )
         trusted_value: dict[str, object] = {"query": await self._redact(query)}
-        untrusted_sections: dict[str, object] = {}
+        untrusted_sections: dict[str, Sequence[Mapping[str, object]] | Mapping[str, object]] = {}
         if relation_first and relation_records is not None:
             untrusted_sections["relations"] = relation_records
         untrusted_sections["evidence"] = [await self._evidence_payload(item) for item in evidence]
