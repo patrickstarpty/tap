@@ -41,10 +41,11 @@ INJECTION_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "role-override",
         re.compile(
-            r"\byou are now (?:an? |the )?(?:\w+\s+)?"
+            r"\byou are now (?:an? |the )?"
+            r"(?:(?:new|unrestricted|uncensored|jailbroken|different)\s+)?"
             r"(?:ai|assistant|chatbot|system|developer|admin\w*)\b"
             r"|\bfrom now on,? you (?:are|will|must)\b"
-            r"|\bpretend (?:to be|you are)\b",
+            r"|\bpretend (?:to be|you are) (?:an? |the )?(?:ai|assistant|system|developer|admin\w*)\b",
             re.I,
         ),
     ),
@@ -74,9 +75,9 @@ INJECTION_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "zh-role",
         re.compile(
-            r"你(?:现在)?(?:是|扮演|充当)(?:一个|一名)?(?:新的)?(?:助手|AI|系统|管理员|开发者)"
-            r"|从现在(?:起|开始)，?你(?:是|要|必须|将)"
-            r"|请(?:你)?扮演"
+            r"你现在(?:是|扮演|充当)(?:一个|一名)?(?:新的)?(?:助手|AI|系统|管理员|开发者)"
+            r"|从现在(?:起|开始)，?你(?:是|要|必须)(?:一个|一名)?(?:助手|AI|系统|管理员|开发者)"
+            r"|请(?:你)?扮演(?:一个|一名)?(?:新的)?(?:助手|AI|系统|管理员|开发者|角色)"
         ),
     ),
     (
