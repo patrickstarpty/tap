@@ -58,6 +58,13 @@ _ORG_NAME_SUFFIXES: tuple[str, ...] = (
 _GENERIC_INDUSTRY_WORDS = frozenset(
     {"保险", "人寿", "财险", "产险", "寿险", "人寿保险", "财产保险"}
 )
+# "股份" ("joint-stock") is corporate-structure filler, the same kind of thing the
+# suffixes above already strip -- it just happens to recur as a leftover *within*
+# the remainder after a shorter suffix match ("保险股份有限公司" minus "有限公司" is
+# "保险股份", not "保险", but is exactly as generic). Checked by stripping it from
+# the remainder before the genericity check, not by adding every "<word>股份"
+# combination to the generic-word set above.
+_CORPORATE_FILLER_SUFFIX = "股份"
 
 
 def _merge_type_bucket(node_type: str) -> str:
@@ -65,11 +72,20 @@ def _merge_type_bucket(node_type: str) -> str:
     return "ORG_PARTICIPANT" if node_type in ORG_PARTICIPANT_TYPES else node_type
 
 
+def _is_generic_remainder(core: str) -> bool:
+    if core in _GENERIC_INDUSTRY_WORDS:
+        return True
+    if core.endswith(_CORPORATE_FILLER_SUFFIX):
+        without_filler = core[: -len(_CORPORATE_FILLER_SUFFIX)]
+        return len(without_filler) < 2 or without_filler in _GENERIC_INDUSTRY_WORDS
+    return False
+
+
 def _strip_org_suffix(key: str) -> str:
     for suffix in sorted(_ORG_NAME_SUFFIXES, key=len, reverse=True):
         if len(key) > len(suffix) and key.endswith(suffix):
             core = key[: -len(suffix)]
-            if len(core) >= 2 and core not in _GENERIC_INDUSTRY_WORDS:
+            if len(core) >= 2 and not _is_generic_remainder(core):
                 return core
     return key
 

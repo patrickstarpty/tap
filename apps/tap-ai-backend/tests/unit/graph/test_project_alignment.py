@@ -176,6 +176,19 @@ def test_a_fully_generic_company_name_is_not_stripped_to_an_industry_word():
     assert len(entities) == 3
 
 
+def test_a_corporate_filler_leftover_is_not_treated_as_distinctive_either():
+    # "保险股份有限公司" ("Insurance Co., Ltd.") has no distinguishing brand either;
+    # the shortest suffix match ("有限公司" alone) would otherwise leave "保险股份"
+    # -- not itself in the generic-word list, but exactly as generic once "股份"
+    # (corporate-structure filler) is recognized as part of what the word means.
+    generic_company = _fragment("frag-a", [("n1", "保险股份有限公司", "ACTOR", "保险股份有限公司")])
+    bare_generic_word = _fragment("frag-b", [("n1", "保险", "ACTOR", "保险")])
+
+    entities = resolve_entities([generic_company, bare_generic_word])
+
+    assert len(entities) == 2
+
+
 def test_same_key_different_type_stays_separate():
     a = _fragment("frag-a", [("n1", "保单", "ENTITY", "保单")])
     b = _fragment("frag-b", [("n1", "保单", "REQUIREMENT", "保单")])
