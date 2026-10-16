@@ -397,7 +397,10 @@ async def test_worker_routes_in_graph_persists_plan_and_binds_completion(questio
                 (
                     "chat-a",
                     SimpleNamespace(
-                        turn_id="turn-a", lease_token="lease-a", input_snapshot=snapshot
+                        turn_id="turn-a",
+                        lease_token="lease-a",
+                        input_snapshot=snapshot,
+                        attempt=1,
                     ),
                 ),
             )

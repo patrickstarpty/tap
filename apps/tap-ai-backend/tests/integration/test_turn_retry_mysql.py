@@ -96,7 +96,12 @@ async def test_deferred_turn_is_not_claimed_before_next_attempt_at(owned_project
                 .one()
             )
         assert row["next_attempt_at"] is None
-        assert row["last_failure"] == "transient:ModelGatewayUnavailable"
+        # `claim_queued` clears `last_failure` along with `next_attempt_at`: this
+        # new attempt's own outcome (another defer, success, or a silent crash)
+        # should decide what the row reports next, not a stale class carried over
+        # from the previous attempt (a silent crash with no explicit `defer_turn`
+        # call must read as `lease-expired`, not an old transient reason).
+        assert row["last_failure"] is None
     finally:
         await engine.dispose()
 
@@ -298,7 +303,9 @@ async def test_canceled_deferred_turn_is_not_reclaimed(owned_project_mysql) -> N
 async def _event_count(sessions, turn_id: str, event_type: str) -> int:
     async with sessions() as session:
         return await session.scalar(
-            text("SELECT COUNT(*) FROM chat_event WHERE turn_id=:turn_id AND event_type=:event_type"),
+            text(
+                "SELECT COUNT(*) FROM chat_event WHERE turn_id=:turn_id AND event_type=:event_type"
+            ),
             {"turn_id": turn_id, "event_type": event_type},
         )
 
@@ -331,7 +338,11 @@ async def test_model_failure_resumes_from_checkpoint_without_repeating_retrieval
 
         async with sessions() as session:
             row = (
-                (await session.execute(select(chat_turn).where(chat_turn.c.turn_id == "turn-resume")))
+                (
+                    await session.execute(
+                        select(chat_turn).where(chat_turn.c.turn_id == "turn-resume")
+                    )
+                )
                 .mappings()
                 .one()
             )
