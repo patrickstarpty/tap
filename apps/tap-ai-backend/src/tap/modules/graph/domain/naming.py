@@ -122,12 +122,6 @@ _PATTERNS = tuple(
         # at the same number of days. A count that keeps its noun ("六十日宽限期")
         # is a different, longer string and is not matched here.
         r"[0-9〇零一二三四五六七八九十百千]+[日天]",
-        # IV 级, Ⅲ级, 四级, 十级: a bare classification grade. Real-model output merged
-        # three unrelated classification systems (NYHA heart function, rheumatoid
-        # arthritis function) across one document this way. A grade that keeps its
-        # qualifying noun ("心功能分级Ⅲ级") is a different, longer string and is not
-        # matched here.
-        r"(?:[ivxlc]+|[0-9]+|[一二三四五六七八九十]+)级",
         # 王先生, 王先生的儿子, 李女士: a brochure's illustrative example person, never
         # a real entity name.
         r"[一-鿿]{1,2}(先生|女士|小姐)(的[一-鿿]{1,10})?",
@@ -142,6 +136,17 @@ _PATTERNS = tuple(
         r"(疾病定义|释义|条款释义)[0-9〇零一二三四五六七八九十]+",
     )
 )
+# IV 级, Ⅲ级, 四级, 十级: a bare classification grade. Unlike every other pattern
+# above, this is *not* a reference word a node may not even be named -- v9 of the
+# real-model run had real nodes legitimately named exactly this way ("0级", "Ⅱ级")
+# with their own edges (心功能状态分级 PART_OF Ⅱ级); rejecting it as a node name
+# dropped those nodes and the edges with them. It is still too ambiguous to use as
+# an *alias*: real-model output used it that way to merge two unrelated
+# classification systems (NYHA heart function, rheumatoid arthritis function)
+# across one document. A grade that keeps its qualifying noun ("心功能分级Ⅲ级") is
+# a different, longer string and is not matched here either way.
+_GRADE_ONLY = re.compile(r"(?:[ivxlc]+|[0-9]+|[一二三四五六七八九十]+)级")
+
 # A single overly generic noun: real enough to mention, far too broad to identify one
 # entity across documents ("死亡证明"'s alias "证明" could mean any certificate at all).
 _GENERIC_ALONE = frozenset({"证明"})
@@ -198,10 +203,23 @@ def is_reference_name(text: str) -> bool:
     return any(pattern.fullmatch(key) for pattern in _PATTERNS)
 
 
+def is_bare_grade(text: str) -> bool:
+    """True when ``text`` is nothing but a classification grade ("IV 级", "Ⅲ级",
+    "四级"). A node may be named this on its own; see ``_GRADE_ONLY``'s comment
+    for why this is not folded into ``is_reference_name``.
+    """
+
+    return bool(_GRADE_ONLY.fullmatch(normalize_key(text)))
+
+
 def usable_alias(text: str) -> bool:
     """True when ``text`` may be kept as a model-provided alias."""
 
-    return len(text.strip()) <= ALIAS_LENGTH_MAX and not is_reference_name(text)
+    return (
+        len(text.strip()) <= ALIAS_LENGTH_MAX
+        and not is_reference_name(text)
+        and not is_bare_grade(text)
+    )
 
 
 # A leading clause/article number ("第二十五条 ", "第9章", "第一部分 "), matched (and

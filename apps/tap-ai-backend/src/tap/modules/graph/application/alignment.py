@@ -11,7 +11,7 @@ import numpy as np
 import numpy.typing as npt
 
 from tap.modules.graph.domain.models import GraphEdge, GraphSnapshotDraft, RelationOrigin
-from tap.modules.graph.domain.naming import clean_alias
+from tap.modules.graph.domain.naming import clean_alias, is_bare_grade
 from tap.modules.graph.domain.project import ProjectEdge, project_edge_id, project_node_id
 from tap.modules.graph.domain.vocabulary import normalize_key
 
@@ -408,13 +408,28 @@ def resolve_entities(
         source = fragment.snapshot.source_revision_ids
         for node in fragment.nodes:
             key1 = alignment_key(node.canonical_key, node.node_type)
+            # A bare grade ("Ⅳ级") is kept as a node's own name (see naming.
+            # is_bare_grade) but is exactly the ambiguous shape ALIAS matching
+            # already refuses as a key: an unrelated classification system a
+            # different document happens to grade the same number. EXACT
+            # matching compares canonical_key text literally and does not go
+            # through naming's alias filtering at all, so without this a real-
+            # model run's "NYHA Ⅳ级" and "RA Ⅳ级" nodes -- same literal
+            # canonical_key text, unrelated entities -- would EXACT-merge.
+            # Skip both the lookup and the registration below; each such node
+            # always starts (or stays) its own cluster by this key.
+            key1_is_bare_grade = is_bare_grade(key1)
             label_keys = alias_keys((node.label,), node.node_type)
             keys2 = alias_keys((node.label, *node.aliases), node.node_type)
 
             target: _Cluster | None = None
             rule_used: Literal["EXACT", "ALIAS", "EMBEDDING"] | None = None
 
-            exact_match = exact_index.get((_merge_type_bucket(node.node_type), key1))
+            exact_match = (
+                None
+                if key1_is_bare_grade
+                else exact_index.get((_merge_type_bucket(node.node_type), key1))
+            )
             if exact_match is not None:
                 target, rule_used = exact_match, "EXACT"
 
@@ -454,7 +469,8 @@ def resolve_entities(
             if aligner is not None:
                 aligner.place(node.node_type, node_key, target)
             target.level1_keys.add(key1)
-            exact_index.setdefault((_merge_type_bucket(node.node_type), key1), target)
+            if not key1_is_bare_grade:
+                exact_index.setdefault((_merge_type_bucket(node.node_type), key1), target)
             target.level2_keys |= keys2
             for key in label_keys:
                 known_position = label_index.get((node.node_type, key))

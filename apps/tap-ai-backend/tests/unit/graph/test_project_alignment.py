@@ -774,6 +774,36 @@ def test_an_alias_shared_by_two_grades_in_one_document_does_not_merge_them():
     assert all(len(entity.members) == 1 for entity in entities)
 
 
+def test_a_bare_grade_canonical_key_never_exact_merges_across_documents():
+    # A bare grade is kept as a node's own name (naming.is_bare_grade), but an
+    # EXACT match compares canonical_key text literally and does not go through
+    # naming's alias filtering -- without a dedicated guard, an NYHA "Ⅳ级" node
+    # and an unrelated RA "Ⅳ级" node, same literal canonical_key text across two
+    # documents, would EXACT-merge into one.
+    a = _fragment("frag-a", [("n1", "Ⅳ级", "CONCEPT", "Ⅳ级")])
+    b = _fragment("frag-b", [("n1", "Ⅳ级", "CONCEPT", "Ⅳ级")])
+
+    entities = resolve_entities([a, b])
+
+    assert len(entities) == 2
+    assert all(len(entity.members) == 1 for entity in entities)
+
+
+def test_a_bare_grade_canonical_key_never_exact_merges_within_one_document():
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("n1", "Ⅳ级", "CONCEPT", "Ⅳ级"),
+            ("n2", "Ⅳ级", "CONCEPT", "Ⅳ级"),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert len(entities) == 2
+    assert all(len(entity.members) == 1 for entity in entities)
+
+
 def test_an_ambiguous_alias_does_not_block_a_different_entitys_safe_merge():
     # The ambiguity guard only disqualifies the ambiguous key itself; an unrelated
     # pair sharing a different, unambiguous alias in the same document still merges.

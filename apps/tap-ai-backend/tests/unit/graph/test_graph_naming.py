@@ -5,6 +5,7 @@ import pytest
 from tap.modules.graph.domain.naming import (
     ALIAS_LENGTH_MAX,
     clean_alias,
+    is_bare_grade,
     is_reference_name,
     usable_alias,
 )
@@ -41,15 +42,12 @@ from tap.modules.graph.domain.naming import (
         "三十九",
         "一百零五",
         "19条",
-        # Bare day counts, classification grades, illustrative example people, a
-        # role restated with a bare age qualifier, and clause/definition locators
-        # with no term attached (the real over-merging aliases, second batch).
+        # Bare day counts, illustrative example people, a role restated with a
+        # bare age qualifier, and clause/definition locators with no term
+        # attached (the real over-merging aliases, second batch). Classification
+        # grades ("IV 级") are not here -- see test_bare_grades_* below.
         "十日",
         "九十日",
-        "IV 级",
-        "Ⅲ级",
-        "Ⅳ级",
-        "四级",
         "王先生",
         "王先生的儿子",
         "李女士",
@@ -133,6 +131,42 @@ def test_reference_names_are_rejected(text):
     ],
 )
 def test_real_names_are_kept(text):
+    assert not is_reference_name(text)
+    assert usable_alias(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # v9 of the real-model run had real nodes legitimately named exactly this
+        # way, with their own edges (心功能状态分级 PART_OF Ⅱ级); is_reference_name
+        # must not reject these, or extraction drops the node and its edges.
+        "IV 级",
+        "Ⅲ级",
+        "Ⅳ级",
+        "四级",
+        "0级",
+        "1级",
+    ],
+)
+def test_bare_grades_are_kept_as_node_names_but_rejected_as_aliases(text):
+    assert is_bare_grade(text)
+    assert not is_reference_name(text)
+    assert not usable_alias(text)
+    assert clean_alias(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A grade with its qualifying noun is a different, longer string: not a
+        # bare grade, kept as both a name and an alias.
+        "功能分类Ⅲ级",
+        "心功能分级Ⅳ级",
+    ],
+)
+def test_a_qualified_grade_is_not_a_bare_grade(text):
+    assert not is_bare_grade(text)
     assert not is_reference_name(text)
     assert usable_alias(text)
 
