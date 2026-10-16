@@ -11,6 +11,7 @@
 .local/graph-real/
 .local/graph-relations/
 .local/graph-bench/
+.local/quality-answers/
 .venv/
 .mypy_cache/
 node_modules/

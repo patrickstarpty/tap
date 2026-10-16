@@ -1,0 +1,277 @@
+{
+  "schemaVersion": "answer-golden-v1",
+  "labeledBy": "generated-fixture",
+  "labeledAt": "2026-10-16",
+  "cases": [
+    {
+      "id": "a-001",
+      "question": "出险后应在多少个工作日内向客户服务中心报案？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["claims-handling"],
+      "expectedFacts": ["10个工作日"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-002",
+      "question": "理赔决定一般时限是多少个工作日？案情复杂时最长可以延长到多久？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["claims-handling"],
+      "expectedFacts": ["15个工作日", "30个工作日"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-003",
+      "question": "小额理赔的金额标准和线上快速通道的审核时限分别是多少？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["claims-handling"],
+      "expectedFacts": ["5000元", "3个工作日"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-004",
+      "question": "理赔金通过什么方式支付？审核通过后多久到账？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["claims-handling"],
+      "expectedFacts": ["银行转账", "5个工作日"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-005",
+      "question": "对理赔决定有异议，可以在收到理赔决定书后多少天内申请复核？复核是否收费？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["claims-handling"],
+      "expectedFacts": ["30日", "不收取任何费用"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-006",
+      "question": "保单的犹豫期是多少天？犹豫期内退保最多扣多少工本费？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["policy-servicing"],
+      "expectedFacts": ["15日", "10元"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-007",
+      "question": "保费缴纳的宽限期是多久？宽限期内出险是否仍能获得赔付？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["policy-servicing"],
+      "expectedFacts": ["60日", "仍可获得赔付"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-008",
+      "question": "保单贷款的额度上限是保单现金价值的多少比例？贷款年利率是多少？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["policy-servicing"],
+      "expectedFacts": ["80%", "6%"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-009",
+      "question": "保单效力中止后，投保人需要在多久内申请复效？复效时需要做什么？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["policy-servicing"],
+      "expectedFacts": ["2年", "健康告知"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-010",
+      "question": "受益人变更这类保全事项可以通过什么渠道办理？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["policy-servicing"],
+      "expectedFacts": ["手机APP"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-011",
+      "question": "测试环境的测试账号统一使用什么前缀创建？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["test-environment-guide"],
+      "expectedFacts": ["TEST_"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-012",
+      "question": "测试数据多久自动重置一次？重置后历史理赔记录会怎样？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["test-environment-guide"],
+      "expectedFacts": ["每周一凌晨2点", "全部清空"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-013",
+      "question": "测试环境中用于自动化测试的短信验证码固定是多少？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["test-environment-guide"],
+      "expectedFacts": ["123456"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-014",
+      "question": "测试环境的例行维护窗口是什么时候？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["test-environment-guide"],
+      "expectedFacts": ["每周三22:00至24:00"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-015",
+      "question": "测试环境目前支持哪些业务线的测试？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["test-environment-guide"],
+      "expectedFacts": ["个人意外险", "个人医疗险"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-016",
+      "question": "通过手机APP可以办理哪类保全变更？对理赔决定不满意的复核申请期限又是多少天？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["policy-servicing", "claims-handling"],
+      "expectedFacts": ["手机APP", "30日"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-017",
+      "question": "犹豫期退保的工本费上限是多少？小额理赔线上快速通道的审核时限又是多少？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["policy-servicing", "claims-handling"],
+      "expectedFacts": ["10元", "3个工作日"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-018",
+      "question": "出险后的报案时效是多少个工作日？测试环境的测试数据又是多久重置一次？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["claims-handling", "test-environment-guide"],
+      "expectedFacts": ["10个工作日", "每周一凌晨2点"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-019",
+      "question": "保单贷款的年利率是多少？测试环境的短信验证码固定值又是多少？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["policy-servicing", "test-environment-guide"],
+      "expectedFacts": ["6%", "123456"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "a-020",
+      "question": "保费缴纳宽限期是多少天？理赔决定的常规时限又是多少个工作日？",
+      "locale": "zh",
+      "kind": "answerable",
+      "expectedSources": ["policy-servicing", "claims-handling"],
+      "expectedFacts": ["60日", "15个工作日"],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "b-001",
+      "question": "安心人寿的总部注册地址在哪里？",
+      "locale": "zh",
+      "kind": "abstain",
+      "expectedSources": ["policy-servicing"],
+      "expectedFacts": [],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "b-002",
+      "question": "测试环境支持哪些浏览器和操作系统？",
+      "locale": "zh",
+      "kind": "abstain",
+      "expectedSources": ["test-environment-guide"],
+      "expectedFacts": [],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "b-003",
+      "question": "保单贷款逾期不还会产生什么后果？",
+      "locale": "zh",
+      "kind": "abstain",
+      "expectedSources": ["policy-servicing"],
+      "expectedFacts": [],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "b-004",
+      "question": "犹豫期内退保是否需要本人亲自到营业网点办理？",
+      "locale": "zh",
+      "kind": "abstain",
+      "expectedSources": ["policy-servicing"],
+      "expectedFacts": [],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "b-005",
+      "question": "理赔复核期间，投保人能否要求更换理赔审核人员？",
+      "locale": "zh",
+      "kind": "abstain",
+      "expectedSources": ["claims-handling"],
+      "expectedFacts": [],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "b-006",
+      "question": "测试环境使用的数据库是什么版本？",
+      "locale": "zh",
+      "kind": "abstain",
+      "expectedSources": ["test-environment-guide"],
+      "expectedFacts": [],
+      "forbiddenFacts": []
+    },
+    {
+      "id": "c-001",
+      "question": "犹豫期是30天，犹豫期内退保最多扣多少工本费？",
+      "locale": "zh",
+      "kind": "false_premise",
+      "expectedSources": ["policy-servicing"],
+      "expectedFacts": ["15日"],
+      "forbiddenFacts": ["30天为犹豫期"]
+    },
+    {
+      "id": "c-002",
+      "question": "保单贷款额度上限是保单现金价值的100%，具体怎么申请？",
+      "locale": "zh",
+      "kind": "false_premise",
+      "expectedSources": ["policy-servicing"],
+      "expectedFacts": ["80%"],
+      "forbiddenFacts": ["额度上限为100%"]
+    },
+    {
+      "id": "c-003",
+      "question": "测试环境的短信验证码每次登录都不一样，具体规则是什么？",
+      "locale": "zh",
+      "kind": "false_premise",
+      "expectedSources": ["test-environment-guide"],
+      "expectedFacts": ["123456"],
+      "forbiddenFacts": ["验证码每次都不同"]
+    },
+    {
+      "id": "c-004",
+      "question": "理赔决定的常规时限是7个工作日，对吗？说说具体规则。",
+      "locale": "zh",
+      "kind": "false_premise",
+      "expectedSources": ["claims-handling"],
+      "expectedFacts": ["15个工作日"],
+      "forbiddenFacts": ["7个工作日内作出理赔决定"]
+    }
+  ]
+}
