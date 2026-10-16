@@ -466,6 +466,31 @@ async def test_refuse_out_of_scope_abstains_without_retrieval_or_generation() ->
 
 
 @pytest.mark.asyncio
+async def test_answer_conversation_short_circuits_out_of_scope_without_generation() -> None:
+    """M4 (defence in depth): `answer_conversation` is also called directly
+    by prompt-suggestion grounding outside the graph (which never runs
+    `guard_in`'s own out-of-scope routing), so it must itself refuse an
+    out-of-scope plan without calling the model, the same way the graph's
+    `finalize` node does."""
+
+    class Models:
+        async def chat(self, *args, **kwargs):
+            raise AssertionError("answer_conversation must never call the chat model")
+
+    frozen, _unused_plan = await _direct_route()
+    plan = _out_of_scope_plan()
+    service = _service(PhaseAnswers(), models=Models())
+    request = RetrievalAnswerRequest(query=frozen.message)
+
+    response = await service.answer_conversation(request, frozen, answer_plan=plan)
+
+    assert response.answer == ""
+    assert response.abstained is True
+    assert response.abstention_reason == AbstentionReason.OUT_OF_SCOPE
+    assert response.trace_id == plan.plan_id
+
+
+@pytest.mark.asyncio
 async def test_output_redaction_keeps_claims_locatable() -> None:
     """`finalize_conversation_answer` must redact the answer body and every
     claim's text with the same egress redactor before `save_frozen` --
@@ -629,6 +654,39 @@ async def test_final_route_answer_is_redacted() -> None:
 
     assert "13812345678" not in result.answer
     assert "[REDACTED_PHONE]" in result.answer
+
+
+@pytest.mark.asyncio
+async def test_final_route_redaction_result_is_validated_before_returning() -> None:
+    """M5: `_redact_final_response` built the redacted response with
+    `model_copy`, which skips validators. If per-claim redaction cannot
+    locate its paragraph in the redacted answer (the `match_index is None`
+    fallback keeps the claim's stale pre-redaction span), the response
+    must fail validation here -- fail closed -- rather than reach the
+    caller with a claim whose span no longer matches its text."""
+    from pydantic import ValidationError
+
+    from tap.modules.knowledge.api import answer_response_to_http
+
+    class InconsistentRedactor:
+        """Redacts the answer unchanged but always returns an unmatched
+        value for a claim, forcing `_redact_final_response`'s defensive
+        `match_index is None` fallback (a stale span) every time."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def redact_with_report(self, text):
+            self.calls += 1
+            if self.calls == 1:
+                return text, {}
+            return "unmatched redacted text", {"phone": 1}
+
+    response = answer_response_to_http(answer_response())
+    service = _service(redactor=InconsistentRedactor())
+
+    with pytest.raises(ValidationError):
+        await service._redact_final_response(response)
 
 
 @pytest.mark.asyncio

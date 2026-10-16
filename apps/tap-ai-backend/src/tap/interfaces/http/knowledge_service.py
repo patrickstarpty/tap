@@ -243,6 +243,12 @@ class KnowledgeHttpService:
     async def answer_conversation(
         self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None
     ):
+        # Defence in depth (M4): this is also called directly by
+        # prompt-suggestion grounding outside the `tapper-chat-v2` graph,
+        # which never runs `guard_in`'s own out-of-scope routing. Refuse
+        # here too, before any retrieval or generation call.
+        if answer_plan is not None and answer_plan.intent == "out_of_scope":
+            return await self.refuse_out_of_scope(frozen_input, answer_plan=answer_plan)
         async with self._plan_deadline(answer_plan):
             return await self._answer_conversation(
                 request, frozen_input, answer_plan=answer_plan, authorize=authorize
@@ -584,7 +590,13 @@ class KnowledgeHttpService:
 
         if hits:
             get_current_span().set_attribute("tap.guard.redaction.output_hits", json.dumps(hits))
-        return response.model_copy(update={"answer": redacted_answer, "claims": new_claims})
+        redacted = response.model_copy(update={"answer": redacted_answer, "claims": new_claims})
+        # Validate (M5): `model_copy` skips validators, so a redaction that
+        # left an inconsistent response (e.g. a claim offset now outside the
+        # redacted answer) must fail closed here rather than reach the caller.
+        return RetrievalAnswerResponse.model_validate(
+            redacted.model_dump(mode="json", by_alias=True)
+        )
 
     async def _authorized_frozen_context(
         self,
