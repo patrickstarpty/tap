@@ -2391,3 +2391,59 @@ async def test_embeddings_are_not_metered():
 
     assert result.output == (0.6, 0.8)
     assert meter.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_metered_chat_call_that_fails_after_sending_still_counts():
+    """A request that was actually sent and then fails must still count against the
+    budget — only calls refused by `before_call()` (never sent) are free."""
+    from tap.platform.budget import CallMeter, metered
+
+    gateway = configured_gateway(lambda incoming: httpx.Response(503))
+    meter = CallMeter(remaining_calls=5, remaining_cost_micros=None)
+
+    with metered(meter):
+        with pytest.raises(ModelGatewayUnavailable):
+            await gateway.chat(request())
+
+    assert meter.calls == 1
+    assert meter.cost_micros == 0
+
+
+@pytest.mark.asyncio
+async def test_metered_chat_call_rejected_by_the_provider_still_counts():
+    """A non-retryable 4xx from the provider is still a sent request, so it counts."""
+    from tap.platform.budget import CallMeter, metered
+
+    gateway = configured_gateway(lambda incoming: httpx.Response(400, text="bad request"))
+    meter = CallMeter(remaining_calls=5, remaining_cost_micros=None)
+
+    with metered(meter):
+        with pytest.raises(ModelGatewayUnavailable):
+            await gateway.chat(request())
+
+    assert meter.calls == 1
+    assert meter.cost_micros == 0
+
+
+@pytest.mark.asyncio
+async def test_metered_structured_call_counts_and_records_cost():
+    from tap.platform.budget import CallMeter, metered
+
+    def respond(incoming):
+        reply = _structured_reply('{"answer":"ok"}')(incoming)
+        return httpx.Response(
+            reply.status_code,
+            json=reply.json(),
+            headers={"x-litellm-response-cost": "0.001"},
+        )
+
+    gateway = configured_gateway(respond)
+    meter = CallMeter(remaining_calls=5, remaining_cost_micros=None)
+
+    with metered(meter):
+        result = await gateway.generate_structured(request(ModelOperation.STRUCTURED))
+
+    assert result.output == {"answer": "ok"}
+    assert meter.calls == 1
+    assert meter.cost_micros == 1000
