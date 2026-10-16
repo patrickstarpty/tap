@@ -510,7 +510,22 @@ def resolve_entities(
                 continue
             seen.add(cleaned)
             aliases.append(cleaned)
-        node_id = project_node_id(node_type, alignment_key(cluster.canonical_key, node_type))
+        node_id_key = alignment_key(cluster.canonical_key, node_type)
+        if is_bare_grade(node_id_key):
+            # A bare grade never joins another cluster by name (see the EXACT
+            # guard above), so there can be many singleton (or embedding-
+            # merged) clusters sharing the identical normalized key ("Ⅳ级")
+            # across sources -- without this, they would all compute the same
+            # project_node_id and collide (ProjectGraphDraft's own alias
+            # uniqueness check raises, and even without that,
+            # dedupe_on_primary_keys would silently drop every cluster but the
+            # first under one shared node row). The cluster's earliest member
+            # (snapshot id, fragment node id) is unique system-wide and stable
+            # for a given fragment set, so folding it into the id input keeps
+            # distinct clusters distinct without making the id random.
+            earliest_snapshot_id, earliest_node_id = cluster.members[0]
+            node_id_key = f"{node_id_key}|{earliest_snapshot_id}|{earliest_node_id}"
+        node_id = project_node_id(node_type, node_id_key)
         resolved.append(
             ResolvedEntity(
                 node_id=node_id,

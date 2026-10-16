@@ -252,6 +252,31 @@ def test_merge_does_not_absorb_an_alias_that_names_a_sibling_entity():
     assert "免责" in liability_aliases
 
 
+def test_merge_keeps_grade_only_nodes_from_different_sources_distinct():
+    # A bare grade ("Ⅳ级") never merges by name (alignment.py skips it for EXACT
+    # matching), but every such node computed its project_node_id from the same
+    # normalized text alone -- three sources each grading something "Ⅳ级" (the
+    # real-model run's v9 had "2级" in three sources, "0级"/"1级" in two) would
+    # collide on one node_id, which ProjectGraphDraft's own alias-uniqueness
+    # check raises on (two same-text LABEL aliases for the "same" node_id), and
+    # which dedupe_on_primary_keys would otherwise silently collapse to one
+    # node row even if the raise didn't happen.
+    fragments = []
+    for i in range(3):
+        node, evidence = _node_with_evidence(f"n{i}", f"frag-{i}", "Ⅳ级", "CONCEPT", "Ⅳ级")
+        fragments.append(GraphSnapshotDraft(_snapshot(f"frag-{i}"), (node,), (), (evidence,), ()))
+    records = [_record(f"frag-{i}", fragment) for i, fragment in enumerate(fragments)]
+
+    draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, records)
+
+    grade_nodes = [n for n in draft.nodes if n.canonical_key == "Ⅳ级"]
+    assert len(grade_nodes) == 3
+    assert len({n.node_id for n in grade_nodes}) == 3
+    for node in grade_nodes:
+        sources = {s.fragment_snapshot_id for s in draft.node_sources if s.node_id == node.node_id}
+        assert len(sources) == 1
+
+
 def test_merge_rejects_scope_mismatch():
     draft_a = _draft(
         "frag-a",
