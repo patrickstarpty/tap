@@ -1732,6 +1732,34 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
 
 
 @pytest.mark.asyncio
+async def test_embed_documents_keeps_phone_and_id_numbers_unredacted() -> None:
+    """C1 residual: `_create_embeddings`'s `KnowledgeModelGateway` must wire
+    a dedicated v1 `embedding_redact` (`_redact_model_context`), distinct
+    from the chat-only v2 `redact` (`_redact_chat_egress`) -- so document
+    ingestion, the graph-merge label embedder, and retrieval query
+    embedding never silently drop phone/ID numbers from indexed text
+    (which would also collapse two labels differing only by such a number
+    onto the same vector), while the chat answer context still redacts
+    them."""
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    model = module._create_embeddings(settings)
+
+    assert model._embedding_redact is module._redact_model_context
+    assert model._redact is module._redact_chat_egress
+    assert model._embedding_redact is not model._redact
+
+    embedded = await model._embedding_redact("hotline 13800138000, id 11010519491231002X")
+    assert embedded == "hotline 13800138000, id 11010519491231002X"
+
+    chat_redacted = await model._redact("hotline 13800138000, id 11010519491231002X")
+    assert "13800138000" not in chat_redacted
+    assert "11010519491231002X" not in chat_redacted
+
+    await model.aclose()
+
+
+@pytest.mark.asyncio
 async def test_database_helper_disposes_engine_if_repository_construction_fails(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]

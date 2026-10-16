@@ -1552,6 +1552,11 @@ def _create_embeddings(
         gateway,
         scope=VALIDATION_SCOPE,
         redact=_redact_chat_egress,
+        # `embed`/`embed_documents` (ingestion and the graph-merge label
+        # embedder, plus retrieval query embedding -- search must match
+        # indexed text) stay on the v1 redactor, never the chat-only
+        # personal-data rules (C1 residual).
+        embedding_redact=_redact_model_context,
         embedding_alias=settings.embedding_model,
         chat_alias=settings.default_chat_model,
         embedding_dimension=settings.embedding_dimension,

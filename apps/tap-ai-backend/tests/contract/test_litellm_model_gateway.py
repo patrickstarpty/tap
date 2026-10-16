@@ -794,6 +794,83 @@ async def test_structured_output_cannot_escape_the_locked_schema():
 
 
 @pytest.mark.asyncio
+async def test_embed_and_embed_documents_use_a_separate_v1_embedding_redactor():
+    """C1 residual: `embed`/`embed_documents` (document ingestion and the
+    graph-merge label embedder both reach the model only through these)
+    must use a dedicated `embedding_redact` callback distinct from the
+    chat-facing `redact` callback -- so indexed text is never run through
+    the personal-data (v2) phone/ID rules, which would otherwise strip
+    phone/ID numbers out of ingested content and collapse two labels that
+    differ only by such a number onto the same vector."""
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+
+    sent = []
+
+    def handler(incoming):
+        sent.append(incoming)
+        return success(incoming)
+
+    async def chat_redact(text: str) -> str:
+        return (await PatternEgressRedactor(personal_data=True).redact(text)).sanitized_text
+
+    async def embedding_redact(text: str) -> str:
+        return (await PatternEgressRedactor().redact(text)).sanitized_text
+
+    gateway = configured_gateway(handler)
+    models = KnowledgeModelGateway(
+        gateway,
+        scope=VALIDATION_SCOPE,
+        redact=chat_redact,
+        embedding_redact=embedding_redact,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+    await models.embed("hotline 13800138000")
+    await models.embed_documents(
+        ("hotline 13800138000",), model_alias="text-embedding-v4", chunk_ids=("chunk1",)
+    )
+
+    assert len(sent) == 2
+    for item in sent:
+        payload = json.loads(item.content)
+        assert payload["input"] == "hotline 13800138000"
+
+
+@pytest.mark.asyncio
+async def test_embedding_redact_defaults_to_the_chat_redact_for_backward_compatibility():
+    """Callers that construct `KnowledgeModelGateway` without `embedding_redact`
+    (existing tests and any caller not yet updated) must keep working: `embed`
+    then falls back to using the same `redact` callback it always did."""
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    sent = []
+
+    def handler(incoming):
+        sent.append(incoming)
+        return success(incoming)
+
+    gateway = configured_gateway(handler)
+    models = KnowledgeModelGateway(
+        gateway,
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+    await models.embed("query password=secret")
+
+    payload = json.loads(sent[0].content)
+    assert "password=secret" not in payload["input"]
+
+
+@pytest.mark.asyncio
 async def test_knowledge_query_document_and_answer_calls_use_one_gateway():
     from test_knowledge_api import _claim_resolution_evidence
 

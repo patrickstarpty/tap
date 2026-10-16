@@ -166,10 +166,17 @@ class KnowledgeModelGateway:
         chat_aliases: frozenset[str] | None = None,
         embedding_dimension: int,
         timeout_seconds: float,
+        embedding_redact: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
         self.gateway = gateway
         self.scope = scope
         self._redact = redact
+        # `embed`/`embed_documents` are reached by document ingestion and the
+        # graph-merge label embedder, never only by chat -- so they must not
+        # share the chat-facing `redact` callback's personal-data (phone/ID)
+        # rules (C1 residual). Defaults to `redact` for backward
+        # compatibility with callers that have not been updated.
+        self._embedding_redact = embedding_redact if embedding_redact is not None else redact
         self.embedding_model_id = embedding_alias
         self.embedding_dimension = embedding_dimension
         self.chat_alias = chat_alias
@@ -276,7 +283,7 @@ class KnowledgeModelGateway:
             raise AnswerUnavailable("model-unavailable") from None
 
     async def embed(self, query: str) -> Embedding:
-        context = await self._redact(query)
+        context = await self._embedding_redact(query)
         try:
             result = await self.gateway.embed(
                 ModelRequest(
