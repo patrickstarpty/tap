@@ -45,7 +45,8 @@ INJECTION_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"(?:(?:new|unrestricted|uncensored|jailbroken|different)\s+)?"
             r"(?:ai|assistant|chatbot|system|developer|admin\w*)\b"
             r"|\bfrom now on,? you (?:are|will|must)\b"
-            r"|\bpretend (?:to be|you are) (?:an? |the )?(?:ai|assistant|system|developer|admin\w*)\b",
+            r"|\bpretend (?:to be|you are) "
+            r"(?:an? |the )?(?:ai|assistant|system|developer|admin\w*)\b",
             re.I,
         ),
     ),

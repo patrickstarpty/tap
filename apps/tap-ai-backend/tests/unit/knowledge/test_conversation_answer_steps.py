@@ -645,7 +645,9 @@ async def test_final_route_answer_is_redacted() -> None:
 
     frozen, plan = await _direct_route()
     request = RetrievalAnswerRequest(query=frozen.message)
-    service = _service(PhaseAnswers(), models=Models(), redactor=PatternEgressRedactor(personal_data=True))
+    service = _service(
+        PhaseAnswers(), models=Models(), redactor=PatternEgressRedactor(personal_data=True)
+    )
 
     step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
     assert step["kind"] == "final"
