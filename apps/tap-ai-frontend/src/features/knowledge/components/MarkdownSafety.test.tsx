@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RetrievalAnswerResponse } from "../api/types";
@@ -210,6 +210,121 @@ it("keeps references at the end of their paragraph and numbers only visible sour
   expect(
     screen.queryByRole("button", { name: "Open source citation 2" }),
   ).toBeNull();
+});
+
+function claimEndingAt(
+  answer: string,
+  claimText: string,
+  citationId = "citation-a",
+) {
+  const start = answer.indexOf(claimText);
+  if (start === -1) {
+    throw new Error("claimText must be a substring of answer");
+  }
+  return answerResponse({
+    answer,
+    claims: [
+      {
+        claimId: "claim-a",
+        text: claimText,
+        answerStart: start,
+        answerEnd: start + claimText.length,
+        citationIds: [citationId],
+      },
+    ],
+    citations: [retrievalCitation(citationId)],
+  });
+}
+
+describe("GroundedAnswer citation badges by source position (round 3)", () => {
+  // A textual sentinel placeholder (round 2) could merge with an adjacent
+  // code span's backticks, or be escaped by a preceding backslash, instead
+  // of becoming a citation badge. Splicing the badge into the parsed
+  // Markdown AST by source offset (round 3) sidesteps all of these --
+  // there is no Markdown source for the badge to corrupt or be corrupted by.
+  it.each([
+    ["ending in inline code", "运行 `make test`", "运行 `make test`"],
+    [
+      "ending in double-backtick code containing a backtick",
+      "返回值为 ``can`t``",
+      "返回值为 ``can`t``",
+    ],
+    ["ending in a backslash", "路径为 C:\\", "路径为 C:\\"],
+  ] as const)(
+    "a claim %s shows exactly one badge and no stray characters",
+    (_name, answer, claimText) => {
+      const { container } = render(
+        <GroundedAnswer
+          response={claimEndingAt(answer, claimText)}
+          onOpenCitation={() => undefined}
+        />,
+      );
+
+      expect(
+        screen.getByRole("button", { name: "打开来源引用 1" }),
+      ).toBeVisible();
+      expect(screen.getAllByRole("button", { name: /引用/u })).toHaveLength(1);
+      expect(
+        container.querySelector(".tapper-markdown")?.textContent,
+      ).not.toMatch(/[\u0000-\u0008\u000e-\u001f]/u);
+      expect(container.querySelector("code")?.textContent ?? "").not.toContain(
+        "[1]",
+      );
+    },
+  );
+
+  it("shows a badge for a claim ending in inline code inside a list item", () => {
+    const { container } = render(
+      <GroundedAnswer
+        response={claimEndingAt(
+          "- 运行 `make test`\n- 其他事项。",
+          "运行 `make test`",
+        )}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    const items = container.querySelectorAll(".tapper-markdown li");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("运行 make test");
+    expect(
+      within(items[0] as HTMLElement).getByRole("button", {
+        name: "打开来源引用 1",
+      }),
+    ).toBeVisible();
+  });
+
+  it("shows a badge for a claim ending in inline code inside a heading", () => {
+    render(
+      <GroundedAnswer
+        response={claimEndingAt("## 运行 `make test`", "运行 `make test`")}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    const heading = screen.getByRole("heading", { level: 2 });
+    expect(heading).toHaveTextContent("运行 make test");
+    expect(
+      within(heading).getByRole("button", { name: "打开来源引用 1" }),
+    ).toBeVisible();
+  });
+
+  it("shows a badge for a claim ending in inline code inside emphasis", () => {
+    const { container } = render(
+      <GroundedAnswer
+        response={claimEndingAt("**运行 `make test`**", "运行 `make test`")}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    const strong = container.querySelector(".tapper-markdown strong");
+    expect(strong).toHaveTextContent("运行 make test");
+    expect(
+      within(strong as HTMLElement).getByRole("button", {
+        name: "打开来源引用 1",
+      }),
+    ).toBeVisible();
+  });
 });
 
 describe("GroundedAnswer model-only chat", () => {

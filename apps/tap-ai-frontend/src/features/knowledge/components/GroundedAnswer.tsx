@@ -35,7 +35,11 @@ const ANSWER_TAGS = [
 
 const answerSchema = {
   tagNames: [...ANSWER_TAGS],
-  attributes: {},
+  // `data*` allows exactly `data-claim-id` (and no other attribute, on no
+  // other tag) -- the citation badge is spliced into the Markdown AST as an
+  // empty `<code data-claim-id="...">` element (round 3 of the LangGraph PR 3
+  // review ruling, 2026-10-17); see `citationBadgeNode` below.
+  attributes: { code: ["data*"] },
   protocols: {},
 };
 
@@ -167,6 +171,7 @@ function validateAnswerGraph(
     if (
       typeof claim.claimId !== "string" ||
       claim.claimId.length === 0 ||
+      !CLAIM_ID_PATTERN.test(claim.claimId) ||
       claimIds.has(claim.claimId) ||
       !Number.isSafeInteger(start) ||
       !Number.isSafeInteger(end) ||
@@ -234,33 +239,136 @@ function SafeMarkdown({ children }: { children: string }) {
   );
 }
 
-// A claim's citation badges are spliced into the single Markdown document as
-// an inline code span carrying this sentinel wrapper around the claim ID
-// (U+0001, never legitimate answer prose) immediately after the claim's own
-// text, so `CitedAnswerMarkdown`'s `code` override can find and replace it --
-// this is what lets badges land inline right after an arbitrary mid-paragraph
-// or mid-list-item offset without a custom remark/rehype plugin, while lists,
-// headings and multi-claim paragraphs still parse as one normal document
-// (LangGraph PR 3 review ruling, 2026-10-16, round 2).
-const CITATION_PLACEHOLDER_MARK = "\u0001";
-const CITATION_PLACEHOLDER_PATTERN = /^\u0001([^\u0001]+)\u0001$/;
+// A claim ID that will end up as the `data-claim-id` attribute of a spliced
+// `<code>` element (see `citationBadgeNode`) and as a React context map key;
+// restricted defensively to a closed, DOM-attribute-safe alphabet (review
+// ruling, 2026-10-17, round 3) even though the backend already generates
+// opaque, closed-alphabet IDs.
+const CLAIM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-function citationPlaceholder(claimId: string): string {
-  return `\`${CITATION_PLACEHOLDER_MARK}${claimId}${CITATION_PLACEHOLDER_MARK}\``;
+/** A point in an mdast `Position`; only `offset` is ever read here, so line
+ * and column are filled with a harmless constant rather than tracked. */
+interface MdPoint {
+  line: number;
+  column: number;
+  offset?: number;
 }
 
-/** The whole answer, verbatim, with one inline citation-badge placeholder
- * spliced in right after each claim's `answerEnd` offset. */
-function citedAnswerMarkdown(graph: ValidAnswerGraph): string {
-  const parts: string[] = [];
-  let cursor = 0;
-  for (const claim of graph.claims) {
-    parts.push(graph.points.slice(cursor, claim.answerEnd).join(""));
-    parts.push(citationPlaceholder(claim.claimId));
-    cursor = claim.answerEnd;
+interface MdNode {
+  type: string;
+  value?: string;
+  position?: { start: MdPoint; end: MdPoint };
+  children?: MdNode[];
+  data?: { hName?: string; hProperties?: Record<string, string> };
+}
+
+function offsetPoint(offset: number): MdPoint {
+  return { line: 1, column: 1, offset };
+}
+
+/** The mdast node spliced in for one claim's citation badge: an empty
+ * `<code data-claim-id="...">` element via mdast-to-hast's `data.hName`/
+ * `data.hProperties` convention. An element (not raw text) means there is no
+ * Markdown source to parse, so unlike a textual placeholder it can never
+ * merge with an adjacent code span's backticks or be escaped by a
+ * preceding backslash (the two concrete bugs round 3 of the review ruling,
+ * 2026-10-17, found in the textual-sentinel approach this replaces). */
+function citationBadgeNode(claimId: string): MdNode {
+  return {
+    type: "tapperCitation",
+    children: [],
+    data: { hName: "code", hProperties: { dataClaimId: claimId } },
+  };
+}
+
+// Leaf (childless, text-bearing) node types a claim's `answerEnd` offset can
+// land in or at the end of. `inlineCode` is never split -- a citation can
+// end exactly at a code span's boundary (the bug case this round fixes) but
+// splitting its source text would corrupt it; `text` is split when the
+// offset falls strictly inside it, preserving an accurate `position` on
+// both halves so a later claim's offset still resolves correctly against
+// this same, already-mutated tree.
+function spliceCitationAtOffset(
+  node: MdNode,
+  offset: number,
+  claimId: string,
+): boolean {
+  const children = node.children;
+  if (children === undefined) return false;
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index]!;
+    const position = child.position;
+    if (
+      (child.type === "text" || child.type === "inlineCode") &&
+      position?.start.offset !== undefined &&
+      position.end.offset !== undefined &&
+      offset >= position.start.offset &&
+      offset <= position.end.offset
+    ) {
+      const badge = citationBadgeNode(claimId);
+      const start = position.start.offset;
+      const end = position.end.offset;
+      if (offset === end || child.type === "inlineCode") {
+        children.splice(index + 1, 0, badge);
+      } else if (offset === start) {
+        children.splice(index, 0, badge);
+      } else if (typeof child.value === "string") {
+        const relative = offset - start;
+        children.splice(
+          index,
+          1,
+          {
+            type: child.type,
+            value: child.value.slice(0, relative),
+            position: { start: position.start, end: offsetPoint(offset) },
+          },
+          badge,
+          {
+            type: child.type,
+            value: child.value.slice(relative),
+            position: { start: offsetPoint(offset), end: position.end },
+          },
+        );
+      } else {
+        children.splice(index + 1, 0, badge);
+      }
+      return true;
+    }
+    if (spliceCitationAtOffset(child, offset, claimId)) return true;
   }
-  parts.push(graph.points.slice(cursor).join(""));
-  return parts.join("");
+  return false;
+}
+
+/** Converts a code-point offset (what `claim.answerEnd` is, matching the
+ * backend's Python string indexing) to a UTF-16 code-unit offset (what
+ * remark/mdast `position.offset` values are, matching JavaScript string
+ * indexing) -- they differ whenever the answer contains an astral character
+ * (e.g. an emoji) before the offset, which takes one code point but two
+ * UTF-16 units. */
+function codePointToUtf16Offset(
+  points: readonly string[],
+  codePointOffset: number,
+): number {
+  let utf16Offset = 0;
+  for (let index = 0; index < codePointOffset; index += 1) {
+    utf16Offset += points[index]!.length;
+  }
+  return utf16Offset;
+}
+
+/** A unified/remark plugin (factory): splices one citation-badge node into
+ * the parsed Markdown AST right after each claim's own text, located by the
+ * original source offset rather than by Markdown syntax -- so list items,
+ * headings and a claim ending in inline code, a backslash, or right before
+ * another claim all still parse and render as ordinary Markdown. */
+function citationRemarkPlugin(
+  insertions: readonly { utf16Offset: number; claimId: string }[],
+) {
+  return (tree: MdNode): void => {
+    for (const insertion of insertions) {
+      spliceCitationAtOffset(tree, insertion.utf16Offset, insertion.claimId);
+    }
+  };
 }
 
 function CitationBadges({
@@ -285,7 +393,7 @@ function CitationBadges({
     <span
       className="tapper-claim-citations"
       data-claim-id={claim.claimId}
-      aria-label={locale === "zh" ? "本段引用" : "Sources for this paragraph"}
+      aria-label={locale === "zh" ? "本句引用" : "Sources for this statement"}
     >
       {claim.citationIds.map((citationId) => {
         const citation = graph.citationById.get(citationId);
@@ -356,23 +464,18 @@ function CitedMarkdownLink({ children }: { children?: ReactNode }) {
 function CitedMarkdownCode({
   children,
   className,
+  "data-claim-id": claimId,
 }: {
   children?: ReactNode;
   className?: string;
+  "data-claim-id"?: string;
 }) {
   const context = useContext(CitedMarkdownContext);
-  const content =
-    typeof children === "string"
-      ? children
-      : Array.isArray(children) &&
-          children.every((child) => typeof child === "string")
-        ? children.join("")
-        : null;
-  const match =
-    content === null ? null : CITATION_PLACEHOLDER_PATTERN.exec(content);
   const claim =
-    context !== null && match !== null
-      ? context.claimById.get(match[1]!)
+    context !== null &&
+    typeof claimId === "string" &&
+    CLAIM_ID_PATTERN.test(claimId)
+      ? context.claimById.get(claimId)
       : undefined;
   if (context === null || claim === undefined) {
     return <code className={className}>{children}</code>;
@@ -413,7 +516,15 @@ function CitedAnswerMarkdown({
     () => new Map(graph.claims.map((claim) => [claim.claimId, claim])),
     [graph],
   );
-  const markdown = useMemo(() => citedAnswerMarkdown(graph), [graph]);
+  const markdown = useMemo(() => graph.points.join(""), [graph]);
+  const insertions = useMemo(
+    () =>
+      graph.claims.map((claim) => ({
+        utf16Offset: codePointToUtf16Offset(graph.points, claim.answerEnd),
+        claimId: claim.claimId,
+      })),
+    [graph],
+  );
   const contextValue = useMemo<CitedMarkdownContextValue>(
     () => ({
       claimById,
@@ -436,6 +547,7 @@ function CitedAnswerMarkdown({
     <div className="tapper-markdown tapper-grounded-claim">
       <CitedMarkdownContext.Provider value={contextValue}>
         <ReactMarkdown
+          remarkPlugins={[[citationRemarkPlugin, insertions]]}
           rehypePlugins={[[rehypeSanitize, answerSchema]]}
           components={CITED_MARKDOWN_COMPONENTS}
         >
