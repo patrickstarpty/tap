@@ -139,16 +139,15 @@ async def test_runtime_cites_frozen_published_knowledge_and_rejects_withdrawal()
     class Gateway:
         async def generate_structured(self, request):
             supplied = json.loads(request.context)
-            assert {item["citationId"] for item in supplied["evidence"]} == {
+            evidence = supplied["untrusted"]["evidence"]
+            assert {item["citationId"] for item in evidence} == {
                 "receipt-a",
                 "knowledge-citation-1",
             }
             assert (
-                next(
-                    item
-                    for item in supplied["evidence"]
-                    if item["citationId"] == "knowledge-citation-1"
-                )["excerpt"]
+                next(item for item in evidence if item["citationId"] == "knowledge-citation-1")[
+                    "excerpt"
+                ]
                 == QUOTE
             )
             return SimpleNamespace(
