@@ -1,15 +1,53 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+from tap.modules.ai.domain.models import ModelGatewayUnavailable
 from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository, chat_turn
 from tap.modules.chat.application.conversations import ConversationConflict, ConversationService
 from tests.integration.test_conversation_persistence import _input
 from tests.integration.test_graph_run_recovery import _completed_graph
+
+
+class _CountingKnowledge:
+    """A `ConversationAnswerSteps` stand-in that counts `prepare`/`generate`
+    invocations and fails `generate_conversation_answer` the first
+    `fail_times` calls with a transient `ModelGatewayUnavailable`, so tests
+    can prove the retried turn resumes from the checkpointed `prepare` step
+    instead of repeating retrieval."""
+
+    def __init__(self, *, fail_times: int) -> None:
+        self.prepare_calls = 0
+        self.generate_calls = 0
+        self._fail_times = fail_times
+
+    async def prepare_conversation_answer(self, _request, _frozen_input, **_kwargs):
+        self.prepare_calls += 1
+        return {"kind": "prepared", "bundle": "stub-bundle"}
+
+    async def generate_conversation_answer(self, step, _frozen_input, **_kwargs):
+        self.generate_calls += 1
+        if self.generate_calls <= self._fail_times:
+            raise ModelGatewayUnavailable()
+        return {"kind": "generated", "bundle": step["bundle"]}
+
+    async def verify_conversation_answer(self, step, _frozen_input, **_kwargs):
+        return {"kind": "verified", "bundle": step["bundle"]}
+
+    async def finalize_conversation_answer(self, _step, _frozen_input, **_kwargs):
+        return SimpleNamespace(
+            answer="grounded",
+            citations=(),
+            abstained=False,
+            trace_id="trace",
+            model_dump=lambda **_: {"answer": "grounded", "citations": []},
+        )
 
 
 @pytest.mark.asyncio
@@ -253,5 +291,99 @@ async def test_canceled_deferred_turn_is_not_reclaimed(owned_project_mysql) -> N
             )
 
         assert await conversations.repository.claim_queued(limit=10) == ()
+    finally:
+        await engine.dispose()
+
+
+async def _event_count(sessions, turn_id: str, event_type: str) -> int:
+    async with sessions() as session:
+        return await session.scalar(
+            text("SELECT COUNT(*) FROM chat_event WHERE turn_id=:turn_id AND event_type=:event_type"),
+            {"turn_id": turn_id, "event_type": event_type},
+        )
+
+
+async def _set_next_attempt_at_to_past(sessions, turn_id: str) -> None:
+    async with sessions() as session, session.begin():
+        await session.execute(
+            update(chat_turn)
+            .where(chat_turn.c.turn_id == turn_id)
+            .values(next_attempt_at=func.utc_timestamp(6) - text("INTERVAL 1 SECOND"))
+        )
+
+
+@pytest.mark.asyncio
+async def test_model_failure_resumes_from_checkpoint_without_repeating_retrieval(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE, max_turn_attempts=3),
+            scope=VALIDATION_SCOPE,
+        )
+        await conversations.create("chat-resume", "turn-resume", "request-resume", _input())
+        knowledge = _CountingKnowledge(fail_times=1)
+        worker = GenerationWorker(conversations, knowledge, max_turn_attempts=3)
+
+        assert await worker.run_once(limit=1) == 1
+
+        async with sessions() as session:
+            row = (
+                (await session.execute(select(chat_turn).where(chat_turn.c.turn_id == "turn-resume")))
+                .mappings()
+                .one()
+            )
+        assert row["state"] == "running"
+        assert row["next_attempt_at"] is not None
+        assert row["next_attempt_at"] > datetime.now(timezone.utc).replace(tzinfo=None)
+        assert knowledge.prepare_calls == 1
+        assert knowledge.generate_calls == 1
+        assert await _event_count(sessions, "turn-resume", "turn.completed") == 0
+        assert await _event_count(sessions, "turn-resume", "turn.failed") == 0
+
+        await _set_next_attempt_at_to_past(sessions, "turn-resume")
+
+        assert await worker.run_once(limit=1) == 1
+        completed = (await conversations.load("chat-resume")).turns[0]
+        assert completed.state == "completed"
+        assert completed.attempt == 2
+        assert knowledge.prepare_calls == 1
+        assert knowledge.generate_calls == 2
+        assert await _event_count(sessions, "turn-resume", "turn.completed") == 1
+        assert await _event_count(sessions, "turn-resume", "turn.failed") == 0
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_three_transient_failures_fail_the_turn_once(owned_project_mysql) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE, max_turn_attempts=3),
+            scope=VALIDATION_SCOPE,
+        )
+        await conversations.create(
+            "chat-exhaust-retry", "turn-exhaust-retry", "request-exhaust-retry", _input()
+        )
+        knowledge = _CountingKnowledge(fail_times=1_000)
+        worker = GenerationWorker(conversations, knowledge, max_turn_attempts=3)
+
+        for _ in range(3):
+            await _set_next_attempt_at_to_past(sessions, "turn-exhaust-retry")
+            assert await worker.run_once(limit=1) == 1
+
+        failed = (await conversations.load("chat-exhaust-retry")).turns[0]
+        assert failed.state == "failed"
+        assert knowledge.prepare_calls == 1
+        assert knowledge.generate_calls == 3
+        assert await _event_count(sessions, "turn-exhaust-retry", "turn.failed") == 1
+        assert await _event_count(sessions, "turn-exhaust-retry", "turn.completed") == 0
+
+        await _set_next_attempt_at_to_past(sessions, "turn-exhaust-retry")
+        assert await worker.run_once(limit=1) == 0
     finally:
         await engine.dispose()
