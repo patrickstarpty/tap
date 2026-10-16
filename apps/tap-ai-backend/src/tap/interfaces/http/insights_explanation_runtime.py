@@ -346,9 +346,7 @@ class ConfiguredInsightsExplanation:
             context_value, flagged_labels = untrusted_context(trusted_value, untrusted_sections)
             if flagged_labels:
                 current_span = trace.get_current_span()
-                current_span.set_attribute(
-                    "tap.guard.injection.flagged", ",".join(flagged_labels)
-                )
+                current_span.set_attribute("tap.guard.injection.flagged", ",".join(flagged_labels))
                 current_span.set_attribute("tap.guard.injection.count", len(flagged_labels))
             model_context = json.dumps(context_value, sort_keys=True, separators=(",", ":"))
             if len(model_context.encode()) > 20_000:
