@@ -102,6 +102,28 @@ def test_plan_budget_timeout_is_deterministic_but_plain_timeout_is_transient() -
     assert classify_turn_failure(GraphCheckpointUnavailable()) == "deterministic"
 
 
+@pytest.mark.parametrize(
+    "cause, expected",
+    [
+        (None, "deterministic"),
+        (ValueError("x"), "deterministic"),
+        (PolicyUnavailable("x"), "transient"),
+        (SAOperationalError("stmt", {}, Exception("orig")), "transient"),
+        (TimeoutError(), "transient"),
+    ],
+    ids=["no-cause", "deterministic-cause", "policy-unavailable", "operational-error", "timeout"],
+)
+def test_authorization_denied_classification_follows_its_cause(cause, expected) -> None:
+    error = AuthorizationDenied("x")
+    if cause is not None:
+        try:
+            raise error from cause
+        except AuthorizationDenied as raised:
+            assert classify_turn_failure(raised) == expected
+            return
+    assert classify_turn_failure(error) == expected
+
+
 def test_retry_delay_is_exponential_capped_and_jittered() -> None:
     rng = random.Random(0)
     expected_bounds = (

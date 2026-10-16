@@ -262,6 +262,7 @@ class ChatTurnNodes:
         require_authorized: Callable[[], Awaitable[None]],
         turn_span: Any | None = None,
         attempt_started_at: float | None = None,
+        retryable: Callable[[BaseException], bool] = lambda _error: False,
     ) -> None:
         self._conversation_id = conversation_id
         self._turn = turn
@@ -272,6 +273,14 @@ class ChatTurnNodes:
         self._insights_explanation = insights_explanation
         self._require_authorized = require_authorized
         self._attempt_started_at = attempt_started_at
+        # Same predicate the worker passes to `ChatGraph(retryable=...)`
+        # (injected here rather than imported, so this `tap.entrypoints`
+        # module does not reach back into `tapper_turn_failures` itself --
+        # keeps the predicate a single worker-owned policy). `finalize` uses
+        # it to let a transient fault from the knowledge finalize step (or
+        # the post-graph reauthorization recheck) escape `TurnProcessor`
+        # instead of being swallowed into a permanent `turn.failed`.
+        self._retryable = retryable
         # `ChatGraph` wraps every node body in its own `graph.node.<name>` span
         # (see `chat_graph.py`'s `_wrap`), so `get_current_span()` would no
         # longer resolve to the outer `turn.execute` span the old single
@@ -551,7 +560,9 @@ class ChatTurnNodes:
                 ),
             )
 
-        turn_processor = TurnProcessor(provider=provider, complete=lambda _evidence: None)
+        turn_processor = TurnProcessor(
+            provider=provider, complete=lambda _evidence: None, reraise=self._retryable
+        )
         evidence = await turn_processor.process(self._turn.input_snapshot)
         graph_context_payload = (
             None if turn_processor.last_result is None else turn_processor.last_result.graph_context

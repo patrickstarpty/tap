@@ -9,14 +9,17 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import sqlalchemy.exc
 from langgraph.checkpoint.memory import InMemorySaver
 
 from tap.entrypoints.tapper_chat_turn import ChatTurnNodes
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
+from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
+from tap.modules.knowledge.ports.answers import AnswerSnapshotUnavailable
 
 
 def _turn(*, turn_id: str = "turn-1", lease_token: str = "lease-1", attempt: int = 1):
@@ -313,3 +316,123 @@ def test_same_attempt_keeps_persisted_plan_deadline() -> None:
 
     assert active_plan is not None
     assert active_plan.deadline_at == deadline_at
+
+
+class _DeferCapturingRepository(_Repository):
+    def __init__(self, turn) -> None:
+        super().__init__(turn)
+        self.defers: list[tuple] = []
+
+    async def defer_turn(self, conversation_id, turn_id, lease_token, *, next_attempt_at, failure):
+        self.defers.append((conversation_id, turn_id, lease_token, next_attempt_at, failure))
+
+
+class _DeferCapturingConversations(_Conversations):
+    def __init__(self, turn) -> None:
+        super().__init__(turn)
+        self.repository = _DeferCapturingRepository(turn)
+
+
+@pytest.mark.asyncio
+async def test_transient_finalize_failure_defers_and_resumes_without_terminal_event() -> None:
+    """A transient fault inside the knowledge finalize step (e.g. the answer
+    snapshot store is briefly unavailable) must escape `TurnProcessor`
+    instead of being swallowed into a permanent `turn.failed`: the worker
+    defers the Turn and the next attempt resumes `finalize` from the
+    checkpoint without repeating `generate`/`verify`."""
+
+    class FlakyFinalizeKnowledge(_StepsKnowledge):
+        def __init__(self) -> None:
+            super().__init__()
+            self.finalize_calls = 0
+
+        async def finalize_conversation_answer(
+            self, step, frozen_input, *, answer_plan=None, authorize=None
+        ):
+            self.finalize_calls += 1
+            if self.finalize_calls == 1:
+                raise AnswerSnapshotUnavailable("snapshot store unavailable")
+            return _answer()
+
+    turn = _turn()
+    conversations = _DeferCapturingConversations(turn)
+    knowledge = FlakyFinalizeKnowledge()
+    checkpointer = InMemorySaver()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=checkpointer)
+
+    assert await worker.run_once(limit=1) == 1
+    assert conversations.completed == []
+    defers = conversations.repository.defers
+    assert len(defers) == 1
+    assert defers[0][4] == "transient:AnswerSnapshotUnavailable"
+    assert knowledge.generate_calls == 1
+
+    assert await worker.run_once(limit=1) == 1
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, _kwargs = conversations.completed[0]
+    assert evidence.outcome == "completed"
+    assert knowledge.prepare_calls == 1
+    assert knowledge.generate_calls == 1
+    assert knowledge.finalize_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_transient_post_graph_reauthorization_failure_defers() -> None:
+    """`authorize_completed_answer` wraps every exception from its checkpoint
+    reauthorization recheck as `AuthorizationDenied`; when the wrapped cause
+    is itself transient (e.g. the policy store's `OperationalError`), the
+    Turn must defer and retry the recheck, not fail permanently."""
+
+    class ReauthorizingKnowledge(_StepsKnowledge):
+        def __init__(self) -> None:
+            super().__init__()
+            self.authorize_calls = 0
+
+        async def authorize_completed_answer(self, _snapshot, _evidence) -> None:
+            self.authorize_calls += 1
+            if self.authorize_calls == 1:
+                raise AuthorizationDenied("checkpoint selection authorization unavailable") from (
+                    sqlalchemy.exc.OperationalError("x", None, Exception())
+                )
+
+    turn = _turn()
+    conversations = _DeferCapturingConversations(turn)
+    knowledge = ReauthorizingKnowledge()
+    checkpointer = InMemorySaver()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=checkpointer)
+
+    assert await worker.run_once(limit=1) == 1
+    assert conversations.completed == []
+    defers = conversations.repository.defers
+    assert len(defers) == 1
+    assert defers[0][4] == "transient:AuthorizationDenied"
+
+    assert await worker.run_once(limit=1) == 1
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, _kwargs = conversations.completed[0]
+    assert evidence.outcome == "completed"
+    assert knowledge.authorize_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_plain_authorization_denial_after_graph_fails_turn() -> None:
+    """A plain `AuthorizationDenied` (no wrapped transient cause) -- a real
+    denial, e.g. the frozen selection changed -- must still fail the Turn
+    immediately; only a transient-caused denial defers."""
+
+    class DenyingKnowledge(_StepsKnowledge):
+        async def authorize_completed_answer(self, _snapshot, _evidence) -> None:
+            raise AuthorizationDenied("frozen revision selection changed")
+
+    turn = _turn()
+    conversations = _DeferCapturingConversations(turn)
+    knowledge = DenyingKnowledge()
+    checkpointer = InMemorySaver()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=checkpointer)
+
+    assert await worker.run_once(limit=1) == 1
+    assert conversations.repository.defers == []
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
+    assert evidence.outcome == "failed"
+    assert kwargs["terminal_event"][0] == "turn.failed"

@@ -11,7 +11,10 @@ visible error, or returning a deterministic failure to the caller is correct:
   (a lease, authorization, or conflicting write), not about the dependency's
   health; the caller must re-establish ownership rather than blindly retry.
 
-Nothing in this module wires these helpers into the worker; later tasks do.
+`GenerationWorker` wires `classify_turn_failure` into its node-level `retryable`
+predicates and its own top-level `except Exception` handling; the `ownership`
+bucket is handled by exiting silently, writing nothing, so the real owner's
+own write is never clobbered.
 """
 
 from __future__ import annotations
@@ -66,12 +69,25 @@ def classify_turn_failure(error: BaseException) -> TurnFailureClass:
     Matching follows the fixed order below; the first matching bucket wins.
     Anything not listed is `deterministic` -- the safe default when a new
     exception type is introduced and this classifier is not updated for it.
+
+    `AuthorizationDenied` is special-cased first: `authorize_completed_answer`
+    wraps every exception from its post-graph reauthorization recheck
+    (`PolicyUnavailable`, `OperationalError`, ...) as `AuthorizationDenied`
+    via `raise ... from error`, which would otherwise always read as a plain
+    (deterministic) denial. One level of `__cause__` is unwrapped: if the
+    cause itself classifies as transient, the denial is transient too (retry
+    re-runs the recheck, so it stays fail-closed); a plain denial with no
+    cause, or a cause that is not transient, stays deterministic.
     """
+    if isinstance(error, AuthorizationDenied):
+        cause = error.__cause__
+        if cause is not None and classify_turn_failure(cause) == "transient":
+            return "transient"
+        return "deterministic"
     if isinstance(
         error,
         (
             InsightsAuthorizationChanged,
-            AuthorizationDenied,
             ModelGatewayRejected,
             ModelOutputTruncated,
             ModelRejected,

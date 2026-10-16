@@ -15,7 +15,7 @@ from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
-from opentelemetry.trace import Span
+from opentelemetry.trace import Span, Status, StatusCode
 
 from tap.contracts.problems import build_problem
 from tap.entrypoints.tapper_chat_turn import (
@@ -151,6 +151,7 @@ class GenerationWorker:
                 if self.checkpointer is None and checkpointer_factory is not None
                 else self.checkpointer or InMemorySaver()
             )
+            turn_retryable = lambda error: classify_turn_failure(error) == "transient"  # noqa: E731
             nodes = ChatTurnNodes(
                 conversation_id=conversation_id,
                 turn=turn,
@@ -162,13 +163,14 @@ class GenerationWorker:
                 require_authorized=require_authorized,
                 turn_span=turn_span,
                 attempt_started_at=attempt_started_at,
+                retryable=turn_retryable,
             ).nodes
             graph = ChatGraph(
                 checkpointer=checkpointer,
                 nodes=nodes,
                 authorize=authorized,
                 propagate=(ConversationConflict, ConversationNotFound),
-                retryable=lambda error: classify_turn_failure(error) == "transient",
+                retryable=turn_retryable,
             )
 
             async def run_graph():
@@ -286,6 +288,9 @@ class GenerationWorker:
                     failure=f"transient:{type(error).__name__}",
                 )
             except ConversationConflict:
+                # Another worker proved it owns this Turn before the defer
+                # committed; do not report this as a deferred attempt.
+                outcome = "lost"
                 return
         finally:
             turn_span.set_attribute("tap.outcome", outcome)
@@ -312,8 +317,9 @@ async def run_worker_loop(
             processed = await worker.run_once(limit=batch_size)
         except Exception as error:  # noqa: BLE001 - keep the loop alive across run errors
             _LOGGER.exception("generation worker run_once failed")
-            with span("worker.loop_error", {"tap.error": type(error).__name__}):
-                pass
+            with span("worker.loop_error", {"tap.error": type(error).__name__}) as loop_span:
+                loop_span.set_status(Status(StatusCode.ERROR, type(error).__name__))
+                loop_span.record_exception(error)
             await wait(stop, backoff)
             backoff = min(30.0, backoff * 2)
             continue

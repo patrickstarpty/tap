@@ -43,9 +43,17 @@ class TurnProcessor:
         *,
         provider: Callable[[object], Awaitable[ProviderResult]],
         complete: Callable[[AnswerEvidence], object],
+        reraise: Callable[[BaseException], bool] | None = None,
     ):
         self.provider = provider
         self.complete = complete
+        # When set and it returns True for a provider exception, that
+        # exception is re-raised instead of being converted to a closed
+        # `failed` `AnswerEvidence`. Lets a caller running inside a node with
+        # `capture_failure=False` (e.g. `ChatTurnNodes.finalize`) escape the
+        # graph on a transient fault so the worker defers and resumes instead
+        # of permanently failing the Turn.
+        self.reraise = reraise
         # The most recent provider `ProviderResult`, including fields (such
         # as `graph_context`) that do not fit `AnswerEvidence`'s fixed
         # shape. `None` until a successful `process()` call.
@@ -74,7 +82,9 @@ class TurnProcessor:
                 result.citations,
                 diagnostics,
             )
-        except Exception:
+        except Exception as error:
+            if self.reraise is not None and self.reraise(error):
+                raise
             evidence = AnswerEvidence(
                 "",
                 "failed",
