@@ -188,7 +188,7 @@ class KnowledgeModelGateway:
         """Generate a model-only answer when the user selected no Knowledge corpus."""
 
         if self.chat_aliases is not None and model_alias not in self.chat_aliases:
-            raise AnswerUnavailable("model-unavailable")
+            raise AnswerRejected("model-rejected")
         context = await self._redact(query)
         direct_chat_prompt = (
             "Answer the user directly. Reply in the user's language unless they ask for another "
@@ -202,7 +202,7 @@ class KnowledgeModelGateway:
         operation = ModelOperation.CHAT
         if governance is not None:
             if governance.model_alias != model_alias:
-                raise AnswerUnavailable("model-unavailable")
+                raise AnswerRejected("model-rejected")
             prompt = "\n\n".join(
                 (
                     _TAPPER_PLATFORM_INSTRUCTION,
@@ -344,10 +344,10 @@ class KnowledgeModelGateway:
             profile_id not in {"quick-hybrid-v1", "deep-hybrid-v1", "audit-hybrid-v1"}
             or not 1 <= len(evidence) <= 20
         ):
-            raise AnswerUnavailable("model-unavailable")
+            raise AnswerRejected("model-rejected")
         alias = model_alias or self.chat_alias
         if self.chat_aliases is not None and alias not in self.chat_aliases:
-            raise AnswerUnavailable("model-unavailable")
+            raise AnswerRejected("model-rejected")
         # Redact copies only; canonical evidence, hashes and citation authority stay intact.
         relation_records: list[object] | None = None
         if relation_context is not None:

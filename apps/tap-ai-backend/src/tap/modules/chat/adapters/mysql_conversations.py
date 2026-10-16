@@ -1305,6 +1305,7 @@ class MysqlConversationRepository:
                         processing_lease_token=lease_token,
                         processing_lease_expires_at=lease_until,
                         next_attempt_at=None,
+                        last_failure=None,
                     )
                 )
                 if graph is not None:
@@ -1356,7 +1357,7 @@ class MysqlConversationRepository:
 
         last_failure = row["last_failure"] or "lease-expired"
         _LOGGER.warning(
-            "conversation turn failed integrity check",
+            "conversation turn settled as unclaimable",
             extra={
                 "turn_id": row["turn_id"],
                 "reason": reason,
@@ -1494,7 +1495,7 @@ class MysqlConversationRepository:
                     graph_run.c.run_id == turn_id,
                     graph_run.c.lease_token == lease_token,
                 )
-                .values(lease_until=_naive(now))
+                .values(lease_until=_naive(now), updated_at=_naive(now))
             )
 
     def graph_checkpointer(self, turn: ConversationTurn):

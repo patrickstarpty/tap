@@ -234,8 +234,9 @@ class KnowledgeHttpService:
     @staticmethod
     def _plan_deadline(answer_plan):
         """One shared deadline guard used by `answer_conversation` and every
-        resumable phase below: raises `TimeoutError` immediately if the plan's
-        persisted deadline has already passed (before any work, including
+        resumable phase below: raises `AnswerBudgetExhausted` (a `TimeoutError`
+        subclass) immediately if the plan's persisted deadline has already
+        passed (before any work, including
         `_authorized_frozen_context`), else returns an `asyncio.timeout`
         context scoped to the time left. `answer_plan.deadline_at` is an
         absolute timestamp, so recomputing it fresh at the start of every
