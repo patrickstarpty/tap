@@ -504,7 +504,7 @@ async def test_output_redaction_keeps_claims_locatable() -> None:
     step = {"kind": "verified", "response": to_json(response)}
 
     answers = PhaseAnswers()
-    service = _service(answers, redactor=PatternEgressRedactor())
+    service = _service(answers, redactor=PatternEgressRedactor(personal_data=True))
 
     result = await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
 
@@ -558,7 +558,7 @@ async def test_output_redaction_hits_land_on_current_span(monkeypatch) -> None:
         ),
     )
     step = {"kind": "verified", "response": to_json(response)}
-    service = _service(PhaseAnswers(), redactor=PatternEgressRedactor())
+    service = _service(PhaseAnswers(), redactor=PatternEgressRedactor(personal_data=True))
 
     await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
 
@@ -620,7 +620,7 @@ async def test_final_route_answer_is_redacted() -> None:
 
     frozen, plan = await _direct_route()
     request = RetrievalAnswerRequest(query=frozen.message)
-    service = _service(PhaseAnswers(), models=Models(), redactor=PatternEgressRedactor())
+    service = _service(PhaseAnswers(), models=Models(), redactor=PatternEgressRedactor(personal_data=True))
 
     step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
     assert step["kind"] == "final"

@@ -13,15 +13,18 @@ from tap.platform.redaction_patterns import PRIVATE_START as _PRIVATE_START
 from tap.platform.redaction_patterns import SECRET as _SECRET
 
 VERSION = "tapper-pattern-egress-v1"
+PERSONAL_DATA_VERSION = "tapper-pattern-egress-v2"
 
 
 class PatternEgressRedactor:
-    def __init__(self, *, max_chars: int = 8000) -> None:
+    def __init__(self, *, max_chars: int = 8000, personal_data: bool = False) -> None:
         self._max_chars = max_chars
+        self._personal_data = personal_data
+        self._version = PERSONAL_DATA_VERSION if personal_data else VERSION
 
     async def redact(self, text: str) -> RedactionResult:
         return RedactionResult(
-            sanitized_text=await self.redact_text(text), redaction_version=VERSION
+            sanitized_text=await self.redact_text(text), redaction_version=self._version
         )
 
     async def redact_text(self, text: str) -> str:
@@ -96,12 +99,16 @@ class PatternEgressRedactor:
 
         # Resident ID before mobile: an 18-digit ID must be fully consumed
         # first so its trailing 11 digits are never re-read as a phone number.
-        sanitized, id_hits = _CN_RESIDENT_ID.subn("[REDACTED_ID]", sanitized)
-        if id_hits:
-            counts["id_number"] = id_hits
-        sanitized, phone_hits = _CN_MOBILE.subn("[REDACTED_PHONE]", sanitized)
-        if phone_hits:
-            counts["phone"] = phone_hits
+        # Phone/ID rules only apply for personal-data (chat egress) callers;
+        # the default v1 rule set stays unchanged for every other caller
+        # (graph extraction, Insights, test design, suggestions, retrieval).
+        if self._personal_data:
+            sanitized, id_hits = _CN_RESIDENT_ID.subn("[REDACTED_ID]", sanitized)
+            if id_hits:
+                counts["id_number"] = id_hits
+            sanitized, phone_hits = _CN_MOBILE.subn("[REDACTED_PHONE]", sanitized)
+            if phone_hits:
+                counts["phone"] = phone_hits
 
         sanitized, email_hits = _EMAIL.subn("[REDACTED_EMAIL]", sanitized)
         if email_hits:

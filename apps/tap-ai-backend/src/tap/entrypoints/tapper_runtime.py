@@ -1466,6 +1466,15 @@ async def _redact_model_context(text: str) -> str:
     return await PatternEgressRedactor(max_chars=262144).redact_text(text)
 
 
+async def _redact_chat_egress(text: str) -> str:
+    """Chat-facing egress (knowledge answer/chat context and planner prompts):
+    the only callers that redact phone/ID numbers (personal_data=True, C1).
+    Everything else (graph extraction, Insights, test design, suggestions,
+    retrieval queries) keeps the v1 rule set via `_redact_model_context` so
+    the gateway's own enforcement check never rejects their raw content."""
+    return await PatternEgressRedactor(max_chars=262144, personal_data=True).redact_text(text)
+
+
 def _gated_ready_sources(list_sources, flowchart_gate, project_id: str):
     """Hide flowchart images from chat sources until their review is published."""
     if flowchart_gate is None:
@@ -1482,7 +1491,7 @@ def _answer_planner(models: KnowledgeModelGateway):
     from tap.modules.chat.application.plan_answer import AnswerPlanner
 
     return AnswerPlanner(
-        ModelGatewayPlanner(models.gateway, scope=models.scope, redact=_redact_model_context)
+        ModelGatewayPlanner(models.gateway, scope=models.scope, redact=_redact_chat_egress)
     )
 
 
@@ -1542,7 +1551,7 @@ def _create_embeddings(
     return KnowledgeModelGateway(
         gateway,
         scope=VALIDATION_SCOPE,
-        redact=_redact_model_context,
+        redact=_redact_chat_egress,
         embedding_alias=settings.embedding_model,
         chat_alias=settings.default_chat_model,
         embedding_dimension=settings.embedding_dimension,
@@ -2070,11 +2079,13 @@ def _assemble_http_services(
         corpus_version=corpus_version,
         models=embeddings,
         answer_planner=_answer_planner(embeddings),
-        # Bounded like `_redact_model_context`, not the smaller query-only
+        # Bounded like `_redact_chat_egress`, not the smaller query-only
         # `redactor` above: a saved answer (and its `redaction_report` use
         # for an incoming chat message) can be far longer than an 8,000-char
         # retrieval query -- up to `litellm.py`'s `max_answer_chars=16000`.
-        redactor=PatternEgressRedactor(max_chars=262144),
+        # personal_data=True (C1): output redaction and the input hit report
+        # are chat egress, so phone/ID rules apply here too.
+        redactor=PatternEgressRedactor(max_chars=262144, personal_data=True),
     )
     prompt_suggestions = None
     prompt_suggestion_store = None

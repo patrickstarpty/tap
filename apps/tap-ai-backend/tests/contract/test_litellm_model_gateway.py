@@ -352,6 +352,18 @@ async def test_invalid_governance_fails_before_io(changes):
 
 
 @pytest.mark.asyncio
+async def test_phone_like_context_is_not_rejected_by_the_enforcement_redactor():
+    """C1: the gateway's own enforcement redactor stays v1 (no phone/ID
+    rules), so raw pre-redaction callers (graph extraction, Insights, test
+    design) are never rejected for content that merely looks like a phone
+    or ID number."""
+    sent = []
+    gateway = configured_gateway(lambda incoming: (sent.append(incoming), success(incoming))[1])
+    await gateway.chat(replace(request(), context="hotline 13800138000"))
+    assert sent != []
+
+
+@pytest.mark.asyncio
 async def test_schema_digest_fails_closed():
     with pytest.raises(ValueError):
         await configured_gateway(success).generate_structured(
