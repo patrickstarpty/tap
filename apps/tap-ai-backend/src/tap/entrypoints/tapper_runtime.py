@@ -50,6 +50,7 @@ from tap.modules.knowledge.ports.search import (
     SearchPort,
 )
 from tap.operations.milvus.contracts import validate_milvus_role_usernames
+from tap.platform.budget import TurnBudget
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -180,6 +181,7 @@ class TapperSettings:
     langfuse_sync_settle_seconds: int = 60
     trace_redaction_rules: Path | None = None
     turn_max_attempts: int = 3
+    turn_budget: TurnBudget = field(default_factory=TurnBudget)
 
     def __post_init__(self) -> None:
         # A deadline too short for the output budget turns a detectable truncation
@@ -429,6 +431,36 @@ class TapperSettings:
             minimum=1,
             maximum=10,
         )
+        turn_budget = TurnBudget(
+            max_tool_rounds=_integer(
+                values,
+                "TAPPER_TURN_MAX_TOOL_ROUNDS",
+                6,
+                minimum=1,
+                maximum=20,
+            ),
+            max_seconds=_duration(
+                values,
+                "TAPPER_TURN_MAX_SECONDS",
+                180.0,
+                minimum=10,
+                maximum=1800,
+            ),
+            max_model_calls=_integer(
+                values,
+                "TAPPER_TURN_MAX_MODEL_CALLS",
+                10,
+                minimum=1,
+                maximum=50,
+            ),
+            max_cost_micros=_integer(
+                values,
+                "TAPPER_TURN_MAX_COST_MICROS",
+                0,
+                minimum=0,
+                maximum=100_000_000,
+            ),
+        )
         trace_redaction_rules_raw = _value(values, "TAP_TRACE_REDACTION_RULES", "")
         trace_redaction_rules: Path | None = None
         if trace_redaction_rules_raw:
@@ -602,6 +634,7 @@ class TapperSettings:
             langfuse_sync_settle_seconds=langfuse_sync_settle_seconds,
             trace_redaction_rules=trace_redaction_rules,
             turn_max_attempts=turn_max_attempts,
+            turn_budget=turn_budget,
         )
 
 
@@ -2240,13 +2273,22 @@ def _duration(
     default: float,
     *,
     maximum: float,
+    minimum: float | None = None,
 ) -> float:
+    """Parse a finite duration bounded above by `maximum`.
+
+    `minimum` is an inclusive closed lower bound when given; omitted, the lower
+    bound stays the historical exclusive 0 (a duration, not a count).
+    """
     raw = _value(values, name, str(default))
     try:
         parsed = float(raw)
     except ValueError:
         raise ValueError(f"{name} must be a finite duration") from None
-    if not math.isfinite(parsed) or not 0 < parsed <= maximum:
+    if minimum is None:
+        if not math.isfinite(parsed) or not 0 < parsed <= maximum:
+            raise ValueError(f"{name} must be a finite bounded duration")
+    elif not math.isfinite(parsed) or not minimum <= parsed <= maximum:
         raise ValueError(f"{name} must be a finite bounded duration")
     return parsed
 

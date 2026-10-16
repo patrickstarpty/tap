@@ -205,6 +205,25 @@ def test_turn_max_attempts_defaults_and_bounds() -> None:
             TapperSettings.from_mapping(S3_SETTINGS | {name: value})
 
 
+def test_turn_budget_defaults_and_bounds() -> None:
+    from tap.platform.budget import TurnBudget
+
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.turn_budget == TurnBudget()
+
+    for name, value in (
+        ("TAPPER_TURN_MAX_TOOL_ROUNDS", "0"),
+        ("TAPPER_TURN_MAX_TOOL_ROUNDS", "21"),
+        ("TAPPER_TURN_MAX_SECONDS", "5"),
+        ("TAPPER_TURN_MAX_SECONDS", "1801"),
+        ("TAPPER_TURN_MAX_MODEL_CALLS", "0"),
+        ("TAPPER_TURN_MAX_MODEL_CALLS", "51"),
+        ("TAPPER_TURN_MAX_COST_MICROS", "100000001"),
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(S3_SETTINGS | {name: value})
+
+
 def test_graph_extraction_budget_settings_are_separate_from_the_model_timeout() -> None:
     settings = TapperSettings.from_mapping(S3_SETTINGS)
 

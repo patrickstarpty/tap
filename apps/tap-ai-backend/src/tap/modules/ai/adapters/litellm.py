@@ -47,6 +47,7 @@ from tap.modules.ai.domain.models import (
     text_digest,
 )
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
+from tap.platform.budget import current_meter
 from tap.platform.telemetry import current_binding, span
 
 Redact = Callable[[str], Awaitable[str]]
@@ -365,6 +366,15 @@ class LiteLLMModelGateway:
         return model
 
     async def _execute(self, request: ModelRequest, operation: ModelOperation) -> ModelResult:
+        meters_this_call = operation in (ModelOperation.CHAT, ModelOperation.STRUCTURED)
+        if meters_this_call:
+            meter = current_meter()
+            if meter is not None:
+                # Must run before any provider I/O and outside the span/record
+                # machinery below: an exhausted budget propagates unchanged and
+                # produces no ModelCallRecord.
+                meter.before_call()
+
         call_id = str(uuid4())
         span_kind = "embeddings" if operation is ModelOperation.EMBED else "chat"
         attempts = GatewayAttempts()
@@ -381,6 +391,7 @@ class LiteLLMModelGateway:
         output_tokens: int | None = None
         status: str = "error"
         error_code: str | None = None
+        request_sent = False
 
         with span(
             f"{span_kind} {request.alias}",
@@ -483,6 +494,7 @@ class LiteLLMModelGateway:
                                 }
                             )
                     body, headers = await self._post(request, payload, attempts)
+                    request_sent = True
                     cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
                     input_tokens, output_tokens = _reported_usage(body)
                     result = self._normalize(request, body, headers, self._upstream_model(headers))
@@ -537,6 +549,15 @@ class LiteLLMModelGateway:
                 error_code = "model-unavailable"
                 raise ModelGatewayUnavailable() from None
             finally:
+                if meters_this_call and request_sent:
+                    meter = current_meter()
+                    if meter is not None:
+                        cost_micros = (
+                            int((cost_usd * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
+                            if cost_usd is not None
+                            else 0
+                        )
+                        meter.after_call(cost_micros)
                 span_context = current_span.get_span_context()
                 binding = current_binding()
                 record = ModelCallRecord(

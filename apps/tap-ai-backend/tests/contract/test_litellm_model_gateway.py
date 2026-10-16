@@ -2333,3 +2333,61 @@ async def test_a_nested_array_over_its_bound_is_invalid_not_truncated():
     with pytest.raises(ModelGatewayUnavailable) as raised:
         await gateway.generate_structured(nested)
     assert not isinstance(raised.value, ModelOutputTruncated)
+
+
+@pytest.mark.asyncio
+async def test_metered_chat_call_counts_and_records_cost():
+    from tap.platform.budget import CallMeter, metered
+
+    def respond(incoming):
+        return httpx.Response(
+            200,
+            json=success(incoming).json(),
+            headers={"x-litellm-response-cost": "0.0025"},
+        )
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+    meter = CallMeter(remaining_calls=5, remaining_cost_micros=None)
+
+    with metered(meter):
+        await gateway.chat(request())
+
+    assert meter.calls == 1
+    assert meter.cost_micros == 2500
+
+
+@pytest.mark.asyncio
+async def test_metered_gateway_refuses_call_over_budget_without_io():
+    from tap.platform.budget import CallBudgetExhausted, CallMeter, metered
+
+    calls: list[httpx.Request] = []
+
+    def respond(incoming):
+        calls.append(incoming)
+        return success(incoming)
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+    meter = CallMeter(remaining_calls=0, remaining_cost_micros=None)
+
+    with metered(meter):
+        with pytest.raises(CallBudgetExhausted):
+            await gateway.chat(request())
+
+    assert calls == []
+    assert recorder.records == []
+
+
+@pytest.mark.asyncio
+async def test_embeddings_are_not_metered():
+    from tap.platform.budget import CallMeter, metered
+
+    gateway = configured_gateway(success)
+    meter = CallMeter(remaining_calls=0, remaining_cost_micros=None)
+
+    with metered(meter):
+        result = await gateway.embed(request(ModelOperation.EMBED))
+
+    assert result.output == (0.6, 0.8)
+    assert meter.calls == 0
