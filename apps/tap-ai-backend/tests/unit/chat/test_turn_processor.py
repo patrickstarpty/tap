@@ -1,19 +1,23 @@
 import asyncio
+import random
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+import sqlalchemy.exc
 from langgraph.checkpoint.memory import InMemorySaver
 
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.ai.domain import graph_runs
 from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
-from tap.modules.chat.application.conversations import ConversationConflict
+from tap.modules.ai.domain.models import ModelGatewayUnavailable
+from tap.modules.chat.application.conversations import ConversationConflict, ConversationNotFound
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.conversations import CitationEvidence, GraphContextStatus
 from tap.modules.chat.domain.suggestions import RefreshReason
+from tap.modules.knowledge.ports.errors import AnswerRejected
 
 
 def test_graph_snapshot_is_legal_only_when_graph_context_was_applied():
@@ -766,12 +770,14 @@ async def test_generation_worker_terminalizes_transient_checkpoint_failure_at_re
             raise AssertionError("provider must not run after checkpoint preflight failure")
 
     conversations = Conversations()
-    worker = GenerationWorker(conversations, Knowledge(), max_checkpoint_attempts=3)
+    worker = GenerationWorker(conversations, Knowledge(), max_turn_attempts=3)
 
     assert await worker.run_once(limit=1) == 1
     assert conversations.completed == [("turn-3", "failed", "turn.failed")]
     finished = {s.name: s for s in span_recorder.get_finished_spans()}
     assert finished["turn.execute"].attributes["tap.outcome"] == "failed"
+    assert finished["turn.execute"].attributes["tap.failure.class"] == "transient"
+    assert finished["turn.execute"].attributes["tap.failure.error"] == "GraphCheckpointRetryable"
 
 
 @pytest.mark.asyncio
@@ -796,12 +802,19 @@ async def test_retryable_exit_marks_execute_span_deferred(span_recorder):
     )
 
     class Repository:
+        defers = []
+
         async def claim_queued(self, *, limit):
             assert limit == 1
             return (("conversation-1", turn),)
 
         def graph_checkpointer(self, _turn):
             return RetryableFailureCheckpointer()
+
+        async def defer_turn(
+            self, conversation_id, turn_id, lease_token, *, next_attempt_at, failure
+        ):
+            self.defers.append((conversation_id, turn_id, lease_token, next_attempt_at, failure))
 
     class Conversations:
         repository = Repository()
@@ -815,10 +828,12 @@ async def test_retryable_exit_marks_execute_span_deferred(span_recorder):
             raise AssertionError("provider must not run after checkpoint preflight failure")
 
     conversations = Conversations()
-    worker = GenerationWorker(conversations, Knowledge(), max_checkpoint_attempts=3)
+    worker = GenerationWorker(conversations, Knowledge(), max_turn_attempts=3)
 
     assert await worker.run_once(limit=1) == 1
     assert conversations.completed == []
+    assert len(conversations.repository.defers) == 1
+    assert conversations.repository.defers[0][4] == "transient:GraphCheckpointRetryable"
     finished = {s.name: s for s in span_recorder.get_finished_spans()}
     assert finished["turn.execute"].attributes["tap.outcome"] == "deferred"
 
@@ -866,7 +881,7 @@ async def test_generation_worker_respects_lease_loss_during_checkpoint_failure_s
 
 
 @pytest.mark.asyncio
-async def test_generation_worker_bounds_checkpoint_settlement_conflict_at_attempt_budget():
+async def test_generation_worker_treats_checkpoint_settlement_conflict_as_ownership_loss():
     turn = SimpleNamespace(
         turn_id="turn-conflict",
         attempt=3,
@@ -903,7 +918,9 @@ async def test_generation_worker_bounds_checkpoint_settlement_conflict_at_attemp
 
     conversations = Conversations()
     assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
-    assert conversations.attempts == ["completed", "failed"]
+    # A `ConversationConflict` on settlement proves another worker owns the
+    # Turn; the attempt budget is irrelevant and nothing further is written.
+    assert conversations.attempts == ["completed"]
 
 
 @pytest.mark.asyncio
@@ -942,7 +959,7 @@ async def test_generation_worker_cannot_fail_a_checkpoint_conflict_after_losing_
 
     conversations = Conversations()
     assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
-    assert conversations.attempts == ["completed", "failed"]
+    assert conversations.attempts == ["completed"]
 
 
 @pytest.mark.asyncio
@@ -1193,3 +1210,257 @@ async def test_generation_worker_skips_a_turn_whose_conversation_was_deleted():
 
     worker = GenerationWorker(Conversations(), Knowledge(), checkpointer=InMemorySaver())
     assert await worker.run_once(limit=1) == 1
+
+
+def _single_turn_repository(turn, *, defers=None):
+    defers = [] if defers is None else defers
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return (("conversation-1", turn),)
+
+        async def defer_turn(
+            self, conversation_id, turn_id, lease_token, *, next_attempt_at, failure
+        ):
+            defers.append((conversation_id, turn_id, lease_token, next_attempt_at, failure))
+
+    return Repository(), defers
+
+
+@pytest.mark.asyncio
+async def test_transient_model_failure_defers_with_backoff_and_no_terminal_event(span_recorder):
+    turn = SimpleNamespace(
+        turn_id="turn-1",
+        attempt=1,
+        lease_token="lease-1",
+        input_snapshot=SimpleNamespace(
+            snapshot_id="snapshot-1",
+            value=SimpleNamespace(message="question", resolved_resources=()),
+        ),
+    )
+    repository, defers = _single_turn_repository(turn)
+
+    class Conversations:
+        completed = []
+
+        async def complete_evidence(self, *args, **kwargs):
+            self.completed.append((args, kwargs))
+
+    class Knowledge:
+        async def answer(self, _request):
+            raise ModelGatewayUnavailable()
+
+    conversations = Conversations()
+    conversations.repository = repository
+    before = datetime.now(UTC)
+    worker = GenerationWorker(conversations, Knowledge(), rng=random.Random(0))
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert conversations.completed == []
+    assert len(defers) == 1
+    conversation_id, turn_id, lease_token, next_attempt_at, failure = defers[0]
+    assert (conversation_id, turn_id, lease_token) == ("conversation-1", "turn-1", "lease-1")
+    assert failure == "transient:ModelGatewayUnavailable"
+    delta_seconds = (next_attempt_at - before).total_seconds()
+    assert 1.0 <= delta_seconds <= 2.0
+    finished = {s.name: s for s in span_recorder.get_finished_spans()}
+    assert finished["turn.execute"].attributes["tap.outcome"] == "deferred"
+    assert finished["turn.execute"].attributes["tap.failure.class"] == "transient"
+    assert finished["turn.execute"].attributes["tap.failure.error"] == "ModelGatewayUnavailable"
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_on_last_attempt_fails_turn():
+    turn = SimpleNamespace(
+        turn_id="turn-1",
+        attempt=3,
+        lease_token="lease-1",
+        input_snapshot=SimpleNamespace(
+            snapshot_id="snapshot-1",
+            value=SimpleNamespace(message="question", resolved_resources=()),
+        ),
+    )
+    repository, defers = _single_turn_repository(turn)
+
+    class Conversations:
+        completed = []
+
+        async def complete_evidence(self, *args, **kwargs):
+            self.completed.append((args, kwargs))
+
+    class Knowledge:
+        async def answer(self, _request):
+            raise ModelGatewayUnavailable()
+
+    conversations = Conversations()
+    conversations.repository = repository
+
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
+
+    assert defers == []
+    assert len(conversations.completed) == 1
+    _args, kwargs = conversations.completed[0]
+    event_type, payload = kwargs["terminal_event"]
+    assert event_type == "turn.failed"
+    assert payload["problem"]["type"].endswith("answer-unavailable")
+
+
+@pytest.mark.asyncio
+async def test_deterministic_failure_fails_turn_immediately():
+    turn = SimpleNamespace(
+        turn_id="turn-1",
+        attempt=1,
+        lease_token="lease-1",
+        input_snapshot=SimpleNamespace(
+            snapshot_id="snapshot-1",
+            value=SimpleNamespace(message="question", resolved_resources=()),
+        ),
+    )
+    repository, defers = _single_turn_repository(turn)
+
+    class Conversations:
+        completed = []
+
+        async def complete_evidence(self, *args, **kwargs):
+            self.completed.append((args, kwargs))
+
+    class Knowledge:
+        async def answer(self, _request):
+            raise AnswerRejected("model-rejected")
+
+    conversations = Conversations()
+    conversations.repository = repository
+
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
+
+    assert defers == []
+    assert len(conversations.completed) == 1
+    _args, kwargs = conversations.completed[0]
+    event_type, _payload = kwargs["terminal_event"]
+    assert event_type == "turn.failed"
+
+
+@pytest.mark.asyncio
+async def test_ownership_loss_writes_nothing():
+    turn = SimpleNamespace(
+        turn_id="turn-1",
+        attempt=1,
+        lease_token="lease-1",
+        input_snapshot=SimpleNamespace(
+            snapshot_id="snapshot-1",
+            value=SimpleNamespace(message="question", resolved_resources=()),
+        ),
+    )
+    repository, defers = _single_turn_repository(turn)
+
+    class Conversations:
+        completed = []
+
+        async def complete_evidence(self, *args, **kwargs):
+            self.completed.append((args, kwargs))
+
+    class Knowledge:
+        async def answer(self, _request):
+            raise ConversationNotFound
+
+    conversations = Conversations()
+    conversations.repository = repository
+
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
+
+    assert conversations.completed == []
+    assert defers == []
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_after_graph_is_deferred():
+    turn = SimpleNamespace(
+        turn_id="turn-1",
+        attempt=1,
+        lease_token="lease-1",
+        input_snapshot=SimpleNamespace(
+            snapshot_id="snapshot-1",
+            value=SimpleNamespace(message="question", resolved_resources=()),
+        ),
+    )
+    repository, defers = _single_turn_repository(turn)
+
+    class Conversations:
+        completed = []
+
+        async def complete_evidence(self, *args, **kwargs):
+            self.completed.append((args, kwargs))
+            raise sqlalchemy.exc.OperationalError("x", None, Exception())
+
+    class Knowledge:
+        async def answer(self, _request):
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    conversations = Conversations()
+    conversations.repository = repository
+
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
+
+    assert len(conversations.completed) == 1
+    assert len(defers) == 1
+    assert defers[0][4] == "transient:OperationalError"
+
+
+@pytest.mark.asyncio
+async def test_one_turn_crash_does_not_skip_the_rest_of_the_batch():
+    turns = tuple(
+        (
+            "conversation-1",
+            SimpleNamespace(
+                turn_id=f"turn-{number}",
+                attempt=1,
+                lease_token=f"lease-{number}",
+                input_snapshot=SimpleNamespace(
+                    snapshot_id="snapshot-1",
+                    value=SimpleNamespace(message="question", resolved_resources=()),
+                ),
+            ),
+        )
+        for number in (1, 2)
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return turns
+
+    class Conversations:
+        repository = Repository()
+        completed = []
+
+        async def complete_evidence(self, conversation_id, turn_id, evidence, **_kwargs):
+            if turn_id == "turn-1":
+                # `fail_turn()` itself blows up here; the worker must isolate
+                # this Turn's crash and still process the rest of the batch.
+                raise RuntimeError("storage exploded")
+            self.completed.append((turn_id, evidence.outcome))
+
+    class Knowledge:
+        calls = 0
+
+        async def answer(self, _request):
+            self.calls += 1
+            if self.calls == 1:
+                raise AnswerRejected("model-rejected")
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    conversations = Conversations()
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=2) == 2
+    assert conversations.completed == [("turn-2", "completed")]
