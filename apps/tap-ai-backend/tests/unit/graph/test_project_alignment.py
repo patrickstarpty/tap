@@ -21,7 +21,7 @@ from tap.modules.graph.domain.models import (
     GraphSnapshotDraft,
     RelationOrigin,
 )
-from tap.modules.graph.domain.naming import is_reference_name
+from tap.modules.graph.domain.naming import clean_alias, is_bare_grade, is_reference_name
 
 
 def _digest(seed: str) -> str:
@@ -391,31 +391,47 @@ def _linear_scan_clusters(
     the node's own document, any of its level-2 keys, else the best embedding match)
     so the indexed resolver can be checked against it.
     """
-    clusters: list[dict[str, object]] = []
-    ambiguous = _ambiguous_alias_keys(sorted(fragments, key=lambda item: item.snapshot.snapshot_id))
-    # These three mirror the indexed resolver's own exact_index/label_index/
-    # alias_index dicts exactly (first-wins, never overwritten) rather than
-    # scanning each cluster's own accumulated key sets: once EXACT matching can
-    # cross a node-type bucket (ACTOR/SYSTEM/ENTITY), a cluster can hold members
-    # of different literal node types, and a per-cluster set would conflate a
-    # key contributed by one member's type with a lookup under another
-    # member's -- production's indices are keyed by the *contributing* node's
-    # own literal type, not the cluster's, both when writing and when reading.
-    exact_owner: dict[tuple[str, str], dict[str, object]] = {}
-    label_owner: dict[tuple[str, str], dict[str, object]] = {}
-    alias_owner: dict[tuple[str, tuple[str, ...], str], dict[str, object]] = {}
+    ordered = sorted(fragments, key=lambda item: item.snapshot.snapshot_id)
+    ambiguous = _ambiguous_alias_keys(ordered)
+
+    # Independent restatement of "a (bucket, key1) names at most one cluster,
+    # system-wide, whoever used it first": precompute, in a separate pass
+    # before any cluster exists, which node (by identity) is the first to use
+    # each key1 as its EXACT key. A later node with the same key1 then simply
+    # looks up *that node's* cluster once it exists -- rather than mutating a
+    # key-to-cluster dict as clusters are built (which is what the indexed
+    # resolver itself does), this is a plain precomputed fact about the input,
+    # checked against a node-to-cluster map filled in as nodes are placed. A
+    # bare grade (naming.is_bare_grade) may not establish or claim ownership:
+    # it is kept as a node's own name, but never merges with another node of
+    # the same literal canonical-key text (see alignment.py's own EXACT guard).
+    first_exact_owner: dict[tuple[str, str], tuple[str, str]] = {}
+    for fragment in ordered:
+        for node in fragment.nodes:
+            key1 = alignment_key(node.canonical_key, node.node_type)
+            if is_bare_grade(key1):
+                continue
+            bucket = _merge_type_bucket(node.node_type)
+            first_exact_owner.setdefault(
+                (bucket, key1), (fragment.snapshot.snapshot_id, node.node_id)
+            )
 
     def names(texts, node_type):
-        return {
-            alignment_key(name, node_type)
-            for name in texts
-            if not is_reference_name(name) and not is_reference_name(alignment_key(name, node_type))
-        }
+        keys = set()
+        for text in texts:
+            cleaned = clean_alias(text)
+            if cleaned is not None:
+                keys.add(alignment_key(cleaned, node_type))
+        return keys
 
-    for fragment in sorted(fragments, key=lambda item: item.snapshot.snapshot_id):
+    clusters: list[dict[str, object]] = []
+    node_cluster: dict[tuple[str, str], dict[str, object]] = {}
+
+    for fragment in ordered:
         snapshot_id = fragment.snapshot.snapshot_id
         source = fragment.snapshot.source_revision_ids
         for node in fragment.nodes:
+            node_identity = (snapshot_id, node.node_id)
             key1 = alignment_key(node.canonical_key, node.node_type)
             label_keys = names((node.label,), node.node_type)
             keys2 = {
@@ -425,28 +441,34 @@ def _linear_scan_clusters(
             }
             target = None
             rule = None
-            bucket = _merge_type_bucket(node.node_type)
-            exact_match = exact_owner.get((bucket, key1))
-            if exact_match is not None:
-                target, rule = exact_match, "EXACT"
+
+            if not is_bare_grade(key1):
+                bucket = _merge_type_bucket(node.node_type)
+                owner = first_exact_owner.get((bucket, key1))
+                if owner is not None and owner != node_identity:
+                    target, rule = node_cluster[owner], "EXACT"
+
             if target is None:
-                # Names match across documents; aliases only within one document.
-                # Mirrors the indexed resolver exactly: collect every matching
-                # key's cluster (label_keys and keys2 can each point at a
-                # different one) and take the earliest-created.
-                candidates = [
-                    label_owner[(node.node_type, key)]
-                    for key in label_keys
-                    if (node.node_type, key) in label_owner
-                ] + [
-                    alias_owner[(node.node_type, source, key)]
-                    for key in keys2
-                    if (node.node_type, source, key) in alias_owner
-                ]
-                if candidates:
-                    target, rule = min(candidates, key=lambda c: c["position"]), "ALIAS"
+                # Names match across documents; aliases only within one
+                # document. Scans every existing cluster (independent of the
+                # indexed resolver's own label_index/alias_index dicts), but
+                # each cluster tracks its label/alias keys *per contributing
+                # node type* (not pooled into one cluster-wide set): once
+                # EXACT can place members of different literal types in one
+                # cluster (ORG_PARTICIPANT_TYPES), a key contributed by one
+                # member's type must not satisfy a lookup under another
+                # member's type.
+                for cluster in clusters:
+                    cluster_labels = cluster["labels_by_type"].get(node.node_type, set())
+                    cluster_aliases = cluster["aliases_by_type_source"].get(
+                        (node.node_type, source), set()
+                    )
+                    if cluster_labels & label_keys or cluster_aliases & keys2:
+                        target, rule = cluster, "ALIAS"
+                        break
+
             if target is None and embeddings:
-                vector = embeddings.get((snapshot_id, node.node_id))
+                vector = embeddings.get(node_identity)
                 if vector is not None:
                     best, best_score = None, -1.0
                     for cluster in clusters:
@@ -473,24 +495,21 @@ def _linear_scan_clusters(
             if target is None:
                 target = {
                     "type": node.node_type,
-                    "position": len(clusters),
                     "members": [],
                     "member_types": [],
+                    "labels_by_type": {},
+                    "aliases_by_type_source": {},
                     "rule": "EXACT",
                 }
                 clusters.append(target)
                 rule = "EXACT"
-            target["members"].append((snapshot_id, node.node_id))
+            node_cluster[node_identity] = target
+            target["members"].append(node_identity)
             target["member_types"].append(node.node_type)
-            exact_owner.setdefault((bucket, key1), target)
-            for key in label_keys:
-                known = label_owner.get((node.node_type, key))
-                if known is None or target["position"] < known["position"]:
-                    label_owner[(node.node_type, key)] = target
-            for key in keys2:
-                known = alias_owner.get((node.node_type, source, key))
-                if known is None or target["position"] < known["position"]:
-                    alias_owner[(node.node_type, source, key)] = target
+            target["labels_by_type"].setdefault(node.node_type, set()).update(label_keys)
+            target["aliases_by_type_source"].setdefault((node.node_type, source), set()).update(
+                keys2
+            )
             target["rule"] = rule
     return [
         (str(cluster["type"]), tuple(cluster["members"]), str(cluster["rule"]))
@@ -515,6 +534,15 @@ def test_indexed_alignment_matches_a_full_cluster_scan_on_overlapping_fragments(
         "友邦人寿",
         "太平人寿",
         "人寿保险",
+        # Clause-prefixed terms: exercise clean_alias's leading-article strip
+        # (and, combined with a corporate suffix below, both affixes at once).
+        "第十九条核保",
+        "第一部分理赔",
+        # Bare classification grades: exercise is_bare_grade's EXACT-matching
+        # guard (combined with a non-empty suffix below, a *qualified* grade,
+        # which is not a bare grade and merges normally).
+        "Ⅳ级",
+        "三级",
     ]
     suffixes = ["", "", "规则", "流程", " policy", " rule", "有限公司", "保险有限公司"]
     node_types = ["CONCEPT", "ENTITY", "PROCESS", "ACTOR", "SYSTEM"]
