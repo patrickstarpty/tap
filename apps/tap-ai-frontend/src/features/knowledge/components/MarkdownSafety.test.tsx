@@ -327,6 +327,105 @@ describe("GroundedAnswer citation badges by source position (round 3)", () => {
   });
 });
 
+describe("GroundedAnswer citation badges at closing delimiters (round 4)", () => {
+  // A claim whose end offset coincides with a closing delimiter (`**`, `*`,
+  // `)` of a link/image, `>` of inline html, a code fence) lands in no text
+  // node; the badge must still render right after that construct, never be
+  // dropped.
+  it.each([
+    ["strong", "结论是 **重要**", "结论是 **重要**"],
+    ["emphasis", "结论是 *重要*", "结论是 *重要*"],
+    ["strikethrough-like text", "结论是 ~~过时~~", "结论是 ~~过时~~"],
+    [
+      "a link",
+      "详见 [退款政策](https://x.example)",
+      "详见 [退款政策](https://x.example)",
+    ],
+    [
+      "an image",
+      "见图 ![流程](https://x.example/a.png)",
+      "见图 ![流程](https://x.example/a.png)",
+    ],
+    ["inline html", "结论 <span>重要</span>", "结论 <span>重要</span>"],
+  ] as const)(
+    "a claim ending in %s keeps its badge in the same paragraph",
+    (_name, answer, claimText) => {
+      const { container } = render(
+        <GroundedAnswer
+          response={claimEndingAt(`${answer}\n\n其他段落。`, claimText)}
+          onOpenCitation={() => undefined}
+        />,
+      );
+
+      const paragraphs = container.querySelectorAll(".tapper-markdown p");
+      expect(paragraphs).toHaveLength(2);
+      expect(
+        within(paragraphs[0] as HTMLElement).getByRole("button", {
+          name: "打开来源引用 1",
+        }),
+      ).toBeVisible();
+      expect(paragraphs[0]?.textContent).toMatch(/\[1\]$/u);
+    },
+  );
+
+  it("keeps the badge for a claim ending in a fenced code block", () => {
+    const answer = "示例：\n\n```text\nmake test\n```\n\n其他段落。";
+    const { container } = render(
+      <GroundedAnswer
+        response={claimEndingAt(answer, "```text\nmake test\n```")}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "打开来源引用 1" }),
+    ).toBeVisible();
+    expect(container.querySelector("pre")?.textContent).toBe("make test\n");
+  });
+
+  it("keeps the badge for a claim ending in a hard break", () => {
+    render(
+      <GroundedAnswer
+        response={claimEndingAt("第一行\\\n第二行", "第一行\\")}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "打开来源引用 1" }),
+    ).toBeVisible();
+  });
+});
+
+describe("GroundedAnswer citation badges when text value differs from source (round 4)", () => {
+  // A text node's `value` can be shorter than its source span (escapes,
+  // entities, stripped line prefixes); the badge must still land right after
+  // the claim's own last character.
+  it.each([
+    ["a backslash escape", "价格 \\*不含税\\* 为 10 元。", "p"],
+    ["a character entity", "A &lt; B &amp; C 成立。", "p"],
+    ["a numeric entity", "符号 &#169; 与 &#x1F600; 成立。", "p"],
+    ["a multi-line blockquote", "> 第一行内容\n> 第二句成立。", "blockquote p"],
+    ["a list item continuation", "- 第一行内容\n  第二句成立。", "li"],
+    ["an indented continuation line", "第一行内容\n   第二句成立。", "p"],
+  ] as const)(
+    "a claim with %s places its badge right after the claim",
+    (_name, claimText, selector) => {
+      const { container } = render(
+        <GroundedAnswer
+          response={claimEndingAt(`${claimText}其余说明。`, claimText)}
+          onOpenCitation={() => undefined}
+        />,
+      );
+
+      const block = container.querySelector(`.tapper-markdown ${selector}`);
+      expect(block?.textContent).toMatch(
+        /成立。\[1\]其余说明。$|元。\[1\]其余说明。$/u,
+      );
+    },
+  );
+});
+
 describe("GroundedAnswer model-only chat", () => {
   it("renders a strict direct-chat response without fabricated citations", () => {
     render(

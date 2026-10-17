@@ -35,11 +35,11 @@ const ANSWER_TAGS = [
 
 const answerSchema = {
   tagNames: [...ANSWER_TAGS],
-  // `data*` allows exactly `data-claim-id` (and no other attribute, on no
+  // Exactly `data-claim-id`, on `code` only (no other attribute, on no
   // other tag) -- the citation badge is spliced into the Markdown AST as an
   // empty `<code data-claim-id="...">` element (round 3 of the LangGraph PR 3
   // review ruling, 2026-10-17); see `citationBadgeNode` below.
-  attributes: { code: ["data*"] },
+  attributes: { code: ["dataClaimId"] },
   protocols: {},
 };
 
@@ -281,52 +281,123 @@ function citationBadgeNode(claimId: string): MdNode {
   };
 }
 
-// Leaf (childless, text-bearing) node types a claim's `answerEnd` offset can
-// land in or at the end of. `inlineCode` is never split -- a citation can
-// end exactly at a code span's boundary (the bug case this round fixes) but
-// splitting its source text would corrupt it; `text` is split when the
-// offset falls strictly inside it, preserving an accurate `position` on
-// both halves so a later claim's offset still resolves correctly against
-// this same, already-mutated tree.
-function spliceCitationAtOffset(
+const ASCII_PUNCTUATION = /^[!-/:-@[-`{-~]$/u;
+const CHARACTER_REFERENCE =
+  /^&(?:#(\d{1,7})|#[xX]([0-9A-Fa-f]{1,6})|([A-Za-z][A-Za-z0-9]{0,31}));/u;
+
+/** Decodes one Markdown character reference (`&lt;`, `&#169;`, `&#x1F600;`)
+ * the way CommonMark does, or returns `null` if it is not one (an unknown
+ * name stays literal text). Named references are resolved by the browser's
+ * own HTML5 entity table, which CommonMark shares; the input is restricted
+ * by `CHARACTER_REFERENCE` to `&name;`, so no markup can be injected. */
+function decodeCharacterReference(match: RegExpExecArray): string | null {
+  const [, decimal, hex, name] = match;
+  if (decimal !== undefined || hex !== undefined) {
+    const code = Number.parseInt(decimal ?? hex!, decimal ? 10 : 16);
+    const valid =
+      code !== 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
+    return valid ? String.fromCodePoint(code) : "\ufffd";
+  }
+  if (name === undefined || typeof document === "undefined") return null;
+  const decoder = document.createElement("textarea");
+  decoder.innerHTML = match[0];
+  return decoder.value === match[0] ? null : decoder.value;
+}
+
+/** Maps a source offset inside a `text` node's span to the matching index
+ * in its (possibly shorter) `value`, by walking the source against the
+ * value and consuming what Markdown parsing removed: backslash escapes,
+ * character references, and stripped line prefixes (continuation-line
+ * indentation, `> ` blockquote markers, list indentation, trailing
+ * whitespace before a line ending). */
+function textValueIndex(
+  source: string,
+  sourceStart: number,
+  sourceOffset: number,
+  value: string,
+): number {
+  let i = sourceStart;
+  let j = 0;
+  while (i < sourceOffset && j < value.length) {
+    const char = source[i]!;
+    if (
+      char === "\\" &&
+      i + 1 < source.length &&
+      ASCII_PUNCTUATION.test(source[i + 1]!) &&
+      value[j] === source[i + 1]
+    ) {
+      i += 2;
+      j += 1;
+      continue;
+    }
+    if (char === "&") {
+      const match = CHARACTER_REFERENCE.exec(source.slice(i, i + 40));
+      const decoded = match === null ? null : decodeCharacterReference(match);
+      if (match !== null && decoded !== null && value.startsWith(decoded, j)) {
+        i += match[0].length;
+        j += decoded.length;
+        continue;
+      }
+    }
+    if (char === value[j]) {
+      j += 1;
+    }
+    i += 1;
+  }
+  return j;
+}
+
+function hasOffsets(node: MdNode): node is MdNode & {
+  position: { start: { offset: number }; end: { offset: number } };
+} {
+  return (
+    node.position?.start.offset !== undefined &&
+    node.position.end.offset !== undefined
+  );
+}
+
+// Pass 1: a `text` or `inlineCode` leaf whose span contains the offset.
+// `inlineCode` is never split -- a citation can end exactly at a code
+// span's boundary but splitting its source text would corrupt it; `text` is
+// split when the offset falls strictly inside it, preserving an accurate
+// `position` on both halves so a later claim's offset still resolves
+// correctly against this same, already-mutated tree.
+function spliceIntoText(
   node: MdNode,
   offset: number,
-  claimId: string,
+  badge: MdNode,
+  source: string,
 ): boolean {
   const children = node.children;
   if (children === undefined) return false;
   for (let index = 0; index < children.length; index += 1) {
     const child = children[index]!;
-    const position = child.position;
     if (
       (child.type === "text" || child.type === "inlineCode") &&
-      position?.start.offset !== undefined &&
-      position.end.offset !== undefined &&
-      offset >= position.start.offset &&
-      offset <= position.end.offset
+      hasOffsets(child) &&
+      offset >= child.position.start.offset &&
+      offset <= child.position.end.offset
     ) {
-      const badge = citationBadgeNode(claimId);
-      const start = position.start.offset;
-      const end = position.end.offset;
-      if (offset === end || child.type === "inlineCode") {
+      const { start, end } = child.position;
+      if (offset === end.offset || child.type === "inlineCode") {
         children.splice(index + 1, 0, badge);
-      } else if (offset === start) {
+      } else if (offset === start.offset) {
         children.splice(index, 0, badge);
       } else if (typeof child.value === "string") {
-        const relative = offset - start;
+        const split = textValueIndex(source, start.offset, offset, child.value);
         children.splice(
           index,
           1,
           {
             type: child.type,
-            value: child.value.slice(0, relative),
-            position: { start: position.start, end: offsetPoint(offset) },
+            value: child.value.slice(0, split),
+            position: { start: child.position.start, end: offsetPoint(offset) },
           },
           badge,
           {
             type: child.type,
-            value: child.value.slice(relative),
-            position: { start: offsetPoint(offset), end: position.end },
+            value: child.value.slice(split),
+            position: { start: offsetPoint(offset), end: child.position.end },
           },
         );
       } else {
@@ -334,9 +405,68 @@ function spliceCitationAtOffset(
       }
       return true;
     }
-    if (spliceCitationAtOffset(child, offset, claimId)) return true;
+    if (spliceIntoText(child, offset, badge, source)) return true;
   }
   return false;
+}
+
+// Pass 2: the deepest node ending exactly at the offset -- a claim ending in
+// a closing delimiter (`**`, `*`, a link's or image's `)`, inline html, a
+// hard break, a code fence) lands in no text node. The badge goes right
+// after that node, as a sibling in its parent.
+function spliceAfterNodeEndingAt(
+  node: MdNode,
+  offset: number,
+  badge: MdNode,
+): boolean {
+  const children = node.children;
+  if (children === undefined) return false;
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index]!;
+    if (spliceAfterNodeEndingAt(child, offset, badge)) return true;
+    if (hasOffsets(child) && child.position.end.offset === offset) {
+      children.splice(index + 1, 0, badge);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Pass 3 (never drop a badge): descend into the deepest node whose span
+// contains the offset and insert the badge after its last child that does
+// not start after the offset -- at worst, at the end of the containing
+// block, or of the document.
+function spliceIntoContainingBlock(
+  node: MdNode,
+  offset: number,
+  badge: MdNode,
+): void {
+  const children = node.children ?? [];
+  let insertAt = 0;
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index]!;
+    if (!hasOffsets(child)) continue;
+    if (child.position.start.offset > offset) break;
+    if (child.children !== undefined && offset <= child.position.end.offset) {
+      spliceIntoContainingBlock(child, offset, badge);
+      return;
+    }
+    insertAt = index + 1;
+  }
+  if (node.children === undefined) node.children = [];
+  node.children.splice(insertAt, 0, badge);
+}
+
+function spliceCitationAtOffset(
+  tree: MdNode,
+  offset: number,
+  claimId: string,
+  source: string,
+): void {
+  const badge = citationBadgeNode(claimId);
+  if (spliceIntoText(tree, offset, badge, source)) return;
+  if (spliceAfterNodeEndingAt(tree, offset, badge)) return;
+  spliceIntoContainingBlock(tree, offset, badge);
 }
 
 /** Converts a code-point offset (what `claim.answerEnd` is, matching the
@@ -361,12 +491,21 @@ function codePointToUtf16Offset(
  * original source offset rather than by Markdown syntax -- so list items,
  * headings and a claim ending in inline code, a backslash, or right before
  * another claim all still parse and render as ordinary Markdown. */
-function citationRemarkPlugin(
-  insertions: readonly { utf16Offset: number; claimId: string }[],
-) {
+function citationRemarkPlugin({
+  source,
+  insertions,
+}: {
+  source: string;
+  insertions: readonly { utf16Offset: number; claimId: string }[];
+}) {
   return (tree: MdNode): void => {
     for (const insertion of insertions) {
-      spliceCitationAtOffset(tree, insertion.utf16Offset, insertion.claimId);
+      spliceCitationAtOffset(
+        tree,
+        insertion.utf16Offset,
+        insertion.claimId,
+        source,
+      );
     }
   };
 }
@@ -517,13 +656,15 @@ function CitedAnswerMarkdown({
     [graph],
   );
   const markdown = useMemo(() => graph.points.join(""), [graph]);
-  const insertions = useMemo(
-    () =>
-      graph.claims.map((claim) => ({
+  const citationOptions = useMemo(
+    () => ({
+      source: markdown,
+      insertions: graph.claims.map((claim) => ({
         utf16Offset: codePointToUtf16Offset(graph.points, claim.answerEnd),
         claimId: claim.claimId,
       })),
-    [graph],
+    }),
+    [graph, markdown],
   );
   const contextValue = useMemo<CitedMarkdownContextValue>(
     () => ({
@@ -547,7 +688,7 @@ function CitedAnswerMarkdown({
     <div className="tapper-markdown tapper-grounded-claim">
       <CitedMarkdownContext.Provider value={contextValue}>
         <ReactMarkdown
-          remarkPlugins={[[citationRemarkPlugin, insertions]]}
+          remarkPlugins={[[citationRemarkPlugin, citationOptions]]}
           rehypePlugins={[[rehypeSanitize, answerSchema]]}
           components={CITED_MARKDOWN_COMPONENTS}
         >
