@@ -738,9 +738,7 @@ def test_rank_edges_ignores_overlap_on_only_generic_domain_vocabulary() -> None:
     # The query's only overlap with `generic_only`'s label is the shared
     # generic vocabulary ("合同"/"责任"/"条款"); the higher confidence x
     # adjacency edge must still win, exactly as it would without a query.
-    ranked = rank_edges(
-        subgraph, (), seed_ids, query="本合同的责任条款规定了什么？"
-    )
+    ranked = rank_edges(subgraph, (), seed_ids, query="本合同的责任条款规定了什么？")
     assert [edge.edge_id for edge, _on_path in ranked] == [
         "e-higher-scored",
         "e-generic-only",
@@ -780,9 +778,7 @@ def test_rank_edges_never_lets_overlap_promote_a_non_adjacent_edge_over_an_adjac
     # and query-text overlap.
     seed_ids = frozenset({"A"})
 
-    ranked = rank_edges(
-        subgraph, (), seed_ids, query="核保审核需要提交哪些健康告知材料？"
-    )
+    ranked = rank_edges(subgraph, (), seed_ids, query="核保审核需要提交哪些健康告知材料？")
     assert [edge.edge_id for edge, _on_path in ranked] == ["e-adjacent", "e-non-adjacent"]
 
 
