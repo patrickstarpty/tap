@@ -25,18 +25,43 @@ Any `DraftStreamUnavailable` from `drafts.append` (or `drafts` being `None`)
 degrades the batcher to accumulate-only for the rest of this instance's life
 (never raises into the `model` node) and records `tap.stream.degraded` on
 the current span once.
+
+`redact` raising `RedactionUnavailable` (a half-written credential value or
+private-key block that has not yet been closed out by more raw text) never
+raises into the `model` node either: a non-final flush simply sends nothing
+and keeps waiting for more context; a final flush (`close()`) instead
+degrades the batcher permanently (nothing more is ever redacted or sent --
+the authoritative, fail-closed redaction decision for the complete answer
+stays with `KnowledgeHttpService.finalize_conversation_answer`).
 """
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Awaitable, Callable
 
 from opentelemetry.trace import get_current_span
 
 from tap.modules.chat.application.ports import DraftStream, DraftStreamUnavailable
+from tap.modules.knowledge.ports.redaction import RedactionUnavailable
+from tap.platform.redaction_patterns import EMAIL_LOCAL_TRAILING_RUN
 
 _INSUFFICIENT_EVIDENCE_SENTINEL = "INSUFFICIENT_EVIDENCE"
+
+# Mirrors `PatternEgressRedactor`'s placeholder markers -> the hit-count key
+# `KnowledgeHttpService._redact_answer_response` records on
+# `tap.guard.redaction.output_hits` for the final answer. The batcher never
+# sees the redactor's own `redact_with_report` counts (its `redact` callable
+# only returns text), so hit counts here are approximated by counting the
+# placeholders actually present in the last successfully redacted text.
+_REDACTION_MARKERS = {
+    "[REDACTED_PRIVATE_KEY]": "private_key",
+    "[REDACTED_SECRET]": "secret",
+    "[REDACTED_ID]": "id_number",
+    "[REDACTED_PHONE]": "phone",
+    "[REDACTED_EMAIL]": "email",
+}
 
 
 class DraftBatcher:
@@ -66,6 +91,14 @@ class DraftBatcher:
         self._sent_text = ""
         self._seq = 0
         self._degraded = drafts is None
+        # Set only when `_redact` raised `RedactionUnavailable` on a *final*
+        # flush (`close()`): no more raw text is ever coming for this
+        # attempt, so the half-written pattern that made redaction fail can
+        # never complete -- every later `_flush` (there should be none) is a
+        # no-op, and `redact` is never called again for this instance.
+        # `finalize`'s own fail-closed redaction remains the sole
+        # authoritative decision for the saved/returned answer either way.
+        self._redaction_unavailable = False
         self._last_redacted = ""
 
     async def push(self, text: str) -> None:
@@ -82,16 +115,39 @@ class DraftBatcher:
 
     async def close(self) -> str:
         await self._flush(final=True)
+        self._record_redaction_hits()
         return self._last_redacted
 
     async def _flush(self, *, final: bool) -> None:
+        if self._redaction_unavailable:
+            self._last_flush_at = time.monotonic()
+            self._unflushed_chars = 0
+            return
         # The sentinel is only ever the model's *entire* output (never mixed
         # into a real answer), so stripping it out of the full raw text before
         # redaction keeps it from ever reaching Redis or the caller, at any
         # flush -- including a final one where the whole answer is nothing
         # but the sentinel.
         visible_raw = self._raw.replace(_INSUFFICIENT_EVIDENCE_SENTINEL, "")
-        redacted = await self._redact(visible_raw)
+        try:
+            redacted = await self._redact(visible_raw)
+        except RedactionUnavailable:
+            self._last_flush_at = time.monotonic()
+            self._unflushed_chars = 0
+            if final:
+                # No more raw text is ever coming for this attempt (a
+                # half-written `password:`, an unterminated quoted
+                # credential value, a `-----BEGIN ... PRIVATE KEY-----`
+                # block with no `END` marker, ...): this attempt can never
+                # again produce a safe redacted draft, so nothing more is
+                # ever sent -- never the raw text.
+                self._redaction_unavailable = True
+                self._mark_degraded()
+            # Non-final: send nothing this flush and keep the current sent
+            # position; more raw text may still complete the pattern (close
+            # the quote, reach the credential block's `END` marker, ...),
+            # letting a later flush redact successfully.
+            return
         self._last_redacted = redacted
         self._last_flush_at = time.monotonic()
         self._unflushed_chars = 0
@@ -105,15 +161,43 @@ class DraftBatcher:
             await self._append(text="", reset=True)
             self._sent_text = ""
 
-        upper = (
-            len(redacted)
-            if final
-            else max(len(self._sent_text), len(redacted) - self._holdback_chars)
-        )
+        if final:
+            upper = len(redacted)
+        else:
+            upper = max(len(self._sent_text), len(redacted) - self._holdback_chars)
+            # M-1: an email's local part has no fixed length, so a trailing
+            # run of its allowed characters that is not yet terminated (no
+            # `@` has completed it, or anything else has ruled it out) could
+            # still grow past `holdback_chars` before it is known whether it
+            # is part of an email at all -- never send into that run. Only
+            # extends an actual (non-zero) holdback margin: `holdback_chars
+            # == 0` means the caller already opted out of any holdback
+            # safety net.
+            if self._holdback_chars:
+                trailing_run = EMAIL_LOCAL_TRAILING_RUN.search(redacted)
+                if trailing_run is not None:
+                    upper = min(upper, trailing_run.start())
+                upper = max(upper, len(self._sent_text))
         new_text = redacted[len(self._sent_text) : upper]
         if new_text:
             await self._append(text=new_text, reset=False)
             self._sent_text += new_text
+
+    def _record_redaction_hits(self) -> None:
+        # Matches `KnowledgeHttpService._redact_answer_response`'s
+        # `tap.guard.redaction.output_hits` style (spec SS4.5): only set when
+        # there is something to report. Named distinctly (`draft_hits`) since
+        # this counts placeholders in the batcher's own last redacted draft,
+        # not the redactor's authoritative `redact_with_report` counts.
+        if not self._last_redacted:
+            return
+        hits = {
+            kind: self._last_redacted.count(marker)
+            for marker, kind in _REDACTION_MARKERS.items()
+            if marker in self._last_redacted
+        }
+        if hits:
+            get_current_span().set_attribute("tap.guard.redaction.draft_hits", json.dumps(hits))
 
     async def _append(self, *, text: str, reset: bool) -> None:
         if self._degraded or self._drafts is None:

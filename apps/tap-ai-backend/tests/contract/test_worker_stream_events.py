@@ -56,6 +56,9 @@ class _KnowledgeConversations:
         self.events: list[tuple[str, dict[str, object]]] = []
         self.completed: list[object] = []
 
+    async def emit(self, *args, **kwargs):
+        pass
+
     async def complete_evidence(self, conversation_id, turn_id, evidence, *, stream_events=(), **_):
         self.events.extend(stream_events)
         self.completed.append(evidence)
@@ -148,6 +151,93 @@ async def test_knowledge_events_validate_against_contract() -> None:
     )
     assert graph_context_payload["seedCount"] == 0
     assert graph_context_payload["querySeedCount"] == 0
+
+
+class _EarlyHitsConversations(_KnowledgeConversations):
+    """Separately records every `emit` call (the early, pre-`finalize`
+    commit path) alongside `complete_evidence`'s terminal batch, so a test
+    can see the two independently and in order."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.emitted: list[tuple[str, dict[str, object]]] = []
+
+    async def emit(self, conversation_id, turn_id, event_type, payload, *, lease_token=None):
+        self.emitted.append((event_type, payload))
+
+
+class _EarlyHitsKnowledge:
+    """Implements the full resumable `ConversationAnswerSteps` protocol so
+    `prepare_conversation_answer` can hand `seed_search` a `retrieval_hits`
+    payload (with `labels`) the way the real `KnowledgeHttpService` does."""
+
+    def __init__(self) -> None:
+        self.hits_ready_committed_before_generate = False
+
+    async def prepare_conversation_answer(self, request, frozen_input, **_kwargs):
+        return {
+            "kind": "prepared",
+            "bundle": {},
+            "retrieval_hits": {
+                "traceId": "trace-1",
+                "authorizedHitCount": 1,
+                "labels": [{"label": "S1", "title": "doc-a", "location": None}],
+            },
+        }
+
+    async def generate_conversation_answer(self, step, frozen_input, *, on_text=None, **_kwargs):
+        return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+
+    async def verify_conversation_answer(self, step, frozen_input, **_kwargs):
+        return {"kind": "verified", "response": {}}
+
+    async def finalize_conversation_answer(self, step, frozen_input, **_kwargs):
+        return SimpleNamespace(
+            answer="grounded",
+            citations=(),
+            abstained=False,
+            trace_id="trace-1",
+            model_dump=lambda **_: {"answer": "grounded", "citations": []},
+        )
+
+    async def refuse_out_of_scope(self, frozen_input, **_kwargs):  # pragma: no cover - unused
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_retrieval_hits_ready_with_labels_is_committed_before_generation() -> None:
+    """M-3: `retrieval.hits_ready` (with `labels`) must be committed through
+    `conversations.emit` before `generate_conversation_answer` ever runs,
+    and that committed payload must itself validate against
+    `ChatEventEnvelope` -- the strict chat stream contract, not just the
+    plain dict `KnowledgeHttpService` builds it from."""
+    conversations = _EarlyHitsConversations()
+    knowledge = _EarlyHitsKnowledge()
+
+    async def generate_conversation_answer(step, frozen_input, *, on_text=None, **_kwargs):
+        knowledge.hits_ready_committed_before_generate = any(
+            event_type == "retrieval.hits_ready" for event_type, _payload in conversations.emitted
+        )
+        return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+
+    knowledge.generate_conversation_answer = generate_conversation_answer
+    worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert knowledge.hits_ready_committed_before_generate is True
+    assert [event_type for event_type, _payload in conversations.emitted] == [
+        "retrieval.hits_ready",
+        "stage.started",
+    ]
+    event_type, payload = conversations.emitted[0]
+    assert event_type == "retrieval.hits_ready"
+    assert payload["labels"] == [{"label": "S1", "title": "doc-a", "location": None}]
+    ChatEventEnvelope.model_validate(_envelope(sequence=1, event_type=event_type, payload=payload))
+    # The terminal batch must not repeat the already-committed event.
+    assert "retrieval.hits_ready" not in [
+        event_type for event_type, _payload in conversations.events
+    ]
 
 
 class _InsightsRepository:

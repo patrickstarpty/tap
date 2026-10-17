@@ -141,6 +141,9 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
         events = []
         completed = []
 
+        async def emit(self, *args, **kwargs):
+            pass
+
         async def complete_evidence(
             self, conversation_id, turn_id, evidence, *, stream_events=(), **_
         ):
@@ -253,6 +256,9 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
         repository = Repository()
         completion = None
 
+        async def emit(self, *args, **kwargs):
+            pass
+
         async def complete_evidence(self, *_args, **kwargs):
             self.completion = kwargs
 
@@ -324,6 +330,9 @@ def _completed_turn_fixtures(*, abstained: bool):  # type: ignore[no-untyped-def
     class Conversations:
         repository = Repository()
         completion = None
+
+        async def emit(self, *args, **kwargs):
+            pass
 
         async def complete_evidence(self, *_args, **kwargs):
             self.completion = kwargs
@@ -522,6 +531,9 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
         repository = Repository()
         stream_events = None
         terminal_event = None
+
+        async def emit(self, *args, **kwargs):
+            pass
 
         async def complete_evidence(self, *_args, terminal_event=None, stream_events=(), **_kwargs):
             self.terminal_event = terminal_event
@@ -991,6 +1003,9 @@ async def test_generation_worker_treats_checkpoint_settlement_conflict_as_owners
         repository = Repository()
         attempts = []
 
+        async def emit(self, *args, **kwargs):
+            pass
+
         async def complete_evidence(self, _conversation_id, _turn_id, evidence, **_kwargs):
             self.attempts.append(evidence.outcome)
             if evidence.outcome == "completed":
@@ -1032,6 +1047,9 @@ async def test_generation_worker_cannot_fail_a_checkpoint_conflict_after_losing_
     class Conversations:
         repository = Repository()
         attempts = []
+
+        async def emit(self, *args, **kwargs):
+            pass
 
         async def complete_evidence(self, _conversation_id, _turn_id, evidence, **_kwargs):
             self.attempts.append(evidence.outcome)
@@ -1535,6 +1553,9 @@ async def test_one_turn_crash_does_not_skip_the_rest_of_the_batch():
     class Conversations:
         repository = Repository()
         completed = []
+
+        async def emit(self, *args, **kwargs):
+            pass
 
         async def complete_evidence(self, conversation_id, turn_id, evidence, **_kwargs):
             if turn_id == "turn-1":

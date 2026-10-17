@@ -93,6 +93,11 @@ def _retrieval_hits_payload(response: Any, relation: Any | None) -> dict[str, ob
         )
     return {
         "traceId": response.trace_id,
+        # M-5: the number of authorized evidence hits retrieval produced
+        # (not citations, which are resolved later and may be fewer) --
+        # `ChatTurnNodes.finalize`'s fallback path (no early `retrieval_hits`
+        # payload) uses the same meaning where it has the data for it,
+        # falling back to the closest proxy it carries otherwise.
         "authorizedHitCount": len(response.evidence),
         "labels": labels,
     }

@@ -46,10 +46,24 @@ from tap.platform.telemetry import current_binding
 
 async def _identity_redact(text: str) -> str:
     """Fallback `DraftBatcher` redactor when `ChatTurnNodes` is constructed
-    without one (every existing non-worker caller): never used in
-    production, where the generation worker always passes the real v2
-    chat-egress redactor."""
+    with neither `drafts` nor `redact` (every existing non-worker caller):
+    never used in production, where the generation worker always passes the
+    real v2 chat-egress redactor. Never used when `drafts` is given -- see
+    `ChatTurnNodes.__init__`'s fail-closed check -- so this can never
+    silently stream unredacted drafts to Redis."""
     return text
+
+
+def _event_key(event_type: str, payload: Mapping[str, object] | None) -> str:
+    """`committed_stream_events`'s dedup key for `event_type`/`payload`
+    (M-4): keyed by `type:stage` when `payload` carries a `stage` (e.g.
+    `stage.started` for `"verify"` vs. some other future stage), else the
+    bare `event_type` -- so a re-run of `verify` after a transient failure
+    recognizes its own earlier `stage.started` as already committed instead
+    of emitting it again, without conflating it with an unrelated event
+    type that happens to share the same bare name."""
+    stage = payload.get("stage") if isinstance(payload, Mapping) else None
+    return f"{event_type}:{stage}" if stage is not None else event_type
 
 
 def _evidence_checkpoint(
@@ -316,6 +330,12 @@ class ChatTurnNodes:
         # `model` node's `DraftBatcher` streams through; both optional so
         # every existing caller that constructs `ChatTurnNodes` directly
         # (tests, other entrypoints) is unaffected.
+        if drafts is not None and redact is None:
+            # Fail-closed (M-7): silently falling back to `_identity_redact`
+            # here would stream every draft to Redis completely unredacted.
+            # A caller that wires a real `DraftStream` must also wire the
+            # real redactor -- there is no safe default.
+            raise ValueError("ChatTurnNodes given drafts without a redact callable")
         self._drafts = drafts
         self._redact = redact or _identity_redact
         # Same predicate the worker passes to `ChatGraph(retryable=...)`
@@ -460,37 +480,67 @@ class ChatTurnNodes:
         )
         result: dict[str, object] = {"step": step, "started_at_ms": started_at_ms}
         retrieval_hits = step.get("retrieval_hits") if isinstance(step, dict) else None
-        committed = await self._emit_committed(state, "retrieval.hits_ready", retrieval_hits)
+        committed = await self._emit_committed(
+            state, "retrieval.hits_ready", await self._redact_labels(retrieval_hits)
+        )
         if committed is not None:
             result["committed_stream_events"] = committed
         return result
+
+    async def _redact_labels(
+        self, payload: Mapping[str, object] | None
+    ) -> dict[str, object] | None:
+        """M-6: `retrieval.hits_ready`'s `labels` carry a source `title` and
+        `location` (a heading path joined with `" / "`, or a page number)
+        taken straight from document structure -- never authored or
+        screened by the model -- so, unlike the rest of the payload, they
+        must still pass through the v2 chat-egress redactor before this
+        event is ever emitted."""
+        labels = payload.get("labels") if payload else None
+        if not payload or not isinstance(labels, list):
+            return None if payload is None else dict(payload)
+        redacted_labels: list[dict[str, object]] = []
+        for raw_label in labels:
+            label = cast(Mapping[str, object], raw_label)
+            title = label.get("title")
+            location = label.get("location")
+            redacted_labels.append(
+                {
+                    **label,
+                    "title": title if title is None else await self._redact(str(title)),
+                    "location": (
+                        location if location is None else await self._redact(str(location))
+                    ),
+                }
+            )
+        return {**payload, "labels": redacted_labels}
 
     async def _emit_committed(
         self, state: ChatGraphState, event_type: str, payload: Mapping[str, object] | None
     ) -> list[str] | None:
         """Commits `event_type`/`payload` as a stream event the instant it is
         ready (ahead of the terminal `complete_evidence` batch), through
-        `conversations.emit` -- if the caller gave both a payload and a
-        `conversations` that actually implements `emit` (not every
-        `ChatTurnNodes` caller's test double does; those simply never see
-        this event early, and `finalize`'s `stream_events` still carries it
-        as before). Returns the updated `committed_stream_events` list (to
-        merge into the node's returned state) so `finalize` never repeats an
-        event already committed here, or `None` if nothing was committed."""
+        `conversations.emit`. Skips re-emitting (and returns `None`) when
+        this exact `event_type`/stage combination (M-4's `_event_key`) is
+        already in `committed_stream_events` -- a resumed `verify` after a
+        transient failure must not commit its `stage.started` a second time.
+        Returns the updated `committed_stream_events` list (to merge into the
+        node's returned state) so `finalize` never repeats an event already
+        committed here, or `None` if nothing was (newly) committed."""
         if not payload:
             return None
-        emit = getattr(self._conversations, "emit", None)
-        if emit is None:
+        key = _event_key(event_type, payload)
+        committed = list(state.get("committed_stream_events") or ())
+        if key in committed:
             return None
-        await emit(
+        await self._conversations.emit(
             self._conversation_id,
             self._turn.turn_id,
             event_type,
             dict(payload),
             lease_token=self._turn.lease_token,
         )
-        committed = list(state.get("committed_stream_events") or ())
-        committed.append(event_type)
+        committed.append(key)
         return committed
 
     async def model(self, state: ChatGraphState) -> dict[str, object]:
@@ -703,6 +753,17 @@ class ChatTurnNodes:
                 retrieval_summary=RetrievalSummary(
                     "abstained" if answer.abstained else "completed",
                     trace_id=answer.trace_id,
+                    # M-5: `authorized_hit_count`'s meaning is "the number of
+                    # authorized evidence hits retrieval produced" (see
+                    # `KnowledgeHttpService._retrieval_hits_payload`'s
+                    # `len(response.evidence)`, the early `seed_search` path).
+                    # This fallback path (no early `retrieval_hits` payload
+                    # was available, e.g. `SingleShotAnswerSteps`) has no
+                    # evidence count of its own to read here -- citations are
+                    # the closest proxy the finalized answer carries, and
+                    # every citation always traces back to an authorized hit
+                    # -- so this undercounts only when an authorized hit
+                    # produced no citation.
                     authorized_hit_count=len(answer.citations),
                 ),
                 citations=citations,

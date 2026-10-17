@@ -11,6 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from tap.modules.access.application.authorize import build_retrieval_policy_context
 from tap.modules.access.domain.policy import Classification, ProjectPolicy, VerifiedSubjectFacts
 from tap.modules.ai.application.interaction_graph import InteractionGraph
+from tap.modules.chat.application.conversations import ClaimBatch
 from tap.modules.chat.application.plan_answer import AnswerPlanner, PlanningInput
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.knowledge.api import KnowledgeAPI
@@ -393,16 +394,18 @@ async def test_worker_routes_in_graph_persists_plan_and_binds_completion(questio
 
     class Repository:
         async def claim_queued(self, **kwargs):
-            return (
+            return ClaimBatch(
                 (
-                    "chat-a",
-                    SimpleNamespace(
-                        turn_id="turn-a",
-                        lease_token="lease-a",
-                        input_snapshot=snapshot,
-                        attempt=1,
+                    (
+                        "chat-a",
+                        SimpleNamespace(
+                            turn_id="turn-a",
+                            lease_token="lease-a",
+                            input_snapshot=snapshot,
+                            attempt=1,
+                        ),
                     ),
-                ),
+                )
             )
 
     class Conversations:
@@ -472,16 +475,18 @@ async def test_worker_records_preplanning_publication_denial_as_failed_turn(leas
 
     class Repository:
         async def claim_queued(self, **kwargs):
-            return (
+            return ClaimBatch(
                 (
-                    "chat-denied",
-                    SimpleNamespace(
-                        turn_id="turn-denied",
-                        lease_token="lease-denied",
-                        attempt=1,
-                        input_snapshot=snapshot,
+                    (
+                        "chat-denied",
+                        SimpleNamespace(
+                            turn_id="turn-denied",
+                            lease_token="lease-denied",
+                            attempt=1,
+                            input_snapshot=snapshot,
+                        ),
                     ),
-                ),
+                )
             )
 
     class Conversations:

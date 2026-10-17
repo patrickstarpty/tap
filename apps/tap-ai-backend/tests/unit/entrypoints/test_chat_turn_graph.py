@@ -840,6 +840,54 @@ async def test_hits_ready_is_committed_before_generation_starts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_retrieval_hits_ready_labels_are_redacted_before_emit() -> None:
+    """M-6: `labels`' `title`/`location` come straight from document
+    structure (never screened by the model), so they must still pass
+    through the configured v2 chat-egress redactor before `retrieval.hits_ready`
+    is emitted -- the same as every other model-bound/egress text."""
+
+    class _LabeledKnowledge(_StepsKnowledge):
+        async def prepare_conversation_answer(
+            self, request, frozen_input, *, answer_plan=None, authorize=None
+        ):
+            self.prepare_calls += 1
+            return {
+                "kind": "prepared",
+                "bundle": {},
+                "retrieval_hits": {
+                    "traceId": "trace-1",
+                    "authorizedHitCount": 1,
+                    "labels": [
+                        {
+                            "label": "S1",
+                            "title": "contact leaker@example.com",
+                            "location": "附录 / leaker@example.com",
+                        }
+                    ],
+                },
+            }
+
+    async def _redact(text: str) -> str:
+        return text.replace("leaker@example.com", "[REDACTED_EMAIL]")
+
+    turn = _turn()
+    conversations = _Conversations(turn)
+    worker = GenerationWorker(
+        conversations, _LabeledKnowledge(), checkpointer=InMemorySaver(), redact=_redact
+    )
+
+    assert await worker.run_once(limit=1) == 1
+
+    _c, _t, event_type, payload, _lease = conversations.emitted[0]
+    assert event_type == "retrieval.hits_ready"
+    label = payload["labels"][0]
+    assert "leaker@example.com" not in label["title"]
+    assert "leaker@example.com" not in label["location"]
+    assert label["title"] == "contact [REDACTED_EMAIL]"
+    assert label["location"] == "附录 / [REDACTED_EMAIL]"
+
+
+@pytest.mark.asyncio
 async def test_verify_stage_started_is_committed_before_verify_runs() -> None:
     turn = _turn()
     conversations = _Conversations(turn)
@@ -933,3 +981,26 @@ async def test_model_node_streams_through_draft_batcher() -> None:
     assert drafts.appended
     assert "".join(chunk.text for chunk in drafts.appended if not chunk.reset) == "HELLO WORLD"
     assert redacted_calls
+
+
+def test_drafts_without_redact_fails_closed_at_construction() -> None:
+    """M-7: a real `DraftStream` wired without the real redactor must never
+    silently fall back to `_identity_redact` -- that would stream every
+    draft to Redis completely unredacted. Fail closed at construction."""
+
+    async def require_authorized() -> None:
+        return None
+
+    with pytest.raises(ValueError, match="redact"):
+        ChatTurnNodes(
+            conversation_id="conversation-1",
+            turn=_turn(),
+            conversations=_Conversations(_turn()),
+            steps=_StepsKnowledge(),
+            planner=None,
+            knowledge=object(),
+            insights_explanation=None,
+            require_authorized=require_authorized,
+            drafts=object(),
+            redact=None,
+        )

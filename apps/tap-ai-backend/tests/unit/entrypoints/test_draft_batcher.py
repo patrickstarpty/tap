@@ -5,12 +5,14 @@ letting the `INSUFFICIENT_EVIDENCE` abstention sentinel reach Redis."""
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
 
 from tap.entrypoints.tapper_draft_batcher import DraftBatcher
 from tap.modules.chat.application.ports import DraftStreamUnavailable
+from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
 
 _PHONE = re.compile(r"\d{11}")
 
@@ -192,3 +194,162 @@ async def test_insufficient_evidence_sentinel_never_reaches_drafts():
 
     assert all("INSUFFICIENT_EVIDENCE" not in text for text in _texts(drafts.calls))
     assert final_text == ""
+
+
+@pytest.mark.parametrize(
+    "half_written",
+    [
+        "联系方式 password:",
+        'the token is password="hun',
+        "key block -----BEGIN PRIVATE KEY----- abc",
+    ],
+    ids=["trailing-assignment", "unterminated-quote", "unterminated-private-key"],
+)
+@pytest.mark.asyncio
+async def test_redaction_unavailable_mid_stream_sends_nothing_and_keeps_position(half_written):
+    """M-Important: a half-written credential at a flush boundary must never
+    fail the Turn. A non-final flush that cannot redact sends nothing and
+    keeps the current sent position -- it is retried (and may succeed) once
+    more raw text arrives."""
+    redactor = PatternEgressRedactor(personal_data=True)
+    drafts = _FakeDrafts()
+    batcher = DraftBatcher(
+        turn_id="turn-1",
+        attempt=1,
+        drafts=drafts,
+        redact=redactor.redact_text,
+        max_delay_s=1000,
+        max_chars=1,
+        holdback_chars=0,
+    )
+
+    await batcher.push(half_written)  # must not raise
+
+    assert drafts.calls == []
+    assert all(half_written not in text for text in _texts(drafts.calls))
+
+
+@pytest.mark.parametrize(
+    "half_written",
+    [
+        "联系方式 password:",
+        'the token is password="hun',
+        "key block -----BEGIN PRIVATE KEY----- abc",
+    ],
+    ids=["trailing-assignment", "unterminated-quote", "unterminated-private-key"],
+)
+@pytest.mark.asyncio
+async def test_redaction_unavailable_at_close_degrades_without_raising(half_written):
+    """M-Important: if the credential never completes (end of the Turn's
+    output), `close()` must not raise either -- it marks the span degraded
+    and sends nothing further; `finalize`'s fail-closed redaction remains
+    the authoritative decision for the saved/returned answer."""
+    redactor = PatternEgressRedactor(personal_data=True)
+    drafts = _FakeDrafts()
+    batcher = DraftBatcher(
+        turn_id="turn-1",
+        attempt=1,
+        drafts=drafts,
+        redact=redactor.redact_text,
+        max_delay_s=1000,
+        max_chars=1000,
+        holdback_chars=0,
+    )
+
+    await batcher.push(half_written)
+    final_text = await batcher.close()  # must not raise
+
+    assert drafts.calls == []
+    assert half_written not in final_text
+    assert batcher._degraded is True
+    assert batcher._redaction_unavailable is True
+
+
+@pytest.mark.asyncio
+async def test_holdback_covers_an_unterminated_email_local_part_longer_than_holdback():
+    """M-1: an email's local part has no fixed length, so a trailing run of
+    characters the `EMAIL` pattern's local part accepts must never be sent
+    while it is still growing, even once it exceeds `holdback_chars` -- only
+    `close()` (no more text can ever complete it) may release it."""
+
+    async def _email_redact(text: str) -> str:
+        return await PatternEgressRedactor().redact_text(text)
+
+    drafts = _FakeDrafts()
+    batcher = DraftBatcher(
+        turn_id="turn-1",
+        attempt=1,
+        drafts=drafts,
+        redact=_email_redact,
+        max_delay_s=1000,
+        max_chars=1,
+        holdback_chars=48,
+    )
+
+    for _ in range(80):
+        await batcher.push("a")
+    sent_before_at = "".join(_texts(drafts.calls))
+    assert "a" * 60 not in sent_before_at
+
+    await batcher.push("@example.com")
+    final_text = await batcher.close()
+
+    replayed = ""
+    for call in drafts.calls:
+        if call[4]:
+            replayed = ""
+        replayed += call[3]
+    assert "a" * 80 not in replayed
+    assert "[REDACTED_EMAIL]" in replayed
+    assert "[REDACTED_EMAIL]" in final_text
+
+
+@pytest.mark.asyncio
+async def test_close_records_draft_redaction_hit_counts_on_the_current_span(span_recorder):
+    """M-8 (partial): the batcher's own last redacted draft's placeholder
+    counts land on the current span at `close()`, matching the style
+    `KnowledgeHttpService._redact_answer_response` uses for the final
+    answer (`tap.guard.redaction.output_hits`)."""
+    from tap.platform.telemetry.tracing import span
+
+    drafts = _FakeDrafts()
+    with span("test.draft_batcher_hits") as current:
+        batcher = DraftBatcher(
+            turn_id="turn-1",
+            attempt=1,
+            drafts=drafts,
+            redact=_phone_redact,
+            max_delay_s=1000,
+            max_chars=1000,
+            holdback_chars=0,
+        )
+        await batcher.push("电话 13812345678 结束")
+        await batcher.close()
+        span_id = current.get_span_context().span_id
+
+    finished = next(s for s in span_recorder.get_finished_spans() if s.context.span_id == span_id)
+    hits = json.loads(finished.attributes["tap.guard.redaction.draft_hits"])
+    assert hits == {"phone": 1}
+
+
+@pytest.mark.asyncio
+async def test_close_records_nothing_when_no_redaction_hits(span_recorder):
+    from tap.platform.telemetry.tracing import span
+
+    drafts = _FakeDrafts()
+    with span("test.draft_batcher_no_hits") as current:
+        batcher = DraftBatcher(
+            turn_id="turn-1",
+            attempt=1,
+            drafts=drafts,
+            redact=_identity_redact,
+            max_delay_s=1000,
+            max_chars=1000,
+            holdback_chars=0,
+        )
+        await batcher.push("hello world")
+        await batcher.close()
+        span_id = current.get_span_context().span_id
+
+    finished = next(s for s in span_recorder.get_finished_spans() if s.context.span_id == span_id)
+    assert "tap.guard.redaction.draft_hits" not in finished.attributes

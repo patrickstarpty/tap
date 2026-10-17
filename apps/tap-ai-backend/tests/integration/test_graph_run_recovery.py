@@ -32,7 +32,7 @@ from tap.modules.chat.adapters.mysql_conversations import (
     chat_turn,
     turn_answer_evidence_snapshot,
 )
-from tap.modules.chat.application.conversations import ConversationService
+from tap.modules.chat.application.conversations import ClaimBatch, ConversationService
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     FrozenResource,
@@ -544,13 +544,13 @@ async def test_permanent_checkpoint_error_terminalizes_once_and_does_not_reclaim
             leaked_answer_count = await session.scalar(
                 text(
                     "SELECT COUNT(*) FROM chat_event "
-                    "WHERE turn_id='turn-permanent' AND event_type='answer.delta'"
+                    "WHERE turn_id='turn-permanent' AND event_type='turn.completed'"
                 )
             )
             healthy_answer_count = await session.scalar(
                 text(
                     "SELECT COUNT(*) FROM chat_event "
-                    "WHERE turn_id='turn-healthy' AND event_type='answer.delta'"
+                    "WHERE turn_id='turn-healthy' AND event_type='turn.completed'"
                 )
             )
         assert failure_outbox_count == 1
@@ -655,7 +655,7 @@ async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_p
             async def claim_queued(self, *, limit):
                 del limit
                 claimed, self.claimed = self.claimed, None
-                return () if claimed is None else (claimed,)
+                return ClaimBatch(()) if claimed is None else ClaimBatch((claimed,))
 
             def __getattr__(self, name):
                 return getattr(self.delegate, name)
