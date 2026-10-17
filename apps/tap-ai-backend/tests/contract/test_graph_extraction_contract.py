@@ -922,7 +922,8 @@ async def test_adjacent_entry_mislink_edge_is_dropped_as_unsupported(span_record
     spans = [
         item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
     ]
-    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 1
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 1
+    assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 0
 
 
 @pytest.mark.asyncio
@@ -970,7 +971,8 @@ async def test_unsupported_edge_check_does_not_drop_a_correctly_grounded_edge(sp
     spans = [
         item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
     ]
-    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 0
 
 
 @pytest.mark.asyncio
@@ -1036,7 +1038,8 @@ async def test_actor_and_system_endpoints_are_exempt_from_the_unsupported_edge_c
     spans = [
         item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
     ]
-    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 0
 
 
 def _numbered_list_request():
@@ -1106,7 +1109,8 @@ async def test_cross_item_edge_in_a_dense_numbered_list_is_dropped(span_recorder
     spans = [
         item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
     ]
-    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 1
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 1
 
 
 @pytest.mark.asyncio
@@ -1154,7 +1158,244 @@ async def test_same_item_edge_in_a_dense_numbered_list_is_kept(span_recorder):
     spans = [
         item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
     ]
-    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 0
+
+
+def _requirement_criterion_request(content: str):
+    return replace(
+        _request(),
+        chunks=(
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": "chunk-1",
+                "content": content,
+                "anchor": {"kind": "text", "start": 0, "end": 10},
+                "contentDigest": "sha256:" + "a" * 64,
+            },
+        ),
+    )
+
+
+def _requirement_criterion_output(disease_label: str, criterion_label: str, relation_type: str):
+    return {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": disease_label,
+                "type": "CONCEPT",
+                "canonicalKey": disease_label,
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": criterion_label,
+                "type": "REQUIREMENT",
+                "canonicalKey": criterion_label,
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": relation_type,
+                "relationLabel": "须满足",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "disease_label", "criterion_label"),
+    [
+        (
+            # Real corpus text: 52) / 53) / 54) in one chunk. The reviewer's false
+            # kill -- item 54's own REQUIREMENT criterion scored only 0.36 LCS
+            # ratio against its own item because the model reordered "达到正常值
+            # 上限的120%" into "≥120%正常值上限", below the 0.5 title-match floor
+            # the (now-replaced) whole-body check used.
+            (
+                "52）严重原发性心肌病\n指因原发性心肌病导致慢性心功能损害造成永久不可逆性的心功能衰竭。\n"
+                "53）严重冠心病\n指经冠状动脉造影检查，明确诊断为三支主要血管严重狭窄性病变。\n"
+                "54）严重心肌炎\n指心肌的严重感染而导致至少持续180天的心功能损害。心功能损害必须满足下列全部"
+                "条件：\n（1）左室腔扩大至少达到正常值上限的120%；\n（2）左室射血分数持续性低于40%。"
+            ),
+            "严重心肌炎",
+            "左室腔扩大≥120%正常值上限",
+        ),
+        (
+            (
+                "55）肺源性心脏病\n指被保险人因慢性肺部疾病导致慢性心功能损害。\n"
+                "56）感染性心内膜炎\n指由感染性微生物引致的心脏内膜炎症，须符合下列所有标准：\n"
+                "（1）血液培养结果呈阳性反应，证明感染性微生物的存在；\n"
+                "（2）心内膜炎引起中度心瓣膜关闭不全（指返流指数20%或以上）或中度心瓣膜狭窄（指心瓣膜开口"
+                "范围小于或等于正常值的30%）。"
+            ),
+            "感染性心内膜炎",
+            "中度心瓣膜狭窄（开口≤30%正常值）",
+        ),
+        (
+            (
+                "57）Ⅲ度房室传导阻滞\n指心房激动在房室交界区、房室束及其分支内发生阻滞，不能正常地传到心室"
+                "的心脏传导性疾病，须满足下列所有条件：\n（1）心电图显示房室搏动彼此独立，心室率<50次/分钟；\n"
+                "（2）出现阿-斯综合征或心力衰竭的表现；\n（3）必须持续性依赖心脏起搏器维持心脏正常功能。\n"
+                "58）严重慢性缩窄性心包炎\n由于慢性心包炎症导致心包脏层和壁层广泛瘢痕粘连、增厚和钙化。"
+            ),
+            "Ⅲ度房室传导阻滞",
+            "心电图显示房室搏动独立且心室率<50次/分",
+        ),
+    ],
+)
+async def test_requirement_criteria_in_a_dense_list_are_never_cross_item_mislinks(
+    span_recorder, content, disease_label, criterion_label
+):
+    # These three real excerpts are the reviewer's false-kill regressions: a
+    # REQUIREMENT-typed criterion of a disease's own definition, reworded by the
+    # model (operators swapped, phrase order flipped), must never be dropped as a
+    # cross-item mislink just because its own item's text scores low against it.
+    output = _requirement_criterion_output(disease_label, criterion_label, "REQUIRES")
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(
+        _requirement_criterion_request(content)
+    )
+
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 0
+
+
+@pytest.mark.asyncio
+async def test_aortic_surgery_trigger_is_not_a_cross_item_mislink(span_recorder):
+    # Real corpus text: item 25 (主动脉手术)'s own body fell on the far side of a
+    # chunk boundary, so this edge's single cited chunk holds only item 25's bare
+    # title plus two unrelated, earlier items -- the target never names any
+    # title in this chunk, so the cross-item check must not fire (it would have
+    # nothing to compare), and the target's whole-chunk character overlap (0.64)
+    # clears the primary check too.
+    content = (
+        "23）语言能力丧失\n指因疾病或意外伤害导致语言能力完全丧失，经过积极治疗至少12个月。\n"
+        "24）重型再生障碍性贫血\n指因骨髓造血功能慢性持续性衰竭导致的贫血、中性粒细胞减少及血小板减少。\n"
+        "25）主动脉手术"
+    )
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "主动脉手术",
+                "type": "CONCEPT",
+                "canonicalKey": "主动脉手术",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": "主动脉疾病或主动脉创伤",
+                "type": "CONCEPT",
+                "canonicalKey": "主动脉疾病或主动脉创伤",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": "TRIGGERS",
+                "relationLabel": "为治疗",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(
+        _requirement_criterion_request(content)
+    )
+
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 0
+
+
+@pytest.mark.asyncio
+async def test_real_crohns_disease_to_bone_marrow_biopsy_is_dropped_as_ungrounded(span_recorder):
+    # Real corpus text and a real rv3 production mislink: the model cited only
+    # item 27/28's own chunk for this edge, which never mentions 骨髓穿刺检查 (a
+    # criterion that belongs to a different item, 24, reached only via a
+    # different chunk) -- caught by the primary ungrounded check, not the
+    # cross-item one (there is only one numbered item's worth of disease name
+    # in this specific chunk's visible text for 骨髓穿刺检查 to possibly match).
+    content = (
+        "27）严重克罗恩病\n指一种慢性肉芽肿性肠炎，具有特征性的克罗恩病（Crohn病）病理组织学变化，"
+        "须根据组织病理学特点诊断，且已经造成瘘管形成并伴有肠梗阻或肠穿孔。\n"
+        "28）严重溃疡性结肠炎\n指伴有致命性电解质紊乱的急性暴发性溃疡性结肠炎，病变已经累及全结肠，"
+        "表现为严重的血便和系统性症状体征，须根据组织病理学特点诊断，且已经实施了结肠切除或回肠造瘘术。\n"
+        "上述二十八种重度疾病依照中国保险行业协会制定的《重大疾病保险的疾病定义使用规范（2020年修订版）》"
+        "标准定义，其他重度疾病依照本附加合同约定定义。"
+    )
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "严重克罗恩病",
+                "type": "CONCEPT",
+                "canonicalKey": "严重克罗恩病",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": "骨髓穿刺检查",
+                "type": "CONCEPT",
+                "canonicalKey": "骨髓穿刺检查",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": "APPLIES_TO",
+                "relationLabel": "须根据组织病理学特点诊断",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(
+        _requirement_criterion_request(content)
+    )
+
+    assert draft.edges == ()
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 1
+    assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 0
 
 
 @pytest.mark.asyncio
@@ -1209,4 +1450,5 @@ async def test_inferred_edge_is_never_checked_against_evidence_text(span_recorde
     spans = [
         item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
     ]
-    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 0
