@@ -232,6 +232,52 @@ class _FailingAppendRepository(InMemoryConversationRepository):
 
 
 @pytest.mark.asyncio
+async def test_create_notifies_with_sequence_one():
+    """A new conversation's first event is always sequence 1 -- trivial,
+    no repository round trip needed to know it."""
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+
+    assert wakeups.notified == [("conversation-1", 1)]
+
+
+@pytest.mark.asyncio
+async def test_append_notifies_with_the_committed_sequence():
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    wakeups.notified.clear()
+
+    await service.append("conversation-1", "turn-2", "request-2", _input("more"))
+
+    detail = await service.load("conversation-1")
+    expected_sequence = max(item.sequence for item in detail.events)
+    assert wakeups.notified == [("conversation-1", expected_sequence)]
+
+
+@pytest.mark.asyncio
+async def test_retry_notifies_like_append():
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    wakeups.notified.clear()
+
+    await service.retry("conversation-1", "turn-1", "turn-2", "request-2")
+
+    assert len(wakeups.notified) == 1
+    conversation_id, _sequence = wakeups.notified[0]
+    assert conversation_id == "conversation-1"
+
+
+@pytest.mark.asyncio
 async def test_notify_after_commit_only():
     wakeups = _FakeWakeups()
     service = ConversationService(
@@ -354,3 +400,40 @@ async def test_complete_evidence_tolerates_wakeup_failure_and_marks_the_span(spa
     assert completed.state == "completed"
     finished = {item.name: item for item in span_recorder.get_finished_spans()}
     assert finished["test.complete_evidence"].attributes["tap.stream.wakeup_failed"] is True
+
+
+@pytest.mark.asyncio
+async def test_claim_queued_result_carries_wakeups_and_behaves_like_the_legacy_tuple():
+    """`ClaimBatch` must keep every existing caller working unchanged (plain
+    tuple semantics) while also exposing `.wakeups` for the new
+    `GenerationWorker.run_once` notify path."""
+    repository = InMemoryConversationRepository()
+    service = ConversationService(repository, scope=VALIDATION_SCOPE)
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+
+    batch = await repository.claim_queued(limit=5)
+
+    assert len(batch) == 1
+    [(conversation_id, turn)] = batch
+    assert conversation_id == "conversation-1"
+    assert turn.turn_id == "turn-1" and turn.state == "running"
+    assert len(batch.wakeups) == 1
+    wakeup_conversation_id, sequence = batch.wakeups[0]
+    assert wakeup_conversation_id == "conversation-1"
+    detail = await service.load("conversation-1")
+    assert sequence == max(item.sequence for item in detail.events)
+    # `.claimed` is an explicit alias for the same data as iterating `batch`.
+    assert batch.claimed == tuple(batch)
+
+
+@pytest.mark.asyncio
+async def test_claim_queued_skips_turns_not_in_queued_state():
+    repository = InMemoryConversationRepository()
+    service = ConversationService(repository, scope=VALIDATION_SCOPE)
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    await repository.claim_queued(limit=5)  # turn-1 is now "running"
+
+    batch = await repository.claim_queued(limit=5)
+
+    assert batch == ()
+    assert batch.wakeups == ()

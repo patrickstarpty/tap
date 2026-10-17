@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -65,8 +66,41 @@ def history_query(value: str | None) -> str | None:
     return stripped or None
 
 
+class ClaimBatch(tuple):
+    """`claim_queued`'s result.
+
+    Behaves exactly like the legacy `tuple[tuple[str, ConversationTurn],
+    ...]` of claimed `(conversation_id, turn)` pairs -- iterates, indexes,
+    and compares equal to one -- so every existing caller (and every fake
+    `claim_queued` in the test suite) needs no change. `.wakeups` adds the
+    `(conversation_id, committed sequence)` pairs for every `turn.started`
+    (newly claimed) or `turn.failed` (settled-as-unclaimable) event this
+    call committed; both bypass `emit`/`complete_evidence`, so their wake-up
+    notify must be fired by the caller (`GenerationWorker.run_once`), never
+    from inside the repository -- and, since a batch can commit several of
+    these in one call, fired concurrently rather than one at a time.
+    """
+
+    wakeups: tuple[tuple[str, int], ...]
+
+    def __new__(
+        cls,
+        claimed: Sequence[tuple[str, ConversationTurn]] = (),
+        *,
+        wakeups: Sequence[tuple[str, int]] = (),
+    ) -> "ClaimBatch":
+        self = super().__new__(cls, claimed)
+        self.wakeups = tuple(wakeups)
+        return self
+
+    @property
+    def claimed(self) -> tuple[tuple[str, ConversationTurn], ...]:
+        return tuple(self)
+
+
 class ConversationRepository(Protocol):
     async def create_with_first_turn(self, conversation: Conversation) -> ConversationTurn: ...
+    async def claim_queued(self, *, limit: int) -> ClaimBatch: ...
     async def append_turn(
         self, conversation_id: str, turn: ConversationTurn, event: ConversationEvent
     ) -> tuple[ConversationTurn, int | None]:
@@ -147,6 +181,56 @@ class InMemoryConversationRepository:
             updated_at=event.occurred_at,
         )
         return turn, event.sequence
+
+    async def claim_queued(self, *, limit: int) -> ClaimBatch:
+        """A simplified double of `MysqlConversationRepository.claim_queued`:
+        claims up to `limit` Turns currently `"queued"`, writing
+        `turn.started`. Unlike the real repository, it never reclaims an
+        expired `"running"` lease and never settles an unclaimable Turn
+        (`turn.failed`) -- those depend on MySQL-only state (lease
+        expiry columns, retry-attempt exhaustion) this in-memory domain
+        model does not carry.
+        """
+        if type(limit) is not int or limit < 1:
+            raise ValueError("limit must be positive")
+        claimed: list[tuple[str, ConversationTurn]] = []
+        wakeups: list[tuple[str, int]] = []
+        for conversation_id, conversation in list(self.values.items()):
+            for turn in conversation.turns:
+                if len(claimed) >= limit:
+                    break
+                if turn.state != "queued":
+                    continue
+                now = datetime.now(timezone.utc)
+                event = ConversationEvent(
+                    uuid4().hex,
+                    max((item.sequence for item in conversation.events), default=0) + 1,
+                    "turn.started",
+                    {"state": "running"},
+                    now,
+                    turn.turn_id,
+                )
+                updated_turn = replace(
+                    turn,
+                    state="running",
+                    attempt=turn.attempt + 1,
+                    lease_token=uuid4().hex,
+                )
+                conversation = replace(
+                    conversation,
+                    turns=tuple(
+                        updated_turn if item.turn_id == turn.turn_id else item
+                        for item in conversation.turns
+                    ),
+                    events=(*conversation.events, event),
+                    updated_at=now,
+                )
+                self.values[conversation_id] = conversation
+                claimed.append((conversation_id, updated_turn))
+                wakeups.append((conversation_id, event.sequence))
+            if len(claimed) >= limit:
+                break
+        return ClaimBatch(claimed, wakeups=wakeups)
 
     async def list(self, *, limit, cursor, query=None):
         needle = None if query is None else query.casefold()
@@ -475,7 +559,9 @@ class ConversationService:
             raise ConversationNotFound
         return evidence
 
-    async def complete_for_test(self, conversation_id, turn_id, *, answer, graph_status):
+    async def complete_for_test(
+        self, conversation_id, turn_id, *, answer, graph_status
+    ) -> ConversationTurn:
         conversation = await self.load(conversation_id)
         turn = next(t for t in conversation.turns if t.turn_id == turn_id)
         now = datetime.now(timezone.utc)
@@ -502,7 +588,10 @@ class ConversationService:
             },
             now,
         )
-        return await self.repository.complete(conversation_id, turn_id, snapshot, event)
+        turn, sequence = await self.repository.complete(conversation_id, turn_id, snapshot, event)
+        if sequence is not None:
+            await self._notify_wakeups(conversation_id, sequence)
+        return turn
 
     async def complete_evidence(
         self,

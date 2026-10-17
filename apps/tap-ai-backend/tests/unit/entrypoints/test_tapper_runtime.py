@@ -1640,12 +1640,15 @@ def test_assemble_http_services_wires_event_wakeups_and_draft_stream() -> None:
         scope_provider=object(),
         authorization_policy=object(),
         conversation_sessions=object(),
+        test_plan_sessions=object(),
         event_wakeups=wakeups,
         draft_stream=draft_stream,
     )
 
     assert services.conversations is not None
     assert services.conversations._wakeups is wakeups
+    assert services.test_plans is not None
+    assert services.test_plans._repository._wakeups is wakeups
     assert services.draft_stream is draft_stream
 
 
@@ -1659,7 +1662,7 @@ async def test_create_api_runtime_composes_draft_stream_over_a_dedicated_block_c
     settings = module.TapperSettings.from_mapping(
         valid_settings()
         | {
-            "TAP_REDIS_STREAM_BLOCK_SECONDS": "30",
+            "TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS": "30",
             "TAP_REDIS_STREAM_POOL_SIZE": "77",
         }
     )
@@ -1731,7 +1734,7 @@ async def test_create_api_runtime_composes_draft_stream_over_a_dedicated_block_c
     assert event_wakeups._redis is general_redis
     assert draft_stream._redis is general_redis
     assert draft_stream._block_redis is block_redis
-    assert draft_stream._block_timeout_seconds == 30.0
+    assert draft_stream.max_block_ms == 28_000  # 30s - the 2s block margin
     await runtime.aclose()
 
 

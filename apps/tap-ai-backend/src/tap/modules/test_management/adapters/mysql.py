@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -788,10 +789,38 @@ class MysqlTestPlanRepository:
             ),
         )
 
+    @asynccontextmanager
+    async def _transaction(self):  # type: ignore[no-untyped-def]
+        """One durable write plus its best-effort stream wake-ups.
+
+        `pending` collects `(conversation_id, sequence)` pairs the body wants
+        notified; they fire only after the `async with self._sessions() as
+        session, session.begin():` block below exits *without* an exception
+        (i.e. after a successful commit), concurrently, and never while this
+        transaction's `FOR UPDATE` locks are still held. A `return` from
+        inside the caller's `async with self._transaction() as (session,
+        pending):` block still runs this generator's post-yield code (Python
+        calls `__aexit__(None, None, None)` for a normal or early-return
+        exit, same as any context manager); an exception instead propagates
+        through the inner `async with` (rolling back) and then out of this
+        generator before the notify loop, so nothing fires on rollback.
+        """
+        pending: list[tuple[str, int]] = []
+        async with self._sessions() as session, session.begin():
+            yield session, pending
+        if pending:
+            await asyncio.gather(
+                *(
+                    self._notify_wakeups(conversation_id, sequence)
+                    for conversation_id, sequence in pending
+                )
+            )
+
     async def _generation_stream_event(
         self,
         session: AsyncSession,
         request: TestPlanGenerationRequest,
+        pending: list[tuple[str, int]],
         *,
         event_type: str,
         payload: dict[str, object],
@@ -841,17 +870,7 @@ class MysqlTestPlanRepository:
             )
             .values(updated_at=_naive(now))
         )
-        # Pragmatic timing note: this runs inside the caller's still-open
-        # `session.begin()`, not strictly after commit -- the four call
-        # sites each have multiple early-return branches inside that same
-        # `async with`, so guaranteeing strict post-commit notify would need
-        # a try/finally extraction around each method's full body. Given
-        # `RedisEventWakeups.notify`'s documented hint-only contract (a
-        # consumer re-reads MySQL itself and never trusts this timing), a
-        # notify fired a few milliseconds before its commit lands is
-        # harmless: the reader either sees the row already (common case) or
-        # finds nothing new and keeps its existing wait/poll going.
-        await self._notify_wakeups(request.conversation_id, sequence)
+        pending.append((request.conversation_id, sequence))
 
     async def create_draft(
         self,
@@ -2277,7 +2296,7 @@ class MysqlTestPlanRepository:
         scope = self._matching_scope(scope)
         instant = _naive(now)
         digest = self._write_digest("cancel", job_id, expected_version, "cancel")
-        async with self._sessions() as session, session.begin():
+        async with self._transaction() as (session, pending):
             await self._lock_write_namespace(session, scope)
             row = (
                 (
@@ -2337,6 +2356,7 @@ class MysqlTestPlanRepository:
             await self._generation_stream_event(
                 session,
                 self._job(row).request,
+                pending,
                 event_type="test-plan.generation.canceled",
                 payload={"jobId": job_id, "reason": "canceled-by-user"},
                 now=instant,
@@ -2847,7 +2867,7 @@ class MysqlTestPlanRepository:
         ):
             raise ValueError("generated draft identity or state is invalid")
         instant = _naive(now)
-        async with self._sessions() as session, session.begin():
+        async with self._transaction() as (session, pending):
             await self._lock_write_namespace(session, scope)
             job = (
                 (
@@ -2919,6 +2939,7 @@ class MysqlTestPlanRepository:
             await self._generation_stream_event(
                 session,
                 request,
+                pending,
                 event_type="test-plan.generation.result_ready",
                 payload={
                     "jobId": request.job_id,
@@ -3032,7 +3053,7 @@ class MysqlTestPlanRepository:
         scope = self._matching_scope(scope)
         if not failure_code or len(failure_code) > 64:
             raise ValueError("test design failure code is invalid")
-        async with self._sessions() as session, session.begin():
+        async with self._transaction() as (session, pending):
             result = await session.execute(
                 update(test_plan_generation_job)
                 .where(
@@ -3057,6 +3078,7 @@ class MysqlTestPlanRepository:
             await self._generation_stream_event(
                 session,
                 claim.job.request,
+                pending,
                 event_type="test-plan.generation.failed",
                 payload={
                     "jobId": claim.job.request.job_id,
@@ -3094,7 +3116,7 @@ class MysqlTestPlanRepository:
         if not reason.strip() or len(reason) > 128:
             raise ValueError("test design waiting reason is invalid")
         instant = _naive(now)
-        async with self._sessions() as session, session.begin():
+        async with self._transaction() as (session, pending):
             result = await session.execute(
                 update(test_plan_generation_job)
                 .where(
@@ -3119,6 +3141,7 @@ class MysqlTestPlanRepository:
             await self._generation_stream_event(
                 session,
                 claim.job.request,
+                pending,
                 event_type="test-plan.generation.waiting",
                 payload={"jobId": claim.job.request.job_id, "reason": reason},
                 now=instant,

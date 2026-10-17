@@ -53,6 +53,7 @@ class _FakeAsyncRedis:
         self.streams: dict[str, list[tuple[str, dict[str, str]]]] = {}
         self.maxlens: dict[str, int] = {}
         self.ttls: dict[str, int] = {}
+        self.block_calls: list[int | None] = []
         self._counter = 0
 
     def pipeline(self, transaction: bool = True) -> _FakePipeline:
@@ -77,6 +78,7 @@ class _FakeAsyncRedis:
         return list(self.streams.get(name, []))
 
     async def xread(self, streams, *, count=None, block=None):
+        self.block_calls.append(block)
         result = []
         for name, start in streams.items():
             entries = self.streams.get(name, [])
@@ -243,20 +245,44 @@ async def test_read_uses_the_dedicated_block_client() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_rejects_block_ms_at_or_above_the_configured_ceiling() -> None:
-    drafts = RedisDraftStream(redis=_FakeAsyncRedis(), block_timeout_seconds=5.0)
+async def test_read_clamps_block_ms_above_the_socket_timeout_margin() -> None:
+    """M-b: `read` must clamp, not raise -- a caller asking for more than the
+    client can safely block for just gets the largest safe window instead."""
+    redis = _FakeAsyncRedis()
+    drafts = RedisDraftStream(redis=redis, socket_timeout_seconds=5.0)
+    assert drafts.max_block_ms == 3_000  # 5s - the 2s margin
 
-    with pytest.raises(ValueError):
-        await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=5_000)
+    await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=5_000)
+
+    assert redis.block_calls == [3_000]
 
 
 @pytest.mark.asyncio
-async def test_read_accepts_block_ms_below_the_configured_ceiling() -> None:
-    drafts = RedisDraftStream(redis=_FakeAsyncRedis(), block_timeout_seconds=25.0)
+async def test_read_passes_block_ms_through_below_the_margin() -> None:
+    redis = _FakeAsyncRedis()
+    drafts = RedisDraftStream(redis=redis, socket_timeout_seconds=25.0)
+    assert drafts.max_block_ms == 23_000
 
     entries = await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=15_000)
 
     assert entries == ()
+    assert redis.block_calls == [15_000]
+
+
+@pytest.mark.asyncio
+async def test_read_never_clamps_when_no_socket_timeout_is_configured() -> None:
+    redis = _FakeAsyncRedis()
+    drafts = RedisDraftStream(redis=redis)
+    assert drafts.max_block_ms is None
+
+    await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=60_000)
+
+    assert redis.block_calls == [60_000]
+
+
+def test_socket_timeout_must_exceed_the_block_margin() -> None:
+    with pytest.raises(ValueError):
+        RedisDraftStream(redis=_FakeAsyncRedis(), socket_timeout_seconds=2.0)
 
 
 @pytest.mark.asyncio

@@ -152,7 +152,7 @@ class TapperSettings:
     milvus_provisioner_username: str
     milvus_provisioner_password: str = field(repr=False)
     e2e_mode: bool
-    redis_stream_block_seconds: float = 20.0
+    redis_stream_socket_timeout_seconds: float = 20.0
     redis_stream_pool_size: int = 50
     vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
@@ -623,8 +623,8 @@ class TapperSettings:
                 "tap-local-Provisioner1!",
             ),
             e2e_mode=demo_mode == "e2e",
-            redis_stream_block_seconds=_duration(
-                values, "TAP_REDIS_STREAM_BLOCK_SECONDS", 20.0, minimum=1.0, maximum=120.0
+            redis_stream_socket_timeout_seconds=_duration(
+                values, "TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS", 20.0, minimum=1.0, maximum=120.0
             ),
             redis_stream_pool_size=_integer(
                 values, "TAP_REDIS_STREAM_POOL_SIZE", 50, minimum=1, maximum=500
@@ -1484,7 +1484,7 @@ def _create_redis_stream_block_client(settings: TapperSettings) -> Redis:
     BLOCK` over it would raise a bogus socket timeout well before the
     requested block window elapses, and a busy SSE fleet would starve other
     Redis operations of that pool's 20 connections. This client's
-    `socket_timeout` is `settings.redis_stream_block_seconds` (configured
+    `socket_timeout` is `settings.redis_stream_socket_timeout_seconds` (configured
     strictly above the longest `block_ms` a reader uses) and its pool is
     sized by `settings.redis_stream_pool_size` for concurrent SSE readers.
     """
@@ -1495,7 +1495,7 @@ def _create_redis_stream_block_client(settings: TapperSettings) -> Redis:
         decode_responses=True,
         max_connections=settings.redis_stream_pool_size,
         socket_connect_timeout=min(5.0, settings.ready_timeout_seconds),
-        socket_timeout=settings.redis_stream_block_seconds,
+        socket_timeout=settings.redis_stream_socket_timeout_seconds,
         socket_keepalive=True,
         health_check_interval=30,
     )
@@ -1526,7 +1526,7 @@ def _create_draft_stream(redis: Redis, block_redis: Redis, settings: TapperSetti
     return RedisDraftStream(
         redis=cast(AsyncRedisStreams, redis),
         block_redis=cast(AsyncRedisStreams, block_redis),
-        block_timeout_seconds=settings.redis_stream_block_seconds,
+        socket_timeout_seconds=settings.redis_stream_socket_timeout_seconds,
     )
 
 
@@ -2112,6 +2112,7 @@ def _assemble_http_services(
                 scope=repository.scope,  # type: ignore[arg-type]
                 model_alias=embeddings.chat_alias,
                 knowledge_requires_publication=False,
+                wakeups=event_wakeups,
             )
         )
     knowledge_reviews = None

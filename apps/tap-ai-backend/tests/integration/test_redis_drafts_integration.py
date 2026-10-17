@@ -17,7 +17,7 @@ def _settings(owned_redis_url: str) -> tapper_runtime.TapperSettings:
         valid_settings()
         | {
             "TAP_REDIS_URL": owned_redis_url,
-            "TAP_REDIS_STREAM_BLOCK_SECONDS": "20",
+            "TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS": "20",
             "TAP_REDIS_STREAM_POOL_SIZE": "10",
         }
     )

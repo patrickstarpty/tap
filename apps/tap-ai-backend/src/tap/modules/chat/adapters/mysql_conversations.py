@@ -31,6 +31,7 @@ from tap.contracts.problems import build_problem
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn
 from tap.modules.chat.application.conversations import (
+    ClaimBatch,
     ConversationConflict,
     ConversationIntegrityError,
     ConversationNotFound,
@@ -245,11 +246,6 @@ class MysqlConversationRepository:
         self.sessions = sessions
         self.scope = require_project_scope(scope)
         self.max_turn_attempts = max_turn_attempts
-        # (conversation_id, committed sequence) for every `turn.started` or
-        # `turn.failed` the most recent `claim_queued` call wrote -- see its
-        # docstring. Not part of the `ConversationRepository` Protocol;
-        # `GenerationWorker.run_once` reads it via `getattr(..., ())`.
-        self.last_claim_wakeups: tuple[tuple[str, int], ...] = ()
 
     async def resolve_citations(
         self, trace_id: str, citation_ids: tuple[str, ...]
@@ -1127,17 +1123,15 @@ class MysqlConversationRepository:
             event.sequence,
         )
 
-    async def claim_queued(self, *, limit: int) -> tuple[tuple[str, ConversationTurn], ...]:
+    async def claim_queued(self, *, limit: int) -> ClaimBatch:
         """Claims up to `limit` due Turns, writing `turn.started` for each.
 
-        As a side channel (not a Protocol method -- callers duck-type it,
-        same as `renew_processing_lease`/`graph_checkpointer` elsewhere),
-        this also settles permanently-faulted Turns inline via
+        Also settles permanently-faulted Turns inline via
         `_fail_unclaimable_turn` (`turn.failed`). Both kinds of write bypass
-        `ConversationService.emit`/`complete_evidence`, so this records every
-        (conversation_id, committed sequence) pair in
-        `self.last_claim_wakeups` for the caller (`GenerationWorker.run_once`)
-        to notify wake-ups for after this call returns -- never from inside
+        `ConversationService.emit`/`complete_evidence`, so the returned
+        `ClaimBatch.wakeups` carries every (conversation_id, committed
+        sequence) pair for the caller (`GenerationWorker.run_once`) to
+        notify wake-ups for after this call returns -- never from inside
         this transaction, per the Redis-is-only-a-hint design.
         """
         if type(limit) is not int or limit < 1:
@@ -1146,7 +1140,6 @@ class MysqlConversationRepository:
 
         claimed: list[tuple[str, ConversationTurn]] = []
         wakeups: list[tuple[str, int]] = []
-        self.last_claim_wakeups = ()
         async with self.sessions() as session, session.begin():
             candidate_now = _naive(datetime.now(timezone.utc))
             rows = (
@@ -1357,8 +1350,7 @@ class MysqlConversationRepository:
                 mutable["processing_lease_expires_at"] = lease_until
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
                 wakeups.append((row["chat_id"], event.sequence))
-        self.last_claim_wakeups = tuple(wakeups)
-        return tuple(claimed)
+        return ClaimBatch(claimed, wakeups=wakeups)
 
     async def _has_input_snapshot(self, session, turn_id: str) -> bool:
         return (

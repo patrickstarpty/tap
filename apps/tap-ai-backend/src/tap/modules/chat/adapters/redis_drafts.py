@@ -138,6 +138,11 @@ class RedisDraftStream:
     """`DraftStream` over `redis.asyncio`; see module docstring for the keys
     and for why blocking reads use a separate client."""
 
+    #: Margin subtracted from `socket_timeout_seconds` to get `max_block_ms`:
+    #: a blocking `XREAD` that ran right up to the socket timeout would race
+    #: it, so every `read()` call clamps `block_ms` to stay safely under it.
+    _BLOCK_MARGIN_SECONDS = 2.0
+
     def __init__(
         self,
         *,
@@ -145,19 +150,28 @@ class RedisDraftStream:
         block_redis: AsyncRedisStreams | None = None,
         maxlen: int = _DRAFT_MAXLEN,
         ttl: timedelta = _DEFAULT_TTL,
-        block_timeout_seconds: float | None = None,
+        socket_timeout_seconds: float | None = None,
     ) -> None:
         if maxlen < 1:
             raise ValueError("maxlen must be positive")
         if ttl.total_seconds() < 1:
             raise ValueError("ttl must be at least one second")
-        if block_timeout_seconds is not None and block_timeout_seconds <= 0:
-            raise ValueError("block_timeout_seconds must be positive")
+        if (
+            socket_timeout_seconds is not None
+            and socket_timeout_seconds <= self._BLOCK_MARGIN_SECONDS
+        ):
+            raise ValueError(
+                f"socket_timeout_seconds must exceed the {self._BLOCK_MARGIN_SECONDS}s block margin"
+            )
         self._redis = redis
         self._block_redis = block_redis if block_redis is not None else redis
         self._maxlen = maxlen
         self._ttl_seconds = int(ttl.total_seconds())
-        self._block_timeout_seconds = block_timeout_seconds
+        self.max_block_ms: int | None = (
+            None
+            if socket_timeout_seconds is None
+            else int((socket_timeout_seconds - self._BLOCK_MARGIN_SECONDS) * 1000)
+        )
 
     async def append(
         self, turn_id: str, *, attempt: int, seq: int, text: str, reset: bool = False
@@ -192,14 +206,8 @@ class RedisDraftStream:
         return latest_attempt, "".join(chunk.text for chunk in kept)
 
     async def read(self, keys: Mapping[str, str], *, block_ms: int) -> tuple[StreamEntry, ...]:
-        if (
-            self._block_timeout_seconds is not None
-            and block_ms / 1000 >= self._block_timeout_seconds
-        ):
-            raise ValueError(
-                "block_ms must stay below the dedicated client's socket timeout ceiling "
-                f"({self._block_timeout_seconds}s)"
-            )
+        if self.max_block_ms is not None and block_ms > self.max_block_ms:
+            block_ms = self.max_block_ms
         try:
             response = await self._block_redis.xread(dict(keys), block=block_ms)
         except _REDIS_FAILURES as error:

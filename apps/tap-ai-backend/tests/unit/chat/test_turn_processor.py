@@ -13,11 +13,69 @@ from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.ai.domain import graph_runs
 from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
-from tap.modules.chat.application.conversations import ConversationConflict, ConversationNotFound
+from tap.modules.chat.application.conversations import (
+    ClaimBatch,
+    ConversationConflict,
+    ConversationNotFound,
+)
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.conversations import CitationEvidence, GraphContextStatus
 from tap.modules.chat.domain.suggestions import RefreshReason
 from tap.modules.knowledge.ports.errors import AnswerRejected
+
+
+@pytest.mark.asyncio
+async def test_run_once_notifies_external_writes_for_every_claim_batch_wakeup():
+    """`claim_queued`'s `turn.started`/`turn.failed` writes bypass `emit`/
+    `complete_evidence`, so `run_once` must fire `notify_external_write` for
+    every `(conversation_id, sequence)` pair `ClaimBatch.wakeups` carries --
+    concurrently, not one at a time (M-a)."""
+    import asyncio as _asyncio
+
+    started: list[str] = []
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return ClaimBatch((), wakeups=(("conversation-1", 3), ("conversation-2", 4)))
+
+    class Conversations:
+        repository = Repository()
+        notified: list[tuple[str, int]] = []
+
+        async def notify_external_write(self, conversation_id, sequence):
+            started.append(conversation_id)
+            await _asyncio.sleep(0)
+            self.notified.append((conversation_id, sequence))
+
+    conversations = Conversations()
+    worker = GenerationWorker(conversations, knowledge=None)
+
+    processed = await worker.run_once(limit=5)
+
+    assert processed == 0
+    assert started == ["conversation-1", "conversation-2"]  # both in flight together
+    assert set(conversations.notified) == {("conversation-1", 3), ("conversation-2", 4)}
+
+
+@pytest.mark.asyncio
+async def test_run_once_tolerates_a_plain_tuple_claim_queued_result():
+    """A fake `claim_queued` returning a legacy plain tuple (no `.wakeups`)
+    must not break `run_once`: `getattr(claimed, "wakeups", ())` defaults to
+    nothing-to-notify instead of raising."""
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return ()
+
+    class Conversations:
+        repository = Repository()
+
+        async def notify_external_write(self, conversation_id, sequence):
+            raise AssertionError("must not be called when there are no wakeups")
+
+    worker = GenerationWorker(Conversations(), knowledge=None)
+
+    assert await worker.run_once(limit=5) == 0
 
 
 def test_graph_snapshot_is_legal_only_when_graph_context_was_applied():

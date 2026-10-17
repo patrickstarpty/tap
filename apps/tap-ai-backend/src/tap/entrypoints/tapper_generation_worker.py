@@ -78,11 +78,18 @@ class GenerationWorker:
         # `claim_queued` writes `turn.started` for every claimed Turn, and may
         # also settle permanently-faulted Turns (`turn.failed`) inline; both
         # bypass `emit`/`complete_evidence`, so notify here instead -- never
-        # inside the repository (see `claim_queued`'s docstring).
-        for conversation_id, sequence in getattr(
-            self.conversations.repository, "last_claim_wakeups", ()
-        ):
-            await self.conversations.notify_external_write(conversation_id, sequence)
+        # inside the repository (see `claim_queued`'s docstring). `getattr`
+        # keeps this harmless against a test double returning a plain tuple
+        # instead of a real `ClaimBatch`. Fired concurrently so a blackholed
+        # Redis serializes at most one socket timeout, not one per wake-up.
+        wakeups = getattr(claimed, "wakeups", ())
+        if wakeups:
+            await asyncio.gather(
+                *(
+                    self.conversations.notify_external_write(conversation_id, sequence)
+                    for conversation_id, sequence in wakeups
+                )
+            )
         for conversation_id, turn in claimed:
             try:
                 try:
