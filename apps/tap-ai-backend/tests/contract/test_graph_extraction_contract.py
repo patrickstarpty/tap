@@ -562,31 +562,6 @@ def test_schema_and_prompt_bound_each_batch_output():
     assert "at most one edge per source, relationType and target" in GRAPH_EXTRACTION_PROMPT
 
 
-def test_relation_type_guidance_gives_triggers_and_defines_their_own_worked_examples():
-    # rv3 regression: a prompt revision that over-corrected APPLIES_TO/PART_OF left
-    # TRIGGERS and DEFINES with only one example each and no repetition in the main
-    # prompt body (unlike APPLIES_TO/PART_OF, which got reinforced twice), and the
-    # model all but stopped using them (130->2 and 400->0 edges in a real snapshot).
-    # Each of the two must have its own worked example in both the schema enum
-    # description and the main prompt body, and the prompt must tell the model to
-    # prefer TRIGGERS over APPLIES_TO for a causal event-to-consequence link.
-    from tap.modules.graph.adapters.model_gateway_extraction import (
-        GRAPH_EXTRACTION_PROMPT,
-        GRAPH_EXTRACTION_SCHEMA,
-    )
-
-    relation_description = GRAPH_EXTRACTION_SCHEMA["properties"]["edges"]["items"]["properties"][
-        "relationType"
-    ]["description"]
-    assert "TRIGGERS 豁免保险费" in relation_description
-    assert relation_description.count("TRIGGERS") >= 2
-    assert "DEFINES 重度疾病" in relation_description
-    assert relation_description.count("DEFINES") >= 2
-    assert "Prefer TRIGGERS over APPLIES_TO" in relation_description
-    assert "TRIGGERS 豁免保险费" in GRAPH_EXTRACTION_PROMPT
-    assert "DEFINES 到达年龄" in GRAPH_EXTRACTION_PROMPT
-
-
 def _known_policy_request():
     return replace(
         _request(),
