@@ -1136,6 +1136,71 @@ async def test_document_evidence_names_its_source_document_for_attribution():
     assert _ANSWER_PROMPT in captured[0].prompt
 
 
+@pytest.mark.asyncio
+async def test_answer_prompt_requires_per_document_values_when_documents_disagree():
+    """A question answerable from several documents whose own value for the
+    same fact differs (e.g. a grace period of 15 days for most products but
+    10 days for one) must not be generalized into one claim; the prompt must
+    say so explicitly, not rely only on the "name the document" instruction
+    above, which a model satisfied by naming a document without noticing the
+    other documents' values actually differ. A document whose own evidence
+    never states the queried value at all must be called out as silent on
+    it, not have another document's value borrowed for it."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.adapters.litellm import _ANSWER_PROMPT
+
+    assert "when documents disagree on that value" in _ANSWER_PROMPT
+    assert "state each document's own value in its own claim" in _ANSWER_PROMPT
+    assert "even if most documents share one value and only one differs" in _ANSWER_PROMPT
+    assert "does not state the value the query asks about" in _ANSWER_PROMPT
+    assert "never infer that value or borrow another document's value" in _ANSWER_PROMPT
+
+    base = _claim_resolution_evidence()
+    other_document = replace(base, title="其它产品条款.pdf", evidence_label="S2")
+    models, captured = _capturing_model_gateway()
+
+    await models.answer("犹豫期是多久？", (base, other_document), "quick-hybrid-v1")
+
+    assert _ANSWER_PROMPT in captured[0].prompt
+    assert "when documents disagree on that value" in captured[0].prompt
+    assert "does not state the value the query asks about" in captured[0].prompt
+
+
+@pytest.mark.asyncio
+async def test_relation_answer_prompt_requires_checking_every_record_against_the_query():
+    """The relation prompt must tell the model to actively check every R
+    record against the query before answering, not only warn it against
+    over-citing -- a purely restrictive prompt left the model free to never
+    cite R at all, even when a record did state the queried relationship.
+    Asserting the sentence is in the constant alone does not prove it ever
+    reaches the model, so this also exercises a real `answer()` call and
+    checks the sentence is actually in the sent prompt."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.adapters.litellm import _RELATION_ANSWER_PROMPT
+
+    assert (
+        "Before writing the final answer, check every supplied relation record's subject, "
+        "relationLabel and object text against what the query asks" in _RELATION_ANSWER_PROMPT
+    )
+    assert "even when" in _RELATION_ANSWER_PROMPT
+    assert "not an optional extra" in _RELATION_ANSWER_PROMPT
+
+    context = _relation_context()
+    models, captured = _capturing_model_gateway()
+
+    await models.answer(
+        "query", (_claim_resolution_evidence(),), "quick-hybrid-v1", relation_context=context
+    )
+
+    assert _RELATION_ANSWER_PROMPT in captured[0].prompt
+    assert (
+        "Before writing the final answer, check every supplied relation record's subject, "
+        "relationLabel and object text against what the query asks" in captured[0].prompt
+    )
+
+
 def _relation_context():
     from tap.modules.knowledge.application.relation_analysis import (
         RelationContext,
