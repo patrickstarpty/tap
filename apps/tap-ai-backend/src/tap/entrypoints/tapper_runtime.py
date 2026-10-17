@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     )
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+    from tap.modules.chat.application.ports import EventWakeups
     from tap.modules.governance.ports.audit import ProjectAuditPort
     from tap.modules.knowledge.adapters.milvus.config import (
         MilvusIndexTarget,
@@ -943,6 +944,7 @@ async def create_api_runtime(
             graph_retrieval_augment=settings.graph_retrieval_augment,
             graph_reasoning=settings.graph_reasoning,
             turn_max_attempts=settings.turn_max_attempts,
+            event_wakeups=_create_event_wakeups(redis),
         )
         services = replace(services, chunk_manager=chunk_manager)
         if settings.insights_base_url:
@@ -1462,6 +1464,17 @@ def _create_redis(settings: TapperSettings) -> Redis:
     )
 
 
+def _create_event_wakeups(redis: Redis) -> EventWakeups:
+    """One `EventWakeups` per process, over the process's single Redis
+    client; `create_graph_worker_runtime`'s eventual generation-worker
+    sibling constructs its `DraftStream`/`EventWakeups` the same way from its
+    own `_create_redis(settings)` client."""
+
+    from tap.modules.chat.adapters.redis_drafts import AsyncRedisStreams, RedisEventWakeups
+
+    return RedisEventWakeups(redis=cast(AsyncRedisStreams, redis))
+
+
 async def _redact_model_context(text: str) -> str:
     return await PatternEgressRedactor(max_chars=262144).redact_text(text)
 
@@ -1874,6 +1887,7 @@ def _assemble_http_services(
     graph_retrieval_augment: bool = True,
     graph_reasoning: bool = True,
     turn_max_attempts: int = 3,
+    event_wakeups: EventWakeups | None = None,
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -2014,6 +2028,7 @@ def _assemble_http_services(
                 max_turn_attempts=turn_max_attempts,
             ),
             scope=repository.scope,
+            wakeups=event_wakeups,
         )
         from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService
 

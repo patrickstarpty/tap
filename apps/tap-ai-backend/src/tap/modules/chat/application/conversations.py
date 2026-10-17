@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from uuid import uuid4
 
+from opentelemetry import trace
+
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import AuthorizationDenied
+from tap.modules.chat.application.ports import EventWakeups
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     AnswerEvidenceSnapshot,
@@ -22,6 +27,8 @@ from tap.modules.chat.domain.conversations import (
 )
 
 _TERMINAL_TURN_STATES = frozenset({"completed", "abstained", "failed", "canceled"})
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ConversationNotFound(Exception):
@@ -287,9 +294,33 @@ class InMemoryConversationRepository:
 
 
 class ConversationService:
-    def __init__(self, repository: ConversationRepository, *, scope: ProjectScopeContext):
+    def __init__(
+        self,
+        repository: ConversationRepository,
+        *,
+        scope: ProjectScopeContext,
+        wakeups: EventWakeups | None = None,
+    ):
         self.repository = repository
         self.scope = scope
+        self._wakeups = wakeups
+
+    async def _notify_wakeups(self, conversation_id: str, sequence: int) -> None:
+        """Best-effort: a wake-up only shortens SSE latency, so a Redis
+        failure here must never fail the caller's already-committed write."""
+        if self._wakeups is None:
+            return
+        try:
+            await self._wakeups.notify(conversation_id, sequence)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.warning(
+                "conversation stream wakeup failed: conversation_id=%s",
+                conversation_id,
+                exc_info=True,
+            )
+            trace.get_current_span().set_attribute("tap.stream.wakeup_failed", True)
 
     def _turn(self, conversation_id, turn_id, request_id, value, *, attempt=0, now=None):
         now = now or datetime.now(timezone.utc)
@@ -496,7 +527,7 @@ class ConversationService:
             ConversationEvent(uuid4().hex, 1, event_type, payload, now)
             for event_type, payload in stream_events
         )
-        return await self.repository.complete(
+        turn = await self.repository.complete(
             conversation_id,
             turn_id,
             snapshot,
@@ -505,6 +536,25 @@ class ConversationService:
             terminal_event=stream_event,
             stream_events=persisted_stream_events,
         )
+        # `repository.complete` recomputes real sequences internally (unlike
+        # the locally built `event`/`stream_event` drafts above), so the
+        # committed sequence to notify with is only known by reloading.
+        if self._wakeups is not None:
+            try:
+                committed = await self.repository.load(conversation_id)
+                latest_sequence = max((item.sequence for item in committed.events), default=None)
+                if latest_sequence is not None:
+                    await self._wakeups.notify(conversation_id, latest_sequence)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.warning(
+                    "conversation stream wakeup failed: conversation_id=%s",
+                    conversation_id,
+                    exc_info=True,
+                )
+                trace.get_current_span().set_attribute("tap.stream.wakeup_failed", True)
+        return turn
 
     async def emit(
         self,
@@ -515,9 +565,11 @@ class ConversationService:
         *,
         lease_token: str | None = None,
     ) -> ConversationEvent:
-        return await self.repository.append_stream_event(
+        event = await self.repository.append_stream_event(
             conversation_id,
             turn_id,
             ConversationEvent(uuid4().hex, 1, event_type, payload, datetime.now(timezone.utc)),
             lease_token=lease_token,
         )
+        await self._notify_wakeups(conversation_id, event.sequence)
+        return event

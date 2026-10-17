@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, Protocol, TypedDict
@@ -23,6 +23,57 @@ class TurnNotFound(Exception):
 
 class LeaseLost(Exception):
     """A relay tried to settle a claim that it no longer owns."""
+
+
+class DraftStreamUnavailable(Exception):
+    """A Redis-backed draft or wake-up stream could not complete an operation.
+
+    Callers must degrade (stop streaming drafts, fall back to MySQL polling)
+    rather than fail the Turn: Redis here is a latency optimization only.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class DraftChunk:
+    attempt: int
+    seq: int
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class StreamEntry:
+    """One raw entry read from a Redis Stream, identified by its source key."""
+
+    key: str
+    id: str
+    fields: Mapping[str, str]
+
+
+class DraftStream(Protocol):
+    """Redis Stream adapter for one Turn's model-answer draft and the
+    conversation-level wake-up stream that announces new authoritative events.
+    Any Redis failure must be raised as `DraftStreamUnavailable`."""
+
+    async def append(self, turn_id: str, *, attempt: int, seq: int, text: str) -> None: ...
+
+    async def replay(self, turn_id: str, *, attempt: int) -> tuple[DraftChunk, ...]: ...
+
+    async def read(self, keys: Mapping[str, str], *, block_ms: int) -> tuple[StreamEntry, ...]:
+        """Block until any of `keys` (Redis key -> starting entry id) has new
+        entries, or `block_ms` elapses; return every new entry found."""
+        ...
+
+    async def partial_text(self, turn_id: str) -> tuple[int, str] | None:
+        """The highest attempt seen for `turn_id` and its concatenated draft
+        text, or `None` if no draft has been written yet."""
+        ...
+
+
+class EventWakeups(Protocol):
+    """Announces that a new authoritative Conversation event committed, so an
+    SSE reader blocked on Redis can re-read MySQL instead of polling it."""
+
+    async def notify(self, conversation_id: str, sequence: int) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
