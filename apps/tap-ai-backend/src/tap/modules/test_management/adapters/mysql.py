@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -790,7 +791,7 @@ class MysqlTestPlanRepository:
         )
 
     @asynccontextmanager
-    async def _transaction(self):  # type: ignore[no-untyped-def]
+    async def _transaction(self) -> AsyncIterator[tuple[AsyncSession, list[tuple[str, int]]]]:
         """One durable write plus its best-effort stream wake-ups.
 
         `pending` collects `(conversation_id, sequence)` pairs the body wants

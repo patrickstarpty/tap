@@ -205,6 +205,26 @@ def test_turn_max_attempts_defaults_and_bounds() -> None:
             TapperSettings.from_mapping(S3_SETTINGS | {name: value})
 
 
+def test_redis_stream_socket_timeout_defaults_and_bounds() -> None:
+    """M-1: the socket timeout must stay above `RedisDraftStream`'s 2s block
+    margin with real safety margin, so 3.0s is the floor -- a value at or
+    below that fails fast as a settings error instead of surfacing later as
+    `RedisDraftStream.__init__`'s `ValueError`."""
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.redis_stream_socket_timeout_seconds == 20.0
+
+    for value in ("0", "1", "2", "2.9", "121"):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(
+                S3_SETTINGS | {"TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS": value}
+            )
+
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS": "3"}
+    )
+    assert settings.redis_stream_socket_timeout_seconds == 3.0
+
+
 def test_turn_budget_defaults_and_bounds() -> None:
     from tap.platform.budget import TurnBudget
 

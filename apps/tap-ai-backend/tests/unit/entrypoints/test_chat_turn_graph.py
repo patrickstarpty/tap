@@ -19,6 +19,7 @@ from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
+from tap.modules.chat.application.conversations import ClaimBatch
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import TurnInput, TurnInputSnapshot
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
@@ -43,7 +44,7 @@ class _Repository:
         self._turn = turn
 
     async def claim_queued(self, *, limit):
-        return (("conversation-1", self._turn),)
+        return ClaimBatch((("conversation-1", self._turn),))
 
 
 class _Conversations:

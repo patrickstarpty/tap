@@ -206,8 +206,12 @@ class RedisDraftStream:
         return latest_attempt, "".join(chunk.text for chunk in kept)
 
     async def read(self, keys: Mapping[str, str], *, block_ms: int) -> tuple[StreamEntry, ...]:
-        if self.max_block_ms is not None and block_ms > self.max_block_ms:
-            block_ms = self.max_block_ms
+        # `XREAD BLOCK 0` blocks forever, so `block_ms` is always clamped to
+        # at least 1ms; it is also clamped to at most `max_block_ms` so a
+        # blocking read can never race this stream's socket timeout.
+        if self.max_block_ms is not None:
+            block_ms = min(block_ms, self.max_block_ms)
+        block_ms = max(block_ms, 1)
         try:
             response = await self._block_redis.xread(dict(keys), block=block_ms)
         except _REDIS_FAILURES as error:

@@ -110,6 +110,67 @@ async def test_transaction_notifies_on_early_return_from_the_caller() -> None:
     assert wakeups.notified == [("conversation-1", 9)]
 
 
+class _FailingCommitTransaction:
+    """Simulates the commit itself raising (e.g. a deadlock or constraint
+    violation detected by the database at `COMMIT`), as opposed to the
+    caller's body raising before `__aexit__` is even reached."""
+
+    def __init__(self, log: list[str]) -> None:
+        self._log = log
+
+    async def __aenter__(self) -> "_FailingCommitTransaction":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        if exc_type is not None:
+            self._log.append("rollback")
+            return False
+        self._log.append("commit-failed")
+        raise RuntimeError("commit failed")
+
+
+class _FailingCommitSession:
+    def __init__(self, log: list[str]) -> None:
+        self._log = log
+
+    def begin(self) -> _FailingCommitTransaction:
+        return _FailingCommitTransaction(self._log)
+
+    async def __aenter__(self) -> "_FailingCommitSession":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class _FailingCommitSessionFactory:
+    def __init__(self, log: list[str]) -> None:
+        self._log = log
+
+    def __call__(self) -> _FailingCommitSession:
+        return _FailingCommitSession(self._log)
+
+
+@pytest.mark.asyncio
+async def test_transaction_fires_no_notify_when_the_commit_itself_fails() -> None:
+    """Item 8: a database-detected commit failure (the caller's body ran
+    clean, but `COMMIT` itself raised) must not fire any pending notify --
+    the write never durably happened, so there is nothing to hint at."""
+    log: list[str] = []
+    wakeups = _FakeWakeups()
+    repository = object.__new__(MysqlTestPlanRepository)
+    repository._sessions = _FailingCommitSessionFactory(log)
+    repository._wakeups = wakeups
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        async with repository._transaction() as (session, pending):
+            assert session is not None
+            pending.append(("conversation-1", 5))
+
+    assert log == ["commit-failed"]
+    assert wakeups.notified == []
+
+
 @pytest.mark.asyncio
 async def test_transaction_fires_multiple_pending_notifies_concurrently() -> None:
     import asyncio

@@ -286,6 +286,28 @@ def test_socket_timeout_must_exceed_the_block_margin() -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_clamps_a_zero_block_ms_to_one_millisecond() -> None:
+    """M-2: `XREAD BLOCK 0` blocks forever, so `block_ms=0` (or negative)
+    must never reach the client unclamped."""
+    redis = _FakeAsyncRedis()
+    drafts = RedisDraftStream(redis=redis, socket_timeout_seconds=5.0)
+
+    await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=0)
+
+    assert redis.block_calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_read_clamps_a_negative_block_ms_to_one_millisecond() -> None:
+    redis = _FakeAsyncRedis()
+    drafts = RedisDraftStream(redis=redis)
+
+    await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=-5)
+
+    assert redis.block_calls == [1]
+
+
+@pytest.mark.asyncio
 async def test_redis_errors_raise_draft_stream_unavailable() -> None:
     drafts = RedisDraftStream(redis=_FailingRedis())
     wakeups = RedisEventWakeups(redis=_FailingRedis())

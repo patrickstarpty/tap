@@ -29,10 +29,17 @@ async def test_run_once_notifies_external_writes_for_every_claim_batch_wakeup():
     """`claim_queued`'s `turn.started`/`turn.failed` writes bypass `emit`/
     `complete_evidence`, so `run_once` must fire `notify_external_write` for
     every `(conversation_id, sequence)` pair `ClaimBatch.wakeups` carries --
-    concurrently, not one at a time (M-a)."""
+    concurrently, not one at a time (M-a).
+
+    Proof of overlap (M-5): `conversation-1`'s notify blocks until
+    `conversation-2`'s notify has *started* (not finished). A sequential
+    `await` of one call then the other would deadlock here -- `conversation-2`
+    would never run until `conversation-1` returns, and `conversation-1` never
+    returns until `conversation-2` starts -- so the `asyncio.wait_for` timeout
+    below would fire if `run_once` stopped firing these concurrently."""
     import asyncio as _asyncio
 
-    started: list[str] = []
+    conversation_2_started = _asyncio.Event()
 
     class Repository:
         async def claim_queued(self, *, limit):
@@ -43,29 +50,32 @@ async def test_run_once_notifies_external_writes_for_every_claim_batch_wakeup():
         notified: list[tuple[str, int]] = []
 
         async def notify_external_write(self, conversation_id, sequence):
-            started.append(conversation_id)
-            await _asyncio.sleep(0)
+            if conversation_id == "conversation-1":
+                # Only returns once conversation-2's notify has started --
+                # impossible unless both are in flight together.
+                await _asyncio.wait_for(conversation_2_started.wait(), timeout=1)
+            else:
+                conversation_2_started.set()
             self.notified.append((conversation_id, sequence))
 
     conversations = Conversations()
     worker = GenerationWorker(conversations, knowledge=None)
 
-    processed = await worker.run_once(limit=5)
+    processed = await _asyncio.wait_for(worker.run_once(limit=5), timeout=2)
 
     assert processed == 0
-    assert started == ["conversation-1", "conversation-2"]  # both in flight together
     assert set(conversations.notified) == {("conversation-1", 3), ("conversation-2", 4)}
 
 
 @pytest.mark.asyncio
-async def test_run_once_tolerates_a_plain_tuple_claim_queued_result():
-    """A fake `claim_queued` returning a legacy plain tuple (no `.wakeups`)
-    must not break `run_once`: `getattr(claimed, "wakeups", ())` defaults to
-    nothing-to-notify instead of raising."""
+async def test_run_once_notifies_nothing_for_an_empty_claim_batch():
+    """M-3: `run_once` reads `claimed.wakeups` directly (no `getattr`
+    fallback) -- every `claim_queued` fake must return a real `ClaimBatch`.
+    An empty batch's `.wakeups` is `()`, so no notify fires."""
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return ()
+            return ClaimBatch(())
 
     class Conversations:
         repository = Repository()
@@ -109,18 +119,20 @@ async def test_failure_produces_closed_answer_evidence_and_unknown_provider_even
 async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
     class Repository:
         async def claim_queued(self, *, limit):
-            return (
+            return ClaimBatch(
                 (
-                    "conversation-1",
-                    SimpleNamespace(
-                        turn_id="turn-1",
-                        lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(
-                            snapshot_id="snapshot-1",
-                            value=SimpleNamespace(message="question"),
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            input_snapshot=SimpleNamespace(
+                                snapshot_id="snapshot-1",
+                                value=SimpleNamespace(message="question"),
+                            ),
                         ),
                     ),
-                ),
+                )
             )
 
     class Conversations:
@@ -224,15 +236,17 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return (
+            return ClaimBatch(
                 (
-                    "conversation-1",
-                    SimpleNamespace(
-                        turn_id="turn-1",
-                        lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
+                        ),
                     ),
-                ),
+                )
             )
 
         async def resolve_citations(self, *_args):
@@ -292,15 +306,17 @@ def _completed_turn_fixtures(*, abstained: bool):  # type: ignore[no-untyped-def
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return (
+            return ClaimBatch(
                 (
-                    "conversation-1",
-                    SimpleNamespace(
-                        turn_id="turn-1",
-                        lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
+                        ),
                     ),
-                ),
+                )
             )
 
         async def resolve_citations(self, *_args):
@@ -388,15 +404,17 @@ async def test_generation_worker_emits_public_failure_and_closes_evidence():
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return (
+            return ClaimBatch(
                 (
-                    "conversation-1",
-                    SimpleNamespace(
-                        turn_id="turn-1",
-                        lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
+                        ),
                     ),
-                ),
+                )
             )
 
     class Conversations:
@@ -454,7 +472,7 @@ async def test_generation_worker_continues_after_cancel_wins_completion_race():
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return turns
+            return ClaimBatch(turns)
 
     class Conversations:
         repository = Repository()
@@ -486,15 +504,17 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return (
+            return ClaimBatch(
                 (
-                    "conversation-1",
-                    SimpleNamespace(
-                        turn_id="turn-1",
-                        lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
+                        ),
                     ),
-                ),
+                )
             )
 
     class Conversations:
@@ -539,18 +559,20 @@ async def test_generation_worker_renews_turn_lease_while_provider_is_running():
         renewals = 0
 
         async def claim_queued(self, *, limit):
-            return (
+            return ClaimBatch(
                 (
-                    "conversation-1",
-                    SimpleNamespace(
-                        turn_id="turn-1",
-                        lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(
-                            snapshot_id="snapshot-1",
-                            value=SimpleNamespace(message="question", resolved_resources=()),
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            input_snapshot=SimpleNamespace(
+                                snapshot_id="snapshot-1",
+                                value=SimpleNamespace(message="question", resolved_resources=()),
+                            ),
                         ),
                     ),
-                ),
+                )
             )
 
         async def renew_processing_lease(
@@ -604,18 +626,20 @@ async def test_generation_worker_uses_turn_scoped_persistent_checkpointer_factor
         checkpoint_claims = []
 
         async def claim_queued(self, *, limit):
-            return (
+            return ClaimBatch(
                 (
-                    "conversation-1",
-                    SimpleNamespace(
-                        turn_id="turn-1",
-                        lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(
-                            snapshot_id="snapshot-1",
-                            value=SimpleNamespace(message="question", resolved_resources=()),
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            input_snapshot=SimpleNamespace(
+                                snapshot_id="snapshot-1",
+                                value=SimpleNamespace(message="question", resolved_resources=()),
+                            ),
                         ),
                     ),
-                ),
+                )
             )
 
         def graph_checkpointer(self, turn, *, budget=None):
@@ -665,19 +689,21 @@ async def test_generation_worker_recovers_after_one_transient_checkpoint_failure
         async def claim_queued(self, *, limit):
             assert limit == 1
             self.claims += 1
-            return (
+            return ClaimBatch(
                 (
-                    "conversation-1",
-                    SimpleNamespace(
-                        turn_id="turn-1",
-                        attempt=self.claims,
-                        lease_token=f"lease-{self.claims}",
-                        input_snapshot=SimpleNamespace(
-                            snapshot_id="snapshot-1",
-                            value=SimpleNamespace(message="question", resolved_resources=()),
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            attempt=self.claims,
+                            lease_token=f"lease-{self.claims}",
+                            input_snapshot=SimpleNamespace(
+                                snapshot_id="snapshot-1",
+                                value=SimpleNamespace(message="question", resolved_resources=()),
+                            ),
                         ),
                     ),
-                ),
+                )
             )
 
         def graph_checkpointer(self, _turn, *, budget=None):
@@ -754,7 +780,7 @@ async def test_generation_worker_terminalizes_permanent_checkpoint_error_and_con
     class Repository:
         async def claim_queued(self, *, limit):
             assert limit == 2
-            return turns
+            return ClaimBatch(turns)
 
         def graph_checkpointer(self, turn, *, budget=None):
             return PermanentlyUnavailableCheckpointer()
@@ -811,7 +837,7 @@ async def test_generation_worker_terminalizes_transient_checkpoint_failure_at_re
     class Repository:
         async def claim_queued(self, *, limit):
             assert limit == 1
-            return (("conversation-1", turn),)
+            return ClaimBatch((("conversation-1", turn),))
 
         def graph_checkpointer(self, _turn, *, budget=None):
             return RetryableFailureCheckpointer()
@@ -864,7 +890,7 @@ async def test_retryable_exit_marks_execute_span_deferred(span_recorder):
 
         async def claim_queued(self, *, limit):
             assert limit == 1
-            return (("conversation-1", turn),)
+            return ClaimBatch((("conversation-1", turn),))
 
         def graph_checkpointer(self, _turn, *, budget=None):
             return RetryableFailureCheckpointer()
@@ -916,7 +942,7 @@ async def test_generation_worker_respects_lease_loss_during_checkpoint_failure_s
     class Repository:
         async def claim_queued(self, *, limit):
             assert limit == 1
-            return (("conversation-1", turn),)
+            return ClaimBatch((("conversation-1", turn),))
 
         def graph_checkpointer(self, _turn, *, budget=None):
             return PermanentFailureCheckpointer()
@@ -953,7 +979,7 @@ async def test_generation_worker_treats_checkpoint_settlement_conflict_as_owners
     class Repository:
         async def claim_queued(self, *, limit):
             assert limit == 1
-            return (("conversation-1", turn),)
+            return ClaimBatch((("conversation-1", turn),))
 
     class Conversations:
         repository = Repository()
@@ -995,7 +1021,7 @@ async def test_generation_worker_cannot_fail_a_checkpoint_conflict_after_losing_
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return (("conversation-1", turn),)
+            return ClaimBatch((("conversation-1", turn),))
 
     class Conversations:
         repository = Repository()
@@ -1026,18 +1052,20 @@ async def test_generation_worker_rechecks_turn_lease_before_provider_call():
         validations = 0
 
         async def claim_queued(self, *, limit):
-            return (
+            return ClaimBatch(
                 (
-                    "conversation-1",
-                    SimpleNamespace(
-                        turn_id="turn-1",
-                        lease_token="lease-1",
-                        input_snapshot=SimpleNamespace(
-                            snapshot_id="snapshot-1",
-                            value=SimpleNamespace(message="question", resolved_resources=()),
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            input_snapshot=SimpleNamespace(
+                                snapshot_id="snapshot-1",
+                                value=SimpleNamespace(message="question", resolved_resources=()),
+                            ),
                         ),
                     ),
-                ),
+                )
             )
 
         async def renew_processing_lease(self, *_args, **_kwargs):
@@ -1184,15 +1212,17 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return (
+            return ClaimBatch(
                 (
-                    "conversation-1",
-                    SimpleNamespace(
-                        turn_id="turn-1",
-                        lease_token="lease-1",
-                        input_snapshot=snapshot,
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            input_snapshot=snapshot,
+                        ),
                     ),
-                ),
+                )
             )
 
         async def resolve_citations(self, trace_id, citation_ids):
@@ -1236,7 +1266,7 @@ async def test_generation_worker_skips_a_turn_whose_conversation_was_deleted():
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return (("conversation-1", turn),)
+            return ClaimBatch((("conversation-1", turn),))
 
     class Conversations:
         repository = Repository()
@@ -1275,7 +1305,7 @@ def _single_turn_repository(turn, *, defers=None):
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return (("conversation-1", turn),)
+            return ClaimBatch((("conversation-1", turn),))
 
         async def defer_turn(
             self, conversation_id, turn_id, lease_token, *, next_attempt_at, failure
@@ -1491,7 +1521,7 @@ async def test_one_turn_crash_does_not_skip_the_rest_of_the_batch():
 
     class Repository:
         async def claim_queued(self, *, limit):
-            return turns
+            return ClaimBatch(turns)
 
     class Conversations:
         repository = Repository()

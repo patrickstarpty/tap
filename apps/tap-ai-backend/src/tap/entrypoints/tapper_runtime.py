@@ -624,7 +624,7 @@ class TapperSettings:
             ),
             e2e_mode=demo_mode == "e2e",
             redis_stream_socket_timeout_seconds=_duration(
-                values, "TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS", 20.0, minimum=1.0, maximum=120.0
+                values, "TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS", 20.0, minimum=3.0, maximum=120.0
             ),
             redis_stream_pool_size=_integer(
                 values, "TAP_REDIS_STREAM_POOL_SIZE", 50, minimum=1, maximum=500
@@ -1484,9 +1484,11 @@ def _create_redis_stream_block_client(settings: TapperSettings) -> Redis:
     BLOCK` over it would raise a bogus socket timeout well before the
     requested block window elapses, and a busy SSE fleet would starve other
     Redis operations of that pool's 20 connections. This client's
-    `socket_timeout` is `settings.redis_stream_socket_timeout_seconds` (configured
-    strictly above the longest `block_ms` a reader uses) and its pool is
-    sized by `settings.redis_stream_pool_size` for concurrent SSE readers.
+    `socket_timeout` is `settings.redis_stream_socket_timeout_seconds`;
+    `RedisDraftStream.read` now clamps every `block_ms` to stay safely under
+    it (see its `_BLOCK_MARGIN_SECONDS`), so this no longer needs to be set
+    above every caller's window by hand. Its pool is sized by
+    `settings.redis_stream_pool_size` for concurrent SSE readers.
     """
     from redis.asyncio import Redis
 

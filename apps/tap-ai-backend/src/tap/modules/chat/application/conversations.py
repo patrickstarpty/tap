@@ -66,7 +66,7 @@ def history_query(value: str | None) -> str | None:
     return stripped or None
 
 
-class ClaimBatch(tuple):
+class ClaimBatch(tuple[tuple[str, ConversationTurn], ...]):
     """`claim_queued`'s result.
 
     Behaves exactly like the legacy `tuple[tuple[str, ConversationTurn],

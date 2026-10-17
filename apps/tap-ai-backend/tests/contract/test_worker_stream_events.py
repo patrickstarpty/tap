@@ -9,6 +9,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
+from tap.modules.chat.application.conversations import ClaimBatch
 
 
 def _envelope(*, sequence: int, event_type: str, payload: dict[str, object]) -> dict[str, object]:
@@ -25,21 +26,23 @@ def _envelope(*, sequence: int, event_type: str, payload: dict[str, object]) -> 
 
 class _KnowledgeRepository:
     async def claim_queued(self, *, limit):
-        return (
+        return ClaimBatch(
             (
-                "conversation-1",
-                SimpleNamespace(
-                    turn_id="turn-1",
-                    lease_token="lease-1",
-                    input_snapshot=SimpleNamespace(
-                        snapshot_id="snapshot-1",
-                        value=SimpleNamespace(
-                            message="question",
-                            resolved_resources=(),
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        input_snapshot=SimpleNamespace(
+                            snapshot_id="snapshot-1",
+                            value=SimpleNamespace(
+                                message="question",
+                                resolved_resources=(),
+                            ),
                         ),
                     ),
                 ),
-            ),
+            )
         )
 
     async def resolve_citations(self, *_args):
@@ -151,23 +154,25 @@ class _InsightsRepository:
         self._resolved_resources = resolved_resources
 
     async def claim_queued(self, *, limit):
-        return (
+        return ClaimBatch(
             (
-                "conversation-1",
-                SimpleNamespace(
-                    turn_id="turn-1",
-                    lease_token="lease-1",
-                    input_snapshot=SimpleNamespace(
-                        snapshot_id="snapshot-1",
-                        value=SimpleNamespace(
-                            message="Explain the timeout",
-                            insights_query_id="query-1",
-                            insights_report_refs=("report-1",),
-                            resolved_resources=self._resolved_resources,
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        input_snapshot=SimpleNamespace(
+                            snapshot_id="snapshot-1",
+                            value=SimpleNamespace(
+                                message="Explain the timeout",
+                                insights_query_id="query-1",
+                                insights_report_refs=("report-1",),
+                                resolved_resources=self._resolved_resources,
+                            ),
                         ),
                     ),
                 ),
-            ),
+            )
         )
 
     async def resolve_citations(self, *_args):
