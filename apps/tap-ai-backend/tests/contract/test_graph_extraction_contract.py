@@ -1057,6 +1057,70 @@ async def test_organization_reference_endpoints_are_exempt_from_the_unsupported_
 
 
 @pytest.mark.asyncio
+async def test_insurer_brand_short_name_suffix_is_an_organization_reference(span_recorder):
+    # rv3 re-review: the organization suffix list only covered generic words
+    # (公司/保险人/机构/...), not an insurer's own brand short name (友邦人寿,
+    # 平安财险, 泰康养老, ...) -- a label ending in 人寿/财险/寿险/养老/健康 is
+    # exactly as much a self-reference as "保险公司" when its own clause names
+    # it only as "本公司".
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "友邦人寿",
+                "type": "ACTOR",
+                "canonicalKey": "友邦人寿",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": "身故保险金",
+                "type": "CONCEPT",
+                "canonicalKey": "身故保险金",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": "RESPONSIBLE_FOR",
+                "relationLabel": "本公司将给付身故保险金",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+    request = replace(
+        _request(),
+        chunks=(
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": "chunk-1",
+                "content": "若被保险人身故，本公司将给付身故保险金予受益人。",
+                "anchor": {"kind": "text", "start": 0, "end": 10},
+                "contentDigest": "sha256:" + "a" * 64,
+            },
+        ),
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(request)
+
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 0
+    assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 0
+
+
+@pytest.mark.asyncio
 async def test_system_node_that_is_really_a_disease_is_not_exempt(span_recorder):
     # rv3 follow-up: a SYSTEM-typed diagnostic procedure (骨髓穿刺检查) wrongly
     # linked to an unrelated disease is a real production mislink that the old,

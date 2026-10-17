@@ -730,7 +730,20 @@ def _keep_edges(
 
 
 _ORGANIZATION_REFERENCE_TYPES = frozenset({"ACTOR", "SYSTEM"})
-_ORGANIZATION_LABEL_SUFFIXES = ("公司", "保险人", "保险", "机构", "协会", "学会", "委员会")
+_ORGANIZATION_LABEL_SUFFIXES = (
+    "公司",
+    "保险人",
+    "保险",
+    "机构",
+    "协会",
+    "学会",
+    "委员会",
+    "人寿",
+    "财险",
+    "寿险",
+    "养老",
+    "健康",
+)
 # A real, grounded-but-paraphrased endpoint keeps at least this fraction of its
 # characters in the cited text (measured empirically: the lowest-scoring genuine
 # paraphrase found in a production replay audit was 0.93; every true adjacent-entry
@@ -755,8 +768,9 @@ def _is_organization_reference(label: str, node_type: str) -> bool:
     every node's aliases -- so this is narrowed to only that case: a reference
     pronoun (``naming.is_reference_name``), or a label that is itself an
     organization/party name (ends with 公司, 保险人, 保险, 机构, 协会, 学会,
-    or 委员会). A SYSTEM/ACTOR node that is really a disease, procedure, or
-    standard matches none of these and is checked like any other endpoint.
+    委员会, or an insurer brand's short-name suffix -- 人寿, 财险, 寿险, 养老,
+    健康). A SYSTEM/ACTOR node that is really a disease, procedure, or standard
+    matches none of these and is checked like any other endpoint.
 
     This applies identically whether the node is new in this batch or already
     an established known entity from an earlier one: being *known* only means
