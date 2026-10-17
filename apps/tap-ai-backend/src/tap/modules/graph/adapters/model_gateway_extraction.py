@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import cast
@@ -427,6 +428,19 @@ class ModelGatewayGraphExtraction:
                 kept_edges_raw, kept_provenance_raw, dropped, dropped_no_evidence_edges = (
                     _keep_edges(edges_raw, provenance_raw, node_ids)
                 )
+                label_lookup = {
+                    node_id: (node.label, node.aliases, node.node_type)
+                    for node_id, node in new_nodes.items()
+                } | {
+                    entity_id: (entity["label"], (), entity["type"])
+                    for entity_id, entity in known.items()
+                }
+                (
+                    kept_edges_raw,
+                    kept_provenance_raw,
+                    dropped_ungrounded_edges,
+                    dropped_cross_item_edges,
+                ) = _drop_unsupported_edges(kept_edges_raw, kept_provenance_raw, label_lookup, refs)
                 edges = tuple(
                     GraphEdge(
                         _string(item, "id"),
@@ -467,6 +481,12 @@ class ModelGatewayGraphExtraction:
             current_span.set_attribute("tap.graph.dropped_no_evidence_nodes", dropped_no_evidence)
             current_span.set_attribute(
                 "tap.graph.dropped_no_evidence_edges", dropped_no_evidence_edges
+            )
+            current_span.set_attribute(
+                "tap.graph.dropped_ungrounded_edges", dropped_ungrounded_edges
+            )
+            current_span.set_attribute(
+                "tap.graph.dropped_cross_item_edges", dropped_cross_item_edges
             )
         if not nodes:
             # The model grounded nothing in this batch (boilerplate chunks, no
@@ -707,6 +727,360 @@ def _keep_edges(
         item for item in provenance_raw if item.get("edgeId") not in dropped_ids
     )
     return kept_edges, kept_provenance, len(dropped_ids), len(no_evidence_ids)
+
+
+_ORGANIZATION_REFERENCE_TYPES = frozenset({"ACTOR", "SYSTEM"})
+_ORGANIZATION_LABEL_SUFFIXES = (
+    "公司",
+    "保险人",
+    "保险",
+    "机构",
+    "协会",
+    "学会",
+    "委员会",
+    "人寿",
+    "财险",
+    "寿险",
+    "养老",
+    "健康",
+)
+# A real, grounded-but-paraphrased endpoint keeps at least this fraction of its
+# characters in the cited text (measured empirically: the lowest-scoring genuine
+# paraphrase found in a production replay audit was 0.93; every true adjacent-entry
+# mislink in that same audit scored 0.0-0.33). 0.6 keeps a wide margin above the
+# former and well above the latter.
+_UNSUPPORTED_EDGE_OVERLAP_MIN = 0.6
+
+
+def _is_organization_reference(label: str, node_type: str) -> bool:
+    """Whether this endpoint is the insurer or the contract referring to itself,
+    rather than some other real-world entity the model happened to type ACTOR or
+    SYSTEM.
+
+    Exempting *every* ACTOR/SYSTEM node let two real rv3 production mislinks slip
+    through uncaught: a SYSTEM-typed diagnostic standard (中国新九分法) and a
+    SYSTEM-typed diagnostic procedure (骨髓穿刺检查), each wrongly linked to an
+    unrelated disease in a dense list -- type is not evidence that the text
+    cannot be checked, it is just a classification the model got wrong. The
+    actual reason an exemption exists at all is the insurer and the contract
+    being referred to in their own clause only by a document-relative pronoun
+    (本公司, 本合同, 本附加合同), which ``usable_alias`` deliberately keeps out of
+    every node's aliases -- so this is narrowed to only that case: a reference
+    pronoun (``naming.is_reference_name``), or a label that is itself an
+    organization/party name (ends with 公司, 保险人, 保险, 机构, 协会, 学会,
+    委员会, or an insurer brand's short-name suffix -- 人寿, 财险, 寿险, 养老,
+    健康). A SYSTEM/ACTOR node that is really a disease, procedure, or standard
+    matches none of these and is checked like any other endpoint.
+
+    This applies identically whether the node is new in this batch or already
+    an established known entity from an earlier one: being *known* only means
+    an earlier batch minted it once, not that it was itself ever checked
+    against evidence text, so a known entity that is really a misclassified
+    SYSTEM/ACTOR disease is exactly as able to seed a cross-item mislink in a
+    later batch as a freshly-minted one, and must be checked the same way.
+    """
+    if node_type not in _ORGANIZATION_REFERENCE_TYPES:
+        return False
+    if is_reference_name(label):
+        return True
+    return label.endswith(_ORGANIZATION_LABEL_SUFFIXES)
+
+
+def _char_overlap_ratio(label: str, text: str) -> float:
+    """The fraction of ``label``'s normalized characters that also occur in ``text``.
+
+    A multiset comparison (via ``collections.Counter``), not a substring check: order
+    and contiguity do not matter, only how many of the label's characters the text
+    also contains (each text character usable once per matching label character).
+    An empty, already-normalized label (e.g. punctuation-only) trivially scores 1.0
+    rather than dividing by zero -- there is nothing for the text to be missing.
+    """
+
+    from collections import Counter
+
+    label_chars = list(label)
+    if not label_chars:
+        return 1.0
+    text_counts = Counter(text)
+    label_counts = Counter(label_chars)
+    matched = sum(min(count, text_counts.get(char, 0)) for char, count in label_counts.items())
+    return matched / len(label_chars)
+
+
+_NUMBERED_ITEM_MARKER = re.compile(r"(?:^|\n)[ \t]*(?:(\d{1,3})[）).]|[一二三四五六七八九十百]+、)")
+_ITEM_TITLE_MATCH_MIN = 0.7
+
+
+def _numbered_items(text: str) -> list[str]:
+    """Split ``text`` on its own bare top-level item markers (37）, 38）, 一、, ...).
+
+    Insurance clause lists in this corpus number each top-level entry (a disease
+    definition, a responsibility, a termination condition) as ``NN）``, ``NN)``,
+    ``NN.``, or a Chinese-numeral ``一、`` at the start of a line, then number that
+    entry's own sub-criteria as ``（N）`` -- a leading full-width or half-width
+    paren the marker above requires *absent*, so a disease's own criteria stay in
+    its item rather than becoming separate items. A bare numeral marker is only
+    accepted as a new top-level boundary when its number is strictly greater than
+    the previous one accepted: a list restarting from ``1）`` without parens right
+    after a top-level item (rather than continuing the top-level count) is a
+    nested sub-condition, not a new item, and is left inside the item it follows.
+    A chunk with fewer than two accepted markers returns the whole text as one
+    item (the whole-text overlap check already covers that ungrouped case).
+    """
+    bounds: list[int] = []
+    last_number = 0
+    for match in _NUMBERED_ITEM_MARKER.finditer(text):
+        digits = match.group(1)
+        if digits is not None:
+            number = int(digits)
+            if number <= last_number:
+                continue
+            last_number = number
+        bounds.append(match.start())
+    if len(bounds) < 2:
+        return [text]
+    edges = sorted({0, *bounds, len(text)})
+    return [
+        text[edges[index] : edges[index + 1]]
+        for index in range(len(edges) - 1)
+        if text[edges[index] : edges[index + 1]].strip()
+    ]
+
+
+def _item_title(item_text: str) -> str:
+    """The item's own heading line: everything up to its first newline.
+
+    Every item but the first carries the newline that preceded its own marker
+    (the segment boundary in ``_numbered_items`` falls right before it, not
+    after), so leading whitespace is stripped first -- otherwise that blank
+    leading line, not the heading, would be what ``partition`` returns.
+    """
+    first_line, _, _ = item_text.strip().partition("\n")
+    return first_line
+
+
+def _longest_common_substring_len(first: str, second: str) -> int:
+    """The length of the longest contiguous run shared by ``first`` and ``second``.
+
+    Unlike ``_char_overlap_ratio``'s multiset comparison, contiguity matters here:
+    two disease names built from the same common morphemes (严重, 性, 炎, ...) but
+    naming different diseases share many characters in any order, which is exactly
+    what lets a cross-item mislink slip past a per-character check scoped to one
+    item's text. A long shared *run* is far more specific, since it requires the
+    label's words to appear together, in order, not just individually.
+    """
+    if not first or not second:
+        return 0
+    previous_row = [0] * (len(second) + 1)
+    longest = 0
+    for first_char in first:
+        current_row = [0] * (len(second) + 1)
+        for column, second_char in enumerate(second, start=1):
+            if first_char == second_char:
+                current_row[column] = previous_row[column - 1] + 1
+                longest = max(longest, current_row[column])
+        previous_row = current_row
+    return longest
+
+
+def _matches_title(names: tuple[str, ...], title: str) -> bool:
+    """Whether some name in ``names`` is (close to) this item's own heading.
+
+    A title line is short and, when the model names a node after it, copied close
+    to verbatim -- unlike a REQUIREMENT-style criterion, which commonly gets
+    reworded or reordered (120% vs. ≥120%, operators swapped) and would score
+    unreliably low here even for its own item. ``_ITEM_TITLE_MATCH_MIN`` is tuned
+    for a short, mostly-literal title match, not for prose.
+    """
+    normalized_title = normalize_key(title)
+    return any(
+        name
+        and normalize_key(name)
+        and (
+            _longest_common_substring_len(normalize_key(name), normalized_title)
+            / len(normalize_key(name))
+        )
+        >= _ITEM_TITLE_MATCH_MIN
+        for name in names
+    )
+
+
+def _mentioned_in(names: tuple[str, ...], text: str) -> bool:
+    """Whether some name in ``names`` literally occurs as a run in ``text``.
+
+    A literal substring, not the multiset overlap ``_drop_unsupported_edges``'s
+    primary check uses: every disease title in this corpus happens to share a
+    generic prefix/suffix (严重..., ...性, ...炎), so a multiset check here would
+    find "enough" of almost any one disease's characters inside almost any other
+    item's title and block nearly every real cross-item drop. A literal run is
+    this safety net's actual job -- did the other item's text, title included,
+    genuinely name this endpoint, e.g. an exclusion clause naming a different
+    disease by its full name -- not a loose, generic-character echo of it.
+    """
+    normalized_text = normalize_key(text)
+    return any(name and normalize_key(name) in normalized_text for name in names)
+
+
+def _cross_item_mislink(
+    source_names: tuple[str, ...], target_names: tuple[str, ...], text: str
+) -> bool:
+    """Whether the source and target each name a *different* list item's own
+    heading, with neither named anywhere in the other's item body.
+
+    Scoped by the caller to text with at least two top-level numbered items
+    (``_numbered_items`` already returns a single, whole-text item otherwise), to
+    REQUIREMENT-free endpoint pairs, and to single-chunk evidence -- a criterion
+    endpoint (120% 正常值上限, 心室率<50次/分钟, ...) essentially never equals an
+    item's own heading verbatim, so requiring a title match on *both* sides, not
+    just a best-matching item, keeps every such criterion out of this check
+    entirely rather than risking a low, unreliable paraphrase score against it.
+    Only a genuine pair of distinct disease/clause headings, unconnected in
+    either item's own text, is flagged as a mislink.
+    """
+    items = _numbered_items(text)
+    if len(items) < 2:
+        return False
+    titles = [_item_title(item) for item in items]
+    source_item = next(
+        (index for index, title in enumerate(titles) if _matches_title(source_names, title)), None
+    )
+    target_item = next(
+        (index for index, title in enumerate(titles) if _matches_title(target_names, title)), None
+    )
+    if source_item is None or target_item is None or source_item == target_item:
+        return False
+    if _mentioned_in(target_names, items[source_item]) or _mentioned_in(
+        source_names, items[target_item]
+    ):
+        return False
+    return True
+
+
+def _drop_unsupported_edges(
+    edges_raw: tuple[dict[str, object], ...],
+    provenance_raw: tuple[dict[str, object], ...],
+    label_lookup: Mapping[str, tuple[str, tuple[str, ...], str]],
+    refs: Mapping[str, Mapping[str, object]],
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int, int]:
+    """Drop an EXTRACTED edge whose endpoints are not both named in its own evidence.
+
+    Two independent checks, in order:
+
+    1. Ungrounded: the model cites which chunks state each fact; a genuinely
+       grounded edge's endpoint name shares nearly all of its characters with
+       that text, even when the model paraphrases a multi-clause bullet
+       (dropping a middle clause, rewording "少于1%" as "<1%", or dropping a
+       trailing "术"/"的" the clause itself omits). An edge whose endpoint
+       shares *none* of its characters with the cited text is dropped: the
+       fraction of the label's (or its best-matching alias's) characters --
+       normalized the same way ``canonical_key`` is -- that also occur in the
+       cited text (as a multiset, not requiring contiguity or order) is below
+       ``_UNSUPPORTED_EDGE_OVERLAP_MIN`` for either endpoint.
+    2. Cross-item: within a dense numbered list (see ``_cross_item_mislink``),
+       the source and target each name a *different* item's own heading, with
+       neither named in the other's item body -- the real rv3 failure mode of
+       two adjacent disease definitions connected to each other instead of
+       what the cited text actually relates. Scoped away from REQUIREMENT
+       endpoints (a criterion restated with reordered wording or swapped
+       comparison operators scores unreliably low against even its own item)
+       and from multi-chunk evidence (no cross-chunk item boundary is tracked).
+
+    An endpoint that is itself a reference to the insurer or the contract (see
+    ``_is_organization_reference``) is never checked by either: it is
+    routinely referred to in its own clause only by a document-relative
+    pronoun (本公司, 本合同, 本附加合同) -- which ``usable_alias`` deliberately
+    keeps out of every node's aliases (see the prompt's alias rule) -- so
+    requiring its real name to appear literally would drop a large share of
+    genuinely grounded facts about the insurer or the contract itself, not
+    just the mislinks these checks target. This is narrower than "every ACTOR
+    or SYSTEM node": a disease, procedure, or standard the model happened to
+    type ACTOR or SYSTEM is still checked like any other endpoint. An INFERRED
+    edge has no chunks by design (its grounding is its provenance's
+    input facts, not text) and is never checked. An edge whose endpoint id is
+    not in ``label_lookup``, or whose own ``chunks`` is empty, is left to
+    ``_keep_edges`` and ``GraphEdge`` to judge instead of being dropped here.
+    Dropping an edge cascades to its own provenance record and to any INFERRED
+    edge whose provenance names it as an input fact, the same cascade
+    ``_keep_edges`` uses. Returns the kept edges, kept provenance, and how many
+    edges were dropped by each of the two checks.
+    """
+
+    def reason(item: dict[str, object]) -> str | None:
+        if item.get("origin") != "EXTRACTED":
+            return None
+        chunks = item.get("chunks")
+        if not isinstance(chunks, list) or not chunks:
+            return None
+        raw_text = "".join(
+            str(refs[ref]["content"]) for ref in chunks if isinstance(ref, str) and ref in refs
+        )
+        text = normalize_key(raw_text)
+        endpoint_names: dict[str, tuple[str, ...]] = {}
+        requirement_endpoint = False
+        for endpoint_key in ("sourceNodeId", "targetNodeId"):
+            endpoint = item.get(endpoint_key)
+            names = label_lookup.get(endpoint) if isinstance(endpoint, str) else None
+            if names is None:
+                endpoint_names[endpoint_key] = ()
+                continue
+            label, aliases, node_type = names
+            if node_type == "REQUIREMENT":
+                requirement_endpoint = True
+            if _is_organization_reference(label, node_type):
+                endpoint_names[endpoint_key] = ()
+                continue
+            endpoint_names[endpoint_key] = (label, *aliases)
+            best = max(
+                (
+                    _char_overlap_ratio(normalize_key(name), text)
+                    for name in (label, *aliases)
+                    if name
+                ),
+                default=1.0,
+            )
+            if best < _UNSUPPORTED_EDGE_OVERLAP_MIN:
+                return "ungrounded"
+        # Both endpoints pass the whole-text check above; single-chunk,
+        # REQUIREMENT-free evidence additionally requires some single item to
+        # name both -- the whole-text check alone cannot tell "both diseases
+        # are somewhere in this list" from "this is the one disease both facts
+        # are actually about".
+        if (
+            not requirement_endpoint
+            and len(chunks) == 1
+            and endpoint_names["sourceNodeId"]
+            and endpoint_names["targetNodeId"]
+            and _cross_item_mislink(
+                endpoint_names["sourceNodeId"], endpoint_names["targetNodeId"], raw_text
+            )
+        ):
+            return "cross_item"
+        return None
+
+    provenance_by_edge: dict[object, dict[str, object]] = {
+        item.get("edgeId"): item for item in provenance_raw
+    }
+    reasons = {item.get("id"): reason(item) for item in edges_raw}
+    dropped_ids: set[object] = {edge_id for edge_id, why in reasons.items() if why is not None}
+    changed = True
+    while changed:
+        changed = False
+        for item in edges_raw:
+            edge_id = item.get("id")
+            if edge_id in dropped_ids or item.get("origin") != "INFERRED":
+                continue
+            provenance_item = provenance_by_edge.get(edge_id)
+            input_facts = provenance_item.get("inputFactIds") if provenance_item else None
+            if isinstance(input_facts, list) and dropped_ids.intersection(input_facts):
+                dropped_ids.add(edge_id)
+                changed = True
+    kept_edges = tuple(item for item in edges_raw if item.get("id") not in dropped_ids)
+    kept_provenance = tuple(
+        item for item in provenance_raw if item.get("edgeId") not in dropped_ids
+    )
+    dropped_ungrounded = sum(1 for why in reasons.values() if why == "ungrounded")
+    dropped_cross_item = sum(1 for why in reasons.values() if why == "cross_item")
+    return kept_edges, kept_provenance, dropped_ungrounded, dropped_cross_item
 
 
 def _dedupe_edges(
