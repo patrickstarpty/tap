@@ -1064,6 +1064,124 @@ async def test_actor_and_system_endpoints_are_exempt_from_the_unsupported_edge_c
     assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 0
 
 
+def _numbered_list_request():
+    return replace(
+        _request(),
+        chunks=(
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": "chunk-1",
+                "content": (
+                    "37）严重急性坏死性胰腺炎\n"
+                    "指由专科医生确诊为急性坏死性胰腺炎，并进行坏死组织清除、病灶切除或胰腺部分切除的手术治疗。\n"
+                    "38）严重自身免疫性肝炎\n"
+                    "自身免疫性肝炎是一种原因不明的慢性肝脏的坏死性炎性疾病，须满足高γ球蛋白血症等条件。"
+                ),
+                "anchor": {"kind": "text", "start": 0, "end": 10},
+                "contentDigest": "sha256:" + "a" * 64,
+            },
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_cross_item_edge_in_a_dense_numbered_list_is_dropped(span_recorder):
+    # Both "严重急性坏死性胰腺炎" and "严重自身免疫性肝炎" clear the whole-chunk
+    # character-overlap check on their own (they share common disease-naming
+    # morphemes -- 严重/性/炎 -- with each other's item), so only a check scoped to
+    # a single numbered item catches that this edge mislinks across item 37 and 38.
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "严重急性坏死性胰腺炎",
+                "type": "CONCEPT",
+                "canonicalKey": "严重急性坏死性胰腺炎",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": "严重自身免疫性肝炎",
+                "type": "CONCEPT",
+                "canonicalKey": "严重自身免疫性肝炎",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": "RELATED_TO",
+                "relationLabel": "相关",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_numbered_list_request())
+
+    assert draft.edges == ()
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 1
+
+
+@pytest.mark.asyncio
+async def test_same_item_edge_in_a_dense_numbered_list_is_kept(span_recorder):
+    # A disease and its own criterion, both named within item 38's own text, must
+    # not be mass-dropped by the new per-item guard just because the chunk also
+    # contains another numbered item (37).
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "严重自身免疫性肝炎",
+                "type": "CONCEPT",
+                "canonicalKey": "严重自身免疫性肝炎",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": "高γ球蛋白血症",
+                "type": "CONCEPT",
+                "canonicalKey": "高γ球蛋白血症",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": "REQUIRES",
+                "relationLabel": "须满足",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(_numbered_list_request())
+
+    assert [edge.edge_id for edge in draft.edges] == ["edge-1"]
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_unsupported_edges"] == 0
+
+
 @pytest.mark.asyncio
 async def test_inferred_edge_is_never_checked_against_evidence_text(span_recorder):
     # An INFERRED edge is grounded by its provenance's input facts, not by its own

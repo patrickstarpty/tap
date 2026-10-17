@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import cast
@@ -777,6 +778,94 @@ def _char_overlap_ratio(label: str, text: str) -> float:
     return matched / len(label_chars)
 
 
+_NUMBERED_ITEM_MARKER = re.compile(r"(?:^|\n)\s*\d{1,3}）")
+_ITEM_COOCCURRENCE_LCS_MIN = 0.5
+
+
+def _numbered_items(text: str) -> list[str]:
+    """Split ``text`` on a bare top-level numbered-item marker (37）, 38）, ...).
+
+    Insurance clause lists in this corpus number each top-level entry (a disease
+    definition, a responsibility, a termination condition) as ``NN）`` at the start
+    of a line, then number that entry's own sub-criteria as ``（N）`` -- with a
+    leading full-width paren the marker above deliberately excludes, so a disease's
+    own criteria stay in its item rather than becoming separate items. A chunk with
+    no bare marker returns the whole text as one item (the per-endpoint overlap
+    check below already covers that ungrouped case).
+    """
+    bounds = [match.start() for match in _NUMBERED_ITEM_MARKER.finditer(text)]
+    if not bounds:
+        return [text]
+    edges = sorted({0, *bounds, len(text)})
+    return [
+        text[edges[index] : edges[index + 1]]
+        for index in range(len(edges) - 1)
+        if text[edges[index] : edges[index + 1]].strip()
+    ]
+
+
+def _longest_common_substring_len(first: str, second: str) -> int:
+    """The length of the longest contiguous run shared by ``first`` and ``second``.
+
+    Unlike ``_char_overlap_ratio``'s multiset comparison, contiguity matters here:
+    two disease names built from the same common morphemes (严重, 性, 炎, ...) but
+    naming different diseases share many characters in any order, which is exactly
+    what lets a cross-item mislink slip past a per-character check scoped to one
+    item's text. A long shared *run* is far more specific, since it requires the
+    label's words to appear together, in order, not just individually.
+    """
+    if not first or not second:
+        return 0
+    previous_row = [0] * (len(second) + 1)
+    longest = 0
+    for first_char in first:
+        current_row = [0] * (len(second) + 1)
+        for column, second_char in enumerate(second, start=1):
+            if first_char == second_char:
+                current_row[column] = previous_row[column - 1] + 1
+                longest = max(longest, current_row[column])
+        previous_row = current_row
+    return longest
+
+
+def _edge_endpoints_share_an_item(
+    source_names: tuple[str, ...], target_names: tuple[str, ...], text: str
+) -> bool:
+    """Whether some single numbered item names both endpoints well enough.
+
+    Scoped to text with at least two numbered items (a genuine dense list, the
+    rv3 adjacent-entry mislink setting): an edge is kept only if there exists one
+    item where the best-matching name of *each* endpoint reaches
+    ``_ITEM_COOCCURRENCE_LCS_MIN`` of its own length as a longest common substring
+    with that item's text. Text with fewer than two items returns ``True``
+    unconditionally -- ``_drop_unsupported_edges``'s whole-text overlap check
+    already covers an edge with no (or only one) numbered item to localize within.
+    """
+    items = _numbered_items(text)
+    if len(items) < 2:
+        return True
+    for item in items:
+        normalized_item = normalize_key(item)
+
+        def best_ratio(names: tuple[str, ...]) -> float:
+            return max(
+                (
+                    _longest_common_substring_len(normalize_key(name), normalized_item)
+                    / len(normalize_key(name))
+                    for name in names
+                    if name and normalize_key(name)
+                ),
+                default=1.0,
+            )
+
+        if (
+            best_ratio(source_names) >= _ITEM_COOCCURRENCE_LCS_MIN
+            and best_ratio(target_names) >= _ITEM_COOCCURRENCE_LCS_MIN
+        ):
+            return True
+    return False
+
+
 def _drop_unsupported_edges(
     edges_raw: tuple[dict[str, object], ...],
     provenance_raw: tuple[dict[str, object], ...],
@@ -822,18 +911,22 @@ def _drop_unsupported_edges(
         chunks = item.get("chunks")
         if not isinstance(chunks, list) or not chunks:
             return True
-        text = normalize_key(
-            "".join(
-                str(refs[ref]["content"]) for ref in chunks if isinstance(ref, str) and ref in refs
-            )
+        raw_text = "".join(
+            str(refs[ref]["content"]) for ref in chunks if isinstance(ref, str) and ref in refs
         )
-        for endpoint in (item.get("sourceNodeId"), item.get("targetNodeId")):
+        text = normalize_key(raw_text)
+        endpoint_names: dict[str, tuple[str, ...]] = {}
+        for endpoint_key in ("sourceNodeId", "targetNodeId"):
+            endpoint = item.get(endpoint_key)
             names = label_lookup.get(endpoint) if isinstance(endpoint, str) else None
             if names is None:
+                endpoint_names[endpoint_key] = ()
                 continue
             label, aliases, node_type = names
             if node_type in _UNCHECKED_ENDPOINT_TYPES:
+                endpoint_names[endpoint_key] = ()
                 continue
+            endpoint_names[endpoint_key] = (label, *aliases)
             best = max(
                 (
                     _char_overlap_ratio(normalize_key(name), text)
@@ -843,6 +936,15 @@ def _drop_unsupported_edges(
                 default=1.0,
             )
             if best < _UNSUPPORTED_EDGE_OVERLAP_MIN:
+                return False
+        # Both endpoints pass the whole-text check above; a dense numbered list
+        # (>=2 items) additionally requires some single item to name both -- the
+        # whole-text check alone cannot tell "both diseases are somewhere in this
+        # list" from "this is the one disease both facts are actually about".
+        if endpoint_names["sourceNodeId"] and endpoint_names["targetNodeId"]:
+            if not _edge_endpoints_share_an_item(
+                endpoint_names["sourceNodeId"], endpoint_names["targetNodeId"], raw_text
+            ):
                 return False
         return True
 
