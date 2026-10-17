@@ -23,6 +23,16 @@ class AnswerUnavailable(ModelUnavailable):
     """The selected answer backend is unavailable or returned invalid grounded output."""
 
 
+class ModelRejected(ModelUnavailable):
+    """The model gateway rejected the request or its output as unusable; retrying as-is
+    cannot help."""
+
+
+class AnswerRejected(AnswerUnavailable):
+    """The model gateway rejected the answer request or its output as unusable; retrying
+    as-is cannot help."""
+
+
 class KnowledgeRuntimeUnavailable(Exception):
     """A provider-neutral knowledge repository or artifact runtime is unavailable."""
 

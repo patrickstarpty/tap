@@ -10,12 +10,20 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.mysql_checkpointer import MysqlGraphCheckpointer, graph_run
-from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
 from tap.modules.ai.ports.insights import InsightsAuthorizationChanged
 from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository, chat_turn
 from tap.modules.chat.application.conversations import ConversationService
 from tap.platform.db.schema import outbox
 from tests.integration.test_conversation_persistence import _input
+
+
+class _WorkerKilled(BaseException):
+    """Simulates the worker process dying mid-write (not a Python `Exception`):
+    `GenerationWorker` only classifies and defers `Exception`s, so a real crash --
+    unlike a transient `GraphCheckpointRetryable` the worker now catches and defers
+    with backoff bookkeeping -- must escape `run_once` uncaught and leave no
+    bookkeeping (in particular no future `next_attempt_at`) behind, exactly like a
+    killed process would."""
 
 
 class _NoOrdinaryAnswer:
@@ -73,7 +81,7 @@ async def test_insights_turn_reload_and_checkpoint_reclaim_preserve_result_and_a
             and any(channel == "result" for channel, _ in writes)
         ):
             interrupted = True
-            raise GraphCheckpointRetryable("connection lost after durable Insights result")
+            raise _WorkerKilled("worker killed after durable Insights result")
 
     monkeypatch.setattr(MysqlGraphCheckpointer, "aput_writes", interrupt)
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
@@ -99,7 +107,11 @@ async def test_insights_turn_reload_and_checkpoint_reclaim_preserve_result_and_a
         worker = GenerationWorker(
             conversations, _NoOrdinaryAnswer(), insights_explanation=explanation
         )
-        assert await worker.run_once(limit=1) == 1
+        if interrupt_after_checkpoint:
+            with pytest.raises(_WorkerKilled):
+                await worker.run_once(limit=1)
+        else:
+            assert await worker.run_once(limit=1) == 1
         if interrupt_after_checkpoint:
             pending = (await conversations.load(conversation_id)).turns[0]
             assert pending.state == "running"

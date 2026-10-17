@@ -5,14 +5,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import signal
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
-from opentelemetry.trace import Span
+from opentelemetry.trace import Span, Status, StatusCode
 
 from tap.contracts.problems import build_problem
 from tap.entrypoints.tapper_chat_turn import (
@@ -20,19 +23,13 @@ from tap.entrypoints.tapper_chat_turn import (
     _evidence_from_checkpoint,
     answer_steps,
 )
-from tap.modules.access.domain.policy import AuthorizationDenied
+from tap.entrypoints.tapper_turn_failures import classify_turn_failure, retry_delay
 from tap.modules.ai.application.chat_graph import (
     CHAT_GRAPH_VERSION,
     CHAT_STATE_SCHEMA_VERSION,
     ChatGraph,
 )
-from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable, GraphCheckpointUnavailable
-from tap.modules.ai.domain.models import ModelGatewayRejected, ModelGatewayUnavailable
-from tap.modules.ai.ports.insights import (
-    InsightsAuthorizationChanged,
-    InsightsBudgetExceeded,
-    InsightsQueryUnavailable,
-)
+from tap.modules.ai.ports.insights import InsightsAuthorizationChanged
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
@@ -62,37 +59,44 @@ class GenerationWorker:
     suggestion_refresh: Any | None = None
     lease_duration: timedelta = timedelta(seconds=60)
     renew_interval_seconds: float = 20.0
-    max_checkpoint_attempts: int = 3
+    max_turn_attempts: int = 3
+    rng: random.Random | None = None
 
     def __post_init__(self) -> None:
         if (
             not timedelta(0) < self.lease_duration <= timedelta(minutes=15)
             or not 0 < self.renew_interval_seconds < self.lease_duration.total_seconds()
-            or type(self.max_checkpoint_attempts) is not int
-            or not 1 <= self.max_checkpoint_attempts <= 100
+            or type(self.max_turn_attempts) is not int
+            or not 1 <= self.max_turn_attempts <= 10
         ):
-            raise ValueError("generation worker lease or checkpoint retry configuration is invalid")
+            raise ValueError("generation worker lease or turn retry configuration is invalid")
 
     async def run_once(self, *, limit: int) -> int:
         claimed = await self.conversations.repository.claim_queued(limit=limit)
         for conversation_id, turn in claimed:
             try:
-                with bind_trace(
-                    scope=getattr(self.conversations, "scope", None),
-                    turn_id=turn.turn_id,
-                    attempt=getattr(turn, "attempt", None),
-                    fresh_usage=True,
-                ):
-                    with span(
-                        "turn.execute",
-                        context=extract_traceparent(getattr(turn, "traceparent", None)),
-                    ) as turn_span:
-                        await self._process_claimed_turn(conversation_id, turn, turn_span)
+                try:
+                    with bind_trace(
+                        scope=getattr(self.conversations, "scope", None),
+                        turn_id=turn.turn_id,
+                        attempt=getattr(turn, "attempt", None),
+                        fresh_usage=True,
+                    ):
+                        with span(
+                            "turn.execute",
+                            context=extract_traceparent(getattr(turn, "traceparent", None)),
+                        ) as turn_span:
+                            await self._process_claimed_turn(conversation_id, turn, turn_span)
+                except Exception:
+                    _LOGGER.exception(
+                        "unhandled error processing turn %s", getattr(turn, "turn_id", None)
+                    )
             finally:
                 await flush_traces()
         return len(claimed)
 
     async def _process_claimed_turn(self, conversation_id: str, turn: Any, turn_span: Span) -> None:
+        attempt_started_at = time.time()
         insights_query_id = getattr(turn.input_snapshot.value, "insights_query_id", None)
         planner = getattr(self.knowledge, "answer_planner", None)
         renew = getattr(self.conversations.repository, "renew_processing_lease", None)
@@ -147,6 +151,7 @@ class GenerationWorker:
                 if self.checkpointer is None and checkpointer_factory is not None
                 else self.checkpointer or InMemorySaver()
             )
+            turn_retryable = lambda error: classify_turn_failure(error) == "transient"  # noqa: E731
             nodes = ChatTurnNodes(
                 conversation_id=conversation_id,
                 turn=turn,
@@ -157,17 +162,15 @@ class GenerationWorker:
                 insights_explanation=self.insights_explanation,
                 require_authorized=require_authorized,
                 turn_span=turn_span,
+                attempt_started_at=attempt_started_at,
+                retryable=turn_retryable,
             ).nodes
             graph = ChatGraph(
                 checkpointer=checkpointer,
                 nodes=nodes,
                 authorize=authorized,
-                propagate=(
-                    ConversationConflict,
-                    ConversationNotFound,
-                    GraphCheckpointRetryable,
-                    GraphCheckpointUnavailable,
-                ),
+                propagate=(ConversationConflict, ConversationNotFound),
+                retryable=turn_retryable,
             )
 
             async def run_graph():
@@ -257,67 +260,72 @@ class GenerationWorker:
                             type(exc).__name__,
                         )
             outcome = evidence.outcome
-        except InsightsAuthorizationChanged:
-            if insights_query_id is None:
-                raise
-            outcome = "failed"
+        except Exception as error:  # noqa: BLE001 - classified below
+            failure_class = classify_turn_failure(error)
+            turn_span.set_attribute("tap.failure.class", failure_class)
+            turn_span.set_attribute("tap.failure.error", type(error).__name__)
+            if failure_class == "ownership":
+                # Another worker, or the owning caller, proved it owns this Turn
+                # (lease loss, conflicting write, or a deleted Conversation); do
+                # not write anything.
+                outcome = "lost"
+                return
+            if failure_class == "deterministic" or turn.attempt >= self.max_turn_attempts:
+                outcome = "failed"
+                try:
+                    await fail_turn()
+                except (ConversationConflict, PermissionError):
+                    # Token and expiry checks prevent a real loser from failing the Turn.
+                    return
+                return
+            outcome = "deferred"
             try:
-                await fail_turn()
-            except (ConversationConflict, PermissionError):
-                return
-        except PermissionError:
-            # The graph fence proves another worker owns the Turn.
-            return
-        except ConversationNotFound:
-            # The owner deleted the Conversation; its Turn must not be completed.
-            return
-        except ConversationConflict:
-            if turn.attempt < self.max_checkpoint_attempts:
-                return
-            outcome = "failed"
-            try:
-                await fail_turn()
-            except (ConversationConflict, PermissionError):
-                # Token and expiry checks prevent a real loser from failing the Turn.
-                return
-        except GraphCheckpointRetryable:
-            if turn.attempt < self.max_checkpoint_attempts:
-                return
-            outcome = "failed"
-            try:
-                await fail_turn()
-            except (ConversationConflict, PermissionError):
-                return
-        except GraphCheckpointUnavailable:
-            outcome = "failed"
-            try:
-                await fail_turn()
-            except (ConversationConflict, PermissionError):
-                return
-        except AuthorizationDenied:
-            outcome = "failed"
-            try:
-                await fail_turn()
-            except (ConversationConflict, PermissionError):
-                # Cancellation or lease reclaim won the terminal-state race.
-                return
-        except (
-            InsightsBudgetExceeded,
-            InsightsQueryUnavailable,
-            ModelGatewayRejected,
-            ModelGatewayUnavailable,
-            RuntimeError,
-            TimeoutError,
-        ):
-            if insights_query_id is None:
-                raise
-            outcome = "failed"
-            try:
-                await fail_turn()
-            except (ConversationConflict, PermissionError):
+                await self.conversations.repository.defer_turn(
+                    conversation_id,
+                    turn.turn_id,
+                    turn.lease_token,
+                    next_attempt_at=datetime.now(UTC) + retry_delay(turn.attempt, rng=self.rng),
+                    failure=f"transient:{type(error).__name__}",
+                )
+            except ConversationConflict:
+                # Another worker proved it owns this Turn before the defer
+                # committed; do not report this as a deferred attempt.
+                outcome = "lost"
                 return
         finally:
             turn_span.set_attribute("tap.outcome", outcome)
+
+
+async def _wait_or_stop(stop: asyncio.Event, timeout: float) -> None:
+    try:
+        await asyncio.wait_for(stop.wait(), timeout=timeout)
+    except TimeoutError:
+        pass
+
+
+async def run_worker_loop(
+    worker: GenerationWorker,
+    stop: asyncio.Event,
+    *,
+    batch_size: int,
+    poll_seconds: float,
+    wait: Callable[[asyncio.Event, float], Awaitable[None]] = _wait_or_stop,
+) -> None:
+    backoff = 1.0
+    while not stop.is_set():
+        try:
+            processed = await worker.run_once(limit=batch_size)
+        except Exception as error:  # noqa: BLE001 - keep the loop alive across run errors
+            _LOGGER.exception("generation worker run_once failed")
+            with span("worker.loop_error", {"tap.error": type(error).__name__}) as loop_span:
+                loop_span.set_status(Status(StatusCode.ERROR, type(error).__name__))
+                loop_span.record_exception(error)
+            await wait(stop, backoff)
+            backoff = min(30.0, backoff * 2)
+            continue
+        backoff = 1.0
+        if processed == 0:
+            await wait(stop, poll_seconds)
 
 
 async def main() -> None:
@@ -337,6 +345,7 @@ async def main() -> None:
         knowledge,
         insights_explanation=runtime.http_services.insights_explanation,
         suggestion_refresh=runtime.http_services.prompt_suggestion_store,
+        max_turn_attempts=settings.turn_max_attempts,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -346,13 +355,12 @@ async def main() -> None:
         except NotImplementedError:
             pass
     try:
-        while not stop.is_set():
-            processed = await worker.run_once(limit=settings.job_batch_size)
-            if processed == 0:
-                try:
-                    await asyncio.wait_for(stop.wait(), timeout=settings.poll_seconds)
-                except TimeoutError:
-                    pass
+        await run_worker_loop(
+            worker,
+            stop,
+            batch_size=settings.job_batch_size,
+            poll_seconds=settings.poll_seconds,
+        )
     finally:
         await runtime.aclose()
 

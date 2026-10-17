@@ -12,6 +12,7 @@ implements `answer`/`answer_conversation` into the resumable
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 from collections.abc import Awaitable, Callable
@@ -260,6 +261,8 @@ class ChatTurnNodes:
         insights_explanation: Any | None,
         require_authorized: Callable[[], Awaitable[None]],
         turn_span: Any | None = None,
+        attempt_started_at: float | None = None,
+        retryable: Callable[[BaseException], bool] = lambda _error: False,
     ) -> None:
         self._conversation_id = conversation_id
         self._turn = turn
@@ -269,6 +272,15 @@ class ChatTurnNodes:
         self._knowledge = knowledge
         self._insights_explanation = insights_explanation
         self._require_authorized = require_authorized
+        self._attempt_started_at = attempt_started_at
+        # Same predicate the worker passes to `ChatGraph(retryable=...)`
+        # (injected here rather than imported, so this `tap.entrypoints`
+        # module does not reach back into `tapper_turn_failures` itself --
+        # keeps the predicate a single worker-owned policy). `finalize` uses
+        # it to let a transient fault from the knowledge finalize step (or
+        # the post-graph reauthorization recheck) escape `TurnProcessor`
+        # instead of being swallowed into a permanent `turn.failed`.
+        self._retryable = retryable
         # `ChatGraph` wraps every node body in its own `graph.node.<name>` span
         # (see `chat_graph.py`'s `_wrap`), so `get_current_span()` would no
         # longer resolve to the outer `turn.execute` span the old single
@@ -295,7 +307,15 @@ class ChatTurnNodes:
         raw = state.get("answer_plan")
         if raw is None:
             return None
-        return AnswerPlan.from_dict(raw)
+        plan = AnswerPlan.from_dict(raw)
+        if state.get("plan_attempt") != self._turn.attempt and self._attempt_started_at is not None:
+            return dataclasses.replace(
+                plan,
+                deadline_at=max(
+                    plan.deadline_at, self._attempt_started_at + plan.remaining_seconds
+                ),
+            )
+        return plan
 
     async def guard_in(self, _state: ChatGraphState) -> dict[str, object]:
         if self._insights_query_id is not None:
@@ -312,7 +332,12 @@ class ChatTurnNodes:
             else tuple(item.input_snapshot for item in (await load(self._conversation_id)).turns)
         )
         plan = await self._planner.plan(planning_input(self._turn.input_snapshot, history=history))
-        return {"route": "chat", "reasoning_mode": "direct", "answer_plan": plan.to_dict()}
+        return {
+            "route": "chat",
+            "reasoning_mode": "direct",
+            "answer_plan": plan.to_dict(),
+            "plan_attempt": self._turn.attempt,
+        }
 
     async def seed_search(self, state: ChatGraphState) -> dict[str, object]:
         active_plan = self._active_plan(state)
@@ -535,7 +560,9 @@ class ChatTurnNodes:
                 ),
             )
 
-        turn_processor = TurnProcessor(provider=provider, complete=lambda _evidence: None)
+        turn_processor = TurnProcessor(
+            provider=provider, complete=lambda _evidence: None, reraise=self._retryable
+        )
         evidence = await turn_processor.process(self._turn.input_snapshot)
         graph_context_payload = (
             None if turn_processor.last_result is None else turn_processor.last_result.graph_context

@@ -56,6 +56,14 @@ from tests.integration.test_knowledge_publication import (
 )
 
 
+class _WorkerKilled(BaseException):
+    """Simulates the worker process dying mid-write (not a Python `Exception`):
+    `GenerationWorker` only classifies and defers `Exception`s, so a real crash --
+    unlike a transient `GraphCheckpointRetryable` the worker now catches and defers
+    with backoff bookkeeping -- must escape `run_once` uncaught and leave no
+    bookkeeping behind, exactly like a killed process would."""
+
+
 def _graph(
     *,
     checkpointer: InMemorySaver,
@@ -564,7 +572,7 @@ async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_p
         await original_aput_writes(self, config, writes, task_id, task_path)
         if not failed and any(channel == "result" for channel, _value in writes):
             failed = True
-            raise GraphCheckpointRetryable("connection lost after durable task write")
+            raise _WorkerKilled("worker killed after durable task write")
 
     monkeypatch.setattr(MysqlGraphCheckpointer, "aput_writes", fail_once_after_durable_write)
 
@@ -592,7 +600,8 @@ async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_p
         knowledge = Knowledge()
         worker = GenerationWorker(conversations, knowledge)
 
-        assert await worker.run_once(limit=1) == 1
+        with pytest.raises(_WorkerKilled):
+            await worker.run_once(limit=1)
         first = (await conversations.load("chat-takeover")).turns[0]
         assert first.state == "running"
         assert first.attempt == 1
@@ -790,10 +799,10 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
 
         async def crash_before_settle(*_args, **_kwargs):
             conversations.complete_evidence = settle
-            raise RuntimeError("worker stopped after result checkpoint")
+            raise _WorkerKilled("worker stopped after result checkpoint")
 
         conversations.complete_evidence = crash_before_settle
-        with pytest.raises(RuntimeError, match="worker stopped"):
+        with pytest.raises(_WorkerKilled, match="worker stopped"):
             await worker.run_once(limit=1)
         first = (await conversations.load("chat-publication-recovery")).turns[0]
         assert first.state == "running"
@@ -1320,14 +1329,15 @@ async def test_legacy_checkpoint_restart_survives_a_crash_right_after_discard(
             # Every checkpoint write after discard fails -- simulating the worker
             # being killed (or losing its connection) before any new checkpoint for
             # the restarted run lands, not just the first one.
-            raise GraphCheckpointRetryable("connection lost right after discard")
+            raise _WorkerKilled("worker killed right after discard")
 
         monkeypatch.setattr(MysqlGraphCheckpointer, "aput", fail_every_aput_after_discard)
 
         # First run_once: reclaims the legacy Turn, discards its stale checkpoint, and
         # then every checkpoint write for the fresh `tapper-chat-v2` run fails -- no
         # new checkpoint ever lands.
-        assert await worker.run_once(limit=1) == 1
+        with pytest.raises(_WorkerKilled):
+            await worker.run_once(limit=1)
         stranded = (await conversations.load("chat-legacy-restart")).turns[0]
         assert stranded.state == "running"
         assert knowledge.calls == 0

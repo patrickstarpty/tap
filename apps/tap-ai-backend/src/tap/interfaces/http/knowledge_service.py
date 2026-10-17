@@ -44,6 +44,10 @@ from tap.modules.knowledge.domain.models import (
 from tap.modules.knowledge.domain.sources import SourceCommand
 
 
+class AnswerBudgetExhausted(TimeoutError):
+    """The answer plan's persisted deadline passed before this phase could run."""
+
+
 class DocumentOperations(Protocol):
     @property
     def scope(self) -> ProjectScopeContext: ...
@@ -230,8 +234,9 @@ class KnowledgeHttpService:
     @staticmethod
     def _plan_deadline(answer_plan):
         """One shared deadline guard used by `answer_conversation` and every
-        resumable phase below: raises `TimeoutError` immediately if the plan's
-        persisted deadline has already passed (before any work, including
+        resumable phase below: raises `AnswerBudgetExhausted` (a `TimeoutError`
+        subclass) immediately if the plan's persisted deadline has already
+        passed (before any work, including
         `_authorized_frozen_context`), else returns an `asyncio.timeout`
         context scoped to the time left. `answer_plan.deadline_at` is an
         absolute timestamp, so recomputing it fresh at the start of every
@@ -240,7 +245,7 @@ class KnowledgeHttpService:
         the remaining time, never resets it."""
         remaining = None if answer_plan is None else answer_plan.deadline_at - time.time()
         if remaining is not None and remaining <= 0:
-            raise TimeoutError("persisted answer budget exhausted")
+            raise AnswerBudgetExhausted("persisted answer budget exhausted")
         return asyncio.timeout(remaining)
 
     async def authorize_planning(self, snapshot) -> None:

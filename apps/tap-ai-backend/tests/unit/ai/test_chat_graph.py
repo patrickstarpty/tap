@@ -233,6 +233,113 @@ async def test_failed_model_node_resumes_without_repeating_seed_search() -> None
 
 
 @pytest.mark.asyncio
+async def test_retryable_node_error_propagates_and_resume_skips_completed_nodes() -> None:
+    calls: list[str] = []
+    failed = False
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("guard_in")
+        return {}
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("seed_search")
+        return {}
+
+    async def model(_state: ChatGraphState) -> dict[str, object]:
+        nonlocal failed
+        calls.append("model")
+        if not failed:
+            failed = True
+            raise ConnectionError("connection lost")
+        return {}
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("verify")
+        return {}
+
+    async def finalize(state: ChatGraphState) -> dict[str, object]:
+        calls.append("finalize")
+        assert state.get("failure") is None
+        return {"result": {"answer": "ok"}}
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run on the chat route")
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=_always_authorized(),
+        retryable=lambda exc: isinstance(exc, ConnectionError),
+    )
+
+    with pytest.raises(ConnectionError):
+        await graph.start(run_id="run-retryable", payload={}, route="chat")
+
+    await graph.resume(run_id="run-retryable")
+
+    assert calls.count("seed_search") == 1
+    assert calls.count("model") == 2
+    assert calls.count("finalize") == 1
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_node_error_still_routes_to_finalize() -> None:
+    calls: list[str] = []
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("guard_in")
+        return {}
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("seed_search")
+        return {}
+
+    async def model(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("model")
+        raise ConnectionError("connection lost")
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("verify must not run after a model failure")
+
+    captured: dict[str, object] = {}
+
+    async def finalize(state: ChatGraphState) -> dict[str, object]:
+        calls.append("finalize")
+        captured["failure"] = state.get("failure")
+        return {"result": {"answer": "degraded"}}
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run on the chat route")
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=_always_authorized(),
+        retryable=lambda _exc: False,
+    )
+
+    state = await graph.start(run_id="run-non-retryable", payload={}, route="chat")
+
+    assert calls == ["guard_in", "seed_search", "model", "finalize"]
+    assert captured["failure"] == {"node": "model", "error": "ConnectionError"}
+    assert state["failure"] == {"node": "model", "error": "ConnectionError"}
+
+
+@pytest.mark.asyncio
 async def test_resume_rejects_other_graph_version() -> None:
     from langchain_core.runnables import RunnableLambda
     from langgraph.graph import END, START, StateGraph

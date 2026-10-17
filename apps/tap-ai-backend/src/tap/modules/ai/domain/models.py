@@ -138,8 +138,11 @@ class ModelOutputTruncated(ModelGatewayUnavailable):
     """The model's output did not fit: it stopped at the output token budget, its
     structured output ends mid-document, or it exceeds a schema array bound.
 
-    Still reported as ``model-unavailable``; callers that can shrink their input
-    (e.g. graph extraction splitting a batch) catch this subclass.
+    Reported as ``model-unavailable`` here; callers that can shrink their
+    input (e.g. graph extraction splitting a batch) catch this subclass. The
+    Tapper knowledge adapter (``modules/knowledge/adapters/litellm.py``)
+    instead reports it as ``model-rejected`` (``AnswerRejected``), since
+    retrying the same oversized request cannot help.
     """
 
 

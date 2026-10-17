@@ -193,6 +193,18 @@ def test_graph_batch_settings_defaults_and_bounds() -> None:
             TapperSettings.from_mapping(S3_SETTINGS | {name: value})
 
 
+def test_turn_max_attempts_defaults_and_bounds() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.turn_max_attempts == 3
+
+    for name, value in (
+        ("TAPPER_TURN_MAX_ATTEMPTS", "0"),
+        ("TAPPER_TURN_MAX_ATTEMPTS", "11"),
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(S3_SETTINGS | {name: value})
+
+
 def test_graph_extraction_budget_settings_are_separate_from_the_model_timeout() -> None:
     settings = TapperSettings.from_mapping(S3_SETTINGS)
 
