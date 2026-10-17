@@ -379,10 +379,13 @@ function spliceIntoText(
       offset <= child.position.end.offset
     ) {
       const { start, end } = child.position;
-      if (offset === end.offset || child.type === "inlineCode") {
-        children.splice(index + 1, 0, badge);
-      } else if (offset === start.offset) {
+      if (offset === start.offset && offset !== end.offset) {
+        // A claim ending exactly where this leaf begins (e.g. right after a
+        // closing `**` with a code span following): the badge belongs before
+        // it, never after the next construct.
         children.splice(index, 0, badge);
+      } else if (offset === end.offset || child.type === "inlineCode") {
+        children.splice(index + 1, 0, badge);
       } else if (typeof child.value === "string") {
         const split = textValueIndex(source, start.offset, offset, child.value);
         children.splice(
@@ -450,6 +453,16 @@ function spliceIntoContainingBlock(
     if (child.children !== undefined && offset <= child.position.end.offset) {
       spliceIntoContainingBlock(child, offset, badge);
       return;
+    }
+    if (
+      child.type === "break" &&
+      offset > child.position.start.offset &&
+      offset < child.position.end.offset
+    ) {
+      // Strictly inside a hard break (a claim ending at its `\`): keep the
+      // badge on the line the claim ends on, before the break.
+      insertAt = index;
+      break;
     }
     insertAt = index + 1;
   }

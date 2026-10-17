@@ -335,7 +335,11 @@ describe("GroundedAnswer citation badges at closing delimiters (round 4)", () =>
   it.each([
     ["strong", "结论是 **重要**", "结论是 **重要**"],
     ["emphasis", "结论是 *重要*", "结论是 *重要*"],
-    ["strikethrough-like text", "结论是 ~~过时~~", "结论是 ~~过时~~"],
+    [
+      "literal tildes (plain text without remark-gfm)",
+      "结论是 ~~过时~~",
+      "结论是 ~~过时~~",
+    ],
     [
       "a link",
       "详见 [退款政策](https://x.example)",
@@ -380,11 +384,18 @@ describe("GroundedAnswer citation badges at closing delimiters (round 4)", () =>
     expect(
       screen.getByRole("button", { name: "打开来源引用 1" }),
     ).toBeVisible();
-    expect(container.querySelector("pre")?.textContent).toBe("make test\n");
+    const pre = container.querySelector(".tapper-markdown pre");
+    expect(pre?.textContent).toBe("make test\n");
+    const badge = container.querySelector(".tapper-claim-citations");
+    expect(badge?.previousElementSibling).toBe(pre);
+    expect(badge?.closest("pre")).toBeNull();
+    expect(
+      container.querySelectorAll(".tapper-markdown p")[1],
+    ).toHaveTextContent("其他段落。");
   });
 
-  it("keeps the badge for a claim ending in a hard break", () => {
-    render(
+  it("keeps the badge for a claim ending in a hard break on the first line", () => {
+    const { container } = render(
       <GroundedAnswer
         response={claimEndingAt("第一行\\\n第二行", "第一行\\")}
         onOpenCitation={() => undefined}
@@ -394,7 +405,35 @@ describe("GroundedAnswer citation badges at closing delimiters (round 4)", () =>
     expect(
       screen.getByRole("button", { name: "打开来源引用 1" }),
     ).toBeVisible();
+    const badge = container.querySelector(".tapper-claim-citations");
+    // The badge stays on the claim's own line: before the break, not after
+    // it on the next line (`br` itself is outside the sanitizer allowlist,
+    // so only the break's line-ending text remains).
+    expect(badge?.previousSibling?.textContent).toBe("第一行");
+    expect(badge?.nextSibling?.textContent).toBe("\n");
+    expect(container.querySelector(".tapper-markdown p")?.textContent).toBe(
+      "第一行[1]\n第二行",
+    );
   });
+
+  it.each([
+    ["strong", "结论 **重要**`make test` 其余。", "结论 **重要**", "STRONG"],
+    ["emphasis", "结论 *甲*`b`。", "结论 *甲*", "EM"],
+  ] as const)(
+    "a claim ending in %s right before inline code puts the badge before the code",
+    (_name, answer, claimText, previousTag) => {
+      const { container } = render(
+        <GroundedAnswer
+          response={claimEndingAt(answer, claimText)}
+          onOpenCitation={() => undefined}
+        />,
+      );
+
+      const badge = container.querySelector(".tapper-claim-citations");
+      expect(badge?.previousElementSibling?.tagName).toBe(previousTag);
+      expect(badge?.nextElementSibling?.tagName).toBe("CODE");
+    },
+  );
 });
 
 describe("GroundedAnswer citation badges when text value differs from source (round 4)", () => {
@@ -402,15 +441,69 @@ describe("GroundedAnswer citation badges when text value differs from source (ro
   // entities, stripped line prefixes); the badge must still land right after
   // the claim's own last character.
   it.each([
-    ["a backslash escape", "价格 \\*不含税\\* 为 10 元。", "p"],
-    ["a character entity", "A &lt; B &amp; C 成立。", "p"],
-    ["a numeric entity", "符号 &#169; 与 &#x1F600; 成立。", "p"],
-    ["a multi-line blockquote", "> 第一行内容\n> 第二句成立。", "blockquote p"],
-    ["a list item continuation", "- 第一行内容\n  第二句成立。", "li"],
-    ["an indented continuation line", "第一行内容\n   第二句成立。", "p"],
+    [
+      "a backslash escape",
+      "价格 \\*不含税\\* 为 10 元。",
+      "p",
+      "价格 *不含税* 为 10 元。[1]其余说明。",
+    ],
+    [
+      "a character entity",
+      "A &lt; B &amp; C 成立。",
+      "p",
+      "A < B & C 成立。[1]其余说明。",
+    ],
+    [
+      "a numeric entity",
+      "符号 &#169; 与 &#x1F600; 成立。",
+      "p",
+      "符号 \u00a9 与 \u{1F600} 成立。[1]其余说明。",
+    ],
+    [
+      "a multi-line blockquote",
+      "> 第一行内容\n> 第二句成立。",
+      "blockquote p",
+      "第一行内容\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "a list item continuation",
+      "- 第一行内容\n  第二句成立。",
+      "li",
+      "第一行内容\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "an indented continuation line",
+      "第一行内容\n   第二句成立。",
+      "p",
+      "第一行内容\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "CRLF line endings",
+      "第一行内容\r\n第二句成立。",
+      "p",
+      "第一行内容\r\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "a tab after the blockquote marker",
+      ">\t第一行内容\n>\t第二句成立。",
+      "blockquote p",
+      "第一行内容\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "a tab-indented list continuation",
+      "- 第一行内容\n\t第二句成立。",
+      "li",
+      "第一行内容\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "a nested list inside a blockquote",
+      "> - 外层\n>   - 内层第一行\n>     第二句成立。",
+      "blockquote li li",
+      "内层第一行\n第二句成立。[1]其余说明。",
+    ],
   ] as const)(
     "a claim with %s places its badge right after the claim",
-    (_name, claimText, selector) => {
+    (_name, claimText, selector, expectedText) => {
       const { container } = render(
         <GroundedAnswer
           response={claimEndingAt(`${claimText}其余说明。`, claimText)}
@@ -419,9 +512,7 @@ describe("GroundedAnswer citation badges when text value differs from source (ro
       );
 
       const block = container.querySelector(`.tapper-markdown ${selector}`);
-      expect(block?.textContent).toMatch(
-        /成立。\[1\]其余说明。$|元。\[1\]其余说明。$/u,
-      );
+      expect(block?.textContent).toBe(expectedText);
     },
   );
 });
