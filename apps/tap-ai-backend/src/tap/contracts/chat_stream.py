@@ -237,9 +237,21 @@ class StageCompletedEvent(StreamContractModel):
     payload: StageCompletedPayload
 
 
+class RetrievalHitsLabelView(StreamContractModel):
+    """One evidence/relation label's display mapping, so the client can
+    render an inline `[S3]`/`[R1]` marker in a streaming draft as a badge
+    showing its source before the terminal answer (and its own `citation`
+    payloads) ever arrive (spec SS2.3)."""
+
+    label: str = Field(min_length=1, max_length=4)
+    title: str = Field(min_length=1)
+    location: str | None = None
+
+
 class RetrievalHitsReadyPayload(StreamContractModel):
     trace_id: str = Field(min_length=1)
     authorized_hit_count: int = Field(ge=0)
+    labels: list[RetrievalHitsLabelView] | None = None
 
 
 class RetrievalHitsReadyEvent(StreamContractModel):

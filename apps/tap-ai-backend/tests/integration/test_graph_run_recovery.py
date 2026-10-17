@@ -878,7 +878,10 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
                 .scalars()
                 .all()
             )
-        assert ("answer.delta" in events) == (publication_state == "valid")
+        # PR 3: the model's answer is streamed through Redis drafts, never
+        # as an `answer.delta` MySQL event; `graph.context_ready` is the
+        # equivalent "generation stream events were committed" marker.
+        assert ("graph.context_ready" in events) == (publication_state == "valid")
         assert ("turn.completed" in events) == (publication_state == "valid")
     finally:
         await engine.dispose()

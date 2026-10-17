@@ -250,6 +250,7 @@ class AnswerService:
         model_alias: str | None = None,
         answer_execution=None,
         authorize=None,
+        on_text=None,
     ):
         publication = await self._authorize_frozen_selection(revisions, policy)
         knowledge_generate = getattr(self._knowledge, "generate_frozen", None)
@@ -262,6 +263,7 @@ class AnswerService:
             model_alias=model_alias,
             answer_execution=answer_execution,
             authorize=self._reauthorize(publication, authorize),
+            **({"on_text": on_text} if on_text is not None else {}),
         )
         await self._revalidate_publication(publication)
         return generation

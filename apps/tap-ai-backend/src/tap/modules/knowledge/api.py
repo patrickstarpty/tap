@@ -224,6 +224,7 @@ class KnowledgeAPI:
         model_alias=None,
         answer_execution=None,
         authorize=None,
+        on_text=None,
     ):
         import asyncio
 
@@ -237,6 +238,7 @@ class KnowledgeAPI:
                 governance=governance,
                 model_alias=model_alias,
                 authorize=authorize,
+                on_text=on_text,
             )
 
     async def verify_frozen(

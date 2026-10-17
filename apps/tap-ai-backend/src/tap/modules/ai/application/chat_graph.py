@@ -42,6 +42,10 @@ class ChatGraphState(TypedDict, total=False):
     result: dict[str, object]
     budget: dict[str, int | float]
     budget_used: dict[str, int]
+    # PR 3: stream event types already committed early (via `conversations.
+    # emit`) by `seed_search`/`verify`, so `finalize`'s own `streamEvents`
+    # batch never repeats them.
+    committed_stream_events: list[str]
 
 
 GraphNode = Callable[[ChatGraphState], Awaitable[dict[str, Any]]]

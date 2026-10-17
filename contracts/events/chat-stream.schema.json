@@ -2247,6 +2247,41 @@
       "title": "RetrievalAnswerResponse",
       "type": "object"
     },
+    "RetrievalHitsLabelView": {
+      "additionalProperties": false,
+      "description": "One evidence/relation label's display mapping, so the client can\nrender an inline `[S3]`/`[R1]` marker in a streaming draft as a badge\nshowing its source before the terminal answer (and its own `citation`\npayloads) ever arrive (spec SS2.3).",
+      "properties": {
+        "label": {
+          "maxLength": 4,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Location"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "title"
+      ],
+      "title": "RetrievalHitsLabelView",
+      "type": "object"
+    },
     "RetrievalHitsReadyEvent": {
       "additionalProperties": false,
       "properties": {
@@ -2273,6 +2308,21 @@
           "minimum": 0,
           "title": "Authorizedhitcount",
           "type": "integer"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/RetrievalHitsLabelView"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labels"
         },
         "traceId": {
           "minLength": 1,

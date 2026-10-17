@@ -715,3 +715,112 @@ async def test_final_route_redaction_failure_propagates() -> None:
 
     with pytest.raises(RedactionUnavailable):
         await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
+
+
+@pytest.mark.asyncio
+async def test_prepared_step_carries_retrieval_hits_labels_for_evidence_and_relations() -> None:
+    """PR 3: a `"prepared"` step must carry a `retrieval_hits` payload the
+    `seed_search` graph node can emit as `retrieval.hits_ready` immediately,
+    before `generate_conversation_answer` ever runs -- one label per
+    `S`-evidence chunk (title, location from its anchor) and one per
+    `R`-relation (title built from its subject/relation/object), built
+    from the evidence/relation context while it is still at hand (before
+    `encode_bundle` turns it opaque)."""
+    from tap.modules.knowledge.application.relation_analysis import (
+        RelationContext,
+        RelationEvidence,
+        RelationSupport,
+    )
+    from tap.modules.knowledge.domain.models import (
+        ContentRole,
+        DocumentAnchor,
+        Evidence,
+        IndexRevision,
+        RelationContextStatus,
+        RevisionKind,
+        SourceFamily,
+        SourceRevisionRef,
+    )
+
+    source_hash = "sha256:" + "a" * 64
+    chunk_hash = "sha256:" + "b" * 64
+    doc_evidence = Evidence(
+        family=SourceFamily.DOC,
+        chunk_id="h_" + "1" * 64,
+        logical_chunk_id="h_" + "2" * 64,
+        title="理赔手册.pdf",
+        content="理赔需在 30 日内提交。",
+        source=SourceRevisionRef(
+            source_id="doc-a",
+            source_type="document",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision="rev-1",
+            source_content_hash=source_hash,
+            anchor=DocumentAnchor(heading_path=("理赔流程", "提交材料"), page=3),
+        ),
+        chunk_content_hash=chunk_hash,
+        content_role=ContentRole.SOURCE,
+        citation_id="citation-1",
+        evidence_label="S1",
+        index_revision=IndexRevision(
+            physical_index="kb-doc-v1", schema_version="search-schema-v1", corpus_version="v1"
+        ),
+        embedding_model_version="tap-embed-fixed-v1",
+        acl_decision_id="decision-1",
+        score=0.9,
+    )
+    relation = RelationContext(
+        status=RelationContextStatus.APPLIED,
+        graph_version="7",
+        relations=(
+            RelationEvidence(
+                label="R1",
+                edge_id="edge-1",
+                subject_node_id="node-a",
+                subject_label="核保流程",
+                subject_aliases=(),
+                object_node_id="node-b",
+                object_label="健康告知",
+                object_aliases=(),
+                relation_type="requires",
+                relation_label="需要",
+                origin="project",
+                confidence=0.8,
+                support=(
+                    RelationSupport(
+                        chunk_id="h_" + "3" * 64,
+                        source_revision_id="rev-1",
+                        document_revision_id="rev-1",
+                        content_digest=chunk_hash,
+                        anchor={},
+                        evidence_label="S1",
+                    ),
+                ),
+                on_path=True,
+            ),
+        ),
+    )
+
+    class RelationAndEvidencePhaseAnswers(PhaseAnswers):
+        async def prepare_frozen(self, request, revisions, policy, **kwargs):
+            bundle = await super().prepare_frozen(request, revisions, policy, **kwargs)
+            return replace(
+                bundle,
+                response=replace(bundle.response, evidence=(doc_evidence,)),
+                relation=relation,
+            )
+
+    frozen, plan = await _retrieve_route()
+    request = RetrievalAnswerRequest(query=frozen.message)
+    service = _service(RelationAndEvidencePhaseAnswers())
+
+    step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+
+    assert step["kind"] == "prepared"
+    hits = step["retrieval_hits"]
+    assert hits["traceId"] == "trace-a"
+    assert hits["authorizedHitCount"] == 1
+    assert hits["labels"] == [
+        {"label": "S1", "title": "理赔手册.pdf", "location": "理赔流程 / 提交材料"},
+        {"label": "R1", "title": "核保流程 需要 健康告知", "location": None},
+    ]

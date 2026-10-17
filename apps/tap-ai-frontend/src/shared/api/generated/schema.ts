@@ -4209,6 +4209,21 @@ export interface components {
              */
             title?: string | null;
         };
+        /**
+         * RetrievalHitsLabelView
+         * @description One evidence/relation label's display mapping, so the client can
+         *     render an inline `[S3]`/`[R1]` marker in a streaming draft as a badge
+         *     showing its source before the terminal answer (and its own `citation`
+         *     payloads) ever arrive (spec SS2.3).
+         */
+        RetrievalHitsLabelView: {
+            /** Label */
+            label: string;
+            /** Location */
+            location?: string | null;
+            /** Title */
+            title: string;
+        };
         /** RetrievalHitsReadyEvent */
         RetrievalHitsReadyEvent: {
             payload: components["schemas"]["RetrievalHitsReadyPayload"];
@@ -4222,6 +4237,8 @@ export interface components {
         RetrievalHitsReadyPayload: {
             /** Authorizedhitcount */
             authorizedHitCount: number;
+            /** Labels */
+            labels?: components["schemas"]["RetrievalHitsLabelView"][] | null;
             /** Traceid */
             traceId: string;
         };

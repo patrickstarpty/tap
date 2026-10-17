@@ -7,7 +7,7 @@ import hashlib
 import json
 import math
 import unicodedata
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Protocol, cast
@@ -642,6 +642,7 @@ class AuthorizedRetrieval:
         governance=None,
         model_alias: str | None = None,
         authorize=None,
+        on_text: Callable[[str], Awaitable[None]] | None = None,
     ) -> AnswerGeneration:
         """Rechecks current revision/policy and authorizes before generating.
 
@@ -650,7 +651,10 @@ class AuthorizedRetrieval:
         authority is still fresh, so it rechecks here. The single-shot
         `answer()` composition calls `_generate_from_bundle` directly instead,
         since `prepare_answer` already performed this recheck immediately
-        before producing the bundle."""
+        before producing the bundle. `on_text` (PR 3) is the `model` graph
+        node's draft-streaming callback, forwarded straight to the model
+        gateway's streaming `answer()`; it is never used by the single-shot
+        path."""
         if self._publication_authority is not None and bundle.publication is not None:
             await self._publication_authority.revalidate(bundle.publication)
         current = policy if frozen_policy else await self._verify_current(policy)
@@ -658,7 +662,7 @@ class AuthorizedRetrieval:
         if authorize is not None:
             await authorize()
         return await self._generate_from_bundle(
-            bundle, governance=governance, model_alias=model_alias
+            bundle, governance=governance, model_alias=model_alias, on_text=on_text
         )
 
     async def _generate_from_bundle(
@@ -667,6 +671,7 @@ class AuthorizedRetrieval:
         *,
         governance=None,
         model_alias: str | None = None,
+        on_text: Callable[[str], Awaitable[None]] | None = None,
     ) -> AnswerGeneration:
         use_extended_answer = (
             governance is not None
@@ -674,6 +679,7 @@ class AuthorizedRetrieval:
             or model_alias is not None
             or bundle.answer_input is not None
             or bundle.relation is not None
+            or on_text is not None
         )
         generation = (
             await cast(Any, self._answers).answer(
@@ -688,6 +694,7 @@ class AuthorizedRetrieval:
                 **(
                     {"answer_input": bundle.answer_input} if bundle.answer_input is not None else {}
                 ),
+                **({"on_text": on_text} if on_text is not None else {}),
             )
             if use_extended_answer
             else await self._answers.answer(

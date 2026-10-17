@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, Protocol, TypedDict
@@ -199,6 +199,12 @@ class ConversationAnswerStep(TypedDict, total=False):
     bundle: dict[str, object]
     generation: dict[str, object]
     response: dict[str, object]
+    # PR 3: present only on a `"prepared"` step, built from the evidence/
+    # relation context `prepare_conversation_answer` just retrieved (before
+    # it is encoded into `bundle`) -- the `retrieval.hits_ready` payload the
+    # `seed_search` graph node emits immediately, without itself needing to
+    # decode the opaque `bundle`.
+    retrieval_hits: dict[str, object]
 
 
 class ConversationAnswerSteps(Protocol):
@@ -217,6 +223,7 @@ class ConversationAnswerSteps(Protocol):
         *,
         answer_plan=None,
         authorize=None,
+        on_text: Callable[[str], Awaitable[None]] | None = None,
     ) -> ConversationAnswerStep: ...
 
     async def verify_conversation_answer(

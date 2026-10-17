@@ -63,6 +63,12 @@ class GenerationWorker:
     max_turn_attempts: int = 3
     rng: random.Random | None = None
     turn_budget: TurnBudget = TurnBudget()
+    # PR 3: the shared Redis draft stream (`None` degrades the `model` node's
+    # `DraftBatcher` to accumulate-only) and the conversation-path
+    # personal-data (v2) egress redactor every draft chunk is sent through --
+    # the same redactor `KnowledgeHttpService` uses for answer finalization.
+    drafts: Any | None = None
+    redact: Callable[[str], Awaitable[str]] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -180,6 +186,8 @@ class GenerationWorker:
                 turn_span=turn_span,
                 attempt_started_at=attempt_started_at,
                 retryable=turn_retryable,
+                drafts=self.drafts,
+                redact=self.redact,
             ).nodes
             graph = ChatGraph(
                 checkpointer=checkpointer,
@@ -341,7 +349,11 @@ async def run_worker_loop(
 
 
 async def main() -> None:
-    from tap.entrypoints.tapper_runtime import TapperSettings, create_api_runtime
+    from tap.entrypoints.tapper_runtime import (
+        TapperSettings,
+        _redact_chat_egress,
+        create_api_runtime,
+    )
     from tap.entrypoints.tracing_setup import start_tracing
 
     settings = TapperSettings.from_mapping(dict(os.environ))
@@ -359,6 +371,10 @@ async def main() -> None:
         suggestion_refresh=runtime.http_services.prompt_suggestion_store,
         max_turn_attempts=settings.turn_max_attempts,
         turn_budget=settings.turn_budget,
+        # The generation worker reuses `create_api_runtime`, so this is the
+        # exact same Redis-backed `DraftStream` the API composes (Task 4).
+        drafts=runtime.http_services.draft_stream,
+        redact=_redact_chat_egress,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

@@ -54,6 +54,50 @@ class AnswerBudgetExhausted(TimeoutError):
     """The answer plan's persisted deadline passed before this phase could run."""
 
 
+def _anchor_location(anchor: object) -> str | None:
+    """A short human-readable location for one evidence item's source
+    anchor, for `retrieval.hits_ready`'s `labels` (spec SS2.3: "label ->
+    source title/location"); duck-typed so any closed `StructuralAnchor`
+    variant without a heading path or page (e.g. a code anchor) safely
+    yields `None` instead of a location."""
+    heading_path = getattr(anchor, "heading_path", None)
+    if heading_path:
+        return " / ".join(heading_path)
+    page = getattr(anchor, "page", None)
+    if page is not None:
+        return f"第 {page} 页"
+    return None
+
+
+def _retrieval_hits_payload(response: Any, relation: Any | None) -> dict[str, object]:
+    """`retrieval.hits_ready`'s payload, built from the just-prepared
+    (not-yet-encoded) `SearchResponse`/`RelationContext` -- one label entry
+    per `S`-labeled evidence chunk and per `R`-labeled relation, each mapped
+    to a source title and, when available, a location."""
+    labels: list[dict[str, object]] = [
+        {
+            "label": item.evidence_label,
+            "title": item.title or item.source.source_id,
+            "location": _anchor_location(item.source.anchor),
+        }
+        for item in response.evidence
+    ]
+    if relation is not None:
+        labels.extend(
+            {
+                "label": item.label,
+                "title": f"{item.subject_label} {item.relation_label} {item.object_label}",
+                "location": None,
+            }
+            for item in relation.relations
+        )
+    return {
+        "traceId": response.trace_id,
+        "authorizedHitCount": len(response.evidence),
+        "labels": labels,
+    }
+
+
 class DocumentOperations(Protocol):
     @property
     def scope(self) -> ProjectScopeContext: ...
@@ -391,15 +435,26 @@ class KnowledgeHttpService:
             )
             if isinstance(prepared, AnswerResponse):
                 return {"kind": "verified", "response": to_json(prepared)}
-            return {"kind": "prepared", "bundle": encode_bundle(prepared)}
+            return {
+                "kind": "prepared",
+                "bundle": encode_bundle(prepared),
+                # PR 3: the `seed_search` graph node emits `retrieval.hits_ready`
+                # as soon as this step is produced -- before the `model` node
+                # ever runs -- using exactly this payload, built here while the
+                # (not-yet-encoded) evidence/relation context is still at hand.
+                "retrieval_hits": _retrieval_hits_payload(prepared.response, prepared.relation),
+            }
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None
+        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
     ):
         """Resumable generate phase: only acts on a `"prepared"` step,
         re-authorizing from `frozen_input` before the model call, bounded by
         the plan's persisted deadline from the start; any other step is
-        returned unchanged."""
+        returned unchanged. `on_text` (PR 3) is the `model` graph node's
+        draft-streaming callback, passed through to the knowledge gateway's
+        streaming model call; omitted entirely when `None` so a
+        `generate_frozen` double that does not know about it is unaffected."""
         async with self._plan_deadline(answer_plan):
             if step.get("kind") != "prepared":
                 return step
@@ -425,6 +480,7 @@ class KnowledgeHttpService:
                 model_alias=frozen_input.model_alias,
                 answer_execution=answer_execution,
                 authorize=authorize,
+                **({"on_text": on_text} if on_text is not None else {}),
             )
             return {
                 "kind": "generated",

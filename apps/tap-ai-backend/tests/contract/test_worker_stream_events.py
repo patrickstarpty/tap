@@ -33,6 +33,7 @@ class _KnowledgeRepository:
                     SimpleNamespace(
                         turn_id="turn-1",
                         lease_token="lease-1",
+                        attempt=1,
                         input_snapshot=SimpleNamespace(
                             snapshot_id="snapshot-1",
                             value=SimpleNamespace(
@@ -161,6 +162,7 @@ class _InsightsRepository:
                     SimpleNamespace(
                         turn_id="turn-1",
                         lease_token="lease-1",
+                        attempt=1,
                         input_snapshot=SimpleNamespace(
                             snapshot_id="snapshot-1",
                             value=SimpleNamespace(
@@ -433,7 +435,6 @@ async def test_graph_context_ready_event_precedes_answer_and_citation_kind_is_em
         "stage.completed",
         "retrieval.hits_ready",
         "graph.context_ready",
-        "answer.delta",
         "citation.resolved",
     ]
 

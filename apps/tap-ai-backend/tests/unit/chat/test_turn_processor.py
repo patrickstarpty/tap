@@ -126,6 +126,7 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
                         SimpleNamespace(
                             turn_id="turn-1",
                             lease_token="lease-1",
+                            attempt=1,
                             input_snapshot=SimpleNamespace(
                                 snapshot_id="snapshot-1",
                                 value=SimpleNamespace(message="question"),
@@ -217,12 +218,7 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
         {"traceId": "trace-1", "authorizedHitCount": 0},
     )
     assert conversations.events[3][:3] == ("conversation-1", "turn-1", "graph.context_ready")
-    assert conversations.events[4] == (
-        "conversation-1",
-        "turn-1",
-        "answer.delta",
-        {"text": "grounded"},
-    )
+    assert len(conversations.events) == 4
     assert conversations.completed[0][2].outcome == "completed"
 
 
@@ -243,6 +239,7 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
                         SimpleNamespace(
                             turn_id="turn-1",
                             lease_token="lease-1",
+                            attempt=1,
                             input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
                         ),
                     ),
@@ -283,9 +280,10 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
     conversations = Conversations()
     await GenerationWorker(conversations, Knowledge()).run_once(limit=1)
     assert conversations.completion["lease_token"] == "lease-1"
-    assert conversations.completion["stream_events"][-1] == (
-        "answer.delta",
-        {"text": "delta"},
+    assert conversations.completion["stream_events"][-1][0] == "graph.context_ready"
+    assert all(
+        event_type != "answer.delta"
+        for event_type, _payload in conversations.completion["stream_events"]
     )
 
 
@@ -313,6 +311,7 @@ def _completed_turn_fixtures(*, abstained: bool):  # type: ignore[no-untyped-def
                         SimpleNamespace(
                             turn_id="turn-1",
                             lease_token="lease-1",
+                            attempt=1,
                             input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
                         ),
                     ),
@@ -411,6 +410,7 @@ async def test_generation_worker_emits_public_failure_and_closes_evidence():
                         SimpleNamespace(
                             turn_id="turn-1",
                             lease_token="lease-1",
+                            attempt=1,
                             input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
                         ),
                     ),
@@ -511,6 +511,7 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
                         SimpleNamespace(
                             turn_id="turn-1",
                             lease_token="lease-1",
+                            attempt=1,
                             input_snapshot=SimpleNamespace(snapshot_id="snapshot-1", value=frozen),
                         ),
                     ),
@@ -543,7 +544,6 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
         "stage.completed",
         "retrieval.hits_ready",
         "graph.context_ready",
-        "answer.delta",
     ]
     assert conversations.terminal_event == (
         "turn.completed",
@@ -566,6 +566,7 @@ async def test_generation_worker_renews_turn_lease_while_provider_is_running():
                         SimpleNamespace(
                             turn_id="turn-1",
                             lease_token="lease-1",
+                            attempt=1,
                             input_snapshot=SimpleNamespace(
                                 snapshot_id="snapshot-1",
                                 value=SimpleNamespace(message="question", resolved_resources=()),
@@ -633,6 +634,7 @@ async def test_generation_worker_uses_turn_scoped_persistent_checkpointer_factor
                         SimpleNamespace(
                             turn_id="turn-1",
                             lease_token="lease-1",
+                            attempt=1,
                             input_snapshot=SimpleNamespace(
                                 snapshot_id="snapshot-1",
                                 value=SimpleNamespace(message="question", resolved_resources=()),
@@ -739,17 +741,21 @@ async def test_generation_worker_recovers_after_one_transient_checkpoint_failure
 
     assert await worker.run_once(limit=1) == 1
     assert conversations.completed == []
-    assert conversations.emitted == []
+    # `verify` already emitted `stage.started` (before `finalize`'s doomed
+    # checkpoint write) on this first, retried attempt.
+    assert conversations.emitted == [("stage.started", {"stage": "verify"})]
     assert await worker.run_once(limit=1) == 1
     assert [event[0] for event in conversations.completed[0][2]] == [
         "context.assembled",
         "stage.completed",
         "retrieval.hits_ready",
         "graph.context_ready",
-        "answer.delta",
     ]
     assert conversations.completed[0][:2] == ("turn-1", "completed")
-    assert conversations.emitted == []
+    # The resumed second attempt replays only `finalize` from the checkpoint
+    # (`seed_search`/`model`/`verify` already committed), so `verify` never
+    # reruns and `emitted` gains no second entry.
+    assert conversations.emitted == [("stage.started", {"stage": "verify"})]
     assert knowledge.calls == 1
 
 
@@ -1059,6 +1065,7 @@ async def test_generation_worker_rechecks_turn_lease_before_provider_call():
                         SimpleNamespace(
                             turn_id="turn-1",
                             lease_token="lease-1",
+                            attempt=1,
                             input_snapshot=SimpleNamespace(
                                 snapshot_id="snapshot-1",
                                 value=SimpleNamespace(message="question", resolved_resources=()),
@@ -1219,6 +1226,7 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
                         SimpleNamespace(
                             turn_id="turn-1",
                             lease_token="lease-1",
+                            attempt=1,
                             input_snapshot=snapshot,
                         ),
                     ),
@@ -1252,6 +1260,7 @@ async def test_generation_worker_skips_a_turn_whose_conversation_was_deleted():
     turn = SimpleNamespace(
         turn_id="turn-1",
         lease_token="lease-1",
+        attempt=1,
         input_snapshot=SimpleNamespace(
             snapshot_id="snapshot-1",
             value=SimpleNamespace(
