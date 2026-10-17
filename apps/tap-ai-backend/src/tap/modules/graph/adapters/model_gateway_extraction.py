@@ -440,7 +440,9 @@ class ModelGatewayGraphExtraction:
                     kept_provenance_raw,
                     dropped_ungrounded_edges,
                     dropped_cross_item_edges,
-                ) = _drop_unsupported_edges(kept_edges_raw, kept_provenance_raw, label_lookup, refs)
+                ) = _drop_unsupported_edges(
+                    kept_edges_raw, kept_provenance_raw, label_lookup, refs, frozenset(known)
+                )
                 edges = tuple(
                     GraphEdge(
                         _string(item, "id"),
@@ -729,13 +731,42 @@ def _keep_edges(
     return kept_edges, kept_provenance, len(dropped_ids), len(no_evidence_ids)
 
 
-_UNCHECKED_ENDPOINT_TYPES = frozenset({"ACTOR", "SYSTEM"})
+_ORGANIZATION_REFERENCE_TYPES = frozenset({"ACTOR", "SYSTEM"})
+_ORGANIZATION_LABEL_SUFFIXES = ("公司", "保险人", "保险", "机构", "协会", "学会", "委员会")
 # A real, grounded-but-paraphrased endpoint keeps at least this fraction of its
 # characters in the cited text (measured empirically: the lowest-scoring genuine
 # paraphrase found in a production replay audit was 0.93; every true adjacent-entry
 # mislink in that same audit scored 0.0-0.33). 0.6 keeps a wide margin above the
 # former and well above the latter.
 _UNSUPPORTED_EDGE_OVERLAP_MIN = 0.6
+
+
+def _is_organization_reference(label: str, node_type: str, is_known: bool) -> bool:
+    """Whether this endpoint is the insurer or the contract referring to itself,
+    rather than some other real-world entity the model happened to type ACTOR or
+    SYSTEM.
+
+    Exempting *every* ACTOR/SYSTEM node let two real rv3 production mislinks slip
+    through uncaught: a SYSTEM-typed diagnostic standard (中国新九分法) and a
+    SYSTEM-typed diagnostic procedure (骨髓穿刺检查), each wrongly linked to an
+    unrelated disease in a dense list -- type is not evidence that the text
+    cannot be checked, it is just a classification the model got wrong. The
+    actual reason an exemption exists at all is the insurer and the contract
+    being referred to in their own clause only by a document-relative pronoun
+    (本公司, 本合同, 本附加合同), which ``usable_alias`` deliberately keeps out of
+    every node's aliases -- so this is narrowed to only that case: a reference
+    pronoun (``naming.is_reference_name``), a node already established as a
+    known entity in an earlier batch of the same document (vetted once
+    already), or a label that is itself an organization/party name (ends with
+    公司, 保险人, 保险, 机构, 协会, 学会, or 委员会). A SYSTEM/ACTOR node that is
+    really a disease, procedure, or standard matches none of these and is
+    checked like any other endpoint.
+    """
+    if node_type not in _ORGANIZATION_REFERENCE_TYPES:
+        return False
+    if is_known or is_reference_name(label):
+        return True
+    return label.endswith(_ORGANIZATION_LABEL_SUFFIXES)
 
 
 def _char_overlap_ratio(label: str, text: str) -> float:
@@ -761,7 +792,6 @@ def _char_overlap_ratio(label: str, text: str) -> float:
 
 _NUMBERED_ITEM_MARKER = re.compile(r"(?:^|\n)[ \t]*(?:(\d{1,3})[）).]|[一二三四五六七八九十百]+、)")
 _ITEM_TITLE_MATCH_MIN = 0.7
-_CROSS_ITEM_UNCHECKED_ENDPOINT_TYPES = frozenset({"ACTOR", "SYSTEM", "REQUIREMENT"})
 
 
 def _numbered_items(text: str) -> list[str]:
@@ -914,6 +944,7 @@ def _drop_unsupported_edges(
     provenance_raw: tuple[dict[str, object], ...],
     label_lookup: Mapping[str, tuple[str, tuple[str, ...], str]],
     refs: Mapping[str, Mapping[str, object]],
+    known_entity_ids: frozenset[str] = frozenset(),
 ) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int, int]:
     """Drop an EXTRACTED edge whose endpoints are not both named in its own evidence.
 
@@ -938,14 +969,17 @@ def _drop_unsupported_edges(
        comparison operators scores unreliably low against even its own item)
        and from multi-chunk evidence (no cross-chunk item boundary is tracked).
 
-    An ACTOR or SYSTEM endpoint is never checked by either: the insurer or the
-    contract itself is routinely referred to in its own clause only by a
-    document-relative pronoun (本公司, 本合同, 本附加合同) -- which
-    ``usable_alias`` deliberately keeps out of every node's aliases (see the
-    prompt's alias rule) -- so requiring its real name to appear literally
-    would drop a large share of genuinely grounded facts about the insurer or
-    the contract itself, not just the mislinks these checks target. An
-    INFERRED edge has no chunks by design (its grounding is its provenance's
+    An endpoint that is itself a reference to the insurer or the contract (see
+    ``_is_organization_reference``) is never checked by either: it is
+    routinely referred to in its own clause only by a document-relative
+    pronoun (本公司, 本合同, 本附加合同) -- which ``usable_alias`` deliberately
+    keeps out of every node's aliases (see the prompt's alias rule) -- so
+    requiring its real name to appear literally would drop a large share of
+    genuinely grounded facts about the insurer or the contract itself, not
+    just the mislinks these checks target. This is narrower than "every ACTOR
+    or SYSTEM node": a disease, procedure, or standard the model happened to
+    type ACTOR or SYSTEM is still checked like any other endpoint. An INFERRED
+    edge has no chunks by design (its grounding is its provenance's
     input facts, not text) and is never checked. An edge whose endpoint id is
     not in ``label_lookup``, or whose own ``chunks`` is empty, is left to
     ``_keep_edges`` and ``GraphEdge`` to judge instead of being dropped here.
@@ -976,7 +1010,7 @@ def _drop_unsupported_edges(
             label, aliases, node_type = names
             if node_type == "REQUIREMENT":
                 requirement_endpoint = True
-            if node_type in _UNCHECKED_ENDPOINT_TYPES:
+            if _is_organization_reference(label, node_type, endpoint in known_entity_ids):
                 endpoint_names[endpoint_key] = ()
                 continue
             endpoint_names[endpoint_key] = (label, *aliases)

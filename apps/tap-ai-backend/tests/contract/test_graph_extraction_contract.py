@@ -718,15 +718,28 @@ async def test_real_repeated_edge_loop_is_deduplicated_and_counted(span_recorder
     # This batch also names a node "王先生" ("n11"): a brochure's illustrative
     # example person, rejected as a graph name since naming.is_reference_name
     # covers it (shared with alignment), which drops its one non-duplicate edge
-    # (e10, n11->n12) along with it. Two more real edges (e12, e19) cite a chunk
-    # that only paraphrases their target (一次性交纳保费 for 趸缴保险费; a dividend
-    # clause with no literal 现金红利 but most of its characters) -- the
-    # unsupported-evidence check's character-overlap-ratio design (rather than a
-    # literal substring requirement) is exactly what keeps both: the rv3 false-drop
-    # audit used this real batch to confirm paraphrased, non-adjacent-mislink edges
-    # like these clear the check.
+    # (e10, n11->n12) along with it. Two real edges (e12, e19, not involving n1)
+    # cite a chunk that only paraphrases their target (一次性交纳保费 for 趸缴保险
+    # 费; a dividend clause with no literal 现金红利 but most of its characters) --
+    # the character-overlap-ratio design (rather than a literal substring
+    # requirement) is exactly what keeps both.
+    #
+    # n1 itself (友邦附加增利宝趸交年金保险（分红型）, typed SYSTEM -- this is really
+    # the product/contract, not a software system) is no longer exempt from
+    # either check just by type: narrowing the exemption to actual organization
+    # references (rv3 follow-up fix) means n1's own long name, referred to in
+    # most of its chunks only as "本附加合同", clears the 0.6 character-overlap
+    # bar for some of its edges (e.g. e23, n1->n15 DEFINES, checked below) but
+    # not others whose chunks use it even more sparingly -- 7 of n1's edges
+    # (e3-e6, e9, e24, e25's shapes) now drop below 0.6 and are gone. A further
+    # edge (e17, 被保险人->受益人) is dropped too: node dedup merges "被保险人"
+    # into the survivor "被保险人（王先生之子）" (the brochure example's alias),
+    # and that merged label no longer ends with the 保险人 organization suffix,
+    # so it is checked for real and its own chunk does not name it well enough.
+    # This is the accepted trade-off of narrowing the exemption rather than a
+    # regression: 27 - 7 - 1 = 19 unique edges survive.
     kept = [(e.source_node_id, e.relation_type, e.target_node_id) for e in draft.edges]
-    assert len(kept) == len(set(kept)) == len(set(shapes)) - 1
+    assert len(kept) == len(set(kept)) == len(set(shapes)) - 1 - 8
     assert not any(node.node_id == "n11" for node in draft.nodes)
     loop = next(e for e in draft.edges if (e.source_node_id, e.target_node_id) == ("n1", "n15"))
     assert loop.relation_type == "DEFINES"
@@ -976,22 +989,23 @@ async def test_unsupported_edge_check_does_not_drop_a_correctly_grounded_edge(sp
 
 
 @pytest.mark.asyncio
-async def test_actor_and_system_endpoints_are_exempt_from_the_unsupported_edge_check(
+async def test_organization_reference_endpoints_are_exempt_from_the_unsupported_edge_check(
     span_recorder,
 ):
-    # The insurer and the contract are routinely referred to in their own clause
-    # only by a pronoun (本公司, 本附加合同), never by their real name, because
-    # ``usable_alias`` deliberately keeps such references out of every node's
-    # aliases. Requiring the literal name here would drop a large share of
-    # genuinely grounded ACTOR/SYSTEM facts, not just adjacent-entry mislinks, so
-    # these two types are exempt.
+    # The insurer is routinely referred to in its own clause only by a pronoun
+    # (本公司), never by its real name, because ``usable_alias`` deliberately
+    # keeps such references out of every node's aliases. Requiring the literal
+    # name here would drop a large share of genuinely grounded insurer facts,
+    # not just adjacent-entry mislinks, so an organization-name label (ends
+    # with 公司 here) is exempt -- but only that narrow case, not every ACTOR or
+    # SYSTEM node (see the next test).
     output = {
         "nodes": [
             {
                 "id": "node-1",
-                "label": "友邦保险",
+                "label": "保险公司",
                 "type": "ACTOR",
-                "canonicalKey": "友邦保险",
+                "canonicalKey": "保险公司",
                 "chunks": ["c1"],
                 "aliases": [],
             },
@@ -1040,6 +1054,70 @@ async def test_actor_and_system_endpoints_are_exempt_from_the_unsupported_edge_c
     ]
     assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 0
     assert spans[0].attributes["tap.graph.dropped_cross_item_edges"] == 0
+
+
+@pytest.mark.asyncio
+async def test_system_node_that_is_really_a_disease_is_not_exempt(span_recorder):
+    # rv3 follow-up: a SYSTEM-typed diagnostic procedure (骨髓穿刺检查) wrongly
+    # linked to an unrelated disease is a real production mislink that the old,
+    # blanket ACTOR/SYSTEM exemption let through untouched. Its label is not a
+    # reference pronoun, not a known entity, and does not end with an
+    # organization suffix, so it must be checked like any other endpoint and
+    # dropped here (its own chunk never mentions it at all).
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "严重克罗恩病",
+                "type": "CONCEPT",
+                "canonicalKey": "严重克罗恩病",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+            {
+                "id": "node-2",
+                "label": "骨髓穿刺检查",
+                "type": "SYSTEM",
+                "canonicalKey": "骨髓穿刺检查",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "node-2",
+                "relationType": "APPLIES_TO",
+                "relationLabel": "须根据组织病理学特点诊断",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+    request = replace(
+        _request(),
+        chunks=(
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": "chunk-1",
+                "content": "27）严重克罗恩病\n指一种慢性肉芽肿性肠炎，须根据组织病理学特点诊断。",
+                "anchor": {"kind": "text", "start": 0, "end": 10},
+                "contentDigest": "sha256:" + "a" * 64,
+            },
+        ),
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(request)
+
+    assert draft.edges == ()
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 1
 
 
 def _numbered_list_request():
