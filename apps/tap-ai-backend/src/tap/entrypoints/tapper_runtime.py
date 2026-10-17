@@ -50,6 +50,7 @@ from tap.modules.knowledge.ports.search import (
     SearchPort,
 )
 from tap.operations.milvus.contracts import validate_milvus_role_usernames
+from tap.platform.budget import TurnBudget
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -180,6 +181,7 @@ class TapperSettings:
     langfuse_sync_settle_seconds: int = 60
     trace_redaction_rules: Path | None = None
     turn_max_attempts: int = 3
+    turn_budget: TurnBudget = field(default_factory=TurnBudget)
 
     def __post_init__(self) -> None:
         # A deadline too short for the output budget turns a detectable truncation
@@ -429,6 +431,36 @@ class TapperSettings:
             minimum=1,
             maximum=10,
         )
+        turn_budget = TurnBudget(
+            max_tool_rounds=_integer(
+                values,
+                "TAPPER_TURN_MAX_TOOL_ROUNDS",
+                6,
+                minimum=1,
+                maximum=20,
+            ),
+            max_seconds=_duration(
+                values,
+                "TAPPER_TURN_MAX_SECONDS",
+                180.0,
+                minimum=10,
+                maximum=1800,
+            ),
+            max_model_calls=_integer(
+                values,
+                "TAPPER_TURN_MAX_MODEL_CALLS",
+                10,
+                minimum=1,
+                maximum=50,
+            ),
+            max_cost_micros=_integer(
+                values,
+                "TAPPER_TURN_MAX_COST_MICROS",
+                0,
+                minimum=0,
+                maximum=100_000_000,
+            ),
+        )
         trace_redaction_rules_raw = _value(values, "TAP_TRACE_REDACTION_RULES", "")
         trace_redaction_rules: Path | None = None
         if trace_redaction_rules_raw:
@@ -602,6 +634,7 @@ class TapperSettings:
             langfuse_sync_settle_seconds=langfuse_sync_settle_seconds,
             trace_redaction_rules=trace_redaction_rules,
             turn_max_attempts=turn_max_attempts,
+            turn_budget=turn_budget,
         )
 
 
@@ -1433,6 +1466,15 @@ async def _redact_model_context(text: str) -> str:
     return await PatternEgressRedactor(max_chars=262144).redact_text(text)
 
 
+async def _redact_chat_egress(text: str) -> str:
+    """Chat-facing egress (knowledge answer/chat context and planner prompts):
+    the only callers that redact phone/ID numbers (personal_data=True, C1).
+    Everything else (graph extraction, Insights, test design, suggestions,
+    retrieval queries) keeps the v1 rule set via `_redact_model_context` so
+    the gateway's own enforcement check never rejects their raw content."""
+    return await PatternEgressRedactor(max_chars=262144, personal_data=True).redact_text(text)
+
+
 def _gated_ready_sources(list_sources, flowchart_gate, project_id: str):
     """Hide flowchart images from chat sources until their review is published."""
     if flowchart_gate is None:
@@ -1449,7 +1491,7 @@ def _answer_planner(models: KnowledgeModelGateway):
     from tap.modules.chat.application.plan_answer import AnswerPlanner
 
     return AnswerPlanner(
-        ModelGatewayPlanner(models.gateway, scope=models.scope, redact=_redact_model_context)
+        ModelGatewayPlanner(models.gateway, scope=models.scope, redact=_redact_chat_egress)
     )
 
 
@@ -1509,7 +1551,12 @@ def _create_embeddings(
     return KnowledgeModelGateway(
         gateway,
         scope=VALIDATION_SCOPE,
-        redact=_redact_model_context,
+        redact=_redact_chat_egress,
+        # `embed`/`embed_documents` (ingestion and the graph-merge label
+        # embedder, plus retrieval query embedding -- search must match
+        # indexed text) stay on the v1 redactor, never the chat-only
+        # personal-data rules (C1 residual).
+        embedding_redact=_redact_model_context,
         embedding_alias=settings.embedding_model,
         chat_alias=settings.default_chat_model,
         embedding_dimension=settings.embedding_dimension,
@@ -2037,6 +2084,13 @@ def _assemble_http_services(
         corpus_version=corpus_version,
         models=embeddings,
         answer_planner=_answer_planner(embeddings),
+        # Bounded like `_redact_chat_egress`, not the smaller query-only
+        # `redactor` above: a saved answer (and its `redaction_report` use
+        # for an incoming chat message) can be far longer than an 8,000-char
+        # retrieval query -- up to `litellm.py`'s `max_answer_chars=16000`.
+        # personal_data=True (C1): output redaction and the input hit report
+        # are chat egress, so phone/ID rules apply here too.
+        redactor=PatternEgressRedactor(max_chars=262144, personal_data=True),
     )
     prompt_suggestions = None
     prompt_suggestion_store = None
@@ -2240,13 +2294,22 @@ def _duration(
     default: float,
     *,
     maximum: float,
+    minimum: float | None = None,
 ) -> float:
+    """Parse a finite duration bounded above by `maximum`.
+
+    `minimum` is an inclusive closed lower bound when given; omitted, the lower
+    bound stays the historical exclusive 0 (a duration, not a count).
+    """
     raw = _value(values, name, str(default))
     try:
         parsed = float(raw)
     except ValueError:
         raise ValueError(f"{name} must be a finite duration") from None
-    if not math.isfinite(parsed) or not 0 < parsed <= maximum:
+    if minimum is None:
+        if not math.isfinite(parsed) or not 0 < parsed <= maximum:
+            raise ValueError(f"{name} must be a finite bounded duration")
+    elif not math.isfinite(parsed) or not minimum <= parsed <= maximum:
         raise ValueError(f"{name} must be a finite bounded duration")
     return parsed
 

@@ -19,6 +19,7 @@ INTENTS = frozenset(
         "procedural",
         "clarification",
         "relation",
+        "out_of_scope",
     }
 )
 ROUTES = frozenset({"direct", "retrieve", "clarify", "insights", "file_analysis", "graph"})
@@ -148,7 +149,11 @@ class AnswerPlan:
             raise ValueError("invalid answer budget")
         if len(self.queries) > 3 or (self.route in {"retrieve", "graph"}) != bool(self.queries):
             raise ValueError("only retrieval plans have one to three queries")
-        if self.route == "direct" and self.intent not in {"general_chat", "transform_text"}:
+        if self.route == "direct" and self.intent not in {
+            "general_chat",
+            "transform_text",
+            "out_of_scope",
+        }:
             raise ValueError("enterprise facts require evidence")
         if self.constraints != protected_constraints(self.original_question):
             raise ValueError("plan constraints differ from original question")

@@ -5,7 +5,9 @@ outcomes) must be unchanged."""
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -18,8 +20,10 @@ from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
 from tap.modules.chat.domain.answer_plan import AnswerPlan
+from tap.modules.chat.domain.conversations import TurnInput, TurnInputSnapshot
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
 from tap.modules.knowledge.ports.answers import AnswerSnapshotUnavailable
+from tap.platform.budget import TurnBudget, current_meter
 
 
 def _turn(*, turn_id: str = "turn-1", lease_token: str = "lease-1", attempt: int = 1):
@@ -96,6 +100,21 @@ class _StepsKnowledge:
         self, step, frozen_input, *, answer_plan=None, authorize=None
     ):
         return _answer()
+
+    async def refuse_out_of_scope(self, frozen_input, *, answer_plan):
+        self.refuse_calls = getattr(self, "refuse_calls", 0) + 1
+        return SimpleNamespace(
+            answer="",
+            citations=(),
+            abstained=True,
+            trace_id=answer_plan.plan_id,
+            model_dump=lambda **_: {
+                "answer": "",
+                "citations": [],
+                "abstained": True,
+                "abstentionReason": "out_of_scope",
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -179,6 +198,102 @@ async def test_oversized_bundle_fails_turn() -> None:
     event_type, payload = kwargs["terminal_event"]
     assert event_type == "turn.failed"
     assert payload["problem"]["type"].endswith("answer-unavailable")
+
+
+@pytest.mark.asyncio
+async def test_output_redaction_failure_fails_turn() -> None:
+    """`RedactionUnavailable` from `finalize_conversation_answer`'s output
+    redaction step must propagate out of the graph instead of being
+    swallowed, and -- being fail-closed and non-retryable -- must land the
+    turn on `turn.failed`, the same terminal shape as any other
+    deterministic answer failure (`test_oversized_bundle_fails_turn`)."""
+    from tap.modules.knowledge.ports.redaction import RedactionUnavailable
+
+    class _FinalizeRedactionFailsKnowledge(_StepsKnowledge):
+        async def finalize_conversation_answer(
+            self, step, frozen_input, *, answer_plan=None, authorize=None
+        ):
+            raise RedactionUnavailable("output redaction rejected the final answer")
+
+    turn = _turn()
+    conversations = _Conversations(turn)
+    knowledge = _FinalizeRedactionFailsKnowledge()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
+    assert evidence.outcome == "failed"
+    event_type, _payload = kwargs["terminal_event"]
+    assert event_type == "turn.failed"
+
+
+class _RecordingSpan:
+    """A minimal `set_attribute`-recording double standing in for the real
+    OTEL span `guard_in` writes `tap.guard.redaction.*` attributes onto."""
+
+    def __init__(self) -> None:
+        self.attributes: dict[str, object] = {}
+
+    def set_attribute(self, key: str, value: object) -> None:
+        self.attributes[key] = value
+
+
+def _guard_in_nodes(*, knowledge: object, turn_span: _RecordingSpan) -> ChatTurnNodes:
+    turn = _turn()
+    conversations = _Conversations(turn)
+
+    async def require_authorized() -> None:
+        return None
+
+    return ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations,
+        steps=_StepsKnowledge(),
+        planner=None,
+        knowledge=knowledge,
+        insights_explanation=None,
+        require_authorized=require_authorized,
+        turn_span=turn_span,
+    )
+
+
+@pytest.mark.asyncio
+async def test_guard_in_records_input_redaction_hits() -> None:
+    class _ReportingKnowledge:
+        async def redaction_report(self, _text: str) -> dict[str, int]:
+            return {"phone": 1}
+
+    span = _RecordingSpan()
+    nodes = _guard_in_nodes(knowledge=_ReportingKnowledge(), turn_span=span)
+
+    result = await nodes.guard_in({})
+
+    assert result == {"route": "chat", "reasoning_mode": "direct"}
+    assert span.attributes["tap.guard.redaction.input_hits"] == json.dumps({"phone": 1})
+    assert "tap.guard.redaction.input_hits_unavailable" not in span.attributes
+
+
+@pytest.mark.asyncio
+async def test_guard_in_input_redaction_failure_does_not_fail_turn() -> None:
+    """A message the redactor cannot parse (over its bound, an unterminated
+    credential-looking value, ...) on *any* route must never fail the turn
+    over a trace-only attribute: `guard_in` swallows the exception and
+    records `tap.guard.redaction.input_hits_unavailable` instead."""
+
+    class _FailingKnowledge:
+        async def redaction_report(self, _text: str) -> dict[str, int]:
+            raise RuntimeError("redactor exploded")
+
+    span = _RecordingSpan()
+    nodes = _guard_in_nodes(knowledge=_FailingKnowledge(), turn_span=span)
+
+    result = await nodes.guard_in({})
+
+    assert result == {"route": "chat", "reasoning_mode": "direct"}
+    assert span.attributes.get("tap.guard.redaction.input_hits_unavailable") is True
+    assert "tap.guard.redaction.input_hits" not in span.attributes
 
 
 @pytest.mark.asyncio
@@ -318,6 +433,32 @@ def test_same_attempt_keeps_persisted_plan_deadline() -> None:
     assert active_plan.deadline_at == deadline_at
 
 
+def test_rebased_plan_deadline_is_capped_at_the_turn_wall_clock_end() -> None:
+    """I2: a fresh attempt's rebased plan deadline (normally
+    `attempt_started_at + remaining_seconds`, e.g. +30s) must never reach
+    past the turn's own `budget.startedAtMs/1000 + budget.maxSeconds` --
+    otherwise a turn whose 180s budget is nearly exhausted would still hand
+    an answer phase a full fresh 30s, making the turn budget's own
+    wall-clock exhaustion effectively unreachable."""
+    plan = _plan(deadline_at=time.time() - 60, remaining_seconds=30)
+    turn = _turn(attempt=2)
+    attempt_started_at = time.time()
+    turn_started_at = attempt_started_at - 175
+    nodes = _nodes(turn=turn, attempt_started_at=attempt_started_at)
+
+    state = {
+        "answer_plan": plan.to_dict(),
+        "plan_attempt": 1,
+        "budget": {"startedAtMs": int(turn_started_at * 1000), "maxSeconds": 180},
+    }
+    active_plan = nodes._active_plan(state)
+
+    assert active_plan is not None
+    turn_end = turn_started_at + 180
+    assert active_plan.deadline_at <= turn_end + 0.01
+    assert active_plan.deadline_at < attempt_started_at + 30 - 0.01
+
+
 class _DeferCapturingRepository(_Repository):
     def __init__(self, turn) -> None:
         super().__init__(turn)
@@ -436,3 +577,194 @@ async def test_plain_authorization_denial_after_graph_fails_turn() -> None:
     _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
     assert evidence.outcome == "failed"
     assert kwargs["terminal_event"][0] == "turn.failed"
+
+
+class _BudgetSpendingKnowledge(_StepsKnowledge):
+    """No `answer_planner` (so `guard_in` stays a no-op); `prepare_conversation_answer`
+    (the `seed_search` node's body) spends the turn's one allowed model call, so the
+    following `model` node must then hit the exhausted model-call budget before its
+    own body runs."""
+
+    async def prepare_conversation_answer(
+        self, request, frozen_input, *, answer_plan=None, authorize=None
+    ):
+        meter = current_meter()
+        assert meter is not None
+        meter.before_call()
+        meter.after_call(0)
+        return await super().prepare_conversation_answer(
+            request, frozen_input, answer_plan=answer_plan, authorize=authorize
+        )
+
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_turn_emits_budget_problem() -> None:
+    turn = _turn()
+    conversations = _Conversations(turn)
+    knowledge = _BudgetSpendingKnowledge()
+    worker = GenerationWorker(
+        conversations,
+        knowledge,
+        checkpointer=InMemorySaver(),
+        turn_budget=TurnBudget(max_model_calls=1),
+    )
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
+    assert evidence.outcome == "failed"
+    event_type, payload = kwargs["terminal_event"]
+    assert event_type == "turn.failed"
+    assert payload["problem"]["type"].endswith("budget-exhausted")
+
+
+class _PlanDeadlineExpiredKnowledge(_StepsKnowledge):
+    """`generate_conversation_answer` raises `AnswerBudgetExhausted` the way
+    `KnowledgeHttpService._plan_deadline` does when the plan's persisted
+    deadline has already passed at phase start -- a plan-deadline exhaustion
+    found at the very start of a phase, not a mid-phase timeout."""
+
+    async def generate_conversation_answer(
+        self, step, frozen_input, *, answer_plan=None, authorize=None
+    ):
+        from tap.interfaces.http.knowledge_service import AnswerBudgetExhausted
+
+        raise AnswerBudgetExhausted("persisted answer budget exhausted")
+
+
+@pytest.mark.asyncio
+async def test_plan_deadline_expired_at_phase_start_emits_budget_problem() -> None:
+    """I2: `AnswerBudgetExhausted` raised because the plan deadline had
+    already passed at phase start must map to the same `budget-exhausted`
+    problem as `TurnBudgetExhausted` -- not `answer-unavailable` -- since it
+    genuinely means the turn ran out of budget, not an ordinary generation
+    failure."""
+    turn = _turn()
+    conversations = _Conversations(turn)
+    knowledge = _PlanDeadlineExpiredKnowledge()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
+    assert evidence.outcome == "failed"
+    event_type, payload = kwargs["terminal_event"]
+    assert event_type == "turn.failed"
+    assert payload["problem"]["type"].endswith("budget-exhausted")
+
+
+def _frozen_turn_for_planning(
+    *, turn_id: str = "turn-oos", message: str = "What's the weather today?", **turn_input_kwargs
+):
+    frozen = TurnInput(message, "actor-a", "validation", "qwen-plus", **turn_input_kwargs)
+    snapshot = TurnInputSnapshot.create(
+        snapshot_id=f"snapshot-{turn_id}",
+        project_id="project-a",
+        turn_id=turn_id,
+        value=frozen,
+        now=datetime.now(UTC),
+    )
+    return SimpleNamespace(
+        turn_id=turn_id,
+        lease_token=f"lease-{turn_id}",
+        attempt=1,
+        input_snapshot=snapshot,
+    )
+
+
+def _out_of_scope_plan() -> AnswerPlan:
+    return AnswerPlan(
+        plan_id="plan-oos",
+        project_id="project-a",
+        turn_id="turn-oos",
+        input_digest=_digest("1"),
+        acl_digest=_digest("2"),
+        policy_digest=_digest("3"),
+        model_alias="qwen-plus",
+        original_question="What's the weather today?",
+        intent="out_of_scope",
+        route="direct",
+        confidence=0.9,
+        standalone_query="What's the weather today?",
+        constraints=(),
+        missing=(),
+        queries=(),
+        source_ids=(),
+        template_id="template-1",
+        template_version="v1",
+        template_digest=_digest("4"),
+        deadline_at=time.time() + 30,
+        remaining_seconds=30,
+    )
+
+
+class _OutOfScopePlanner:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def plan(self, _value, *, previous_plan_id=None):
+        self.calls += 1
+        return _out_of_scope_plan()
+
+
+@pytest.mark.asyncio
+async def test_out_of_scope_turn_abstains_without_retrieval_or_generation() -> None:
+    turn = _frozen_turn_for_planning()
+    conversations = _Conversations(turn)
+    knowledge = _StepsKnowledge()
+    knowledge.answer_planner = _OutOfScopePlanner()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert knowledge.prepare_calls == 0
+    assert knowledge.generate_calls == 0
+    assert knowledge.refuse_calls == 1
+    assert knowledge.answer_planner.calls == 1
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, kwargs = conversations.completed[0]
+    assert evidence.outcome == "abstained"
+    terminal_type, terminal_payload = kwargs["terminal_event"]
+    assert terminal_type == "turn.abstained"
+    assert terminal_payload["answer"]["abstentionReason"] == "out_of_scope"
+    stage_payload = next(
+        payload
+        for event_type, payload in kwargs["stream_events"]
+        if event_type == "stage.completed"
+    )
+    assert stage_payload["durationMs"] < 60_000
+    assert [event_type for event_type, _payload in kwargs["stream_events"]].count(
+        "retrieval.hits_ready"
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_insights_route_never_out_of_scope() -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-insights",
+        insights_query_id="insights-1",
+        insights_report_refs=("report-1",),
+    )
+    conversations = _Conversations(turn)
+    planner = _OutOfScopePlanner()
+
+    async def require_authorized() -> None:
+        return None
+
+    nodes = ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations,
+        steps=_StepsKnowledge(),
+        planner=planner,
+        knowledge=object(),
+        insights_explanation=None,
+        require_authorized=require_authorized,
+    )
+
+    result = await nodes.guard_in({})
+
+    assert result == {"route": "insights", "reasoning_mode": "workflow"}
+    assert planner.calls == 0

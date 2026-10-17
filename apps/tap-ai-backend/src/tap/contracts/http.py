@@ -116,6 +116,7 @@ class AbstentionReason(str, Enum):
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     CONFLICTING_SOURCES = "conflicting_sources"
     REVISION_MISMATCH = "revision_mismatch"
+    OUT_OF_SCOPE = "out_of_scope"
 
 
 class DocumentStatus(str, Enum):

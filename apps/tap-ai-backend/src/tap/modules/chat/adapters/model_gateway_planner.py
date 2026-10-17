@@ -47,7 +47,10 @@ PLANNER_PROMPT = (
     "formatting instructions into search text. Clarify unresolved objects or versions. "
     "Historical answers are not evidence. Never answer enterprise facts without sources. "
     "Use intent relation and route graph when the question asks how two named things relate, "
-    "what depends on or follows something, or which rules affect an entity."
+    "what depends on or follows something, or which rules affect an entity. "
+    "Use intent out_of_scope with route direct and no queries when the request is unrelated to "
+    "the project's knowledge, software testing or quality work, or asks for content Tapper must "
+    "not produce."
 )
 
 

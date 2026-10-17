@@ -60,6 +60,15 @@
       "type": "https://tap.example/problems/automation-mapping-required"
     },
     {
+      "code": "budget-exhausted",
+      "detail": "The answer stopped because its time, model-call or cost budget ran out.",
+      "failureStage": "answer",
+      "retryable": false,
+      "status": 422,
+      "title": "Answer budget exhausted",
+      "type": "https://tap.example/problems/budget-exhausted"
+    },
+    {
       "code": "citation-stale",
       "detail": "The citation no longer resolves to its exact source revision.",
       "retryable": false,

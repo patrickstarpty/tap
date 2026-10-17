@@ -137,6 +137,25 @@ def suggestion(**changes):
 
 
 @pytest.mark.asyncio
+async def test_model_out_of_scope_intent_requires_direct_route_without_queries():
+    async def direct_model(_input, _timeout):
+        return suggestion(intent="out_of_scope", route="direct", queries=[])
+
+    plan = await planning().AnswerPlanner(direct_model).plan(context("比较章节 A 和 B"))
+    assert plan.intent == "out_of_scope"
+    assert plan.route == "direct"
+    assert plan.queries == ()
+    assert plan.degradation_reason is None
+
+    async def retrieve_model(_input, _timeout):
+        return suggestion(intent="out_of_scope", route="retrieve")
+
+    degraded = await planning().AnswerPlanner(retrieve_model).plan(context("比较章节 A 和 B"))
+    assert degraded.degradation_reason is not None
+    assert degraded.intent != "out_of_scope"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad",
     [

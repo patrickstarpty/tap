@@ -370,3 +370,55 @@ describe("GroundedAnswer closed graph", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("GroundedAnswer out_of_scope abstention", () => {
+  it("renders the fixed English refusal copy and no format error", () => {
+    render(
+      <GroundedAnswer
+        locale="en"
+        response={answerResponse({
+          abstained: true,
+          answer: "",
+          claims: [],
+          citations: [],
+          abstentionReason: "out_of_scope",
+        })}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "This request is outside what Tapper can help with. Tapper answers questions from this project's authorized knowledge sources.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("The answer format could not be verified. Ask again."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the fixed Chinese refusal copy and no format error", () => {
+    render(
+      <GroundedAnswer
+        locale="zh"
+        response={answerResponse({
+          abstained: true,
+          answer: "",
+          claims: [],
+          citations: [],
+          abstentionReason: "out_of_scope",
+        })}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "这个问题超出了 Tapper 的服务范围。Tapper 只基于当前项目已授权的知识来源回答问题。",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("回答格式无法核验，请重新提问。"),
+    ).not.toBeInTheDocument();
+  });
+});

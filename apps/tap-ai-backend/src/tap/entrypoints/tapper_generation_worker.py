@@ -40,6 +40,7 @@ from tap.modules.chat.domain.conversations import (
     RetrievalSummary,
 )
 from tap.modules.chat.domain.suggestions import RefreshReason
+from tap.platform.budget import TurnBudget
 from tap.platform.telemetry import (
     bind_trace,
     extract_traceparent,
@@ -61,6 +62,7 @@ class GenerationWorker:
     renew_interval_seconds: float = 20.0
     max_turn_attempts: int = 3
     rng: random.Random | None = None
+    turn_budget: TurnBudget = TurnBudget()
 
     def __post_init__(self) -> None:
         if (
@@ -147,7 +149,7 @@ class GenerationWorker:
                 self.conversations.repository, "graph_checkpointer", None
             )
             checkpointer = (
-                checkpointer_factory(turn)
+                checkpointer_factory(turn, budget=self.turn_budget.to_dict())
                 if self.checkpointer is None and checkpointer_factory is not None
                 else self.checkpointer or InMemorySaver()
             )
@@ -177,17 +179,13 @@ class GenerationWorker:
                 stored = await graph.stored_version(run_id=turn.turn_id)
                 if stored is not None and stored != (CHAT_GRAPH_VERSION, CHAT_STATE_SCHEMA_VERSION):
                     await graph.discard(run_id=turn.turn_id)
-                    return await graph.start(
-                        run_id=turn.turn_id,
-                        payload={"conversationId": conversation_id, "turnId": turn.turn_id},
-                        route="insights" if insights_query_id is not None else "chat",
-                    )
-                if await graph.has_checkpoint(run_id=turn.turn_id):
+                elif await graph.has_checkpoint(run_id=turn.turn_id):
                     return await graph.resume(run_id=turn.turn_id)
                 return await graph.start(
                     run_id=turn.turn_id,
                     payload={"conversationId": conversation_id, "turnId": turn.turn_id},
                     route="insights" if insights_query_id is not None else "chat",
+                    budget=self.turn_budget,
                 )
 
             running = asyncio.create_task(run_graph())
@@ -346,6 +344,7 @@ async def main() -> None:
         insights_explanation=runtime.http_services.insights_explanation,
         suggestion_refresh=runtime.http_services.prompt_suggestion_store,
         max_turn_attempts=settings.turn_max_attempts,
+        turn_budget=settings.turn_budget,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

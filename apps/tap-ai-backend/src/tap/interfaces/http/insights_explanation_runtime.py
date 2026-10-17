@@ -6,10 +6,12 @@ import asyncio
 import hashlib
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from xml.etree import ElementTree
+
+from opentelemetry import trace
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.adapters.published_knowledge import PublishedKnowledgeEvidence
@@ -20,6 +22,7 @@ from tap.modules.ai.application.insights_explanation import (
     ProposedExplanation,
 )
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest, schema_digest, text_digest
+from tap.modules.ai.domain.prompt_guard import untrusted_context
 from tap.modules.ai.ports.insights import (
     AuthorizedEvidence,
     AuthorizedInsightsScope,
@@ -328,17 +331,24 @@ class ConfiguredInsightsExplanation:
                     ),
                     cost_micros=0,
                 )
-            payload = {
+            trusted_value: dict[str, object] = {
                 "question": request.question,
                 "queryId": metrics.query_id,
                 "metricVersion": metrics.metric_version,
                 "asOf": metrics.query.as_of.isoformat(),
                 "facts": [asdict(fact) for fact in facts],
+            }
+            untrusted_sections: dict[str, Sequence[Mapping[str, object]] | Mapping[str, object]] = {
                 "evidence": [
                     {"citationId": item.citation_id, "excerpt": item.excerpt} for item in evidence
-                ],
+                ]
             }
-            model_context = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            context_value, flagged_labels = untrusted_context(trusted_value, untrusted_sections)
+            if flagged_labels:
+                current_span = trace.get_current_span()
+                current_span.set_attribute("tap.guard.injection.flagged", ",".join(flagged_labels))
+                current_span.set_attribute("tap.guard.injection.count", len(flagged_labels))
+            model_context = json.dumps(context_value, sort_keys=True, separators=(",", ":"))
             if len(model_context.encode()) > 20_000:
                 raise InsightsBudgetExceeded("Insights model context exceeds the bounded input")
             # Reserve a conservative configured ceiling, including schema and protocol overhead.

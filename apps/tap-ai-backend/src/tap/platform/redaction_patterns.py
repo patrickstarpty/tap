@@ -16,3 +16,10 @@ EMAIL = re.compile(
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"
     r"(?![\w.-])"
 )
+
+# Egress-only patterns (not used by the trace-export redactor): mainland
+# China mobile numbers and resident ID numbers. The resident ID pattern must
+# be applied before the mobile pattern so an 18-digit ID is never misread as
+# an embedded 11-digit mobile number.
+CN_MOBILE = re.compile(r"(?<![\dA-Za-z])(?:\+?86[-\s]?)?1[3-9]\d{9}(?![\dA-Za-z])")
+CN_RESIDENT_ID = re.compile(r"(?<![\dA-Za-z])\d{17}[\dXx](?![\dA-Za-z])")

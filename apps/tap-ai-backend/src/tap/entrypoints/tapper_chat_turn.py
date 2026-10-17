@@ -15,7 +15,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
 from opentelemetry.trace import get_current_span
@@ -127,6 +127,7 @@ def stream_events(
     turn: Any,
     answer_response: Any | None,
     graph_context_payload: dict[str, object] | None,
+    retrieval_performed: bool = True,
 ) -> list[dict[str, object]]:
     if evidence.outcome == "failed":
         return []
@@ -143,7 +144,7 @@ def stream_events(
             "payload": {"stage": "knowledge.answer", "durationMs": duration_ms},
         },
     ]
-    if evidence.retrieval_summary.trace_id is not None:
+    if retrieval_performed and evidence.retrieval_summary.trace_id is not None:
         events.append(
             {
                 "type": "retrieval.hits_ready",
@@ -244,6 +245,24 @@ class SingleShotAnswerSteps:
     ):
         return step["response"]
 
+    async def refuse_out_of_scope(self, frozen_input, *, answer_plan):
+        from tap.contracts.http import AbstentionReason, RetrievalAnswerResponse
+
+        return RetrievalAnswerResponse(
+            trace_id=answer_plan.plan_id,
+            query_plan_id=answer_plan.plan_id,
+            context_snapshot_id=answer_plan.plan_id,
+            corpus_version="unversioned",
+            retrieval_profile_id="direct-chat-v1",
+            degraded_mode=False,
+            answer="",
+            abstained=True,
+            abstention_reason=AbstentionReason.OUT_OF_SCOPE,
+            claims=[],
+            citations=[],
+            graph_context_status="NOT_SELECTED",
+        )
+
 
 class ChatTurnNodes:
     """Binds one claimed chat Turn's resumable answer phases, Insights
@@ -299,7 +318,22 @@ class ChatTurnNodes:
             model=self.model,
             verify=self.verify,
             finalize=self.finalize,
+            ingress=self.ingress,
         )
+
+    async def ingress(self, state: ChatGraphState) -> dict[str, object]:
+        budget = dict(state.get("budget") or {})
+        result: dict[str, object] = {}
+        if "startedAtMs" not in budget:
+            budget["startedAtMs"] = int(time.time() * 1000)
+            result["budget"] = budget
+            result["budget_used"] = {"modelCalls": 0, "costMicros": 0, "toolRounds": 0}
+        audit_span = self._turn_span if self._turn_span is not None else get_current_span()
+        audit_span.set_attribute("tap.budget.max_model_calls", int(budget.get("maxModelCalls", 0)))
+        audit_span.set_attribute("tap.budget.max_seconds", float(budget.get("maxSeconds", 0.0)))
+        audit_span.set_attribute("tap.budget.max_tool_rounds", int(budget.get("maxToolRounds", 0)))
+        audit_span.set_attribute("tap.budget.max_cost_micros", int(budget.get("maxCostMicros", 0)))
+        return result
 
     def _active_plan(self, state: ChatGraphState) -> AnswerPlan | None:
         if self._planner is None:
@@ -309,15 +343,39 @@ class ChatTurnNodes:
             return None
         plan = AnswerPlan.from_dict(raw)
         if state.get("plan_attempt") != self._turn.attempt and self._attempt_started_at is not None:
-            return dataclasses.replace(
-                plan,
-                deadline_at=max(
-                    plan.deadline_at, self._attempt_started_at + plan.remaining_seconds
-                ),
-            )
+            deadline_at = max(plan.deadline_at, self._attempt_started_at + plan.remaining_seconds)
+            # Never rebase past the turn's own wall-clock end: otherwise a
+            # turn whose budget is nearly exhausted would still hand a fresh
+            # attempt a full new plan window, making the turn budget's
+            # wall-clock exhaustion effectively unreachable (I2).
+            budget = state.get("budget")
+            if budget:
+                turn_end = budget.get("startedAtMs", 0) / 1000 + budget.get("maxSeconds", 0.0)
+                deadline_at = min(deadline_at, turn_end)
+            return dataclasses.replace(plan, deadline_at=deadline_at)
         return plan
 
     async def guard_in(self, _state: ChatGraphState) -> dict[str, object]:
+        # Trace-only: the message saved on the Turn stays as-is (existing
+        # rules), and the retrieval/generation paths already redact what
+        # they send the model (`retrieve.py`); this just records whether the
+        # incoming message itself carried redactable content. Best-effort: a
+        # message the redactor cannot parse (over its bound, an unterminated
+        # credential-looking value, ...) must never fail the turn over a
+        # trace attribute, so any exception here is swallowed and recorded
+        # as unavailable instead of raised.
+        audit_span = self._turn_span if self._turn_span is not None else get_current_span()
+        redaction_report = getattr(self._knowledge, "redaction_report", None)
+        if redaction_report is not None:
+            try:
+                input_hits = await redaction_report(self._turn.input_snapshot.value.message)
+            except Exception:
+                audit_span.set_attribute("tap.guard.redaction.input_hits_unavailable", True)
+            else:
+                if input_hits:
+                    audit_span.set_attribute(
+                        "tap.guard.redaction.input_hits", json.dumps(dict(input_hits))
+                    )
         if self._insights_query_id is not None:
             return {"route": "insights", "reasoning_mode": "workflow"}
         if self._planner is None:
@@ -332,12 +390,21 @@ class ChatTurnNodes:
             else tuple(item.input_snapshot for item in (await load(self._conversation_id)).turns)
         )
         plan = await self._planner.plan(planning_input(self._turn.input_snapshot, history=history))
-        return {
-            "route": "chat",
+        route = "out_of_scope" if plan.intent == "out_of_scope" else "chat"
+        result: dict[str, object] = {
+            "route": route,
             "reasoning_mode": "direct",
             "answer_plan": plan.to_dict(),
             "plan_attempt": self._turn.attempt,
         }
+        if route == "out_of_scope":
+            # `seed_search` never runs on this route, so it never stamps
+            # `started_at_ms` the way it does for the chat route; without this,
+            # `finalize`'s `duration_ms` would be measured against the epoch
+            # (`state.get("started_at_ms") or 0`), producing a huge bogus
+            # `stage.completed` duration.
+            result["started_at_ms"] = int(time.time() * 1000)
+        return result
 
     async def seed_search(self, state: ChatGraphState) -> dict[str, object]:
         active_plan = self._active_plan(state)
@@ -495,9 +562,14 @@ class ChatTurnNodes:
             }
         }
 
-    def _failed_result(self) -> dict[str, object]:
+    def _failed_result(self, failure: Mapping[str, object]) -> dict[str, object]:
         evidence = AnswerEvidence(
             "", "failed", RetrievalSummary("failed"), GraphContextStatus.FAILED
+        )
+        problem_type = (
+            "budget-exhausted"
+            if failure.get("error") in ("TurnBudgetExhausted", "AnswerBudgetExhausted")
+            else "answer-unavailable"
         )
         return {
             "result": {
@@ -506,7 +578,7 @@ class ChatTurnNodes:
                     "type": "turn.failed",
                     "payload": {
                         "problem": build_problem(
-                            "answer-unavailable", correlation_id=self._turn.turn_id
+                            problem_type, correlation_id=self._turn.turn_id
                         ).model_dump(mode="json", by_alias=True)
                     },
                 },
@@ -515,21 +587,32 @@ class ChatTurnNodes:
         }
 
     async def finalize(self, state: ChatGraphState) -> dict[str, object]:
-        if state.get("failure"):
-            return self._failed_result()
+        failure = state.get("failure")
+        if failure:
+            return self._failed_result(failure)
         if state.get("route") == "insights":
             return {}
         active_plan = self._active_plan(state)
-        step = _require_step(state)
+        out_of_scope = state.get("route") == "out_of_scope"
+        if out_of_scope:
+            audit_span = self._turn_span if self._turn_span is not None else get_current_span()
+            audit_span.set_attribute("tap.plan.intent", "out_of_scope")
+        step = None if out_of_scope else _require_step(state)
         answered: list[Any] = []
 
         async def provider(_snapshot: object) -> ProviderResult:
-            answer = await self._steps.finalize_conversation_answer(
-                step,
-                self._turn.input_snapshot.value,
-                answer_plan=active_plan,
-                authorize=self._require_authorized,
-            )
+            if out_of_scope:
+                answer = await self._steps.refuse_out_of_scope(
+                    self._turn.input_snapshot.value, answer_plan=active_plan
+                )
+            else:
+                assert step is not None
+                answer = await self._steps.finalize_conversation_answer(
+                    step,
+                    self._turn.input_snapshot.value,
+                    answer_plan=active_plan,
+                    authorize=self._require_authorized,
+                )
             answered.append(answer)
             citations = (
                 await self._conversations.repository.resolve_citations(
@@ -600,6 +683,7 @@ class ChatTurnNodes:
                     turn=self._turn,
                     answer_response=answer_response,
                     graph_context_payload=graph_context_payload,
+                    retrieval_performed=not out_of_scope,
                 ),
             }
         }

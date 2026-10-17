@@ -176,3 +176,7 @@ class ConversationAnswerSteps(Protocol):
         answer_plan=None,
         authorize=None,
     ) -> RetrievalAnswerResponse: ...
+
+    async def refuse_out_of_scope(
+        self, frozen_input, *, answer_plan
+    ) -> RetrievalAnswerResponse: ...

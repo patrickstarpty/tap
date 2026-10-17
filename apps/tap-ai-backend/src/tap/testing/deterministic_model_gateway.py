@@ -143,8 +143,9 @@ class DeterministicModelGateway(LiteLLMModelGateway):
             elif request.operation is ModelOperation.STRUCTURED:
                 try:
                     parsed_context = json.loads(request.context)
-                    evidence = parsed_context.get("evidence", [])
-                    relations = parsed_context.get("relations", [])
+                    untrusted = parsed_context.get("untrusted", {})
+                    evidence = untrusted.get("evidence", [])
+                    relations = untrusted.get("relations", [])
                 except (ValueError, AttributeError):
                     evidence = []
                     relations = []
