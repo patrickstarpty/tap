@@ -1620,6 +1620,121 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
     await runtime.aclose()
 
 
+def test_assemble_http_services_wires_event_wakeups_and_draft_stream() -> None:
+    """`ConversationService` gets `EventWakeups` and `HttpServices` carries the
+    composed `DraftStream`, so the same object the API uses also reaches the
+    generation worker (its `main()` calls `create_api_runtime` directly and
+    reuses `runtime.http_services.conversations`/`.draft_stream`)."""
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    wakeups = object()
+    draft_stream = object()
+
+    services = module._assemble_http_services(
+        repository=SimpleNamespace(scope=VALIDATION_SCOPE),
+        artifacts=object(),
+        search=object(),
+        embeddings=module._create_embeddings(settings),
+        readiness=object(),
+        redactor=object(),
+        scope_provider=object(),
+        authorization_policy=object(),
+        conversation_sessions=object(),
+        event_wakeups=wakeups,
+        draft_stream=draft_stream,
+    )
+
+    assert services.conversations is not None
+    assert services.conversations._wakeups is wakeups
+    assert services.draft_stream is draft_stream
+
+
+@pytest.mark.asyncio
+async def test_create_api_runtime_composes_draft_stream_over_a_dedicated_block_client(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """I-1/I-2: blocking `XREAD` must use a separate client/pool from the
+    general-purpose Redis client, sized and timed by its own settings."""
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(
+        valid_settings()
+        | {
+            "TAP_REDIS_STREAM_BLOCK_SECONDS": "30",
+            "TAP_REDIS_STREAM_POOL_SIZE": "77",
+        }
+    )
+
+    class Resource:
+        async def aclose(self) -> None:
+            return None
+
+    class RedisResource(Resource):
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        async def set(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return True
+
+        async def getdel(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return None
+
+    engine = Resource()
+    artifacts = Resource()
+    general_redis = RedisResource("general")
+    block_redis = RedisResource("block")
+    search = Resource()
+    chunk_index = Resource()
+    captured: dict[str, object] = {}
+
+    async def database(_settings):  # type: ignore[no-untyped-def]
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
+
+    async def create_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
+        return search, object(), object()
+
+    def create_redis_stream_block_client(received_settings):  # type: ignore[no-untyped-def]
+        captured["block_client_settings"] = received_settings
+        return block_redis
+
+    def assemble_http_services(**kwargs):  # type: ignore[no-untyped-def]
+        captured["event_wakeups"] = kwargs.get("event_wakeups")
+        captured["draft_stream"] = kwargs.get("draft_stream")
+        return HttpServices()
+
+    monkeypatch.setattr(module, "_create_database", database)
+    monkeypatch.setattr(module, "_create_blob", lambda _settings: artifacts)
+    monkeypatch.setattr(module, "_create_redis", lambda _settings: general_redis)
+    monkeypatch.setattr(
+        module, "_create_redis_stream_block_client", create_redis_stream_block_client
+    )
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: object())
+    monkeypatch.setattr(module, "_create_search", create_search)
+
+    async def create_index(_settings, _engine):
+        return chunk_index
+
+    monkeypatch.setattr(module, "_create_document_index", create_index)
+    monkeypatch.setattr(module, "_create_readiness", lambda **_kwargs: object())
+
+    async def create_asset_catalog(*_args):  # type: ignore[no-untyped-def]
+        return object()
+
+    monkeypatch.setattr(module, "_create_asset_catalog", create_asset_catalog)
+    monkeypatch.setattr(module, "_assemble_http_services", assemble_http_services)
+
+    runtime = await module.create_api_runtime(settings)
+
+    assert captured["block_client_settings"] is settings
+    event_wakeups = captured["event_wakeups"]
+    draft_stream = captured["draft_stream"]
+    assert event_wakeups is not None and draft_stream is not None
+    assert event_wakeups._redis is general_redis
+    assert draft_stream._redis is general_redis
+    assert draft_stream._block_redis is block_redis
+    assert draft_stream._block_timeout_seconds == 30.0
+    await runtime.aclose()
+
+
 @pytest.mark.asyncio
 async def test_api_failure_controller_construction_failure_closes_prior_owners(
     monkeypatch,

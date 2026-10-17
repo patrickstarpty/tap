@@ -245,6 +245,12 @@ class HttpServices:
     insights_explanation: object | None = None
     insights_knowledge_search: object | None = None
     insights_publication_authority: object | None = None
+    # The shared, per-process Redis draft/wake-up stream adapter, composed once
+    # in `tapper_runtime` from the same Redis client the API and generation
+    # worker (which shares this composition via `create_api_runtime`) both use.
+    # Not yet consumed by any route; Tasks 5-7 read it to stream/replay drafts
+    # and check cancellation.
+    draft_stream: object | None = None
 
 
 class GraphUnavailable(Exception):

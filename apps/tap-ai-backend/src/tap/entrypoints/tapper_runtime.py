@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     )
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
-    from tap.modules.chat.application.ports import EventWakeups
+    from tap.modules.chat.application.ports import DraftStream, EventWakeups
     from tap.modules.governance.ports.audit import ProjectAuditPort
     from tap.modules.knowledge.adapters.milvus.config import (
         MilvusIndexTarget,
@@ -152,6 +152,8 @@ class TapperSettings:
     milvus_provisioner_username: str
     milvus_provisioner_password: str = field(repr=False)
     e2e_mode: bool
+    redis_stream_block_seconds: float = 20.0
+    redis_stream_pool_size: int = 50
     vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
     graph_extraction_timeout_seconds: float = 240.0
@@ -621,6 +623,12 @@ class TapperSettings:
                 "tap-local-Provisioner1!",
             ),
             e2e_mode=demo_mode == "e2e",
+            redis_stream_block_seconds=_duration(
+                values, "TAP_REDIS_STREAM_BLOCK_SECONDS", 20.0, minimum=1.0, maximum=120.0
+            ),
+            redis_stream_pool_size=_integer(
+                values, "TAP_REDIS_STREAM_POOL_SIZE", 50, minimum=1, maximum=500
+            ),
             insights_base_url=values.get("TAP_INSIGHTS_BASE_URL", ""),
             insights_delegated_user_token=values.get("TAP_INSIGHTS_DELEGATED_USER_TOKEN", ""),
             insights_service_token=values.get("TAP_INSIGHTS_SERVICE_TOKEN", ""),
@@ -889,6 +897,8 @@ async def create_api_runtime(
         resources.push(artifacts)
         redis = _create_redis(settings)
         resources.push(redis)
+        redis_stream_block = _create_redis_stream_block_client(settings)
+        resources.push(redis_stream_block)
         failure_controller = _create_stage_controller(settings, redis)
         embeddings = _create_embeddings(
             settings,
@@ -945,6 +955,7 @@ async def create_api_runtime(
             graph_reasoning=settings.graph_reasoning,
             turn_max_attempts=settings.turn_max_attempts,
             event_wakeups=_create_event_wakeups(redis),
+            draft_stream=_create_draft_stream(redis, redis_stream_block, settings),
         )
         services = replace(services, chunk_manager=chunk_manager)
         if settings.insights_base_url:
@@ -1372,6 +1383,7 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
                 scope=scope,
                 model_alias=settings.default_chat_model,
                 knowledge_requires_publication=False,
+                wakeups=_create_event_wakeups(redis),
             ),
             generator=generator,
             scope=scope,
@@ -1464,15 +1476,58 @@ def _create_redis(settings: TapperSettings) -> Redis:
     )
 
 
+def _create_redis_stream_block_client(settings: TapperSettings) -> Redis:
+    """A separate connection pool dedicated to blocking `XREAD BLOCK` SSE reads.
+
+    `_create_redis`'s general-purpose client caps `socket_timeout` at 5s
+    (bounded by `ready_timeout_seconds`), so issuing a multi-second `XREAD
+    BLOCK` over it would raise a bogus socket timeout well before the
+    requested block window elapses, and a busy SSE fleet would starve other
+    Redis operations of that pool's 20 connections. This client's
+    `socket_timeout` is `settings.redis_stream_block_seconds` (configured
+    strictly above the longest `block_ms` a reader uses) and its pool is
+    sized by `settings.redis_stream_pool_size` for concurrent SSE readers.
+    """
+    from redis.asyncio import Redis
+
+    return Redis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        max_connections=settings.redis_stream_pool_size,
+        socket_connect_timeout=min(5.0, settings.ready_timeout_seconds),
+        socket_timeout=settings.redis_stream_block_seconds,
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
+
+
 def _create_event_wakeups(redis: Redis) -> EventWakeups:
-    """One `EventWakeups` per process, over the process's single Redis
-    client; `create_graph_worker_runtime`'s eventual generation-worker
-    sibling constructs its `DraftStream`/`EventWakeups` the same way from its
-    own `_create_redis(settings)` client."""
+    """One `EventWakeups` per process, over the process's general-purpose
+    Redis client (writes only, never blocks). The generation worker's `main()`
+    does not construct its own: it calls `create_api_runtime` directly and
+    reuses `runtime.http_services.conversations`/`.draft_stream`, so this one
+    composition already reaches both the API and the generation worker."""
 
     from tap.modules.chat.adapters.redis_drafts import AsyncRedisStreams, RedisEventWakeups
 
     return RedisEventWakeups(redis=cast(AsyncRedisStreams, redis))
+
+
+def _create_draft_stream(redis: Redis, block_redis: Redis, settings: TapperSettings) -> DraftStream:
+    """One `DraftStream` per process: non-blocking ops (`append`/`replay`/
+    `partial_text`) go over the shared general-purpose client; `read`'s
+    blocking `XREAD` goes over the dedicated `block_redis` pool (see
+    `_create_redis_stream_block_client`) so it cannot be starved by, or
+    starve, other Redis traffic, and cannot raise a false
+    `DraftStreamUnavailable` from the general client's short socket timeout."""
+
+    from tap.modules.chat.adapters.redis_drafts import AsyncRedisStreams, RedisDraftStream
+
+    return RedisDraftStream(
+        redis=cast(AsyncRedisStreams, redis),
+        block_redis=cast(AsyncRedisStreams, block_redis),
+        block_timeout_seconds=settings.redis_stream_block_seconds,
+    )
 
 
 async def _redact_model_context(text: str) -> str:
@@ -1888,6 +1943,7 @@ def _assemble_http_services(
     graph_reasoning: bool = True,
     turn_max_attempts: int = 3,
     event_wakeups: EventWakeups | None = None,
+    draft_stream: DraftStream | None = None,
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -2188,6 +2244,7 @@ def _assemble_http_services(
         knowledge_reviews=knowledge_reviews,
         insights_knowledge_search=answer_service,
         insights_publication_authority=publication_authority,
+        draft_stream=draft_stream,
     )
 
 

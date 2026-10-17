@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+from opentelemetry import trace
 from sqlalchemy import (
     Boolean,
     Column,
@@ -43,6 +45,7 @@ from tap.modules.chat.adapters.mysql_conversations import (
     turn_artifact_link,
     turn_input_snapshot,
 )
+from tap.modules.chat.application.ports import EventWakeups
 from tap.modules.governance.adapters.mysql_audit import MysqlProjectAudit
 from tap.modules.governance.domain.audit import (
     AuditAction,
@@ -98,6 +101,8 @@ from tap.modules.test_management.ports.generation import (
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _scope_constraints(name: str):
@@ -612,6 +617,7 @@ class MysqlTestPlanRepository:
         scope: ProjectScopeContext,
         model_alias: str,
         knowledge_requires_publication: bool = True,
+        wakeups: EventWakeups | None = None,
     ) -> None:
         self._sessions = sessions
         self.scope = require_project_scope(scope)
@@ -619,6 +625,25 @@ class MysqlTestPlanRepository:
             raise ValueError("test design model alias is required")
         self._model_alias = model_alias
         self._knowledge_requires_publication = knowledge_requires_publication
+        self._wakeups = wakeups
+
+    async def _notify_wakeups(self, conversation_id: str, sequence: int) -> None:
+        """Best-effort, same contract as `ConversationService._notify_wakeups`:
+        a wake-up only shortens SSE latency, so it must never fail a commit
+        that already succeeded."""
+        if self._wakeups is None:
+            return
+        try:
+            await self._wakeups.notify(conversation_id, sequence)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.warning(
+                "test plan generation stream wakeup failed: conversation_id=%s",
+                conversation_id,
+                exc_info=True,
+            )
+            trace.get_current_span().set_attribute("tap.stream.wakeup_failed", True)
 
     def _assert_model_alias(self, model_alias: str) -> None:
         if model_alias != self._model_alias:
@@ -816,6 +841,17 @@ class MysqlTestPlanRepository:
             )
             .values(updated_at=_naive(now))
         )
+        # Pragmatic timing note: this runs inside the caller's still-open
+        # `session.begin()`, not strictly after commit -- the four call
+        # sites each have multiple early-return branches inside that same
+        # `async with`, so guaranteeing strict post-commit notify would need
+        # a try/finally extraction around each method's full body. Given
+        # `RedisEventWakeups.notify`'s documented hint-only contract (a
+        # consumer re-reads MySQL itself and never trusts this timing), a
+        # notify fired a few milliseconds before its commit lands is
+        # harmless: the reader either sees the row already (common case) or
+        # finds nothing new and keeps its existing wait/poll going.
+        await self._notify_wakeups(request.conversation_id, sequence)
 
     async def create_draft(
         self,

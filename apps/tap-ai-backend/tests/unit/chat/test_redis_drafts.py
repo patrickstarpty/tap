@@ -1,12 +1,49 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from tap.modules.chat.adapters.redis_drafts import RedisDraftStream, RedisEventWakeups
 from tap.modules.chat.application.ports import DraftStreamUnavailable
+
+
+class _FakePipeline:
+    """Queues `xadd`/`expire` synchronously; `execute()` applies them to the
+    same in-memory streams as the owning fake client, mirroring
+    `redis.asyncio`'s MULTI/EXEC pipeline semantics closely enough for tests."""
+
+    def __init__(self, redis: "_FakeAsyncRedis") -> None:
+        self._redis = redis
+        self._ops: list[tuple[str, object, object, object]] = []
+
+    def xadd(self, name, fields, *, maxlen=None, approximate=True):
+        self._ops.append(("xadd", name, dict(fields), maxlen))
+        return self
+
+    def expire(self, name, seconds):
+        self._ops.append(("expire", name, seconds, None))
+        return self
+
+    async def execute(self):
+        results = []
+        for kind, name, value, maxlen in self._ops:
+            if kind == "xadd":
+                results.append(await self._redis.xadd(name, value, maxlen=maxlen))
+            else:
+                results.append(await self._redis.expire(name, value))
+        self._ops = []
+        return results
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
 
 
 class _FakeAsyncRedis:
@@ -17,6 +54,9 @@ class _FakeAsyncRedis:
         self.maxlens: dict[str, int] = {}
         self.ttls: dict[str, int] = {}
         self._counter = 0
+
+    def pipeline(self, transaction: bool = True) -> _FakePipeline:
+        return _FakePipeline(self)
 
     async def xadd(self, name, fields, *, maxlen=None, approximate=True):
         self._counter += 1
@@ -48,18 +88,40 @@ class _FakeAsyncRedis:
         return result
 
 
-class _FailingRedis:
-    async def xadd(self, *args, **kwargs):
-        raise RedisError("redis unavailable")
+class _RaisingPipeline:
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
 
-    async def expire(self, *args, **kwargs):
-        raise RedisError("redis unavailable")
+    def xadd(self, *args, **kwargs):
+        return self
+
+    def expire(self, *args, **kwargs):
+        return self
+
+    async def execute(self):
+        raise self._error
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+
+class _FailingRedis:
+    """Raises `error` from every operation this module depends on."""
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        self._error = error if error is not None else RedisError("redis unavailable")
+
+    def pipeline(self, transaction: bool = True) -> _RaisingPipeline:
+        return _RaisingPipeline(self._error)
 
     async def xrange(self, *args, **kwargs):
-        raise RedisError("redis unavailable")
+        raise self._error
 
     async def xread(self, *args, **kwargs):
-        raise RedisError("redis unavailable")
+        raise self._error
 
 
 @pytest.mark.asyncio
@@ -95,6 +157,20 @@ async def test_replay_filters_attempt_and_orders_by_seq() -> None:
 
 
 @pytest.mark.asyncio
+async def test_replay_drops_chunks_before_the_last_reset() -> None:
+    redis = _FakeAsyncRedis()
+    drafts = RedisDraftStream(redis=redis)
+
+    await drafts.append("turn-1", attempt=1, seq=1, text="stale-prefix")
+    await drafts.append("turn-1", attempt=1, seq=2, text="", reset=True)
+    await drafts.append("turn-1", attempt=1, seq=3, text="fresh")
+
+    chunks = await drafts.replay("turn-1", attempt=1)
+
+    assert [(chunk.seq, chunk.text, chunk.reset) for chunk in chunks] == [(3, "fresh", False)]
+
+
+@pytest.mark.asyncio
 async def test_partial_text_uses_latest_attempt() -> None:
     redis = _FakeAsyncRedis()
     drafts = RedisDraftStream(redis=redis)
@@ -106,6 +182,20 @@ async def test_partial_text_uses_latest_attempt() -> None:
     result = await drafts.partial_text("turn-1")
 
     assert result == (2, "new-draft")
+
+
+@pytest.mark.asyncio
+async def test_partial_text_drops_chunks_before_the_last_reset() -> None:
+    redis = _FakeAsyncRedis()
+    drafts = RedisDraftStream(redis=redis)
+
+    await drafts.append("turn-1", attempt=1, seq=1, text="13812345678")
+    await drafts.append("turn-1", attempt=1, seq=2, text="", reset=True)
+    await drafts.append("turn-1", attempt=1, seq=3, text="[REDACTED_PHONE]")
+
+    result = await drafts.partial_text("turn-1")
+
+    assert result == (1, "[REDACTED_PHONE]")
 
 
 @pytest.mark.asyncio
@@ -133,6 +223,43 @@ async def test_read_returns_entries_from_both_keys() -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_uses_the_dedicated_block_client() -> None:
+    """`read`'s `XREAD BLOCK` must go over `block_redis`, not the
+    general-purpose `redis` client, so it never shares that client's short
+    socket timeout or small pool (I-1/I-2)."""
+    redis = _FakeAsyncRedis()
+    block_redis = _FakeAsyncRedis()
+    drafts = RedisDraftStream(redis=redis, block_redis=block_redis)
+
+    await drafts.append("turn-1", attempt=1, seq=1, text="hi")
+    entries = await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=10)
+
+    # The entry only exists on `redis` (where `append` wrote it); `read`
+    # reading an empty `block_redis` instead would return nothing.
+    assert entries == ()
+    await block_redis.xadd("tap:turn:turn-1:draft", {"attempt": "1", "seq": "9", "text": "y"})
+    entries = await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=10)
+    assert len(entries) == 1
+
+
+@pytest.mark.asyncio
+async def test_read_rejects_block_ms_at_or_above_the_configured_ceiling() -> None:
+    drafts = RedisDraftStream(redis=_FakeAsyncRedis(), block_timeout_seconds=5.0)
+
+    with pytest.raises(ValueError):
+        await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=5_000)
+
+
+@pytest.mark.asyncio
+async def test_read_accepts_block_ms_below_the_configured_ceiling() -> None:
+    drafts = RedisDraftStream(redis=_FakeAsyncRedis(), block_timeout_seconds=25.0)
+
+    entries = await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=15_000)
+
+    assert entries == ()
+
+
+@pytest.mark.asyncio
 async def test_redis_errors_raise_draft_stream_unavailable() -> None:
     drafts = RedisDraftStream(redis=_FailingRedis())
     wakeups = RedisEventWakeups(redis=_FailingRedis())
@@ -147,3 +274,31 @@ async def test_redis_errors_raise_draft_stream_unavailable() -> None:
         await drafts.read({"tap:turn:turn-1:draft": "0"}, block_ms=10)
     with pytest.raises(DraftStreamUnavailable):
         await wakeups.notify("conv-1", 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        RedisTimeoutError("timed out"),
+        RedisConnectionError("connection reset"),
+        OSError("broken pipe"),
+        asyncio.TimeoutError("socket timeout"),
+    ],
+)
+async def test_non_redis_transport_failures_also_raise_draft_stream_unavailable(error) -> None:
+    drafts = RedisDraftStream(redis=_FailingRedis(error))
+    wakeups = RedisEventWakeups(redis=_FailingRedis(error))
+
+    with pytest.raises(DraftStreamUnavailable):
+        await drafts.append("turn-1", attempt=1, seq=1, text="x")
+    with pytest.raises(DraftStreamUnavailable):
+        await wakeups.notify("conv-1", 1)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_error_propagates_instead_of_degrading() -> None:
+    drafts = RedisDraftStream(redis=_FailingRedis(asyncio.CancelledError()))
+
+    with pytest.raises(asyncio.CancelledError):
+        await drafts.append("turn-1", attempt=1, seq=1, text="x")

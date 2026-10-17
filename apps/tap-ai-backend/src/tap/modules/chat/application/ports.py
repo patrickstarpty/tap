@@ -38,6 +38,10 @@ class DraftChunk:
     attempt: int
     seq: int
     text: str
+    # Set by `DraftBatcher` (Task 5) when a redaction-driven rewrite changes
+    # an already-sent prefix: `text` is empty and every earlier chunk for
+    # this attempt must be discarded before accumulating what follows.
+    reset: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,9 +58,14 @@ class DraftStream(Protocol):
     conversation-level wake-up stream that announces new authoritative events.
     Any Redis failure must be raised as `DraftStreamUnavailable`."""
 
-    async def append(self, turn_id: str, *, attempt: int, seq: int, text: str) -> None: ...
+    async def append(
+        self, turn_id: str, *, attempt: int, seq: int, text: str, reset: bool = False
+    ) -> None: ...
 
-    async def replay(self, turn_id: str, *, attempt: int) -> tuple[DraftChunk, ...]: ...
+    async def replay(self, turn_id: str, *, attempt: int) -> tuple[DraftChunk, ...]:
+        """Chunks for `attempt` ordered by `seq`, with every chunk before the
+        last `reset: true` chunk (if any) discarded."""
+        ...
 
     async def read(self, keys: Mapping[str, str], *, block_ms: int) -> tuple[StreamEntry, ...]:
         """Block until any of `keys` (Redis key -> starting entry id) has new

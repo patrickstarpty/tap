@@ -238,6 +238,7 @@ async def test_notify_after_commit_only():
         InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
     )
     await service.create("conversation-1", "turn-1", "request-1", _input())
+    wakeups.notified.clear()  # `create` itself notifies trivially; isolate `emit`'s.
 
     event = await service.emit("conversation-1", "turn-1", "stage.started", {"stage": "verify"})
 
@@ -251,6 +252,7 @@ async def test_notify_not_sent_when_append_fails():
         _FailingAppendRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
     )
     await service.create("conversation-1", "turn-1", "request-1", _input())
+    wakeups.notified.clear()
 
     with pytest.raises(RuntimeError, match="append failed"):
         await service.emit("conversation-1", "turn-1", "stage.started", {"stage": "verify"})
@@ -278,6 +280,7 @@ async def test_complete_evidence_notifies_wakeups():
         InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
     )
     await service.create("conversation-1", "turn-1", "request-1", _input())
+    wakeups.notified.clear()
     evidence = AnswerEvidence(
         "Grounded", "completed", RetrievalSummary("completed"), GraphContextStatus.NOT_REQUESTED
     )
@@ -294,3 +297,60 @@ async def test_complete_evidence_notifies_wakeups():
     assert conversation_id == "conversation-1"
     detail = await service.load("conversation-1")
     assert sequence == max(item.sequence for item in detail.events)
+
+
+@pytest.mark.asyncio
+async def test_complete_evidence_sends_no_wakeup_when_turn_already_terminal():
+    """`complete_evidence` on an already-terminal Turn is the existing no-op
+    (idempotent settle race); since nothing new committed, no wakeup fires."""
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    evidence = AnswerEvidence(
+        "Grounded", "completed", RetrievalSummary("completed"), GraphContextStatus.NOT_REQUESTED
+    )
+    await service.complete_evidence(
+        "conversation-1",
+        "turn-1",
+        evidence,
+        terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+    )
+    wakeups.notified.clear()
+
+    again = await service.complete_evidence(
+        "conversation-1",
+        "turn-1",
+        evidence,
+        terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+    )
+
+    assert again.state == "completed"
+    assert wakeups.notified == []
+
+
+@pytest.mark.asyncio
+async def test_complete_evidence_tolerates_wakeup_failure_and_marks_the_span(span_recorder):
+    from tap.platform.telemetry import span
+
+    wakeups = _FakeWakeups(fail=True)
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    evidence = AnswerEvidence(
+        "Grounded", "completed", RetrievalSummary("completed"), GraphContextStatus.NOT_REQUESTED
+    )
+
+    with span("test.complete_evidence"):
+        completed = await service.complete_evidence(
+            "conversation-1",
+            "turn-1",
+            evidence,
+            terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+        )
+
+    assert completed.state == "completed"
+    finished = {item.name: item for item in span_recorder.get_finished_spans()}
+    assert finished["test.complete_evidence"].attributes["tap.stream.wakeup_failed"] is True

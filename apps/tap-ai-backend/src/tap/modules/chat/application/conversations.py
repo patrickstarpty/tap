@@ -69,7 +69,11 @@ class ConversationRepository(Protocol):
     async def create_with_first_turn(self, conversation: Conversation) -> ConversationTurn: ...
     async def append_turn(
         self, conversation_id: str, turn: ConversationTurn, event: ConversationEvent
-    ) -> ConversationTurn: ...
+    ) -> tuple[ConversationTurn, int | None]:
+        """The persisted Turn and the committed event's sequence, or `None`
+        when an idempotent replay persisted nothing new."""
+        ...
+
     async def list(
         self, *, limit: int, cursor: str | None, query: str | None = None
     ) -> tuple[tuple[Conversation, ...], str | None]: ...
@@ -90,7 +94,11 @@ class ConversationRepository(Protocol):
         lease_token: str | None = None,
         terminal_event: ConversationEvent | None = None,
         stream_events: tuple[ConversationEvent, ...] = (),
-    ) -> ConversationTurn: ...
+    ) -> tuple[ConversationTurn, int | None]:
+        """The persisted Turn and the highest sequence committed by this call,
+        or `None` when the Turn was already terminal (no-op)."""
+        ...
+
     async def append_stream_event(
         self,
         conversation_id: str,
@@ -131,14 +139,14 @@ class InMemoryConversationRepository:
             if existing.client_request_id == turn.client_request_id:
                 if existing.input_snapshot.value != turn.input_snapshot.value:
                     raise ConversationConflict("idempotency-conflict")
-                return existing
+                return existing, None
         self.values[conversation_id] = replace(
             conversation,
             turns=(*conversation.turns, turn),
             events=(*conversation.events, event),
             updated_at=event.occurred_at,
         )
-        return turn
+        return turn, event.sequence
 
     async def list(self, *, limit, cursor, query=None):
         needle = None if query is None else query.casefold()
@@ -210,7 +218,7 @@ class InMemoryConversationRepository:
         if current is None:
             raise ConversationNotFound
         if current.state in {"completed", "abstained", "failed", "canceled"}:
-            return current
+            return current, None
         turns = []
         found = None
         for turn in conversation.turns:
@@ -221,6 +229,9 @@ class InMemoryConversationRepository:
                 turns.append(turn)
         if found is None:
             raise ConversationNotFound
+        committed_sequence = (
+            len(conversation.events) + len(stream_events) + (2 if terminal_event else 1)
+        )
         self.values[conversation_id] = replace(
             conversation,
             turns=tuple(turns),
@@ -245,16 +256,11 @@ class InMemoryConversationRepository:
                     if terminal_event
                     else ()
                 ),
-                replace(
-                    event,
-                    sequence=(
-                        len(conversation.events) + len(stream_events) + (2 if terminal_event else 1)
-                    ),
-                ),
+                replace(event, sequence=committed_sequence),
             ),
             updated_at=event.occurred_at,
         )
-        return found
+        return found, committed_sequence
 
     async def append_stream_event(self, conversation_id, turn_id, event, lease_token=None):
         conversation = await self.load(conversation_id)
@@ -322,6 +328,13 @@ class ConversationService:
             )
             trace.get_current_span().set_attribute("tap.stream.wakeup_failed", True)
 
+    async def notify_external_write(self, conversation_id: str, sequence: int) -> None:
+        """For a write made directly through `repository`, bypassing `emit`/
+        `complete_evidence` -- e.g. the generation worker's `claim_queued`
+        (`turn.started`) or `_fail_unclaimable_turn` (`turn.failed`) -- where
+        the caller already knows the committed sequence."""
+        await self._notify_wakeups(conversation_id, sequence)
+
     def _turn(self, conversation_id, turn_id, request_id, value, *, attempt=0, now=None):
         now = now or datetime.now(timezone.utc)
         snapshot = TurnInputSnapshot.create(
@@ -358,13 +371,21 @@ class ConversationService:
             (event,),
             actor_id=self.scope.actor_id,
         )
-        return await self.repository.create_with_first_turn(conversation)
+        created = await self.repository.create_with_first_turn(conversation)
+        # Trivial: a brand-new conversation's first event is always sequence
+        # 1; an idempotent-replay no-op notifying anyway is harmless (the
+        # sequence is only a hint -- see `RedisEventWakeups.notify`).
+        await self._notify_wakeups(conversation_id, 1)
+        return created
 
     async def append(self, conversation_id, turn_id, request_id, value):
         conversation = await self.load(conversation_id)
         turn, event = self._turn(conversation_id, turn_id, request_id, value)
         event = replace(event, sequence=len(conversation.events) + 1)
-        return await self.repository.append_turn(conversation_id, turn, event)
+        persisted_turn, sequence = await self.repository.append_turn(conversation_id, turn, event)
+        if sequence is not None:
+            await self._notify_wakeups(conversation_id, sequence)
+        return persisted_turn
 
     async def list(self, *, limit, cursor, query: str | None = None):
         return await self.repository.list(limit=limit, cursor=cursor, query=history_query(query))
@@ -527,7 +548,7 @@ class ConversationService:
             ConversationEvent(uuid4().hex, 1, event_type, payload, now)
             for event_type, payload in stream_events
         )
-        turn = await self.repository.complete(
+        turn, sequence = await self.repository.complete(
             conversation_id,
             turn_id,
             snapshot,
@@ -536,24 +557,8 @@ class ConversationService:
             terminal_event=stream_event,
             stream_events=persisted_stream_events,
         )
-        # `repository.complete` recomputes real sequences internally (unlike
-        # the locally built `event`/`stream_event` drafts above), so the
-        # committed sequence to notify with is only known by reloading.
-        if self._wakeups is not None:
-            try:
-                committed = await self.repository.load(conversation_id)
-                latest_sequence = max((item.sequence for item in committed.events), default=None)
-                if latest_sequence is not None:
-                    await self._wakeups.notify(conversation_id, latest_sequence)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                _LOGGER.warning(
-                    "conversation stream wakeup failed: conversation_id=%s",
-                    conversation_id,
-                    exc_info=True,
-                )
-                trace.get_current_span().set_attribute("tap.stream.wakeup_failed", True)
+        if sequence is not None:
+            await self._notify_wakeups(conversation_id, sequence)
         return turn
 
     async def emit(

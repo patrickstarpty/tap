@@ -75,6 +75,14 @@ class GenerationWorker:
 
     async def run_once(self, *, limit: int) -> int:
         claimed = await self.conversations.repository.claim_queued(limit=limit)
+        # `claim_queued` writes `turn.started` for every claimed Turn, and may
+        # also settle permanently-faulted Turns (`turn.failed`) inline; both
+        # bypass `emit`/`complete_evidence`, so notify here instead -- never
+        # inside the repository (see `claim_queued`'s docstring).
+        for conversation_id, sequence in getattr(
+            self.conversations.repository, "last_claim_wakeups", ()
+        ):
+            await self.conversations.notify_external_write(conversation_id, sequence)
         for conversation_id, turn in claimed:
             try:
                 try:
