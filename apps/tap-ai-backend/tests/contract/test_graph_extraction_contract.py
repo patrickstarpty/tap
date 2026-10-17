@@ -1120,6 +1120,74 @@ async def test_system_node_that_is_really_a_disease_is_not_exempt(span_recorder)
     assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 1
 
 
+@pytest.mark.asyncio
+async def test_known_system_entity_that_is_really_a_disease_is_not_exempt(span_recorder):
+    # rv3 re-review: being a *known* entity (minted in an earlier batch, passed
+    # in via knownEntities) must not grant the organization-reference exemption
+    # on its own -- the offline eval harness that first measured this fix always
+    # ran a single batch with empty knownEntities, so it could not have caught
+    # a known entity carrying the same SYSTEM misclassification as a freshly
+    # minted one. 骨髓穿刺检查 (a diagnostic procedure) is "known" here exactly
+    # as it would be after an earlier batch of the same document first minted
+    # it; this later batch wrongly links it to an unrelated disease whose own
+    # chunk never mentions it, and it must be checked -- and dropped -- the
+    # same as if it were new.
+    output = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "label": "严重克罗恩病",
+                "type": "CONCEPT",
+                "canonicalKey": "严重克罗恩病",
+                "chunks": ["c1"],
+                "aliases": [],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "sourceNodeId": "node-1",
+                "targetNodeId": "known-n2",
+                "relationType": "APPLIES_TO",
+                "relationLabel": "须根据组织病理学特点诊断",
+                "origin": "EXTRACTED",
+                "confidence": 1.0,
+                "chunks": ["c1"],
+            }
+        ],
+        "provenance": [],
+    }
+    request = replace(
+        _request(),
+        chunks=(
+            {
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "document-revision-1",
+                "chunkId": "chunk-1",
+                "content": "27）严重克罗恩病\n指一种慢性肉芽肿性肠炎，须根据组织病理学特点诊断。",
+                "anchor": {"kind": "text", "start": 0, "end": 10},
+                "contentDigest": "sha256:" + "a" * 64,
+            },
+        ),
+        known_entities=(
+            {
+                "id": "known-n2",
+                "label": "骨髓穿刺检查",
+                "type": "SYSTEM",
+                "canonicalKey": "骨髓穿刺检查",
+            },
+        ),
+    )
+
+    draft = await ModelGatewayGraphExtraction(Gateway(output)).extract(request)
+
+    assert draft.edges == ()
+    spans = [
+        item for item in span_recorder.get_finished_spans() if item.name == "graph.extract_batch"
+    ]
+    assert spans[0].attributes["tap.graph.dropped_ungrounded_edges"] == 1
+
+
 def _numbered_list_request():
     return replace(
         _request(),

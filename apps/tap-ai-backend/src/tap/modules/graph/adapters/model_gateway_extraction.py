@@ -440,9 +440,7 @@ class ModelGatewayGraphExtraction:
                     kept_provenance_raw,
                     dropped_ungrounded_edges,
                     dropped_cross_item_edges,
-                ) = _drop_unsupported_edges(
-                    kept_edges_raw, kept_provenance_raw, label_lookup, refs, frozenset(known)
-                )
+                ) = _drop_unsupported_edges(kept_edges_raw, kept_provenance_raw, label_lookup, refs)
                 edges = tuple(
                     GraphEdge(
                         _string(item, "id"),
@@ -741,7 +739,7 @@ _ORGANIZATION_LABEL_SUFFIXES = ("公司", "保险人", "保险", "机构", "协�
 _UNSUPPORTED_EDGE_OVERLAP_MIN = 0.6
 
 
-def _is_organization_reference(label: str, node_type: str, is_known: bool) -> bool:
+def _is_organization_reference(label: str, node_type: str) -> bool:
     """Whether this endpoint is the insurer or the contract referring to itself,
     rather than some other real-world entity the model happened to type ACTOR or
     SYSTEM.
@@ -755,16 +753,21 @@ def _is_organization_reference(label: str, node_type: str, is_known: bool) -> bo
     being referred to in their own clause only by a document-relative pronoun
     (本公司, 本合同, 本附加合同), which ``usable_alias`` deliberately keeps out of
     every node's aliases -- so this is narrowed to only that case: a reference
-    pronoun (``naming.is_reference_name``), a node already established as a
-    known entity in an earlier batch of the same document (vetted once
-    already), or a label that is itself an organization/party name (ends with
-    公司, 保险人, 保险, 机构, 协会, 学会, or 委员会). A SYSTEM/ACTOR node that is
-    really a disease, procedure, or standard matches none of these and is
-    checked like any other endpoint.
+    pronoun (``naming.is_reference_name``), or a label that is itself an
+    organization/party name (ends with 公司, 保险人, 保险, 机构, 协会, 学会,
+    or 委员会). A SYSTEM/ACTOR node that is really a disease, procedure, or
+    standard matches none of these and is checked like any other endpoint.
+
+    This applies identically whether the node is new in this batch or already
+    an established known entity from an earlier one: being *known* only means
+    an earlier batch minted it once, not that it was itself ever checked
+    against evidence text, so a known entity that is really a misclassified
+    SYSTEM/ACTOR disease is exactly as able to seed a cross-item mislink in a
+    later batch as a freshly-minted one, and must be checked the same way.
     """
     if node_type not in _ORGANIZATION_REFERENCE_TYPES:
         return False
-    if is_known or is_reference_name(label):
+    if is_reference_name(label):
         return True
     return label.endswith(_ORGANIZATION_LABEL_SUFFIXES)
 
@@ -944,7 +947,6 @@ def _drop_unsupported_edges(
     provenance_raw: tuple[dict[str, object], ...],
     label_lookup: Mapping[str, tuple[str, tuple[str, ...], str]],
     refs: Mapping[str, Mapping[str, object]],
-    known_entity_ids: frozenset[str] = frozenset(),
 ) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int, int]:
     """Drop an EXTRACTED edge whose endpoints are not both named in its own evidence.
 
@@ -1010,7 +1012,7 @@ def _drop_unsupported_edges(
             label, aliases, node_type = names
             if node_type == "REQUIREMENT":
                 requirement_endpoint = True
-            if _is_organization_reference(label, node_type, endpoint in known_entity_ids):
+            if _is_organization_reference(label, node_type):
                 endpoint_names[endpoint_key] = ()
                 continue
             endpoint_names[endpoint_key] = (label, *aliases)
