@@ -503,9 +503,15 @@ class SkillAuthoringService:
             # rather than surfacing a conflict for a commit that, from the
             # caller's perspective, already happened.
             existing = await self._find_revision(plan.asset_id, plan.revision_id)
-            await self._cleanup_promoted(file_refs)
             if existing is not None:
+                # Do NOT clean up file_refs here: with deterministic
+                # per-(asset, revision, relative_path) object identity, a
+                # real content-addressed store's promote() is idempotent —
+                # our just-promoted refs and the survivor's persisted refs
+                # resolve to the exact same objects. Deleting them would
+                # delete the survivor's live data, not an orphan.
                 return existing
+            await self._cleanup_promoted(file_refs)
             raise
         except BaseException:
             await self._cleanup_promoted(file_refs)

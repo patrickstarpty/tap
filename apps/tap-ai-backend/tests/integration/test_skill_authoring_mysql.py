@@ -27,6 +27,7 @@ class _FakeObjectStore:
     def __init__(self) -> None:
         self.staged: dict[object, bytes] = {}
         self.objects: dict[object, bytes] = {}
+        self._promoted: dict[tuple[object, ...], object] = {}
         self._counter = 0
 
     async def put_staged(self, request):
@@ -45,12 +46,19 @@ class _FakeObjectStore:
     async def promote(self, staged, expected_sha256, *, identity, attributes):
         from tap.platform.storage.objects import ObjectMissingError, ObjectRef
 
-        data = self.staged.pop(staged.ref, None)
+        # Mirrors the real store: non-destructive of staging, and
+        # content-addressed/idempotent (same identity+content -> same ref).
+        data = self.staged.get(staged.ref)
         if data is None:
             raise ObjectMissingError("missing staged object")
+        key = (identity, expected_sha256, len(data), staged.content_type)
+        existing_ref = self._promoted.get(key)
+        if existing_ref is not None:
+            return existing_ref
         self._counter += 1
         ref = ObjectRef(f"obj-{self._counter}")
         self.objects[ref] = data
+        self._promoted[key] = ref
         return ref
 
     async def open_verified(self, ref):
@@ -64,7 +72,10 @@ class _FakeObjectStore:
 
     async def delete(self, ref):
         self.staged.pop(ref, None)
-        self.objects.pop(ref, None)
+        if self.objects.pop(ref, None) is not None:
+            for key, promoted_ref in list(self._promoted.items()):
+                if promoted_ref == ref:
+                    del self._promoted[key]
 
 
 @pytest.mark.asyncio

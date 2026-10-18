@@ -23,12 +23,14 @@ from tap.modules.ai.application.skill_authoring import (
     SkillImportRecord,
     TextUpload,
     _deterministic_id,
+    _file_identity,
 )
 from tap.modules.ai.application.skill_package import SkillPackageRejected
 from tap.modules.ai.domain.assets import (
     AssetRevisionRejected,
     AssetRevisionStatus,
     RevisionConflict,
+    SkillFile,
     SkillRevision,
     text_digest,
 )
@@ -36,6 +38,7 @@ from tap.platform.storage.objects import (
     ObjectIntegrityError,
     ObjectMissingError,
     ObjectRef,
+    PutObjectRequest,
     StagedObject,
     StagingRef,
     VerifiedObject,
@@ -136,6 +139,7 @@ class _FakeObjectStore:
     def __init__(self) -> None:
         self.staged: dict[StagingRef, bytes] = {}
         self.objects: dict[ObjectRef, tuple[bytes, str, dict[str, str], str]] = {}
+        self._promoted: dict[tuple[object, ...], ObjectRef] = {}
         self._counter = 0
 
     async def put_staged(self, request):
@@ -159,15 +163,26 @@ class _FakeObjectStore:
         for part in identity.split("/"):
             if _SEGMENT.fullmatch(part) is None or part in (".", ".."):
                 raise ValueError(f"invalid identity segment: {part!r}")
-        data = self.staged.pop(staged.ref, None)
+        # Mirrors the real store: promote() reads the staged bytes but never
+        # consumes/deletes the staging entry itself.
+        data = self.staged.get(staged.ref)
         if data is None:
             raise ObjectMissingError("missing staged object")
         digest = f"sha256:{hashlib.sha256(data).hexdigest()}"
         if digest != expected_sha256:
             raise ValueError("digest mismatch")
+        # Content-addressed and idempotent, like the real store: the same
+        # (identity, content, attributes) always resolves to the same ref,
+        # so two concurrent committers promoting the same file converge on
+        # one object rather than each creating their own.
+        key = (identity, digest, len(data), staged.content_type, tuple(sorted(attributes.items())))
+        existing_ref = self._promoted.get(key)
+        if existing_ref is not None:
+            return existing_ref
         self._counter += 1
         ref = ObjectRef(f"obj-{self._counter}")
         self.objects[ref] = (data, digest, dict(attributes), identity)
+        self._promoted[key] = ref
         return ref
 
     async def open_verified(self, ref):
@@ -196,6 +211,9 @@ class _FakeObjectStore:
             return
         if ref in self.objects:
             del self.objects[ref]
+            for key, promoted_ref in list(self._promoted.items()):
+                if promoted_ref == ref:
+                    del self._promoted[key]
             return
         raise ObjectMissingError("missing object")
 
@@ -206,6 +224,19 @@ def _service(catalog=None, objects=None, now=None):
     box = [now or datetime(2026, 1, 1, tzinfo=timezone.utc)]
     service = SkillAuthoringService(catalog, objects, scope=VALIDATION_SCOPE, clock=lambda: box[0])
     return service, catalog, objects, box
+
+
+async def _stage_bytes_for_test(objects, data: bytes):
+    async def content():
+        yield data
+
+    # Matches SkillAuthoringService._stage_bytes's fixed content type, so a
+    # manually-staged-and-promoted "winner" collides with the service's own
+    # promotion of the same (identity, content) under the idempotent fake
+    # store's dedup key.
+    return await objects.put_staged(
+        PutObjectRequest(content(), max(len(data), 1), "application/octet-stream")
+    )
 
 
 @pytest.mark.asyncio
@@ -233,7 +264,9 @@ async def test_stage_then_commit_creates_revision_and_objects() -> None:
     assert revision.display_name == "demo-skill"
     assert revision.instruction_template is not None
     assert [file.relative_path for file in revision.files] == ["SKILL.md"]
-    assert not objects.staged  # promoted, not left staged
+    # Promoted into permanent storage (promote() does not consume staging,
+    # matching the real store: staging cleanup is a separate concern).
+    assert objects.objects
 
     ref = await catalog.get_skill_file_object_ref(revision.revision_id, "SKILL.md")
     assert ref is not None
@@ -443,14 +476,29 @@ async def test_commit_import_validates_every_selection_before_writing_any() -> N
 async def test_commit_import_converges_with_a_concurrent_writer_via_deterministic_ids() -> None:
     """I-2: a row already inserted under the deterministic (import_id, root)
     id - as a concurrent committer would leave it - is reused rather than
-    rejected or duplicated."""
+    rejected or duplicated, and (fix round 2) the winner's promoted file
+    remains intact and readable: with deterministic object identity a real
+    content-addressed store's promote() is idempotent, so the loser's
+    promotion of the same content resolves to the exact same ref as the
+    winner's — cleaning it up on "conflict" would have deleted live data."""
     service, catalog, objects, _ = _service()
     preview = await service.stage_import(
         VALIDATION_SCOPE, upload=FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode()})
     )
     asset_id = _deterministic_id("skill", preview.import_id, "demo-skill")
     revision_id = _deterministic_id("skill-rev", preview.import_id, "demo-skill")
+    skill_md_bytes = _SKILL_MD.encode()
 
+    # Simulate a concurrent committer: it independently staged and promoted
+    # the identical file content under the same deterministic identity, and
+    # already inserted its revision, before this call runs.
+    winner_staged = await _stage_bytes_for_test(objects, skill_md_bytes)
+    winner_ref = await objects.promote(
+        winner_staged,
+        winner_staged.sha256,
+        identity=_file_identity(asset_id, revision_id, "SKILL.md"),
+        attributes={"revision": revision_id, "kind": "skill", "relativePath": "SKILL.md"},
+    )
     concurrent_revision = SkillRevision(
         revision_id=revision_id,
         asset_id=asset_id,
@@ -462,8 +510,21 @@ async def test_commit_import_converges_with_a_concurrent_writer_via_deterministi
         instruction_template="y",
         description="Demo skill used in authoring tests.",
         source_kind="imported",
+        files=(
+            SkillFile(
+                relative_path="SKILL.md",
+                size_bytes=len(skill_md_bytes),
+                sha256=hashlib.sha256(skill_md_bytes).hexdigest(),
+                category="skill",
+                attached=False,
+            ),
+        ),
     )
-    await catalog.insert_skill_revision(concurrent_revision, base_revision_id=None)
+    await catalog.insert_skill_revision(
+        concurrent_revision,
+        base_revision_id=None,
+        file_object_refs={"SKILL.md": str(winner_ref)},
+    )
 
     (revision,) = await service.commit_import(
         VALIDATION_SCOPE, preview.import_id, (ImportSelection(root="demo-skill"),)
@@ -472,8 +533,11 @@ async def test_commit_import_converges_with_a_concurrent_writer_via_deterministi
     assert revision.revision_id == revision_id
     assert revision.asset_id == asset_id
     assert len(await catalog.list_revisions("skill", asset_id)) == 1
-    # Our own (unused) promotion for this file was cleaned up.
-    assert not objects.objects
+    # The winner's object is still intact: open_file still returns the
+    # original content via the persisted (shared) ref.
+    opened = await service.open_file(VALIDATION_SCOPE, revision_id, "SKILL.md")
+    assert opened.data == skill_md_bytes
+    assert ObjectRef(str(winner_ref)) in objects.objects
 
 
 @pytest.mark.asyncio
@@ -527,7 +591,9 @@ async def test_empty_file_is_recorded_without_touching_the_object_store() -> Non
 
     empty_file = next(f for f in revision.files if f.relative_path == "empty.txt")
     assert empty_file.size_bytes == 0
-    assert not objects.staged  # SKILL.md promoted; nothing left staged
+    # SKILL.md was promoted (and no object was ever created for the empty
+    # file); promote() does not consume staging, matching the real store.
+    assert objects.objects
     opened = await service.open_file(VALIDATION_SCOPE, revision.revision_id, "empty.txt")
     assert opened.data == b""
     assert opened.size == 0

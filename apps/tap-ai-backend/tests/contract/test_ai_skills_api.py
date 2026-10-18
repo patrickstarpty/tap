@@ -467,6 +467,39 @@ def test_import_skill_via_multipart_files() -> None:
     assert response.json()["skills"][0]["name"] == "files-skill"
 
 
+def test_import_skill_archive_too_large_rejected() -> None:
+    client, _catalog = _app()
+    oversized = b"0" * (20 * 1024 * 1024 + 1)
+
+    response = client.post(
+        f"{BASE}/skills/imports",
+        files={"archive": ("skill.zip", io.BytesIO(oversized), "application/zip")},
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "code": "skill_package_too_large",
+        "detail": "the uploaded skill package exceeds the archive size limit",
+    }
+
+
+def test_import_skill_many_files_aggregate_too_large_rejected() -> None:
+    client, _catalog = _app()
+    chunk = b"0" * (3 * 1024 * 1024)  # 3 MiB per file, well under the 20 MiB bound alone
+    files = [
+        (
+            "files",
+            (f"demo-skill/part-{index}.bin", io.BytesIO(chunk), "application/octet-stream"),
+        )
+        for index in range(8)  # 24 MiB aggregate across parts
+    ]
+
+    response = client.post(f"{BASE}/skills/imports", files=files)
+
+    assert response.status_code == 413
+    assert response.json()["code"] == "skill_package_too_large"
+
+
 def test_import_skill_requires_an_upload_or_text_body() -> None:
     client, _catalog = _app()
 

@@ -32,7 +32,6 @@ from tap.contracts.http import (
 )
 from tap.interfaces.http.dependencies import asset_catalog_service, skill_authoring_service
 from tap.interfaces.http.problems import problem_response_metadata, skill_problem_response_metadata
-from tap.interfaces.http.routes.knowledge_documents import bounded_upload_bytes
 from tap.interfaces.http.scope import project_authorization
 from tap.modules.ai.application.skill_authoring import (
     FilesUpload,
@@ -42,6 +41,7 @@ from tap.modules.ai.application.skill_authoring import (
     TextUpload,
     ZipUpload,
 )
+from tap.modules.ai.application.skill_package import MAX_ARCHIVE_BYTES, SkillPackageRejected
 from tap.modules.ai.domain.assets import AssetRevisionRejected, SkillFile, SkillRevision
 
 _ApplicableTask = Literal["knowledge.answer", "test-plan.generate", "automation.generate"]
@@ -50,6 +50,16 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 _WRITE = Depends(project_authorization("ai.skills.write"))
 _READ = Depends(project_authorization("ai.skills.read"))
+
+# Same bound as a staged archive's own compressed-size limit (Task 3's
+# `scan_zip`): a single multipart `archive` part, or the sum of every
+# `files` part in one import request, must not exceed it. Reusing the
+# shared `bounded_upload_bytes` (25 MiB, raising the Knowledge-only
+# `InvalidDocumentUpload` -> RFC 9457 `ProblemDetails`) would both pick the
+# wrong limit and the wrong error shape for this endpoint, whose errors are
+# the bespoke `{"code", "detail"}` `SkillProblem` body.
+_MAX_SKILL_UPLOAD_BYTES = MAX_ARCHIVE_BYTES
+_SKILL_UPLOAD_READ_CHUNK_BYTES = 1_048_576
 
 
 # -- serialization ------------------------------------------------------
@@ -134,6 +144,27 @@ def _reject_upload_shape(message: str) -> NoReturn:
     )
 
 
+async def _bounded_skill_upload_bytes(upload: UploadFile, remaining: list[int]) -> bytes:
+    """Read one multipart part in chunks against a shared, mutable byte budget.
+
+    ``remaining`` is a one-element box shared across every part of a single
+    import request (the lone ``archive`` part, or every ``files`` part), so
+    many small files cannot together exceed the aggregate archive-size bound
+    any more than one oversized archive could. Rejects before buffering the
+    chunk that would exceed the budget, never after.
+    """
+    chunks: list[bytes] = []
+    while chunk := await upload.read(_SKILL_UPLOAD_READ_CHUNK_BYTES):
+        remaining[0] -= len(chunk)
+        if remaining[0] < 0:
+            raise SkillPackageRejected(
+                "skill_package_too_large",
+                "the uploaded skill package exceeds the archive size limit",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def _parse_skill_upload(request: Request) -> ZipUpload | FilesUpload | TextUpload:
     media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if media_type == "application/json":
@@ -152,18 +183,19 @@ async def _parse_skill_upload(request: Request) -> ZipUpload | FilesUpload | Tex
     file_items = [item for item in form.getlist("files") if isinstance(item, StarletteUploadFile)]
     if bool(archive_items) == bool(file_items):
         _reject_upload_shape("provide exactly one of an archive field or one or more files")
+    budget = [_MAX_SKILL_UPLOAD_BYTES]
     if archive_items:
         if len(archive_items) != 1:
             _reject_upload_shape("only one archive upload is accepted")
         archive = cast(UploadFile, archive_items[0])
-        data = b"".join([chunk async for chunk in bounded_upload_bytes(archive)])
+        data = await _bounded_skill_upload_bytes(archive, budget)
         return ZipUpload(data=data)
     files: dict[str, bytes] = {}
     for item in file_items:
         if not item.filename:
             _reject_upload_shape("each uploaded file requires a relative-path filename")
         upload = cast(UploadFile, item)
-        files[item.filename] = b"".join([chunk async for chunk in bounded_upload_bytes(upload)])
+        files[item.filename] = await _bounded_skill_upload_bytes(upload, budget)
     return FilesUpload(files=files)
 
 
