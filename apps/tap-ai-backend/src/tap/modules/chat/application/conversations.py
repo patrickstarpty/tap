@@ -14,7 +14,7 @@ from opentelemetry import trace
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import AuthorizationDenied
-from tap.modules.chat.application.ports import EventWakeups
+from tap.modules.chat.application.ports import DraftStream, EventWakeups
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     AnswerEvidenceSnapshot,
@@ -390,10 +390,12 @@ class ConversationService:
         *,
         scope: ProjectScopeContext,
         wakeups: EventWakeups | None = None,
+        drafts: DraftStream | None = None,
     ):
         self.repository = repository
         self.scope = scope
         self._wakeups = wakeups
+        self._drafts = drafts
 
     async def _notify_wakeups(self, conversation_id: str, sequence: int) -> None:
         """Best-effort: a wake-up only shortens SSE latency, so a Redis
@@ -523,7 +525,11 @@ class ConversationService:
             raise ConversationNotFound
         if turn.state in _TERMINAL_TURN_STATES:
             return turn
-        return await self.complete_evidence(
+        partial_answer = await self._partial_draft_text(turn_id)
+        payload: dict[str, object] = {"partialAnswerRetained": partial_answer is not None}
+        if partial_answer is not None:
+            payload["partialAnswer"] = partial_answer
+        result = await self.complete_evidence(
             conversation_id,
             turn_id,
             AnswerEvidence(
@@ -532,7 +538,34 @@ class ConversationService:
                 RetrievalSummary("canceled"),
                 GraphContextStatus.NOT_REQUESTED,
             ),
+            terminal_event=("turn.canceled", payload),
         )
+        if self._drafts is not None:
+            try:
+                await self._drafts.request_cancel(turn_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.warning("draft cancel marker failed: turn_id=%s", turn_id, exc_info=True)
+        return result
+
+    async def _partial_draft_text(self, turn_id: str) -> str | None:
+        """The latest draft text for `turn_id`, or `None` if no draft was
+        written or Redis could not be read (failure is ignored here -- the
+        draft is only a latency optimization, and `cancel` must still
+        terminate the Turn without it)."""
+        if self._drafts is None:
+            return None
+        try:
+            partial = await self._drafts.partial_text(turn_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return None
+        if partial is None:
+            return None
+        _attempt, text = partial
+        return text or None
 
     async def retry(self, conversation_id, turn_id, new_turn_id, request_id):
         old = next(

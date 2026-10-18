@@ -34,6 +34,7 @@ from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
 )
+from tap.modules.chat.application.ports import DraftStreamUnavailable
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     GraphContextStatus,
@@ -189,10 +190,25 @@ class GenerationWorker:
                 drafts=self.drafts,
                 redact=self.redact,
             ).nodes
+
+            async def canceled() -> bool:
+                """Fast, Redis-backed node-boundary check (Task 7); any
+                Redis failure degrades to "not canceled" here -- the
+                `authorize`/`renew_processing_lease` check above still
+                stops the Turn at the next node boundary from MySQL alone
+                once `cancel` has written the Turn's `canceled` state."""
+                if self.drafts is None:
+                    return False
+                try:
+                    return await self.drafts.cancel_requested(turn.turn_id)
+                except DraftStreamUnavailable:
+                    return False
+
             graph = ChatGraph(
                 checkpointer=checkpointer,
                 nodes=nodes,
                 authorize=authorized,
+                canceled=canceled,
                 propagate=(ConversationConflict, ConversationNotFound),
                 retryable=turn_retryable,
             )
@@ -211,13 +227,31 @@ class GenerationWorker:
                 )
 
             running = asyncio.create_task(run_graph())
+            # Task 7: poll `cancel_requested` far more often than the lease
+            # renewal cadence (`renew_interval_seconds`, often tens of
+            # seconds) so a cancel stops this Turn's generation within
+            # well under a second, instead of waiting for the next node
+            # boundary. Lease renewal itself still only fires every
+            # `renew_interval_seconds`, tracked separately below.
+            check_interval = min(self.renew_interval_seconds, 0.25)
+            since_last_renew = 0.0
             try:
                 while True:
-                    done, _ = await asyncio.wait({running}, timeout=self.renew_interval_seconds)
+                    done, _ = await asyncio.wait({running}, timeout=check_interval)
                     if done:
                         state = await running
                         break
-                    if renew is not None:
+                    if await canceled():
+                        running.cancel()
+                        await asyncio.gather(running, return_exceptions=True)
+                        # The API already wrote `turn.canceled` (including
+                        # any partial draft) before setting this marker, so
+                        # there is nothing left for the worker to persist.
+                        outcome = "canceled"
+                        return
+                    since_last_renew += check_interval
+                    if renew is not None and since_last_renew >= self.renew_interval_seconds:
+                        since_last_renew = 0.0
                         await renew(
                             conversation_id,
                             turn.turn_id,

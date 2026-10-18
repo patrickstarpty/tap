@@ -966,6 +966,7 @@ class MysqlConversationRepository:
                     "turn.completed",
                     "turn.abstained",
                     "turn.failed",
+                    "turn.canceled",
                 }:
                     raise ValueError("completion terminal event is invalid")
                 terminal_event = await self._next_event(session, conversation_id, terminal_event)

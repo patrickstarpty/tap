@@ -54,7 +54,18 @@ class _FakeAsyncRedis:
         self.maxlens: dict[str, int] = {}
         self.ttls: dict[str, int] = {}
         self.block_calls: list[int | None] = []
+        self.values: dict[str, str] = {}
+        self.value_ttls: dict[str, int] = {}
         self._counter = 0
+
+    async def set(self, name, value, *, ex=None):
+        self.values[name] = value
+        if ex is not None:
+            self.value_ttls[name] = ex
+        return True
+
+    async def get(self, name):
+        return self.values.get(name)
 
     def pipeline(self, transaction: bool = True) -> _FakePipeline:
         return _FakePipeline(self)
@@ -123,6 +134,12 @@ class _FailingRedis:
         raise self._error
 
     async def xread(self, *args, **kwargs):
+        raise self._error
+
+    async def set(self, *args, **kwargs):
+        raise self._error
+
+    async def get(self, *args, **kwargs):
         raise self._error
 
 
@@ -367,3 +384,27 @@ async def test_cancelled_error_propagates_instead_of_degrading() -> None:
 
     with pytest.raises(asyncio.CancelledError):
         await drafts.append("turn-1", attempt=1, seq=1, text="x")
+
+
+@pytest.mark.asyncio
+async def test_request_cancel_sets_the_cancel_key_with_a_24h_ttl() -> None:
+    redis = _FakeAsyncRedis()
+    drafts = RedisDraftStream(redis=redis, ttl=timedelta(seconds=86_400))
+
+    assert await drafts.cancel_requested("turn-1") is False
+    await drafts.request_cancel("turn-1")
+
+    key = "tap:turn:turn-1:cancel"
+    assert redis.values[key] == "1"
+    assert redis.value_ttls[key] == 86_400
+    assert await drafts.cancel_requested("turn-1") is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_marker_errors_raise_draft_stream_unavailable() -> None:
+    drafts = RedisDraftStream(redis=_FailingRedis())
+
+    with pytest.raises(DraftStreamUnavailable):
+        await drafts.request_cancel("turn-1")
+    with pytest.raises(DraftStreamUnavailable):
+        await drafts.cancel_requested("turn-1")

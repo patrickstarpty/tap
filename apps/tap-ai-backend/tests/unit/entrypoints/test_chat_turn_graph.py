@@ -1010,6 +1010,14 @@ async def test_model_node_streams_through_draft_batcher() -> None:
         async def partial_text(self, turn_id):  # pragma: no cover - unused
             raise NotImplementedError
 
+        async def request_cancel(self, turn_id):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        async def cancel_requested(self, turn_id):
+            # Task 7: the worker's node-boundary poll reads this before every
+            # node; this scenario never cancels, so it is always `False`.
+            return False
+
     class _StreamingKnowledge(_StepsKnowledge):
         async def generate_conversation_answer(
             self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None

@@ -69,6 +69,12 @@ def wake_stream_key(conversation_id: str) -> str:
     return f"tap:conv:{conversation_id}:events"
 
 
+def cancel_stream_key(turn_id: str) -> str:
+    """The Redis key for one Turn's cancel marker; see `draft_stream_key`."""
+
+    return f"tap:turn:{turn_id}:cancel"
+
+
 class DraftStream(Protocol):
     """Redis Stream adapter for one Turn's model-answer draft and the
     conversation-level wake-up stream that announces new authoritative events.
@@ -98,6 +104,15 @@ class DraftStream(Protocol):
     async def partial_text(self, turn_id: str) -> tuple[int, str] | None:
         """The highest attempt seen for `turn_id` and its concatenated draft
         text, or `None` if no draft has been written yet."""
+        ...
+
+    async def request_cancel(self, turn_id: str) -> None:
+        """Mark `turn_id` as canceled for later `cancel_requested` reads
+        (`SET tap:turn:{turnId}:cancel 1 EX 86400`)."""
+        ...
+
+    async def cancel_requested(self, turn_id: str) -> bool:
+        """Whether `request_cancel` has been called for `turn_id`."""
         ...
 
 

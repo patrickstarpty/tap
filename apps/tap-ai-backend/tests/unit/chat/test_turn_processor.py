@@ -1,5 +1,6 @@
 import asyncio
 import random
+import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -1582,3 +1583,153 @@ async def test_one_turn_crash_does_not_skip_the_rest_of_the_batch():
     conversations = Conversations()
     assert await GenerationWorker(conversations, Knowledge()).run_once(limit=2) == 2
     assert conversations.completed == [("turn-2", "completed")]
+
+
+@pytest.mark.asyncio
+async def test_worker_cancels_running_graph_within_half_a_second():
+    """Task 7: once a cancel marker is set, the worker must stop generation
+    well before the node itself would ever finish on its own -- not wait for
+    the next node boundary -- by polling `drafts.cancel_requested` on a
+    sub-second cadence independent of `renew_interval_seconds`."""
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return ClaimBatch(
+                (
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            attempt=1,
+                            input_snapshot=SimpleNamespace(
+                                snapshot_id="snapshot-1",
+                                value=SimpleNamespace(message="question", resolved_resources=()),
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+    class Conversations:
+        repository = Repository()
+
+        def __init__(self):
+            self.completed = []
+
+        async def emit(self, *_args, **_kwargs):
+            pass
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            self.completed.append(True)
+
+    class Drafts:
+        def __init__(self):
+            self.checked = []
+
+        async def append(self, *_args, **_kwargs):
+            pass
+
+        async def cancel_requested(self, turn_id):
+            self.checked.append(turn_id)
+            return True
+
+    class Knowledge:
+        async def answer(self, _request):
+            await asyncio.sleep(10)
+            raise AssertionError("generation must not run to completion after cancellation")
+
+    async def redact(text):
+        return text
+
+    conversations = Conversations()
+    drafts = Drafts()
+    worker = GenerationWorker(conversations, Knowledge(), drafts=drafts, redact=redact)
+
+    started = time.monotonic()
+    assert await worker.run_once(limit=1) == 1
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.5
+    assert conversations.completed == []
+    assert drafts.checked and set(drafts.checked) == {"turn-1"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_without_redis_stops_at_next_node_boundary():
+    """Global constraint: when Redis is unavailable, `cancel_requested`
+    degrades to "not canceled" for the fast polling path, but the Turn's
+    own `canceled` state (already durable in MySQL once `cancel` ran) must
+    still stop generation at the next node boundary, via the existing
+    `renew_processing_lease`-backed authorization check."""
+
+    from tap.modules.chat.application.ports import DraftStreamUnavailable
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return ClaimBatch(
+                (
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            attempt=1,
+                            input_snapshot=SimpleNamespace(
+                                snapshot_id="snapshot-1",
+                                value=SimpleNamespace(message="question", resolved_resources=()),
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        async def renew_processing_lease(
+            self, conversation_id, turn_id, lease_token, *, lease_duration
+        ):
+            # The Turn was already canceled (by `ConversationService.cancel`,
+            # which writes MySQL state unconditionally, Redis aside) before
+            # this node boundary's authorization check ran.
+            raise ConversationConflict("generation lease lost")
+
+    class Conversations:
+        repository = Repository()
+
+        def __init__(self):
+            self.completed = []
+
+        async def emit(self, *_args, **_kwargs):
+            pass
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            self.completed.append(True)
+
+    class Drafts:
+        async def append(self, *_args, **_kwargs):
+            pass
+
+        async def cancel_requested(self, turn_id):
+            raise DraftStreamUnavailable("redis unreachable")
+
+    node_calls: list[str] = []
+
+    class Knowledge:
+        async def answer(self, _request):
+            node_calls.append("answer")
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    async def redact(text):
+        return text
+
+    conversations = Conversations()
+    worker = GenerationWorker(conversations, Knowledge(), drafts=Drafts(), redact=redact)
+
+    assert await worker.run_once(limit=1) == 1
+    assert node_calls == []
+    assert conversations.completed == []

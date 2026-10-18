@@ -2087,6 +2087,7 @@ def _assemble_http_services(
             ),
             scope=repository.scope,
             wakeups=event_wakeups,
+            drafts=draft_stream,
         )
         from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService
 

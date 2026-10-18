@@ -1402,3 +1402,48 @@ async def test_legacy_checkpoint_restart_survives_a_crash_right_after_discard(
         assert final_row["status"] == "SUCCEEDED"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_persists_partial_draft_and_sets_the_redis_cancel_marker(
+    owned_project_mysql, owned_redis_url
+) -> None:
+    """Task 7, real MySQL + real Redis: `cancel` reads the Turn's latest
+    draft text before writing `turn.canceled` (so a client reconnecting
+    after cancel still sees what streamed so far), and marks the Turn
+    canceled in Redis so a running worker's fast poll can observe it."""
+    from redis.asyncio import Redis
+
+    from tap.modules.chat.adapters.redis_drafts import RedisDraftStream
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    redis = Redis.from_url(owned_redis_url, decode_responses=True)
+    drafts = RedisDraftStream(redis=redis)
+    turn_id = "turn-cancel-draft"
+    try:
+        service = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+            drafts=drafts,
+        )
+        await service.create("chat-cancel-draft", turn_id, "request-cancel-draft", _input())
+        await service.repository.claim_queued(limit=1)
+        await drafts.append(turn_id, attempt=1, seq=1, text="Stopped ")
+        await drafts.append(turn_id, attempt=1, seq=2, text="mid")
+
+        canceled = await service.cancel("chat-cancel-draft", turn_id)
+
+        assert canceled.state == "canceled"
+        detail = await service.load("chat-cancel-draft")
+        terminal = detail.events[-2]
+        assert terminal.event_type == "turn.canceled"
+        assert dict(terminal.payload) == {
+            "partialAnswerRetained": True,
+            "partialAnswer": "Stopped mid",
+        }
+        assert await drafts.cancel_requested(turn_id) is True
+    finally:
+        await redis.delete(f"tap:turn:{turn_id}:draft", f"tap:turn:{turn_id}:cancel")
+        await redis.aclose()
+        await engine.dispose()

@@ -94,10 +94,12 @@ class ChatGraph:
         checkpointer: BaseCheckpointSaver,
         nodes: ChatGraphNodes,
         authorize: AuthorizationCheck,
+        canceled: AuthorizationCheck | None = None,
         propagate: tuple[type[BaseException], ...] = (),
         retryable: Callable[[BaseException], bool] = lambda _error: False,
     ) -> None:
         self._authorize = authorize
+        self._canceled = canceled
         self._propagate = propagate
         self._retryable = retryable
         self._checkpointer = checkpointer
@@ -180,6 +182,8 @@ class ChatGraph:
         async def run(state: ChatGraphState) -> dict[str, Any]:
             if not await self._authorize():
                 raise PermissionError("graph run authorization changed")
+            if self._canceled is not None and await self._canceled():
+                raise PermissionError("graph run was canceled")
             with span(f"graph.node.{name}", {"tap.graph.version": CHAT_GRAPH_VERSION}) as node_span:
                 try:
                     if enforce_budget:

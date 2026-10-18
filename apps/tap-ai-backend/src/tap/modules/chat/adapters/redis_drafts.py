@@ -31,6 +31,7 @@ from tap.modules.chat.application.ports import (
     DraftChunk,
     DraftStreamUnavailable,
     StreamEntry,
+    cancel_stream_key,
     draft_stream_key,
     wake_stream_key,
 )
@@ -67,7 +68,10 @@ class AsyncRedisPipeline(Protocol):
 
 
 class AsyncRedisStreams(Protocol):
-    """The Redis Stream command subset this module depends on."""
+    """The Redis Stream command subset this module depends on, plus the
+    plain string `set`/`get` the cancel marker (`request_cancel`/
+    `cancel_requested`) uses -- the same general-purpose client already
+    supports both."""
 
     def pipeline(self, transaction: bool = True) -> AsyncRedisPipeline: ...
 
@@ -83,11 +87,16 @@ class AsyncRedisStreams(Protocol):
         block: int | None = None,
     ) -> object: ...
 
+    async def set(self, name: str, value: str, *, ex: int | None = None) -> object: ...
+
+    async def get(self, name: str) -> object: ...
+
 
 # Key formats live on the port (`draft_stream_key`/`wake_stream_key`), the
 # single source of truth both this adapter and the `/stream` route use (M-5).
 _draft_key = draft_stream_key
 _wakeup_key = wake_stream_key
+_cancel_key = cancel_stream_key
 
 
 def _decode_draft_chunk(fields: Mapping[str, object]) -> DraftChunk | None:
@@ -209,6 +218,19 @@ class RedisDraftStream:
         )
         kept = _drop_before_last_reset(ordered)
         return latest_attempt, "".join(chunk.text for chunk in kept)
+
+    async def request_cancel(self, turn_id: str) -> None:
+        try:
+            await self._redis.set(_cancel_key(turn_id), "1", ex=self._ttl_seconds)
+        except _REDIS_FAILURES as error:
+            raise DraftStreamUnavailable(str(error)) from error
+
+    async def cancel_requested(self, turn_id: str) -> bool:
+        try:
+            value = await self._redis.get(_cancel_key(turn_id))
+        except _REDIS_FAILURES as error:
+            raise DraftStreamUnavailable(str(error)) from error
+        return value is not None
 
     async def read(self, keys: Mapping[str, str], *, block_ms: int) -> tuple[StreamEntry, ...]:
         # `XREAD BLOCK 0` blocks forever, so `block_ms` is always clamped to

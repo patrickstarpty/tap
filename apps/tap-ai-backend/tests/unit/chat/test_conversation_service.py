@@ -162,6 +162,56 @@ async def test_in_memory_completion_binds_terminal_event_and_cannot_reverse_canc
     assert after.events == before.events
 
 
+class _FakeDrafts:
+    """A `DraftStream` double exposing only the two members `cancel` reads
+    (`partial_text`/`request_cancel`); every unrelated `DraftStream` method
+    is deliberately absent so a test fails loudly if `cancel` ever calls one."""
+
+    def __init__(self, partial: tuple[int, str] | None) -> None:
+        self._partial = partial
+        self.canceled: list[str] = []
+
+    async def partial_text(self, turn_id):
+        return self._partial
+
+    async def request_cancel(self, turn_id):
+        self.canceled.append(turn_id)
+
+
+@pytest.mark.asyncio
+async def test_cancel_includes_partial_draft():
+    drafts = _FakeDrafts((1, "Stopped mid"))
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, drafts=drafts
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    canceled = await service.cancel("conversation-1", "turn-1")
+    assert canceled.state == "canceled"
+    detail = await service.load("conversation-1")
+    terminal = detail.events[-2]
+    assert terminal.event_type == "turn.canceled"
+    assert dict(terminal.payload) == {
+        "partialAnswerRetained": True,
+        "partialAnswer": "Stopped mid",
+    }
+    assert drafts.canceled == ["turn-1"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_before_any_draft_has_no_partial_answer():
+    drafts = _FakeDrafts(None)
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, drafts=drafts
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    await service.cancel("conversation-1", "turn-1")
+    detail = await service.load("conversation-1")
+    terminal = detail.events[-2]
+    assert terminal.event_type == "turn.canceled"
+    assert dict(terminal.payload) == {"partialAnswerRetained": False}
+    assert drafts.canceled == ["turn-1"]
+
+
 @pytest.mark.asyncio
 async def test_complete_evidence_persists_graph_context_ready_stream_event():
     """`graph.context_ready` must be a recognized
