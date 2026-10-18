@@ -544,3 +544,47 @@ async def test_graph_context_ready_event_precedes_answer_and_citation_kind_is_em
         payload for event_type, payload in conversations.events if event_type == "citation.resolved"
     ][-1]
     assert last_citation_resolved["citation"]["kind"] == "edge"
+
+
+def test_answer_draft_event_schema_and_no_answer_delta() -> None:
+    """PR 3 Task 6: `answer.draft {attempt, seq, text}` replaces the retired
+    `answer.delta` event; the envelope still validates with `sequence` set to
+    the most recent authoritative sequence (drafts never advance it)."""
+    envelope = _envelope(
+        sequence=3,
+        event_type="answer.draft",
+        payload={"attempt": 1, "seq": 0, "text": "Evidence shows"},
+    )
+    validated = ChatEventEnvelope.model_validate(envelope)
+    assert validated.event.type == "answer.draft"
+    assert validated.event.payload.attempt == 1
+    assert validated.event.payload.seq == 0
+    assert validated.event.payload.text == "Evidence shows"
+
+    with pytest.raises(ValueError):
+        ChatEventEnvelope.model_validate(
+            _envelope(sequence=1, event_type="answer.delta", payload={"text": "stale"})
+        )
+
+
+def test_turn_canceled_accepts_partial_answer() -> None:
+    """`turn.canceled` gained an optional `partialAnswer` alongside the
+    existing `partialAnswerRetained`, so a canceled Turn's SSE frame can
+    carry the stopped draft text without it entering the citation system."""
+    envelope = _envelope(
+        sequence=2,
+        event_type="turn.canceled",
+        payload={"partialAnswerRetained": True, "partialAnswer": "Stopped mid"},
+    )
+    validated = ChatEventEnvelope.model_validate(envelope)
+    assert validated.event.payload.partial_answer_retained is True
+    assert validated.event.payload.partial_answer == "Stopped mid"
+
+    without_partial = ChatEventEnvelope.model_validate(
+        _envelope(
+            sequence=2,
+            event_type="turn.canceled",
+            payload={"partialAnswerRetained": False},
+        )
+    )
+    assert without_partial.event.payload.partial_answer is None

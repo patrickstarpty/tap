@@ -129,14 +129,14 @@
         "title": "AnswerClaim",
         "type": "object"
       },
-      "AnswerDeltaEvent": {
+      "AnswerDraftEvent": {
         "additionalProperties": false,
         "properties": {
           "payload": {
-            "$ref": "#/components/schemas/AnswerDeltaPayload"
+            "$ref": "#/components/schemas/AnswerDraftPayload"
           },
           "type": {
-            "const": "answer.delta",
+            "const": "answer.draft",
             "title": "Type",
             "type": "string"
           }
@@ -145,21 +145,34 @@
           "type",
           "payload"
         ],
-        "title": "AnswerDeltaEvent",
+        "title": "AnswerDraftEvent",
         "type": "object"
       },
-      "AnswerDeltaPayload": {
+      "AnswerDraftPayload": {
         "additionalProperties": false,
+        "description": "One batched, redacted draft chunk of the model's in-progress answer,\nstreamed from Redis (never persisted to MySQL): `attempt`/`seq` order\ndrafts within one Turn attempt, not the envelope `sequence`, which is\ncarried only for the `ChatEventEnvelope` wrapper and is never advanced\nor deduplicated against for this event type (spec SS task 6).",
         "properties": {
+          "attempt": {
+            "minimum": 1.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0.0,
+            "title": "Seq",
+            "type": "integer"
+          },
           "text": {
             "title": "Text",
             "type": "string"
           }
         },
         "required": [
+          "attempt",
+          "seq",
           "text"
         ],
-        "title": "AnswerDeltaPayload",
+        "title": "AnswerDraftPayload",
         "type": "object"
       },
       "AnswerFeedbackRequest": {
@@ -410,7 +423,7 @@
           "event": {
             "discriminator": {
               "mapping": {
-                "answer.delta": "#/components/schemas/AnswerDeltaEvent",
+                "answer.draft": "#/components/schemas/AnswerDraftEvent",
                 "citation.resolved": "#/components/schemas/CitationResolvedEvent",
                 "context.assembled": "#/components/schemas/ContextAssembledEvent",
                 "conversation.turn.completed": "#/components/schemas/ConversationTurnCompletedEvent",
@@ -460,7 +473,7 @@
                 "$ref": "#/components/schemas/RerankCompletedEvent"
               },
               {
-                "$ref": "#/components/schemas/AnswerDeltaEvent"
+                "$ref": "#/components/schemas/AnswerDraftEvent"
               },
               {
                 "$ref": "#/components/schemas/CitationResolvedEvent"
@@ -1182,7 +1195,6 @@
               "retrieval.hits_ready",
               "graph.context_ready",
               "rerank.completed",
-              "answer.delta",
               "citation.resolved",
               "turn.completed",
               "turn.abstained",
@@ -10442,6 +10454,17 @@
       "TurnCanceledPayload": {
         "additionalProperties": false,
         "properties": {
+          "partialAnswer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partialanswer"
+          },
           "partialAnswerRetained": {
             "title": "Partialanswerretained",
             "type": "boolean"

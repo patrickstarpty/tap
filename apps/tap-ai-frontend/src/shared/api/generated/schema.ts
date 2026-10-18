@@ -1420,17 +1420,28 @@ export interface components {
             /** Text */
             text: string;
         };
-        /** AnswerDeltaEvent */
-        AnswerDeltaEvent: {
-            payload: components["schemas"]["AnswerDeltaPayload"];
+        /** AnswerDraftEvent */
+        AnswerDraftEvent: {
+            payload: components["schemas"]["AnswerDraftPayload"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "answer.delta";
+            type: "answer.draft";
         };
-        /** AnswerDeltaPayload */
-        AnswerDeltaPayload: {
+        /**
+         * AnswerDraftPayload
+         * @description One batched, redacted draft chunk of the model's in-progress answer,
+         *     streamed from Redis (never persisted to MySQL): `attempt`/`seq` order
+         *     drafts within one Turn attempt, not the envelope `sequence`, which is
+         *     carried only for the `ChatEventEnvelope` wrapper and is never advanced
+         *     or deduplicated against for this event type (spec SS task 6).
+         */
+        AnswerDraftPayload: {
+            /** Attempt */
+            attempt: number;
+            /** Seq */
+            seq: number;
             /** Text */
             text: string;
         };
@@ -1534,7 +1545,7 @@ export interface components {
             /** Chatid */
             chatId: string;
             /** Event */
-            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["GraphContextReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
+            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["GraphContextReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDraftEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
             /** Eventid */
             eventId: string;
             /** Occurredat */
@@ -1769,7 +1780,7 @@ export interface components {
              * Eventtype
              * @enum {string}
              */
-            eventType: "turn.started" | "context.assembled" | "query.plan_ready" | "stage.started" | "stage.completed" | "retrieval.hits_ready" | "graph.context_ready" | "rerank.completed" | "answer.delta" | "citation.resolved" | "turn.completed" | "turn.abstained" | "turn.degraded" | "turn.canceled" | "turn.failed" | "conversation.turn.requested" | "conversation.turn.completed" | "test-plan.generation.waiting" | "test-plan.generation.result_ready" | "test-plan.generation.failed" | "test-plan.generation.canceled";
+            eventType: "turn.started" | "context.assembled" | "query.plan_ready" | "stage.started" | "stage.completed" | "retrieval.hits_ready" | "graph.context_ready" | "rerank.completed" | "citation.resolved" | "turn.completed" | "turn.abstained" | "turn.degraded" | "turn.canceled" | "turn.failed" | "conversation.turn.requested" | "conversation.turn.completed" | "test-plan.generation.waiting" | "test-plan.generation.result_ready" | "test-plan.generation.failed" | "test-plan.generation.canceled";
             /** Occurredat */
             occurredAt: string;
             /** Payload */
@@ -5022,6 +5033,8 @@ export interface components {
         };
         /** TurnCanceledPayload */
         TurnCanceledPayload: {
+            /** Partialanswer */
+            partialAnswer?: string | null;
             /** Partialanswerretained */
             partialAnswerRetained: boolean;
         };

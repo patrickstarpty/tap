@@ -285,13 +285,21 @@ class RerankCompletedEvent(StreamContractModel):
     payload: RerankCompletedPayload
 
 
-class AnswerDeltaPayload(StreamContractModel):
+class AnswerDraftPayload(StreamContractModel):
+    """One batched, redacted draft chunk of the model's in-progress answer,
+    streamed from Redis (never persisted to MySQL): `attempt`/`seq` order
+    drafts within one Turn attempt, not the envelope `sequence`, which is
+    carried only for the `ChatEventEnvelope` wrapper and is never advanced
+    or deduplicated against for this event type (spec SS task 6)."""
+
+    attempt: int = Field(ge=1)
+    seq: int = Field(ge=0)
     text: str
 
 
-class AnswerDeltaEvent(StreamContractModel):
-    type: Literal["answer.delta"]
-    payload: AnswerDeltaPayload
+class AnswerDraftEvent(StreamContractModel):
+    type: Literal["answer.draft"]
+    payload: AnswerDraftPayload
 
 
 class CitationResolvedPayload(StreamContractModel):
@@ -340,6 +348,7 @@ class TurnDegradedEvent(StreamContractModel):
 
 class TurnCanceledPayload(StreamContractModel):
     partial_answer_retained: bool
+    partial_answer: str | None = None
 
 
 class TurnCanceledEvent(StreamContractModel):
@@ -430,7 +439,7 @@ ChatStreamEvent = Annotated[
     | RetrievalHitsReadyEvent
     | GraphContextReadyEvent
     | RerankCompletedEvent
-    | AnswerDeltaEvent
+    | AnswerDraftEvent
     | CitationResolvedEvent
     | TurnCompletedEvent
     | TurnAbstainedEvent

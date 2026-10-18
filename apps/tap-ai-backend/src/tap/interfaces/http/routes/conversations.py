@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+from datetime import datetime, timezone
 from typing import cast
 from uuid import uuid4
 
@@ -54,6 +56,7 @@ from tap.modules.chat.application.conversations import (
     ConversationService,
 )
 from tap.modules.chat.application.feedback import FeedbackService
+from tap.modules.chat.application.ports import DraftStream, DraftStreamUnavailable
 from tap.modules.chat.domain.conversations import TurnInput
 from tap.modules.chat.domain.feedback import AnswerFeedback
 from tap.modules.knowledge.application.answers import DocumentStateChanged
@@ -491,6 +494,44 @@ async def events(
     )
 
 
+_TERMINAL_TURN_STATES = frozenset({"completed", "abstained", "failed", "canceled"})
+_DRAFT_BLOCK_MS = 15_000
+_DEGRADED_POLL_SECONDS = 1.0
+
+
+def _draft_key(turn_id: str) -> str:
+    return f"tap:turn:{turn_id}:draft"
+
+
+def _wake_key(conversation_id: str) -> str:
+    return f"tap:conv:{conversation_id}:events"
+
+
+def _encode_draft_frame(
+    *, conversation_id: str, turn_id: str, sequence: int, attempt: int, seq: int, text: str
+) -> str:
+    """An `answer.draft` SSE frame: still a `ChatEventEnvelope`, but never
+    carries an `id:` line -- drafts are not persisted MySQL events, and the
+    client orders/dedupes them by `attempt`/`seq`, never by `sequence`."""
+
+    envelope = ChatEventEnvelope.model_validate(
+        {
+            "eventId": uuid4().hex,
+            "sequence": sequence,
+            "chatId": conversation_id,
+            "turnId": turn_id,
+            "occurredAt": datetime.now(timezone.utc).isoformat(),
+            "schemaVersion": 1,
+            "event": {
+                "type": "answer.draft",
+                "payload": {"attempt": attempt, "seq": seq, "text": text},
+            },
+        }
+    ).model_dump(mode="json", by_alias=True)
+    data = json.dumps(envelope, separators=(",", ":"))
+    return f"event: answer.draft\ndata: {data}\n\n"
+
+
 @router.get(
     "/{conversation_id}/stream",
     response_class=StreamingResponse,
@@ -509,24 +550,32 @@ async def events(
 )
 async def stream(
     conversation_id: str,
+    request: Request,
     last_event_id: str | None = Header(None, alias="Last-Event-ID", pattern=r"^(0|[1-9][0-9]*)$"),
     service: ConversationService = Depends(conversation_service),
 ):
     resume = 0 if last_event_id is None else int(last_event_id)
     await service.load(conversation_id)
+    services = request.app.state.http_services
+    draft_stream: DraftStream | None = getattr(services, "draft_stream", None)
 
     async def generate():
         nonlocal resume
-        idle = 0
-        while idle < 10:
-            try:
-                value = await service.load(conversation_id)
-            except ConversationNotFound:
-                # Deleted while streaming: close the stream instead of failing mid-body.
-                return
-            fresh = [event for event in value.events if event.sequence > resume]
-            if fresh:
-                idle = 0
+        degraded = draft_stream is None
+        replayed_for: tuple[str, int] | None = None
+        last_draft_id = "$"
+        last_wake_id = "$"
+
+        with span("conversation.stream", {"tap.conversation_id": conversation_id}) as current_span:
+            if degraded:
+                current_span.set_attribute("tap.stream.degraded", True)
+            while True:
+                try:
+                    value = await service.load(conversation_id)
+                except ConversationNotFound:
+                    # Deleted while streaming: close the stream instead of failing mid-body.
+                    return
+                fresh = [event for event in value.events if event.sequence > resume]
                 for event in fresh:
                     turn_id = event.turn_id or str(event.payload.get("turnId") or "")
                     if not turn_id:
@@ -544,9 +593,88 @@ async def stream(
                     ).model_dump(mode="json", by_alias=True)
                     yield encode_sse((envelope,), last_event_id=str(resume))
                     resume = event.sequence
-            else:
-                idle += 1
-                await asyncio.sleep(0.1)
+
+                current_turn = next(
+                    (
+                        turn
+                        for turn in reversed(value.turns)
+                        if turn.state not in _TERMINAL_TURN_STATES
+                    ),
+                    None,
+                )
+                if current_turn is None:
+                    # Every Turn is terminal and every authoritative event has
+                    # been sent: close the stream (the client's reconnect
+                    # semantics are unaffected -- there is nothing left to
+                    # resume into).
+                    return
+
+                if degraded:
+                    await asyncio.sleep(_DEGRADED_POLL_SECONDS)
+                    continue
+
+                assert draft_stream is not None  # degraded is False only when set
+                replay_key = (current_turn.turn_id, current_turn.attempt)
+                if replayed_for != replay_key:
+                    try:
+                        chunks = await draft_stream.replay(
+                            current_turn.turn_id, attempt=current_turn.attempt
+                        )
+                    except DraftStreamUnavailable:
+                        degraded = True
+                        current_span.set_attribute("tap.stream.degraded", True)
+                        continue
+                    for chunk in chunks:
+                        yield _encode_draft_frame(
+                            conversation_id=conversation_id,
+                            turn_id=current_turn.turn_id,
+                            sequence=resume,
+                            attempt=chunk.attempt,
+                            seq=chunk.seq,
+                            text=chunk.text,
+                        )
+                    replayed_for = replay_key
+                    last_draft_id = "$"
+                    last_wake_id = "$"
+
+                draft_key = _draft_key(current_turn.turn_id)
+                wake_key = _wake_key(conversation_id)
+                try:
+                    entries = await draft_stream.read(
+                        {draft_key: last_draft_id, wake_key: last_wake_id},
+                        block_ms=_DRAFT_BLOCK_MS,
+                    )
+                except DraftStreamUnavailable:
+                    degraded = True
+                    current_span.set_attribute("tap.stream.degraded", True)
+                    continue
+                if not entries:
+                    # Block timed out with nothing new: keep the connection
+                    # alive and let the top of the loop re-check MySQL once,
+                    # without busy-polling Redis or MySQL in between.
+                    yield ": keepalive\n\n"
+                    continue
+                for entry in entries:
+                    if entry.key == draft_key:
+                        last_draft_id = entry.id
+                        attempt = entry.fields.get("attempt")
+                        seq = entry.fields.get("seq")
+                        text = entry.fields.get("text")
+                        if attempt is None or seq is None or text is None:
+                            continue
+                        try:
+                            yield _encode_draft_frame(
+                                conversation_id=conversation_id,
+                                turn_id=current_turn.turn_id,
+                                sequence=resume,
+                                attempt=int(attempt),
+                                seq=int(seq),
+                                text=text,
+                            )
+                        except (TypeError, ValueError):
+                            continue
+                    elif entry.key == wake_key:
+                        last_wake_id = entry.id
 
     return StreamingResponse(
         generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
