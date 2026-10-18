@@ -5,7 +5,8 @@
     "tests/e2e/knowledge-conversation.spec.ts",
     "tests/e2e/knowledge-review.spec.ts",
     "tests/e2e/tapper-test-plan.spec.ts",
-    "tests/e2e/knowledge-graph.spec.ts"
+    "tests/e2e/knowledge-graph.spec.ts",
+    "tests/e2e/skills-agents.spec.ts"
   ],
   "app-restart": ["tests/e2e/persistence.spec.ts"],
   "compose-restart": ["tests/e2e/persistence.spec.ts"]

@@ -1,0 +1,7 @@
+Claim intake checklist template
+================================
+
+Claimant name:
+Policy number:
+Incident date:
+Notes:

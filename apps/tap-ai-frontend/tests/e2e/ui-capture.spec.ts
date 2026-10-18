@@ -370,6 +370,206 @@ test("captures AI Agent and Skill catalogs", async ({ page }) => {
   expect(await capture(page, "04-skills")).not.toBe(agents);
 });
 
+test("captures the Skill import preview, Skill detail and Agent creation form", async ({
+  page,
+}) => {
+  const skillRevisionId = "skill-rev-capture-claim-intake-1";
+  const skillSummary = {
+    skillId: "skill-capture-claim-intake",
+    revisionId: skillRevisionId,
+    displayName: "Claim intake checklist",
+    description:
+      "Checks a claim submission for required fields before a reviewer looks at it.",
+    applicableTasks: ["knowledge.answer"],
+    isLatest: true,
+    builtIn: false,
+    sourceKind: "imported",
+    status: "enabled",
+    contentDigest: "digest-capture-claim-intake-1",
+    assetId: "asset-capture-claim-intake-1",
+  };
+  const skillFiles = [
+    {
+      relativePath: "SKILL.md",
+      sizeBytes: 420,
+      sha256: "a".repeat(64),
+      category: "skill",
+      attached: false,
+    },
+    {
+      relativePath: "references/glossary.md",
+      sizeBytes: 180,
+      sha256: "b".repeat(64),
+      category: "reference",
+      attached: true,
+    },
+    {
+      relativePath: "scripts/check_fields.py",
+      sizeBytes: 260,
+      sha256: "c".repeat(64),
+      category: "script",
+      attached: false,
+    },
+    {
+      relativePath: "assets/template.txt",
+      sizeBytes: 90,
+      sha256: "d".repeat(64),
+      category: "asset",
+      attached: false,
+    },
+  ];
+  const skillDetail = {
+    ...skillSummary,
+    instructions:
+      "Confirm the claimant name, policy number and incident date are present before routing a claim for review.",
+    attachedReferences:
+      "## Glossary\n\nIncident date: the calendar date the loss occurred.",
+    frontmatter: {
+      name: "claim-intake-checklist",
+      description: skillSummary.description,
+    },
+    files: skillFiles,
+  };
+  const importPreview = {
+    importId: "import-capture-claim-intake",
+    expiresAt: "2026-12-31T00:00:00Z",
+    skills: [
+      {
+        root: "",
+        name: "claim-intake-checklist",
+        description: skillSummary.description,
+        frontmatter: skillDetail.frontmatter,
+        files: skillFiles,
+        warnings: [],
+      },
+    ],
+  };
+
+  // This test's own catalogs differ from "captures AI Agent and Skill
+  // catalogs" above (that one deliberately captures the empty-catalog
+  // state), so it reroutes `**/api/v1/**` with its own fixture rather than
+  // widening the shared `beforeEach` route -- the same idiom the graph and
+  // Insights capture tests below use for their own reroutes.
+  await page.unroute("**/api/v1/**");
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const method = route.request().method();
+    if (path === "/api/v1/runtime-mode") {
+      await route.fulfill({
+        json: {
+          mode: "validation",
+          identityMode: "validation",
+          projectId: "project-capture",
+          actorId: "actor-capture",
+        },
+      });
+      return;
+    }
+    if (path.endsWith("/ai/models")) {
+      await route.fulfill({
+        json: {
+          defaultAlias: "qwen-plus",
+          items: [
+            {
+              alias: "qwen-plus",
+              displayName: "Capture model",
+              capabilities: ["chat", "structured"],
+            },
+          ],
+        },
+      });
+      return;
+    }
+    if (path.endsWith("/prompt-suggestions")) {
+      await route.fulfill({ json: { items: [] } });
+      return;
+    }
+    if (path.endsWith("/conversations")) {
+      await route.fulfill({ json: { items: [], nextCursor: null } });
+      return;
+    }
+    if (path.endsWith("/ai/skills/imports") && method === "POST") {
+      await route.fulfill({ json: importPreview });
+      return;
+    }
+    if (path.endsWith(`/ai/skills/${skillRevisionId}`) && method === "GET") {
+      await route.fulfill({ json: skillDetail });
+      return;
+    }
+    if (path.endsWith("/ai/skills") && method === "GET") {
+      await route.fulfill({
+        json: { items: [skillSummary], nextCursor: null },
+      });
+      return;
+    }
+    if (path.endsWith("/ai/agents") && method === "GET") {
+      await route.fulfill({ json: { items: [], nextCursor: null } });
+      return;
+    }
+    throw new Error(`Unexpected capture API request: ${method} ${path}`);
+  });
+
+  await page.getByRole("button", { name: "Skills", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Skills", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: skillSummary.displayName }),
+  ).toBeVisible();
+  const skillsList = await capture(page, "14-skills-list");
+
+  await page.getByRole("button", { name: "Import skill", exact: true }).click();
+  const importDialog = page.getByRole("dialog", { name: "Import a skill" });
+  await importDialog
+    .getByLabel("Paste SKILL.md content", { exact: true })
+    .fill("placeholder content -- the preview response below is mocked");
+  const stagePending = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/ai/skills/imports"),
+  );
+  await importDialog
+    .getByRole("button", { name: "Preview", exact: true })
+    .click();
+  await stagePending;
+  const reviewDialog = page.getByRole("dialog", {
+    name: "Review before import",
+  });
+  await expect(reviewDialog).toBeVisible();
+  await expect(
+    reviewDialog.getByText("Script · saved, not executed", { exact: true }),
+  ).toBeVisible();
+  const importPreviewCapture = await capture(page, "15-skill-import-preview");
+  expect(importPreviewCapture).not.toBe(skillsList);
+  await page.keyboard.press("Escape");
+  await expect(reviewDialog).toHaveCount(0);
+
+  await page.getByRole("button", { name: skillSummary.displayName }).click();
+  await expect(
+    page.getByRole("dialog", { name: skillSummary.displayName }),
+  ).toBeVisible();
+  const skillDetailCapture = await capture(page, "16-skill-detail");
+  expect(skillDetailCapture).not.toBe(importPreviewCapture);
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Agents", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "New agent", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "New agent" })).toBeVisible();
+  const agentFormCapture = await capture(page, "17-agent-form");
+
+  expect(
+    new Set([
+      skillsList,
+      importPreviewCapture,
+      skillDetailCapture,
+      agentFormCapture,
+    ]).size,
+  ).toBe(4);
+});
+
 test("captures Library graph and document views", async ({ page }) => {
   await page.getByRole("button", { name: "Library", exact: true }).click();
   await page.getByRole("tab", { name: "Knowledge Graph" }).click();
