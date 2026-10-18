@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import suppress
 from datetime import datetime, timedelta
 
@@ -45,10 +44,6 @@ from tap.modules.knowledge.ports.documents import (
 )
 from tap.platform.db.session import create_engine_and_session_factory
 
-DATABASE_URL = os.getenv(
-    "TAP_DATABASE_URL",
-    "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-)
 KNOWLEDGE_TABLES = (
     "knowledge_citation_snapshot",
     "knowledge_answer_source",
@@ -365,11 +360,13 @@ class OneChunk:
         )
 
 
-def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
+def test_real_mysql_restart_resumes_from_persisted_embedding_artifact(
+    owned_module_database_url: str,
+) -> None:
     """A fresh process must publish from MySQL/blob facts without repeating model work."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -499,7 +496,7 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
                 worker=restarted,
                 wakeups=UnavailableWakeups(),  # type: ignore[arg-type]
                 settings=tapper_ingestion_worker.WorkerSettings(
-                    database_url=DATABASE_URL,
+                    database_url=owned_module_database_url,
                     redis_url="redis://127.0.0.1:16379/0",
                     job_batch_size=10,
                     poll_seconds=0.01,
@@ -532,11 +529,13 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
     asyncio.run(scenario())
 
 
-def test_real_mysql_ordinary_list_excludes_deleting_document_immediately() -> None:
+def test_real_mysql_ordinary_list_excludes_deleting_document_immediately(
+    owned_module_database_url: str,
+) -> None:
     """The ordinary list is a selection source and must not expose deleting rows."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -565,11 +564,13 @@ def test_real_mysql_ordinary_list_excludes_deleting_document_immediately() -> No
     asyncio.run(scenario())
 
 
-def test_real_mysql_deletion_waits_for_cancelled_owner_settlement() -> None:
+def test_real_mysql_deletion_waits_for_cancelled_owner_settlement(
+    owned_module_database_url: str,
+) -> None:
     """A deletion claim must not race an active owner whose provider call may still finish."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -684,6 +685,7 @@ def test_real_mysql_deletion_waits_for_cancelled_owner_settlement() -> None:
 
 def test_real_mysql_cancelled_owner_crash_releases_barrier_only_after_expiry(
     monkeypatch,
+    owned_module_database_url: str,
 ) -> None:  # type: ignore[no-untyped-def]
     """Without a live heartbeat, a crashed cancelled owner releases deletion by lease expiry."""
 
@@ -695,7 +697,7 @@ def test_real_mysql_cancelled_owner_crash_releases_barrier_only_after_expiry(
     )
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -765,6 +767,7 @@ def test_real_mysql_cancelled_owner_crash_releases_barrier_only_after_expiry(
 
 def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
     monkeypatch,
+    owned_module_database_url: str,
 ) -> None:  # type: ignore[no-untyped-def]
     """Delete may finish only after the old publisher settles, then fencing keeps zero durable."""
 
@@ -779,7 +782,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
     )
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -984,6 +987,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
 
 def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
     monkeypatch,
+    owned_module_database_url: str,
 ) -> None:  # type: ignore[no-untyped-def]
     """A late chunks write must stay fenced past its original lease and be cleaned after settle."""
 
@@ -999,7 +1003,7 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
     )
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         old_task: asyncio.Task | None = None
         artifacts = BlockingChunkArtifacts()

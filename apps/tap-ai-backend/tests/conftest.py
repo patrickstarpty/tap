@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 from collections.abc import Iterator
@@ -21,6 +22,15 @@ if TYPE_CHECKING:
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
+
+# pymilvus.settings calls load_dotenv() on import, which would leak the repository
+# .env (including shared database URLs) into every test. Import it once here and
+# restore the caller environment so tests only see explicitly provided values.
+_environment_before_pymilvus_import = dict(os.environ)
+importlib.import_module("pymilvus.settings")
+os.environ.clear()
+os.environ.update(_environment_before_pymilvus_import)
+del _environment_before_pymilvus_import
 
 
 @pytest.fixture(scope="session")
@@ -64,6 +74,25 @@ def owned_project_mysql(monkeypatch: pytest.MonkeyPatch) -> Iterator[IsolatedMys
             database = resources.enter_context(isolated_mysql())
             database.upgrade("head")
         yield database
+
+
+# Ledger and recovery scenarios clean their tables between tests, so one owned
+# head-migrated database per module is enough; never fall back to caller URLs.
+@pytest.fixture(scope="module")
+def owned_module_database_url() -> Iterator[str]:
+    from scripts.migration_support import isolated_mysql
+
+    from tests.owned_mysql import owned_project_database_url
+
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
+    with ExitStack() as resources:
+        with pytest.MonkeyPatch.context() as environment:
+            environment.delenv("TAP_DATABASE_URL", raising=False)
+            environment.delenv("TAP_ALEMBIC_DATABASE_URL", raising=False)
+            database = resources.enter_context(isolated_mysql())
+            database.upgrade("head")
+        yield owned_project_database_url(database)
 
 
 def validation_http_services(knowledge=None, readiness=None, traces=None):
