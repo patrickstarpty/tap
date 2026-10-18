@@ -180,6 +180,11 @@ async def test_replay_filters_attempt_and_orders_by_seq() -> None:
 
 @pytest.mark.asyncio
 async def test_replay_drops_chunks_before_the_last_reset() -> None:
+    """I-2: `replay` drops every chunk *before* the last reset, but must
+    keep the reset chunk itself (as the first result) so a reconnecting
+    client can clear its own stale rendered prefix before re-appending the
+    post-reset chunks -- dropping the reset chunk too (the old behaviour)
+    silently duplicated the answer on reconnect."""
     redis = _FakeAsyncRedis()
     drafts = RedisDraftStream(redis=redis)
 
@@ -189,7 +194,40 @@ async def test_replay_drops_chunks_before_the_last_reset() -> None:
 
     chunks, last_id = await drafts.replay("turn-1", attempt=1)
 
-    assert [(chunk.seq, chunk.text, chunk.reset) for chunk in chunks] == [(3, "fresh", False)]
+    assert [(chunk.seq, chunk.text, chunk.reset) for chunk in chunks] == [
+        (2, "", True),
+        (3, "fresh", False),
+    ]
+    assert last_id == redis.streams["tap:turn:turn-1:draft"][-1][0]
+
+
+@pytest.mark.asyncio
+async def test_replay_after_reconnect_across_a_mid_stream_reset() -> None:
+    """I-2 regression: the client applied seq 1..10 of attempt 1, then
+    disconnected. While it was gone, the batcher wrote a reset at seq 11
+    and resent the answer from the start as seq 12..15. On reconnect,
+    `replay` must hand back the reset chunk (11) first, followed by
+    12..15 -- not just 12..15 with no reset frame, which would make the
+    client append the fresh text after its old, now-stale seq 1..10
+    instead of clearing first."""
+    redis = _FakeAsyncRedis()
+    drafts = RedisDraftStream(redis=redis)
+
+    for seq in range(1, 11):
+        await drafts.append("turn-1", attempt=1, seq=seq, text=f"chunk-{seq}")
+    await drafts.append("turn-1", attempt=1, seq=11, text="", reset=True)
+    for seq, text in zip(range(12, 16), ["re-", "a", "n", "swer"], strict=True):
+        await drafts.append("turn-1", attempt=1, seq=seq, text=text)
+
+    chunks, last_id = await drafts.replay("turn-1", attempt=1)
+
+    assert [(chunk.seq, chunk.text, chunk.reset) for chunk in chunks] == [
+        (11, "", True),
+        (12, "re-", False),
+        (13, "a", False),
+        (14, "n", False),
+        (15, "swer", False),
+    ]
     assert last_id == redis.streams["tap:turn:turn-1:draft"][-1][0]
 
 

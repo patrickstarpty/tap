@@ -181,6 +181,53 @@ describe("conversation stream reducer", () => {
     });
   });
 
+  it("I-2: clears stale pre-disconnect text when a reconnect replay delivers a reset at a higher seq", () => {
+    // The client applied seq 1..10 of attempt 1, then disconnected. While it
+    // was gone, the batcher wrote a reset at seq 11 and resent the answer
+    // from the start as seq 12..15. On reconnect, the backend replay now
+    // includes the reset chunk (11) ahead of 12..15 -- the fix for I-2 --
+    // and this reducer must clear the stale seq 1..10 text on that reset
+    // frame instead of appending the fresh text after it.
+    let state = createStreamState();
+    for (let seq = 1; seq <= 10; seq += 1) {
+      state = reduceStreamEvent(
+        state,
+        envelope(1, "turn-1", "answer.draft", {
+          attempt: 1,
+          seq,
+          text: `chunk-${seq}`,
+        }),
+      );
+    }
+
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 11,
+        text: "",
+        reset: true,
+      }),
+    );
+    for (const [seq, text] of [
+      [12, "re-"],
+      [13, "a"],
+      [14, "n"],
+      [15, "swer"],
+    ] as const) {
+      state = reduceStreamEvent(
+        state,
+        envelope(1, "turn-1", "answer.draft", { attempt: 1, seq, text }),
+      );
+    }
+
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 1,
+      seq: 15,
+      text: "re-answer",
+    });
+  });
+
   it("fills citationLabels from retrieval.hits_ready without requiring every hit to carry one", () => {
     let state = createStreamState();
     state = reduceStreamEvent(

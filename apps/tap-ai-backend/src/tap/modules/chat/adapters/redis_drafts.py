@@ -116,12 +116,18 @@ def _decode_draft_chunk(fields: Mapping[str, object]) -> DraftChunk | None:
 def _drop_before_last_reset(chunks: list[DraftChunk]) -> list[DraftChunk]:
     """A `reset: true` chunk (Task 5's `DraftBatcher`, on a redaction-driven
     rewrite of an already-sent prefix) discards every earlier chunk for its
-    attempt; `chunks` must already be sorted by `seq`."""
+    attempt; `chunks` must already be sorted by `seq`.
+
+    The reset chunk itself is kept as the first element of the result (I-2):
+    a client that reconnected after missing the reset entirely still needs it
+    delivered, so it can clear its own already-rendered prefix before
+    re-appending `kept`'s later chunks -- `reset`'s own `text` is always
+    empty, so including it never changes `partial_text`'s joined text."""
 
     kept: list[DraftChunk] = []
     for chunk in chunks:
         if chunk.reset:
-            kept = []
+            kept = [chunk]
             continue
         kept.append(chunk)
     return kept
