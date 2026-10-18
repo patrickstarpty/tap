@@ -24,6 +24,7 @@ from tap.modules.ai.domain.assets import (
     text_digest,
 )
 from tap.modules.ai.domain.models import ModelCapability, ModelDescriptor
+from tap.modules.ai.domain.tools import required_tool_ids
 
 
 class _FakeCatalog:
@@ -161,13 +162,16 @@ async def test_create_rejects_system_instruction_over_32kb() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_rejects_tool_ids_missing_required_tools() -> None:
+async def test_create_fills_in_required_tools_when_draft_omits_them() -> None:
+    # The UI never sends `toolIds` (built-in tools are always enabled and
+    # shown read-only, per spec), so the service must union the registry's
+    # required ids into the draft before validating — a bare `AgentDraft()`
+    # default (empty `tool_ids`) must succeed, not 400.
     service, _catalog = _service()
 
-    with pytest.raises(AgentAuthoringRejected) as excinfo:
-        await service.create(VALIDATION_SCOPE, _draft(tool_ids=frozenset()))
+    revision = await service.create(VALIDATION_SCOPE, _draft(tool_ids=frozenset()))
 
-    assert excinfo.value.code == "agent_tool_allowlist_invalid"
+    assert revision.tool_allowlist == required_tool_ids("knowledge.answer")
 
 
 @pytest.mark.asyncio

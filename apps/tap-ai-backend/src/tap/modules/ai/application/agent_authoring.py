@@ -182,8 +182,14 @@ class AgentAuthoringService:
                 "agent_system_instruction_too_large",
                 "systemInstruction must be non-empty and at most 32 KiB",
             )
-        tool_ids = frozenset(draft.tool_ids)
+        # Built-in tools (knowledge search/answer) are always enabled per
+        # spec and shown read-only in the UI, which never sends `toolIds`
+        # (defaults to `[]`) — union the registry's required ids in before
+        # validating, so an empty/partial draft still succeeds. An unknown
+        # id the caller did supply is not swept away by this and still
+        # fails the upper-bound check below.
         required = required_tool_ids(_AGENT_TASK)
+        tool_ids = frozenset(draft.tool_ids) | required
         if not (required <= tool_ids <= known_tool_ids()):
             raise AgentAuthoringRejected(
                 "agent_tool_allowlist_invalid",

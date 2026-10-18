@@ -167,6 +167,28 @@ def test_create_agent_returns_authored_revision_detail() -> None:
     assert sorted(body["toolAllowlist"]) == ["knowledge.answer", "knowledge.search"]
 
 
+def test_create_agent_without_tool_ids_fills_in_the_required_tools() -> None:
+    # The real UI never sends `toolIds` at all (built-in tools are always
+    # enabled and shown read-only) — this reproduces that exact payload,
+    # which previously 400'd with agent_tool_allowlist_invalid.
+    client, _catalog = _app()
+
+    response = client.post(
+        f"{BASE}/agents",
+        json={
+            "name": "demo-agent-no-tools",
+            "description": "A demo agent for contract tests.",
+            "systemInstruction": "Answer using only approved knowledge.",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert sorted(response.json()["toolAllowlist"]) == [
+        "knowledge.answer",
+        "knowledge.search",
+    ]
+
+
 def test_create_agent_requires_write_permission() -> None:
     client, _catalog = _app(allowed=frozenset({"ai.agents.read"}))
 
