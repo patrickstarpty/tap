@@ -195,11 +195,28 @@ class DeterministicModelGateway(LiteLLMModelGateway):
     async def chat_stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """Chunk the deterministic non-streaming chat answer into 8-character pieces,
         pacing them with a short sleep so the fake E2E profile can observe a draft
-        forming incrementally. Metering and recording happen in `chat` itself."""
+        forming incrementally. Metering and recording happen in `chat` itself.
+
+        The `[e2e-cancel]` cancellation delay (Task 9) runs here now, immediately
+        before the *last* piece, instead of inside `_post` before any content
+        exists. `DraftBatcher` (Task 6) only ever sends text past its
+        `holdback_chars` margin, so a Stop click must land after several pieces
+        have already been paced out at the normal 0.02s cadence -- exactly as
+        they are for every other piece -- for a non-empty draft chunk to have
+        already reached Redis by the time the delay (and then a cancel) lands."""
 
         result = await self.chat(request)
         text = result.output if isinstance(result.output, str) else ""
-        for piece in _chunk_into(text):
+        pieces = _chunk_into(text)
+        cancellation_delay = (
+            self._answer_delay_seconds
+            if self._answer_delay_seconds and _cancellation_requested(request.context)
+            else None
+        )
+        last_index = len(pieces) - 1
+        for index, piece in enumerate(pieces):
+            if index == last_index and cancellation_delay is not None:
+                await asyncio.sleep(cancellation_delay)
             yield ModelTextDelta(piece)
             await asyncio.sleep(0.02)
         yield result
@@ -220,8 +237,9 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 "usage": {"prompt_tokens": len(request.context.split())},
             }
         else:
-            if self._answer_delay_seconds and _cancellation_requested(request.context):
-                await asyncio.sleep(self._answer_delay_seconds)
+            # The `[e2e-cancel]` delay used to run here, before any content existed;
+            # it now runs in `chat_stream`, after the first chunk is yielded, so a
+            # partial draft is visible before the delay (Task 9).
             content = "Grounded"
             if (
                 request.operation is ModelOperation.STRUCTURED

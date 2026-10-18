@@ -123,6 +123,17 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     turnId: string;
   };
 
+  // The generating draft (`answer.draft` frames assembled into `DraftAnswer`)
+  // must be visible, with at least one inline citation badge resolved from
+  // `retrieval.hits_ready`, before the turn reaches a terminal state and the
+  // final `GroundedAnswer` replaces it.
+  await expect(page.locator(".tapper-draft-answer").first()).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.locator(".tapper-draft-citation").first()).toBeVisible({
+    timeout: 15_000,
+  });
+
   await expect
     .poll(
       async () => {
@@ -149,6 +160,11 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     turns: Array<{ state: string }>;
   };
   expect(preFeedbackStateBody.turns[0]?.state).toBe("completed");
+
+  // The draft is gone now that the turn is terminal and the final answer
+  // (with its own "Open source citation 1" button, asserted further below)
+  // has replaced it.
+  await expect(page.locator(".tapper-draft-answer")).toHaveCount(0);
 
   const notHelpfulButton = page.getByRole("button", {
     name: /^(Not helpful|没帮助)$/u,
@@ -253,13 +269,16 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   expect(eventPage.items.map((item) => item.eventType)).toEqual(
     expect.arrayContaining([
       "conversation.turn.requested",
-      "answer.delta",
+      "retrieval.hits_ready",
       "turn.completed",
       "conversation.turn.completed",
     ]),
   );
+  // `answer.draft` SSE frames carry no MySQL sequence (PR 3) and are never
+  // persisted as `ChatEventEnvelope` rows, so resume uses the durable
+  // `retrieval.hits_ready` event's sequence as the Last-Event-ID instead.
   const resumeFrom = eventPage.items.find(
-    (item) => item.eventType === "answer.delta",
+    (item) => item.eventType === "retrieval.hits_ready",
   )!.sequence;
   const citationId = eventPage.items.find(
     (item) => item.eventType === "turn.completed",
@@ -369,6 +388,15 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   const stop = page.getByRole("button", { name: "Stop generating" });
   await expect(stop).toBeVisible();
   await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);
+  // The `[e2e-cancel]` deterministic gateway hook (Task 9) paces every
+  // piece but the last at the normal 0.02s cadence before holding the long
+  // cancellation delay, so a non-empty draft chunk has already cleared
+  // `DraftBatcher`'s holdback margin and reached Redis by the time Stop is
+  // clickable -- this must be visible before Stop is clicked, not just
+  // after.
+  await expect(page.locator(".tapper-draft-answer").first()).toBeVisible({
+    timeout: 15_000,
+  });
   const canceledPromise = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -389,8 +417,15 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
         ?.state;
     })
     .toBe("canceled");
+  // `DraftAnswer`'s canceled view (Task 9): the partial draft's "Stopped ·
+  // not verified" / "已停止 · 未核对依据" `role="status"` notice replaces
+  // the "Stop generating" control; the partial draft never joins the
+  // citation system, so no citation badge from the canceled turn is ever
+  // shown.
   await expect(
-    page.getByText("Generation stopped.", { exact: true }),
+    page.getByText(/^(Stopped · not verified|已停止 · 未核对依据)$/u, {
+      exact: true,
+    }),
   ).toBeVisible();
 
   const deleted = await page.request.delete(
@@ -632,4 +667,87 @@ test("a published source's suggested question grounds a Tapper answer", async ({
     },
   );
   expect(deleted.status()).toBe(204);
+});
+
+test("an abstained answer replaces the draft", async ({ page }) => {
+  // A question asked with no knowledge source attached resolves to an empty
+  // `resourceRefs` scope (`seed_search` in `tapper_chat_turn.py`), which
+  // `AuthorizedRetrieval` treats as "no resources selected" rather than "no
+  // restriction" -- retrieval always returns zero evidence, and
+  // `if not run.response.evidence` abstains deterministically
+  // (`INSUFFICIENT_EVIDENCE`), independent of whatever else is published in
+  // the project at the time this test runs.
+  const runtimeResponse = await page.request.get("/api/v1/runtime-mode");
+  expect(runtimeResponse.status()).toBe(200);
+  const runtime = (await runtimeResponse.json()) as { projectId: string };
+  const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+
+  const prompt = `Unattached question ${Date.now()}`;
+  await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
+  const acceptedResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `${root}/conversations`,
+  );
+  await page.getByRole("button", { name: "Send" }).click();
+  const acceptedResponse = await acceptedResponsePromise;
+  expect(acceptedResponse.status()).toBe(202);
+  const accepted = (await acceptedResponse.json()) as {
+    conversationId: string;
+    turnId: string;
+  };
+
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/conversations/${accepted.conversationId}`,
+        );
+        const body = (await response.json()) as {
+          turns: Array<{ state: string }>;
+        };
+        return body.turns[0]?.state;
+      },
+      { timeout: 45_000 },
+    )
+    .toMatch(/abstained|completed/u);
+
+  const stateResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}`,
+  );
+  const stateBody = (await stateResponse.json()) as {
+    turns: Array<{ state: string }>;
+  };
+  // Fail fast with a clear message if the fixture unexpectedly grounded
+  // this question instead of abstaining.
+  expect(stateBody.turns[0]?.state).toBe("abstained");
+
+  const eventsResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}/events`,
+  );
+  expect(eventsResponse.status()).toBe(200);
+  const eventPage = (await eventsResponse.json()) as {
+    items: Array<{
+      eventType: string;
+      payload: { answer?: { abstained?: boolean } };
+    }>;
+  };
+  const abstainedEvent = eventPage.items.find(
+    (item) => item.eventType === "turn.abstained",
+  );
+  expect(abstainedEvent?.payload.answer?.abstained).toBe(true);
+
+  // `GroundedAnswer`'s abstained view (an `Alert` titled from `ANSWER_COPY`)
+  // has replaced whatever was showing while the turn was running -- the
+  // draft is gone and the "Stop generating"/`DraftAnswer` machinery never
+  // lingers past a terminal abstained state.
+  await expect(
+    page.getByText(
+      /^(The selected sources do not contain enough evidence to answer this question\.|所选来源中没有足够证据回答这个问题。)$/u,
+    ),
+  ).toBeVisible();
+  await expect(page.locator(".tapper-draft-answer")).toHaveCount(0);
 });

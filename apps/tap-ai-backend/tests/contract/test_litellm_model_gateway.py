@@ -572,8 +572,10 @@ async def test_deterministic_gateway_delays_chat_answer_with_cancel_marker(
     """The isolated browser E2E clicks Stop generating on a third question ending in
     ` [e2e-cancel]`; the fake gateway must hold the answer open long enough for the
     cancel request to land, exactly like `DeterministicTapperModel.answer` already does.
-    `chat_stream` also sleeps 0.02s between each chunk it paces out, so the 5.0s
-    cancellation delay is asserted by membership, not list equality."""
+    `chat_stream` also sleeps 0.02s between each chunk it paces out; the 5.0s
+    cancellation delay (Task 9) now runs immediately before the *last* chunk --
+    not the first -- so `DraftBatcher`'s holdback margin has already let a
+    non-empty draft reach Redis by the time the delay (and a Stop click) lands."""
 
     from tap.testing import deterministic_model_gateway
     from tap.testing.deterministic_model_gateway import DeterministicModelGateway
@@ -599,8 +601,9 @@ async def test_deterministic_gateway_delays_chat_answer_with_cancel_marker(
     async for _ in gateway.chat_stream(_chat_answer_request(context)):
         pass
 
-    assert delays[0] == 5.0
-    assert delays[1:] == [0.02] * (len(delays) - 1)
+    assert delays[-2] == 5.0
+    assert delays[-1] == 0.02
+    assert delays[:-2] == [0.02] * (len(delays) - 2)
 
 
 @pytest.mark.asyncio
