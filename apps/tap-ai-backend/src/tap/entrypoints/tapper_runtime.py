@@ -977,10 +977,11 @@ async def create_api_runtime(
             event_wakeups=_create_event_wakeups(redis),
             draft_stream=_create_draft_stream(redis, redis_stream_block, settings),
         )
-        agent_authoring = AgentAuthoringService(
-            asset_catalog,
-            services.model_catalog,
-            scope=repository.scope,
+        model_catalog = services.model_catalog
+        agent_authoring = (
+            AgentAuthoringService(asset_catalog, model_catalog, scope=repository.scope)
+            if model_catalog is not None
+            else None
         )
         services = replace(
             services,
