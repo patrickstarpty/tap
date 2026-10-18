@@ -14,6 +14,45 @@ const FIXTURE_ROOT = resolve(
   "tests/e2e/fixtures/skills/claim-intake-checklist",
 );
 
+// This spec uploads its own evidence Knowledge source (see Step 0 below);
+// every other journey spec deletes its own source in `afterEach`
+// (`tapper-test-plan.spec.ts`) so the exact document-set assertion in
+// `persistence.spec.ts`'s app-restart phase isn't perturbed by a leftover
+// document. Module-level (not `test.step`-scoped) so cleanup still runs
+// when the test fails partway through.
+let cleanupSourceId: string | null = null;
+
+test.afterEach(async ({ request }) => {
+  if (cleanupSourceId === null) return;
+  const runtime = (await (
+    await request.get("/api/v1/runtime-mode")
+  ).json()) as {
+    projectId: string;
+  };
+  const deleted = await request.delete(
+    `/api/v1/projects/${encodeURIComponent(runtime.projectId)}/knowledge/sources/${cleanupSourceId}`,
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `cleanup-skills-agents-${cleanupSourceId}`,
+      },
+    },
+  );
+  expect(deleted.status()).toBe(204);
+  await expect
+    .poll(
+      async () =>
+        (
+          await request.get(
+            `/api/v1/projects/${encodeURIComponent(runtime.projectId)}/knowledge/sources/${cleanupSourceId}`,
+          )
+        ).status(),
+      { timeout: 45_000 },
+    )
+    .toBe(404);
+  cleanupSourceId = null;
+});
+
 // -- Minimal STORED-only ZIP writer ------------------------------------------
 //
 // No zip library is reachable from `apps/tap-ai-frontend`'s own dependency
@@ -154,6 +193,7 @@ test("imports a Skill package, binds it to a new Agent, and uses it end to end",
     source: { sourceId: string };
   };
   const createdSourceId = uploaded.source.sourceId;
+  cleanupSourceId = createdSourceId;
   await expect
     .poll(
       async () => {
