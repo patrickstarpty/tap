@@ -1,6 +1,10 @@
 import type { RetrievalAnswerResponse } from "../../../features/knowledge/api/types";
 import type { InsightsExplanationResult } from "../../../features/conversations/api/client";
-import type { GraphContextSummary } from "../../../features/conversations/model/stream";
+import type {
+  CitationLabelInfo,
+  DraftState,
+  GraphContextSummary,
+} from "../../../features/conversations/model/stream";
 import type { FeedbackValue } from "../../../features/conversations/feedback/AnswerFeedback";
 
 export type Locale = "en" | "zh";
@@ -48,6 +52,10 @@ export interface AssistantTurn {
   sourceReferences: readonly AssistantSourceReference[];
   response?: RetrievalAnswerResponse | null;
   graphContext?: GraphContextSummary | null;
+  draft?: DraftState | null;
+  citationLabels?: Readonly<Record<string, CitationLabelInfo>>;
+  stage?: "verify" | null;
+  partialAnswer?: string | null;
   traceId?: string | null;
   myFeedback?: FeedbackValue | null;
   attempt?: number;

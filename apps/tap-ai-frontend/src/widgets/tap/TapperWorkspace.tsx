@@ -65,6 +65,7 @@ import {
   reduceStreamEvent,
   type GraphContextSummary,
 } from "../../features/conversations/model/stream";
+import { DraftAnswer } from "../../features/conversations/components/DraftAnswer";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { useModelCatalog } from "../../features/knowledge/api/modelCatalog";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
@@ -312,7 +313,7 @@ export function AnswerActivity({
   ).length;
   const assembledCount = sourceCount;
   const answerRecorded = events.some(
-    (event) => event.eventType === "answer.delta",
+    (event) => event.eventType === "answer.draft",
   );
   const rows = [
     assembledCount > 0
@@ -712,8 +713,15 @@ function AssistantResponse({
     }
     if (turn.status === "canceled") {
       return (
-        <div role="status">
-          <p>{turn.locale === "zh" ? "已停止生成。" : "Generation stopped."}</p>
+        <div>
+          <DraftAnswer
+            draft={null}
+            citationLabels={turn.citationLabels ?? {}}
+            stage={null}
+            partialAnswer={turn.partialAnswer ?? null}
+            canceled
+            locale={turn.locale}
+          />
           {onResend === undefined ? null : (
             <Button size="small" onClick={onResend}>
               {contentCopy.chat.retry}
@@ -847,12 +855,26 @@ function AssistantResponse({
       );
     }
     if (turn.status === "queued" || turn.status === "running") {
+      const draft = turn.draft ?? null;
+      const stage = turn.stage ?? null;
       return (
-        <AnswerProgress
-          locale={turn.locale}
-          sourceCount={turn.sourceReferences.length}
-          status={turn.status}
-        />
+        <>
+          <AnswerProgress
+            locale={turn.locale}
+            sourceCount={turn.sourceReferences.length}
+            status={turn.status}
+          />
+          {(draft !== null && draft.text.length > 0) || stage === "verify" ? (
+            <DraftAnswer
+              draft={draft}
+              citationLabels={turn.citationLabels ?? {}}
+              stage={stage}
+              partialAnswer={null}
+              canceled={false}
+              locale={turn.locale}
+            />
+          ) : null}
+        </>
       );
     }
     if (turn.response === null) {
@@ -1558,6 +1580,10 @@ export function TapperWorkspace() {
         })),
         response: streamed?.response ?? null,
         graphContext: streamed?.graphContext ?? null,
+        draft: streamed?.draft ?? null,
+        citationLabels: streamed?.citationLabels ?? {},
+        stage: streamed?.stage ?? null,
+        partialAnswer: streamed?.partialAnswer ?? null,
         traceId: turn.traceId ?? null,
         myFeedback:
           turn.myFeedback == null
@@ -1622,6 +1648,12 @@ export function TapperWorkspace() {
           ...accepted,
           status: streamed?.status ?? accepted.status,
           response: streamed?.response ?? accepted.response ?? null,
+          draft: streamed?.draft ?? accepted.draft ?? null,
+          citationLabels:
+            streamed?.citationLabels ?? accepted.citationLabels ?? {},
+          stage: streamed?.stage ?? accepted.stage ?? null,
+          partialAnswer:
+            streamed?.partialAnswer ?? accepted.partialAnswer ?? null,
         },
       ];
     };

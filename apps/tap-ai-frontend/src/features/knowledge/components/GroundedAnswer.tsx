@@ -7,41 +7,9 @@ import rehypeSanitize from "rehype-sanitize";
 import type { RetrievalAnswerResponse } from "../api/types";
 import { CITATION_EN, COPY } from "../copy";
 import { isEdgeCitation } from "../model/edgeCitation";
+import { answerSchema } from "../../../shared/markdown/answerSchema";
 import type { HistoricalCitationQuery } from "./CitationViewer";
 import { EdgeCitationChip } from "./EdgeCitationChip";
-
-const ANSWER_TAGS = [
-  "p",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "ul",
-  "ol",
-  "li",
-  "blockquote",
-  "pre",
-  "code",
-  "strong",
-  "em",
-  "table",
-  "thead",
-  "tbody",
-  "tr",
-  "th",
-  "td",
-  "hr",
-] as const;
-
-const answerSchema = {
-  tagNames: [...ANSWER_TAGS],
-  // Exactly `data-claim-id`, on `code` only (no other attribute, on no
-  // other tag) -- the citation badge is spliced into the Markdown AST as an
-  // empty `<code data-claim-id="...">` element (round 3 of the LangGraph PR 3
-  // review ruling, 2026-10-17); see `citationBadgeNode` below.
-  attributes: { code: ["dataClaimId"] },
-  protocols: {},
-};
 
 const ANSWER_COPY = {
   en: {

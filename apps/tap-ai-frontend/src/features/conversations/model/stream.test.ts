@@ -24,53 +24,241 @@ const envelope = (
 });
 
 describe("conversation stream reducer", () => {
-  it("appends ordered deltas once and retains the resume sequence", () => {
+  it("appends draft text ordered by (attempt, seq) and never advances lastSequence", () => {
     let state = createStreamState();
     state = reduceStreamEvent(
       state,
-      envelope(2, "turn-1", "answer.delta", { text: "ground" }),
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "ground",
+      }),
     );
     state = reduceStreamEvent(
       state,
-      envelope(3, "turn-1", "answer.delta", { text: "ed" }),
-    );
-    state = reduceStreamEvent(
-      state,
-      envelope(3, "turn-1", "answer.delta", { text: "ed" }),
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 2,
+        text: "ed",
+      }),
     );
 
-    expect(state.lastSequence).toBe(3);
-    expect(state.turns["turn-1"]?.answer).toBe("grounded");
+    expect(state.lastSequence).toBe(0);
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 1,
+      seq: 2,
+      text: "grounded",
+    });
+    expect(state.turns["turn-1"]?.lastSequence).toBe(0);
   });
 
-  it("closes canceled and failed turns without accepting later deltas", () => {
+  it("ignores a duplicate or out-of-order draft seq within the same attempt", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 5,
+        text: "abc",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 3,
+        text: "ignored",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 5,
+        text: "ignored",
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 1,
+      seq: 5,
+      text: "abc",
+    });
+  });
+
+  it("resets the draft text when a higher attempt arrives", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 2,
+        text: "stale attempt text",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 2,
+        seq: 1,
+        text: "fresh",
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 2,
+      seq: 1,
+      text: "fresh",
+    });
+  });
+
+  it("clears draft text on a reset frame and keeps appending later seqs", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "before reset",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 2,
+        text: "",
+        reset: true,
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 3,
+        text: "after reset",
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 1,
+      seq: 3,
+      text: "after reset",
+    });
+  });
+
+  it("fills citationLabels from retrieval.hits_ready without requiring every hit to carry one", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "retrieval.hits_ready", {
+        traceId: "trace-1",
+        authorizedHitCount: 3,
+        labels: [
+          { label: "S1", title: "Policy handbook", location: "p. 4" },
+          { label: "R1", title: "Rule graph", location: null },
+        ],
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.citationLabels).toEqual({
+      S1: { title: "Policy handbook", location: "p. 4" },
+      R1: { title: "Rule graph", location: null },
+    });
+  });
+
+  it("sets the verify stage from stage.started and clears it once the turn completes", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "stage.started", { stage: "verify" }),
+    );
+    expect(state.turns["turn-1"]?.stage).toBe("verify");
+
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "turn.completed", {
+        answer: { answer: "done", citations: [] },
+      }),
+    );
+    expect(state.turns["turn-1"]?.stage).toBeNull();
+  });
+
+  it("replaces the draft with the terminal answer on completion", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "partial draft text",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "turn.completed", {
+        answer: { answer: "Final answer.", citations: [] },
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.draft).toBeNull();
+    expect(state.turns["turn-1"]?.response?.answer).toBe("Final answer.");
+    expect(state.turns["turn-1"]?.status).toBe("completed");
+  });
+
+  it("closes canceled and failed turns, keeping the partial answer and refusing later drafts", () => {
     const canceled = reduceStreamEvent(
       reduceStreamEvent(
         createStreamState(),
-        envelope(1, "turn-1", "answer.delta", { text: "partial" }),
+        envelope(1, "turn-1", "answer.draft", {
+          attempt: 1,
+          seq: 1,
+          text: "partial",
+        }),
       ),
       envelope(2, "turn-1", "turn.canceled", {
+        partialAnswer: "partial",
         partialAnswerRetained: true,
       }),
     );
-    const afterLateDelta = reduceStreamEvent(
+    const afterLateDraft = reduceStreamEvent(
       canceled,
-      envelope(3, "turn-1", "answer.delta", { text: "ignored" }),
+      envelope(3, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 2,
+        text: "ignored",
+      }),
     );
     const failed = reduceStreamEvent(
-      afterLateDelta,
+      afterLateDraft,
       envelope(4, "turn-2", "turn.failed", {
         problem: { title: "Generation unavailable" },
       }),
     );
 
     expect(failed.turns["turn-1"]).toMatchObject({
-      answer: "partial",
+      partialAnswer: "partial",
+      draft: null,
       status: "canceled",
     });
     expect(failed.turns["turn-2"]).toMatchObject({
       error: "Generation unavailable",
       status: "failed",
+    });
+  });
+
+  it("keeps partialAnswer null when a turn is canceled before any draft text", () => {
+    const canceled = reduceStreamEvent(
+      createStreamState(),
+      envelope(1, "turn-1", "turn.canceled", {
+        partialAnswerRetained: false,
+      }),
+    );
+
+    expect(canceled.turns["turn-1"]).toMatchObject({
+      partialAnswer: null,
+      draft: null,
+      status: "canceled",
     });
   });
 
@@ -201,7 +389,7 @@ describe("conversation stream reducer", () => {
     );
     const staleStreamState = reduceStreamEvent(
       createStreamState(),
-      envelope(4, "turn-2", "answer.delta", { text: "partial" }),
+      envelope(4, "turn-2", "turn.started", { state: "running" }),
     );
 
     expect(
