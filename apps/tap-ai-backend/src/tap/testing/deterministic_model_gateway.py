@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -36,6 +37,24 @@ from tap.testing.deterministic_model import (
 # `[e2e-cancel]`. Both only ever reach this deterministic gateway, which is
 # wired up for the explicitly isolated fake E2E profile only.
 _ABSTENTION_QUERY_SUFFIX = " [e2e-abstain]"
+
+# Task 7: a test-only marker that lets an isolated E2E journey assert a
+# selected Skill actually reached the model prompt. Unlike `[e2e-cancel]`/
+# `[e2e-abstain]` (matched against the *query*), this is matched against the
+# assembled *prompt* -- the Skill instruction text, wrapped in its
+# `<skill name=... revision=...>` block by `_skill_blocks`
+# (`modules/knowledge/adapters/litellm.py`), lands in the prompt, not the
+# context. The marker is echoed back as plain, uncited text so a deterministic
+# answer's existing `[S1]`/`[R1]` inline citations stay intact and
+# `parse_inline_answer`'s `_MARKER` (only `[S1]`-`[R999]`-shaped) never
+# mistakes it for one.
+_SKILL_MARKER = re.compile(r"\[e2e-skill:[^\[\]]+\]")
+
+
+def _skill_marker_in_prompt(prompt: str) -> str | None:
+    match = _SKILL_MARKER.search(prompt)
+    return match.group(0) if match else None
+
 
 # Longer than `DraftBatcher`'s default `max_delay_s` (0.05s); see `chat_stream`.
 _PRE_HOLD_FLUSH_PAUSE_SECONDS = 0.2
@@ -335,6 +354,14 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                     if claims
                     else "INSUFFICIENT_EVIDENCE"
                 )
+            if request.operation is not ModelOperation.STRUCTURED:
+                # Structured content is a closed JSON document (PromptSuggestions,
+                # `{answer: ...}`, ...); appending plain text would corrupt it, and
+                # a Skill is only ever governed into the Markdown/CHAT answer path
+                # (`_skill_blocks` in `modules/knowledge/adapters/litellm.py`).
+                skill_marker = _skill_marker_in_prompt(request.prompt)
+                if skill_marker is not None:
+                    content = f"{content} {skill_marker}"
             body = {
                 "model": "fake/deterministic-chat-v1",
                 "choices": [{"message": {"content": content}}],

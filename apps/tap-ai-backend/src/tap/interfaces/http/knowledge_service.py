@@ -893,6 +893,9 @@ class KnowledgeHttpService:
                     *frozen_input.skill_revision_digests,
                     *frozen_input.skill_instruction_template_digests,
                 ),
+                agent_revision_id=frozen_input.agent_revision_id,
+                skill_names=frozen_input.skill_labels or frozen_input.skill_revision_ids,
+                skill_revision_ids=frozen_input.skill_revision_ids,
             )
         return governance
 

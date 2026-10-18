@@ -35,6 +35,7 @@ from tap.modules.chat.application.conversations import (
     InvalidConversationCursor,
 )
 from tap.modules.chat.application.feedback import FeedbackNotAllowed
+from tap.modules.chat.application.skill_selection import SkillBudgetExceeded
 from tap.modules.graph.domain.jobs import GraphJobBusy
 from tap.modules.graph.ports.project_store import (
     ProjectGraphVersionMismatch as StoreProjectGraphVersionMismatch,
@@ -433,6 +434,12 @@ def register_problem_handlers(app: FastAPI) -> None:
     @app.exception_handler(SkillPackageRejected)
     async def skill_package_rejected_problem(
         _request: Request, error: SkillPackageRejected
+    ) -> JSONResponse:
+        return skill_problem_response(error.code, error.detail)
+
+    @app.exception_handler(SkillBudgetExceeded)
+    async def skill_budget_exceeded_problem(
+        _request: Request, error: SkillBudgetExceeded
     ) -> JSONResponse:
         return skill_problem_response(error.code, error.detail)
 

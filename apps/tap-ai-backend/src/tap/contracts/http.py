@@ -1228,6 +1228,7 @@ class ConversationTurnInputView(ContractModel):
     agent_label: str | None = None
     skill_revision_ids: list[str]
     skill_labels: list[str]
+    skill_notices: list[str] = []
     insights_query_id: str | None = None
 
 

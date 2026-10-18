@@ -2168,6 +2168,11 @@ export interface components {
             resolvedResources: components["schemas"]["ConversationResolvedResourceView"][];
             /** Skilllabels */
             skillLabels: string[];
+            /**
+             * Skillnotices
+             * @default []
+             */
+            skillNotices?: string[];
             /** Skillrevisionids */
             skillRevisionIds: string[];
             /** Sourcerevisionids */

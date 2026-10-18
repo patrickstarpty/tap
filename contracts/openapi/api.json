@@ -1856,6 +1856,14 @@
             "title": "Skilllabels",
             "type": "array"
           },
+          "skillNotices": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Skillnotices",
+            "type": "array"
+          },
           "skillRevisionIds": {
             "items": {
               "type": "string"

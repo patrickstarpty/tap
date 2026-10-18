@@ -132,6 +132,10 @@ class TurnInput:
     agent_output_schema_digest: str | None = None
     skill_instruction_templates: tuple[str, ...] = ()
     skill_instruction_template_digests: tuple[str, ...] = ()
+    # Server-computed facts about Skills merge_skill_selection skipped (disabled
+    # bound Skill, task-inapplicable Skill); frozen into the Turn so a checkpoint
+    # resume/retry sees the same notices rather than recomputing them.
+    skill_notices: tuple[str, ...] = ()
     acl_digest: str = "sha256:" + "0" * 64
     retrieval_policy_digest: str = "sha256:" + "0" * 64
     insights_query_id: str | None = None
@@ -239,6 +243,8 @@ class TurnInput:
             value.pop("agent_label")
         if not self.skill_labels:
             value.pop("skill_labels")
+        if not self.skill_notices:
+            value.pop("skill_notices")
         resources = []
         for item in value["resolved_resources"]:
             resources.append({key: fact for key, fact in item.items() if fact is not None})
