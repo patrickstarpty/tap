@@ -45,7 +45,7 @@ from opentelemetry.trace import get_current_span
 
 from tap.modules.chat.application.ports import DraftStream, DraftStreamUnavailable
 from tap.modules.knowledge.ports.redaction import RedactionUnavailable
-from tap.platform.redaction_patterns import EMAIL_LOCAL_TRAILING_RUN
+from tap.platform.redaction_patterns import email_local_trailing_run_start
 
 _INSUFFICIENT_EVIDENCE_SENTINEL = "INSUFFICIENT_EVIDENCE"
 
@@ -184,9 +184,9 @@ class DraftBatcher:
             # == 0` means the caller already opted out of any holdback
             # safety net.
             if self._holdback_chars:
-                trailing_run = EMAIL_LOCAL_TRAILING_RUN.search(redacted)
-                if trailing_run is not None:
-                    upper = min(upper, trailing_run.start())
+                trailing_run_start = email_local_trailing_run_start(redacted)
+                if trailing_run_start is not None:
+                    upper = min(upper, trailing_run_start)
                 upper = max(upper, len(self._sent_text))
         new_text = redacted[len(self._sent_text) : upper]
         if new_text:

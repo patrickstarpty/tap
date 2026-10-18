@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 import pytest
 
@@ -341,6 +342,44 @@ async def test_holdback_covers_an_unterminated_email_local_part_longer_than_hold
     all_chunks_ever_sent2 = "".join(_texts(drafts2.calls))
     assert local_part not in all_chunks_ever_sent2
     assert "[REDACTED_EMAIL]" in final_text2
+
+
+@pytest.mark.asyncio
+async def test_trailing_run_holdback_stays_fast_on_a_long_unbroken_run():
+    """Task 5 (deferred performance fix): the trailing-run holdback check
+    used to be a `$`-anchored regex `search()`, which tries matching at
+    every start position in the accumulated text -- since the character
+    class matches almost anything, each failed attempt scans nearly to the
+    end before the `$` anchor rejects it, making every non-final flush
+    O(len(text)**2) on a long unbroken run of allowed characters (e.g. a
+    hex/base64-looking blob with no `@`/`.`/space to break the run). The
+    backward-scan replacement must stay fast on a 20k-char run and still
+    hold back exactly as before: nothing sent until the run is known to be
+    complete (`close()`)."""
+    drafts = _FakeDrafts()
+    batcher = DraftBatcher(
+        turn_id="turn-1",
+        attempt=1,
+        drafts=drafts,
+        redact=_identity_redact,
+        max_delay_s=1000,
+        max_chars=32,
+        holdback_chars=48,
+    )
+    long_run = "ab01" * 5000  # 20,000 chars, all in the trailing-run class
+
+    started = time.monotonic()
+    await batcher.push(long_run)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2.0
+    # Still fully held back: the whole run could still be an in-progress
+    # email local part, so nothing has been sent yet.
+    assert drafts.calls == []
+
+    final_text = await batcher.close()
+    assert final_text == long_run
+    assert "".join(_texts(drafts.calls)) == long_run
 
 
 @pytest.mark.asyncio
