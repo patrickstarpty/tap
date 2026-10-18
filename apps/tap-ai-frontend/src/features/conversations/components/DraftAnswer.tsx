@@ -172,10 +172,11 @@ function DraftMarkdown({
  *   once `stage === "verify"` (committed before verification runs).
  * - Canceled: renders `partialAnswer` (the already-redacted draft text at
  *   cancellation, if any) under a "Stopped · not verified" notice; with no
- *   partial draft, only the stopped notice is shown. A canceled turn's
- *   partial text never joins the citation system — labels inside it still
- *   render as badges from `citationLabels` (found before cancellation), but
- *   this text itself is never a `RetrievalAnswerResponse`.
+ *   partial draft, only the stopped notice is shown. A canceled turn’s
+ *   partial text never joins the citation system — every `[S1]`/`[R1]`
+ *   marker inside it renders as plain text, not a badge, even for labels
+ *   `citationLabels` already knows, because this text itself is never a
+ *   `RetrievalAnswerResponse`.
  */
 export function DraftAnswer({
   draft,
