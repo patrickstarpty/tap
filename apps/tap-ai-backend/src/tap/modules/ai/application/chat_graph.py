@@ -27,6 +27,17 @@ CHAT_GRAPH_VERSION = "tapper-chat-v2"
 CHAT_STATE_SCHEMA_VERSION = 2
 
 
+class GraphRunCanceled(PermissionError):
+    """Raised by `ChatGraph._wrap` when the node-boundary `canceled()` check
+    (not the `authorize()` check) stops a run (M-3). A plain `PermissionError`
+    here would classify the same as a genuine ownership loss (lease loss,
+    conflicting write, deleted Conversation) in `classify_turn_failure`, so
+    the worker would record `tap.outcome = "lost"` for a user-initiated
+    cancel. `GraphRunCanceled` is still a `PermissionError` -- the "do not
+    write anything, the owner/API already did" handling is identical -- it
+    only lets the worker tell the two apart for telemetry."""
+
+
 class ChatGraphState(TypedDict, total=False):
     graph_version: str
     state_schema_version: int
@@ -42,6 +53,10 @@ class ChatGraphState(TypedDict, total=False):
     result: dict[str, object]
     budget: dict[str, int | float]
     budget_used: dict[str, int]
+    # PR 3: stream event types already committed early (via `conversations.
+    # emit`) by `seed_search`/`verify`, so `finalize`'s own `streamEvents`
+    # batch never repeats them.
+    committed_stream_events: list[str]
 
 
 GraphNode = Callable[[ChatGraphState], Awaitable[dict[str, Any]]]
@@ -90,10 +105,12 @@ class ChatGraph:
         checkpointer: BaseCheckpointSaver,
         nodes: ChatGraphNodes,
         authorize: AuthorizationCheck,
+        canceled: AuthorizationCheck | None = None,
         propagate: tuple[type[BaseException], ...] = (),
         retryable: Callable[[BaseException], bool] = lambda _error: False,
     ) -> None:
         self._authorize = authorize
+        self._canceled = canceled
         self._propagate = propagate
         self._retryable = retryable
         self._checkpointer = checkpointer
@@ -176,6 +193,8 @@ class ChatGraph:
         async def run(state: ChatGraphState) -> dict[str, Any]:
             if not await self._authorize():
                 raise PermissionError("graph run authorization changed")
+            if self._canceled is not None and await self._canceled():
+                raise GraphRunCanceled("graph run was canceled")
             with span(f"graph.node.{name}", {"tap.graph.version": CHAT_GRAPH_VERSION}) as node_span:
                 try:
                     if enforce_budget:

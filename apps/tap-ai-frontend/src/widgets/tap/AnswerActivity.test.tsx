@@ -58,7 +58,7 @@ it("distinguishes resolved citation records from references used in visible clai
       edgeCitationCount={0}
       graphContext={null}
       events={[
-        { eventType: "answer.delta", payload: {} },
+        { eventType: "answer.draft", payload: {} },
         ...Array.from({ length: 8 }, () => ({
           eventType: "citation.resolved",
           payload: {},
@@ -136,7 +136,7 @@ it("falls back to edge citation count without a graph event", () => {
       chunkCitationCount={3}
       edgeCitationCount={2}
       graphContext={null}
-      events={[{ eventType: "answer.delta", payload: {} }]}
+      events={[{ eventType: "answer.draft", payload: {} }]}
     />,
   );
   expect(
@@ -185,7 +185,7 @@ it("hides the seed/path rows when there is no seed count and no paths", () => {
         paths: [],
         relationCount: 0,
       }}
-      events={[{ eventType: "answer.delta", payload: {} }]}
+      events={[{ eventType: "answer.draft", payload: {} }]}
     />,
   );
   expect(screen.queryByText(/seed entit/u)).not.toBeInTheDocument();

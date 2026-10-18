@@ -330,18 +330,8 @@ button:focus-visible,
   margin: 0 0 14px;
 }
 
-.tapper-grounded-claim .tapper-markdown > :last-child,
 .tapper-markdown > :last-child {
   margin-bottom: 0;
-}
-
-.tapper-markdown--with-citation > p:has(+ .tapper-claim-citations) {
-  display: inline;
-  margin: 0;
-}
-
-.tapper-markdown--with-citation > p + .tapper-claim-citations {
-  margin-inline-start: 5px;
 }
 
 .tapper-claim-citations {

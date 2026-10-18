@@ -28,12 +28,14 @@ from tap.modules.ai.application.chat_graph import (
     CHAT_GRAPH_VERSION,
     CHAT_STATE_SCHEMA_VERSION,
     ChatGraph,
+    GraphRunCanceled,
 )
 from tap.modules.ai.ports.insights import InsightsAuthorizationChanged
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
 )
+from tap.modules.chat.application.ports import DraftStreamUnavailable
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     GraphContextStatus,
@@ -50,6 +52,12 @@ from tap.platform.telemetry import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Fix round 1 / I-1: a hanging `cancel_requested` call (e.g. a dead Redis
+# connection the client hasn't timed out yet) must never itself delay lease
+# renewal -- every poll is bounded to well under the renewal cadence, and a
+# timeout here degrades to "not canceled", the same as `DraftStreamUnavailable`.
+_CANCEL_POLL_TIMEOUT_SECONDS = 0.5
+
 
 @dataclass(slots=True)
 class GenerationWorker:
@@ -63,6 +71,12 @@ class GenerationWorker:
     max_turn_attempts: int = 3
     rng: random.Random | None = None
     turn_budget: TurnBudget = TurnBudget()
+    # PR 3: the shared Redis draft stream (`None` degrades the `model` node's
+    # `DraftBatcher` to accumulate-only) and the conversation-path
+    # personal-data (v2) egress redactor every draft chunk is sent through --
+    # the same redactor `KnowledgeHttpService` uses for answer finalization.
+    drafts: Any | None = None
+    redact: Callable[[str], Awaitable[str]] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -75,6 +89,20 @@ class GenerationWorker:
 
     async def run_once(self, *, limit: int) -> int:
         claimed = await self.conversations.repository.claim_queued(limit=limit)
+        # `claim_queued` writes `turn.started` for every claimed Turn, and may
+        # also settle permanently-faulted Turns (`turn.failed`) inline; both
+        # bypass `emit`/`complete_evidence`, so notify here instead -- never
+        # inside the repository (see `claim_queued`'s docstring). Fired
+        # concurrently so a blackholed Redis serializes at most one socket
+        # timeout, not one per wake-up.
+        wakeups = claimed.wakeups
+        if wakeups:
+            await asyncio.gather(
+                *(
+                    self.conversations.notify_external_write(conversation_id, sequence)
+                    for conversation_id, sequence in wakeups
+                )
+            )
         for conversation_id, turn in claimed:
             try:
                 try:
@@ -166,11 +194,34 @@ class GenerationWorker:
                 turn_span=turn_span,
                 attempt_started_at=attempt_started_at,
                 retryable=turn_retryable,
+                drafts=self.drafts,
+                redact=self.redact,
             ).nodes
+
+            async def canceled() -> bool:
+                """Fast, Redis-backed node-boundary check (Task 7); any
+                Redis failure -- or a call that does not answer within
+                `_CANCEL_POLL_TIMEOUT_SECONDS` (I-1: a dead connection the
+                client itself hasn't timed out yet) -- degrades to "not
+                canceled" here. The `authorize`/`renew_processing_lease`
+                check above still stops the Turn at the next node boundary
+                from MySQL alone once `cancel` has written the Turn's
+                `canceled` state."""
+                if self.drafts is None:
+                    return False
+                try:
+                    return await asyncio.wait_for(
+                        self.drafts.cancel_requested(turn.turn_id),
+                        timeout=_CANCEL_POLL_TIMEOUT_SECONDS,
+                    )
+                except (DraftStreamUnavailable, TimeoutError):
+                    return False
+
             graph = ChatGraph(
                 checkpointer=checkpointer,
                 nodes=nodes,
                 authorize=authorized,
+                canceled=canceled,
                 propagate=(ConversationConflict, ConversationNotFound),
                 retryable=turn_retryable,
             )
@@ -189,13 +240,36 @@ class GenerationWorker:
                 )
 
             running = asyncio.create_task(run_graph())
+            # Task 7: poll `cancel_requested` far more often than the lease
+            # renewal cadence (`renew_interval_seconds`, often tens of
+            # seconds) so a cancel stops this Turn's generation within
+            # well under a second, instead of waiting for the next node
+            # boundary. Lease renewal itself still only fires every
+            # `renew_interval_seconds`, tracked below by wall-clock time
+            # (I-1): counting elapsed ticks would let a slow/hanging
+            # `canceled()` poll (bounded, but not free) push renewal later
+            # and later, eventually losing the lease to a reclaim.
+            check_interval = min(self.renew_interval_seconds, 0.25)
+            last_renewed_at = time.monotonic()
             try:
                 while True:
-                    done, _ = await asyncio.wait({running}, timeout=self.renew_interval_seconds)
+                    done, _ = await asyncio.wait({running}, timeout=check_interval)
                     if done:
                         state = await running
                         break
-                    if renew is not None:
+                    if await canceled():
+                        running.cancel()
+                        await asyncio.gather(running, return_exceptions=True)
+                        # The API already wrote `turn.canceled` (including
+                        # any partial draft) before setting this marker, so
+                        # there is nothing left for the worker to persist.
+                        outcome = "canceled"
+                        return
+                    if (
+                        renew is not None
+                        and time.monotonic() - last_renewed_at >= self.renew_interval_seconds
+                    ):
+                        last_renewed_at = time.monotonic()
                         await renew(
                             conversation_id,
                             turn.turn_id,
@@ -265,8 +339,12 @@ class GenerationWorker:
             if failure_class == "ownership":
                 # Another worker, or the owning caller, proved it owns this Turn
                 # (lease loss, conflicting write, or a deleted Conversation); do
-                # not write anything.
-                outcome = "lost"
+                # not write anything. A `GraphRunCanceled` (M-3) is also
+                # `ownership`-classified (nothing to write here either -- the
+                # API already wrote `turn.canceled`), but it was the
+                # node-boundary cancel check, not a real ownership loss, so
+                # the telemetry outcome must say `canceled`, not `lost`.
+                outcome = "canceled" if isinstance(error, GraphRunCanceled) else "lost"
                 return
             if failure_class == "deterministic" or turn.attempt >= self.max_turn_attempts:
                 outcome = "failed"
@@ -327,7 +405,11 @@ async def run_worker_loop(
 
 
 async def main() -> None:
-    from tap.entrypoints.tapper_runtime import TapperSettings, create_api_runtime
+    from tap.entrypoints.tapper_runtime import (
+        TapperSettings,
+        _redact_chat_egress,
+        create_api_runtime,
+    )
     from tap.entrypoints.tracing_setup import start_tracing
 
     settings = TapperSettings.from_mapping(dict(os.environ))
@@ -345,6 +427,10 @@ async def main() -> None:
         suggestion_refresh=runtime.http_services.prompt_suggestion_store,
         max_turn_attempts=settings.turn_max_attempts,
         turn_budget=settings.turn_budget,
+        # The generation worker reuses `create_api_runtime`, so this is the
+        # exact same Redis-backed `DraftStream` the API composes (Task 4).
+        drafts=runtime.http_services.draft_stream,
+        redact=_redact_chat_egress,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

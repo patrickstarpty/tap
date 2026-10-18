@@ -5,6 +5,7 @@ import {
   graphContextFromEvents,
   isTargetTurnActive,
   latestTurnState,
+  mergedDraftFacts,
   reduceStreamEvent,
 } from "./stream";
 
@@ -24,53 +25,321 @@ const envelope = (
 });
 
 describe("conversation stream reducer", () => {
-  it("appends ordered deltas once and retains the resume sequence", () => {
+  it("appends draft text ordered by (attempt, seq) and never advances lastSequence", () => {
     let state = createStreamState();
     state = reduceStreamEvent(
       state,
-      envelope(2, "turn-1", "answer.delta", { text: "ground" }),
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "ground",
+      }),
     );
     state = reduceStreamEvent(
       state,
-      envelope(3, "turn-1", "answer.delta", { text: "ed" }),
-    );
-    state = reduceStreamEvent(
-      state,
-      envelope(3, "turn-1", "answer.delta", { text: "ed" }),
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 2,
+        text: "ed",
+      }),
     );
 
-    expect(state.lastSequence).toBe(3);
-    expect(state.turns["turn-1"]?.answer).toBe("grounded");
+    expect(state.lastSequence).toBe(0);
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 1,
+      seq: 2,
+      text: "grounded",
+    });
+    expect(state.turns["turn-1"]?.lastSequence).toBe(0);
   });
 
-  it("closes canceled and failed turns without accepting later deltas", () => {
+  it("ignores a duplicate or out-of-order draft seq within the same attempt", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 5,
+        text: "abc",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 3,
+        text: "ignored",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 5,
+        text: "ignored",
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 1,
+      seq: 5,
+      text: "abc",
+    });
+  });
+
+  it("resets the draft text when a higher attempt arrives", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 2,
+        text: "stale attempt text",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 2,
+        seq: 1,
+        text: "fresh",
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 2,
+      seq: 1,
+      text: "fresh",
+    });
+  });
+
+  it("clears a pending verify stage when a higher-attempt draft arrives", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "attempt one",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "stage.started", { stage: "verify" }),
+    );
+    expect(state.turns["turn-1"]?.stage).toBe("verify");
+
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "answer.draft", {
+        attempt: 2,
+        seq: 1,
+        text: "attempt two",
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.stage).toBeNull();
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 2,
+      seq: 1,
+      text: "attempt two",
+    });
+  });
+
+  it("clears draft text on a reset frame and keeps appending later seqs", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "before reset",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 2,
+        text: "",
+        reset: true,
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 3,
+        text: "after reset",
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 1,
+      seq: 3,
+      text: "after reset",
+    });
+  });
+
+  it("I-2: clears stale pre-disconnect text when a reconnect replay delivers a reset at a higher seq", () => {
+    // The client applied seq 1..10 of attempt 1, then disconnected. While it
+    // was gone, the batcher wrote a reset at seq 11 and resent the answer
+    // from the start as seq 12..15. On reconnect, the backend replay now
+    // includes the reset chunk (11) ahead of 12..15 -- the fix for I-2 --
+    // and this reducer must clear the stale seq 1..10 text on that reset
+    // frame instead of appending the fresh text after it.
+    let state = createStreamState();
+    for (let seq = 1; seq <= 10; seq += 1) {
+      state = reduceStreamEvent(
+        state,
+        envelope(1, "turn-1", "answer.draft", {
+          attempt: 1,
+          seq,
+          text: `chunk-${seq}`,
+        }),
+      );
+    }
+
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 11,
+        text: "",
+        reset: true,
+      }),
+    );
+    for (const [seq, text] of [
+      [12, "re-"],
+      [13, "a"],
+      [14, "n"],
+      [15, "swer"],
+    ] as const) {
+      state = reduceStreamEvent(
+        state,
+        envelope(1, "turn-1", "answer.draft", { attempt: 1, seq, text }),
+      );
+    }
+
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 1,
+      seq: 15,
+      text: "re-answer",
+    });
+  });
+
+  it("fills citationLabels from retrieval.hits_ready without requiring every hit to carry one", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "retrieval.hits_ready", {
+        traceId: "trace-1",
+        authorizedHitCount: 3,
+        labels: [
+          { label: "S1", title: "Policy handbook", location: "p. 4" },
+          { label: "R1", title: "Rule graph", location: null },
+        ],
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.citationLabels).toEqual({
+      S1: { title: "Policy handbook", location: "p. 4" },
+      R1: { title: "Rule graph", location: null },
+    });
+  });
+
+  it("sets the verify stage from stage.started and clears it once the turn completes", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "stage.started", { stage: "verify" }),
+    );
+    expect(state.turns["turn-1"]?.stage).toBe("verify");
+
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "turn.completed", {
+        answer: { answer: "done", citations: [] },
+      }),
+    );
+    expect(state.turns["turn-1"]?.stage).toBeNull();
+  });
+
+  it("replaces the draft with the terminal answer on completion", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "partial draft text",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "turn.completed", {
+        answer: { answer: "Final answer.", citations: [] },
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.draft).toBeNull();
+    expect(state.turns["turn-1"]?.response?.answer).toBe("Final answer.");
+    expect(state.turns["turn-1"]?.status).toBe("completed");
+  });
+
+  it("closes canceled and failed turns, keeping the partial answer and refusing later drafts", () => {
     const canceled = reduceStreamEvent(
       reduceStreamEvent(
         createStreamState(),
-        envelope(1, "turn-1", "answer.delta", { text: "partial" }),
+        envelope(1, "turn-1", "answer.draft", {
+          attempt: 1,
+          seq: 1,
+          text: "partial",
+        }),
       ),
       envelope(2, "turn-1", "turn.canceled", {
+        partialAnswer: "partial",
         partialAnswerRetained: true,
       }),
     );
-    const afterLateDelta = reduceStreamEvent(
+    const afterLateDraft = reduceStreamEvent(
       canceled,
-      envelope(3, "turn-1", "answer.delta", { text: "ignored" }),
+      envelope(3, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 2,
+        text: "ignored",
+      }),
     );
     const failed = reduceStreamEvent(
-      afterLateDelta,
+      afterLateDraft,
       envelope(4, "turn-2", "turn.failed", {
         problem: { title: "Generation unavailable" },
       }),
     );
 
     expect(failed.turns["turn-1"]).toMatchObject({
-      answer: "partial",
+      partialAnswer: "partial",
+      draft: null,
       status: "canceled",
     });
     expect(failed.turns["turn-2"]).toMatchObject({
       error: "Generation unavailable",
       status: "failed",
+    });
+  });
+
+  it("keeps partialAnswer null when a turn is canceled before any draft text", () => {
+    const canceled = reduceStreamEvent(
+      createStreamState(),
+      envelope(1, "turn-1", "turn.canceled", {
+        partialAnswerRetained: false,
+      }),
+    );
+
+    expect(canceled.turns["turn-1"]).toMatchObject({
+      partialAnswer: null,
+      draft: null,
+      status: "canceled",
     });
   });
 
@@ -201,7 +470,7 @@ describe("conversation stream reducer", () => {
     );
     const staleStreamState = reduceStreamEvent(
       createStreamState(),
-      envelope(4, "turn-2", "answer.delta", { text: "partial" }),
+      envelope(4, "turn-2", "turn.started", { state: "running" }),
     );
 
     expect(
@@ -327,6 +596,92 @@ describe("conversation stream reducer", () => {
       }),
     );
     expect(state.turns["turn-1"]?.graphContext?.paths).toHaveLength(3);
+  });
+});
+
+describe("mergedDraftFacts", () => {
+  it("takes the draft from the live stream (never the recovered record) after a reconnect mid-generation", () => {
+    // Simulates a page reload while a turn is still generating: the
+    // recovered record (GET /conversations/{id}/events, durable events
+    // only) has already seen `retrieval.hits_ready` at a higher sequence
+    // than anything the freshly reconnected stream has processed yet,
+    // because `answer.draft` is never persisted and so never advances
+    // `lastSequence` on the live side.
+    const recoveredState = reduceStreamEvent(
+      reduceStreamEvent(
+        createStreamState(),
+        envelope(1, "turn-1", "turn.started", { state: "running" }),
+      ),
+      envelope(2, "turn-1", "retrieval.hits_ready", {
+        traceId: "trace-1",
+        authorizedHitCount: 2,
+        labels: [{ label: "S1", title: "Policy handbook", location: "p. 4" }],
+      }),
+    );
+    const streamState = reduceStreamEvent(
+      createStreamState(),
+      envelope(2, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 3,
+        text: "Replayed draft text.",
+      }),
+    );
+
+    // `latestTurnState` picks the whole recovered record here, which has
+    // no draft at all -- this is the bug `mergedDraftFacts` exists to work
+    // around, not a property of `mergedDraftFacts` itself.
+    expect(
+      latestTurnState("turn-1", recoveredState, streamState)?.draft,
+    ).toBeNull();
+
+    const facts = mergedDraftFacts("turn-1", recoveredState, streamState);
+    expect(facts.draft).toEqual({
+      attempt: 1,
+      seq: 3,
+      text: "Replayed draft text.",
+    });
+    expect(facts.citationLabels).toEqual({
+      S1: { title: "Policy handbook", location: "p. 4" },
+    });
+  });
+
+  it("unions citationLabels seen by only one of the two records", () => {
+    const recoveredState = reduceStreamEvent(
+      createStreamState(),
+      envelope(1, "turn-1", "retrieval.hits_ready", {
+        traceId: "trace-1",
+        authorizedHitCount: 1,
+        labels: [
+          { label: "S1", title: "Recovered-only source", location: null },
+        ],
+      }),
+    );
+    const streamState = reduceStreamEvent(
+      createStreamState(),
+      envelope(1, "turn-1", "retrieval.hits_ready", {
+        traceId: "trace-1",
+        authorizedHitCount: 1,
+        labels: [
+          { label: "R1", title: "Stream-only relation", location: null },
+        ],
+      }),
+    );
+
+    const facts = mergedDraftFacts("turn-1", recoveredState, streamState);
+    expect(facts.citationLabels).toEqual({
+      S1: { title: "Recovered-only source", location: null },
+      R1: { title: "Stream-only relation", location: null },
+    });
+  });
+
+  it("returns a null draft and empty citationLabels when neither record has the turn", () => {
+    const facts = mergedDraftFacts(
+      "turn-1",
+      createStreamState(),
+      createStreamState(),
+    );
+    expect(facts.draft).toBeNull();
+    expect(facts.citationLabels).toEqual({});
   });
 });
 

@@ -31,6 +31,7 @@ from tap.contracts.problems import build_problem
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn
 from tap.modules.chat.application.conversations import (
+    ClaimBatch,
     ConversationConflict,
     ConversationIntegrityError,
     ConversationNotFound,
@@ -471,7 +472,7 @@ class MysqlConversationRepository:
                 existing = await self._load_turn(session, row)
                 if existing.input_snapshot.value != turn.input_snapshot.value:
                     raise ConversationConflict("idempotency-conflict")
-                return existing
+                return existing, None
             event = await self._next_event(session, conversation_id, event)
             await self._insert_turn(session, conversation_id, turn, event)
             await session.execute(
@@ -482,7 +483,7 @@ class MysqlConversationRepository:
                 )
                 .values(updated_at=_naive(event.occurred_at))
             )
-        return turn
+        return turn, event.sequence
 
     async def _load_turn(self, session, row):
         snapshot = (
@@ -823,7 +824,7 @@ class MysqlConversationRepository:
             if row is None:
                 raise ConversationNotFound
             if row["state"] in {"completed", "abstained", "failed", "canceled"}:
-                return await self._load_turn(session, row)
+                return await self._load_turn(session, row), None
             if (
                 row["state"] == "running"
                 and snapshot.value.outcome != "canceled"
@@ -965,6 +966,7 @@ class MysqlConversationRepository:
                     "turn.completed",
                     "turn.abstained",
                     "turn.failed",
+                    "turn.canceled",
                 }:
                     raise ValueError("completion terminal event is invalid")
                 terminal_event = await self._next_event(session, conversation_id, terminal_event)
@@ -1117,14 +1119,28 @@ class MysqlConversationRepository:
                         ),
                     )
         persisted = await self.load(conversation_id)
-        return next(turn for turn in persisted.turns if turn.turn_id == turn_id)
+        return (
+            next(turn for turn in persisted.turns if turn.turn_id == turn_id),
+            event.sequence,
+        )
 
-    async def claim_queued(self, *, limit: int) -> tuple[tuple[str, ConversationTurn], ...]:
+    async def claim_queued(self, *, limit: int) -> ClaimBatch:
+        """Claims up to `limit` due Turns, writing `turn.started` for each.
+
+        Also settles permanently-faulted Turns inline via
+        `_fail_unclaimable_turn` (`turn.failed`). Both kinds of write bypass
+        `ConversationService.emit`/`complete_evidence`, so the returned
+        `ClaimBatch.wakeups` carries every (conversation_id, committed
+        sequence) pair for the caller (`GenerationWorker.run_once`) to
+        notify wake-ups for after this call returns -- never from inside
+        this transaction, per the Redis-is-only-a-hint design.
+        """
         if type(limit) is not int or limit < 1:
             raise ValueError("limit must be positive")
         from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
         claimed: list[tuple[str, ConversationTurn]] = []
+        wakeups: list[tuple[str, int]] = []
         async with self.sessions() as session, session.begin():
             candidate_now = _naive(datetime.now(timezone.utc))
             rows = (
@@ -1247,7 +1263,7 @@ class MysqlConversationRepository:
                             continue
                 if not await self._has_input_snapshot(session, row["turn_id"]):
                     # A permanent fault: settle the Turn instead of wedging every claim batch.
-                    await self._fail_unclaimable_turn(
+                    failed_sequence = await self._fail_unclaimable_turn(
                         session,
                         row,
                         graph is not None,
@@ -1255,10 +1271,11 @@ class MysqlConversationRepository:
                         problem_type="conversation-integrity",
                         reason="input-snapshot-missing",
                     )
+                    wakeups.append((row["chat_id"], failed_sequence))
                     continue
                 if row["processing_attempt"] >= self.max_turn_attempts:
                     # Exhausted its retry budget: settle it instead of reclaiming forever.
-                    await self._fail_unclaimable_turn(
+                    failed_sequence = await self._fail_unclaimable_turn(
                         session,
                         row,
                         graph is not None,
@@ -1266,6 +1283,7 @@ class MysqlConversationRepository:
                         problem_type="answer-unavailable",
                         reason="attempts-exhausted",
                     )
+                    wakeups.append((row["chat_id"], failed_sequence))
                     continue
                 lease_token = uuid4().hex
                 lease_until = _naive(now + timedelta(seconds=60))
@@ -1332,7 +1350,8 @@ class MysqlConversationRepository:
                 mutable["processing_lease_token"] = lease_token
                 mutable["processing_lease_expires_at"] = lease_until
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
-        return tuple(claimed)
+                wakeups.append((row["chat_id"], event.sequence))
+        return ClaimBatch(claimed, wakeups=wakeups)
 
     async def _has_input_snapshot(self, session, turn_id: str) -> bool:
         return (
@@ -1353,7 +1372,7 @@ class MysqlConversationRepository:
         *,
         problem_type: str,
         reason: str,
-    ) -> None:
+    ) -> int:
         from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
         last_failure = row["last_failure"] or "lease-expired"
@@ -1416,6 +1435,7 @@ class MysqlConversationRepository:
                     updated_at=_naive(now),
                 )
             )
+        return event.sequence
 
     async def renew_processing_lease(
         self,

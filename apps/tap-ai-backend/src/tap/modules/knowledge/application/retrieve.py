@@ -7,7 +7,7 @@ import hashlib
 import json
 import math
 import unicodedata
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Protocol, cast
@@ -298,17 +298,27 @@ def _resolve_generated_claims(
         )
         if not citation_ids or len(citation_ids) != len(generated_claim.evidence_labels):
             return None
-        if "\n\n" in generated_claim.text:
+        if "\n\n" in generated_claim.text or not generated_claim.text:
             return None
+        # A claim is a cited sentence, not necessarily a whole paragraph (LangGraph
+        # PR 3: inline `[S1]`/`[R1]` markers can cite one sentence inside a
+        # Markdown list/paragraph that also carries uncited prose) -- it just has
+        # to be locatable at exactly one offset in the answer. A short claim can
+        # legitimately occur as a substring of a longer, unrelated sentence
+        # elsewhere in the answer (e.g. claim "Contract takes effect." inside a
+        # longer "This contract takes effect."); that ambiguity drops only this
+        # one claim (review ruling, 2026-10-16 round 2) -- it must never abstain
+        # the whole answer when every other claim resolved cleanly.
         spans: list[tuple[int, int]] = []
-        start = 0
-        for paragraph in generation.text.split("\n\n"):
-            end = start + len(paragraph)
-            if paragraph == generated_claim.text:
-                spans.append((start, end))
-            start = end + 2
+        search_from = 0
+        while True:
+            found = generation.text.find(generated_claim.text, search_from)
+            if found == -1:
+                break
+            spans.append((found, found + len(generated_claim.text)))
+            search_from = found + len(generated_claim.text)
         if len(spans) != 1:
-            return None
+            continue
         claims.append(
             Claim(
                 claim_id=id_factory(),
@@ -636,6 +646,7 @@ class AuthorizedRetrieval:
         governance=None,
         model_alias: str | None = None,
         authorize=None,
+        on_text: Callable[[str], Awaitable[None]] | None = None,
     ) -> AnswerGeneration:
         """Rechecks current revision/policy and authorizes before generating.
 
@@ -644,7 +655,10 @@ class AuthorizedRetrieval:
         authority is still fresh, so it rechecks here. The single-shot
         `answer()` composition calls `_generate_from_bundle` directly instead,
         since `prepare_answer` already performed this recheck immediately
-        before producing the bundle."""
+        before producing the bundle. `on_text` (PR 3) is the `model` graph
+        node's draft-streaming callback, forwarded straight to the model
+        gateway's streaming `answer()`; it is never used by the single-shot
+        path."""
         if self._publication_authority is not None and bundle.publication is not None:
             await self._publication_authority.revalidate(bundle.publication)
         current = policy if frozen_policy else await self._verify_current(policy)
@@ -652,7 +666,7 @@ class AuthorizedRetrieval:
         if authorize is not None:
             await authorize()
         return await self._generate_from_bundle(
-            bundle, governance=governance, model_alias=model_alias
+            bundle, governance=governance, model_alias=model_alias, on_text=on_text
         )
 
     async def _generate_from_bundle(
@@ -661,6 +675,7 @@ class AuthorizedRetrieval:
         *,
         governance=None,
         model_alias: str | None = None,
+        on_text: Callable[[str], Awaitable[None]] | None = None,
     ) -> AnswerGeneration:
         use_extended_answer = (
             governance is not None
@@ -668,6 +683,7 @@ class AuthorizedRetrieval:
             or model_alias is not None
             or bundle.answer_input is not None
             or bundle.relation is not None
+            or on_text is not None
         )
         generation = (
             await cast(Any, self._answers).answer(
@@ -682,6 +698,7 @@ class AuthorizedRetrieval:
                 **(
                     {"answer_input": bundle.answer_input} if bundle.answer_input is not None else {}
                 ),
+                **({"on_text": on_text} if on_text is not None else {}),
             )
             if use_extended_answer
             else await self._answers.answer(

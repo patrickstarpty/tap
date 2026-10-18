@@ -9,6 +9,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
+from tap.modules.chat.application.conversations import ClaimBatch
 
 
 def _envelope(*, sequence: int, event_type: str, payload: dict[str, object]) -> dict[str, object]:
@@ -25,21 +26,24 @@ def _envelope(*, sequence: int, event_type: str, payload: dict[str, object]) -> 
 
 class _KnowledgeRepository:
     async def claim_queued(self, *, limit):
-        return (
+        return ClaimBatch(
             (
-                "conversation-1",
-                SimpleNamespace(
-                    turn_id="turn-1",
-                    lease_token="lease-1",
-                    input_snapshot=SimpleNamespace(
-                        snapshot_id="snapshot-1",
-                        value=SimpleNamespace(
-                            message="question",
-                            resolved_resources=(),
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        attempt=1,
+                        input_snapshot=SimpleNamespace(
+                            snapshot_id="snapshot-1",
+                            value=SimpleNamespace(
+                                message="question",
+                                resolved_resources=(),
+                            ),
                         ),
                     ),
                 ),
-            ),
+            )
         )
 
     async def resolve_citations(self, *_args):
@@ -51,6 +55,9 @@ class _KnowledgeConversations:
         self.repository = _KnowledgeRepository()
         self.events: list[tuple[str, dict[str, object]]] = []
         self.completed: list[object] = []
+
+    async def emit(self, *args, **kwargs):
+        pass
 
     async def complete_evidence(self, conversation_id, turn_id, evidence, *, stream_events=(), **_):
         self.events.extend(stream_events)
@@ -146,28 +153,118 @@ async def test_knowledge_events_validate_against_contract() -> None:
     assert graph_context_payload["querySeedCount"] == 0
 
 
+class _EarlyHitsConversations(_KnowledgeConversations):
+    """Separately records every `emit` call (the early, pre-`finalize`
+    commit path) alongside `complete_evidence`'s terminal batch, so a test
+    can see the two independently and in order."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.emitted: list[tuple[str, dict[str, object]]] = []
+
+    async def emit(self, conversation_id, turn_id, event_type, payload, *, lease_token=None):
+        self.emitted.append((event_type, payload))
+
+
+class _EarlyHitsKnowledge:
+    """Implements the full resumable `ConversationAnswerSteps` protocol so
+    `prepare_conversation_answer` can hand `seed_search` a `retrieval_hits`
+    payload (with `labels`) the way the real `KnowledgeHttpService` does."""
+
+    def __init__(self) -> None:
+        self.hits_ready_committed_before_generate = False
+
+    async def prepare_conversation_answer(self, request, frozen_input, **_kwargs):
+        return {
+            "kind": "prepared",
+            "bundle": {},
+            "retrieval_hits": {
+                "traceId": "trace-1",
+                "authorizedHitCount": 1,
+                "labels": [{"label": "S1", "title": "doc-a", "location": None}],
+            },
+        }
+
+    async def generate_conversation_answer(self, step, frozen_input, *, on_text=None, **_kwargs):
+        return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+
+    async def verify_conversation_answer(self, step, frozen_input, **_kwargs):
+        return {"kind": "verified", "response": {}}
+
+    async def finalize_conversation_answer(self, step, frozen_input, **_kwargs):
+        return SimpleNamespace(
+            answer="grounded",
+            citations=(),
+            abstained=False,
+            trace_id="trace-1",
+            model_dump=lambda **_: {"answer": "grounded", "citations": []},
+        )
+
+    async def refuse_out_of_scope(self, frozen_input, **_kwargs):  # pragma: no cover - unused
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_retrieval_hits_ready_with_labels_is_committed_before_generation() -> None:
+    """M-3: `retrieval.hits_ready` (with `labels`) must be committed through
+    `conversations.emit` before `generate_conversation_answer` ever runs,
+    and that committed payload must itself validate against
+    `ChatEventEnvelope` -- the strict chat stream contract, not just the
+    plain dict `KnowledgeHttpService` builds it from."""
+    conversations = _EarlyHitsConversations()
+    knowledge = _EarlyHitsKnowledge()
+
+    async def generate_conversation_answer(step, frozen_input, *, on_text=None, **_kwargs):
+        knowledge.hits_ready_committed_before_generate = any(
+            event_type == "retrieval.hits_ready" for event_type, _payload in conversations.emitted
+        )
+        return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+
+    knowledge.generate_conversation_answer = generate_conversation_answer
+    worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert knowledge.hits_ready_committed_before_generate is True
+    assert [event_type for event_type, _payload in conversations.emitted] == [
+        "retrieval.hits_ready",
+        "stage.started",
+    ]
+    event_type, payload = conversations.emitted[0]
+    assert event_type == "retrieval.hits_ready"
+    assert payload["labels"] == [{"label": "S1", "title": "doc-a", "location": None}]
+    ChatEventEnvelope.model_validate(_envelope(sequence=1, event_type=event_type, payload=payload))
+    # The terminal batch must not repeat the already-committed event.
+    assert "retrieval.hits_ready" not in [
+        event_type for event_type, _payload in conversations.events
+    ]
+
+
 class _InsightsRepository:
     def __init__(self, *, resolved_resources) -> None:
         self._resolved_resources = resolved_resources
 
     async def claim_queued(self, *, limit):
-        return (
+        return ClaimBatch(
             (
-                "conversation-1",
-                SimpleNamespace(
-                    turn_id="turn-1",
-                    lease_token="lease-1",
-                    input_snapshot=SimpleNamespace(
-                        snapshot_id="snapshot-1",
-                        value=SimpleNamespace(
-                            message="Explain the timeout",
-                            insights_query_id="query-1",
-                            insights_report_refs=("report-1",),
-                            resolved_resources=self._resolved_resources,
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        attempt=1,
+                        input_snapshot=SimpleNamespace(
+                            snapshot_id="snapshot-1",
+                            value=SimpleNamespace(
+                                message="Explain the timeout",
+                                insights_query_id="query-1",
+                                insights_report_refs=("report-1",),
+                                resolved_resources=self._resolved_resources,
+                            ),
                         ),
                     ),
                 ),
-            ),
+            )
         )
 
     async def resolve_citations(self, *_args):
@@ -428,7 +525,6 @@ async def test_graph_context_ready_event_precedes_answer_and_citation_kind_is_em
         "stage.completed",
         "retrieval.hits_ready",
         "graph.context_ready",
-        "answer.delta",
         "citation.resolved",
     ]
 
@@ -448,3 +544,47 @@ async def test_graph_context_ready_event_precedes_answer_and_citation_kind_is_em
         payload for event_type, payload in conversations.events if event_type == "citation.resolved"
     ][-1]
     assert last_citation_resolved["citation"]["kind"] == "edge"
+
+
+def test_answer_draft_event_schema_and_no_answer_delta() -> None:
+    """PR 3 Task 6: `answer.draft {attempt, seq, text}` replaces the retired
+    `answer.delta` event; the envelope still validates with `sequence` set to
+    the most recent authoritative sequence (drafts never advance it)."""
+    envelope = _envelope(
+        sequence=3,
+        event_type="answer.draft",
+        payload={"attempt": 1, "seq": 0, "text": "Evidence shows"},
+    )
+    validated = ChatEventEnvelope.model_validate(envelope)
+    assert validated.event.type == "answer.draft"
+    assert validated.event.payload.attempt == 1
+    assert validated.event.payload.seq == 0
+    assert validated.event.payload.text == "Evidence shows"
+
+    with pytest.raises(ValueError):
+        ChatEventEnvelope.model_validate(
+            _envelope(sequence=1, event_type="answer.delta", payload={"text": "stale"})
+        )
+
+
+def test_turn_canceled_accepts_partial_answer() -> None:
+    """`turn.canceled` gained an optional `partialAnswer` alongside the
+    existing `partialAnswerRetained`, so a canceled Turn's SSE frame can
+    carry the stopped draft text without it entering the citation system."""
+    envelope = _envelope(
+        sequence=2,
+        event_type="turn.canceled",
+        payload={"partialAnswerRetained": True, "partialAnswer": "Stopped mid"},
+    )
+    validated = ChatEventEnvelope.model_validate(envelope)
+    assert validated.event.payload.partial_answer_retained is True
+    assert validated.event.payload.partial_answer == "Stopped mid"
+
+    without_partial = ChatEventEnvelope.model_validate(
+        _envelope(
+            sequence=2,
+            event_type="turn.canceled",
+            payload={"partialAnswerRetained": False},
+        )
+    )
+    assert without_partial.event.payload.partial_answer is None

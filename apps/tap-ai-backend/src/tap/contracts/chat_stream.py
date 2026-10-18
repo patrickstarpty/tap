@@ -237,9 +237,21 @@ class StageCompletedEvent(StreamContractModel):
     payload: StageCompletedPayload
 
 
+class RetrievalHitsLabelView(StreamContractModel):
+    """One evidence/relation label's display mapping, so the client can
+    render an inline `[S3]`/`[R1]` marker in a streaming draft as a badge
+    showing its source before the terminal answer (and its own `citation`
+    payloads) ever arrive (spec SS2.3)."""
+
+    label: str = Field(min_length=1, max_length=4)
+    title: str = Field(min_length=1)
+    location: str | None = None
+
+
 class RetrievalHitsReadyPayload(StreamContractModel):
     trace_id: str = Field(min_length=1)
     authorized_hit_count: int = Field(ge=0)
+    labels: list[RetrievalHitsLabelView] | None = None
 
 
 class RetrievalHitsReadyEvent(StreamContractModel):
@@ -273,13 +285,25 @@ class RerankCompletedEvent(StreamContractModel):
     payload: RerankCompletedPayload
 
 
-class AnswerDeltaPayload(StreamContractModel):
+class AnswerDraftPayload(StreamContractModel):
+    """One batched, redacted draft chunk of the model's in-progress answer,
+    streamed from Redis (never persisted to MySQL): `attempt`/`seq` order
+    drafts within one Turn attempt, not the envelope `sequence`, which is
+    carried only for the `ChatEventEnvelope` wrapper and is never advanced
+    or deduplicated against for this event type (spec SS task 6)."""
+
+    attempt: int = Field(ge=1)
+    seq: int = Field(ge=0)
     text: str
+    # Set by `DraftBatcher` when a redaction-driven rewrite changes an
+    # already-sent prefix: `text` is empty and the client must discard every
+    # earlier chunk for this attempt before accumulating what follows (I-2).
+    reset: bool = False
 
 
-class AnswerDeltaEvent(StreamContractModel):
-    type: Literal["answer.delta"]
-    payload: AnswerDeltaPayload
+class AnswerDraftEvent(StreamContractModel):
+    type: Literal["answer.draft"]
+    payload: AnswerDraftPayload
 
 
 class CitationResolvedPayload(StreamContractModel):
@@ -328,6 +352,7 @@ class TurnDegradedEvent(StreamContractModel):
 
 class TurnCanceledPayload(StreamContractModel):
     partial_answer_retained: bool
+    partial_answer: str | None = None
 
 
 class TurnCanceledEvent(StreamContractModel):
@@ -418,7 +443,7 @@ ChatStreamEvent = Annotated[
     | RetrievalHitsReadyEvent
     | GraphContextReadyEvent
     | RerankCompletedEvent
-    | AnswerDeltaEvent
+    | AnswerDraftEvent
     | CitationResolvedEvent
     | TurnCompletedEvent
     | TurnAbstainedEvent

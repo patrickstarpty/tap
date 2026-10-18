@@ -5,11 +5,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+from opentelemetry import trace
 from sqlalchemy import (
     Boolean,
     Column,
@@ -43,6 +47,7 @@ from tap.modules.chat.adapters.mysql_conversations import (
     turn_artifact_link,
     turn_input_snapshot,
 )
+from tap.modules.chat.application.ports import EventWakeups
 from tap.modules.governance.adapters.mysql_audit import MysqlProjectAudit
 from tap.modules.governance.domain.audit import (
     AuditAction,
@@ -98,6 +103,8 @@ from tap.modules.test_management.ports.generation import (
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _scope_constraints(name: str):
@@ -612,6 +619,7 @@ class MysqlTestPlanRepository:
         scope: ProjectScopeContext,
         model_alias: str,
         knowledge_requires_publication: bool = True,
+        wakeups: EventWakeups | None = None,
     ) -> None:
         self._sessions = sessions
         self.scope = require_project_scope(scope)
@@ -619,6 +627,25 @@ class MysqlTestPlanRepository:
             raise ValueError("test design model alias is required")
         self._model_alias = model_alias
         self._knowledge_requires_publication = knowledge_requires_publication
+        self._wakeups = wakeups
+
+    async def _notify_wakeups(self, conversation_id: str, sequence: int) -> None:
+        """Best-effort, same contract as `ConversationService._notify_wakeups`:
+        a wake-up only shortens SSE latency, so it must never fail a commit
+        that already succeeded."""
+        if self._wakeups is None:
+            return
+        try:
+            await self._wakeups.notify(conversation_id, sequence)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.warning(
+                "test plan generation stream wakeup failed: conversation_id=%s",
+                conversation_id,
+                exc_info=True,
+            )
+            trace.get_current_span().set_attribute("tap.stream.wakeup_failed", True)
 
     def _assert_model_alias(self, model_alias: str) -> None:
         if model_alias != self._model_alias:
@@ -763,10 +790,38 @@ class MysqlTestPlanRepository:
             ),
         )
 
+    @asynccontextmanager
+    async def _transaction(self) -> AsyncIterator[tuple[AsyncSession, list[tuple[str, int]]]]:
+        """One durable write plus its best-effort stream wake-ups.
+
+        `pending` collects `(conversation_id, sequence)` pairs the body wants
+        notified; they fire only after the `async with self._sessions() as
+        session, session.begin():` block below exits *without* an exception
+        (i.e. after a successful commit), concurrently, and never while this
+        transaction's `FOR UPDATE` locks are still held. A `return` from
+        inside the caller's `async with self._transaction() as (session,
+        pending):` block still runs this generator's post-yield code (Python
+        calls `__aexit__(None, None, None)` for a normal or early-return
+        exit, same as any context manager); an exception instead propagates
+        through the inner `async with` (rolling back) and then out of this
+        generator before the notify loop, so nothing fires on rollback.
+        """
+        pending: list[tuple[str, int]] = []
+        async with self._sessions() as session, session.begin():
+            yield session, pending
+        if pending:
+            await asyncio.gather(
+                *(
+                    self._notify_wakeups(conversation_id, sequence)
+                    for conversation_id, sequence in pending
+                )
+            )
+
     async def _generation_stream_event(
         self,
         session: AsyncSession,
         request: TestPlanGenerationRequest,
+        pending: list[tuple[str, int]],
         *,
         event_type: str,
         payload: dict[str, object],
@@ -816,6 +871,7 @@ class MysqlTestPlanRepository:
             )
             .values(updated_at=_naive(now))
         )
+        pending.append((request.conversation_id, sequence))
 
     async def create_draft(
         self,
@@ -2241,7 +2297,7 @@ class MysqlTestPlanRepository:
         scope = self._matching_scope(scope)
         instant = _naive(now)
         digest = self._write_digest("cancel", job_id, expected_version, "cancel")
-        async with self._sessions() as session, session.begin():
+        async with self._transaction() as (session, pending):
             await self._lock_write_namespace(session, scope)
             row = (
                 (
@@ -2301,6 +2357,7 @@ class MysqlTestPlanRepository:
             await self._generation_stream_event(
                 session,
                 self._job(row).request,
+                pending,
                 event_type="test-plan.generation.canceled",
                 payload={"jobId": job_id, "reason": "canceled-by-user"},
                 now=instant,
@@ -2811,7 +2868,7 @@ class MysqlTestPlanRepository:
         ):
             raise ValueError("generated draft identity or state is invalid")
         instant = _naive(now)
-        async with self._sessions() as session, session.begin():
+        async with self._transaction() as (session, pending):
             await self._lock_write_namespace(session, scope)
             job = (
                 (
@@ -2883,6 +2940,7 @@ class MysqlTestPlanRepository:
             await self._generation_stream_event(
                 session,
                 request,
+                pending,
                 event_type="test-plan.generation.result_ready",
                 payload={
                     "jobId": request.job_id,
@@ -2996,7 +3054,7 @@ class MysqlTestPlanRepository:
         scope = self._matching_scope(scope)
         if not failure_code or len(failure_code) > 64:
             raise ValueError("test design failure code is invalid")
-        async with self._sessions() as session, session.begin():
+        async with self._transaction() as (session, pending):
             result = await session.execute(
                 update(test_plan_generation_job)
                 .where(
@@ -3021,6 +3079,7 @@ class MysqlTestPlanRepository:
             await self._generation_stream_event(
                 session,
                 claim.job.request,
+                pending,
                 event_type="test-plan.generation.failed",
                 payload={
                     "jobId": claim.job.request.job_id,
@@ -3058,7 +3117,7 @@ class MysqlTestPlanRepository:
         if not reason.strip() or len(reason) > 128:
             raise ValueError("test design waiting reason is invalid")
         instant = _naive(now)
-        async with self._sessions() as session, session.begin():
+        async with self._transaction() as (session, pending):
             result = await session.execute(
                 update(test_plan_generation_job)
                 .where(
@@ -3083,6 +3142,7 @@ class MysqlTestPlanRepository:
             await self._generation_stream_event(
                 session,
                 claim.job.request,
+                pending,
                 event_type="test-plan.generation.waiting",
                 payload={"jobId": claim.job.request.job_id, "reason": reason},
                 now=instant,

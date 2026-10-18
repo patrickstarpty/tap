@@ -162,6 +162,84 @@ async def test_in_memory_completion_binds_terminal_event_and_cannot_reverse_canc
     assert after.events == before.events
 
 
+class _FakeDrafts:
+    """A `DraftStream` double exposing only the two members `cancel` reads
+    (`partial_text`/`request_cancel`); every unrelated `DraftStream` method
+    is deliberately absent so a test fails loudly if `cancel` ever calls one."""
+
+    def __init__(self, partial: tuple[int, str] | None) -> None:
+        self._partial = partial
+        self.canceled: list[str] = []
+
+    async def partial_text(self, turn_id):
+        return self._partial
+
+    async def request_cancel(self, turn_id):
+        self.canceled.append(turn_id)
+
+
+@pytest.mark.asyncio
+async def test_cancel_includes_partial_draft():
+    # A freshly created Turn is always on attempt 0 (`ConversationService.
+    # _turn`'s default); the draft must report that same attempt to count.
+    drafts = _FakeDrafts((0, "Stopped mid"))
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, drafts=drafts
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    canceled = await service.cancel("conversation-1", "turn-1")
+    assert canceled.state == "canceled"
+    detail = await service.load("conversation-1")
+    terminal = detail.events[-2]
+    assert terminal.event_type == "turn.canceled"
+    assert dict(terminal.payload) == {
+        "partialAnswerRetained": True,
+        "partialAnswer": "Stopped mid",
+    }
+    assert drafts.canceled == ["turn-1"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_ignores_a_draft_from_a_stale_attempt():
+    """M-3: `partial_text` reports the highest attempt Redis has ever seen
+    for this Turn id, which is stale once a retry started a new attempt --
+    `cancel` must not surface an older attempt's draft as this attempt's
+    partial answer."""
+    drafts = _FakeDrafts((0, "Stopped mid"))
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, drafts=drafts
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    await service.repository.claim_queued(limit=1)
+    reloaded = next(
+        turn for turn in (await service.load("conversation-1")).turns if turn.turn_id == "turn-1"
+    )
+    assert reloaded.attempt == 1
+
+    canceled = await service.cancel("conversation-1", "turn-1")
+
+    assert canceled.state == "canceled"
+    detail = await service.load("conversation-1")
+    terminal = detail.events[-2]
+    assert terminal.event_type == "turn.canceled"
+    assert dict(terminal.payload) == {"partialAnswerRetained": False}
+
+
+@pytest.mark.asyncio
+async def test_cancel_before_any_draft_has_no_partial_answer():
+    drafts = _FakeDrafts(None)
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, drafts=drafts
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    await service.cancel("conversation-1", "turn-1")
+    detail = await service.load("conversation-1")
+    terminal = detail.events[-2]
+    assert terminal.event_type == "turn.canceled"
+    assert dict(terminal.payload) == {"partialAnswerRetained": False}
+    assert drafts.canceled == ["turn-1"]
+
+
 @pytest.mark.asyncio
 async def test_complete_evidence_persists_graph_context_ready_stream_event():
     """`graph.context_ready` must be a recognized
@@ -211,3 +289,229 @@ def test_snapshot_digest_is_bound_to_project_turn_and_immutable_input():
         replace(turn.input_snapshot, project_id="other-project")
     with pytest.raises(ValueError, match="digest"):
         replace(turn.input_snapshot, digest="sha256:" + "f" * 64)
+
+
+class _FakeWakeups:
+    """Spy EventWakeups double; `fail=True` simulates a Redis adapter raising."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.notified: list[tuple[str, int]] = []
+
+    async def notify(self, conversation_id: str, sequence: int) -> None:
+        if self.fail:
+            raise RuntimeError("wakeup backend unavailable")
+        self.notified.append((conversation_id, sequence))
+
+
+class _FailingAppendRepository(InMemoryConversationRepository):
+    async def append_stream_event(self, conversation_id, turn_id, event, lease_token=None):
+        raise RuntimeError("append failed")
+
+
+@pytest.mark.asyncio
+async def test_create_notifies_with_sequence_one():
+    """A new conversation's first event is always sequence 1 -- trivial,
+    no repository round trip needed to know it."""
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+
+    assert wakeups.notified == [("conversation-1", 1)]
+
+
+@pytest.mark.asyncio
+async def test_append_notifies_with_the_committed_sequence():
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    wakeups.notified.clear()
+
+    await service.append("conversation-1", "turn-2", "request-2", _input("more"))
+
+    detail = await service.load("conversation-1")
+    expected_sequence = max(item.sequence for item in detail.events)
+    assert wakeups.notified == [("conversation-1", expected_sequence)]
+
+
+@pytest.mark.asyncio
+async def test_retry_notifies_like_append():
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    wakeups.notified.clear()
+
+    await service.retry("conversation-1", "turn-1", "turn-2", "request-2")
+
+    assert len(wakeups.notified) == 1
+    conversation_id, _sequence = wakeups.notified[0]
+    assert conversation_id == "conversation-1"
+
+
+@pytest.mark.asyncio
+async def test_notify_after_commit_only():
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    wakeups.notified.clear()  # `create` itself notifies trivially; isolate `emit`'s.
+
+    event = await service.emit("conversation-1", "turn-1", "stage.started", {"stage": "verify"})
+
+    assert wakeups.notified == [("conversation-1", event.sequence)]
+
+
+@pytest.mark.asyncio
+async def test_notify_not_sent_when_append_fails():
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        _FailingAppendRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    wakeups.notified.clear()
+
+    with pytest.raises(RuntimeError, match="append failed"):
+        await service.emit("conversation-1", "turn-1", "stage.started", {"stage": "verify"})
+
+    assert wakeups.notified == []
+
+
+@pytest.mark.asyncio
+async def test_notify_failure_does_not_fail_the_call():
+    wakeups = _FakeWakeups(fail=True)
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+
+    event = await service.emit("conversation-1", "turn-1", "stage.started", {"stage": "verify"})
+
+    assert event.event_type == "stage.started"
+
+
+@pytest.mark.asyncio
+async def test_complete_evidence_notifies_wakeups():
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    wakeups.notified.clear()
+    evidence = AnswerEvidence(
+        "Grounded", "completed", RetrievalSummary("completed"), GraphContextStatus.NOT_REQUESTED
+    )
+
+    await service.complete_evidence(
+        "conversation-1",
+        "turn-1",
+        evidence,
+        terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+    )
+
+    assert len(wakeups.notified) == 1
+    conversation_id, sequence = wakeups.notified[0]
+    assert conversation_id == "conversation-1"
+    detail = await service.load("conversation-1")
+    assert sequence == max(item.sequence for item in detail.events)
+
+
+@pytest.mark.asyncio
+async def test_complete_evidence_sends_no_wakeup_when_turn_already_terminal():
+    """`complete_evidence` on an already-terminal Turn is the existing no-op
+    (idempotent settle race); since nothing new committed, no wakeup fires."""
+    wakeups = _FakeWakeups()
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    evidence = AnswerEvidence(
+        "Grounded", "completed", RetrievalSummary("completed"), GraphContextStatus.NOT_REQUESTED
+    )
+    await service.complete_evidence(
+        "conversation-1",
+        "turn-1",
+        evidence,
+        terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+    )
+    wakeups.notified.clear()
+
+    again = await service.complete_evidence(
+        "conversation-1",
+        "turn-1",
+        evidence,
+        terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+    )
+
+    assert again.state == "completed"
+    assert wakeups.notified == []
+
+
+@pytest.mark.asyncio
+async def test_complete_evidence_tolerates_wakeup_failure_and_marks_the_span(span_recorder):
+    from tap.platform.telemetry import span
+
+    wakeups = _FakeWakeups(fail=True)
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, wakeups=wakeups
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    evidence = AnswerEvidence(
+        "Grounded", "completed", RetrievalSummary("completed"), GraphContextStatus.NOT_REQUESTED
+    )
+
+    with span("test.complete_evidence"):
+        completed = await service.complete_evidence(
+            "conversation-1",
+            "turn-1",
+            evidence,
+            terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+        )
+
+    assert completed.state == "completed"
+    finished = {item.name: item for item in span_recorder.get_finished_spans()}
+    assert finished["test.complete_evidence"].attributes["tap.stream.wakeup_failed"] is True
+
+
+@pytest.mark.asyncio
+async def test_claim_queued_result_carries_wakeups_and_behaves_like_the_legacy_tuple():
+    """`ClaimBatch` must keep every existing caller working unchanged (plain
+    tuple semantics) while also exposing `.wakeups` for the new
+    `GenerationWorker.run_once` notify path."""
+    repository = InMemoryConversationRepository()
+    service = ConversationService(repository, scope=VALIDATION_SCOPE)
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+
+    batch = await repository.claim_queued(limit=5)
+
+    assert len(batch) == 1
+    [(conversation_id, turn)] = batch
+    assert conversation_id == "conversation-1"
+    assert turn.turn_id == "turn-1" and turn.state == "running"
+    assert len(batch.wakeups) == 1
+    wakeup_conversation_id, sequence = batch.wakeups[0]
+    assert wakeup_conversation_id == "conversation-1"
+    detail = await service.load("conversation-1")
+    assert sequence == max(item.sequence for item in detail.events)
+    # `.claimed` is an explicit alias for the same data as iterating `batch`.
+    assert batch.claimed == tuple(batch)
+
+
+@pytest.mark.asyncio
+async def test_claim_queued_skips_turns_not_in_queued_state():
+    repository = InMemoryConversationRepository()
+    service = ConversationService(repository, scope=VALIDATION_SCOPE)
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    await repository.claim_queued(limit=5)  # turn-1 is now "running"
+
+    batch = await repository.claim_queued(limit=5)
+
+    assert batch == ()
+    assert batch.wakeups == ()

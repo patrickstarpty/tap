@@ -32,7 +32,7 @@ from tap.modules.chat.adapters.mysql_conversations import (
     chat_turn,
     turn_answer_evidence_snapshot,
 )
-from tap.modules.chat.application.conversations import ConversationService
+from tap.modules.chat.application.conversations import ClaimBatch, ConversationService
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     FrozenResource,
@@ -544,13 +544,13 @@ async def test_permanent_checkpoint_error_terminalizes_once_and_does_not_reclaim
             leaked_answer_count = await session.scalar(
                 text(
                     "SELECT COUNT(*) FROM chat_event "
-                    "WHERE turn_id='turn-permanent' AND event_type='answer.delta'"
+                    "WHERE turn_id='turn-permanent' AND event_type='turn.completed'"
                 )
             )
             healthy_answer_count = await session.scalar(
                 text(
                     "SELECT COUNT(*) FROM chat_event "
-                    "WHERE turn_id='turn-healthy' AND event_type='answer.delta'"
+                    "WHERE turn_id='turn-healthy' AND event_type='turn.completed'"
                 )
             )
         assert failure_outbox_count == 1
@@ -655,7 +655,7 @@ async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_p
             async def claim_queued(self, *, limit):
                 del limit
                 claimed, self.claimed = self.claimed, None
-                return () if claimed is None else (claimed,)
+                return ClaimBatch(()) if claimed is None else ClaimBatch((claimed,))
 
             def __getattr__(self, name):
                 return getattr(self.delegate, name)
@@ -878,7 +878,10 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
                 .scalars()
                 .all()
             )
-        assert ("answer.delta" in events) == (publication_state == "valid")
+        # PR 3: the model's answer is streamed through Redis drafts, never
+        # as an `answer.delta` MySQL event; `graph.context_ready` is the
+        # equivalent "generation stream events were committed" marker.
+        assert ("graph.context_ready" in events) == (publication_state == "valid")
         assert ("turn.completed" in events) == (publication_state == "valid")
     finally:
         await engine.dispose()
@@ -1398,4 +1401,49 @@ async def test_legacy_checkpoint_restart_survives_a_crash_right_after_discard(
         assert final_row["state_schema_version"] == CHAT_STATE_SCHEMA_VERSION
         assert final_row["status"] == "SUCCEEDED"
     finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_persists_partial_draft_and_sets_the_redis_cancel_marker(
+    owned_project_mysql, owned_redis_url
+) -> None:
+    """Task 7, real MySQL + real Redis: `cancel` reads the Turn's latest
+    draft text before writing `turn.canceled` (so a client reconnecting
+    after cancel still sees what streamed so far), and marks the Turn
+    canceled in Redis so a running worker's fast poll can observe it."""
+    from redis.asyncio import Redis
+
+    from tap.modules.chat.adapters.redis_drafts import RedisDraftStream
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    redis = Redis.from_url(owned_redis_url, decode_responses=True)
+    drafts = RedisDraftStream(redis=redis)
+    turn_id = "turn-cancel-draft"
+    try:
+        service = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+            drafts=drafts,
+        )
+        await service.create("chat-cancel-draft", turn_id, "request-cancel-draft", _input())
+        await service.repository.claim_queued(limit=1)
+        await drafts.append(turn_id, attempt=1, seq=1, text="Stopped ")
+        await drafts.append(turn_id, attempt=1, seq=2, text="mid")
+
+        canceled = await service.cancel("chat-cancel-draft", turn_id)
+
+        assert canceled.state == "canceled"
+        detail = await service.load("chat-cancel-draft")
+        terminal = detail.events[-2]
+        assert terminal.event_type == "turn.canceled"
+        assert dict(terminal.payload) == {
+            "partialAnswerRetained": True,
+            "partialAnswer": "Stopped mid",
+        }
+        assert await drafts.cancel_requested(turn_id) is True
+    finally:
+        await redis.delete(f"tap:turn:{turn_id}:draft", f"tap:turn:{turn_id}:cancel")
+        await redis.aclose()
         await engine.dispose()

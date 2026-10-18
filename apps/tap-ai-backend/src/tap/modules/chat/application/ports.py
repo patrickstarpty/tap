@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, Protocol, TypedDict
@@ -23,6 +23,104 @@ class TurnNotFound(Exception):
 
 class LeaseLost(Exception):
     """A relay tried to settle a claim that it no longer owns."""
+
+
+class DraftStreamUnavailable(Exception):
+    """A Redis-backed draft or wake-up stream could not complete an operation.
+
+    Callers must degrade (stop streaming drafts, fall back to MySQL polling)
+    rather than fail the Turn: Redis here is a latency optimization only.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class DraftChunk:
+    attempt: int
+    seq: int
+    text: str
+    # Set by `DraftBatcher` (Task 5) when a redaction-driven rewrite changes
+    # an already-sent prefix: `text` is empty and every earlier chunk for
+    # this attempt must be discarded before accumulating what follows.
+    reset: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class StreamEntry:
+    """One raw entry read from a Redis Stream, identified by its source key."""
+
+    key: str
+    id: str
+    fields: Mapping[str, str]
+
+
+def draft_stream_key(turn_id: str) -> str:
+    """The Redis Stream key for one Turn's draft chunks.
+
+    The single source of truth for this key format: adapters (`RedisDraftStream`)
+    and consumers (the `/stream` SSE route) must both import this rather than
+    each reconstructing `tap:turn:{turnId}:draft` themselves (M-5)."""
+
+    return f"tap:turn:{turn_id}:draft"
+
+
+def wake_stream_key(conversation_id: str) -> str:
+    """The Redis Stream key for one Conversation's wake-up hints; see `draft_stream_key`."""
+
+    return f"tap:conv:{conversation_id}:events"
+
+
+def cancel_stream_key(turn_id: str) -> str:
+    """The Redis key for one Turn's cancel marker; see `draft_stream_key`."""
+
+    return f"tap:turn:{turn_id}:cancel"
+
+
+class DraftStream(Protocol):
+    """Redis Stream adapter for one Turn's model-answer draft and the
+    conversation-level wake-up stream that announces new authoritative events.
+    Any Redis failure must be raised as `DraftStreamUnavailable`."""
+
+    async def append(
+        self, turn_id: str, *, attempt: int, seq: int, text: str, reset: bool = False
+    ) -> None: ...
+
+    async def replay(self, turn_id: str, *, attempt: int) -> tuple[tuple[DraftChunk, ...], str]:
+        """Chunks for `attempt` ordered by `seq` (with every chunk before the
+        last `reset: true` chunk, if any, discarded), paired with the raw id
+        of the last entry seen anywhere in this Turn's draft stream (any
+        attempt), or `"0-0"` if the stream is empty or missing.
+
+        Callers must continue their live `read()` draft-key cursor from this
+        id, never from `"$"`: `"$"` is resolved by Redis at the moment `read`
+        is actually called, so an entry written between this call and the
+        first `read()` would otherwise be silently lost (I-4)."""
+        ...
+
+    async def read(self, keys: Mapping[str, str], *, block_ms: int) -> tuple[StreamEntry, ...]:
+        """Block until any of `keys` (Redis key -> starting entry id) has new
+        entries, or `block_ms` elapses; return every new entry found."""
+        ...
+
+    async def partial_text(self, turn_id: str) -> tuple[int, str] | None:
+        """The highest attempt seen for `turn_id` and its concatenated draft
+        text, or `None` if no draft has been written yet."""
+        ...
+
+    async def request_cancel(self, turn_id: str) -> None:
+        """Mark `turn_id` as canceled for later `cancel_requested` reads
+        (`SET tap:turn:{turnId}:cancel 1 EX 86400`)."""
+        ...
+
+    async def cancel_requested(self, turn_id: str) -> bool:
+        """Whether `request_cancel` has been called for `turn_id`."""
+        ...
+
+
+class EventWakeups(Protocol):
+    """Announces that a new authoritative Conversation event committed, so an
+    SSE reader blocked on Redis can re-read MySQL instead of polling it."""
+
+    async def notify(self, conversation_id: str, sequence: int) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +237,12 @@ class ConversationAnswerStep(TypedDict, total=False):
     bundle: dict[str, object]
     generation: dict[str, object]
     response: dict[str, object]
+    # PR 3: present only on a `"prepared"` step, built from the evidence/
+    # relation context `prepare_conversation_answer` just retrieved (before
+    # it is encoded into `bundle`) -- the `retrieval.hits_ready` payload the
+    # `seed_search` graph node emits immediately, without itself needing to
+    # decode the opaque `bundle`.
+    retrieval_hits: dict[str, object]
 
 
 class ConversationAnswerSteps(Protocol):
@@ -157,6 +261,7 @@ class ConversationAnswerSteps(Protocol):
         *,
         answer_plan=None,
         authorize=None,
+        on_text: Callable[[str], Awaitable[None]] | None = None,
     ) -> ConversationAnswerStep: ...
 
     async def verify_conversation_answer(

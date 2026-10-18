@@ -62,9 +62,11 @@ import {
   createStreamState,
   isTargetTurnActive,
   latestTurnState,
+  mergedDraftFacts,
   reduceStreamEvent,
   type GraphContextSummary,
 } from "../../features/conversations/model/stream";
+import { DraftAnswer } from "../../features/conversations/components/DraftAnswer";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
 import { useModelCatalog } from "../../features/knowledge/api/modelCatalog";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
@@ -311,9 +313,6 @@ export function AnswerActivity({
     (event) => event.eventType === "citation.resolved",
   ).length;
   const assembledCount = sourceCount;
-  const answerRecorded = events.some(
-    (event) => event.eventType === "answer.delta",
-  );
   const rows = [
     assembledCount > 0
       ? context
@@ -328,11 +327,7 @@ export function AnswerActivity({
       ? locale === "zh"
         ? "Knowledge answer 调用完成"
         : "Knowledge answer call completed"
-      : answerRecorded
-        ? locale === "zh"
-          ? "回答正文已记录"
-          : "Answer text recorded"
-        : null,
+      : null,
     hits && typeof hits.payload.authorizedHitCount === "number"
       ? locale === "zh"
         ? `检索结果：${hits.payload.authorizedHitCount} 处授权证据`
@@ -712,8 +707,15 @@ function AssistantResponse({
     }
     if (turn.status === "canceled") {
       return (
-        <div role="status">
-          <p>{turn.locale === "zh" ? "已停止生成。" : "Generation stopped."}</p>
+        <div>
+          <DraftAnswer
+            draft={null}
+            citationLabels={turn.citationLabels ?? {}}
+            stage={null}
+            partialAnswer={turn.partialAnswer ?? null}
+            canceled
+            locale={turn.locale}
+          />
           {onResend === undefined ? null : (
             <Button size="small" onClick={onResend}>
               {contentCopy.chat.retry}
@@ -847,12 +849,26 @@ function AssistantResponse({
       );
     }
     if (turn.status === "queued" || turn.status === "running") {
+      const draft = turn.draft ?? null;
+      const stage = turn.stage ?? null;
       return (
-        <AnswerProgress
-          locale={turn.locale}
-          sourceCount={turn.sourceReferences.length}
-          status={turn.status}
-        />
+        <>
+          <AnswerProgress
+            locale={turn.locale}
+            sourceCount={turn.sourceReferences.length}
+            status={turn.status}
+          />
+          {(draft !== null && draft.text.length > 0) || stage === "verify" ? (
+            <DraftAnswer
+              draft={draft}
+              citationLabels={turn.citationLabels ?? {}}
+              stage={stage}
+              partialAnswer={null}
+              canceled={false}
+              locale={turn.locale}
+            />
+          ) : null}
+        </>
       );
     }
     if (turn.response === null) {
@@ -1544,6 +1560,17 @@ export function TapperWorkspace() {
         recoveredStreamState,
         streamState,
       );
+      // `draft`/`citationLabels` are taken independently of the
+      // `latestTurnState` whole-record pick above: `answer.draft` is never
+      // persisted, so a reconnect/page-reload mid-generation would
+      // otherwise lose the replayed draft and its labels to a recovered
+      // record with a higher `lastSequence` but no draft at all (review
+      // fix round 1, finding I).
+      const draftFacts = mergedDraftFacts(
+        turn.turnId,
+        recoveredStreamState,
+        streamState,
+      );
       return {
         id: turn.turnId,
         intent: "answer",
@@ -1558,6 +1585,10 @@ export function TapperWorkspace() {
         })),
         response: streamed?.response ?? null,
         graphContext: streamed?.graphContext ?? null,
+        draft: draftFacts.draft,
+        citationLabels: draftFacts.citationLabels,
+        stage: streamed?.stage ?? null,
+        partialAnswer: streamed?.partialAnswer ?? null,
         traceId: turn.traceId ?? null,
         myFeedback:
           turn.myFeedback == null
@@ -1616,12 +1647,25 @@ export function TapperWorkspace() {
         recoveredStreamState,
         streamState,
       );
+      const draftFacts = mergedDraftFacts(
+        accepted.id,
+        recoveredStreamState,
+        streamState,
+      );
       return [
         ...turns,
         {
           ...accepted,
           status: streamed?.status ?? accepted.status,
           response: streamed?.response ?? accepted.response ?? null,
+          draft: draftFacts.draft ?? accepted.draft ?? null,
+          citationLabels:
+            Object.keys(draftFacts.citationLabels).length > 0
+              ? draftFacts.citationLabels
+              : (accepted.citationLabels ?? {}),
+          stage: streamed?.stage ?? accepted.stage ?? null,
+          partialAnswer:
+            streamed?.partialAnswer ?? accepted.partialAnswer ?? null,
         },
       ];
     };

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RetrievalAnswerResponse } from "../api/types";
@@ -102,6 +102,56 @@ describe("GroundedAnswer Markdown safety", () => {
     expect(pre).not.toBeNull();
     expect(pre?.textContent).toContain(code);
   });
+
+  it("renders a heading and list sentence-level claims as one normal Markdown document", () => {
+    // Round 2 of the 2026-10-16 review ruling: a claim cites one sentence
+    // inside a list item that also carries a heading above it -- neither
+    // claim starts/ends on a `\n\n` paragraph boundary, so the whole answer
+    // must still render as a single heading + two-item list, with each
+    // claim's citation badge inline right after its own sentence.
+    const { container } = render(
+      <GroundedAnswer
+        response={answerResponse({
+          answer: "## 结论\n\n- 退款需两人审批。\n- 材料包括身份证明。",
+          claims: [
+            {
+              claimId: "claim-refund",
+              text: "退款需两人审批。",
+              answerStart: 9,
+              answerEnd: 17,
+              citationIds: ["citation-a"],
+            },
+            {
+              claimId: "claim-id",
+              text: "材料包括身份证明。",
+              answerStart: 20,
+              answerEnd: 29,
+              citationIds: ["citation-b"],
+            },
+          ],
+          citations: [
+            retrievalCitation("citation-a"),
+            retrievalCitation("citation-b", { chunkId: "chunk-b" }),
+          ],
+        })}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "结论", level: 2 }),
+    ).toBeVisible();
+    const items = container.querySelectorAll(".tapper-markdown li");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent(/退款需两人审批。\s*\[1\]/u);
+    expect(items[1]).toHaveTextContent(/材料包括身份证明。\s*\[2\]/u);
+    expect(
+      screen.getByRole("button", { name: "打开来源引用 1" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "打开来源引用 2" }),
+    ).toBeVisible();
+  });
 });
 
 it("renders an English answer with compact inline source references", () => {
@@ -148,15 +198,323 @@ it("keeps references at the end of their paragraph and numbers only visible sour
   const citation = screen.getByRole("button", {
     name: "Open source citation 1",
   });
-  expect(citation.closest(".tapper-markdown--with-citation")).toHaveTextContent(
+  expect(citation.closest(".tapper-markdown")).toHaveTextContent(
     /Age 17 is rejected at submission\.\s*\[1\]/u,
   );
+  // The whole answer renders as one Markdown document (round 2 of the
+  // 2026-10-16 review ruling); the citation badge is inline inside the
+  // claim's own paragraph, never a direct child of the claim wrapper.
   expect(
     container.querySelector(".tapper-grounded-claim > .tapper-claim-citations"),
   ).toBeNull();
   expect(
     screen.queryByRole("button", { name: "Open source citation 2" }),
   ).toBeNull();
+});
+
+function claimEndingAt(
+  answer: string,
+  claimText: string,
+  citationId = "citation-a",
+) {
+  const start = answer.indexOf(claimText);
+  if (start === -1) {
+    throw new Error("claimText must be a substring of answer");
+  }
+  return answerResponse({
+    answer,
+    claims: [
+      {
+        claimId: "claim-a",
+        text: claimText,
+        answerStart: start,
+        answerEnd: start + claimText.length,
+        citationIds: [citationId],
+      },
+    ],
+    citations: [retrievalCitation(citationId)],
+  });
+}
+
+describe("GroundedAnswer citation badges by source position (round 3)", () => {
+  // A textual sentinel placeholder (round 2) could merge with an adjacent
+  // code span's backticks, or be escaped by a preceding backslash, instead
+  // of becoming a citation badge. Splicing the badge into the parsed
+  // Markdown AST by source offset (round 3) sidesteps all of these --
+  // there is no Markdown source for the badge to corrupt or be corrupted by.
+  it.each([
+    ["ending in inline code", "运行 `make test`", "运行 `make test`"],
+    [
+      "ending in double-backtick code containing a backtick",
+      "返回值为 ``can`t``",
+      "返回值为 ``can`t``",
+    ],
+    ["ending in a backslash", "路径为 C:\\", "路径为 C:\\"],
+  ] as const)(
+    "a claim %s shows exactly one badge and no stray characters",
+    (_name, answer, claimText) => {
+      const { container } = render(
+        <GroundedAnswer
+          response={claimEndingAt(answer, claimText)}
+          onOpenCitation={() => undefined}
+        />,
+      );
+
+      expect(
+        screen.getByRole("button", { name: "打开来源引用 1" }),
+      ).toBeVisible();
+      expect(screen.getAllByRole("button", { name: /引用/u })).toHaveLength(1);
+      expect(
+        container.querySelector(".tapper-markdown")?.textContent,
+      ).not.toMatch(/[\u0000-\u0008\u000e-\u001f]/u);
+      expect(container.querySelector("code")?.textContent ?? "").not.toContain(
+        "[1]",
+      );
+    },
+  );
+
+  it("shows a badge for a claim ending in inline code inside a list item", () => {
+    const { container } = render(
+      <GroundedAnswer
+        response={claimEndingAt(
+          "- 运行 `make test`\n- 其他事项。",
+          "运行 `make test`",
+        )}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    const items = container.querySelectorAll(".tapper-markdown li");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("运行 make test");
+    expect(
+      within(items[0] as HTMLElement).getByRole("button", {
+        name: "打开来源引用 1",
+      }),
+    ).toBeVisible();
+  });
+
+  it("shows a badge for a claim ending in inline code inside a heading", () => {
+    render(
+      <GroundedAnswer
+        response={claimEndingAt("## 运行 `make test`", "运行 `make test`")}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    const heading = screen.getByRole("heading", { level: 2 });
+    expect(heading).toHaveTextContent("运行 make test");
+    expect(
+      within(heading).getByRole("button", { name: "打开来源引用 1" }),
+    ).toBeVisible();
+  });
+
+  it("shows a badge for a claim ending in inline code inside emphasis", () => {
+    const { container } = render(
+      <GroundedAnswer
+        response={claimEndingAt("**运行 `make test`**", "运行 `make test`")}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    const strong = container.querySelector(".tapper-markdown strong");
+    expect(strong).toHaveTextContent("运行 make test");
+    expect(
+      within(strong as HTMLElement).getByRole("button", {
+        name: "打开来源引用 1",
+      }),
+    ).toBeVisible();
+  });
+});
+
+describe("GroundedAnswer citation badges at closing delimiters (round 4)", () => {
+  // A claim whose end offset coincides with a closing delimiter (`**`, `*`,
+  // `)` of a link/image, `>` of inline html, a code fence) lands in no text
+  // node; the badge must still render right after that construct, never be
+  // dropped.
+  it.each([
+    ["strong", "结论是 **重要**", "结论是 **重要**"],
+    ["emphasis", "结论是 *重要*", "结论是 *重要*"],
+    [
+      "literal tildes (plain text without remark-gfm)",
+      "结论是 ~~过时~~",
+      "结论是 ~~过时~~",
+    ],
+    [
+      "a link",
+      "详见 [退款政策](https://x.example)",
+      "详见 [退款政策](https://x.example)",
+    ],
+    [
+      "an image",
+      "见图 ![流程](https://x.example/a.png)",
+      "见图 ![流程](https://x.example/a.png)",
+    ],
+    ["inline html", "结论 <span>重要</span>", "结论 <span>重要</span>"],
+  ] as const)(
+    "a claim ending in %s keeps its badge in the same paragraph",
+    (_name, answer, claimText) => {
+      const { container } = render(
+        <GroundedAnswer
+          response={claimEndingAt(`${answer}\n\n其他段落。`, claimText)}
+          onOpenCitation={() => undefined}
+        />,
+      );
+
+      const paragraphs = container.querySelectorAll(".tapper-markdown p");
+      expect(paragraphs).toHaveLength(2);
+      expect(
+        within(paragraphs[0] as HTMLElement).getByRole("button", {
+          name: "打开来源引用 1",
+        }),
+      ).toBeVisible();
+      expect(paragraphs[0]?.textContent).toMatch(/\[1\]$/u);
+    },
+  );
+
+  it("keeps the badge for a claim ending in a fenced code block", () => {
+    const answer = "示例：\n\n```text\nmake test\n```\n\n其他段落。";
+    const { container } = render(
+      <GroundedAnswer
+        response={claimEndingAt(answer, "```text\nmake test\n```")}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "打开来源引用 1" }),
+    ).toBeVisible();
+    const pre = container.querySelector(".tapper-markdown pre");
+    expect(pre?.textContent).toBe("make test\n");
+    const badge = container.querySelector(".tapper-claim-citations");
+    expect(badge?.previousElementSibling).toBe(pre);
+    expect(badge?.closest("pre")).toBeNull();
+    expect(
+      container.querySelectorAll(".tapper-markdown p")[1],
+    ).toHaveTextContent("其他段落。");
+  });
+
+  it("keeps the badge for a claim ending in a hard break on the first line", () => {
+    const { container } = render(
+      <GroundedAnswer
+        response={claimEndingAt("第一行\\\n第二行", "第一行\\")}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "打开来源引用 1" }),
+    ).toBeVisible();
+    const badge = container.querySelector(".tapper-claim-citations");
+    // The badge stays on the claim's own line: before the break, not after
+    // it on the next line (`br` itself is outside the sanitizer allowlist,
+    // so only the break's line-ending text remains).
+    expect(badge?.previousSibling?.textContent).toBe("第一行");
+    expect(badge?.nextSibling?.textContent).toBe("\n");
+    expect(container.querySelector(".tapper-markdown p")?.textContent).toBe(
+      "第一行[1]\n第二行",
+    );
+  });
+
+  it.each([
+    ["strong", "结论 **重要**`make test` 其余。", "结论 **重要**", "STRONG"],
+    ["emphasis", "结论 *甲*`b`。", "结论 *甲*", "EM"],
+  ] as const)(
+    "a claim ending in %s right before inline code puts the badge before the code",
+    (_name, answer, claimText, previousTag) => {
+      const { container } = render(
+        <GroundedAnswer
+          response={claimEndingAt(answer, claimText)}
+          onOpenCitation={() => undefined}
+        />,
+      );
+
+      const badge = container.querySelector(".tapper-claim-citations");
+      expect(badge?.previousElementSibling?.tagName).toBe(previousTag);
+      expect(badge?.nextElementSibling?.tagName).toBe("CODE");
+    },
+  );
+});
+
+describe("GroundedAnswer citation badges when text value differs from source (round 4)", () => {
+  // A text node's `value` can be shorter than its source span (escapes,
+  // entities, stripped line prefixes); the badge must still land right after
+  // the claim's own last character.
+  it.each([
+    [
+      "a backslash escape",
+      "价格 \\*不含税\\* 为 10 元。",
+      "p",
+      "价格 *不含税* 为 10 元。[1]其余说明。",
+    ],
+    [
+      "a character entity",
+      "A &lt; B &amp; C 成立。",
+      "p",
+      "A < B & C 成立。[1]其余说明。",
+    ],
+    [
+      "a numeric entity",
+      "符号 &#169; 与 &#x1F600; 成立。",
+      "p",
+      "符号 \u00a9 与 \u{1F600} 成立。[1]其余说明。",
+    ],
+    [
+      "a multi-line blockquote",
+      "> 第一行内容\n> 第二句成立。",
+      "blockquote p",
+      "第一行内容\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "a list item continuation",
+      "- 第一行内容\n  第二句成立。",
+      "li",
+      "第一行内容\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "an indented continuation line",
+      "第一行内容\n   第二句成立。",
+      "p",
+      "第一行内容\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "CRLF line endings",
+      "第一行内容\r\n第二句成立。",
+      "p",
+      "第一行内容\r\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "a tab after the blockquote marker",
+      ">\t第一行内容\n>\t第二句成立。",
+      "blockquote p",
+      "第一行内容\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "a tab-indented list continuation",
+      "- 第一行内容\n\t第二句成立。",
+      "li",
+      "第一行内容\n第二句成立。[1]其余说明。",
+    ],
+    [
+      "a nested list inside a blockquote",
+      "> - 外层\n>   - 内层第一行\n>     第二句成立。",
+      "blockquote li li",
+      "内层第一行\n第二句成立。[1]其余说明。",
+    ],
+  ] as const)(
+    "a claim with %s places its badge right after the claim",
+    (_name, claimText, selector, expectedText) => {
+      const { container } = render(
+        <GroundedAnswer
+          response={claimEndingAt(`${claimText}其余说明。`, claimText)}
+          onOpenCitation={() => undefined}
+        />,
+      );
+
+      const block = container.querySelector(`.tapper-markdown ${selector}`);
+      expect(block?.textContent).toBe(expectedText);
+    },
+  );
 });
 
 describe("GroundedAnswer model-only chat", () => {

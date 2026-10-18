@@ -642,7 +642,7 @@ describe("TAP AI page (durable Conversation API)", () => {
 
     renderKnowledgeApp(<TapAiPage />, { api: fakeKnowledgeClient() });
 
-    expect(await screen.findByText("Generation stopped.")).toBeVisible();
+    expect(await screen.findByText("Stopped · not verified")).toBeVisible();
     expect(
       screen.queryByText("回答格式无法核验，请重新提问。"),
     ).not.toBeInTheDocument();

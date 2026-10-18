@@ -67,6 +67,26 @@ function parseGraphContextPayload(
   };
 }
 
+/**
+ * The current attempt's in-progress draft text, assembled from `answer.draft`
+ * frames. `attempt`/`seq` are the draft's own ordering keys (not the envelope
+ * `sequence`) — a higher `attempt` than previously seen resets `text` and
+ * starts tracking that attempt; within the same attempt, a `seq` at or below
+ * the one already applied is a duplicate or out-of-order replay and is
+ * ignored; `reset: true` clears `text` before continuing to append later
+ * `seq`s of the same attempt (controller ruling, 2026-10-16).
+ */
+export interface DraftState {
+  attempt: number;
+  seq: number;
+  text: string;
+}
+
+export interface CitationLabelInfo {
+  title: string;
+  location: string | null;
+}
+
 export interface StreamTurnState {
   answer: string;
   error: string | null;
@@ -83,6 +103,23 @@ export interface StreamTurnState {
   response: RetrievalAnswerResponse | null;
   status:
     "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
+  /** The current attempt's in-progress draft, or `null` before the first
+   * `answer.draft` frame arrives, or once the turn reaches a terminal
+   * outcome (`turn.completed`/`turn.abstained` replace it with the
+   * authoritative answer; `turn.canceled` moves it to `partialAnswer`). */
+  draft: DraftState | null;
+  /** `label` (`"S3"`, `"R1"`, …) to source title/location, accumulated from
+   * `retrieval.hits_ready` payloads so a draft's inline `[S3]`/`[R1]`
+   * markers can render as badges before the terminal answer's own
+   * `citations` arrive. */
+  citationLabels: Readonly<Record<string, CitationLabelInfo>>;
+  /** Set by `stage.started {stage: "verify"}`, committed before the
+   * verification step runs on the current attempt's draft. */
+  stage: "verify" | null;
+  /** The current attempt's already-redacted draft text at the moment
+   * `turn.canceled` was recorded, or `null` when the turn was canceled
+   * before any draft text existed. */
+  partialAnswer: string | null;
 }
 
 export interface ConversationStreamState {
@@ -98,6 +135,10 @@ const emptyTurn = (): StreamTurnState => ({
   pendingCitations: [],
   response: null,
   status: "queued",
+  draft: null,
+  citationLabels: {},
+  stage: null,
+  partialAnswer: null,
 });
 
 export function createStreamState(): ConversationStreamState {
@@ -142,6 +183,70 @@ export function latestTurnState(
   return streamed.lastSequence >= recovered.lastSequence ? streamed : recovered;
 }
 
+/**
+ * `draft`/`citationLabels` facts for one turn, taken independently of
+ * `latestTurnState`'s whole-record `lastSequence` pick (review fix round 1,
+ * finding I). `draft` is never persisted to MySQL, so `recoveredState`
+ * (built from the durable event history) never carries one — on a
+ * reconnect/page-reload mid-generation, `recoveredState`'s `lastSequence`
+ * is typically higher than the freshly (re)connected `streamState`'s, so
+ * `latestTurnState` would pick the recovered record and silently drop the
+ * replayed draft and its labels. `citationLabels` is accumulated from the
+ * durable `retrieval.hits_ready` event, which can land in either record
+ * depending on whether the live stream replayed it since reconnecting, so
+ * it is unioned from both instead of picked from one.
+ */
+export function mergedDraftFacts(
+  turnId: string,
+  recoveredState: ConversationStreamState,
+  streamState: ConversationStreamState,
+): {
+  draft: DraftState | null;
+  citationLabels: Readonly<Record<string, CitationLabelInfo>>;
+} {
+  const recovered = recoveredState.turns[turnId];
+  const streamed = streamState.turns[turnId];
+  return {
+    draft: streamed?.draft ?? recovered?.draft ?? null,
+    citationLabels: {
+      ...(recovered?.citationLabels ?? {}),
+      ...(streamed?.citationLabels ?? {}),
+    },
+  };
+}
+
+/**
+ * Applies one `answer.draft` payload to a turn's current draft, per the
+ * `(attempt, seq)` ordering rule: a higher `attempt` resets `text` and
+ * starts tracking that attempt; a `seq` at or below the current attempt's
+ * already-applied `seq` is a duplicate or out-of-order replay and is
+ * ignored; `reset: true` clears `text` (to `payload.text`, which is empty on
+ * a reset frame) instead of appending it.
+ */
+function reduceDraft(
+  current: DraftState | null,
+  payload: Record<string, unknown>,
+): DraftState | null {
+  const attempt = payload.attempt;
+  const seq = payload.seq;
+  const text = payload.text;
+  if (
+    typeof attempt !== "number" ||
+    typeof seq !== "number" ||
+    typeof text !== "string"
+  ) {
+    return current;
+  }
+  const reset = payload.reset === true;
+  if (current === null || attempt > current.attempt) {
+    return { attempt, seq, text };
+  }
+  if (attempt < current.attempt || seq <= current.seq) {
+    return current;
+  }
+  return { attempt, seq, text: reset ? text : current.text + text };
+}
+
 function problemTitle(payload: Record<string, unknown>): string {
   const problem = payload.problem;
   return typeof problem === "object" &&
@@ -161,7 +266,6 @@ export function reduceStreamEvent(
   const event = envelope.event;
   if (
     typeof sequence !== "number" ||
-    sequence <= state.lastSequence ||
     typeof turnId !== "string" ||
     typeof event !== "object" ||
     event === null ||
@@ -174,21 +278,66 @@ export function reduceStreamEvent(
     return state;
   }
 
+  // `answer.draft` frames carry no SSE `id` and their envelope `sequence` is
+  // merely the last *authoritative* sequence at send time (possibly already
+  // applied) — unlike every other event type, they must never be dropped by
+  // the `sequence <= state.lastSequence` staleness guard below, and must
+  // never advance `lastSequence` themselves (controller ruling, 2026-10-16).
+  const isDraft = event.type === "answer.draft";
+  if (!isDraft && sequence <= state.lastSequence) {
+    return state;
+  }
+
   const current = state.turns[turnId] ?? emptyTurn();
   const payload = event.payload as Record<string, unknown>;
   let next = current;
   if (event.type === "turn.started") {
     next = { ...current, status: "running" };
   } else if (
-    event.type === "answer.delta" &&
-    typeof payload.text === "string" &&
+    isDraft &&
     !["completed", "abstained", "canceled", "failed"].includes(current.status)
   ) {
+    const draft = reduceDraft(current.draft, payload);
+    // A higher attempt means the previous attempt's verification (if any)
+    // no longer applies to the draft now showing — clear `stage` along with
+    // the text reset so "Checking sources" cannot linger over a fresh
+    // attempt's unverified draft (review fix round 1, minor finding).
+    const isNewAttempt =
+      typeof payload.attempt === "number" &&
+      (current.draft === null || payload.attempt > current.draft.attempt);
     next = {
       ...current,
-      answer: current.answer + payload.text,
+      draft,
       status: "running",
+      stage: isNewAttempt ? null : current.stage,
     };
+  } else if (event.type === "retrieval.hits_ready") {
+    const labels = payload.labels;
+    if (Array.isArray(labels)) {
+      const additions: Record<string, CitationLabelInfo> = {};
+      for (const entry of labels) {
+        if (
+          typeof entry === "object" &&
+          entry !== null &&
+          typeof (entry as Record<string, unknown>).label === "string" &&
+          typeof (entry as Record<string, unknown>).title === "string"
+        ) {
+          const label = (entry as Record<string, unknown>).label as string;
+          const title = (entry as Record<string, unknown>).title as string;
+          const location = (entry as Record<string, unknown>).location;
+          additions[label] = {
+            title,
+            location: typeof location === "string" ? location : null,
+          };
+        }
+      }
+      next = {
+        ...current,
+        citationLabels: { ...current.citationLabels, ...additions },
+      };
+    }
+  } else if (event.type === "stage.started" && payload.stage === "verify") {
+    next = { ...current, stage: "verify" };
   } else if (event.type === "citation.resolved") {
     const citation = payload.citation;
     if (typeof citation === "object" && citation !== null) {
@@ -219,6 +368,8 @@ export function reduceStreamEvent(
               : current.pendingCitations,
         },
         status: event.type === "turn.abstained" ? "abstained" : "completed",
+        draft: null,
+        stage: null,
       };
     }
   } else if (event.type === "graph.context_ready") {
@@ -227,7 +378,14 @@ export function reduceStreamEvent(
       next = { ...current, graphContext };
     }
   } else if (event.type === "turn.canceled") {
-    next = { ...current, status: "canceled" };
+    const partialAnswer = payload.partialAnswer;
+    next = {
+      ...current,
+      status: "canceled",
+      draft: null,
+      stage: null,
+      partialAnswer: typeof partialAnswer === "string" ? partialAnswer : null,
+    };
   } else if (event.type === "conversation.turn.completed") {
     const outcome = payload.outcome;
     if (
@@ -240,6 +398,13 @@ export function reduceStreamEvent(
     }
   } else if (event.type === "turn.failed") {
     next = { ...current, error: problemTitle(payload), status: "failed" };
+  }
+
+  if (isDraft) {
+    return {
+      lastSequence: state.lastSequence,
+      turns: { ...state.turns, [turnId]: next },
+    };
   }
 
   return {

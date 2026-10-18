@@ -937,18 +937,19 @@ class RetrievalAnswerResponse(ContractModel):
     @model_validator(mode="after")
     def validate_claim_spans(self) -> Self:
         citation_ids = {citation.citation_id for citation in self.citations}
-        paragraphs = _answer_paragraph_spans(self.answer)
         previous_end = 0
         for claim in self.claims:
             if not set(claim.citation_ids) <= citation_ids:
                 raise ValueError("claim citations must exist in the answer citation set")
             if "\n\n" in claim.text:
                 raise ValueError("claim text must not contain a paragraph separator")
-            matches = [
-                (start, end) for start, end in paragraphs if self.answer[start:end] == claim.text
-            ]
+            # A claim is a cited sentence, not necessarily a whole paragraph
+            # (LangGraph PR 3: inline `[S1]`/`[R1]` markers can cite one sentence
+            # inside a Markdown list/paragraph that also carries uncited prose)
+            # -- it just has to be locatable at exactly one offset in the answer.
+            matches = _answer_text_occurrences(self.answer, claim.text)
             if len(matches) != 1 or matches[0] != (claim.answer_start, claim.answer_end):
-                raise ValueError("claim text must occupy one unique complete answer paragraph")
+                raise ValueError("claim text must occupy one unique answer span")
             if claim.answer_end < claim.answer_start:
                 raise ValueError("claim answer offsets must be ordered")
             if claim.answer_start < previous_end:
@@ -957,24 +958,24 @@ class RetrievalAnswerResponse(ContractModel):
                 raise ValueError("claim answer span exceeds the answer")
             if self.answer[claim.answer_start : claim.answer_end] != claim.text:
                 raise ValueError("claim text must match its answer span")
-            if claim.answer_start != 0 and not self.answer[: claim.answer_start].endswith("\n\n"):
-                raise ValueError("claim answer span must start on a paragraph boundary")
-            if claim.answer_end != len(self.answer) and not self.answer[
-                claim.answer_end :
-            ].startswith("\n\n"):
-                raise ValueError("claim answer span must end on a paragraph boundary")
             previous_end = claim.answer_end
         return self
 
 
-def _answer_paragraph_spans(answer: str) -> tuple[tuple[int, int], ...]:
-    """Return complete answer-paragraph spans using Unicode code-point offsets."""
-    start = 0
+def _answer_text_occurrences(answer: str, text: str) -> tuple[tuple[int, int], ...]:
+    """Every non-overlapping `[start, end)` span where `answer[start:end] ==
+    text`, using Unicode code-point offsets; an empty `text` never occurs."""
+
+    if not text:
+        return ()
     spans: list[tuple[int, int]] = []
-    for paragraph in answer.split("\n\n"):
-        end = start + len(paragraph)
-        spans.append((start, end))
-        start = end + 2
+    start = 0
+    while True:
+        found = answer.find(text, start)
+        if found == -1:
+            break
+        spans.append((found, found + len(text)))
+        start = found + len(text)
     return tuple(spans)
 
 
@@ -1222,7 +1223,6 @@ class ConversationEventItem(ContractModel):
         "retrieval.hits_ready",
         "graph.context_ready",
         "rerank.completed",
-        "answer.delta",
         "citation.resolved",
         "turn.completed",
         "turn.abstained",

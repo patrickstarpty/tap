@@ -19,10 +19,12 @@ from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
+from tap.modules.chat.application.conversations import ClaimBatch
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import TurnInput, TurnInputSnapshot
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
 from tap.modules.knowledge.ports.answers import AnswerSnapshotUnavailable
+from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 from tap.platform.budget import TurnBudget, current_meter
 
 
@@ -43,16 +45,21 @@ class _Repository:
         self._turn = turn
 
     async def claim_queued(self, *, limit):
-        return (("conversation-1", self._turn),)
+        return ClaimBatch((("conversation-1", self._turn),))
 
 
 class _Conversations:
     def __init__(self, turn) -> None:
         self.repository = _Repository(turn)
         self.completed: list[tuple] = []
+        self.emitted: list[tuple] = []
 
     async def complete_evidence(self, conversation_id, turn_id, evidence, **kwargs):
         self.completed.append((conversation_id, turn_id, evidence, kwargs))
+
+    async def emit(self, conversation_id, turn_id, event_type, payload, *, lease_token=None):
+        self.emitted.append((conversation_id, turn_id, event_type, payload, lease_token))
+        return SimpleNamespace(sequence=len(self.emitted))
 
 
 def _answer(*, answer: str = "grounded") -> SimpleNamespace:
@@ -83,7 +90,7 @@ class _StepsKnowledge:
         return {"kind": "prepared", "bundle": {}}
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None
+        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
     ):
         self.generate_calls += 1
         if not self._generate_failed_once:
@@ -178,7 +185,6 @@ async def test_legacy_fast_chat_checkpoint_restarts_on_new_graph() -> None:
         "stage.completed",
         "retrieval.hits_ready",
         "graph.context_ready",
-        "answer.delta",
     ]
     assert knowledge.prepare_calls == 1
 
@@ -352,7 +358,6 @@ async def test_single_shot_knowledge_still_answers() -> None:
         "stage.completed",
         "retrieval.hits_ready",
         "graph.context_ready",
-        "answer.delta",
     ]
     assert knowledge.calls == 1
 
@@ -626,7 +631,7 @@ class _PlanDeadlineExpiredKnowledge(_StepsKnowledge):
     found at the very start of a phase, not a mid-phase timeout."""
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None
+        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
     ):
         from tap.interfaces.http.knowledge_service import AnswerBudgetExhausted
 
@@ -768,3 +773,303 @@ async def test_insights_route_never_out_of_scope() -> None:
 
     assert result == {"route": "insights", "reasoning_mode": "workflow"}
     assert planner.calls == 0
+
+
+class _HitsReadyKnowledge(_StepsKnowledge):
+    """`prepare_conversation_answer` returns a `"prepared"` step carrying a
+    `retrieval_hits` payload the way the real `KnowledgeHttpService` does;
+    `generate_conversation_answer` asserts the `seed_search` node already
+    committed it through `conversations.emit` before generation starts."""
+
+    def __init__(self, *, conversations) -> None:
+        super().__init__()
+        self._conversations = conversations
+        self.hits_ready_committed_before_generate = False
+
+    async def prepare_conversation_answer(
+        self, request, frozen_input, *, answer_plan=None, authorize=None
+    ):
+        self.prepare_calls += 1
+        return {
+            "kind": "prepared",
+            "bundle": {},
+            "retrieval_hits": {
+                "traceId": "trace-1",
+                "authorizedHitCount": 2,
+                "labels": [{"label": "S1", "title": "doc-a", "location": None}],
+            },
+        }
+
+    async def generate_conversation_answer(
+        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
+    ):
+        self.generate_calls += 1
+        self.hits_ready_committed_before_generate = any(
+            event_type == "retrieval.hits_ready"
+            for _c, _t, event_type, _payload, _lease in self._conversations.emitted
+        )
+        if on_text is not None:
+            await on_text("grounded answer")
+        return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+
+
+@pytest.mark.asyncio
+async def test_hits_ready_is_committed_before_generation_starts() -> None:
+    turn = _turn()
+    conversations = _Conversations(turn)
+    knowledge = _HitsReadyKnowledge(conversations=conversations)
+    worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert knowledge.hits_ready_committed_before_generate is True
+    assert [event_type for *_rest, event_type, _payload, _lease in conversations.emitted] == [
+        "retrieval.hits_ready",
+        "stage.started",
+    ]
+    _c, _t, event_type, payload, lease_token = conversations.emitted[0]
+    assert event_type == "retrieval.hits_ready"
+    assert payload["traceId"] == "trace-1"
+    assert payload["authorizedHitCount"] == 2
+    assert lease_token == turn.lease_token
+    # `finalize`'s own batch must not repeat an event already committed early.
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, _evidence, kwargs = conversations.completed[0]
+    assert [event_type for event_type, _payload in kwargs["stream_events"]].count(
+        "retrieval.hits_ready"
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_retrieval_hits_ready_labels_are_redacted_before_emit() -> None:
+    """M-6: `labels`' `title`/`location` come straight from document
+    structure (never screened by the model), so they must still pass
+    through the configured v2 chat-egress redactor before `retrieval.hits_ready`
+    is emitted -- the same as every other model-bound/egress text."""
+
+    class _LabeledKnowledge(_StepsKnowledge):
+        async def prepare_conversation_answer(
+            self, request, frozen_input, *, answer_plan=None, authorize=None
+        ):
+            self.prepare_calls += 1
+            return {
+                "kind": "prepared",
+                "bundle": {},
+                "retrieval_hits": {
+                    "traceId": "trace-1",
+                    "authorizedHitCount": 1,
+                    "labels": [
+                        {
+                            "label": "S1",
+                            "title": "contact leaker@example.com",
+                            "location": "附录 / leaker@example.com",
+                        }
+                    ],
+                },
+            }
+
+    async def _redact(text: str) -> str:
+        return text.replace("leaker@example.com", "[REDACTED_EMAIL]")
+
+    turn = _turn()
+    conversations = _Conversations(turn)
+    worker = GenerationWorker(
+        conversations, _LabeledKnowledge(), checkpointer=InMemorySaver(), redact=_redact
+    )
+
+    assert await worker.run_once(limit=1) == 1
+
+    _c, _t, event_type, payload, _lease = conversations.emitted[0]
+    assert event_type == "retrieval.hits_ready"
+    label = payload["labels"][0]
+    assert "leaker@example.com" not in label["title"]
+    assert "leaker@example.com" not in label["location"]
+    assert label["title"] == "contact [REDACTED_EMAIL]"
+    assert label["location"] == "附录 / [REDACTED_EMAIL]"
+
+
+@pytest.mark.asyncio
+async def test_retrieval_hits_ready_drops_a_label_whose_title_redaction_is_unavailable() -> None:
+    """A label's `title`/`location` come straight from document structure
+    and can look like a half-written credential or private-key block to the
+    redactor (e.g. a heading literally titled "Account / Forgot password:"),
+    raising `RedactionUnavailable`. These are display labels, not the
+    authoritative answer -- that must never fail the Turn. A label whose
+    `title` cannot be redacted is dropped entirely; one whose `location`
+    (but not `title`) fails keeps its title and gets a `None` location."""
+
+    class _LabeledKnowledge(_StepsKnowledge):
+        async def prepare_conversation_answer(
+            self, request, frozen_input, *, answer_plan=None, authorize=None
+        ):
+            self.prepare_calls += 1
+            return {
+                "kind": "prepared",
+                "bundle": {},
+                "retrieval_hits": {
+                    "traceId": "trace-1",
+                    "authorizedHitCount": 2,
+                    "labels": [
+                        {
+                            "label": "S1",
+                            "title": "Account / Forgot password:",
+                            "location": "附录 1",
+                        },
+                        {
+                            "label": "S2",
+                            "title": "normal title",
+                            "location": "Account / Forgot password:",
+                        },
+                    ],
+                },
+            }
+
+    async def _redact(text: str) -> str:
+        if "password" in text:
+            raise RedactionUnavailable("half-written credential")
+        return text
+
+    turn = _turn()
+    conversations = _Conversations(turn)
+    worker = GenerationWorker(
+        conversations, _LabeledKnowledge(), checkpointer=InMemorySaver(), redact=_redact
+    )
+
+    assert await worker.run_once(limit=1) == 1
+
+    _c, _t, event_type, payload, _lease = conversations.emitted[0]
+    assert event_type == "retrieval.hits_ready"
+    labels = payload["labels"]
+    # S1's title failed to redact -> the whole label is dropped.
+    assert all(label["label"] != "S1" for label in labels)
+    # S2's title redacted fine; its location failed -> location becomes None.
+    s2 = next(label for label in labels if label["label"] == "S2")
+    assert s2["title"] == "normal title"
+    assert s2["location"] is None
+
+
+@pytest.mark.asyncio
+async def test_verify_stage_started_is_committed_before_verify_runs() -> None:
+    turn = _turn()
+    conversations = _Conversations(turn)
+
+    class _VerifyOrderKnowledge(_StepsKnowledge):
+        async def verify_conversation_answer(
+            self, step, frozen_input, *, answer_plan=None, authorize=None
+        ):
+            assert any(
+                event_type == "stage.started" and payload == {"stage": "verify"}
+                for _c, _t, event_type, payload, _lease in conversations.emitted
+            )
+            return await super().verify_conversation_answer(
+                step, frozen_input, answer_plan=answer_plan, authorize=authorize
+            )
+
+    worker = GenerationWorker(conversations, _VerifyOrderKnowledge(), checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+    assert len(conversations.completed) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_answer_delta_event_is_emitted() -> None:
+    turn = _turn()
+    conversations = _Conversations(turn)
+    worker = GenerationWorker(conversations, _StepsKnowledge(), checkpointer=InMemorySaver())
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, _evidence, kwargs = conversations.completed[0]
+    event_types = [event_type for event_type, _payload in kwargs["stream_events"]]
+    assert "answer.delta" not in event_types
+    emitted_types = [event_type for *_rest, event_type, _payload, _lease in conversations.emitted]
+    assert "answer.delta" not in emitted_types
+
+
+@pytest.mark.asyncio
+async def test_model_node_streams_through_draft_batcher() -> None:
+    """The `model` node must feed every text chunk the knowledge gateway
+    hands it (via `on_text`) into a `DraftBatcher` writing to the configured
+    `DraftStream`, and redact it with the configured redactor."""
+    from tap.modules.chat.application.ports import DraftChunk
+
+    class _FakeDrafts:
+        def __init__(self) -> None:
+            self.appended: list[DraftChunk] = []
+
+        async def append(self, turn_id, *, attempt, seq, text, reset=False):
+            self.appended.append(DraftChunk(attempt, seq, text, reset))
+
+        async def replay(self, turn_id, *, attempt):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        async def read(self, keys, *, block_ms):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        async def partial_text(self, turn_id):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        async def request_cancel(self, turn_id):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        async def cancel_requested(self, turn_id):
+            # Task 7: the worker's node-boundary poll reads this before every
+            # node; this scenario never cancels, so it is always `False`.
+            return False
+
+    class _StreamingKnowledge(_StepsKnowledge):
+        async def generate_conversation_answer(
+            self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
+        ):
+            self.generate_calls += 1
+            assert on_text is not None
+            for chunk in ("hello ", "world"):
+                await on_text(chunk)
+            return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+
+    redacted_calls: list[str] = []
+
+    async def _recording_redact(text: str) -> str:
+        redacted_calls.append(text)
+        return text.upper()
+
+    turn = _turn()
+    conversations = _Conversations(turn)
+    drafts = _FakeDrafts()
+    worker = GenerationWorker(
+        conversations,
+        _StreamingKnowledge(),
+        checkpointer=InMemorySaver(),
+        drafts=drafts,
+        redact=_recording_redact,
+    )
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert drafts.appended
+    assert "".join(chunk.text for chunk in drafts.appended if not chunk.reset) == "HELLO WORLD"
+    assert redacted_calls
+
+
+def test_drafts_without_redact_fails_closed_at_construction() -> None:
+    """M-7: a real `DraftStream` wired without the real redactor must never
+    silently fall back to `_identity_redact` -- that would stream every
+    draft to Redis completely unredacted. Fail closed at construction."""
+
+    async def require_authorized() -> None:
+        return None
+
+    with pytest.raises(ValueError, match="redact"):
+        ChatTurnNodes(
+            conversation_id="conversation-1",
+            turn=_turn(),
+            conversations=_Conversations(_turn()),
+            steps=_StepsKnowledge(),
+            planner=None,
+            knowledge=object(),
+            insights_explanation=None,
+            require_authorized=require_authorized,
+            drafts=object(),
+            redact=None,
+        )

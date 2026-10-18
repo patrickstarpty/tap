@@ -46,6 +46,7 @@ from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.chat.application.feedback import FeedbackService
+from tap.modules.chat.application.ports import DraftStream
 from tap.modules.chat.application.suggestion_ports import SuggestionStore
 from tap.modules.chat.application.suggestions import PromptSuggestionService
 from tap.modules.graph.application.jobs import GraphJobStore
@@ -245,6 +246,12 @@ class HttpServices:
     insights_explanation: object | None = None
     insights_knowledge_search: object | None = None
     insights_publication_authority: object | None = None
+    # The shared, per-process Redis draft/wake-up stream adapter, composed once
+    # in `tapper_runtime` from the same Redis client the API and generation
+    # worker (which shares this composition via `create_api_runtime`) both use.
+    # Read by `conversation_stream` (Task 6) to replay/stream drafts; Task 7
+    # also reads it to check cancellation.
+    draft_stream: DraftStream | None = None
 
 
 class GraphUnavailable(Exception):

@@ -95,18 +95,10 @@ async def test_model_generation_consumes_pinned_template_and_preserves_schema():
     requests = []
 
     class Gateway:
-        async def generate_structured(self, request):
+        async def chat_stream(self, request):
             requests.append(request)
-            return SimpleNamespace(
-                output={
-                    "answer": "Authorization requires the verified project policy.",
-                    "claims": [
-                        {
-                            "text": "Authorization requires the verified project policy.",
-                            "evidenceLabels": ["S1"],
-                        }
-                    ],
-                },
+            yield SimpleNamespace(
+                output="Authorization requires the verified project policy.[S1]",
                 provider_request_id="provider",
                 gateway_call_id="call",
                 actual_model="model",
@@ -133,7 +125,13 @@ async def test_model_generation_consumes_pinned_template_and_preserves_schema():
     assert result.text == "Authorization requires the verified project policy."
     assert selected.instruction in requests[0].prompt
     assert json.loads(requests[0].context)["answerPlan"]["missingEvidence"] == ["q2"]
-    assert requests[0].schema == assembled.schema
+    # The model is no longer asked for JSON (PR 3 inline markers), so the request
+    # carries no schema; the pinned template's schema stays digest-bound in
+    # `governance_digests` instead (see `KnowledgeModelGateway.answer`).
+    assert requests[0].schema is None
+    from tap.modules.ai.domain.models import schema_digest
+
+    assert schema_digest(assembled.schema) in requests[0].governance_digests
     assert requests[0].idempotency_key == "plan-a:generation"
 
 
@@ -234,16 +232,54 @@ async def test_direct_model_consumes_pinned_template_and_schema():
     "template", ["general", "factual", "explanation", "comparison", "procedural", "clarification"]
 )
 def test_claim_sentence_rule_is_an_additive_template_version(template):
+    """The JSON sentence-claim-rule version (general/factual/.../procedural:
+    "2"; clarification: "3") predates PR 3's inline markers and is pinned
+    forever for plans that already replay it -- it is no longer `latest`
+    (see `test_inline_marker_rule_is_the_latest_additive_template_version`),
+    but its own text and digest must stay exactly as they were."""
     module = templates()
     legacy_version = "2" if template == "clarification" else "1"
+    sentence_version = "3" if template == "clarification" else "2"
     legacy = module.get_template(template, legacy_version)
-    latest = module.get_template(template, module.latest_template_version(template))
-    assert latest.version != legacy.version
-    assert latest.digest != legacy.digest
+    sentence = module.get_template(template, sentence_version)
+    assert sentence.version != legacy.version
+    assert sentence.digest != legacy.digest
     assert "copied exactly once as a full paragraph" in legacy.instruction
-    assert "copied exactly once" not in latest.instruction
-    assert "in your own words as one complete sentence" in latest.instruction
-    assert "joining exactly those claim texts" in latest.instruction
+    assert "copied exactly once" not in sentence.instruction
+    assert "in your own words as one complete sentence" in sentence.instruction
+    assert "joining exactly those claim texts" in sentence.instruction
+    if template == "clarification":
+        assert "time-range" in sentence.instruction
+    assembled = module.assemble_answer(
+        template_id=template,
+        template_version=sentence.version,
+        template_digest=sentence.digest,
+        original_question="E104",
+        standalone_question="E104",
+        evidence_map={},
+    )
+    assert assembled.platform_instruction == sentence.instruction
+
+
+@pytest.mark.parametrize(
+    "template", ["general", "factual", "explanation", "comparison", "procedural", "clarification"]
+)
+def test_inline_marker_rule_is_the_latest_additive_template_version(template):
+    """LangGraph PR 3 review ruling (2026-10-16): `KnowledgeModelGateway.answer`
+    no longer requests the closed JSON schema for a plan-bound answer, so the
+    *latest* template version must stop asking for one -- `latest_template_version`
+    (what the real answer planner, `plan_answer.py`, always uses for a new
+    plan) now resolves to this inline-marker version, additive over the
+    pinned JSON ones."""
+    module = templates()
+    sentence_version = "3" if template == "clarification" else "2"
+    sentence = module.get_template(template, sentence_version)
+    latest = module.get_template(template, module.latest_template_version(template))
+    assert latest.version != sentence.version
+    assert latest.digest != sentence.digest
+    assert "Return exactly answer and claims" not in latest.instruction
+    assert "Write the answer as Markdown prose, not JSON" in latest.instruction
+    assert "immediately after it place the evidence labels" in latest.instruction
     if template == "clarification":
         assert "time-range" in latest.instruction
     assembled = module.assemble_answer(

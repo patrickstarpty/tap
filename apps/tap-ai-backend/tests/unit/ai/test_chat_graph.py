@@ -937,3 +937,63 @@ async def test_budget_usage_survives_resume() -> None:
     assert calls.count("model") == 2
     assert state["budget_used"] == {"modelCalls": 2, "costMicros": 0, "toolRounds": 0}
     assert state["budget"]["startedAtMs"] == captured["first_started_at"]
+
+
+@pytest.mark.asyncio
+async def test_canceled_check_raises_permission_error() -> None:
+    """Task 7: an optional `canceled` check runs alongside `authorize`
+    before every node, independent of authorization loss, so a canceled
+    Turn stops at the next node boundary even when `authorize` itself
+    stays true throughout."""
+    calls: list[str] = []
+    is_canceled = False
+
+    async def authorize() -> bool:
+        return True
+
+    async def canceled() -> bool:
+        return is_canceled
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("guard_in")
+        return {}
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        nonlocal is_canceled
+        calls.append("seed_search")
+        is_canceled = True
+        return {}
+
+    async def model(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("model")
+        return {}
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("verify")
+        return {}
+
+    async def finalize(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("finalize")
+        return {"result": {}}
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run on the chat route")
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=authorize,
+        canceled=canceled,
+    )
+
+    with pytest.raises(PermissionError, match="canceled"):
+        await graph.start(run_id="run-canceled", payload={}, route="chat")
+
+    assert calls == ["guard_in", "seed_search"]

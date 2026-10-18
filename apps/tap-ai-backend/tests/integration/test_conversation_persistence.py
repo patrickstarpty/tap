@@ -126,15 +126,15 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
                 await restarted.emit(
                     "conversation-1",
                     "turn-2",
-                    "answer.delta",
-                    {"text": "stale"},
+                    "stage.started",
+                    {"stage": "stale"},
                     lease_token=first_claim.lease_token,
                 )
             await restarted.emit(
                 "conversation-1",
                 "turn-2",
-                "answer.delta",
-                {"text": "current"},
+                "stage.started",
+                {"stage": "current"},
                 lease_token=second_claim.lease_token,
             )
             canceled = await restarted.cancel("conversation-1", "turn-2")
