@@ -184,6 +184,38 @@ export function latestTurnState(
 }
 
 /**
+ * `draft`/`citationLabels` facts for one turn, taken independently of
+ * `latestTurnState`'s whole-record `lastSequence` pick (review fix round 1,
+ * finding I). `draft` is never persisted to MySQL, so `recoveredState`
+ * (built from the durable event history) never carries one — on a
+ * reconnect/page-reload mid-generation, `recoveredState`'s `lastSequence`
+ * is typically higher than the freshly (re)connected `streamState`'s, so
+ * `latestTurnState` would pick the recovered record and silently drop the
+ * replayed draft and its labels. `citationLabels` is accumulated from the
+ * durable `retrieval.hits_ready` event, which can land in either record
+ * depending on whether the live stream replayed it since reconnecting, so
+ * it is unioned from both instead of picked from one.
+ */
+export function mergedDraftFacts(
+  turnId: string,
+  recoveredState: ConversationStreamState,
+  streamState: ConversationStreamState,
+): {
+  draft: DraftState | null;
+  citationLabels: Readonly<Record<string, CitationLabelInfo>>;
+} {
+  const recovered = recoveredState.turns[turnId];
+  const streamed = streamState.turns[turnId];
+  return {
+    draft: streamed?.draft ?? recovered?.draft ?? null,
+    citationLabels: {
+      ...(recovered?.citationLabels ?? {}),
+      ...(streamed?.citationLabels ?? {}),
+    },
+  };
+}
+
+/**
  * Applies one `answer.draft` payload to a turn's current draft, per the
  * `(attempt, seq)` ordering rule: a higher `attempt` resets `text` and
  * starts tracking that attempt; a `seq` at or below the current attempt's
@@ -265,10 +297,19 @@ export function reduceStreamEvent(
     isDraft &&
     !["completed", "abstained", "canceled", "failed"].includes(current.status)
   ) {
+    const draft = reduceDraft(current.draft, payload);
+    // A higher attempt means the previous attempt's verification (if any)
+    // no longer applies to the draft now showing — clear `stage` along with
+    // the text reset so "Checking sources" cannot linger over a fresh
+    // attempt's unverified draft (review fix round 1, minor finding).
+    const isNewAttempt =
+      typeof payload.attempt === "number" &&
+      (current.draft === null || payload.attempt > current.draft.attempt);
     next = {
       ...current,
-      draft: reduceDraft(current.draft, payload),
+      draft,
       status: "running",
+      stage: isNewAttempt ? null : current.stage,
     };
   } else if (event.type === "retrieval.hits_ready") {
     const labels = payload.labels;

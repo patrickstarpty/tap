@@ -81,6 +81,22 @@ describe("DraftAnswer", () => {
     expect(screen.getByRole("status")).toHaveTextContent("已停止 · 未核对依据");
   });
 
+  it("never renders a citation badge in the partial answer, even for a known label", () => {
+    render(
+      <DraftAnswer
+        draft={null}
+        citationLabels={{ S3: { title: "Policy handbook", location: "p. 4" } }}
+        stage={null}
+        partialAnswer="A rule applies [S3]."
+        canceled
+        locale="zh"
+      />,
+    );
+
+    expect(screen.getByText(/A rule applies \[S3\]\./u)).toBeVisible();
+    expect(screen.queryByTitle(/./u)).toBeNull();
+  });
+
   it("shows only the stopped notice when canceled before any draft text", () => {
     render(
       <DraftAnswer

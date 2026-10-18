@@ -62,6 +62,7 @@ import {
   createStreamState,
   isTargetTurnActive,
   latestTurnState,
+  mergedDraftFacts,
   reduceStreamEvent,
   type GraphContextSummary,
 } from "../../features/conversations/model/stream";
@@ -312,9 +313,6 @@ export function AnswerActivity({
     (event) => event.eventType === "citation.resolved",
   ).length;
   const assembledCount = sourceCount;
-  const answerRecorded = events.some(
-    (event) => event.eventType === "answer.draft",
-  );
   const rows = [
     assembledCount > 0
       ? context
@@ -329,11 +327,7 @@ export function AnswerActivity({
       ? locale === "zh"
         ? "Knowledge answer 调用完成"
         : "Knowledge answer call completed"
-      : answerRecorded
-        ? locale === "zh"
-          ? "回答正文已记录"
-          : "Answer text recorded"
-        : null,
+      : null,
     hits && typeof hits.payload.authorizedHitCount === "number"
       ? locale === "zh"
         ? `检索结果：${hits.payload.authorizedHitCount} 处授权证据`
@@ -1566,6 +1560,17 @@ export function TapperWorkspace() {
         recoveredStreamState,
         streamState,
       );
+      // `draft`/`citationLabels` are taken independently of the
+      // `latestTurnState` whole-record pick above: `answer.draft` is never
+      // persisted, so a reconnect/page-reload mid-generation would
+      // otherwise lose the replayed draft and its labels to a recovered
+      // record with a higher `lastSequence` but no draft at all (review
+      // fix round 1, finding I).
+      const draftFacts = mergedDraftFacts(
+        turn.turnId,
+        recoveredStreamState,
+        streamState,
+      );
       return {
         id: turn.turnId,
         intent: "answer",
@@ -1580,8 +1585,8 @@ export function TapperWorkspace() {
         })),
         response: streamed?.response ?? null,
         graphContext: streamed?.graphContext ?? null,
-        draft: streamed?.draft ?? null,
-        citationLabels: streamed?.citationLabels ?? {},
+        draft: draftFacts.draft,
+        citationLabels: draftFacts.citationLabels,
         stage: streamed?.stage ?? null,
         partialAnswer: streamed?.partialAnswer ?? null,
         traceId: turn.traceId ?? null,
@@ -1642,15 +1647,22 @@ export function TapperWorkspace() {
         recoveredStreamState,
         streamState,
       );
+      const draftFacts = mergedDraftFacts(
+        accepted.id,
+        recoveredStreamState,
+        streamState,
+      );
       return [
         ...turns,
         {
           ...accepted,
           status: streamed?.status ?? accepted.status,
           response: streamed?.response ?? accepted.response ?? null,
-          draft: streamed?.draft ?? accepted.draft ?? null,
+          draft: draftFacts.draft ?? accepted.draft ?? null,
           citationLabels:
-            streamed?.citationLabels ?? accepted.citationLabels ?? {},
+            Object.keys(draftFacts.citationLabels).length > 0
+              ? draftFacts.citationLabels
+              : (accepted.citationLabels ?? {}),
           stage: streamed?.stage ?? accepted.stage ?? null,
           partialAnswer:
             streamed?.partialAnswer ?? accepted.partialAnswer ?? null,

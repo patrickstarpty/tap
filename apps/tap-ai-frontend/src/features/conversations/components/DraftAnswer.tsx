@@ -197,7 +197,11 @@ export function DraftAnswer({
     return (
       <div className="tapper-draft-answer tapper-draft-canceled">
         {partialAnswer !== null && partialAnswer.length > 0 ? (
-          <DraftMarkdown text={partialAnswer} citationLabels={citationLabels} />
+          // Ruling (review fix round 1): a canceled partial draft never
+          // joins the citation system, even for labels `citationLabels`
+          // already knows — every `[S1]`/`[R1]` marker in `partialAnswer`
+          // renders as plain text, not a badge.
+          <DraftMarkdown text={partialAnswer} citationLabels={{}} />
         ) : null}
         <p className="tapper-draft-status" role="status">
           {copy.stopped}
@@ -206,7 +210,10 @@ export function DraftAnswer({
     );
   }
   return (
-    <div className="tapper-draft-answer" aria-live="polite">
+    // No `aria-live` here: the draft text itself streams in per-chunk and
+    // must not be re-announced on every chunk. The single `role="status"`
+    // paragraph below is the only live region, and only while it is shown.
+    <div className="tapper-draft-answer">
       <DraftMarkdown text={draft?.text ?? ""} citationLabels={citationLabels} />
       {stage === "verify" ? (
         <p className="tapper-draft-status" role="status">

@@ -5,6 +5,7 @@ import {
   graphContextFromEvents,
   isTargetTurnActive,
   latestTurnState,
+  mergedDraftFacts,
   reduceStreamEvent,
 } from "./stream";
 
@@ -109,6 +110,39 @@ describe("conversation stream reducer", () => {
       attempt: 2,
       seq: 1,
       text: "fresh",
+    });
+  });
+
+  it("clears a pending verify stage when a higher-attempt draft arrives", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "attempt one",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "stage.started", { stage: "verify" }),
+    );
+    expect(state.turns["turn-1"]?.stage).toBe("verify");
+
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "answer.draft", {
+        attempt: 2,
+        seq: 1,
+        text: "attempt two",
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.stage).toBeNull();
+    expect(state.turns["turn-1"]?.draft).toEqual({
+      attempt: 2,
+      seq: 1,
+      text: "attempt two",
     });
   });
 
@@ -515,6 +549,92 @@ describe("conversation stream reducer", () => {
       }),
     );
     expect(state.turns["turn-1"]?.graphContext?.paths).toHaveLength(3);
+  });
+});
+
+describe("mergedDraftFacts", () => {
+  it("takes the draft from the live stream (never the recovered record) after a reconnect mid-generation", () => {
+    // Simulates a page reload while a turn is still generating: the
+    // recovered record (GET /conversations/{id}/events, durable events
+    // only) has already seen `retrieval.hits_ready` at a higher sequence
+    // than anything the freshly reconnected stream has processed yet,
+    // because `answer.draft` is never persisted and so never advances
+    // `lastSequence` on the live side.
+    const recoveredState = reduceStreamEvent(
+      reduceStreamEvent(
+        createStreamState(),
+        envelope(1, "turn-1", "turn.started", { state: "running" }),
+      ),
+      envelope(2, "turn-1", "retrieval.hits_ready", {
+        traceId: "trace-1",
+        authorizedHitCount: 2,
+        labels: [{ label: "S1", title: "Policy handbook", location: "p. 4" }],
+      }),
+    );
+    const streamState = reduceStreamEvent(
+      createStreamState(),
+      envelope(2, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 3,
+        text: "Replayed draft text.",
+      }),
+    );
+
+    // `latestTurnState` picks the whole recovered record here, which has
+    // no draft at all -- this is the bug `mergedDraftFacts` exists to work
+    // around, not a property of `mergedDraftFacts` itself.
+    expect(
+      latestTurnState("turn-1", recoveredState, streamState)?.draft,
+    ).toBeNull();
+
+    const facts = mergedDraftFacts("turn-1", recoveredState, streamState);
+    expect(facts.draft).toEqual({
+      attempt: 1,
+      seq: 3,
+      text: "Replayed draft text.",
+    });
+    expect(facts.citationLabels).toEqual({
+      S1: { title: "Policy handbook", location: "p. 4" },
+    });
+  });
+
+  it("unions citationLabels seen by only one of the two records", () => {
+    const recoveredState = reduceStreamEvent(
+      createStreamState(),
+      envelope(1, "turn-1", "retrieval.hits_ready", {
+        traceId: "trace-1",
+        authorizedHitCount: 1,
+        labels: [
+          { label: "S1", title: "Recovered-only source", location: null },
+        ],
+      }),
+    );
+    const streamState = reduceStreamEvent(
+      createStreamState(),
+      envelope(1, "turn-1", "retrieval.hits_ready", {
+        traceId: "trace-1",
+        authorizedHitCount: 1,
+        labels: [
+          { label: "R1", title: "Stream-only relation", location: null },
+        ],
+      }),
+    );
+
+    const facts = mergedDraftFacts("turn-1", recoveredState, streamState);
+    expect(facts.citationLabels).toEqual({
+      S1: { title: "Recovered-only source", location: null },
+      R1: { title: "Stream-only relation", location: null },
+    });
+  });
+
+  it("returns a null draft and empty citationLabels when neither record has the turn", () => {
+    const facts = mergedDraftFacts(
+      "turn-1",
+      createStreamState(),
+      createStreamState(),
+    );
+    expect(facts.draft).toBeNull();
+    expect(facts.citationLabels).toEqual({});
   });
 });
 
