@@ -54,14 +54,14 @@
 - `evaluate-answer-golden.py --golden PATH --observations PATH --report PATH [--baseline-observations PATH] [--real]`：指标 `citationSourcePrecision`（被引来源中属于 `expectedSources` 的比例，answerable 题）、`expectedSourceRecall`、`factRecall`（`expectedFacts` 命中率）、`abstainAccuracy`（abstain 题弃答比例）、`falsePremiseHandled`（false_premise 题弃答或命中纠正短语的比例）、`forbiddenFactRate`。fake 模式门槛：observations 覆盖全部题目、报告结构有效、`citationSourcePrecision == 1.0`。`--real` 且给出 `--baseline-observations` 时：每项指标不得低于基线（`forbiddenFactRate` 不得高于基线），否则退出码 1。
 - Make：`quality-answers`（fake，写入 `.local/quality-answers/`）；`quality-answers-real`（检查 `TAP_RUN_QUALITY_ANSWERS=1`、`TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION=approved:*`，`TAP_QUALITY_ANSWERS_BASELINE` 默认 `.local/quality-answers/baseline-observations.json`）。
 
-- [ ] **Step 1: 写失败测试**（`test_answer_golden.py`，直接 import 两个脚本的纯函数，参照 `tests/unit/quality/` 中 graph-relations 评测测试的写法）
+- [x] **Step 1: 写失败测试**（`test_answer_golden.py`，直接 import 两个脚本的纯函数，参照 `tests/unit/quality/` 中 graph-relations 评测测试的写法）
   - `test_golden_fixture_is_valid`：30 题，kind 计数为 20/6/4，`expectedSources` 均对应语料文件，`id` 唯一。
   - `test_metrics_on_handmade_observations`：3 题手工观察，断言各指标数值。
   - `test_real_gate_fails_below_baseline`：基线 `factRecall` 0.8、候选 0.7，评测返回失败；相等时通过。
-- [ ] **Step 2: 运行确认失败**：`uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/quality/test_answer_golden.py -q` → FAIL
-- [ ] **Step 3: 编写语料、golden set 与两个脚本**
-- [ ] **Step 4: 运行通过**：同上 PASS；`make quality-answers` 退出码 0。
-- [ ] **Step 5: Commit**：`git commit -m "feat: add the answer golden set and regression commands"`（此提交即真实模型 JSON 格式基线的运行点，在 Task 10 记录其 SHA）
+- [x] **Step 2: 运行确认失败**：`uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/quality/test_answer_golden.py -q` → FAIL
+- [x] **Step 3: 编写语料、golden set 与两个脚本**
+- [x] **Step 4: 运行通过**：同上 PASS；`make quality-answers` 退出码 0。
+- [x] **Step 5: Commit**：`git commit -m "feat: add the answer golden set and regression commands"`（此提交即真实模型 JSON 格式基线的运行点，在 Task 10 记录其 SHA）
 
 ---
 
@@ -79,12 +79,12 @@
   - 端口：`def chat_stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]`。
   - LiteLLM：payload 加 `"stream": True, "stream_options": {"include_usage": True}`；逐行解析 `data: {...}` / `data: [DONE]`，累计 `choices[0].delta.content`；最后一个带 `usage` 的块提供 token 数；响应头提供费用与上游模型；超出现有响应大小上限抛 `ModelGatewayUnavailable`；流中途断开抛 `ModelGatewayUnavailable`；`finally` 中照常写 `ModelCallRecord`（`response_text` 为全文）并调用 PR 4 的 `CallMeter.after_call`；调用前 `before_call`。
   - 确定性网关：`chat_stream` 把其非流式答案按 8 字符切块逐个产出，块间 `await asyncio.sleep(0.02)`（E2E 可观察草稿）。
-- [ ] **Step 1: 写失败测试**（MockTransport 返回 `text/event-stream` 体）
+- [x] **Step 1: 写失败测试**（MockTransport 返回 `text/event-stream` 体）
   - `test_chat_stream_yields_deltas_then_result_with_usage_and_upstream_model`：三个内容块 + 一个 usage 块；产出 3 个 `ModelTextDelta` 与 1 个 `ModelResult`，`result.text` 为拼接全文，usage 与 `x-litellm-model-id` 映射的上游模型正确，recorder 记录一次。
   - `test_chat_stream_interrupted_raises_unavailable_and_still_records`：流在第二块后断开，抛 `ModelGatewayUnavailable`，recorder 记录 `status` 为失败。
   - `test_chat_stream_is_metered_once`：`metered(CallMeter(1, None))` 下完成一次流式调用后 `meter.calls == 1`。
-- [ ] **Step 2–4: 确认失败 → 实现 → 通过**（`uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/contract/test_litellm_model_gateway.py -q`）
-- [ ] **Step 5: Commit**：`git commit -m "feat: stream chat completions through the model gateway"`
+- [x] **Step 2–4: 确认失败 → 实现 → 通过**（`uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/contract/test_litellm_model_gateway.py -q`）
+- [x] **Step 5: Commit**：`git commit -m "feat: stream chat completions through the model gateway"`
 
 ---
 
@@ -101,14 +101,14 @@
   - `parse_inline_answer(text: str, evidence: Sequence[Evidence], *, extra_labels: frozenset[str] = frozenset(), max_answer_chars: int, max_claims: int, max_claim_chars: int, max_labels_per_claim: int) -> tuple[str, tuple[GeneratedClaim, ...]]`：返回去掉全部标记后的正文与 claim 元组。claim 为“含至少一个有效标记的句子”：句子文本（去标记、首尾空白规整）、标签（按出现顺序去重，属于证据标签 ∪ `extra_labels`）；句子按 `。！？.!?` 与换行切分；代码块与行内代码中的标记不算；未知标签被丢弃，丢弃后无有效标签的句子不是 claim；沿用 `_borrows_another_document` 规则；句子在正文中不能唯一定位时丢弃该 claim。全部 claim 都无效时返回 `("", ())`（调用方按现有规则弃答）。
   - 提示词：要求 Markdown 正文、每个事实句末用 `[S1]` / `[R1]` 标记引用、只用给出的标签、证据不足时只输出 `INSUFFICIENT_EVIDENCE`（解析为弃答，原因 `insufficient_evidence`）。保留 PR 4 的 `untrusted` 说明句。
   - `KnowledgeModelGateway.answer(..., on_text: Callable[[str], Awaitable[None]] | None = None)`：经 `chat_stream` 生成；每个 `ModelTextDelta` 调用 `on_text`（原始文本，含标记）；结束后用 `parse_inline_answer` 产出与原来相同类型的 `AnswerGeneration`（`answer`、`claims` 语义不变，下游校验、快照与前端定稿渲染不改）。`retrieval_profile_id` / 生成器版本标识由 `grounded-answer-v1` 改为 `grounded-answer-v2`。
-- [ ] **Step 1: 写失败测试**（`test_inline_citations.py`）
+- [x] **Step 1: 写失败测试**（`test_inline_citations.py`）
   - `test_sentences_with_markers_become_claims`：`"理赔需在 30 日内提交[S1]。材料包括身份证明[S2][S1]。"` → 正文无标记，两条 claim，第二条标签 `("S2", "S1")`。
   - `test_unknown_and_code_span_markers_are_not_claims`：`"见 `[S1]` 示例。结论成立[S9]。"`（证据只有 S1）→ `("", ())`。
   - `test_relation_labels_are_accepted_via_extra_labels`：`[R1]` 在 `extra_labels={"R1"}` 时成为 claim。
   - `test_insufficient_evidence_sentinel_abstains`：经 `KnowledgeModelGateway.answer` 且网关返回 `INSUFFICIENT_EVIDENCE` 时 `abstained` 结果原因 `insufficient_evidence`。
   - `test_on_text_receives_every_delta`：替身流式网关产出三块，`on_text` 依次收到三块。
-- [ ] **Step 2–4: 确认失败 → 实现 → 通过**；另跑 `apps/tap-ai-backend/tests/contract apps/tap-ai-backend/tests/unit/knowledge` 与 `make quality-answers`（fake 门槛仍通过）。
-- [ ] **Step 5: Commit**：`git commit -m "feat: generate answers with inline citation markers"`
+- [x] **Step 2–4: 确认失败 → 实现 → 通过**；另跑 `apps/tap-ai-backend/tests/contract apps/tap-ai-backend/tests/unit/knowledge` 与 `make quality-answers`（fake 门槛仍通过）。
+- [x] **Step 5: Commit**：`git commit -m "feat: generate answers with inline citation markers"`
 
 ---
 
@@ -128,12 +128,12 @@
   - `class EventWakeups(Protocol)`: `async def notify(self, conversation_id: str, sequence: int) -> None`。
   - `RedisDraftStream`、`RedisEventWakeups`：键名、`MAXLEN ~`、TTL 取 Global Constraints；任何 Redis 异常包装为 `DraftStreamUnavailable`（调用方据此降级，不使 Turn 失败）。
   - `ConversationService.append_stream_event` 与 `complete_evidence` 在仓储提交成功后调用 `wakeups.notify(...)`（`wakeups` 可为 `None`；通知失败只记 warning 与 span 属性 `tap.stream.wakeup_failed`）。
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
   - `test_append_sets_maxlen_and_ttl`、`test_replay_filters_attempt_and_orders_by_seq`、`test_partial_text_uses_latest_attempt`、`test_redis_errors_raise_draft_stream_unavailable`（fake Redis）。
   - `test_notify_after_commit_only`：仓储 `append_stream_event` 抛异常时不发唤醒；成功时发一次，`sequence` 等于新事件序号。
   - 集成：`test_read_blocks_until_draft_or_wakeup_arrives`（真实 Redis，阻塞读在另一协程 `append` 后 1s 内返回）。
-- [ ] **Step 2–4: 确认失败 → 实现 → 通过**
-- [ ] **Step 5: Commit**：`git commit -m "feat: add redis draft and wakeup streams for conversations"`
+- [x] **Step 2–4: 确认失败 → 实现 → 通过**
+- [x] **Step 5: Commit**：`git commit -m "feat: add redis draft and wakeup streams for conversations"`
 
 ---
 
@@ -151,12 +151,12 @@
   - `class DraftBatcher`: `__init__(self, *, turn_id: str, attempt: int, drafts: DraftStream | None, redact: Callable[[str], Awaitable[str]], max_delay_s: float = 0.05, max_chars: int = 32, holdback_chars: int = 48)`；`async def push(self, text: str) -> None`；`async def close(self) -> str`（冲刷剩余并返回脱敏后全文）。算法：累计原始全文 `raw`；达到阈值时 `redacted = await redact(raw)`，可发送的上界为 `len(redacted) - holdback_chars`（`close` 时为全长），只发送上次已发位置到上界之间的新文本（若脱敏导致已发前缀变化，则以 `seq` 递增发送一条 `text` 为空、字段 `reset: true` 的条目后从头重发——不预期发生，测试覆盖）；`drafts` 为 `None` 或抛 `DraftStreamUnavailable` 时转为只累计不发送，并在当前 span 设 `tap.stream.degraded = true`。
   - `model` 节点：用 batcher 作为 `on_text` 回调；节点结束前 `close()`。
   - `seed_search` 完成时立即经 `conversations.append_stream_event(..., lease_token=turn.lease_token)` 提交 `retrieval.hits_ready`；`verify` 开始时提交 `stage.started {"stage": "verify"}`；状态记录已提交的事件类型，`finalize` 的 `stream_events` 不再重复它们，并且不再产生 `answer.delta`。
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
   - `test_draft_batcher.py`：`test_flushes_on_32_chars_or_50ms`；`test_redaction_holds_back_patterns_split_across_batches`（依次 push `"联系 138123"`、`"45678 处理"`，所有已 `append` 文本拼接后不含 `13812345678`，`close()` 返回含 `[REDACTED_PHONE]`）；`test_degrades_silently_when_drafts_unavailable`；`test_seq_is_monotonic_per_attempt`。
   - `test_chat_turn_graph.py`：`test_hits_ready_is_committed_before_generation_starts`（替身生成步骤断言调用时仓储已有 `retrieval.hits_ready`）；`test_no_answer_delta_event_is_emitted`。
   - `test_worker_stream_events.py`：更新期望事件序列（去掉 `answer.delta`，`retrieval.hits_ready` 提前）。
-- [ ] **Step 2–4: 确认失败 → 实现 → 通过**（含 `apps/tap-ai-backend/tests/unit apps/tap-ai-backend/tests/contract/test_worker_stream_events.py`）
-- [ ] **Step 5: Commit**：`git commit -m "feat: stream redacted answer drafts from the model node"`
+- [x] **Step 2–4: 确认失败 → 实现 → 通过**（含 `apps/tap-ai-backend/tests/unit apps/tap-ai-backend/tests/contract/test_worker_stream_events.py`）
+- [x] **Step 5: Commit**：`git commit -m "feat: stream redacted answer drafts from the model node"`
 
 ---
 
@@ -176,11 +176,11 @@
   4. 会话中所有 Turn 都已终止且已发送完毕后关闭流（保持前端现有重连语义）。
   5. `DraftStreamUnavailable` 时转入每 1s 读 MySQL 的降级循环（不发草稿），当前 span 设 `tap.stream.degraded = true`。
 - `answer.draft` 帧仍使用 `ChatEventEnvelope` 外层（`sequence` 取最近一次权威事件序号，前端以 `attempt`/`seq` 排序草稿，不以 `sequence` 去重草稿）。
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
   - 契约：`test_answer_draft_event_schema_and_no_answer_delta`；`test_turn_canceled_accepts_partial_answer`。
   - 集成：`test_draft_frames_arrive_before_terminal_event`；`test_reconnect_replays_only_current_attempt`（写入 attempt 1 与 2 的草稿，带 Last-Event-ID 重连只收到 attempt 2）；`test_stream_degrades_to_mysql_polling_when_redis_fails`（读取抛 `DraftStreamUnavailable` 后终止事件在约 1s 内送达，流不报错）；`test_stream_does_not_poll_when_idle`（替身计数：阻塞期间 MySQL 读取次数不随时间增长）。
-- [ ] **Step 2–4: 确认失败 → 实现 → 通过**；运行 `make contracts` 并确认生成物只含上述契约变化。
-- [ ] **Step 5: Commit**：`git commit -m "feat: replace sse polling with blocking reads and answer drafts"`
+- [x] **Step 2–4: 确认失败 → 实现 → 通过**；运行 `make contracts` 并确认生成物只含上述契约变化。
+- [x] **Step 5: Commit**：`git commit -m "feat: replace sse polling with blocking reads and answer drafts"`
 
 ---
 
@@ -199,12 +199,12 @@
   - `ConversationService.cancel`：先读 `partial_text(turn_id)`（失败忽略），写 `turn.canceled` 时载荷加 `partialAnswer`（仅当非空；文本已是脱敏后的草稿）；提交后 `request_cancel`（失败忽略）。
   - worker：等待图任务时以 `min(renew_interval_seconds, 0.25)` 为周期检查 `cancel_requested`，为真则取消图任务、静默返回（终止事件已由 API 写入）；续租仍按 `renew_interval_seconds`。
   - `ChatGraph`：每个节点前除授权外检查一个可选的 `canceled: Callable[[], Awaitable[bool]]`（worker 传入读取 Turn 状态的检查），为真时抛 `PermissionError`（按所有权丢失静默退出）。
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
   - `test_cancel_includes_partial_draft`、`test_cancel_before_any_draft_has_no_partial_answer`（服务层，fake drafts）。
   - `test_worker_cancels_running_graph_within_half_a_second`（替身生成步骤 `await asyncio.sleep(10)`，设置取消标记后 worker 在 0.5s 内返回且未调用 `complete_evidence`）。
   - `test_cancel_without_redis_stops_at_next_node_boundary`（`cancel_requested` 抛 `DraftStreamUnavailable`，Turn 状态已为 canceled，下一个节点不执行）。
-- [ ] **Step 2–4: 确认失败 → 实现 → 通过**
-- [ ] **Step 5: Commit**：`git commit -m "feat: stop answer generation immediately on cancel"`
+- [x] **Step 2–4: 确认失败 → 实现 → 通过**
+- [x] **Step 5: Commit**：`git commit -m "feat: stop answer generation immediately on cancel"`
 
 ---
 
@@ -220,9 +220,9 @@
 - `StreamTurnState` 新增：`draft: { attempt: number; seq: number; text: string } | null`、`citationLabels: Record<string, { title: string; location: string | null }>`（来自 `retrieval.hits_ready` 载荷）、`stage: "verify" | null`、`partialAnswer: string | null`。
 - reducer：`answer.draft` 按 `(attempt, seq)` 追加（更大 attempt 清空重来，重复或更小 seq 忽略，`reset: true` 清空当前 attempt 文本）；`retrieval.hits_ready` 填 `citationLabels`；`stage.started {stage: "verify"}` 设 `stage`；`turn.completed` / `turn.abstained` 清空 `draft` 并用权威答案替换；`turn.canceled` 设 `partialAnswer`；删除 `answer.delta` 分支。`answer.draft` 不更新 `lastSequence`。
 - `DraftAnswer`：以“生成中”样式渲染 `draft.text` 的 Markdown（沿用现有安全 Markdown 渲染），把 `[S3]`、`[R1]` 中存在于 `citationLabels` 的标记渲染为带来源标题的徽标，不存在的标记按纯文本显示；`stage === "verify"` 时显示“正在核对依据” / “Checking sources”；取消后显示 `partialAnswer` 与“已停止 · 未核对依据” / “Stopped · not verified”，无部分草稿时只显示已停止状态。
-- [ ] **Step 1: 写失败测试**：`test_higher_attempt_draft_resets_text`、`test_out_of_order_seq_is_ignored`、`test_terminal_answer_replaces_draft`、`test_canceled_keeps_partial_answer`（stream.test.ts）；`test_known_label_renders_badge_with_source_title`、`test_unknown_label_renders_as_plain_text`、`test_verify_stage_shows_checking_sources`、`test_stopped_shows_unverified_notice`（DraftAnswer.test.tsx）。
-- [ ] **Step 2–4: 确认失败 → 实现 → 通过**（`pnpm --filter @tap/ai-frontend exec vitest run src/features/conversations`，并跑前端 lint 与 typecheck）
-- [ ] **Step 5: Commit**：`git commit -m "feat: render streaming drafts with citation badges"`
+- [x] **Step 1: 写失败测试**：`test_higher_attempt_draft_resets_text`、`test_out_of_order_seq_is_ignored`、`test_terminal_answer_replaces_draft`、`test_canceled_keeps_partial_answer`（stream.test.ts）；`test_known_label_renders_badge_with_source_title`、`test_unknown_label_renders_as_plain_text`、`test_verify_stage_shows_checking_sources`、`test_stopped_shows_unverified_notice`（DraftAnswer.test.tsx）。
+- [x] **Step 2–4: 确认失败 → 实现 → 通过**（`pnpm --filter @tap/ai-frontend exec vitest run src/features/conversations`，并跑前端 lint 与 typecheck）
+- [x] **Step 5: Commit**：`git commit -m "feat: render streaming drafts with citation badges"`
 
 ---
 
@@ -233,13 +233,13 @@
 
 **Interfaces:**
 - Consumes: 确定性网关分块流式输出（Task 2）、`[e2e-cancel]` 延迟钩子（已有）。
-- [ ] **Step 1: 更新/新增断言**
+- [x] **Step 1: 更新/新增断言**
   - 事件序列不再含 `answer.delta`；重放断言改用 `retrieval.hits_ready` 的序号作为 Last-Event-ID。
   - `draft appears with citation badges before the final answer replaces it`：提交问题后先可见“生成中”草稿与至少一个引用徽标，随后可见定稿与“打开来源引用 1”按钮，草稿消失。
   - `abstained answer replaces the draft`：选择无相关内容的问题，弃答提示替换草稿。
   - `stop shows the partial draft as not verified`：`[e2e-cancel]` 问题，草稿出现后点击停止，显示“已停止 · 未核对依据”，Turn 状态 `canceled`。
-- [ ] **Step 2: 子代理只运行 `pnpm --filter @tap/ai-frontend exec playwright test --list` 确认用例可收集；`make demo-e2e` 由主会话执行**
-- [ ] **Step 3: Commit**：`git commit -m "test: cover streaming drafts and stop in the conversation journey"`
+- [x] **Step 2: 子代理只运行 `pnpm --filter @tap/ai-frontend exec playwright test --list` 确认用例可收集；`make demo-e2e` 由主会话执行**
+- [x] **Step 3: Commit**：`git commit -m "test: cover streaming drafts and stop in the conversation journey"`
 
 ---
 
@@ -250,6 +250,6 @@
 - Modify: `docs/superpowers/plans/2026-10-01-product-roadmap.md`（子项目 7 行：PR 3；子项目 3 行：golden set 格式与命令已就绪）
 - Modify: `docs/architecture.md`（SSE 不再轮询、Redis 草稿流；可靠问答缺口行中“仓库内质量用例为空”“SSE 为数据库轮询”两项的更新）
 
-- [ ] **Step 1: 全量验证**：`make check`（含 `quality-answers`）；`make test`（对照既有失败，不得新增）；相关 MySQL 与 Redis 集成测试；`make contracts` 无新差异。
+- [x] **Step 1: 全量验证**：`make check`（含 `quality-answers`）；`make test`（对照既有失败，不得新增）；相关 MySQL 与 Redis 集成测试；`make contracts` 无新差异。
 - [ ] **Step 2: 记录质量对比运行方式**：在 V1 总纲能力 1 处写明真实基线运行点为 Task 1 提交（短 SHA），切换后在本分支 HEAD 运行 `make quality-answers-real` 并给出 `TAP_QUALITY_ANSWERS_BASELINE`；未运行前该验收项保持未勾选。
-- [ ] **Step 3: Commit**：`git commit -m "docs: record langgraph streaming delivery"`
+- [x] **Step 3: Commit**：`git commit -m "docs: record langgraph streaming delivery"`
