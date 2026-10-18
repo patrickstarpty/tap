@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
 from datetime import datetime, timedelta
 
 import pytest
@@ -34,10 +33,8 @@ from tap.modules.knowledge.ports.documents import (
 )
 from tap.platform.db.session import create_engine_and_session_factory
 
-DATABASE_URL = os.getenv(
-    "TAP_DATABASE_URL",
-    "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-)
+# Validation-only scenarios build an engine but never connect.
+UNCONNECTED_DATABASE_URL = "mysql+asyncmy://unused:unused@127.0.0.1:3306/unused"
 KNOWLEDGE_TABLES = (
     "knowledge_citation_snapshot",
     "knowledge_answer_source",
@@ -171,9 +168,11 @@ async def clean(engine: AsyncEngine) -> None:
             await connection.execute(text(f"DELETE FROM {table}"))
 
 
-def test_activated_upload_is_one_durable_document_revision_job_and_outbox() -> None:
+def test_activated_upload_is_one_durable_document_revision_job_and_outbox(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -210,11 +209,13 @@ def test_activated_upload_is_one_durable_document_revision_job_and_outbox() -> N
     asyncio.run(scenario())
 
 
-def test_activation_persists_the_reserved_nondefault_pipeline_versions() -> None:
+def test_activation_persists_the_reserved_nondefault_pipeline_versions(
+    owned_module_database_url: str,
+) -> None:
     """Hard-coded adapter versions would drift from the revision identity inputs."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -257,9 +258,11 @@ def test_activation_persists_the_reserved_nondefault_pipeline_versions() -> None
     asyncio.run(scenario())
 
 
-def test_concurrent_renamed_duplicate_has_one_identity_and_one_dispatch_path() -> None:
+def test_concurrent_renamed_duplicate_has_one_identity_and_one_dispatch_path(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             first_repo = MysqlDocumentRepository(
@@ -303,11 +306,13 @@ def test_concurrent_renamed_duplicate_has_one_identity_and_one_dispatch_path() -
     asyncio.run(scenario())
 
 
-def test_late_helper_cannot_reopen_cleanup_fact_after_active_cleanup() -> None:
+def test_late_helper_cannot_reopen_cleanup_fact_after_active_cleanup(
+    owned_module_database_url: str,
+) -> None:
     """An idempotent helper arriving after activation must leave recovery columns closed."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -352,11 +357,13 @@ def test_late_helper_cannot_reopen_cleanup_fact_after_active_cleanup() -> None:
     asyncio.run(scenario())
 
 
-def test_empty_dedupe_range_deadlock_is_retried_as_one_owned_and_one_pending() -> None:
+def test_empty_dedupe_range_deadlock_is_retried_as_one_owned_and_one_pending(
+    owned_module_database_url: str,
+) -> None:
     """A 1213 after two empty-range reads must not escape the repository boundary."""
 
     async def scenario() -> None:
-        engine, _ = create_engine_and_session_factory(DATABASE_URL)
+        engine, _ = create_engine_and_session_factory(owned_module_database_url)
         sessions = async_sessionmaker(
             engine,
             class_=ReservationInsertBarrierSession,
@@ -390,9 +397,11 @@ def test_empty_dedupe_range_deadlock_is_retried_as_one_owned_and_one_pending() -
     asyncio.run(scenario())
 
 
-def test_capacity_lock_allows_exactly_one_of_two_concurrent_unique_fiftieth_documents() -> None:
+def test_capacity_lock_allows_exactly_one_of_two_concurrent_unique_fiftieth_documents(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -420,9 +429,11 @@ def test_capacity_lock_allows_exactly_one_of_two_concurrent_unique_fiftieth_docu
     asyncio.run(scenario())
 
 
-def test_lease_token_ownership_and_expired_lease_recovery_are_conditional() -> None:
+def test_lease_token_ownership_and_expired_lease_recovery_are_conditional(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -484,9 +495,11 @@ def test_lease_token_ownership_and_expired_lease_recovery_are_conditional() -> N
     asyncio.run(scenario())
 
 
-def test_active_duplicate_is_returned_before_capacity_and_keeps_one_job() -> None:
+def test_active_duplicate_is_returned_before_capacity_and_keeps_one_job(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -517,9 +530,11 @@ def test_active_duplicate_is_returned_before_capacity_and_keeps_one_job() -> Non
     asyncio.run(scenario())
 
 
-def test_cursor_is_stable_and_malformed_or_widened_values_fail_closed() -> None:
+def test_cursor_is_stable_and_malformed_or_widened_values_fail_closed(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -650,7 +665,7 @@ def test_cursor_v1_rejects_every_noncanonical_position_mutation(cursor: Document
     """Relaxing any v1 position byte would admit ambiguous or widened pagination state."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(UNCONNECTED_DATABASE_URL)
         try:
             repository = MysqlDocumentRepository(
                 sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
@@ -663,9 +678,11 @@ def test_cursor_v1_rejects_every_noncanonical_position_mutation(cursor: Document
     asyncio.run(scenario())
 
 
-def test_only_failed_ingestion_retries_from_first_incomplete_stage_without_secret_text() -> None:
+def test_only_failed_ingestion_retries_from_first_incomplete_stage_without_secret_text(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -741,9 +758,9 @@ def test_only_failed_ingestion_retries_from_first_incomplete_stage_without_secre
     asyncio.run(scenario())
 
 
-def test_lease_renewal_requires_the_current_unexpired_token() -> None:
+def test_lease_renewal_requires_the_current_unexpired_token(owned_module_database_url: str) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -809,11 +826,13 @@ def test_lease_renewal_requires_the_current_unexpired_token() -> None:
 
 
 @pytest.mark.parametrize("operation", ["renew", "checkpoint", "fail"])
-def test_old_lease_token_loses_when_real_row_lock_wait_crosses_expiry(operation: str) -> None:
+def test_old_lease_token_loses_when_real_row_lock_wait_crosses_expiry(
+    operation: str, owned_module_database_url: str
+) -> None:
     """A timestamp sampled before a row-lock wait must not extend stale ownership."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         blocker = await engine.connect()
         transaction = None
@@ -893,7 +912,7 @@ def test_job_lease_duration_is_strict_positive_and_bounded(
     lease_duration: timedelta,
 ) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(UNCONNECTED_DATABASE_URL)
         try:
             with pytest.raises(ValueError):
                 await MysqlDocumentRepository(
@@ -910,11 +929,11 @@ def test_job_lease_duration_is_strict_positive_and_bounded(
     asyncio.run(scenario())
 
 
-def test_claim_lease_is_based_on_post_lock_database_time() -> None:
+def test_claim_lease_is_based_on_post_lock_database_time(owned_module_database_url: str) -> None:
     """A claim returned after a long lock hold must still own a future lease."""
 
     async def scenario() -> None:
-        engine, setup_sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, setup_sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             setup_repository = MysqlDocumentRepository(
@@ -949,9 +968,11 @@ def test_claim_lease_is_based_on_post_lock_database_time() -> None:
     asyncio.run(scenario())
 
 
-def test_delete_is_immediately_unselectable_and_final_delete_releases_dedupe_identity() -> None:
+def test_delete_is_immediately_unselectable_and_final_delete_releases_dedupe_identity(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -1025,9 +1046,11 @@ def test_delete_is_immediately_unselectable_and_final_delete_releases_dedupe_ide
     asyncio.run(scenario())
 
 
-def test_failed_deletion_stays_unselectable_and_reissued_delete_requeues_cleanup() -> None:
+def test_failed_deletion_stays_unselectable_and_reissued_delete_requeues_cleanup(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -1085,11 +1108,13 @@ def test_failed_deletion_stays_unselectable_and_reissued_delete_requeues_cleanup
     asyncio.run(scenario())
 
 
-def test_retry_and_delete_share_job_then_document_lock_order_without_deadlock() -> None:
+def test_retry_and_delete_share_job_then_document_lock_order_without_deadlock(
+    owned_module_database_url: str,
+) -> None:
     """Opposite job/document lock order would leak MySQL 1213 from this forced race."""
 
     async def scenario() -> None:
-        engine, setup_sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, setup_sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             setup = MysqlDocumentRepository(
@@ -1208,9 +1233,11 @@ def test_retry_and_delete_share_job_then_document_lock_order_without_deadlock() 
     asyncio.run(scenario())
 
 
-def test_delete_waits_for_inflight_job_then_fences_every_old_ingestion_transition() -> None:
+def test_delete_waits_for_inflight_job_then_fences_every_old_ingestion_transition(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -1326,9 +1353,11 @@ def test_delete_waits_for_inflight_job_then_fences_every_old_ingestion_transitio
     asyncio.run(scenario())
 
 
-def test_failed_promotion_is_hidden_and_fenced_for_durable_takeover() -> None:
+def test_failed_promotion_is_hidden_and_fenced_for_durable_takeover(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -1374,9 +1403,11 @@ def test_failed_promotion_is_hidden_and_fenced_for_durable_takeover() -> None:
     asyncio.run(scenario())
 
 
-def test_late_outbox_failure_keeps_promoted_locator_for_durable_takeover() -> None:
+def test_late_outbox_failure_keeps_promoted_locator_for_durable_takeover(
+    owned_module_database_url: str,
+) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             repository = OutboxFailureRepository(

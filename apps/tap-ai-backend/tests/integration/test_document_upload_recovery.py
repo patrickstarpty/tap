@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import AsyncIterable
 from datetime import datetime, timedelta
 
@@ -23,11 +22,6 @@ from tap.modules.knowledge.ports.documents import (
 )
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.platform.db.session import create_engine_and_session_factory
-
-DATABASE_URL = os.getenv(
-    "TAP_DATABASE_URL",
-    "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-)
 
 
 async def content(value: bytes) -> AsyncIterable[bytes]:
@@ -107,9 +101,9 @@ async def expire_reservations(engine: AsyncEngine) -> None:
         )
 
 
-def test_claimed_job_survives_repository_reconstruction() -> None:
+def test_claimed_job_survives_repository_reconstruction(owned_module_database_url: str) -> None:
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         try:
             first_repository = MysqlDocumentRepository(
@@ -146,11 +140,13 @@ def test_claimed_job_survives_repository_reconstruction() -> None:
     asyncio.run(scenario())
 
 
-def test_promotion_crash_is_taken_over_after_service_and_repository_reconstruction() -> None:
+def test_promotion_crash_is_taken_over_after_service_and_repository_reconstruction(
+    owned_module_database_url: str,
+) -> None:
     """Losing the process after formal promotion must not strand hidden capacity forever."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         artifacts = DurableArtifactFake()
         try:
@@ -202,11 +198,13 @@ def test_promotion_crash_is_taken_over_after_service_and_repository_reconstructi
     asyncio.run(scenario())
 
 
-def test_cleanup_failure_remains_a_durable_fact_until_reconstructed_recovery() -> None:
+def test_cleanup_failure_remains_a_durable_fact_until_reconstructed_recovery(
+    owned_module_database_url: str,
+) -> None:
     """A swallowed cleanup error would orphan staging with no restart-visible work."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         artifacts = DurableArtifactFake()
         artifacts.fail_cleanup = True
@@ -256,11 +254,13 @@ def test_cleanup_failure_remains_a_durable_fact_until_reconstructed_recovery() -
     asyncio.run(scenario())
 
 
-def test_activation_holds_cleanup_lease_until_owner_clears_staging_fact() -> None:
+def test_activation_holds_cleanup_lease_until_owner_clears_staging_fact(
+    owned_module_database_url: str,
+) -> None:
     """Recovery must not steal ownership between activation commit and external cleanup."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         artifacts = DurableArtifactFake()
         artifacts.block_cleanup = True
@@ -303,11 +303,13 @@ def test_activation_holds_cleanup_lease_until_owner_clears_staging_fact() -> Non
     asyncio.run(scenario())
 
 
-def test_expired_cleanup_takeover_does_not_turn_activated_upload_into_failure() -> None:
+def test_expired_cleanup_takeover_does_not_turn_activated_upload_into_failure(
+    owned_module_database_url: str,
+) -> None:
     """An old owner losing its cleanup token delegates recovery without failing upload."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         artifacts = DurableArtifactFake()
         artifacts.block_cleanup = True
@@ -351,11 +353,13 @@ def test_expired_cleanup_takeover_does_not_turn_activated_upload_into_failure() 
     asyncio.run(scenario())
 
 
-def test_duplicate_helper_activates_owner_staging_without_a_second_dispatch_path() -> None:
+def test_duplicate_helper_activates_owner_staging_without_a_second_dispatch_path(
+    owned_module_database_url: str,
+) -> None:
     """A helper may finish the durable owner copy but must not create another formal path."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         artifacts = DurableArtifactFake()
         try:
@@ -411,11 +415,13 @@ def test_duplicate_helper_activates_owner_staging_without_a_second_dispatch_path
     asyncio.run(scenario())
 
 
-def test_duplicate_helper_uses_own_bytes_when_owner_staging_is_missing() -> None:
+def test_duplicate_helper_uses_own_bytes_when_owner_staging_is_missing(
+    owned_module_database_url: str,
+) -> None:
     """Destroying helper bytes before promotion would make the hidden document unrecoverable."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await clean(engine)
         artifacts = DurableArtifactFake()
         try:
