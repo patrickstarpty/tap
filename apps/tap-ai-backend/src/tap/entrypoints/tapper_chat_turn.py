@@ -41,6 +41,7 @@ from tap.modules.chat.domain.conversations import (
     GraphContextStatus,
     RetrievalSummary,
 )
+from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 from tap.platform.telemetry import current_binding
 
 
@@ -495,25 +496,44 @@ class ChatTurnNodes:
         taken straight from document structure -- never authored or
         screened by the model -- so, unlike the rest of the payload, they
         must still pass through the v2 chat-egress redactor before this
-        event is ever emitted."""
+        event is ever emitted.
+
+        `_redact` can raise `RedactionUnavailable` for a field whose
+        document-sourced text looks like a half-written credential or
+        private-key block (e.g. a heading literally titled "Account /
+        Forgot password:") -- these are *display* labels, not the
+        authoritative answer, so that must never fail the Turn. A field
+        that fails to redact is caught per-field and dropped (set to
+        `None`); `title` is the one field callers always render, so a label
+        whose `title` cannot be redacted is dropped from the list entirely
+        rather than emitted with a missing title."""
         labels = payload.get("labels") if payload else None
         if not payload or not isinstance(labels, list):
             return None if payload is None else dict(payload)
         redacted_labels: list[dict[str, object]] = []
         for raw_label in labels:
             label = cast(Mapping[str, object], raw_label)
-            title = label.get("title")
-            location = label.get("location")
-            redacted_labels.append(
-                {
-                    **label,
-                    "title": title if title is None else await self._redact(str(title)),
-                    "location": (
-                        location if location is None else await self._redact(str(location))
-                    ),
-                }
-            )
+            title_ok, title = await self._try_redact(label.get("title"))
+            if not title_ok:
+                # Callers always render `title`; a label whose title cannot
+                # be safely redacted has nothing safe to show, so the whole
+                # label is dropped rather than emitted with a blank title.
+                continue
+            _location_ok, location = await self._try_redact(label.get("location"))
+            redacted_labels.append({**label, "title": title, "location": location})
         return {**payload, "labels": redacted_labels}
+
+    async def _try_redact(self, value: object) -> tuple[bool, object]:
+        """Redacts one `retrieval.hits_ready` label field, never letting a
+        `RedactionUnavailable` for this field fail the Turn. Returns
+        `(True, redacted_text)` on success, or `(False, None)` if `_redact`
+        raised -- the field is set to `None` either way the caller uses it."""
+        if value is None:
+            return True, None
+        try:
+            return True, await self._redact(str(value))
+        except RedactionUnavailable:
+            return False, None
 
     async def _emit_committed(
         self, state: ChatGraphState, event_type: str, payload: Mapping[str, object] | None
@@ -522,11 +542,20 @@ class ChatTurnNodes:
         ready (ahead of the terminal `complete_evidence` batch), through
         `conversations.emit`. Skips re-emitting (and returns `None`) when
         this exact `event_type`/stage combination (M-4's `_event_key`) is
-        already in `committed_stream_events` -- a resumed `verify` after a
-        transient failure must not commit its `stage.started` a second time.
-        Returns the updated `committed_stream_events` list (to merge into the
-        node's returned state) so `finalize` never repeats an event already
-        committed here, or `None` if nothing was (newly) committed."""
+        already in `committed_stream_events`. The actual guarantee this
+        gives: no duplicate is ever emitted across a successful node
+        completion or a checkpoint resume, because `committed_stream_events`
+        is itself part of the checkpointed state. It does *not* cover a
+        retry after `verify` raised a retryable exception -- that state
+        update was never returned/checkpointed, so a later retry's
+        `_emit_committed(state, "stage.started", ...)` sees a `state`
+        without this node's key and commits `stage.started` a second time.
+        That is a harmless, duplicate *progress* event (not the final
+        evidence), so it is an acceptable gap rather than a guarantee this
+        method makes. Returns the updated `committed_stream_events` list (to
+        merge into the node's returned state) so `finalize` never repeats an
+        event already committed here, or `None` if nothing was (newly)
+        committed."""
         if not payload:
             return None
         key = _event_key(event_type, payload)

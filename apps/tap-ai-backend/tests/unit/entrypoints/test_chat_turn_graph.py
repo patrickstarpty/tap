@@ -24,6 +24,7 @@ from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import TurnInput, TurnInputSnapshot
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
 from tap.modules.knowledge.ports.answers import AnswerSnapshotUnavailable
+from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 from tap.platform.budget import TurnBudget, current_meter
 
 
@@ -885,6 +886,66 @@ async def test_retrieval_hits_ready_labels_are_redacted_before_emit() -> None:
     assert "leaker@example.com" not in label["location"]
     assert label["title"] == "contact [REDACTED_EMAIL]"
     assert label["location"] == "附录 / [REDACTED_EMAIL]"
+
+
+@pytest.mark.asyncio
+async def test_retrieval_hits_ready_drops_a_label_whose_title_redaction_is_unavailable() -> None:
+    """A label's `title`/`location` come straight from document structure
+    and can look like a half-written credential or private-key block to the
+    redactor (e.g. a heading literally titled "Account / Forgot password:"),
+    raising `RedactionUnavailable`. These are display labels, not the
+    authoritative answer -- that must never fail the Turn. A label whose
+    `title` cannot be redacted is dropped entirely; one whose `location`
+    (but not `title`) fails keeps its title and gets a `None` location."""
+
+    class _LabeledKnowledge(_StepsKnowledge):
+        async def prepare_conversation_answer(
+            self, request, frozen_input, *, answer_plan=None, authorize=None
+        ):
+            self.prepare_calls += 1
+            return {
+                "kind": "prepared",
+                "bundle": {},
+                "retrieval_hits": {
+                    "traceId": "trace-1",
+                    "authorizedHitCount": 2,
+                    "labels": [
+                        {
+                            "label": "S1",
+                            "title": "Account / Forgot password:",
+                            "location": "附录 1",
+                        },
+                        {
+                            "label": "S2",
+                            "title": "normal title",
+                            "location": "Account / Forgot password:",
+                        },
+                    ],
+                },
+            }
+
+    async def _redact(text: str) -> str:
+        if "password" in text:
+            raise RedactionUnavailable("half-written credential")
+        return text
+
+    turn = _turn()
+    conversations = _Conversations(turn)
+    worker = GenerationWorker(
+        conversations, _LabeledKnowledge(), checkpointer=InMemorySaver(), redact=_redact
+    )
+
+    assert await worker.run_once(limit=1) == 1
+
+    _c, _t, event_type, payload, _lease = conversations.emitted[0]
+    assert event_type == "retrieval.hits_ready"
+    labels = payload["labels"]
+    # S1's title failed to redact -> the whole label is dropped.
+    assert all(label["label"] != "S1" for label in labels)
+    # S2's title redacted fine; its location failed -> location becomes None.
+    s2 = next(label for label in labels if label["label"] == "S2")
+    assert s2["title"] == "normal title"
+    assert s2["location"] is None
 
 
 @pytest.mark.asyncio

@@ -286,12 +286,20 @@ async def test_holdback_covers_an_unterminated_email_local_part_longer_than_hold
         holdback_chars=48,
     )
 
+    await batcher.push("Contact ")
     for _ in range(80):
         await batcher.push("a")
     sent_before_at = "".join(_texts(drafts.calls))
     assert "a" * 60 not in sent_before_at
 
-    await batcher.push("@example.com")
+    # The `@` arrives on its own push -- this is exactly the boundary where
+    # a trailing-run pattern missing `@` from its character class would stop
+    # matching and silently fall back to the fixed `holdback_chars` margin.
+    await batcher.push("@")
+    await batcher.push("exa")
+    await batcher.push("mple")
+    for ch in ".com and bbb-ccc@sub.example.co more text to flush past holdback":
+        await batcher.push(ch)
     final_text = await batcher.close()
 
     replayed = ""
@@ -299,9 +307,82 @@ async def test_holdback_covers_an_unterminated_email_local_part_longer_than_hold
         if call[4]:
             replayed = ""
         replayed += call[3]
-    assert "a" * 80 not in replayed
+
+    # No run of 41+ consecutive `a`s (the local part, longer than
+    # `holdback_chars`) may ever have been exposed, across every chunk ever
+    # appended -- including any sent before a later `reset: true` discarded
+    # them -- not just what remains in the final replay.
+    all_chunks_ever_sent = "".join(_texts(drafts.calls))
+    assert re.search(r"a{41,}", all_chunks_ever_sent) is None
+    assert re.search(r"a{41,}", replayed) is None
     assert "[REDACTED_EMAIL]" in replayed
     assert "[REDACTED_EMAIL]" in final_text
+
+    # A second, independent long local part containing `-`, pushed
+    # character-by-character, must also never leak a run longer than the
+    # holdback margin before `close()`.
+    drafts2 = _FakeDrafts()
+    batcher2 = DraftBatcher(
+        turn_id="turn-2",
+        attempt=1,
+        drafts=drafts2,
+        redact=_email_redact,
+        max_delay_s=1000,
+        max_chars=1,
+        holdback_chars=48,
+    )
+    local_part = "user-name-" + "b" * 60
+    for ch in local_part:
+        await batcher2.push(ch)
+    await batcher2.push("@")
+    for ch in "sub.example.com":
+        await batcher2.push(ch)
+    final_text2 = await batcher2.close()
+    all_chunks_ever_sent2 = "".join(_texts(drafts2.calls))
+    assert local_part not in all_chunks_ever_sent2
+    assert "[REDACTED_EMAIL]" in final_text2
+
+
+@pytest.mark.asyncio
+async def test_close_returns_empty_and_skips_hits_when_degraded_by_redaction(span_recorder):
+    """When `close()`'s own final flush degrades the batcher via
+    `RedactionUnavailable` (a credential/key block that never completes),
+    `_last_redacted` is stale -- at best a partial redaction from an earlier
+    successful flush of a shorter raw text -- and must never be returned as
+    this attempt's answer, nor have its placeholder counts recorded as this
+    attempt's redaction hits. `finalize`'s fail-closed redaction remains the
+    sole authoritative decision regardless."""
+    from tap.platform.telemetry.tracing import span
+
+    redactor = PatternEgressRedactor(personal_data=True)
+    drafts = _FakeDrafts()
+    with span("test.draft_batcher_degraded_hits") as current:
+        batcher = DraftBatcher(
+            turn_id="turn-1",
+            attempt=1,
+            drafts=drafts,
+            redact=redactor.redact_text,
+            max_delay_s=1000,
+            max_chars=1,
+            holdback_chars=0,
+        )
+        # First flush succeeds and redacts a phone number -- this is what
+        # would leak via a stale `_last_redacted` if `close()` ignored the
+        # degradation that follows.
+        await batcher.push("电话 13812345678 结束 ")
+        assert batcher._last_redacted != ""
+
+        # Second push never completes its credential pattern -- `close()`'s
+        # final flush raises `RedactionUnavailable` and degrades.
+        await batcher.push("password:")
+        final_text = await batcher.close()  # must not raise
+        span_id = current.get_span_context().span_id
+
+    assert batcher._redaction_unavailable is True
+    assert final_text == ""
+
+    finished = next(s for s in span_recorder.get_finished_spans() if s.context.span_id == span_id)
+    assert "tap.guard.redaction.draft_hits" not in finished.attributes
 
 
 @pytest.mark.asyncio

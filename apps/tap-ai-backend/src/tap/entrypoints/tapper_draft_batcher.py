@@ -115,6 +115,16 @@ class DraftBatcher:
 
     async def close(self) -> str:
         await self._flush(final=True)
+        if self._redaction_unavailable:
+            # Degraded by a `RedactionUnavailable` that never got the chance
+            # to redact this attempt's complete answer (this call's own
+            # final flush, or an earlier one): `_last_redacted` is stale --
+            # at best a partial redaction of an earlier, shorter raw text --
+            # and must never be returned as if it were this attempt's
+            # answer, nor counted into its redaction-hit stats.
+            # `KnowledgeHttpService.finalize_conversation_answer` remains the
+            # sole authoritative, fail-closed redaction decision either way.
+            return ""
         self._record_redaction_hits()
         return self._last_redacted
 
