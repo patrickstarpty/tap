@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -393,3 +394,63 @@ def test_real_mode_refuses_without_tap_run_quality_answers(
     assert exit_code == 2
     assert not observations_path.exists()
     assert "TAP_RUN_QUALITY_ANSWERS" in capsys.readouterr().err
+
+
+def test_poll_ready_fails_fast_on_a_failed_document(
+    run_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 1 (deferred performance/correctness item): a document that
+    reaches `"failed"` never becomes `"ready"`, so without this check
+    `_poll_ready` would keep polling it until `deadline` -- which can be
+    minutes in the real `corpus` run -- instead of failing immediately with
+    a clear reason. `monotonic`'s own deadline must never be reached."""
+    calls: list[str] = []
+
+    def fake_source_documents(api: str, project_id: str, source_id: str) -> list[dict]:
+        calls.append(source_id)
+        if source_id == "src-bad":
+            return [
+                {
+                    "documentId": "doc-1",
+                    "status": "failed",
+                    "errorCode": "unsupported_media_type",
+                }
+            ]
+        return [{"documentId": "doc-2", "status": "running"}]
+
+    monkeypatch.setattr(run_module, "_source_documents", fake_source_documents)
+    monkeypatch.setattr(run_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(RuntimeError, match="src-bad"):
+        run_module._poll_ready(
+            "http://api.invalid",
+            "project-1",
+            ["src-bad", "src-good"],
+            deadline=time.monotonic() + 600,
+        )
+
+    # Failed fast: raised as soon as the failed source was seen (sorted
+    # iteration order reaches "src-bad" before "src-good"), without ever
+    # needing `time.sleep` (patched to a no-op above) or a second pass.
+    assert calls == ["src-bad"]
+
+
+def test_poll_ready_succeeds_once_every_source_is_ready(
+    run_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-failed, non-ready document is still just polled normally --
+    this fix must not turn every pending document into a failure."""
+
+    def fake_source_documents(api: str, project_id: str, source_id: str) -> list[dict]:
+        return [{"documentId": "doc-1", "status": "ready"}]
+
+    monkeypatch.setattr(run_module, "_source_documents", fake_source_documents)
+
+    run_module._poll_ready(
+        "http://api.invalid",
+        "project-1",
+        ["src-a"],
+        deadline=time.monotonic() + 600,
+    )

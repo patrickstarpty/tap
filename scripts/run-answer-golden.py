@@ -341,9 +341,27 @@ def _poll_ready(
     pending = set(source_ids)
     while pending:
         for source_id in sorted(pending):
+            items = _source_documents(api, project_id, source_id)
+            # Fail fast and clearly on a failed document (Task 1 deferred
+            # item): without this check, a document that reaches "failed"
+            # never becomes "ready", so the loop below would otherwise just
+            # keep polling it until the deadline -- which can be minutes --
+            # instead of reporting the real problem immediately.
+            failed = [
+                item
+                for item in items
+                if str(item.get("status", "")).lower() == "failed"
+            ]
+            if failed:
+                details = "; ".join(
+                    f"{item.get('documentId', '?')} ({item.get('errorCode') or item.get('error_code') or 'unknown error'})"
+                    for item in failed
+                )
+                raise RuntimeError(
+                    f"knowledge source {source_id} has a failed document: {details}"
+                )
             ready = any(
-                str(item.get("status", "")).lower() == "ready"
-                for item in _source_documents(api, project_id, source_id)
+                str(item.get("status", "")).lower() == "ready" for item in items
             )
             if ready:
                 pending.discard(source_id)
