@@ -638,6 +638,66 @@ async def test_deterministic_gateway_does_not_delay_a_normal_chat_answer(
 
 
 @pytest.mark.asyncio
+async def test_deterministic_gateway_abstains_with_abstain_marker() -> None:
+    """Task 9 fix round 1: the isolated browser E2E's abstain journey appends
+    ` [e2e-abstain]` to force the fake model to abstain deterministically, since
+    `AuthorizedRetrieval` has no relevance/score cutoff -- an unrestricted query
+    almost always finds *some* evidence in a shared E2E corpus, so withholding
+    evidence from the request can't be used to force an empty-claims abstain.
+    The marker makes the gateway answer `INSUFFICIENT_EVIDENCE` (no inline
+    `[S1]`/`[R1]` markers) even though real evidence was supplied -- exactly the
+    shape `parse_inline_answer` already treats as "no grounded claim"."""
+
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    gateway = DeterministicModelGateway(
+        configured_gateway(success)._config, scope=VALIDATION_SCOPE, redact=redact
+    )
+    context = json.dumps(
+        {
+            "query": "退款规则是什么？ [e2e-abstain]",
+            "untrusted": {"evidence": [{"label": "S1", "content": "退款需要两人审批。"}]},
+        },
+        ensure_ascii=False,
+    )
+
+    result = None
+    async for event in gateway.chat_stream(_chat_answer_request(context)):
+        if not isinstance(event, ModelTextDelta):
+            result = event
+    assert result is not None
+    assert result.output == "INSUFFICIENT_EVIDENCE"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_gateway_abstain_marker_does_not_affect_a_normal_answer() -> None:
+    """A real refund question (no marker) with the same evidence still grounds an
+    answer -- `_abstention_requested` only fires on the literal marker, never on
+    unrelated evidence/relation text that happens to resemble it."""
+
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    gateway = DeterministicModelGateway(
+        configured_gateway(success)._config, scope=VALIDATION_SCOPE, redact=redact
+    )
+    context = json.dumps(
+        {
+            "query": "退款规则是什么？",
+            "untrusted": {"evidence": [{"label": "S1", "content": "退款需要两人审批。"}]},
+        },
+        ensure_ascii=False,
+    )
+
+    result = None
+    async for event in gateway.chat_stream(_chat_answer_request(context)):
+        if not isinstance(event, ModelTextDelta):
+            result = event
+    assert result is not None
+    assert result.output != "INSUFFICIENT_EVIDENCE"
+    assert "[S1]" in result.output
+
+
+@pytest.mark.asyncio
 async def test_deterministic_gateway_embed_never_delays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

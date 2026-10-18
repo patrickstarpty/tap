@@ -31,6 +31,12 @@ from tap.testing.deterministic_model import (
     deterministic_vector,
 )
 
+# Task 9 fix round 1: a test-only marker forcing the fake model to abstain
+# (see `_abstention_requested`), mirroring `_CANCELLATION_QUERY_SUFFIX`'s
+# `[e2e-cancel]`. Both only ever reach this deterministic gateway, which is
+# wired up for the explicitly isolated fake E2E profile only.
+_ABSTENTION_QUERY_SUFFIX = " [e2e-abstain]"
+
 BUILT_IN_ROUTES = LiteLLMRoutes(
     {
         "qwen-plus": LiteLLMModel("qwen-plus", "Qwen Plus", "chat", True, True, False),
@@ -67,13 +73,13 @@ def _chunk_into(text: str, size: int = 8) -> list[str]:
     return [text[index : index + size] for index in range(0, len(text), size)]
 
 
-def _cancellation_requested(context: str) -> bool:
+def _query_ends_with(context: str, suffix: str) -> bool:
     """`KnowledgeModelGateway.answer` carries the question under the JSON `query` key
-    (`src/tap/modules/knowledge/adapters/litellm.py`); match the E2E cancel marker there
-    so an unrelated evidence or relation record ending in similar text cannot trigger it.
+    (`src/tap/modules/knowledge/adapters/litellm.py`); match an E2E marker there so an
+    unrelated evidence or relation record ending in similar text cannot trigger it.
     Other structured contexts (e.g. prompt suggestions) do not carry a separately
     addressable question, so fall back to a plain substring check on the raw context --
-    the production marker never occurs there outside of this fake E2E contract."""
+    a production marker never occurs there outside of this fake E2E contract."""
 
     try:
         parsed = json.loads(context)
@@ -81,8 +87,31 @@ def _cancellation_requested(context: str) -> bool:
         parsed = None
     query = parsed.get("query") if isinstance(parsed, dict) else None
     if isinstance(query, str):
-        return query.endswith(_CANCELLATION_QUERY_SUFFIX)
-    return isinstance(context, str) and _CANCELLATION_QUERY_SUFFIX in context
+        return query.endswith(suffix)
+    return isinstance(context, str) and suffix in context
+
+
+def _cancellation_requested(context: str) -> bool:
+    return _query_ends_with(context, _CANCELLATION_QUERY_SUFFIX)
+
+
+def _abstention_requested(context: str) -> bool:
+    """Task 9 fix round 1: the real stack has no relevance/score cutoff at
+    retrieval (`AuthorizedRetrieval._hit_is_in_execution` admits every hit
+    whose family/corpus/embedding version match once no `SCOPE` resource is
+    selected -- an unrestricted question almost always finds *some*
+    evidence in whatever is already published), so there is no
+    content-only way to force a genuinely empty-evidence abstain
+    deterministically against a shared E2E corpus. This marker lets the
+    isolated browser E2E force the *model* to abstain instead (exactly the
+    `verify_answer` path a real model takes when it writes no inline
+    `[S1]`/`[R1]` markers at all): `KnowledgeModelGateway.answer`'s
+    platform instruction already tells a real model to answer with
+    `INSUFFICIENT_EVIDENCE` when no evidence supports the answer
+    (`modules/knowledge/adapters/litellm.py`), so this only mirrors that
+    contract for the fake model instead of fabricating a new one."""
+
+    return _query_ends_with(context, _ABSTENTION_QUERY_SUFFIX)
 
 
 def _is_grounded_answer_context(context: str) -> bool:
@@ -281,7 +310,11 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 # exactly as the JSON path used to. A plain `chat()` (model-only,
                 # no retrieval) never carries `untrusted.evidence`, so it still gets
                 # the unchanged plain "Grounded" answer below.
-                claims = _grounded_claims_from_context(request.context)
+                claims = (
+                    []
+                    if _abstention_requested(request.context)
+                    else _grounded_claims_from_context(request.context)
+                )
                 content = (
                     " ".join(
                         item["text"] + "".join(f"[{label}]" for label in item["evidenceLabels"])

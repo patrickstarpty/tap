@@ -670,22 +670,76 @@ test("a published source's suggested question grounds a Tapper answer", async ({
 });
 
 test("an abstained answer replaces the draft", async ({ page }) => {
-  // A question asked with no knowledge source attached resolves to an empty
-  // `resourceRefs` scope (`seed_search` in `tapper_chat_turn.py`), which
-  // `AuthorizedRetrieval` treats as "no resources selected" rather than "no
-  // restriction" -- retrieval always returns zero evidence, and
-  // `if not run.response.evidence` abstains deterministically
-  // (`INSUFFICIENT_EVIDENCE`), independent of whatever else is published in
-  // the project at the time this test runs.
+  // `AuthorizedRetrieval._hit_is_in_execution` (retrieve.py) admits every
+  // hit whose family/corpus/embedding version match once no `SCOPE`
+  // resource narrows the search, so an unrestricted question almost
+  // always finds *some* evidence in whatever the project already has
+  // published -- there is no content-only way to force a genuinely
+  // empty-evidence abstain deterministically against a shared E2E corpus.
+  // The isolated browser E2E instead appends ` [e2e-abstain]` to the
+  // question, a test-only marker `DeterministicModelGateway` recognizes
+  // (Task 9 fix round 1, `apps/tap-ai-backend/src/tap/testing/
+  // deterministic_model_gateway.py`): it forces the fake model's answer to
+  // carry no inline `[S1]`/`[R1]` markers at all, exactly the shape
+  // `parse_inline_answer` (and a real model, per `KnowledgeModelGateway`'s
+  // platform instruction) already treats as "no grounded claim" --
+  // `verify_answer`'s `if not generation.text and not claims` then
+  // abstains deterministically regardless of what evidence was retrieved.
   const runtimeResponse = await page.request.get("/api/v1/runtime-mode");
   expect(runtimeResponse.status()).toBe(200);
   const runtime = (await runtimeResponse.json()) as { projectId: string };
   const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
 
+  const sourceFilename = `abstain-evidence-${Date.now()}.md`;
+  const upload = await page.request.post(`${root}/knowledge/sources`, {
+    headers: {
+      Origin: ORIGIN,
+      "Idempotency-Key": `abstain-source-${Date.now()}`,
+    },
+    multipart: {
+      upload: {
+        name: sourceFilename,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(
+          `# Abstain evidence ${Date.now()}\n\nA policy application requires verified identity evidence.`,
+        ),
+      },
+    },
+  });
+  expect(upload.status()).toBe(202);
+  const uploaded = (await upload.json()) as { source: { sourceId: string } };
+  const createdSourceId = uploaded.source.sourceId;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+        );
+        const detail = (await response.json()) as { readyCount: number };
+        return detail.readyCount;
+      },
+      { timeout: 45_000 },
+    )
+    .toBeGreaterThan(0);
+  const detailResponse = await page.request.get(
+    `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+  );
+  const sourceDetail = (await detailResponse.json()) as {
+    documents: { items: Array<{ revisionId: string; status: string }> };
+  };
+  const revision = sourceDetail.documents.items.find(
+    (item) => item.status === "ready",
+  );
+  expect(revision).toBeDefined();
+  preparePublishedFixture([revision!.revisionId]);
+
   await page.goto("/");
   await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: new RegExp(sourceFilename, "u") })
+    .check();
 
-  const prompt = `Unattached question ${Date.now()}`;
+  const prompt = `Abstained question ${Date.now()} [e2e-abstain]`;
   await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
   const acceptedResponsePromise = page.waitForResponse(
     (response) =>
@@ -750,4 +804,15 @@ test("an abstained answer replaces the draft", async ({ page }) => {
     ),
   ).toBeVisible();
   await expect(page.locator(".tapper-draft-answer")).toHaveCount(0);
+
+  const deleted = await page.request.delete(
+    `${root}/knowledge/sources/${createdSourceId}`,
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `abstain-cleanup-${createdSourceId}`,
+      },
+    },
+  );
+  expect(deleted.status()).toBe(204);
 });
