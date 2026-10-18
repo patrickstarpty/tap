@@ -14,6 +14,7 @@ import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
 import { TapperChat, type ChatAttachment } from "./workspace/TapperChat";
 import { CatalogWorkspace } from "./workspace/CatalogWorkspace";
+import { SkillsWorkspace } from "./workspace/skills/SkillsWorkspace";
 import { WORKSPACE_COPY, type WorkspaceCopy } from "./workspace/copy";
 import { KnowledgeSourcesPanel } from "./workspace/KnowledgeSourcesPanel";
 import {
@@ -2782,13 +2783,22 @@ export function TapperWorkspace() {
           />
         ) : null}
         {activeModule === "skills" ? (
-          <CatalogWorkspace
-            kind="skill"
-            copy={copy}
-            items={skills}
-            onUse={(itemId) => useCatalogItem("skill", itemId)}
-            projectId={projectId ?? undefined}
-          />
+          projectId !== null ? (
+            <SkillsWorkspace
+              key={projectId}
+              projectId={projectId}
+              copy={copy}
+              onUse={(revisionId) => useCatalogItem("skill", revisionId)}
+            />
+          ) : (
+            <CatalogWorkspace
+              kind="skill"
+              copy={copy}
+              items={skills}
+              onUse={(itemId) => useCatalogItem("skill", itemId)}
+              projectId={projectId ?? undefined}
+            />
+          )
         ) : null}
         {activeModule === "library" ? (
           projectId !== null ? (

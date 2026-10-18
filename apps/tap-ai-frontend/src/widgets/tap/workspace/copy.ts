@@ -141,6 +141,82 @@ export interface WorkspaceCopy {
     agentCatalog: string;
     skillCatalog: string;
   };
+  skillsWorkspace: {
+    heading: string;
+    description: string;
+    importSkill: string;
+    createSkill: string;
+    filterAll: string;
+    filterBuiltIn: string;
+    filterCustom: string;
+    filterDisabled: string;
+    noResults: string;
+    applicableTasks: string;
+    revision: string;
+    useInChat: string;
+    edit: string;
+    enable: string;
+    disable: string;
+    copyAsCustom: string;
+    cancel: string;
+    close: string;
+    tabs: {
+      instructions: string;
+      files: string;
+      metadata: string;
+      revisions: string;
+    };
+    taskLabels: {
+      "knowledge.answer": string;
+      "test-plan.generate": string;
+      "automation.generate": string;
+    };
+    import: {
+      step1Title: string;
+      step1Description: string;
+      browseFiles: string;
+      browseFolder: string;
+      pasteLabel: string;
+      pastePlaceholder: string;
+      next: string;
+      back: string;
+      commit: string;
+      step2Title: string;
+      frontmatter: string;
+      files: string;
+      warnings: string;
+      category: {
+        skill: string;
+        referenceAttached: string;
+        referenceUnattached: string;
+        script: string;
+        asset: string;
+      };
+      nameConflict: string;
+      importAsNewRevision: string;
+      skip: string;
+      stageFailed: string;
+      commitFailed: string;
+    };
+    form: {
+      createTitle: string;
+      editTitle: string;
+      copyTitle: string;
+      name: string;
+      description: string;
+      applicableTasks: string;
+      instructions: string;
+      preview: string;
+      save: string;
+      cancel: string;
+      nameInvalid: string;
+      descriptionRequired: string;
+      instructionsRequired: string;
+      budgetExceeded: string;
+      revisionConflict: string;
+      saveFailed: string;
+    };
+  };
   library: {
     listView: string;
     cardView: string;
@@ -403,6 +479,83 @@ export const WORKSPACE_COPY = {
       agentCatalog: "Agent catalog",
       skillCatalog: "Skill catalog",
     },
+    skillsWorkspace: {
+      heading: "Skills",
+      description: "Reusable instructions and files for every conversation.",
+      importSkill: "Import skill",
+      createSkill: "New skill",
+      filterAll: "All",
+      filterBuiltIn: "Built-in",
+      filterCustom: "Custom",
+      filterDisabled: "Disabled",
+      noResults: "No skills match this filter.",
+      applicableTasks: "Applicable tasks",
+      revision: "Revision",
+      useInChat: "Use in chat",
+      edit: "Edit",
+      enable: "Enable",
+      disable: "Disable",
+      copyAsCustom: "Copy as custom",
+      cancel: "Cancel",
+      close: "Close",
+      tabs: {
+        instructions: "Instructions",
+        files: "Files",
+        metadata: "Metadata",
+        revisions: "Revision history",
+      },
+      taskLabels: {
+        "knowledge.answer": "Knowledge answers",
+        "test-plan.generate": "Test plan generation",
+        "automation.generate": "Automation generation",
+      },
+      import: {
+        step1Title: "Import a skill",
+        step1Description:
+          "Drop a SKILL.md file, a zip archive or a folder, or paste the file content below.",
+        browseFiles: "Browse files",
+        browseFolder: "Browse folder",
+        pasteLabel: "Paste SKILL.md content",
+        pastePlaceholder: "Paste the SKILL.md content here",
+        next: "Preview",
+        back: "Back",
+        commit: "Import selected",
+        step2Title: "Review before import",
+        frontmatter: "Frontmatter",
+        files: "Files",
+        warnings: "Warnings",
+        category: {
+          skill: "Instructions",
+          referenceAttached: "Reference · attached",
+          referenceUnattached: "Reference · not attached",
+          script: "Script · saved, not executed",
+          asset: "Asset",
+        },
+        nameConflict: "A skill with this name already exists.",
+        importAsNewRevision: "Import as a new revision",
+        skip: "Skip",
+        stageFailed: "This import could not be read.",
+        commitFailed: "The selected skills could not be imported.",
+      },
+      form: {
+        createTitle: "New skill",
+        editTitle: "Edit skill",
+        copyTitle: "Copy as a custom skill",
+        name: "Name",
+        description: "Description",
+        applicableTasks: "Applicable tasks",
+        instructions: "Instructions",
+        preview: "SKILL.md preview",
+        save: "Save",
+        cancel: "Cancel",
+        nameInvalid: "Enter a lowercase, hyphenated name up to 64 characters.",
+        descriptionRequired: "Enter a description.",
+        instructionsRequired: "Enter instructions.",
+        budgetExceeded: "SKILL.md is over the 256 KB limit.",
+        revisionConflict: "This content was updated elsewhere. Please refresh.",
+        saveFailed: "This skill could not be saved.",
+      },
+    },
     library: {
       listView: "List view",
       cardView: "Card view",
@@ -663,6 +816,83 @@ export const WORKSPACE_COPY = {
       noResults: "没有匹配项",
       agentCatalog: "智能体目录",
       skillCatalog: "技能目录",
+    },
+    skillsWorkspace: {
+      heading: "技能",
+      description: "可在每次对话中复用的指令与文件。",
+      importSkill: "导入 Skill",
+      createSkill: "新建 Skill",
+      filterAll: "全部",
+      filterBuiltIn: "内置",
+      filterCustom: "自定义",
+      filterDisabled: "已停用",
+      noResults: "没有符合筛选条件的 Skill。",
+      applicableTasks: "适用任务",
+      revision: "修订",
+      useInChat: "在对话中使用",
+      edit: "编辑",
+      enable: "启用",
+      disable: "停用",
+      copyAsCustom: "复制为自定义",
+      cancel: "取消",
+      close: "关闭",
+      tabs: {
+        instructions: "指令",
+        files: "文件",
+        metadata: "元数据",
+        revisions: "修订历史",
+      },
+      taskLabels: {
+        "knowledge.answer": "知识问答",
+        "test-plan.generate": "测试计划生成",
+        "automation.generate": "自动化生成",
+      },
+      import: {
+        step1Title: "导入 Skill",
+        step1Description:
+          "拖入 SKILL.md、zip 压缩包或文件夹，或在下方粘贴文本。",
+        browseFiles: "选择文件",
+        browseFolder: "选择文件夹",
+        pasteLabel: "粘贴 SKILL.md 内容",
+        pastePlaceholder: "在此粘贴 SKILL.md 内容",
+        next: "预览",
+        back: "返回",
+        commit: "导入所选",
+        step2Title: "导入前确认",
+        frontmatter: "元数据",
+        files: "文件",
+        warnings: "告警",
+        category: {
+          skill: "指令",
+          referenceAttached: "参考·已附加",
+          referenceUnattached: "参考·未附加",
+          script: "脚本·已保存不执行",
+          asset: "资源",
+        },
+        nameConflict: "已存在同名 Skill。",
+        importAsNewRevision: "作为新修订导入",
+        skip: "跳过",
+        stageFailed: "无法读取此次导入。",
+        commitFailed: "无法导入所选 Skill。",
+      },
+      form: {
+        createTitle: "新建 Skill",
+        editTitle: "编辑 Skill",
+        copyTitle: "复制为自定义 Skill",
+        name: "名称",
+        description: "描述",
+        applicableTasks: "适用任务",
+        instructions: "指令",
+        preview: "SKILL.md 预览",
+        save: "保存",
+        cancel: "取消",
+        nameInvalid: "请输入小写连字符名称，最多 64 个字符。",
+        descriptionRequired: "请填写描述。",
+        instructionsRequired: "请填写指令。",
+        budgetExceeded: "SKILL.md 超过 256 KB 限制。",
+        revisionConflict: "内容已被他人更新，请刷新。",
+        saveFailed: "无法保存该 Skill。",
+      },
     },
     library: {
       listView: "列表视图",
