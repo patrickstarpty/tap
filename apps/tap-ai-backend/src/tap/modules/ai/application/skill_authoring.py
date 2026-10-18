@@ -11,6 +11,7 @@ packaged code.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -29,8 +30,10 @@ from tap.modules.ai.application.skill_package import (
     scan_zip,
 )
 from tap.modules.ai.domain.assets import (
+    AiAgentRevision,
     AssetRevisionRejected,
     AssetRevisionStatus,
+    RevisionConflict,
     SkillFile,
     SkillRevision,
     text_digest,
@@ -47,6 +50,33 @@ from tap.platform.storage.objects import (
 
 _STAGING_TTL = timedelta(hours=24)
 _IMPORTED_APPLICABLE_TASKS = frozenset({"knowledge.answer"})
+# Zero-byte files are never staged/promoted (the real object store rejects
+# empty uploads); this marker is stored in place of an object reference and
+# ``open_file`` recognizes it to synthesize an empty read without touching
+# the object store.
+_EMPTY_FILE_MARKER = "skill-empty-file"
+_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
+def _deterministic_id(prefix: str, import_id: str, root: str) -> str:
+    """Derive a stable asset/revision id from (import_id, root).
+
+    Two callers committing the same staged import concurrently (or a caller
+    retrying before either has recorded a result) compute the identical id,
+    so their writes converge on the same database row instead of creating
+    duplicate visible Skill assets.
+    """
+    digest = hashlib.sha256(f"{import_id}\0{root}".encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"
+
+
+def _file_identity(asset_id: str, revision_id: str, relative_path: str) -> str:
+    """A path-hash identity: real object stores restrict identity segments to
+    ``[A-Za-z0-9_-][A-Za-z0-9._-]{0,255}``, which arbitrary relative paths
+    (spaces, unicode, leading dots, ``+``, ``@``) can violate. The relative
+    path itself is preserved in the object's attributes instead."""
+    digest = hashlib.sha256(relative_path.encode("utf-8")).hexdigest()
+    return f"skills/{asset_id}/{revision_id}/{digest}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +155,7 @@ class SkillAuthoringCatalog(Protocol):
 
     async def list_revisions(
         self, kind: Literal["agent", "skill"], asset_id: str
-    ) -> tuple[SkillRevision, ...]: ...
+    ) -> tuple[AiAgentRevision, ...] | tuple[SkillRevision, ...]: ...
 
     async def find_skill_by_name(
         self, scope: ProjectScopeContext, name: str
@@ -151,6 +181,16 @@ class SkillAuthoringCatalog(Protocol):
     async def purge_expired_skill_imports(
         self, *, now: datetime, limit: int
     ) -> tuple[SkillImportRecord, ...]: ...
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _CommitPlan:
+    """A validated, about-to-be-written Skill revision for one selection."""
+
+    entry: Mapping[str, object]
+    asset_id: str
+    base_revision_id: str | None
+    revision_id: str
 
 
 Clock = Callable[[], datetime]
@@ -191,9 +231,11 @@ class SkillAuthoringService:
         return len(records)
 
     async def _discard_staging(self, locator: str) -> None:
+        # Best-effort: a purge sweep must not abort stage_import over a
+        # provider hiccup or an object that is already gone.
         try:
             await self._objects.delete(StagingRef(locator))
-        except ObjectMissingError:
+        except Exception:
             pass
 
     async def stage_import(
@@ -214,6 +256,20 @@ class SkillAuthoringService:
 
             staged_files: list[dict[str, object]] = []
             for file in skill.files:
+                if file.size_bytes == 0:
+                    # The real object store rejects empty uploads; record the
+                    # file without staging/promoting any bytes.
+                    staged_files.append(
+                        {
+                            "relative_path": file.relative_path,
+                            "size_bytes": 0,
+                            "sha256": file.sha256,
+                            "category": file.category,
+                            "attached": file.attached,
+                            "staging_ref": None,
+                        }
+                    )
+                    continue
                 full_path = (
                     f"{skill.root}/{file.relative_path}" if skill.root else file.relative_path
                 )
@@ -303,16 +359,75 @@ class SkillAuthoringService:
             return self._decode_result(record.committed_result_json)
 
         preview_skills = cast(list[dict[str, object]], record.preview_json["skills"])
-        preview_by_root = {entry["root"]: entry for entry in preview_skills}
+        preview_by_root = {cast(str, entry["root"]): entry for entry in preview_skills}
+        plans = await self._validate_selections(scope, import_id, preview_by_root, selections)
+
         revisions: list[SkillRevision] = []
+        for plan in plans:
+            revisions.append(await self._commit_one(scope, plan))
+
+        result_json = self._encode_result(revisions)
+        won = await self._catalog.set_skill_import_committed(import_id, result_json)
+        if not won:
+            refreshed = await self._catalog.get_skill_import(import_id)
+            if refreshed is not None and refreshed.committed_result_json is not None:
+                return self._decode_result(refreshed.committed_result_json)
+        return tuple(revisions)
+
+    async def _validate_selections(
+        self,
+        scope: ProjectScopeContext,
+        import_id: str,
+        preview_by_root: Mapping[str, dict[str, object]],
+        selections: Sequence[ImportSelection],
+    ) -> list[_CommitPlan]:
+        """Validate every selection before any write (I-1): an unknown root,
+        duplicate root, empty selection list, unresolved name conflict or
+        missing ``as_new_revision_of`` target must fail the whole commit
+        before any Skill is persisted, not partway through."""
+        if not selections:
+            raise SkillPackageRejected(
+                "skill_not_found_in_package", "no skills were selected to commit"
+            )
+        seen_roots: set[str] = set()
+        plans: list[_CommitPlan] = []
         for selection in selections:
+            if selection.root in seen_roots:
+                raise SkillPackageRejected(
+                    "skill_not_found_in_package",
+                    f"duplicate selection for root {selection.root!r}",
+                )
+            seen_roots.add(selection.root)
             entry = preview_by_root.get(selection.root)
             if entry is None:
                 raise SkillPackageRejected(
                     "skill_not_found_in_package",
                     f"no staged skill at root {selection.root!r}",
                 )
-            if entry["conflict_skill_id"] is not None and selection.as_new_revision_of is None:
+            # The id this exact (import_id, root) would create or converge
+            # on (I-2) when not attaching to an explicit existing asset.
+            deterministic_asset_id = (
+                _deterministic_id("skill", import_id, selection.root)
+                if selection.as_new_revision_of is None
+                else None
+            )
+            # Re-check the name conflict against the catalog's current
+            # state (another skill of the same name may have been created
+            # since this import was staged) — but a match that is this
+            # exact commit's own deterministic asset (a concurrent or
+            # retried committer for the same import_id/root) is not a
+            # conflict, it is the convergence I-2 relies on.
+            fresh_conflict = await self._catalog.find_skill_by_name(scope, cast(str, entry["name"]))
+            conflict_skill_id = (
+                fresh_conflict.asset_id
+                if fresh_conflict is not None
+                else entry["conflict_skill_id"]
+            )
+            if (
+                conflict_skill_id is not None
+                and conflict_skill_id != deterministic_asset_id
+                and selection.as_new_revision_of is None
+            ):
                 raise SkillPackageRejected(
                     "skill_name_conflict",
                     f"a skill named {entry['name']!r} already exists; "
@@ -328,62 +443,100 @@ class SkillAuthoringService:
                     )
                 base_revision_id = existing_revisions[-1].revision_id
             else:
-                asset_id = f"skill-{uuid4().hex[:16]}"
-
-            instruction_template = cast(str, entry["body"])
-            attached_reference_text = cast(str, entry["attached_reference_text"])
-            combined = f"{instruction_template}{attached_reference_text}"
-            file_entries = cast(list[dict[str, object]], entry["files"])
-            files = tuple(
-                SkillFile(
-                    relative_path=cast(str, file["relative_path"]),
-                    size_bytes=cast(int, file["size_bytes"]),
-                    sha256=cast(str, file["sha256"]),
-                    category=cast(
-                        "Literal['skill', 'reference', 'script', 'asset', 'other']",
-                        file["category"],
-                    ),
-                    attached=cast(bool, file["attached"]),
+                asset_id = deterministic_asset_id
+            assert asset_id is not None
+            revision_id = _deterministic_id("skill-rev", import_id, selection.root)
+            plans.append(
+                _CommitPlan(
+                    entry=entry,
+                    asset_id=asset_id,
+                    base_revision_id=base_revision_id,
+                    revision_id=revision_id,
                 )
-                for file in file_entries
             )
-            revision = SkillRevision(
-                revision_id=f"skill-rev-{uuid4().hex[:16]}",
-                asset_id=asset_id,
-                display_name=cast(str, entry["name"]),
-                scope=scope,
-                content_digest=text_digest(json.dumps(entry["frontmatter"], sort_keys=True)),
-                instruction_template_digest=text_digest(combined),
-                applicable_tasks=_IMPORTED_APPLICABLE_TASKS,
-                instruction_template=instruction_template,
-                description=cast(str, entry["description"]),
-                source_kind="imported",
-                attached_references=attached_reference_text,
-                frontmatter=cast("Mapping[str, object]", entry["frontmatter"]),
-                package_digest=text_digest(combined),
-                files=files,
-            )
-            file_refs = await self._promote_staged_files(
-                asset_id, revision.revision_id, file_entries
-            )
-            revision = await self._catalog.insert_skill_revision(
-                revision, base_revision_id=base_revision_id, file_object_refs=file_refs
-            )
-            revisions.append(revision)
+        return plans
 
-        result_json = self._encode_result(revisions)
-        won = await self._catalog.set_skill_import_committed(import_id, result_json)
-        if not won:
-            refreshed = await self._catalog.get_skill_import(import_id)
-            if refreshed is not None and refreshed.committed_result_json is not None:
-                return self._decode_result(refreshed.committed_result_json)
-        return tuple(revisions)
+    async def _commit_one(self, scope: ProjectScopeContext, plan: _CommitPlan) -> SkillRevision:
+        entry = plan.entry
+        instruction_template = cast(str, entry["body"])
+        attached_reference_text = cast(str, entry["attached_reference_text"])
+        combined = f"{instruction_template}{attached_reference_text}"
+        file_entries = cast(list[dict[str, object]], entry["files"])
+        files = tuple(
+            SkillFile(
+                relative_path=cast(str, file["relative_path"]),
+                size_bytes=cast(int, file["size_bytes"]),
+                sha256=cast(str, file["sha256"]),
+                category=cast(
+                    "Literal['skill', 'reference', 'script', 'asset', 'other']",
+                    file["category"],
+                ),
+                attached=cast(bool, file["attached"]),
+            )
+            for file in file_entries
+        )
+        revision = SkillRevision(
+            revision_id=plan.revision_id,
+            asset_id=plan.asset_id,
+            display_name=cast(str, entry["name"]),
+            scope=scope,
+            content_digest=text_digest(json.dumps(entry["frontmatter"], sort_keys=True)),
+            instruction_template_digest=text_digest(combined),
+            applicable_tasks=_IMPORTED_APPLICABLE_TASKS,
+            instruction_template=instruction_template,
+            description=cast(str, entry["description"]),
+            source_kind="imported",
+            attached_references=attached_reference_text,
+            frontmatter=cast("Mapping[str, object]", entry["frontmatter"]),
+            package_digest=text_digest(combined),
+            files=files,
+        )
+        file_refs = await self._promote_staged_files(plan.asset_id, plan.revision_id, file_entries)
+        try:
+            return await self._catalog.insert_skill_revision(
+                revision, base_revision_id=plan.base_revision_id, file_object_refs=file_refs
+            )
+        except RevisionConflict:
+            # Deterministic ids (I-2) mean a concurrent or retried committer
+            # for the same (import_id, root) collides on this exact row: the
+            # survivor's insert already succeeded, so fetch and reuse it
+            # rather than surfacing a conflict for a commit that, from the
+            # caller's perspective, already happened.
+            existing = await self._find_revision(plan.asset_id, plan.revision_id)
+            await self._cleanup_promoted(file_refs)
+            if existing is not None:
+                return existing
+            raise
+        except BaseException:
+            await self._cleanup_promoted(file_refs)
+            raise
+
+    async def _find_revision(self, asset_id: str, revision_id: str) -> SkillRevision | None:
+        for revision in await self._catalog.list_revisions("skill", asset_id):
+            if revision.revision_id == revision_id:
+                return cast(SkillRevision, revision)
+        return None
+
+    async def _cleanup_promoted(self, file_refs: Mapping[str, str]) -> None:
+        # Best-effort: the DB write failing (or losing a commit race) must
+        # not itself raise over a provider cleanup error.
+        for ref in file_refs.values():
+            if ref == _EMPTY_FILE_MARKER:
+                continue
+            try:
+                await self._objects.delete(ObjectRef(ref))
+            except Exception:
+                pass
 
     async def _promote_staged_files(
         self, asset_id: str, revision_id: str, file_entries: Sequence[Mapping[str, object]]
     ) -> dict[str, str]:
         refs: dict[str, str] = {}
         for file in file_entries:
+            relative_path = str(file["relative_path"])
+            if file.get("staging_ref") is None:
+                refs[relative_path] = _EMPTY_FILE_MARKER
+                continue
             digest = f"sha256:{file['sha256']}"
             staged = StagedObject(
                 StagingRef(str(file["staging_ref"])),
@@ -394,10 +547,14 @@ class SkillAuthoringService:
             ref = await self._objects.promote(
                 staged,
                 digest,
-                identity=f"skills/{asset_id}/{revision_id}/{file['relative_path']}",
-                attributes={"revision": revision_id, "kind": str(file["category"])},
+                identity=_file_identity(asset_id, revision_id, relative_path),
+                attributes={
+                    "revision": revision_id,
+                    "kind": str(file["category"]),
+                    "relativePath": relative_path,
+                },
             )
-            refs[str(file["relative_path"])] = str(ref)
+            refs[relative_path] = str(ref)
         return refs
 
     def _encode_result(self, revisions: Sequence[SkillRevision]) -> list[dict[str, object]]:
@@ -465,25 +622,35 @@ class SkillAuthoringService:
         asset_id = f"skill-{uuid4().hex[:16]}"
         revision, scan = self._build_authored_revision(scope, draft, asset_id=asset_id)
         file_refs = await self._promote_authored_files(asset_id, revision.revision_id, scan)
-        return await self._catalog.insert_skill_revision(
-            revision, base_revision_id=None, file_object_refs=file_refs
-        )
+        try:
+            return await self._catalog.insert_skill_revision(
+                revision, base_revision_id=None, file_object_refs=file_refs
+            )
+        except BaseException:
+            await self._cleanup_promoted(file_refs)
+            raise
 
     async def revise(
         self,
         scope: ProjectScopeContext,
         skill_id: str,
-        base_revision_id: str | None,
+        base_revision_id: str,
         draft: SkillDraft,
     ) -> SkillRevision:
         self._assert_scope(scope)
+        if not await self._catalog.list_revisions("skill", skill_id):
+            raise AssetRevisionRejected()
         revision, scan = self._build_authored_revision(
             scope, draft, asset_id=skill_id, adopted_from_revision_id=base_revision_id
         )
         file_refs = await self._promote_authored_files(skill_id, revision.revision_id, scan)
-        return await self._catalog.insert_skill_revision(
-            revision, base_revision_id=base_revision_id, file_object_refs=file_refs
-        )
+        try:
+            return await self._catalog.insert_skill_revision(
+                revision, base_revision_id=base_revision_id, file_object_refs=file_refs
+            )
+        except BaseException:
+            await self._cleanup_promoted(file_refs)
+            raise
 
     def _build_authored_revision(
         self,
@@ -529,12 +696,19 @@ class SkillAuthoringService:
     ) -> dict[str, str]:
         refs: dict[str, str] = {}
         for file in scan.skills[0].files:
+            if file.size_bytes == 0:
+                refs[file.relative_path] = _EMPTY_FILE_MARKER
+                continue
             staged = await self._stage_bytes(scan.contents[file.relative_path])
             ref = await self._objects.promote(
                 staged,
                 staged.sha256,
-                identity=f"skills/{asset_id}/{revision_id}/{file.relative_path}",
-                attributes={"revision": revision_id, "kind": file.category},
+                identity=_file_identity(asset_id, revision_id, file.relative_path),
+                attributes={
+                    "revision": revision_id,
+                    "kind": file.category,
+                    "relativePath": file.relative_path,
+                },
             )
             refs[file.relative_path] = str(ref)
         return refs
@@ -552,4 +726,21 @@ class SkillAuthoringService:
             raise SkillPackageRejected(
                 "skill_path_rejected", "path is not part of this revision's file table"
             )
-        return await self._objects.open_verified(ObjectRef(ref))
+        if ref == _EMPTY_FILE_MARKER:
+            return VerifiedObject(
+                b"",
+                f"sha256:{_EMPTY_SHA256}",
+                0,
+                "application/octet-stream",
+                _EMPTY_FILE_MARKER,
+                (),
+            )
+        try:
+            return await self._objects.open_verified(ObjectRef(ref))
+        except (ObjectMissingError, ValueError, TypeError):
+            # A malformed or no-longer-present object reference (including
+            # the legacy identity-string fallback) surfaces as a clean
+            # not-found rather than a raw storage exception.
+            raise SkillPackageRejected(
+                "skill_path_rejected", "the file's object is no longer available"
+            ) from None

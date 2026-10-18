@@ -26,7 +26,7 @@ from tap.interfaces.http.dependencies import HttpServices, ReadinessHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationScopeProvider
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.application.scope import RequestFacts
-from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.ai.adapters.litellm import (
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     )
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
     from tap.modules.chat.application.ports import DraftStream, EventWakeups
     from tap.modules.governance.ports.audit import ProjectAuditPort
     from tap.modules.knowledge.adapters.milvus.config import (
@@ -80,6 +81,7 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository
     from tap.modules.knowledge.ports.documents import JobStage
     from tap.operations.milvus.client import TapperDocumentMilvusClients
+    from tap.platform.storage.s3 import S3ObjectStore
 
 _PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{2,62}\Z")
 _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
@@ -91,6 +93,14 @@ _FIXED_RETRIEVAL_PROFILE = "quick-hybrid-v1"
 _FIXED_SCHEMA_VERSION = "doc-schema-v1"
 _FIXED_TENANT = "local"
 _FIXED_PROJECT = "tapper-demo"
+# A distinct object-store scope for Skill package bytes: see
+# _create_skill_objects for why this must not be VALIDATION_SCOPE.
+_SKILL_OBJECT_SCOPE = ProjectScopeContext(
+    enterprise_id=VALIDATION_SCOPE.enterprise_id,
+    project_id=f"{VALIDATION_SCOPE.project_id}-skills",
+    actor_id=VALIDATION_SCOPE.actor_id,
+    identity_mode=IdentityMode.VALIDATION,
+)
 _FIXED_GROUP = "tapper-local"
 _FIXED_ENVIRONMENT = "global"
 
@@ -932,8 +942,8 @@ async def create_api_runtime(
         skill_objects = _create_skill_objects(settings)
         resources.push(skill_objects)
         skill_authoring = SkillAuthoringService(
-            asset_catalog,  # type: ignore[arg-type]
-            skill_objects,  # type: ignore[arg-type]
+            asset_catalog,
+            skill_objects,
             scope=repository.scope,
         )
         from tap.modules.knowledge.adapters.managed_chunk_search import ManagedChunkSearch
@@ -1472,12 +1482,18 @@ def _create_blob(settings: TapperSettings) -> KnowledgeArtifactStore:
     )
 
 
-def _create_skill_objects(settings: TapperSettings) -> object:
+def _create_skill_objects(settings: TapperSettings) -> S3ObjectStore:
     """A dedicated object store connection for Skill package bytes.
 
     Deliberately independent of ``_create_blob``'s Knowledge artifact store
     (rather than reaching into its ``.objects`` attribute) so unit tests that
-    stub ``_create_blob`` with a narrow double are unaffected.
+    stub ``_create_blob`` with a narrow double are unaffected. Uses a distinct
+    ``store_id`` and ``ProjectScopeContext`` (not ``VALIDATION_SCOPE``) so its
+    S3 staging prefix never overlaps Knowledge's: ``ManagedObjectStore``
+    derives the staging key prefix from the scope alone, and Knowledge's
+    ingestion worker scavenges anything under its own prefix older than one
+    hour — Skill staging (24h TTL, purged by ``purge_expired_imports``) must
+    never be visible to that sweep.
     """
 
     from pydantic import SecretStr
@@ -1491,10 +1507,10 @@ def _create_skill_objects(settings: TapperSettings) -> object:
             region=settings.s3_region,
             access_key=SecretStr(settings.s3_access_key),
             secret_key=SecretStr(settings.s3_secret_key),
-            store_id=settings.s3_store_id,
+            store_id=f"{settings.s3_store_id}-skills",
             timeout_seconds=settings.blob_timeout_seconds,
         ),
-        scope=VALIDATION_SCOPE,
+        scope=_SKILL_OBJECT_SCOPE,
     )
 
 
@@ -1946,7 +1962,9 @@ def _create_validation_authority(engine: AsyncEngine) -> tuple[ScopeProvider, Au
     return ValidationScopeProvider(), ValidationAuthorizationPolicy(registry)
 
 
-async def _create_asset_catalog(engine: AsyncEngine, scope: ProjectScopeContext) -> object:
+async def _create_asset_catalog(
+    engine: AsyncEngine, scope: ProjectScopeContext
+) -> MysqlAssetCatalog:
     """Create and seed the only server-approved, project-scoped AI catalog."""
 
     from sqlalchemy.ext.asyncio import async_sessionmaker

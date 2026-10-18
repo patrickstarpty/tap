@@ -8,6 +8,7 @@ behavior is covered separately in the isolated integration test.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -21,20 +22,29 @@ from tap.modules.ai.application.skill_authoring import (
     SkillDraft,
     SkillImportRecord,
     TextUpload,
+    _deterministic_id,
 )
 from tap.modules.ai.application.skill_package import SkillPackageRejected
 from tap.modules.ai.domain.assets import (
+    AssetRevisionRejected,
     AssetRevisionStatus,
     RevisionConflict,
     SkillRevision,
+    text_digest,
 )
 from tap.platform.storage.objects import (
+    ObjectIntegrityError,
     ObjectMissingError,
     ObjectRef,
     StagedObject,
     StagingRef,
     VerifiedObject,
 )
+
+# Mirrors the real S3ObjectStore's identity-segment restriction so a test
+# package with a path outside it (space, unicode, leading dot, "+", "@")
+# exercises the same rejection the real provider would raise.
+_SEGMENT = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,255}\Z")
 
 _SKILL_MD = (
     "---\n"
@@ -47,12 +57,19 @@ _SKILL_MD = (
 
 
 class _FakeCatalog:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_inserts: int = 0) -> None:
         self._skills: dict[str, list[SkillRevision]] = {}
         self._file_refs: dict[tuple[str, str], str] = {}
         self._imports: dict[str, dict[str, object]] = {}
+        # Test hook for M-5: fail this many inserts (counting down) with a
+        # plain RuntimeError, simulating a DB write failure unrelated to any
+        # revision conflict.
+        self._fail_inserts = fail_inserts
 
     async def insert_skill_revision(self, revision, *, base_revision_id, file_object_refs=None):
+        if self._fail_inserts > 0:
+            self._fail_inserts -= 1
+            raise RuntimeError("simulated database failure")
         history = self._skills.setdefault(revision.asset_id, [])
         latest = history[-1].revision_id if history else None
         if latest != base_revision_id:
@@ -126,6 +143,10 @@ class _FakeObjectStore:
         async for chunk in request.content:
             data += chunk
         data = bytes(data)
+        if not data:
+            # Mirrors the real S3ObjectStore, which rejects empty uploads:
+            # callers must never stage a zero-byte file.
+            raise ObjectIntegrityError("object upload is empty")
         self._counter += 1
         ref = StagingRef(f"stg-{self._counter}")
         self.staged[ref] = data
@@ -133,6 +154,11 @@ class _FakeObjectStore:
         return StagedObject(ref, digest, len(data), request.content_type)
 
     async def promote(self, staged, expected_sha256, *, identity, attributes):
+        if not isinstance(identity, str) or len(identity) > 512:
+            raise ValueError("invalid identity")
+        for part in identity.split("/"):
+            if _SEGMENT.fullmatch(part) is None or part in (".", ".."):
+                raise ValueError(f"invalid identity segment: {part!r}")
         data = self.staged.pop(staged.ref, None)
         if data is None:
             raise ObjectMissingError("missing staged object")
@@ -359,3 +385,194 @@ async def test_set_enabled_disables_latest_revision() -> None:
 
     latest = (await catalog.list_revisions("skill", revision.asset_id))[-1]
     assert latest.status == AssetRevisionStatus.DISABLED
+
+
+@pytest.mark.asyncio
+async def test_commit_import_rejects_empty_or_duplicate_selections() -> None:
+    service, _, _, _ = _service()
+    preview = await service.stage_import(
+        VALIDATION_SCOPE, upload=FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode()})
+    )
+
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        await service.commit_import(VALIDATION_SCOPE, preview.import_id, ())
+    assert excinfo.value.code == "skill_not_found_in_package"
+
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        await service.commit_import(
+            VALIDATION_SCOPE,
+            preview.import_id,
+            (ImportSelection(root="demo-skill"), ImportSelection(root="demo-skill")),
+        )
+    assert excinfo.value.code == "skill_not_found_in_package"
+
+
+@pytest.mark.asyncio
+async def test_commit_import_validates_every_selection_before_writing_any() -> None:
+    """I-1: a package with two skills where only one selection is invalid
+    must not leave the valid one partially committed."""
+    service, catalog, _, _ = _service()
+    other_skill_md = (
+        "---\nname: other-skill\ndescription: Another demo skill.\n---\n\nOther body.\n"
+    )
+    preview = await service.stage_import(
+        VALIDATION_SCOPE,
+        upload=FilesUpload(
+            files={
+                "demo-skill/SKILL.md": _SKILL_MD.encode(),
+                "other-skill/SKILL.md": other_skill_md.encode(),
+            }
+        ),
+    )
+
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        await service.commit_import(
+            VALIDATION_SCOPE,
+            preview.import_id,
+            (
+                ImportSelection(root="demo-skill"),
+                ImportSelection(root="no-such-root"),
+            ),
+        )
+    assert excinfo.value.code == "skill_not_found_in_package"
+    # Nothing was written for the valid "demo-skill" selection either.
+    assert catalog._skills == {}
+
+
+@pytest.mark.asyncio
+async def test_commit_import_converges_with_a_concurrent_writer_via_deterministic_ids() -> None:
+    """I-2: a row already inserted under the deterministic (import_id, root)
+    id - as a concurrent committer would leave it - is reused rather than
+    rejected or duplicated."""
+    service, catalog, objects, _ = _service()
+    preview = await service.stage_import(
+        VALIDATION_SCOPE, upload=FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode()})
+    )
+    asset_id = _deterministic_id("skill", preview.import_id, "demo-skill")
+    revision_id = _deterministic_id("skill-rev", preview.import_id, "demo-skill")
+
+    concurrent_revision = SkillRevision(
+        revision_id=revision_id,
+        asset_id=asset_id,
+        display_name="demo-skill",
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest("x"),
+        instruction_template_digest=text_digest("y"),
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        instruction_template="y",
+        description="Demo skill used in authoring tests.",
+        source_kind="imported",
+    )
+    await catalog.insert_skill_revision(concurrent_revision, base_revision_id=None)
+
+    (revision,) = await service.commit_import(
+        VALIDATION_SCOPE, preview.import_id, (ImportSelection(root="demo-skill"),)
+    )
+
+    assert revision.revision_id == revision_id
+    assert revision.asset_id == asset_id
+    assert len(await catalog.list_revisions("skill", asset_id)) == 1
+    # Our own (unused) promotion for this file was cleaned up.
+    assert not objects.objects
+
+
+@pytest.mark.asyncio
+async def test_commit_import_cleans_up_promoted_objects_on_insert_failure() -> None:
+    """M-5: when the catalog write fails for a reason other than a
+    recoverable deterministic-id collision, newly promoted objects are
+    deleted rather than leaked."""
+    catalog = _FakeCatalog(fail_inserts=1)
+    service, _, objects, _ = _service(catalog=catalog)
+    preview = await service.stage_import(
+        VALIDATION_SCOPE, upload=FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode()})
+    )
+
+    with pytest.raises(RuntimeError):
+        await service.commit_import(
+            VALIDATION_SCOPE, preview.import_id, (ImportSelection(root="demo-skill"),)
+        )
+
+    assert not objects.objects
+
+
+@pytest.mark.asyncio
+async def test_revise_requires_existing_skill() -> None:
+    service, _, _, _ = _service()
+    draft = SkillDraft(name="ghost-skill", description="Does not exist yet.", instructions="X.")
+
+    with pytest.raises(AssetRevisionRejected):
+        await service.revise(VALIDATION_SCOPE, "skill-does-not-exist", "no-base", draft)
+
+
+@pytest.mark.asyncio
+async def test_empty_file_is_recorded_without_touching_the_object_store() -> None:
+    """I-4: the real object store rejects empty uploads, so a zero-byte file
+    must never be staged or promoted; open_file still returns empty bytes."""
+    service, catalog, objects, _ = _service()
+    preview = await service.stage_import(
+        VALIDATION_SCOPE,
+        upload=FilesUpload(
+            files={
+                "demo-skill/SKILL.md": _SKILL_MD.encode(),
+                "demo-skill/empty.txt": b"",
+            }
+        ),
+    )
+    # Only SKILL.md was staged; the empty file never touched put_staged.
+    assert len(objects.staged) == 1
+
+    (revision,) = await service.commit_import(
+        VALIDATION_SCOPE, preview.import_id, (ImportSelection(root="demo-skill"),)
+    )
+
+    empty_file = next(f for f in revision.files if f.relative_path == "empty.txt")
+    assert empty_file.size_bytes == 0
+    assert not objects.staged  # SKILL.md promoted; nothing left staged
+    opened = await service.open_file(VALIDATION_SCOPE, revision.revision_id, "empty.txt")
+    assert opened.data == b""
+    assert opened.size == 0
+
+
+@pytest.mark.asyncio
+async def test_relative_path_with_unsafe_identity_characters_still_promotes() -> None:
+    """I-4: a relative path containing characters the real object store's
+    identity segments forbid (space, unicode, "+", "@") must still import
+    cleanly because identity is derived from a hash of the path."""
+    service, catalog, objects, _ = _service()
+    tricky_path = "demo-skill/notes é+extra@home.txt"
+    preview = await service.stage_import(
+        VALIDATION_SCOPE,
+        upload=FilesUpload(
+            files={
+                "demo-skill/SKILL.md": _SKILL_MD.encode(),
+                tricky_path: b"tricky content",
+            }
+        ),
+    )
+
+    (revision,) = await service.commit_import(
+        VALIDATION_SCOPE, preview.import_id, (ImportSelection(root="demo-skill"),)
+    )
+
+    opened = await service.open_file(
+        VALIDATION_SCOPE, revision.revision_id, "notes é+extra@home.txt"
+    )
+    assert opened.data == b"tricky content"
+
+
+@pytest.mark.asyncio
+async def test_open_file_maps_missing_object_to_clean_rejection() -> None:
+    """M-9: a file whose persisted reference no longer resolves (object
+    deleted, or a malformed legacy locator) surfaces as skill_path_rejected,
+    not a raw storage exception."""
+    service, catalog, objects, _ = _service()
+    draft = SkillDraft(
+        name="vanishing-skill", description="Will lose its object.", instructions="Body."
+    )
+    revision = await service.create_authored(VALIDATION_SCOPE, draft)
+    ref = await catalog.get_skill_file_object_ref(revision.revision_id, "SKILL.md")
+    await objects.delete(ObjectRef(ref))
+
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        await service.open_file(VALIDATION_SCOPE, revision.revision_id, "SKILL.md")
+    assert excinfo.value.code == "skill_path_rejected"

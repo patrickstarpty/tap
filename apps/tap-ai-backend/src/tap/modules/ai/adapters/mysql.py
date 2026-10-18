@@ -1079,7 +1079,23 @@ class MysqlAssetCatalog:
         return self._skill_import_record(row)
 
     async def set_skill_import_committed(self, import_id: str, result_json: object) -> bool:
+        # Claim the row with SELECT ... FOR UPDATE before the write so a
+        # concurrent committer serializes on this row rather than racing the
+        # plain UPDATE below; the UPDATE's own WHERE ... IS NULL remains the
+        # actual atomic guard (rowcount == 1 iff this call won).
         async with self._sessions.begin() as session:
+            locked = (
+                await session.execute(
+                    select(skill_import.c.committed_result_json)
+                    .where(
+                        *scope_predicates(skill_import, self._scope),
+                        skill_import.c.import_id == import_id,
+                    )
+                    .with_for_update()
+                )
+            ).first()
+            if locked is None or locked[0] is not None:
+                return False
             result = await session.execute(
                 update(skill_import)
                 .where(

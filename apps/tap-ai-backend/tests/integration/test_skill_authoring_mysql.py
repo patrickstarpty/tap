@@ -130,3 +130,54 @@ async def test_import_commit_round_trip(owned_project_mysql) -> None:
         assert len(await catalog.list_revisions("skill", revision.asset_id)) == 2
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_empty_file_and_unsafe_path_round_trip(owned_project_mysql) -> None:
+    """I-4: a zero-byte file and a relative path containing characters a
+    real object store's identity segments forbid (space, unicode, "+", "@")
+    must both round-trip through the real MySQL file table."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.skill_authoring import (
+        FilesUpload,
+        ImportSelection,
+        SkillAuthoringService,
+    )
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        catalog = MysqlAssetCatalog(
+            async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+        )
+        objects = _FakeObjectStore()
+        service = SkillAuthoringService(catalog, objects, scope=VALIDATION_SCOPE)
+
+        tricky_path = "tricky-skill/notes é+extra@home.txt"
+        upload = FilesUpload(
+            files={
+                "tricky-skill/SKILL.md": (
+                    "---\nname: tricky-skill\ndescription: Has tricky files.\n---\n\nBody.\n"
+                ).encode("utf-8"),
+                "tricky-skill/empty.txt": b"",
+                tricky_path: b"tricky content",
+            }
+        )
+        preview = await service.stage_import(VALIDATION_SCOPE, upload=upload)
+        (revision,) = await service.commit_import(
+            VALIDATION_SCOPE, preview.import_id, (ImportSelection(root="tricky-skill"),)
+        )
+
+        empty_file = next(f for f in revision.files if f.relative_path == "empty.txt")
+        assert empty_file.size_bytes == 0
+        opened_empty = await service.open_file(VALIDATION_SCOPE, revision.revision_id, "empty.txt")
+        assert opened_empty.data == b""
+
+        opened_tricky = await service.open_file(
+            VALIDATION_SCOPE, revision.revision_id, "notes é+extra@home.txt"
+        )
+        assert opened_tricky.data == b"tricky content"
+    finally:
+        await engine.dispose()
