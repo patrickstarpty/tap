@@ -53,7 +53,7 @@ flowchart LR
 | 子项目 3 可靠问答（能力 1） | 进行中（推荐问题部分见上一行；golden set 格式与回归命令已就绪，随子项目 7 PR 3 交付——`make quality-answers` CI 常驻假模型门禁、`make quality-answers-real` 真实模型对比 opt-in，真实基线待用户在 Task 1 提交 `d6e432de` 上运行；链路可靠性修复并入子项目 7 ②） |
 | 子项目 4 知识图谱脉络分析（能力 2、3） | 进行中（PR 1–PR 5 与验收修复已合并到 `develop`（a7869d9），独立验收有条件通过；真实 golden set 待人工标注、真实门禁待运行） |
 | 子项目 5 Skills/Agents（能力 4） | 已设计（[spec](../specs/2026-10-11-skills-agents-design.md)、[计划](2026-10-12-skills-agents.md)；MCP 不在 V1） |
-| 子项目 7 LangGraph 编排（能力 6，② 图重构 → ③ 角色与意图 → ④ 围栏 → ⑤ 工具与长任务 → ⑥ 可信知识） | 进行中（PR 1 图骨架已合并到 `develop`（2026-10-15）；PR 2（瞬时失败退避续跑、attempt 上限、worker loop 单次异常不退出）与 PR 4 围栏已合并到 `develop`（2026-10-17）；PR 3（ModelGateway 流式、正文内联引用 `[S<n>]`/`[R<n>]`、Redis 草稿流与唤醒流、SSE 阻塞读取取代数据库轮询、立即停止）已在 `feat/langgraph-pr3` 完成，待合入 `develop`；[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md)，7 个 PR；2026-10-14 由 V2 方向提入 V1；PR 1–4 先行，能力 4 在 PR 5 之前合入） |
+| 子项目 7 LangGraph 编排（能力 6，② 图重构 → ③ 角色与意图 → ④ 围栏 → ⑤ 工具与长任务 → ⑥ 可信知识） | 进行中（PR 1 图骨架已合并到 `develop`（2026-10-15）；PR 2（瞬时失败退避续跑、attempt 上限、worker loop 单次异常不退出）与 PR 4 围栏已合并到 `develop`（2026-10-17）；PR 3（ModelGateway 流式、正文内联引用 `[S<n>]`/`[R<n>]`、Redis 草稿流与唤醒流、SSE 阻塞读取取代数据库轮询、立即停止）已合并到 `develop`（2026-10-18）；[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md)，7 个 PR；2026-10-14 由 V2 方向提入 V1；PR 1–4 先行，能力 4 在 PR 5 之前合入） |
 
 ## V2：主动 Tapper（已设计）
 
