@@ -2264,9 +2264,7 @@ export function TapperWorkspace() {
           : defaultAlias;
     if (fellBack) {
       setComposerNotice(
-        locale === "zh"
-          ? `${agent?.displayName ?? ""} 的默认模型已不可用，已改用全局默认模型。`
-          : `${agent?.displayName ?? ""}'s default model is no longer available; using the global default instead.`,
+        copy.composer.agentModelFallback(agent?.displayName ?? ""),
       );
     }
     return {
@@ -3024,6 +3022,7 @@ export function TapperWorkspace() {
                 copy={copy}
                 onUse={(revisionId) => useCatalogItem("agent", revisionId)}
                 initialDetailRevisionId={pendingAgentRevisionId}
+                onInitialDetailConsumed={() => setPendingAgentRevisionId(null)}
               />
             </>
           ) : (
@@ -3045,6 +3044,7 @@ export function TapperWorkspace() {
                 copy={copy}
                 onUse={(revisionId) => useCatalogItem("skill", revisionId)}
                 initialDetailRevisionId={pendingSkillRevisionId}
+                onInitialDetailConsumed={() => setPendingSkillRevisionId(null)}
               />
             </>
           ) : (

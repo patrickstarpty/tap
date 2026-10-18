@@ -5,6 +5,7 @@ import { createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AiAssetError,
   useAgent,
   useAgentRevisions,
   useReviseAgent,
@@ -42,7 +43,7 @@ const DETAIL = {
   assetId: "agent_1",
   displayName: "Underwriting helper",
   description: "Helps review underwriting evidence.",
-  systemInstruction: "Review the evidence before escalating.",
+  systemInstruction: "Review the evidence before escalating." as string | null,
   contentDigest: "digest",
   outputSchemaDigest: "schema-digest",
   toolAllowlist: ["knowledge.search", "knowledge.answer"],
@@ -111,6 +112,7 @@ function renderDrawer(
     onEdit?: (detail: unknown) => void;
     onUse?: (revisionId: string) => void;
     onCopyAsCustom?: (detail: unknown) => void;
+    onUpgraded?: (revisionId: string) => void;
     reviseMutate?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
@@ -134,10 +136,12 @@ function renderDrawer(
   const onEdit = overrides.onEdit ?? vi.fn();
   const onUse = overrides.onUse ?? vi.fn();
   const onCopyAsCustom = overrides.onCopyAsCustom ?? vi.fn();
+  const onUpgraded = overrides.onUpgraded ?? vi.fn();
   return {
     onEdit,
     onUse,
     onCopyAsCustom,
+    onUpgraded,
     reviseMutate,
     ...render(
       createElement(AgentDetailDrawer, {
@@ -149,6 +153,7 @@ function renderDrawer(
         onUse,
         onEdit,
         onCopyAsCustom,
+        onUpgraded,
         opener: document.body,
       }),
       { wrapper },
@@ -217,7 +222,7 @@ describe("AgentDetailDrawer", () => {
     );
     await user.click(screen.getByRole("button", { name: "Upgrade" }));
 
-    expect(reviseMutate).toHaveBeenCalledWith({
+    expect(reviseMutate.mock.calls[0]![0]).toEqual({
       agentId: "agent_1",
       request: expect.objectContaining({
         baseRevisionId: "rev_1",
@@ -225,5 +230,87 @@ describe("AgentDetailDrawer", () => {
         skillRevisionIds: ["skill-rev-new"],
       }),
     });
+  });
+
+  it("never offers Upgrade for a built-in agent, even with a bundled Skill update", () => {
+    mockFetchSkillDetail();
+    renderDrawer({ detail: BUILT_IN_DETAIL });
+    expect(
+      screen.getByText("A bundled skill has a newer revision."),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Upgrade" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables Upgrade when the revision has no systemInstruction to resubmit", () => {
+    mockFetchSkillDetail();
+    renderDrawer({ detail: { ...DETAIL, systemInstruction: null } });
+    expect(screen.getByRole("button", { name: "Upgrade" })).toBeDisabled();
+  });
+
+  it("moves the drawer to the new revision when Upgrade succeeds", async () => {
+    mockFetchSkillDetail();
+    const user = userEvent.setup();
+    const reviseMutate = vi.fn();
+    const onUpgraded = vi.fn();
+    renderDrawer({ reviseMutate, onUpgraded });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Upgrade" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Upgrade" }));
+
+    const options = reviseMutate.mock.calls[0]![1] as {
+      onSuccess: (result: { revisionId: string }) => void;
+    };
+    options.onSuccess({ revisionId: "rev_2" });
+    expect(onUpgraded).toHaveBeenCalledWith("rev_2");
+  });
+
+  it("shows a revision-conflict message when Upgrade returns 409 revision_conflict", async () => {
+    mockFetchSkillDetail();
+    const user = userEvent.setup();
+    const reviseMutate = vi.fn();
+    renderDrawer({ reviseMutate });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Upgrade" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Upgrade" }));
+
+    const options = reviseMutate.mock.calls[0]![1] as {
+      onError: (cause: unknown) => void;
+    };
+    options.onError(
+      new AiAssetError({ code: "revision_conflict", detail: "stale" }),
+    );
+
+    expect(
+      await screen.findByText(
+        "This content was updated elsewhere. Please refresh.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("shows a generic error message on other Upgrade failures", async () => {
+    mockFetchSkillDetail();
+    const user = userEvent.setup();
+    const reviseMutate = vi.fn();
+    renderDrawer({ reviseMutate });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Upgrade" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Upgrade" }));
+
+    const options = reviseMutate.mock.calls[0]![1] as {
+      onError: (cause: unknown) => void;
+    };
+    options.onError(new Error("network down"));
+
+    expect(
+      await screen.findByText("This agent could not be upgraded."),
+    ).toBeVisible();
   });
 });

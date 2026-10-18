@@ -121,6 +121,7 @@ export interface WorkspaceCopy {
     skillBudgetWarning: string;
     skillBudgetExceeded: string;
     largestSkills: string;
+    agentModelFallback(agentName: string): string;
   };
   catalog: {
     agents: string;
@@ -253,6 +254,8 @@ export interface WorkspaceCopy {
     loading: string;
     loadFailed: string;
     retry: string;
+    upgradeFailed: string;
+    revisionConflict: string;
     tabs: {
       overview: string;
       skills: string;
@@ -540,6 +543,8 @@ export const WORKSPACE_COPY = {
       skillBudgetExceeded:
         "Selected skills exceed the per-turn budget. Remove some before sending.",
       largestSkills: "Largest skills",
+      agentModelFallback: (agentName: string) =>
+        `${agentName}'s default model is no longer available; using the global default instead.`,
     },
     catalog: {
       agents: "Agents",
@@ -676,6 +681,8 @@ export const WORKSPACE_COPY = {
       loading: "Loading agents…",
       loadFailed: "Agents could not be loaded.",
       retry: "Retry",
+      upgradeFailed: "This agent could not be upgraded.",
+      revisionConflict: "This content was updated elsewhere. Please refresh.",
       tabs: {
         overview: "Overview",
         skills: "Skills",
@@ -969,6 +976,8 @@ export const WORKSPACE_COPY = {
       skillBudgetExceeded:
         "所选 Skill 已超出单轮预算上限，请先移除部分 Skill 再发送。",
       largestSkills: "占用最大的 Skill",
+      agentModelFallback: (agentName: string) =>
+        `${agentName} 的默认模型已不可用，已改用全局默认模型。`,
     },
     catalog: {
       agents: "智能体",
@@ -1102,6 +1111,8 @@ export const WORKSPACE_COPY = {
       loading: "正在加载 Agent…",
       loadFailed: "无法加载 Agent。",
       retry: "重试",
+      upgradeFailed: "无法升级该 Agent。",
+      revisionConflict: "内容已被他人更新，请刷新。",
       tabs: {
         overview: "概览",
         skills: "Skill",

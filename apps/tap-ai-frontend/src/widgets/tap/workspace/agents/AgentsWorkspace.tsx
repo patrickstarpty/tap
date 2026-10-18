@@ -24,6 +24,12 @@ export interface AgentsWorkspaceProps {
   /** Opens this revision's detail drawer once, e.g. when a turn's "Sources
    * and settings" link names an Agent revision. */
   initialDetailRevisionId?: string | null;
+  /** Called once `initialDetailRevisionId` has been applied, so the
+   * caller can clear it — otherwise a later remount (this workspace is
+   * conditionally rendered, so switching modules away and back unmounts
+   * it) would see the same non-null id again and reopen the same
+   * revision's drawer on every later visit. */
+  onInitialDetailConsumed?: () => void;
 }
 
 type FormState =
@@ -36,6 +42,7 @@ export function AgentsWorkspace({
   copy,
   onUse,
   initialDetailRevisionId = null,
+  onInitialDetailConsumed,
 }: AgentsWorkspaceProps) {
   const text = copy.agentsWorkspace;
   const isChinese = text.heading !== "Agents";
@@ -52,8 +59,9 @@ export function AgentsWorkspace({
     ) {
       consumedInitialDetailRef.current = initialDetailRevisionId;
       setDetailRevisionId(initialDetailRevisionId);
+      onInitialDetailConsumed?.();
     }
-  }, [initialDetailRevisionId]);
+  }, [initialDetailRevisionId, onInitialDetailConsumed]);
 
   const agentsQuery = useAgents(projectId);
   const skillsQuery = useSkills(projectId);
@@ -231,6 +239,7 @@ export function AgentsWorkspace({
             setDetailRevisionId(null);
             setFormState({ mode: "copy", agent: detail });
           }}
+          onUpgraded={(newRevisionId) => setDetailRevisionId(newRevisionId)}
           opener={triggerRef.current}
         />
       ) : null}

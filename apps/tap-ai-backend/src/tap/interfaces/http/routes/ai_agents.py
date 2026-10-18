@@ -64,7 +64,7 @@ async def _detail(
 ) -> AiAgentRevisionDetail:
     summary = await _summary(request, value, is_latest=is_latest)
     return AiAgentRevisionDetail(
-        **summary.model_dump(), system_instruction=value.system_instruction or ""
+        **summary.model_dump(), system_instruction=value.system_instruction
     )
 
 

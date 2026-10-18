@@ -23,6 +23,12 @@ export interface SkillsWorkspaceProps {
   /** Opens this revision's detail drawer once, e.g. when a turn's "Sources
    * and settings" link names a Skill revision. */
   initialDetailRevisionId?: string | null;
+  /** Called once `initialDetailRevisionId` has been applied, so the
+   * caller can clear it — otherwise a later remount (this workspace is
+   * conditionally rendered, so switching modules away and back unmounts
+   * it) would see the same non-null id again and reopen the same
+   * revision's drawer on every later visit. */
+  onInitialDetailConsumed?: () => void;
 }
 
 type FormState =
@@ -35,6 +41,7 @@ export function SkillsWorkspace({
   copy,
   onUse,
   initialDetailRevisionId = null,
+  onInitialDetailConsumed,
 }: SkillsWorkspaceProps) {
   const text = copy.skillsWorkspace;
   const isChinese = text.heading !== "Skills";
@@ -52,8 +59,9 @@ export function SkillsWorkspace({
     ) {
       consumedInitialDetailRef.current = initialDetailRevisionId;
       setDetailRevisionId(initialDetailRevisionId);
+      onInitialDetailConsumed?.();
     }
-  }, [initialDetailRevisionId]);
+  }, [initialDetailRevisionId, onInitialDetailConsumed]);
 
   const skillsQuery = useSkills(projectId);
   const setEnabled = useSetSkillEnabled(projectId);

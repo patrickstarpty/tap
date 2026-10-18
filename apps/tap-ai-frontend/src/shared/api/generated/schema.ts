@@ -1633,7 +1633,7 @@ export interface components {
              */
             status: "enabled" | "disabled";
             /** Systeminstruction */
-            systemInstruction: string;
+            systemInstruction?: string | null;
             /** Toolallowlist */
             toolAllowlist: string[];
         };

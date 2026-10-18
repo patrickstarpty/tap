@@ -479,7 +479,8 @@ export function TapperChat({
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = message.trim();
-    if (prompt.length === 0 || !modelAvailable || sending) return;
+    if (prompt.length === 0 || !modelAvailable || sending || overSkillBudget)
+      return;
     setSubmitError(false);
     const accepted = await onSend(prompt);
     if (accepted) setMessage("");

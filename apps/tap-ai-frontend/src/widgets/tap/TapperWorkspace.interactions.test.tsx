@@ -2709,7 +2709,17 @@ describe("Tap product workspace interactions", () => {
         "Selected skills exceed the per-turn budget. Remove some before sending.",
       ),
     ).toBeVisible();
+    const composer = screen.getByRole("textbox", { name: "Message Tapper" });
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    // Enter submits the form directly (`requestSubmit()`), bypassing the
+    // disabled Send button — the over-budget guard has to live in
+    // `submit()` itself, not just the button's `disabled` attribute.
+    await user.keyboard("{Enter}");
+    // A successful send clears the composer (see `submit()`'s
+    // `setMessage("")`); the draft staying in place is the signal nothing
+    // was sent.
+    expect(composer).toHaveValue("What evidence is needed?");
   });
 
   it("shows the turn's skillNotices once and links Sources and settings to the Agent/Skill revision", async () => {
@@ -2860,6 +2870,19 @@ describe("Tap product workspace interactions", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "Reviews underwriting evidence.",
     );
+
+    // Closing the drawer, leaving the Agents module and coming back must
+    // not reopen the same linked revision — only following the link again
+    // should.
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Close",
+      }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Tapper" }));
+    await user.click(screen.getByRole("button", { name: "Agents" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("supports keyboard navigation and Escape focus restoration in the add menu", async () => {

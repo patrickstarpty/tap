@@ -80,7 +80,14 @@ class AiAgentRevisionSummary(ContractModel):
 
 
 class AiAgentRevisionDetail(AiAgentRevisionSummary):
-    system_instruction: Annotated[str, Field(strict=True, min_length=1, max_length=40_000)]
+    # Optional (unlike AgentDraftRequest's required field below): every
+    # agent created/revised through this API always has one (validated at
+    # write time), but a revision read back whose stored value is absent
+    # must not 500 against a `min_length=1` requirement — mirrors
+    # `description`'s `| None` pattern above.
+    system_instruction: (
+        Annotated[str, Field(strict=True, min_length=1, max_length=40_000)] | None
+    ) = None
 
 
 class AiAgentRevisionPage(ContractModel):

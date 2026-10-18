@@ -167,3 +167,48 @@ def test_tool_catalog_defaults_to_english_and_supports_zh_locale() -> None:
         assert item["description"] == definition.descriptions["zh"]
 
     assert denied.status_code == 403
+
+
+class _AssetsWithoutSystemInstruction:
+    """An Agent revision whose stored `system_instruction` is absent (e.g.
+    a built-in seeded without one) — the detail route must return it as
+    `null` rather than coercing to `""` and 500ing against the response
+    model's `min_length=1` constraint."""
+
+    scope = VALIDATION_SCOPE
+
+    async def get_agent(self, scope, revision_id):
+        from tap.modules.ai.domain.assets import AiAgentRevision, text_digest
+
+        assert scope == VALIDATION_SCOPE
+        return AiAgentRevision(
+            revision_id=revision_id,
+            asset_id="bare-agent",
+            display_name="Bare agent",
+            scope=scope,
+            content_digest=text_digest("bare-agent-v1"),
+            system_instruction_digest=text_digest(""),
+            tool_allowlist=frozenset({"knowledge.search"}),
+            output_schema_digest=text_digest("output-schema"),
+        )
+
+    async def list_revisions(self, kind, asset_id):
+        return (await self.get_agent(VALIDATION_SCOPE, "bare-agent-revision"),)
+
+
+def test_get_agent_detail_tolerates_a_missing_system_instruction() -> None:
+    authority = _Authority()
+    app = create_app(
+        HttpServices(
+            asset_catalog=_AssetsWithoutSystemInstruction(),
+            scope=VALIDATION_SCOPE,
+            scope_provider=authority,
+            authorization_policy=authority,
+        )
+    )
+    client = TestClient(app)
+
+    detail = client.get("/api/v1/projects/tapper-demo/ai/agents/bare-agent-revision")
+
+    assert detail.status_code == 200
+    assert detail.json()["systemInstruction"] is None

@@ -252,10 +252,17 @@
             "type": "string"
           },
           "systemInstruction": {
-            "maxLength": 40000,
-            "minLength": 1,
-            "title": "Systeminstruction",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 40000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Systeminstruction"
           },
           "toolAllowlist": {
             "items": {
@@ -279,8 +286,7 @@
           "sourceKind",
           "builtIn",
           "status",
-          "isLatest",
-          "systemInstruction"
+          "isLatest"
         ],
         "title": "AiAgentRevisionDetail",
         "type": "object"
