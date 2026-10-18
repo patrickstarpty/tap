@@ -29,6 +29,12 @@ from tap.modules.chat.domain.conversations import (
 
 _TERMINAL_TURN_STATES = frozenset({"completed", "abstained", "failed", "canceled"})
 
+# Fix round 1 / I-1, M-4: `cancel`'s two Redis calls (reading the partial
+# draft, then marking the cancel key) must never let a hanging Redis call
+# stall the `cancel` HTTP request -- each is bounded well under a typical
+# client request timeout.
+_CANCEL_REDIS_TIMEOUT_SECONDS = 0.5
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -525,7 +531,7 @@ class ConversationService:
             raise ConversationNotFound
         if turn.state in _TERMINAL_TURN_STATES:
             return turn
-        partial_answer = await self._partial_draft_text(turn_id)
+        partial_answer = await self._partial_draft_text(turn_id, turn.attempt)
         payload: dict[str, object] = {"partialAnswerRetained": partial_answer is not None}
         if partial_answer is not None:
             payload["partialAnswer"] = partial_answer
@@ -542,29 +548,39 @@ class ConversationService:
         )
         if self._drafts is not None:
             try:
-                await self._drafts.request_cancel(turn_id)
+                await asyncio.wait_for(
+                    self._drafts.request_cancel(turn_id), timeout=_CANCEL_REDIS_TIMEOUT_SECONDS
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:
                 _LOGGER.warning("draft cancel marker failed: turn_id=%s", turn_id, exc_info=True)
         return result
 
-    async def _partial_draft_text(self, turn_id: str) -> str | None:
+    async def _partial_draft_text(self, turn_id: str, attempt: int) -> str | None:
         """The latest draft text for `turn_id`, or `None` if no draft was
-        written or Redis could not be read (failure is ignored here -- the
-        draft is only a latency optimization, and `cancel` must still
-        terminate the Turn without it)."""
+        written, the draft belongs to an earlier attempt than `attempt`
+        (M-3: `partial_text` reports the highest attempt seen, which is
+        stale once a retry has started a new one), or Redis could not be
+        read in time (I-1/M-4: bounded to `_CANCEL_REDIS_TIMEOUT_SECONDS` so
+        a hanging Redis call can never stall the `cancel` HTTP call; failure
+        is ignored here -- the draft is only a latency optimization, and
+        `cancel` must still terminate the Turn without it)."""
         if self._drafts is None:
             return None
         try:
-            partial = await self._drafts.partial_text(turn_id)
+            partial = await asyncio.wait_for(
+                self._drafts.partial_text(turn_id), timeout=_CANCEL_REDIS_TIMEOUT_SECONDS
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
             return None
         if partial is None:
             return None
-        _attempt, text = partial
+        draft_attempt, text = partial
+        if draft_attempt != attempt:
+            return None
         return text or None
 
     async def retry(self, conversation_id, turn_id, new_turn_id, request_id):

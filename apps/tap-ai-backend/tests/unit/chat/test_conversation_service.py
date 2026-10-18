@@ -180,7 +180,9 @@ class _FakeDrafts:
 
 @pytest.mark.asyncio
 async def test_cancel_includes_partial_draft():
-    drafts = _FakeDrafts((1, "Stopped mid"))
+    # A freshly created Turn is always on attempt 0 (`ConversationService.
+    # _turn`'s default); the draft must report that same attempt to count.
+    drafts = _FakeDrafts((0, "Stopped mid"))
     service = ConversationService(
         InMemoryConversationRepository(), scope=VALIDATION_SCOPE, drafts=drafts
     )
@@ -195,6 +197,32 @@ async def test_cancel_includes_partial_draft():
         "partialAnswer": "Stopped mid",
     }
     assert drafts.canceled == ["turn-1"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_ignores_a_draft_from_a_stale_attempt():
+    """M-3: `partial_text` reports the highest attempt Redis has ever seen
+    for this Turn id, which is stale once a retry started a new attempt --
+    `cancel` must not surface an older attempt's draft as this attempt's
+    partial answer."""
+    drafts = _FakeDrafts((0, "Stopped mid"))
+    service = ConversationService(
+        InMemoryConversationRepository(), scope=VALIDATION_SCOPE, drafts=drafts
+    )
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    await service.repository.claim_queued(limit=1)
+    reloaded = next(
+        turn for turn in (await service.load("conversation-1")).turns if turn.turn_id == "turn-1"
+    )
+    assert reloaded.attempt == 1
+
+    canceled = await service.cancel("conversation-1", "turn-1")
+
+    assert canceled.state == "canceled"
+    detail = await service.load("conversation-1")
+    terminal = detail.events[-2]
+    assert terminal.event_type == "turn.canceled"
+    assert dict(terminal.payload) == {"partialAnswerRetained": False}
 
 
 @pytest.mark.asyncio

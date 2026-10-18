@@ -633,6 +633,103 @@ async def test_generation_worker_renews_turn_lease_while_provider_is_running():
 
 
 @pytest.mark.asyncio
+async def test_hanging_cancel_poll_does_not_delay_lease_renewal():
+    """Fix round 1 / I-1: a `cancel_requested` call that hangs (e.g. a dead
+    Redis connection the client hasn't timed out yet) must not push lease
+    renewal later and later -- each poll is bounded to
+    `_CANCEL_POLL_TIMEOUT_SECONDS`, and renewal is tracked by wall-clock
+    time elapsed, not by counting ticks, so it still fires on roughly the
+    configured cadence even while every poll times out."""
+    renewed = asyncio.Event()
+
+    class Repository:
+        renewals = 0
+
+        async def claim_queued(self, *, limit):
+            return ClaimBatch(
+                (
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            attempt=1,
+                            input_snapshot=SimpleNamespace(
+                                snapshot_id="snapshot-1",
+                                value=SimpleNamespace(message="question", resolved_resources=()),
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        async def renew_processing_lease(
+            self, conversation_id, turn_id, lease_token, *, lease_duration
+        ):
+            self.renewals += 1
+            if self.renewals >= 2:
+                renewed.set()
+
+    class Conversations:
+        repository = Repository()
+
+        async def emit(self, *_args, **_kwargs):
+            pass
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            pass
+
+    class Drafts:
+        async def append(self, *_args, **_kwargs):
+            pass
+
+        async def cancel_requested(self, turn_id):
+            # Hangs far longer than `_CANCEL_POLL_TIMEOUT_SECONDS` (0.5s);
+            # the worker's own `asyncio.wait_for` must cut this off rather
+            # than block the renewal loop on it.
+            await asyncio.sleep(5)
+            raise AssertionError("must have timed out before this returns")
+
+    class Knowledge:
+        async def answer(self, _request):
+            await asyncio.wait_for(renewed.wait(), timeout=2)
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    async def redact(text):
+        return text
+
+    worker = GenerationWorker(
+        Conversations(),
+        Knowledge(),
+        drafts=Drafts(),
+        redact=redact,
+        lease_duration=timedelta(milliseconds=300),
+        renew_interval_seconds=0.1,
+    )
+
+    started = time.monotonic()
+    assert await worker.run_once(limit=1) == 1
+    elapsed = time.monotonic() - started
+
+    assert renewed.is_set()
+    assert worker.conversations.repository.renewals >= 2
+    # `canceled()` is polled both by the worker's wait loop and, bounded the
+    # same way, before every one of this graph's ~6 nodes, so a permanently
+    # hanging Redis call here does cost up to ~0.5s per check -- but that
+    # cost is bounded and does not compound. The old per-tick (not
+    # wall-clock) renewal bug, combined with an *unbounded* poll hang, was
+    # reported to slip lease renewal to ~420s against a 20s target; this
+    # must stay an order of magnitude below that.
+    assert elapsed < 6.0
+
+
+@pytest.mark.asyncio
 async def test_generation_worker_uses_turn_scoped_persistent_checkpointer_factory():
     checkpointer = InMemorySaver()
 
@@ -1586,11 +1683,19 @@ async def test_one_turn_crash_does_not_skip_the_rest_of_the_batch():
 
 
 @pytest.mark.asyncio
-async def test_worker_cancels_running_graph_within_half_a_second():
+async def test_worker_cancels_running_graph_within_half_a_second(span_recorder):
     """Task 7: once a cancel marker is set, the worker must stop generation
     well before the node itself would ever finish on its own -- not wait for
     the next node boundary -- by polling `drafts.cancel_requested` on a
-    sub-second cadence independent of `renew_interval_seconds`."""
+    sub-second cadence independent of `renew_interval_seconds`.
+
+    Fix round 1 / I-2: `cancel_requested` must stay `False` until the
+    generation step has actually started (and is blocked in
+    `asyncio.sleep(10)`), or this test would pass for the wrong reason --
+    `ChatGraph`'s own per-node `canceled` check would stop the run at
+    `ingress`, before `running.cancel()` is ever exercised, and the worker
+    would exit via ownership loss rather than the cancellation path this
+    test means to cover."""
 
     class Repository:
         async def claim_queued(self, *, limit):
@@ -1623,6 +1728,8 @@ async def test_worker_cancels_running_graph_within_half_a_second():
         async def complete_evidence(self, *_args, **_kwargs):
             self.completed.append(True)
 
+    generation_started = asyncio.Event()
+
     class Drafts:
         def __init__(self):
             self.checked = []
@@ -1632,10 +1739,11 @@ async def test_worker_cancels_running_graph_within_half_a_second():
 
         async def cancel_requested(self, turn_id):
             self.checked.append(turn_id)
-            return True
+            return generation_started.is_set()
 
     class Knowledge:
         async def answer(self, _request):
+            generation_started.set()
             await asyncio.sleep(10)
             raise AssertionError("generation must not run to completion after cancellation")
 
@@ -1653,6 +1761,8 @@ async def test_worker_cancels_running_graph_within_half_a_second():
     assert elapsed < 0.5
     assert conversations.completed == []
     assert drafts.checked and set(drafts.checked) == {"turn-1"}
+    finished = {s.name: s for s in span_recorder.get_finished_spans()}
+    assert finished["turn.execute"].attributes["tap.outcome"] == "canceled"
 
 
 @pytest.mark.asyncio

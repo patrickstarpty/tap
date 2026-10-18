@@ -51,6 +51,12 @@ from tap.platform.telemetry import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Fix round 1 / I-1: a hanging `cancel_requested` call (e.g. a dead Redis
+# connection the client hasn't timed out yet) must never itself delay lease
+# renewal -- every poll is bounded to well under the renewal cadence, and a
+# timeout here degrades to "not canceled", the same as `DraftStreamUnavailable`.
+_CANCEL_POLL_TIMEOUT_SECONDS = 0.5
+
 
 @dataclass(slots=True)
 class GenerationWorker:
@@ -193,15 +199,21 @@ class GenerationWorker:
 
             async def canceled() -> bool:
                 """Fast, Redis-backed node-boundary check (Task 7); any
-                Redis failure degrades to "not canceled" here -- the
-                `authorize`/`renew_processing_lease` check above still
-                stops the Turn at the next node boundary from MySQL alone
-                once `cancel` has written the Turn's `canceled` state."""
+                Redis failure -- or a call that does not answer within
+                `_CANCEL_POLL_TIMEOUT_SECONDS` (I-1: a dead connection the
+                client itself hasn't timed out yet) -- degrades to "not
+                canceled" here. The `authorize`/`renew_processing_lease`
+                check above still stops the Turn at the next node boundary
+                from MySQL alone once `cancel` has written the Turn's
+                `canceled` state."""
                 if self.drafts is None:
                     return False
                 try:
-                    return await self.drafts.cancel_requested(turn.turn_id)
-                except DraftStreamUnavailable:
+                    return await asyncio.wait_for(
+                        self.drafts.cancel_requested(turn.turn_id),
+                        timeout=_CANCEL_POLL_TIMEOUT_SECONDS,
+                    )
+                except (DraftStreamUnavailable, TimeoutError):
                     return False
 
             graph = ChatGraph(
@@ -232,9 +244,12 @@ class GenerationWorker:
             # seconds) so a cancel stops this Turn's generation within
             # well under a second, instead of waiting for the next node
             # boundary. Lease renewal itself still only fires every
-            # `renew_interval_seconds`, tracked separately below.
+            # `renew_interval_seconds`, tracked below by wall-clock time
+            # (I-1): counting elapsed ticks would let a slow/hanging
+            # `canceled()` poll (bounded, but not free) push renewal later
+            # and later, eventually losing the lease to a reclaim.
             check_interval = min(self.renew_interval_seconds, 0.25)
-            since_last_renew = 0.0
+            last_renewed_at = time.monotonic()
             try:
                 while True:
                     done, _ = await asyncio.wait({running}, timeout=check_interval)
@@ -249,9 +264,11 @@ class GenerationWorker:
                         # there is nothing left for the worker to persist.
                         outcome = "canceled"
                         return
-                    since_last_renew += check_interval
-                    if renew is not None and since_last_renew >= self.renew_interval_seconds:
-                        since_last_renew = 0.0
+                    if (
+                        renew is not None
+                        and time.monotonic() - last_renewed_at >= self.renew_interval_seconds
+                    ):
+                        last_renewed_at = time.monotonic()
                         await renew(
                             conversation_id,
                             turn.turn_id,
