@@ -28,6 +28,7 @@ from tap.modules.ai.application.chat_graph import (
     CHAT_GRAPH_VERSION,
     CHAT_STATE_SCHEMA_VERSION,
     ChatGraph,
+    GraphRunCanceled,
 )
 from tap.modules.ai.ports.insights import InsightsAuthorizationChanged
 from tap.modules.chat.application.conversations import (
@@ -338,8 +339,12 @@ class GenerationWorker:
             if failure_class == "ownership":
                 # Another worker, or the owning caller, proved it owns this Turn
                 # (lease loss, conflicting write, or a deleted Conversation); do
-                # not write anything.
-                outcome = "lost"
+                # not write anything. A `GraphRunCanceled` (M-3) is also
+                # `ownership`-classified (nothing to write here either -- the
+                # API already wrote `turn.canceled`), but it was the
+                # node-boundary cancel check, not a real ownership loss, so
+                # the telemetry outcome must say `canceled`, not `lost`.
+                outcome = "canceled" if isinstance(error, GraphRunCanceled) else "lost"
                 return
             if failure_class == "deterministic" or turn.attempt >= self.max_turn_attempts:
                 outcome = "failed"

@@ -1766,6 +1766,81 @@ async def test_worker_cancels_running_graph_within_half_a_second(span_recorder):
 
 
 @pytest.mark.asyncio
+async def test_graph_internal_cancel_check_records_canceled_not_lost(span_recorder):
+    """M-3: `ChatGraph._wrap`'s own node-boundary `canceled()` check (not the
+    worker's outer polling loop) can itself observe the cancel marker first
+    and raise `GraphRunCanceled` from inside the graph run, before
+    `running.cancel()` is ever exercised by the outer loop. That exception
+    reaches the worker's top-level `except Exception` handler and
+    classifies as `ownership` (same as a genuine lease loss) -- it must
+    still record `tap.outcome = "canceled"`, not `"lost"`, since nothing
+    about Turn ownership actually changed; `cancel_requested` just read
+    `True` before `authorize()`/`renew_processing_lease` did."""
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return ClaimBatch(
+                (
+                    (
+                        "conversation-1",
+                        SimpleNamespace(
+                            turn_id="turn-1",
+                            lease_token="lease-1",
+                            attempt=1,
+                            input_snapshot=SimpleNamespace(
+                                snapshot_id="snapshot-1",
+                                value=SimpleNamespace(message="question", resolved_resources=()),
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        async def renew_processing_lease(
+            self, conversation_id, turn_id, lease_token, *, lease_duration
+        ):
+            return None
+
+    class Conversations:
+        repository = Repository()
+
+        def __init__(self):
+            self.completed = []
+
+        async def emit(self, *_args, **_kwargs):
+            pass
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            self.completed.append(True)
+
+    class Drafts:
+        async def append(self, *_args, **_kwargs):
+            pass
+
+        async def cancel_requested(self, turn_id):
+            # Always canceled: the graph's own per-node check (run before
+            # the node body, before the outer loop's own poll tick) sees
+            # this immediately at the first node.
+            return True
+
+    class Knowledge:
+        async def answer(self, _request):
+            raise AssertionError("generation must not run once the Turn is canceled")
+
+    async def redact(text):
+        return text
+
+    conversations = Conversations()
+    worker = GenerationWorker(conversations, Knowledge(), drafts=Drafts(), redact=redact)
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert conversations.completed == []
+    finished = {s.name: s for s in span_recorder.get_finished_spans()}
+    assert finished["turn.execute"].attributes["tap.outcome"] == "canceled"
+
+
+@pytest.mark.asyncio
 async def test_cancel_without_redis_stops_at_next_node_boundary():
     """Global constraint: when Redis is unavailable, `cancel_requested`
     degrades to "not canceled" for the fast polling path, but the Turn's
