@@ -185,9 +185,20 @@ export const aiAssetKeys = {
 };
 
 function invalidateAiAssets(queryClient: QueryClient, projectId: string) {
-  return queryClient.invalidateQueries({
-    queryKey: aiAssetKeys.all(projectId),
-  });
+  // The composer still reads the Agent/Skill catalog through the older
+  // `useAiAssetCatalog` hook above (its own query keys, kept separate so a
+  // workspace-page refetch doesn't thrash the composer's 60s staleTime) —
+  // without this, creating/revising/enabling an Agent or Skill here never
+  // reaches the composer, so a just-created Agent can't be selected and an
+  // already-selected one's `agentById` lookup (model prefill, bundled
+  // skills) keeps missing until that cache separately goes stale.
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: aiAssetKeys.all(projectId) }),
+    queryClient.invalidateQueries({
+      queryKey: ["ai-agent-catalog", projectId],
+    }),
+    queryClient.invalidateQueries({ queryKey: ["skill-catalog", projectId] }),
+  ]);
 }
 
 // -- Skill reads -------------------------------------------------------
@@ -203,16 +214,23 @@ export function useSkills(projectId: string) {
   });
 }
 
+/** Shared by `useSkill` below and by any `useQueries` fan-out over several
+ * Skill revisions at once (e.g. summing an Agent's bundled Skills' sizes) —
+ * same URL and response shape, so both paths share one cache entry under
+ * `aiAssetKeys.skill`. */
+export function fetchSkillRevisionDetail(
+  projectId: string,
+  revisionId: string,
+): Promise<SkillRevisionDetail> {
+  return requestJson<SkillRevisionDetail>(
+    projectAiPath(projectId, `/skills/${encodeURIComponent(revisionId)}`),
+  );
+}
+
 export function useSkill(projectId: string, revisionId: string | null) {
   return useQuery({
     queryKey: aiAssetKeys.skill(projectId, revisionId ?? "none"),
-    queryFn: () =>
-      requestJson<SkillRevisionDetail>(
-        projectAiPath(
-          projectId,
-          `/skills/${encodeURIComponent(revisionId ?? "")}`,
-        ),
-      ),
+    queryFn: () => fetchSkillRevisionDetail(projectId, revisionId ?? ""),
     enabled: revisionId !== null,
     staleTime: 30_000,
   });
@@ -369,7 +387,7 @@ export function useAgent(projectId: string, revisionId: string | null) {
   return useQuery({
     queryKey: aiAssetKeys.agent(projectId, revisionId ?? "none"),
     queryFn: () =>
-      requestJson<AiAgentRevision>(
+      requestJson<AiAgentRevisionDetail>(
         projectAiPath(
           projectId,
           `/agents/${encodeURIComponent(revisionId ?? "")}`,

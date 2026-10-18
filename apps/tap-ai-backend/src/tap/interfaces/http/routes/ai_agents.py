@@ -116,7 +116,7 @@ async def list_agents(request: Request) -> AiAgentRevisionPage:
 @router.get(
     "/agents/{revision_id}",
     operation_id="ai_get_agent_revision",
-    response_model=AiAgentRevisionSummary,
+    response_model=AiAgentRevisionDetail,
     dependencies=[_READ],
     responses={
         404: problem_response_metadata("Agent revision unavailable"),
@@ -124,10 +124,10 @@ async def list_agents(request: Request) -> AiAgentRevisionPage:
         503: problem_response_metadata("Knowledge runtime unavailable"),
     },
 )
-async def get_agent(request: Request, revision_id: str) -> AiAgentRevisionSummary:
+async def get_agent(request: Request, revision_id: str) -> AiAgentRevisionDetail:
     value = await asset_catalog_service(request).get_agent(request.state.project_scope, revision_id)
     latest = await _latest_revision_ids(request, {value.asset_id})
-    return await _summary(request, value, is_latest=latest.get(value.asset_id) == value.revision_id)
+    return await _detail(request, value, is_latest=latest.get(value.asset_id) == value.revision_id)
 
 
 @router.get(

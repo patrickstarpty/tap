@@ -1,5 +1,5 @@
 import { Button } from "antd";
-import { useMemo, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import {
   useSetSkillEnabled,
@@ -7,6 +7,10 @@ import {
   type SkillRevision,
   type SkillRevisionDetail,
 } from "../../../../features/knowledge/api/aiAssets";
+import {
+  filterAssetWorkspaceItems,
+  type AssetWorkspaceFilter,
+} from "../assetWorkspaceFilter";
 import type { WorkspaceCopy } from "../copy";
 import { SkillDetailDrawer } from "./SkillDetailDrawer";
 import { SkillForm } from "./SkillForm";
@@ -16,9 +20,10 @@ export interface SkillsWorkspaceProps {
   projectId: string;
   copy: WorkspaceCopy;
   onUse: (revisionId: string) => void;
+  /** Opens this revision's detail drawer once, e.g. when a turn's "Sources
+   * and settings" link names a Skill revision. */
+  initialDetailRevisionId?: string | null;
 }
-
-type Filter = "all" | "built-in" | "custom" | "disabled";
 
 type FormState =
   | { mode: "create" }
@@ -29,14 +34,26 @@ export function SkillsWorkspace({
   projectId,
   copy,
   onUse,
+  initialDetailRevisionId = null,
 }: SkillsWorkspaceProps) {
   const text = copy.skillsWorkspace;
   const isChinese = text.heading !== "Skills";
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<AssetWorkspaceFilter>("all");
   const [importOpen, setImportOpen] = useState(false);
   const [detailRevisionId, setDetailRevisionId] = useState<string | null>(null);
   const [formState, setFormState] = useState<FormState | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
+  const consumedInitialDetailRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (
+      initialDetailRevisionId !== null &&
+      consumedInitialDetailRef.current !== initialDetailRevisionId
+    ) {
+      consumedInitialDetailRef.current = initialDetailRevisionId;
+      setDetailRevisionId(initialDetailRevisionId);
+    }
+  }, [initialDetailRevisionId]);
 
   const skillsQuery = useSkills(projectId);
   const setEnabled = useSetSkillEnabled(projectId);
@@ -46,23 +63,10 @@ export function SkillsWorkspace({
     [skillsQuery.data],
   );
 
-  const visibleItems = useMemo(() => {
-    // "Built-in"/"Custom" are origin facets restricted to enabled items;
-    // "Disabled" is a status facet spanning both origins. Each item lands
-    // in exactly one of the three facets, matching the four-state filter
-    // the brief specifies (All / Built-in / Custom / Disabled).
-    if (filter === "built-in")
-      return latestItems.filter(
-        (item) => item.sourceKind === "built_in" && item.status === "enabled",
-      );
-    if (filter === "custom")
-      return latestItems.filter(
-        (item) => item.sourceKind !== "built_in" && item.status === "enabled",
-      );
-    if (filter === "disabled")
-      return latestItems.filter((item) => item.status === "disabled");
-    return latestItems;
-  }, [filter, latestItems]);
+  const visibleItems = useMemo(
+    () => filterAssetWorkspaceItems(latestItems, filter),
+    [filter, latestItems],
+  );
 
   const openImport = (event: MouseEvent<HTMLElement>) => {
     triggerRef.current = event.currentTarget;

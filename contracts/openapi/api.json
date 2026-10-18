@@ -13300,7 +13300,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AiAgentRevisionSummary"
+                  "$ref": "#/components/schemas/AiAgentRevisionDetail"
                 }
               }
             },

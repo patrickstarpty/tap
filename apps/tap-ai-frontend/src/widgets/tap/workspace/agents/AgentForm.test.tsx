@@ -156,10 +156,10 @@ describe("AgentForm fields and tools", () => {
     mockFetchSkillDetail({});
     renderForm({ skills: [APPLICABLE_SKILL, NOT_APPLICABLE_SKILL] });
     expect(
-      screen.getByRole("checkbox", { name: "Citation skill" }),
+      screen.getByRole("checkbox", { name: /Citation skill/ }),
     ).toBeEnabled();
     expect(
-      screen.getByRole("checkbox", { name: "Test plan skill" }),
+      screen.getByRole("checkbox", { name: /Test plan skill/ }),
     ).toBeDisabled();
   });
 
@@ -177,6 +177,55 @@ describe("AgentForm fields and tools", () => {
     );
     expect(save).toBeEnabled();
   });
+
+  it("blocks save when the description is over 1,024 characters", async () => {
+    const user = userEvent.setup();
+    mockFetchSkillDetail({});
+    renderForm();
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "a");
+    await user.click(screen.getByRole("textbox", { name: "Description" }));
+    await user.paste("x".repeat(1025));
+    await user.type(
+      screen.getByRole("textbox", { name: "System instruction" }),
+      "s",
+    );
+    expect(
+      screen.getByText("Description is over the 1,024 character limit."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("blocks save when the system instruction is over 32 KB", async () => {
+    const user = userEvent.setup();
+    mockFetchSkillDetail({});
+    renderForm();
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "a");
+    await user.type(screen.getByRole("textbox", { name: "Description" }), "d");
+    await user.click(
+      screen.getByRole("textbox", { name: "System instruction" }),
+    );
+    await user.paste("a".repeat(32 * 1024 + 1));
+    expect(
+      screen.getByText("System instruction is over the 32 KB limit."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("filters the Skill list by the search box", async () => {
+    const user = userEvent.setup();
+    mockFetchSkillDetail({});
+    renderForm({ skills: [APPLICABLE_SKILL, NOT_APPLICABLE_SKILL] });
+    await user.type(
+      screen.getByRole("textbox", { name: "Search skills" }),
+      "Test plan",
+    );
+    expect(
+      screen.queryByRole("checkbox", { name: /Citation skill/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: /Test plan skill/ }),
+    ).toBeVisible();
+  });
 });
 
 describe("AgentForm Skill budget", () => {
@@ -186,7 +235,7 @@ describe("AgentForm Skill budget", () => {
     mockFetchSkillDetail({ "skill-rev-1": nearBudgetSize });
     renderForm({ skills: [APPLICABLE_SKILL] });
 
-    await user.click(screen.getByRole("checkbox", { name: "Citation skill" }));
+    await user.click(screen.getByRole("checkbox", { name: /Citation skill/ }));
     await user.type(screen.getByRole("textbox", { name: "Name" }), "a");
     await user.type(screen.getByRole("textbox", { name: "Description" }), "d");
     await user.type(
@@ -208,7 +257,7 @@ describe("AgentForm Skill budget", () => {
     mockFetchSkillDetail({ "skill-rev-1": overBudgetSize });
     renderForm({ skills: [APPLICABLE_SKILL] });
 
-    await user.click(screen.getByRole("checkbox", { name: "Citation skill" }));
+    await user.click(screen.getByRole("checkbox", { name: /Citation skill/ }));
     await user.type(screen.getByRole("textbox", { name: "Name" }), "a");
     await user.type(screen.getByRole("textbox", { name: "Description" }), "d");
     await user.type(

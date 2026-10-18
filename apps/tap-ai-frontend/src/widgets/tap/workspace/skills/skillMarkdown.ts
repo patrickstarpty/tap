@@ -6,6 +6,13 @@
 
 export const SKILL_MD_BYTE_LIMIT = 256 * 1024;
 
+// Global constraint (global-constraints.md): "单轮 Skill 文本（含附加参考）合计
+// ≤ 96 KB" — the server-enforced per-turn budget across every Skill a turn
+// brings in (an Agent's bundled Skills plus any manually added), shared by
+// the Agent authoring form and the chat composer so both warn/block at the
+// same threshold.
+export const SKILL_TURN_BUDGET_BYTES = 96 * 1024;
+
 export interface SkillMarkdownFields {
   name: string;
   description: string;

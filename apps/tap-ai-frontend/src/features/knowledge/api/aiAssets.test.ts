@@ -265,6 +265,10 @@ describe("Skill write hooks", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: aiAssetKeys.all("project-1"),
     });
+    // Same composer-cache concern as the Agent case above.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["skill-catalog", "project-1"],
+    });
   });
 
   it("revises a Skill against a base revision", async () => {
@@ -469,6 +473,13 @@ describe("Agent write hooks", () => {
     );
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: aiAssetKeys.all("project-1"),
+    });
+    // The composer reads the catalog through the older
+    // `useAiAssetCatalog` query keys (not `aiAssetKeys`), so a just-created
+    // Agent must invalidate those too, or it can't be selected/prefilled
+    // from the composer until that separate 60s cache happens to expire.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["ai-agent-catalog", "project-1"],
     });
   });
 

@@ -70,6 +70,7 @@ export interface AssistantTurn {
   answerEvidenceSnapshotDigest?: string | null;
   agentRevisionId?: string | null;
   skillRevisionIds?: readonly string[];
+  skillNotices?: readonly string[];
   catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
 }
 

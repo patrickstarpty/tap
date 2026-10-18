@@ -15,6 +15,22 @@ export interface SkillBudgetSummary {
   largest: readonly string[];
 }
 
+export interface AgentSkillSelectorLabels {
+  fromAgent: string;
+  skillBudgetWarning: string;
+  skillBudgetExceeded: string;
+  largestSkills: string;
+}
+
+const DEFAULT_LABELS: AgentSkillSelectorLabels = {
+  fromAgent: "From Agent",
+  skillBudgetWarning:
+    "Selected skills are near the per-turn budget. Remove some before they are needed together.",
+  skillBudgetExceeded:
+    "Selected skills exceed the per-turn budget. Remove some before saving.",
+  largestSkills: "Largest skills",
+};
+
 export function AgentSkillSelector({
   agents,
   skills,
@@ -30,6 +46,7 @@ export function AgentSkillSelector({
   // drops them, matching the composer's own agent-bundled-skill behavior.
   lockedSkillRevisionIds = [],
   skillBudget,
+  labels,
 }: {
   agents: readonly ApprovedAiAsset[];
   skills: readonly ApprovedAiAsset[];
@@ -42,7 +59,11 @@ export function AgentSkillSelector({
   onRetry?: () => void;
   lockedSkillRevisionIds?: readonly string[];
   skillBudget?: SkillBudgetSummary;
+  /** Localized copy for the locked-skill tag and budget hints; defaults to
+   * English when the consumer doesn't localize this component yet. */
+  labels?: Partial<AgentSkillSelectorLabels>;
 }) {
+  const text = { ...DEFAULT_LABELS, ...labels };
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [retiredSkillsRemoved, setRetiredSkillsRemoved] = useState(false);
   const selected = agents.find((item) => item.revisionId === agentRevisionId);
@@ -130,7 +151,7 @@ export function AgentSkillSelector({
                   }
                 />
                 {item.displayName}
-                {locked && <span>From Agent</span>}
+                {locked && <span>{text.fromAgent}</span>}
               </label>
             );
           })}
@@ -138,12 +159,14 @@ export function AgentSkillSelector({
       )}
       {skillBudget && skillBudget.usedBytes > skillBudget.limitBytes ? (
         <div role="alert">
-          <p>Selected skills exceed the per-turn budget.</p>
-          <p>Largest skills: {skillBudget.largest.join(", ")}</p>
+          <p>{text.skillBudgetExceeded}</p>
+          <p>
+            {text.largestSkills}: {skillBudget.largest.join(", ")}
+          </p>
         </div>
       ) : skillBudget &&
         skillBudget.usedBytes >= skillBudget.limitBytes * 0.9 ? (
-        <p role="status">Selected skills are near the per-turn budget.</p>
+        <p role="status">{text.skillBudgetWarning}</p>
       ) : null}
     </div>
   );

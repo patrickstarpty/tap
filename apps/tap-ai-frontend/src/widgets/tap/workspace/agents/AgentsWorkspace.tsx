@@ -1,13 +1,18 @@
 import { Button } from "antd";
-import { useMemo, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import {
   useAgents,
   useSetAgentEnabled,
   useSkills,
   type AiAgentRevision,
+  type AiAgentRevisionDetail,
 } from "../../../../features/knowledge/api/aiAssets";
 import { useModelCatalog } from "../../../../features/knowledge/api/modelCatalog";
+import {
+  filterAssetWorkspaceItems,
+  type AssetWorkspaceFilter,
+} from "../assetWorkspaceFilter";
 import type { WorkspaceCopy } from "../copy";
 import { AgentDetailDrawer } from "./AgentDetailDrawer";
 import { AgentForm } from "./AgentForm";
@@ -16,28 +21,39 @@ export interface AgentsWorkspaceProps {
   projectId: string;
   copy: WorkspaceCopy;
   onUse: (revisionId: string) => void;
+  /** Opens this revision's detail drawer once, e.g. when a turn's "Sources
+   * and settings" link names an Agent revision. */
+  initialDetailRevisionId?: string | null;
 }
-
-type Filter = "all" | "built-in" | "custom" | "disabled";
 
 type FormState =
   | { mode: "create" }
-  | {
-      mode: "edit";
-      agent: AiAgentRevision & { systemInstruction?: string };
-    };
+  | { mode: "edit"; agent: AiAgentRevisionDetail }
+  | { mode: "copy"; agent: AiAgentRevisionDetail };
 
 export function AgentsWorkspace({
   projectId,
   copy,
   onUse,
+  initialDetailRevisionId = null,
 }: AgentsWorkspaceProps) {
   const text = copy.agentsWorkspace;
   const isChinese = text.heading !== "Agents";
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<AssetWorkspaceFilter>("all");
   const [detailRevisionId, setDetailRevisionId] = useState<string | null>(null);
   const [formState, setFormState] = useState<FormState | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
+  const consumedInitialDetailRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (
+      initialDetailRevisionId !== null &&
+      consumedInitialDetailRef.current !== initialDetailRevisionId
+    ) {
+      consumedInitialDetailRef.current = initialDetailRevisionId;
+      setDetailRevisionId(initialDetailRevisionId);
+    }
+  }, [initialDetailRevisionId]);
 
   const agentsQuery = useAgents(projectId);
   const skillsQuery = useSkills(projectId);
@@ -63,19 +79,10 @@ export function AgentsWorkspace({
     [agentsQuery.data],
   );
 
-  const visibleItems = useMemo(() => {
-    if (filter === "built-in")
-      return latestItems.filter(
-        (item) => item.sourceKind === "built_in" && item.status === "enabled",
-      );
-    if (filter === "custom")
-      return latestItems.filter(
-        (item) => item.sourceKind !== "built_in" && item.status === "enabled",
-      );
-    if (filter === "disabled")
-      return latestItems.filter((item) => item.status === "disabled");
-    return latestItems;
-  }, [filter, latestItems]);
+  const visibleItems = useMemo(
+    () => filterAssetWorkspaceItems(latestItems, filter),
+    [filter, latestItems],
+  );
 
   const openCreate = (event: MouseEvent<HTMLElement>) => {
     triggerRef.current = event.currentTarget;
@@ -136,7 +143,16 @@ export function AgentsWorkspace({
         <span>{visibleItems.length}</span>
       </div>
 
-      {visibleItems.length === 0 ? (
+      {agentsQuery.isPending ? (
+        <p role="status">{text.loading}</p>
+      ) : agentsQuery.isError ? (
+        <div role="alert">
+          <p>{text.loadFailed}</p>
+          <Button onClick={() => void agentsQuery.refetch()}>
+            {text.retry}
+          </Button>
+        </div>
+      ) : visibleItems.length === 0 ? (
         <div className="tap-catalog-empty">{text.noResults}</div>
       ) : (
         <ul className="tap-catalog-list" aria-label={text.heading}>
@@ -157,7 +173,11 @@ export function AgentsWorkspace({
                       ? text.filterBuiltIn
                       : text.filterCustom}
                   </span>
-                  <span data-status={item.status}>{item.status}</span>
+                  <span data-status={item.status}>
+                    {item.status === "enabled"
+                      ? text.statusEnabled
+                      : text.statusDisabled}
+                  </span>
                 </div>
                 {item.description ? <p>{item.description}</p> : null}
                 {item.hasSkillUpdates ? <p>{text.hasSkillUpdates}</p> : null}
@@ -172,17 +192,23 @@ export function AgentsWorkspace({
                     {text.useInChat}
                   </Button>
                 ) : null}
-                <Button
-                  loading={setEnabled.isPending}
-                  onClick={() =>
-                    setEnabled.mutate({
-                      agentId: item.agentId,
-                      enabled: item.status !== "enabled",
-                    })
-                  }
-                >
-                  {item.status === "enabled" ? text.disable : text.enable}
-                </Button>
+                {/* Built-in Agents are immutable server-side (revise/disable
+                    both reject them) — the UI mirrors that by never
+                    offering Disable here; "Copy as custom" (from the
+                    detail drawer) is the only way to build on one. */}
+                {item.sourceKind === "built_in" ? null : (
+                  <Button
+                    loading={setEnabled.isPending}
+                    onClick={() =>
+                      setEnabled.mutate({
+                        agentId: item.agentId,
+                        enabled: item.status !== "enabled",
+                      })
+                    }
+                  >
+                    {item.status === "enabled" ? text.disable : text.enable}
+                  </Button>
+                )}
               </div>
             </li>
           ))}
@@ -200,6 +226,10 @@ export function AgentsWorkspace({
           onEdit={(detail) => {
             setDetailRevisionId(null);
             setFormState({ mode: "edit", agent: detail });
+          }}
+          onCopyAsCustom={(detail) => {
+            setDetailRevisionId(null);
+            setFormState({ mode: "copy", agent: detail });
           }}
           opener={triggerRef.current}
         />

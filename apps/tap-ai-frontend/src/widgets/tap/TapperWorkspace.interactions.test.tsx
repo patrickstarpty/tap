@@ -2505,6 +2505,363 @@ describe("Tap product workspace interactions", () => {
     ).toBeVisible();
   });
 
+  // `renderWorkspace()`'s `seedAgentSkillCatalog` doesn't carry
+  // `defaultModelAlias`/`skillRevisionIds` (its Agents never prefill or
+  // bundle anything), so these cases seed the composer's own catalog keys
+  // directly with an Agent that does.
+  function renderWorkspaceWithComposerAgent(overrides: {
+    defaultModelAlias?: string | null;
+    skillRevisionIds?: string[];
+  }) {
+    const api = defaultKnowledgeClient();
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(
+      ["ai-agent-catalog", api.projectId],
+      [
+        {
+          revisionId: "underwriting-reviewer",
+          assetId: "underwriting-reviewer",
+          displayName: "Underwriting reviewer",
+          contentDigest: `sha256:${"7".repeat(64)}`,
+          toolAllowlist: ["knowledge.search", "knowledge.answer"],
+          outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+          defaultModelAlias: overrides.defaultModelAlias ?? null,
+          skillRevisionIds: overrides.skillRevisionIds ?? [],
+        },
+      ],
+    );
+    queryClient.setQueryData(
+      ["skill-catalog", api.projectId],
+      [
+        {
+          revisionId: "rules-lookup",
+          assetId: "rules-lookup",
+          displayName: "Rules lookup",
+          contentDigest: `sha256:${"9".repeat(64)}`,
+          applicableTasks: ["knowledge.answer"],
+        },
+      ],
+    );
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    return renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+  }
+
+  it("brings in the selected Agent's bundled Skill as a locked chip and drops it when the Agent is deselected", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ skillRevisionIds: ["rules-lookup"] });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    const composer = screen.getByRole("form", { name: "Message composer" });
+    expect(within(composer).getByText("Rules lookup")).toBeVisible();
+    expect(within(composer).getByText("From Agent")).toBeVisible();
+    // A locked chip has no remove button — only deselecting the Agent drops it.
+    expect(
+      within(composer).queryByRole("button", { name: "Remove Rules lookup" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(composer).getByRole("button", {
+        name: "Remove Underwriting reviewer",
+      }),
+    );
+    expect(
+      within(composer).queryByText("Rules lookup"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("prefills the composer model from the selected Agent's default model", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ defaultModelAlias: "qwen-max" });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: /current model Qwen Max/,
+      }),
+    ).toBeVisible();
+  });
+
+  it("falls back to the global default model and shows a one-time notice when the Agent's default model left the catalog", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ defaultModelAlias: "retired-model" });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    expect(
+      screen.getByRole("button", { name: /current model Qwen Plus/ }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /default model is no longer available; using the global default instead/,
+      ),
+    ).toBeVisible();
+  });
+
+  it("shows the model-fallback notice in Chinese when the UI locale is Chinese", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ defaultModelAlias: "retired-model" });
+    await user.click(screen.getByRole("button", { name: "中文" }));
+
+    await user.click(screen.getByRole("button", { name: "添加到消息" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "添加到消息" })).getByRole(
+        "menuitem",
+        { name: "使用智能体" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "使用智能体" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    expect(
+      screen.getByText(/的默认模型已不可用，已改用全局默认模型/),
+    ).toBeVisible();
+  });
+
+  it("warns and disables Send when selected Skills exceed the per-turn budget", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (/\/ai\/skills\/rules-lookup$/u.test(input)) {
+          return Response.json({
+            revisionId: "rules-lookup",
+            skillId: "rules-lookup",
+            assetId: "rules-lookup",
+            displayName: "Rules lookup",
+            description: "",
+            instructions: "a".repeat(100 * 1024),
+            applicableTasks: ["knowledge.answer"],
+            sourceKind: "authored",
+            builtIn: false,
+            status: "enabled",
+            isLatest: true,
+          });
+        }
+        if (/\/ai\/(agents|skills)$/u.test(input))
+          return Response.json({ items: [] });
+        return Response.json({ items: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({});
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Skills" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Skills" })).getByRole(
+        "option",
+        { name: "Rules lookup" },
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+
+    expect(
+      await screen.findByText(
+        "Selected skills exceed the per-turn budget. Remove some before sending.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("shows the turn's skillNotices once and links Sources and settings to the Agent/Skill revision", async () => {
+    const AGENT_SUMMARY = {
+      revisionId: "underwriting-reviewer",
+      agentId: "underwriting-reviewer",
+      assetId: "underwriting-reviewer",
+      displayName: "Underwriting reviewer",
+      description: "Reviews underwriting evidence.",
+      contentDigest: `sha256:${"7".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+      hasSkillUpdates: false,
+      defaultModelAlias: null,
+      skillRevisionIds: [],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        // aiAssets.ts calls `fetch(relativePath)` with a bare string, which
+        // a real browser resolves against the document — but wrapping that
+        // string in `new Request()` here (Node's undici implementation, no
+        // implicit document base) throws on a relative URL. Resolve it
+        // against `window.location.origin` instead of constructing a
+        // `Request` at all.
+        const rawUrl =
+          input instanceof Request
+            ? input.url
+            : input instanceof URL
+              ? input.toString()
+              : input;
+        const method = (
+          input instanceof Request ? input.method : (init?.method ?? "GET")
+        ).toUpperCase();
+        const path = new URL(rawUrl, window.location.origin).pathname;
+        if (path.endsWith("/ai/agents"))
+          return Response.json({ items: [AGENT_SUMMARY] });
+        if (path.endsWith("/ai/agents/underwriting-reviewer"))
+          return Response.json({
+            ...AGENT_SUMMARY,
+            systemInstruction: "Review the evidence.",
+          });
+        if (path.endsWith("/ai/skills")) return Response.json({ items: [] });
+        if (path.endsWith("/conversations") && method === "GET")
+          return Response.json({ items: [], nextCursor: null });
+        if (path.endsWith("/conversations") && method === "POST") {
+          return Response.json(
+            {
+              conversationId: "conversation-notices",
+              turnId: "conversation-notices-turn-1",
+              state: "queued",
+            },
+            { status: 202 },
+          );
+        }
+        if (path.endsWith("/conversation-notices")) {
+          return Response.json({
+            conversationId: "conversation-notices",
+            title: "What evidence is needed?",
+            createdAt: CONVERSATION_NOW,
+            updatedAt: CONVERSATION_NOW,
+            turns: [
+              {
+                turnId: "conversation-notices-turn-1",
+                state: "completed",
+                attempt: 1,
+                inputSnapshotDigest: INPUT_DIGEST,
+                answerEvidenceSnapshotDigest: EVIDENCE_DIGEST,
+                input: {
+                  message: "What evidence is needed?",
+                  modelAlias: "qwen-plus",
+                  sourceRevisionIds: [],
+                  documentRevisionIds: [],
+                  resolvedResources: [],
+                  agentRevisionId: "underwriting-reviewer",
+                  agentLabel: "Underwriting reviewer",
+                  skillRevisionIds: [],
+                  skillLabels: [],
+                  skillNotices: ["A bundled skill was updated for this turn."],
+                },
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/events"))
+          return Response.json({
+            items: [
+              {
+                eventId: "conversation-notices-turn-1-event",
+                sequence: 1,
+                turnId: "conversation-notices-turn-1",
+                occurredAt: CONVERSATION_NOW,
+                eventType: "turn.completed",
+                payload: { answer: NO_CONTEXT_ANSWER },
+              },
+            ],
+          });
+        if (path.endsWith("/stream"))
+          return new Response("", {
+            headers: { "content-type": "text/event-stream" },
+          });
+        return Response.json({ items: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Use Agents" }),
+      ).toHaveTextContent("Underwriting reviewer"),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText("A bundled skill was updated for this turn."),
+    ).toBeVisible();
+
+    await user.click(screen.getByText(/Sources and settings used/));
+    await user.click(
+      screen.getByRole("button", { name: "Underwriting reviewer" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Underwriting reviewer" }),
+    ).toBeVisible();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Reviews underwriting evidence.",
+    );
+  });
+
   it("supports keyboard navigation and Escape focus restoration in the add menu", async () => {
     const user = userEvent.setup();
     renderWorkspace();

@@ -233,4 +233,37 @@ describe("AgentSkillSelector", () => {
       "Largest skills: Citation skill",
     );
   });
+
+  it("localizes the locked-skill tag and budget hints through the labels prop", async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentSkillSelector
+        agents={[{ revisionId: "agent-v1", displayName: "Knowledge agent" }]}
+        skills={[{ revisionId: "skill-v1", displayName: "Citation skill" }]}
+        agentRevisionId="agent-v1"
+        skillRevisionIds={["skill-v1"]}
+        onAgentChange={() => {}}
+        onSkillsChange={() => {}}
+        lockedSkillRevisionIds={["skill-v1"]}
+        skillBudget={{
+          usedBytes: 100 * 1024,
+          limitBytes: 96 * 1024,
+          largest: ["Citation skill"],
+        }}
+        labels={{
+          fromAgent: "来自 Agent",
+          skillBudgetExceeded: "所选 Skill 已超出单轮预算上限。",
+          largestSkills: "占用最大的 Skill",
+        }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByText("来自 Agent")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "所选 Skill 已超出单轮预算上限。",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "占用最大的 Skill: Citation skill",
+    );
+  });
 });

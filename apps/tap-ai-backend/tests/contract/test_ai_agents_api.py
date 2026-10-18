@@ -384,13 +384,26 @@ def test_list_agents_keeps_legacy_fields_and_adds_new_ones() -> None:
     assert item["isLatest"] is True
 
 
-def test_get_agent_detail_omits_system_instruction() -> None:
+def test_get_agent_detail_includes_system_instruction() -> None:
+    # spec §3.3: `GET /ai/agents/{revisionId}` returns the full revision
+    # detail (same shape the create/revise responses return), unlike the
+    # list route, which only ever returns the summary shape and omits it —
+    # see test_agent_list_omits_system_instruction below.
     client, _catalog = _app()
     created = _create_agent(client)
 
     detail = client.get(f"{BASE}/agents/{created['revisionId']}")
     assert detail.status_code == 200
-    assert "systemInstruction" not in detail.text
+    assert detail.json()["systemInstruction"] == created["systemInstruction"]
+
+
+def test_agent_list_omits_system_instruction() -> None:
+    client, _catalog = _app()
+    _create_agent(client)
+
+    listed = client.get(f"{BASE}/agents")
+    assert listed.status_code == 200
+    assert "systemInstruction" not in listed.text
 
 
 def test_revision_history_marks_latest_revision() -> None:

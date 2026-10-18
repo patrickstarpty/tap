@@ -117,6 +117,10 @@ export interface WorkspaceCopy {
     attachmentFailed: string;
     reviewInLibrary: string;
     removeAttachment: string;
+    fromAgent: string;
+    skillBudgetWarning: string;
+    skillBudgetExceeded: string;
+    largestSkills: string;
   };
   catalog: {
     agents: string;
@@ -160,6 +164,7 @@ export interface WorkspaceCopy {
     statusEnabled: string;
     statusDisabled: string;
     copyAsCustom: string;
+    unavailable: string;
     cancel: string;
     close: string;
     tabs: {
@@ -241,6 +246,13 @@ export interface WorkspaceCopy {
     toolsLabel: string;
     toolsBuiltIn: string;
     hasSkillUpdates: string;
+    statusEnabled: string;
+    statusDisabled: string;
+    copyAsCustom: string;
+    unavailable: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
     tabs: {
       overview: string;
       skills: string;
@@ -249,12 +261,14 @@ export interface WorkspaceCopy {
     form: {
       createTitle: string;
       editTitle: string;
+      copyTitle: string;
       name: string;
       description: string;
       systemInstruction: string;
       defaultModel: string;
       defaultModelGlobal: string;
       skills: string;
+      searchSkills: string;
       noSkills: string;
       toolsLabel: string;
       toolsBuiltIn: string;
@@ -262,7 +276,11 @@ export interface WorkspaceCopy {
       cancel: string;
       nameInvalid: string;
       descriptionRequired: string;
+      descriptionTooLong: string;
       systemInstructionRequired: string;
+      systemInstructionTooLarge: string;
+      budgetCalculating: string;
+      budgetUnavailable: string;
       budgetWarning: string;
       budgetExceeded: string;
       largestSkills: string;
@@ -516,6 +534,12 @@ export const WORKSPACE_COPY = {
       attachmentFailed: "Upload failed",
       reviewInLibrary: "Open in Library",
       removeAttachment: "Remove attachment",
+      fromAgent: "From Agent",
+      skillBudgetWarning:
+        "Selected skills are near the per-turn budget. Remove some before they are needed together.",
+      skillBudgetExceeded:
+        "Selected skills exceed the per-turn budget. Remove some before sending.",
+      largestSkills: "Largest skills",
     },
     catalog: {
       agents: "Agents",
@@ -561,6 +585,7 @@ export const WORKSPACE_COPY = {
       statusEnabled: "Enabled",
       statusDisabled: "Disabled",
       copyAsCustom: "Copy as custom",
+      unavailable: "Skills are not available for this chat yet.",
       cancel: "Cancel",
       close: "Close",
       tabs: {
@@ -644,6 +669,13 @@ export const WORKSPACE_COPY = {
       toolsLabel: "Built-in tools",
       toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
       hasSkillUpdates: "A bundled skill has a newer revision.",
+      statusEnabled: "Enabled",
+      statusDisabled: "Disabled",
+      copyAsCustom: "Copy as custom",
+      unavailable: "Agents are not available for this chat yet.",
+      loading: "Loading agents…",
+      loadFailed: "Agents could not be loaded.",
+      retry: "Retry",
       tabs: {
         overview: "Overview",
         skills: "Skills",
@@ -652,12 +684,14 @@ export const WORKSPACE_COPY = {
       form: {
         createTitle: "New agent",
         editTitle: "Edit agent",
+        copyTitle: "Copy as a custom agent",
         name: "Name",
         description: "Description",
         systemInstruction: "System instruction",
         defaultModel: "Default model",
         defaultModelGlobal: "Use the global default model",
         skills: "Skills",
+        searchSkills: "Search skills",
         noSkills: "No enabled skills available.",
         toolsLabel: "Built-in tools",
         toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
@@ -665,7 +699,13 @@ export const WORKSPACE_COPY = {
         cancel: "Cancel",
         nameInvalid: "Enter a name up to 128 characters.",
         descriptionRequired: "Enter a description.",
+        descriptionTooLong: "Description is over the 1,024 character limit.",
         systemInstructionRequired: "Enter a system instruction.",
+        systemInstructionTooLarge:
+          "System instruction is over the 32 KB limit.",
+        budgetCalculating: "Calculating the Skill budget…",
+        budgetUnavailable:
+          "The Skill budget could not be calculated. Try again.",
         budgetWarning:
           "Selected skills are near the per-turn budget. Remove some before they are needed together.",
         budgetExceeded:
@@ -924,6 +964,11 @@ export const WORKSPACE_COPY = {
       attachmentFailed: "上传失败",
       reviewInLibrary: "在知识库中打开",
       removeAttachment: "移除附件",
+      fromAgent: "来自 Agent",
+      skillBudgetWarning: "所选 Skill 已接近单轮预算上限，请考虑精简组合。",
+      skillBudgetExceeded:
+        "所选 Skill 已超出单轮预算上限，请先移除部分 Skill 再发送。",
+      largestSkills: "占用最大的 Skill",
     },
     catalog: {
       agents: "智能体",
@@ -967,6 +1012,7 @@ export const WORKSPACE_COPY = {
       statusEnabled: "已启用",
       statusDisabled: "已停用",
       copyAsCustom: "复制为自定义",
+      unavailable: "本次对话暂不支持使用 Skill。",
       cancel: "取消",
       close: "关闭",
       tabs: {
@@ -1049,6 +1095,13 @@ export const WORKSPACE_COPY = {
       toolsLabel: "内置工具",
       toolsBuiltIn: "知识检索、知识回答（始终启用）",
       hasSkillUpdates: "已绑定的 Skill 有新修订。",
+      statusEnabled: "已启用",
+      statusDisabled: "已停用",
+      copyAsCustom: "复制为自定义",
+      unavailable: "本次对话暂不支持使用 Agent。",
+      loading: "正在加载 Agent…",
+      loadFailed: "无法加载 Agent。",
+      retry: "重试",
       tabs: {
         overview: "概览",
         skills: "Skill",
@@ -1057,12 +1110,14 @@ export const WORKSPACE_COPY = {
       form: {
         createTitle: "新建 Agent",
         editTitle: "编辑 Agent",
+        copyTitle: "复制为自定义 Agent",
         name: "名称",
         description: "描述",
         systemInstruction: "系统提示词",
         defaultModel: "默认模型",
         defaultModelGlobal: "使用全局默认模型",
         skills: "Skill",
+        searchSkills: "搜索 Skill",
         noSkills: "暂无可用的已启用 Skill。",
         toolsLabel: "内置工具",
         toolsBuiltIn: "知识检索、知识回答（始终启用）",
@@ -1070,7 +1125,11 @@ export const WORKSPACE_COPY = {
         cancel: "取消",
         nameInvalid: "请输入不超过 128 个字符的名称。",
         descriptionRequired: "请填写描述。",
+        descriptionTooLong: "描述超过 1024 个字符限制。",
         systemInstructionRequired: "请填写系统提示词。",
+        systemInstructionTooLarge: "系统提示词超过 32 KB 限制。",
+        budgetCalculating: "正在计算 Skill 预算…",
+        budgetUnavailable: "无法计算 Skill 预算，请重试。",
         budgetWarning: "所选 Skill 已接近单轮预算上限，请考虑精简组合。",
         budgetExceeded:
           "所选 Skill 已超出单轮预算上限，请先移除部分 Skill 再保存。",

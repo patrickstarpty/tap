@@ -6299,7 +6299,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AiAgentRevisionSummary"];
+                    "application/json": components["schemas"]["AiAgentRevisionDetail"];
                 };
             };
             /** @description Project scope or authorization denied */

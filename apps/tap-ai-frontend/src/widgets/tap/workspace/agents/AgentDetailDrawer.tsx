@@ -3,9 +3,12 @@ import { useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 
 import {
+  aiAssetKeys,
+  fetchSkillRevisionDetail,
   useAgent,
   useAgentRevisions,
-  type AiAgentRevision,
+  useReviseAgent,
+  type AiAgentRevisionDetail,
   type SkillRevision,
   type SkillRevisionDetail,
 } from "../../../../features/knowledge/api/aiAssets";
@@ -21,19 +24,9 @@ export interface AgentDetailDrawerProps {
   skills: readonly SkillRevision[];
   onClose: () => void;
   onUse: (revisionId: string) => void;
-  onEdit: (detail: AiAgentRevision & { systemInstruction?: string }) => void;
+  onEdit: (detail: AiAgentRevisionDetail) => void;
+  onCopyAsCustom: (detail: AiAgentRevisionDetail) => void;
   opener: HTMLElement | null;
-}
-
-async function fetchSkillRevisionDetail(
-  projectId: string,
-  revisionId: string,
-): Promise<SkillRevisionDetail> {
-  const response = await fetch(
-    `/api/v1/projects/${encodeURIComponent(projectId)}/ai/skills/${encodeURIComponent(revisionId)}`,
-  );
-  if (!response.ok) throw new Error("Skill revision is unavailable.");
-  return (await response.json()) as SkillRevisionDetail;
 }
 
 export function AgentDetailDrawer({
@@ -44,6 +37,7 @@ export function AgentDetailDrawer({
   onClose,
   onUse,
   onEdit,
+  onCopyAsCustom,
   opener,
 }: AgentDetailDrawerProps) {
   const text = copy.agentsWorkspace;
@@ -51,15 +45,22 @@ export function AgentDetailDrawer({
   const detailQuery = useAgent(projectId, revisionId);
   const detail = detailQuery.data;
   const revisionsQuery = useAgentRevisions(projectId, detail?.agentId ?? null);
+  const reviseAgent = useReviseAgent(projectId);
 
   const attachedSkillIds = detail?.skillRevisionIds ?? [];
   const attachedSkillQueries = useQueries({
     queries: attachedSkillIds.map((id) => ({
-      queryKey: ["ai-assets", projectId, "skill", id],
+      queryKey: aiAssetKeys.skill(projectId, id),
       queryFn: () => fetchSkillRevisionDetail(projectId, id),
       staleTime: 30_000,
     })),
   });
+  const attachedSkillsPending = attachedSkillQueries.some(
+    (query) => query.isPending,
+  );
+  const attachedSkillsErrored = attachedSkillQueries.some(
+    (query) => query.isError,
+  );
   const attachedSkillNames = useMemo(
     () =>
       attachedSkillQueries
@@ -74,14 +75,13 @@ export function AgentDetailDrawer({
     return map;
   }, [skills]);
 
-  // Getting an agent by revision only ever returns the Summary shape (no
-  // `systemInstruction`, which the backend never exposes again after
-  // create/revise), so an upgrade can't be auto-submitted here — it opens
-  // the edit form, pre-selecting each bundled skill's latest revision, and
-  // lets the person confirm the (required) system instruction before
-  // saving the new revision.
+  // Each bundled Skill's latest revision can only be resolved once its own
+  // (currently-attached) revision's `skillId` is known, so Upgrade stays
+  // disabled until every lookup settles — upgrading from a partial set
+  // would silently drop whichever skill hadn't resolved yet.
   const upgrade = () => {
-    if (detail === undefined) return;
+    if (detail === undefined || attachedSkillsPending || attachedSkillsErrored)
+      return;
     const upgradedSkillIds = attachedSkillQueries
       .map((query) => query.data)
       .filter((value): value is SkillRevisionDetail => value !== undefined)
@@ -89,7 +89,17 @@ export function AgentDetailDrawer({
         (skillDetail) =>
           latestBySkillId.get(skillDetail.skillId) ?? skillDetail.revisionId,
       );
-    onEdit({ ...detail, skillRevisionIds: upgradedSkillIds });
+    reviseAgent.mutate({
+      agentId: detail.agentId,
+      request: {
+        baseRevisionId: detail.revisionId,
+        name: detail.displayName,
+        description: detail.description ?? "",
+        systemInstruction: detail.systemInstruction,
+        defaultModelAlias: detail.defaultModelAlias ?? null,
+        skillRevisionIds: upgradedSkillIds,
+      },
+    });
   };
 
   const tabs: { id: DetailTab; label: string }[] = [
@@ -109,12 +119,27 @@ export function AgentDetailDrawer({
         <h2>{detail?.displayName ?? text.heading}</h2>
         <Button onClick={onClose}>{text.close}</Button>
       </header>
-      {detailQuery.isPending ? null : detail === undefined ? null : (
+      {detailQuery.isPending ? (
+        <p role="status">{text.loading}</p>
+      ) : detailQuery.isError || detail === undefined ? (
+        <div role="alert">
+          <p>{text.loadFailed}</p>
+          <Button onClick={() => void detailQuery.refetch()}>
+            {text.retry}
+          </Button>
+        </div>
+      ) : (
         <>
           {detail.hasSkillUpdates ? (
             <div role="status" className="tap-agent-skill-updates">
               <p>{text.hasSkillUpdates}</p>
-              <Button onClick={upgrade}>{text.upgrade}</Button>
+              <Button
+                loading={reviseAgent.isPending}
+                disabled={attachedSkillsPending || attachedSkillsErrored}
+                onClick={upgrade}
+              >
+                {text.upgrade}
+              </Button>
             </div>
           ) : null}
           <div role="tablist">
@@ -145,11 +170,15 @@ export function AgentDetailDrawer({
           ) : null}
           {tab === "skills" ? (
             <div role="tabpanel">
-              <ul>
-                {attachedSkillNames.map((name) => (
-                  <li key={name}>{name}</li>
-                ))}
-              </ul>
+              {attachedSkillsErrored ? (
+                <p role="alert">{text.loadFailed}</p>
+              ) : (
+                <ul>
+                  {attachedSkillNames.map((name) => (
+                    <li key={name}>{name}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           ) : null}
           {tab === "revisions" ? (
@@ -171,7 +200,11 @@ export function AgentDetailDrawer({
                 {text.useInChat}
               </Button>
             ) : null}
-            {detail.builtIn ? null : (
+            {detail.builtIn ? (
+              <Button onClick={() => onCopyAsCustom(detail)}>
+                {text.copyAsCustom}
+              </Button>
+            ) : (
               <Button onClick={() => onEdit(detail)}>{text.edit}</Button>
             )}
           </div>

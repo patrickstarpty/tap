@@ -43,6 +43,7 @@ class _Assets:
             scope=scope,
             content_digest=text_digest("agent-v1"),
             system_instruction_digest=text_digest("system-instruction"),
+            system_instruction="system-instruction",
             tool_allowlist=frozenset({"knowledge.search"}),
             output_schema_digest=text_digest("output-schema"),
         )
@@ -100,7 +101,11 @@ def test_agent_and_skill_catalog_is_project_scoped_read_only_and_omits_content()
         ]
     }
     assert detail.status_code == 200
-    assert "systemInstruction" not in detail.text
+    # The single-revision GET returns the full detail shape (spec §3.3),
+    # including systemInstruction — unlike the list route above, which only
+    # ever returns the summary shape and omits it.
+    assert detail.json()["systemInstruction"] == "system-instruction"
+    assert "systemInstruction" not in listed.text
     assert client.post("/api/v1/projects/tapper-demo/ai/agents", json={}).status_code in {403, 405}
     assert denied.status_code == 403
 

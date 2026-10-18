@@ -81,6 +81,23 @@ interface TapperChatProps {
   renderAssistantTurn: (turn: AssistantTurn) => ReactNode;
   skills: readonly CatalogItem[];
   sources: readonly LibrarySource[];
+  /** Skills bundled in by a currently-selected Agent — rendered as a
+   * locked, non-removable chip tagged "From Agent"; removing the Agent
+   * (not the chip) is what drops them. */
+  lockedSkillIds?: readonly string[];
+  /** Per-turn Skill text budget (global-constraints.md: 96 KB), summed
+   * across `selectedSkillIds` + `lockedSkillIds`. `undefined` while sizes
+   * are still loading — Send stays enabled until the real total is known
+   * and only then can it be blocked. */
+  skillBudget?: {
+    usedBytes: number;
+    limitBytes: number;
+    largest: readonly string[];
+  };
+  /** A one-time notice (Agent default model fell back to the global
+   * default, or the turn's `skillNotices`) shown above the composer until
+   * dismissed or replaced. */
+  composerNotice?: { text: string; onDismiss: () => void };
 }
 
 const QUESTION_RAIL_ROW_HEIGHT = 14;
@@ -156,6 +173,9 @@ export function TapperChat({
   renderAssistantTurn,
   skills,
   sources,
+  lockedSkillIds = [],
+  skillBudget,
+  composerNotice,
 }: TapperChatProps) {
   const catalog = useModelCatalog(projectId);
   const catalogPage = catalog.isError ? undefined : catalog.data;
@@ -355,9 +375,20 @@ export function TapperChat({
   const selectedAgents = agents.filter((agent) =>
     conversation.selectedAgentIds.includes(agent.id),
   );
-  const selectedSkills = skills.filter((skill) =>
-    conversation.selectedSkillIds.includes(skill.id),
+  const lockedSkills = skills.filter((skill) =>
+    lockedSkillIds.includes(skill.id),
   );
+  const selectedSkills = skills.filter(
+    (skill) =>
+      conversation.selectedSkillIds.includes(skill.id) &&
+      !lockedSkillIds.includes(skill.id),
+  );
+  const overSkillBudget =
+    skillBudget !== undefined && skillBudget.usedBytes > skillBudget.limitBytes;
+  const nearSkillBudget =
+    skillBudget !== undefined &&
+    !overSkillBudget &&
+    skillBudget.usedBytes >= skillBudget.limitBytes * 0.9;
   const isQuestionRailWindowed =
     conversation.turns.length > questionRailCapacity;
   const visibleQuestionCapacity = isQuestionRailWindowed
@@ -611,7 +642,10 @@ export function TapperChat({
         {copy.chat.messageTapper}
       </label>
 
-      {selectedSources.length + selectedAgents.length + selectedSkills.length >
+      {selectedSources.length +
+        selectedAgents.length +
+        selectedSkills.length +
+        lockedSkills.length >
       0 ? (
         <div
           className="tap-context-chips"
@@ -669,7 +703,43 @@ export function TapperChat({
               </button>
             </span>
           ))}
+          {lockedSkills.map((skill) => (
+            <span
+              key={`locked-skill-${skill.id}`}
+              className="tap-context-chip"
+              data-kind="skill"
+              data-locked="true"
+            >
+              <ToolOutlined aria-hidden="true" />
+              <span title={skill.name}>{skill.name}</span>
+              <span className="tap-context-chip-lock-tag">
+                {copy.composer.fromAgent}
+              </span>
+            </span>
+          ))}
         </div>
+      ) : null}
+
+      {composerNotice !== undefined ? (
+        <div className="tap-composer-notice" role="status">
+          <span>{composerNotice.text}</span>
+          <button type="button" onClick={composerNotice.onDismiss}>
+            {copy.composer.close}
+          </button>
+        </div>
+      ) : null}
+
+      {overSkillBudget ? (
+        <div role="alert" className="tap-composer-skill-budget">
+          <p>{copy.composer.skillBudgetExceeded}</p>
+          <p>
+            {copy.composer.largestSkills}: {skillBudget!.largest.join(", ")}
+          </p>
+        </div>
+      ) : nearSkillBudget ? (
+        <p role="status" className="tap-composer-skill-budget">
+          {copy.composer.skillBudgetWarning}
+        </p>
       ) : null}
 
       {attachments.length > 0 ? (
@@ -842,7 +912,12 @@ export function TapperChat({
             type="submit"
             aria-label={copy.chat.send}
             aria-busy={sending || undefined}
-            disabled={message.trim().length === 0 || !modelAvailable || sending}
+            disabled={
+              message.trim().length === 0 ||
+              !modelAvailable ||
+              sending ||
+              overSkillBudget
+            }
           >
             <span className="tap-composer-send-face">
               {sending ? (

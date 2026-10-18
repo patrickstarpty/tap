@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -116,13 +116,20 @@ function renderWorkspace(
     locale?: "en" | "zh";
     onUse?: (revisionId: string) => void;
     setEnabledMutate?: ReturnType<typeof vi.fn>;
+    agentsPending?: boolean;
+    agentsError?: boolean;
+    agentsRefetch?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
+  const agentsRefetch = overrides.agentsRefetch ?? vi.fn();
   vi.mocked(useAgents).mockReturnValue({
-    data: overrides.agents ?? AGENTS,
-    isPending: false,
-    isError: false,
-    refetch: vi.fn(),
+    data:
+      overrides.agentsPending === true
+        ? undefined
+        : (overrides.agents ?? AGENTS),
+    isPending: overrides.agentsPending ?? false,
+    isError: overrides.agentsError ?? false,
+    refetch: agentsRefetch,
   } as never);
   vi.mocked(useSkills).mockReturnValue({
     data: [],
@@ -154,6 +161,7 @@ function renderWorkspace(
   return {
     onUse,
     setEnabledMutate,
+    agentsRefetch,
     ...render(
       createElement(AgentsWorkspace, {
         projectId: "project-1",
@@ -221,20 +229,31 @@ describe("AgentsWorkspace actions", () => {
     expect(onUse).toHaveBeenCalledWith("rev_custom");
   });
 
-  it("toggles enabled state through Enable/Disable", async () => {
+  it("toggles enabled state through Enable/Disable for a custom agent", async () => {
     const user = userEvent.setup();
     const setEnabledMutate = vi.fn();
     renderWorkspace({ setEnabledMutate });
-    const row = screen.getByText("Built-in reviewer").closest("li")!;
+    const row = screen.getByText("Custom helper").closest("li")!;
     await user.click(
       screen
         .getAllByRole("button", { name: "Disable" })
         .find((button) => row.contains(button))!,
     );
     expect(setEnabledMutate).toHaveBeenCalledWith({
-      agentId: "agent_builtin",
+      agentId: "agent_custom",
       enabled: false,
     });
+  });
+
+  it("never offers Disable for a built-in agent", () => {
+    renderWorkspace();
+    const row = screen.getByText("Built-in reviewer").closest("li")!;
+    expect(
+      within(row).queryByRole("button", { name: "Disable" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(row).queryByRole("button", { name: "Enable" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows a notice on an agent whose bundled Skill has a newer revision", () => {
@@ -248,5 +267,24 @@ describe("AgentsWorkspace actions", () => {
     renderWorkspace();
     await user.click(screen.getByRole("button", { name: "New agent" }));
     expect(screen.getByRole("dialog", { name: "New agent" })).toBeVisible();
+  });
+});
+
+describe("AgentsWorkspace loading and error states", () => {
+  it("shows a loading status while the catalog is pending", () => {
+    renderWorkspace({ agentsPending: true });
+    expect(screen.getByRole("status")).toHaveTextContent("Loading agents…");
+    expect(screen.queryByText("Built-in reviewer")).not.toBeInTheDocument();
+  });
+
+  it("shows an error and a retry button when the catalog fails to load", async () => {
+    const user = userEvent.setup();
+    const agentsRefetch = vi.fn();
+    renderWorkspace({ agentsError: true, agentsRefetch });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Agents could not be loaded.",
+    );
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(agentsRefetch).toHaveBeenCalled();
   });
 });
