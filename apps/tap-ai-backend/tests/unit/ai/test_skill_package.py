@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import warnings
 import zipfile
 
 import pytest
@@ -218,3 +219,134 @@ def test_scan_markdown_wraps_single_skill() -> None:
     scan = scan_markdown(text)
     assert len(scan.skills) == 1
     assert scan.skills[0].manifest.name == "my-skill"
+
+
+# --- Fix round 1: security review findings -------------------------------------
+
+
+def test_windows_style_and_control_char_paths_rejected() -> None:
+    bad_paths = (
+        "..\\..\\evil.txt",
+        "C:\\evil.txt",
+        "C:/evil.txt",
+        "./x/./y.txt",
+        "a\x00b",
+        "a\nb",
+    )
+    for bad_path in bad_paths:
+        with pytest.raises(SkillPackageRejected) as excinfo:
+            scan_files({"SKILL.md": _skill_md(), bad_path: b"data"})
+        assert excinfo.value.code == "skill_path_rejected", bad_path
+
+
+def test_duplicate_zip_entry_names_rejected() -> None:
+    buffer = io.BytesIO()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("SKILL.md", _skill_md(name="skill-one"))
+            archive.writestr("SKILL.md", _skill_md(name="skill-two"))
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        scan_zip(buffer.getvalue())
+    assert excinfo.value.code == "skill_path_rejected"
+
+
+def test_case_insensitive_duplicate_paths_rejected() -> None:
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        scan_files(
+            {
+                "SKILL.md": _skill_md(),
+                "References/A.md": b"upper",
+                "references/a.md": b"lower",
+            }
+        )
+    assert excinfo.value.code == "skill_path_rejected"
+
+
+def test_encrypted_zip_entry_rejected() -> None:
+    # zipfile.writestr resets flag_bits on write, so the "encrypted" general
+    # purpose bit flag (bit 0) is set directly on the written bytes: in both the
+    # local file header (flag field at offset 6) and the central directory
+    # record (flag field at offset 8).
+    data = bytearray(_zip_bytes({"SKILL.md": _skill_md()}))
+    local_offset = data.find(b"PK\x03\x04")
+    central_offset = data.find(b"PK\x01\x02")
+    assert local_offset != -1 and central_offset != -1
+    local_flags = int.from_bytes(data[local_offset + 6 : local_offset + 8], "little")
+    central_flags = int.from_bytes(data[central_offset + 8 : central_offset + 10], "little")
+    data[local_offset + 6 : local_offset + 8] = (local_flags | 0x1).to_bytes(2, "little")
+    data[central_offset + 8 : central_offset + 10] = (central_flags | 0x1).to_bytes(2, "little")
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        scan_zip(bytes(data))
+    assert excinfo.value.code == "skill_path_rejected"
+
+
+def test_corrupt_zip_entry_rejected() -> None:
+    marker = b"CORRUPT-ME-PAYLOAD"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("SKILL.md", _skill_md(body=marker.decode()))
+    data = bytearray(buffer.getvalue())
+    offset = data.find(marker)
+    assert offset != -1
+    data[offset] ^= 0xFF
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        scan_zip(bytes(data))
+    assert excinfo.value.code == "skill_path_rejected"
+
+
+def test_yaml_alias_rejected() -> None:
+    raw = b"---\nname: my-skill\ndescription: &d Does the thing.\nother: *d\n---\nbody\n"
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        parse_skill_markdown(raw)
+    assert excinfo.value.code == "skill_frontmatter_invalid"
+
+
+def test_yaml_non_string_key_rejected() -> None:
+    raw = (
+        b"---\n"
+        b"name: my-skill\n"
+        b"description: Does the thing.\n"
+        b"metadata:\n"
+        b"  1: numeric-key\n"
+        b"---\n"
+        b"body\n"
+    )
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        parse_skill_markdown(raw)
+    assert excinfo.value.code == "skill_frontmatter_invalid"
+
+
+def test_yaml_date_value_rejected() -> None:
+    raw = b"---\nname: my-skill\ndescription: Does the thing.\nupdated: 2024-01-01\n---\nbody\n"
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        parse_skill_markdown(raw)
+    assert excinfo.value.code == "skill_frontmatter_invalid"
+
+
+def test_skill_order_is_deterministic() -> None:
+    scan = scan_files(
+        {
+            "skills/b/SKILL.md": _skill_md(name="skill-b"),
+            "skills/a/SKILL.md": _skill_md(name="skill-a"),
+        }
+    )
+    assert [skill.root for skill in scan.skills] == ["skills/a", "skills/b"]
+
+
+def test_duplicate_skill_name_rejected() -> None:
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        scan_files(
+            {
+                "skills/a/SKILL.md": _skill_md(name="same-name"),
+                "skills/b/SKILL.md": _skill_md(name="same-name"),
+            }
+        )
+    assert excinfo.value.code == "skill_frontmatter_invalid"
+
+
+def test_frontmatter_closing_delimiter_must_be_on_own_line() -> None:
+    raw = b"---\nname: my-skill\ndescription: Does the thing.\n---not-a-fence\nbody\n"
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        parse_skill_markdown(raw)
+    assert excinfo.value.code == "skill_frontmatter_invalid"

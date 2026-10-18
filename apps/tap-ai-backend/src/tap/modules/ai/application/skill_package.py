@@ -17,7 +17,9 @@ import io
 import posixpath
 import re
 import stat
+import unicodedata
 import zipfile
+import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -32,9 +34,20 @@ MAX_SKILL_MD_BYTES = 256 * 1024
 MAX_ATTACHED_BYTES = 64 * 1024
 
 _NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-_FRONTMATTER_PATTERN = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
+# The closing fence must be `---` alone on its own line (or at end of string): a
+# line like `---extra` must not be mistaken for the end of frontmatter.
+_FRONTMATTER_PATTERN = re.compile(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)(.*)\Z", re.DOTALL)
 _REFERENCE_PATTERN = re.compile(r"\[[^\]]*\]\((references/[^)\s]+)\)|`(references/[^`]+)`")
 _CHUNK_BYTES = 1 << 20
+_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+_DRIVE_PREFIX_PATTERN = re.compile(r"^[A-Za-z]:")
+_UNREADABLE_ZIP_ENTRY_ERRORS = (
+    zipfile.BadZipFile,
+    NotImplementedError,
+    RuntimeError,
+    zlib.error,
+    EOFError,
+)
 
 
 class SkillPackageRejected(Exception):
@@ -85,9 +98,21 @@ def parse_skill_markdown(raw: bytes) -> SkillManifest:
     match = _FRONTMATTER_PATTERN.match(text)
     if match is None:
         raise SkillPackageRejected(
-            "skill_frontmatter_invalid", "SKILL.md must start with a --- frontmatter block"
+            "skill_frontmatter_invalid",
+            "SKILL.md must start with a --- frontmatter block closed by --- alone on its own line",
         )
     frontmatter_text, body = match.group(1), match.group(2)
+    try:
+        for event in yaml.parse(frontmatter_text, Loader=yaml.SafeLoader):
+            if isinstance(event, yaml.events.AliasEvent):
+                raise SkillPackageRejected(
+                    "skill_frontmatter_invalid",
+                    "frontmatter must not use YAML anchors or aliases",
+                )
+    except yaml.YAMLError as error:
+        raise SkillPackageRejected(
+            "skill_frontmatter_invalid", "SKILL.md frontmatter must be valid YAML"
+        ) from error
     try:
         frontmatter = yaml.safe_load(frontmatter_text)
     except yaml.YAMLError as error:
@@ -98,6 +123,7 @@ def parse_skill_markdown(raw: bytes) -> SkillManifest:
         raise SkillPackageRejected(
             "skill_frontmatter_invalid", "SKILL.md frontmatter must be a YAML mapping"
         )
+    _check_json_compatible(frontmatter)
     name = frontmatter.get("name")
     if not isinstance(name, str) or len(name) > 64 or _NAME_PATTERN.fullmatch(name) is None:
         raise SkillPackageRejected(
@@ -114,12 +140,52 @@ def parse_skill_markdown(raw: bytes) -> SkillManifest:
     return SkillManifest(name=name, description=description, frontmatter=frontmatter, body=body)
 
 
-def _validate_relative_path(path: str) -> None:
+def _check_json_compatible(value: object) -> None:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return
+    if isinstance(value, list):
+        for item in value:
+            _check_json_compatible(item)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise SkillPackageRejected(
+                    "skill_frontmatter_invalid", "frontmatter mapping keys must be strings"
+                )
+            _check_json_compatible(item)
+        return
+    raise SkillPackageRejected(
+        "skill_frontmatter_invalid",
+        f"frontmatter contains an unsupported value type: {type(value).__name__}",
+    )
+
+
+def _validate_relative_path(path: str) -> str:
     if not isinstance(path, str) or not path:
         raise SkillPackageRejected("skill_path_rejected", f"invalid path: {path!r}")
-    segments = path.split("/")
-    if any(segment in ("", "..") for segment in segments):
+    normalized = unicodedata.normalize("NFC", path)
+    if (
+        "\\" in normalized
+        or _DRIVE_PREFIX_PATTERN.match(normalized) is not None
+        or _CONTROL_CHAR_PATTERN.search(normalized) is not None
+    ):
         raise SkillPackageRejected("skill_path_rejected", f"invalid path: {path!r}")
+    segments = normalized.split("/")
+    if any(segment in ("", ".", "..") for segment in segments):
+        raise SkillPackageRejected("skill_path_rejected", f"invalid path: {path!r}")
+    return normalized
+
+
+def _reject_duplicate_paths(paths: list[str]) -> None:
+    seen: set[str] = set()
+    for path in paths:
+        key = path.casefold()
+        if key in seen:
+            raise SkillPackageRejected(
+                "skill_path_rejected", f"duplicate path in package: {path!r}"
+            )
+        seen.add(key)
 
 
 def _strip_common_prefix(paths: list[str]) -> list[str]:
@@ -177,11 +243,14 @@ def scan_files(files: Mapping[str, bytes]) -> PackageScan:
             "skill_path_rejected", "package contents must be a mapping of path to bytes"
         )
     contents: dict[str, bytes] = {}
+    normalized_paths: list[str] = []
     for path, content in files.items():
-        _validate_relative_path(path)
+        normalized_path = _validate_relative_path(path)
         if not isinstance(content, bytes):
             raise SkillPackageRejected("skill_path_rejected", f"invalid content for path: {path!r}")
-        contents[path] = content
+        normalized_paths.append(normalized_path)
+        contents[normalized_path] = content
+    _reject_duplicate_paths(normalized_paths)
     if len(contents) > MAX_FILES:
         raise SkillPackageRejected(
             "skill_package_too_large",
@@ -192,8 +261,7 @@ def scan_files(files: Mapping[str, bytes]) -> PackageScan:
 
     roots = sorted(
         {posixpath.dirname(path) for path in contents if posixpath.basename(path) == "SKILL.md"},
-        key=len,
-        reverse=True,
+        key=lambda root: (-len(root), root),
     )
     if not roots:
         raise SkillPackageRejected(
@@ -260,6 +328,15 @@ def scan_files(files: Mapping[str, bytes]) -> PackageScan:
             )
         )
 
+    seen_names: set[str] = set()
+    for skill in skills:
+        if skill.manifest.name in seen_names:
+            raise SkillPackageRejected(
+                "skill_frontmatter_invalid",
+                f"duplicate skill name within package: {skill.manifest.name!r}",
+            )
+        seen_names.add(skill.manifest.name)
+
     return PackageScan(skills=tuple(skills), contents=dict(contents))
 
 
@@ -287,15 +364,20 @@ def scan_zip(data: bytes) -> PackageScan:
         file_infos = [info for info in archive.infolist() if not info.is_dir()]
         names: list[str] = []
         for info in file_infos:
-            name = info.filename
-            _validate_relative_path(name)
+            normalized_name = _validate_relative_path(info.filename)
+            if info.flag_bits & 0x1:
+                raise SkillPackageRejected(
+                    "skill_path_rejected",
+                    f"encrypted package entries are not supported: {normalized_name}",
+                )
             mode = info.external_attr >> 16
             file_type = stat.S_IFMT(mode)
             if file_type and file_type not in (stat.S_IFREG, stat.S_IFDIR):
                 raise SkillPackageRejected(
-                    "skill_path_rejected", f"unsupported file type in package entry: {name}"
+                    "skill_path_rejected",
+                    f"unsupported file type in package entry: {normalized_name}",
                 )
-            names.append(name)
+            names.append(normalized_name)
 
         if len(names) > MAX_FILES:
             raise SkillPackageRejected(
@@ -306,23 +388,30 @@ def scan_zip(data: bytes) -> PackageScan:
             )
 
         stripped_names = _strip_common_prefix(names)
+        _reject_duplicate_paths(stripped_names)
 
         contents: dict[str, bytes] = {}
         total_extracted = 0
         for info, stripped_name in zip(file_infos, stripped_names):
             chunks: list[bytes] = []
-            with archive.open(info) as handle:
-                while True:
-                    chunk = handle.read(_CHUNK_BYTES)
-                    if not chunk:
-                        break
-                    total_extracted += len(chunk)
-                    if total_extracted > MAX_EXTRACTED_BYTES:
-                        raise SkillPackageRejected(
-                            "skill_package_too_large",
-                            "the decompressed package exceeds the extraction size limit",
-                        )
-                    chunks.append(chunk)
+            try:
+                with archive.open(info) as handle:
+                    while True:
+                        chunk = handle.read(_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        total_extracted += len(chunk)
+                        if total_extracted > MAX_EXTRACTED_BYTES:
+                            raise SkillPackageRejected(
+                                "skill_package_too_large",
+                                "the decompressed package exceeds the extraction size limit",
+                            )
+                        chunks.append(chunk)
+            except _UNREADABLE_ZIP_ENTRY_ERRORS as error:
+                raise SkillPackageRejected(
+                    "skill_path_rejected",
+                    f"the package entry could not be read: {stripped_name}",
+                ) from error
             contents[stripped_name] = b"".join(chunks)
 
     return scan_files(contents)
