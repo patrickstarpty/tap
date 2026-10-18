@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Literal
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, a
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.ai.application.assets import ValidationAssetSeed, resolve_agent_selection
+from tap.modules.ai.application.skill_authoring import SkillImportRecord
 from tap.modules.ai.domain.assets import (
     AiAgentRevision,
     AssetRevisionRejected,
@@ -205,7 +207,10 @@ skill_import = Table(
     Column("preview_json", JSON, nullable=False),
     Column("staging_locators", JSON, nullable=False),
     Column("expires_at", DATETIME(fsp=6), nullable=False),
-    Column("committed_result_json", JSON),
+    # `none_as_null=True` is required so a Python ``None`` binds as SQL NULL
+    # rather than the JSON scalar ``null`` (SQLAlchemy's JSON default): the
+    # idempotent commit guard below depends on a real SQL `IS NULL` check.
+    Column("committed_result_json", JSON(none_as_null=True)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     Column("enterprise_id", String(128), nullable=False),
     Column("project_id", String(128), nullable=False),
@@ -450,7 +455,7 @@ class MysqlAssetCatalog:
                 **scope_values(self._scope),
             )
         )
-        await self._insert_skill_files(session, revision)
+        await self._insert_skill_files(session, revision, file_object_refs=None)
 
     async def list_agents(self, scope: ProjectScopeContext) -> tuple[AiAgentRevision, ...]:
         self._assert_scope(scope)
@@ -740,9 +745,16 @@ class MysqlAssetCatalog:
             for row in rows
         )
 
-    async def _insert_skill_files(self, session: AsyncSession, revision: SkillRevision) -> None:
+    async def _insert_skill_files(
+        self,
+        session: AsyncSession,
+        revision: SkillRevision,
+        *,
+        file_object_refs: Mapping[str, str] | None,
+    ) -> None:
         if not revision.files:
             return
+        refs = file_object_refs or {}
         await session.execute(
             skill_revision_file.insert(),
             [
@@ -754,8 +766,13 @@ class MysqlAssetCatalog:
                     "sha256": file.sha256,
                     "category": file.category,
                     "attached": file.attached,
-                    "object_locator": (
-                        f"skills/{revision.asset_id}/{revision.revision_id}/{file.relative_path}"
+                    # Prefer the caller-supplied, provider-opaque object
+                    # reference (needed to re-open the bytes later); fall
+                    # back to the documented identity convention so the
+                    # column is never left unpopulated.
+                    "object_locator": refs.get(
+                        file.relative_path,
+                        f"skills/{revision.asset_id}/{revision.revision_id}/{file.relative_path}",
                     ),
                     "enterprise_id": self._scope.enterprise_id,
                     "actor_id": self._scope.actor_id,
@@ -780,7 +797,11 @@ class MysqlAssetCatalog:
         return row[0] if row is not None else None
 
     async def insert_skill_revision(
-        self, revision: SkillRevision, *, base_revision_id: str | None
+        self,
+        revision: SkillRevision,
+        *,
+        base_revision_id: str | None,
+        file_object_refs: Mapping[str, str] | None = None,
     ) -> SkillRevision:
         if not isinstance(revision, SkillRevision):
             raise AssetRevisionRejected()
@@ -844,7 +865,7 @@ class MysqlAssetCatalog:
                         **scope_values(self._scope),
                     )
                 )
-                await self._insert_skill_files(session, revision)
+                await self._insert_skill_files(session, revision, file_object_refs=file_object_refs)
         except IntegrityError as error:
             # A residual race (e.g. two first-time creates of the same new
             # asset_id racing the parent-row insert itself, before either
@@ -1003,3 +1024,111 @@ class MysqlAssetCatalog:
             if table is ai_agent_revision:
                 return self._agent(row)
             return await self._skill_with_files(session, row)
+
+    async def get_skill_file_object_ref(self, revision_id: str, relative_path: str) -> str | None:
+        async with self._sessions() as session:
+            row = (
+                await session.execute(
+                    select(skill_revision_file.c.object_locator).where(
+                        *scope_predicates(skill_revision_file, self._scope),
+                        skill_revision_file.c.revision_id == revision_id,
+                        skill_revision_file.c.relative_path == relative_path,
+                    )
+                )
+            ).first()
+        return row[0] if row is not None else None
+
+    async def create_skill_import(
+        self,
+        *,
+        import_id: str,
+        preview_json: Mapping[str, object],
+        staging_locators: Sequence[str],
+        expires_at: datetime,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        async with self._sessions.begin() as session:
+            await session.execute(
+                skill_import.insert().values(
+                    import_id=import_id,
+                    preview_json=dict(preview_json),
+                    staging_locators=list(staging_locators),
+                    expires_at=expires_at,
+                    committed_result_json=None,
+                    created_at=now,
+                    **scope_values(self._scope),
+                )
+            )
+
+    async def get_skill_import(self, import_id: str) -> SkillImportRecord | None:
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(skill_import).where(
+                            *scope_predicates(skill_import, self._scope),
+                            skill_import.c.import_id == import_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            return None
+        return self._skill_import_record(row)
+
+    async def set_skill_import_committed(self, import_id: str, result_json: object) -> bool:
+        async with self._sessions.begin() as session:
+            result = await session.execute(
+                update(skill_import)
+                .where(
+                    *scope_predicates(skill_import, self._scope),
+                    skill_import.c.import_id == import_id,
+                    skill_import.c.committed_result_json.is_(None),
+                )
+                .values(committed_result_json=result_json)
+            )
+        return result.rowcount == 1
+
+    async def purge_expired_skill_imports(
+        self, *, now: datetime, limit: int = 20
+    ) -> tuple[SkillImportRecord, ...]:
+        async with self._sessions.begin() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(skill_import)
+                        .where(
+                            *scope_predicates(skill_import, self._scope),
+                            skill_import.c.expires_at <= now,
+                        )
+                        .order_by(skill_import.c.expires_at)
+                        .limit(limit)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            records = tuple(self._skill_import_record(row) for row in rows)
+            if records:
+                await session.execute(
+                    skill_import.delete().where(
+                        *scope_predicates(skill_import, self._scope),
+                        skill_import.c.import_id.in_([record.import_id for record in records]),
+                    )
+                )
+        return records
+
+    @staticmethod
+    def _skill_import_record(row) -> SkillImportRecord:
+        expires_at = row["expires_at"]
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return SkillImportRecord(
+            import_id=row["import_id"],
+            preview_json=row["preview_json"],
+            staging_locators=tuple(row["staging_locators"]),
+            expires_at=expires_at,
+            committed_result_json=row["committed_result_json"],
+        )

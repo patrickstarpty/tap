@@ -1,0 +1,361 @@
+"""SkillAuthoringService: import, author, revise, disable, download.
+
+Uses in-memory doubles for the catalog port and the object store so these
+tests exercise only the service's own orchestration logic; MySQL-backed
+behavior is covered separately in the isolated integration test.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.application.skill_authoring import (
+    FilesUpload,
+    ImportSelection,
+    SkillAuthoringService,
+    SkillDraft,
+    SkillImportRecord,
+    TextUpload,
+)
+from tap.modules.ai.application.skill_package import SkillPackageRejected
+from tap.modules.ai.domain.assets import (
+    AssetRevisionStatus,
+    RevisionConflict,
+    SkillRevision,
+)
+from tap.platform.storage.objects import (
+    ObjectMissingError,
+    ObjectRef,
+    StagedObject,
+    StagingRef,
+    VerifiedObject,
+)
+
+_SKILL_MD = (
+    "---\n"
+    "name: demo-skill\n"
+    "description: Demo skill used in authoring tests.\n"
+    "---\n"
+    "\n"
+    "Use the demo skill body as instructions.\n"
+)
+
+
+class _FakeCatalog:
+    def __init__(self) -> None:
+        self._skills: dict[str, list[SkillRevision]] = {}
+        self._file_refs: dict[tuple[str, str], str] = {}
+        self._imports: dict[str, dict[str, object]] = {}
+
+    async def insert_skill_revision(self, revision, *, base_revision_id, file_object_refs=None):
+        history = self._skills.setdefault(revision.asset_id, [])
+        latest = history[-1].revision_id if history else None
+        if latest != base_revision_id:
+            raise RevisionConflict()
+        history.append(revision)
+        for file in revision.files:
+            ref = (file_object_refs or {}).get(file.relative_path)
+            if ref is not None:
+                self._file_refs[(revision.revision_id, file.relative_path)] = ref
+        return revision
+
+    async def set_asset_enabled(self, kind, asset_id, enabled):
+        history = self._skills.get(asset_id)
+        if not history:
+            raise LookupError(asset_id)
+        status = AssetRevisionStatus.ENABLED if enabled else AssetRevisionStatus.DISABLED
+        history[-1] = replace(history[-1], status=status)
+
+    async def list_revisions(self, kind, asset_id):
+        return tuple(self._skills.get(asset_id, ()))
+
+    async def find_skill_by_name(self, scope, name):
+        for history in self._skills.values():
+            if history and history[-1].display_name == name:
+                return history[-1]
+        return None
+
+    async def get_skill_file_object_ref(self, revision_id, relative_path):
+        return self._file_refs.get((revision_id, relative_path))
+
+    async def create_skill_import(self, *, import_id, preview_json, staging_locators, expires_at):
+        self._imports[import_id] = {
+            "preview_json": preview_json,
+            "staging_locators": tuple(staging_locators),
+            "expires_at": expires_at,
+            "committed_result_json": None,
+        }
+
+    async def get_skill_import(self, import_id):
+        row = self._imports.get(import_id)
+        if row is None:
+            return None
+        return SkillImportRecord(import_id=import_id, **row)
+
+    async def set_skill_import_committed(self, import_id, result_json):
+        row = self._imports.get(import_id)
+        if row is None or row["committed_result_json"] is not None:
+            return False
+        row["committed_result_json"] = result_json
+        return True
+
+    async def purge_expired_skill_imports(self, *, now, limit):
+        expired = [
+            SkillImportRecord(import_id=key, **value)
+            for key, value in self._imports.items()
+            if value["expires_at"] <= now
+        ][:limit]
+        for record in expired:
+            del self._imports[record.import_id]
+        return tuple(expired)
+
+
+class _FakeObjectStore:
+    def __init__(self) -> None:
+        self.staged: dict[StagingRef, bytes] = {}
+        self.objects: dict[ObjectRef, tuple[bytes, str, dict[str, str], str]] = {}
+        self._counter = 0
+
+    async def put_staged(self, request):
+        data = bytearray()
+        async for chunk in request.content:
+            data += chunk
+        data = bytes(data)
+        self._counter += 1
+        ref = StagingRef(f"stg-{self._counter}")
+        self.staged[ref] = data
+        digest = f"sha256:{hashlib.sha256(data).hexdigest()}"
+        return StagedObject(ref, digest, len(data), request.content_type)
+
+    async def promote(self, staged, expected_sha256, *, identity, attributes):
+        data = self.staged.pop(staged.ref, None)
+        if data is None:
+            raise ObjectMissingError("missing staged object")
+        digest = f"sha256:{hashlib.sha256(data).hexdigest()}"
+        if digest != expected_sha256:
+            raise ValueError("digest mismatch")
+        self._counter += 1
+        ref = ObjectRef(f"obj-{self._counter}")
+        self.objects[ref] = (data, digest, dict(attributes), identity)
+        return ref
+
+    async def open_verified(self, ref):
+        if isinstance(ref, StagingRef):
+            data = self.staged.get(ref)
+            if data is None:
+                raise ObjectMissingError("missing staged object")
+            digest = f"sha256:{hashlib.sha256(data).hexdigest()}"
+            return VerifiedObject(data, digest, len(data), "application/octet-stream", "staged", ())
+        entry = self.objects.get(ref)
+        if entry is None:
+            raise ObjectMissingError("missing object")
+        data, digest, attributes, identity = entry
+        return VerifiedObject(
+            data,
+            digest,
+            len(data),
+            "application/octet-stream",
+            identity,
+            tuple(sorted(attributes.items())),
+        )
+
+    async def delete(self, ref):
+        if ref in self.staged:
+            del self.staged[ref]
+            return
+        if ref in self.objects:
+            del self.objects[ref]
+            return
+        raise ObjectMissingError("missing object")
+
+
+def _service(catalog=None, objects=None, now=None):
+    catalog = catalog if catalog is not None else _FakeCatalog()
+    objects = objects if objects is not None else _FakeObjectStore()
+    box = [now or datetime(2026, 1, 1, tzinfo=timezone.utc)]
+    service = SkillAuthoringService(catalog, objects, scope=VALIDATION_SCOPE, clock=lambda: box[0])
+    return service, catalog, objects, box
+
+
+@pytest.mark.asyncio
+async def test_stage_then_commit_creates_revision_and_objects() -> None:
+    service, catalog, objects, _ = _service()
+    upload = FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode("utf-8")})
+
+    preview = await service.stage_import(VALIDATION_SCOPE, upload=upload)
+
+    assert len(preview.skills) == 1
+    skill_preview = preview.skills[0]
+    assert skill_preview.root == "demo-skill"
+    assert skill_preview.name == "demo-skill"
+    assert skill_preview.conflict_skill_id is None
+    assert [file.relative_path for file in skill_preview.files] == ["SKILL.md"]
+    assert objects.staged  # the file bytes are staged before commit
+
+    revisions = await service.commit_import(
+        VALIDATION_SCOPE, preview.import_id, (ImportSelection(root="demo-skill"),)
+    )
+
+    assert len(revisions) == 1
+    revision = revisions[0]
+    assert revision.source_kind == "imported"
+    assert revision.display_name == "demo-skill"
+    assert revision.instruction_template is not None
+    assert [file.relative_path for file in revision.files] == ["SKILL.md"]
+    assert not objects.staged  # promoted, not left staged
+
+    ref = await catalog.get_skill_file_object_ref(revision.revision_id, "SKILL.md")
+    assert ref is not None
+    opened = await objects.open_verified(ObjectRef(ref))
+    assert opened.data == _SKILL_MD.encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_commit_is_idempotent() -> None:
+    service, catalog, _, _ = _service()
+    upload = FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode("utf-8")})
+    preview = await service.stage_import(VALIDATION_SCOPE, upload=upload)
+    selections = (ImportSelection(root="demo-skill"),)
+
+    first = await service.commit_import(VALIDATION_SCOPE, preview.import_id, selections)
+    second = await service.commit_import(VALIDATION_SCOPE, preview.import_id, selections)
+
+    assert [r.revision_id for r in first] == [r.revision_id for r in second]
+    assert len(catalog._skills[first[0].asset_id]) == 1
+
+
+@pytest.mark.asyncio
+async def test_name_conflict_requires_explicit_new_revision() -> None:
+    service, _, _, _ = _service()
+    first_import = await service.stage_import(
+        VALIDATION_SCOPE, upload=FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode()})
+    )
+    (created,) = await service.commit_import(
+        VALIDATION_SCOPE, first_import.import_id, (ImportSelection(root="demo-skill"),)
+    )
+
+    second_import = await service.stage_import(
+        VALIDATION_SCOPE, upload=FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode()})
+    )
+    assert second_import.skills[0].conflict_skill_id == created.asset_id
+
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        await service.commit_import(
+            VALIDATION_SCOPE, second_import.import_id, (ImportSelection(root="demo-skill"),)
+        )
+    assert excinfo.value.code == "skill_name_conflict"
+
+    (revised,) = await service.commit_import(
+        VALIDATION_SCOPE,
+        second_import.import_id,
+        (ImportSelection(root="demo-skill", as_new_revision_of=created.asset_id),),
+    )
+    assert revised.asset_id == created.asset_id
+    assert revised.revision_id != created.revision_id
+
+
+@pytest.mark.asyncio
+async def test_expired_import_rejected() -> None:
+    service, _, _, box = _service()
+    preview = await service.stage_import(VALIDATION_SCOPE, upload=TextUpload(text=_SKILL_MD))
+    box[0] = box[0] + timedelta(hours=25)
+
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        await service.commit_import(
+            VALIDATION_SCOPE, preview.import_id, (ImportSelection(root=""),)
+        )
+    assert excinfo.value.code == "import_expired"
+
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        await service.commit_import(VALIDATION_SCOPE, "unknown-import-id", ())
+    assert excinfo.value.code == "import_expired"
+
+
+@pytest.mark.asyncio
+async def test_authored_skill_matches_imported_shape() -> None:
+    service, _, objects, _ = _service()
+    draft = SkillDraft(
+        name="authored-skill",
+        description="An authored skill for shape comparison.",
+        instructions="Follow the authored instructions.",
+    )
+
+    revision = await service.create_authored(VALIDATION_SCOPE, draft)
+
+    assert revision.source_kind == "authored"
+    assert revision.display_name == "authored-skill"
+    assert revision.applicable_tasks == frozenset({"knowledge.answer"})
+    assert [file.relative_path for file in revision.files] == ["SKILL.md"]
+    assert revision.frontmatter is not None
+    assert revision.frontmatter["name"] == "authored-skill"
+    file_ref = revision.files[0]
+    assert file_ref.category == "skill"
+    opened = await objects.open_verified(ObjectRef(f"obj-{objects._counter}"))
+    assert b"Follow the authored instructions." in opened.data
+
+
+@pytest.mark.asyncio
+async def test_stale_base_revision_conflicts() -> None:
+    service, _, _, _ = _service()
+    draft = SkillDraft(
+        name="revisable-skill", description="First version.", instructions="V1 body."
+    )
+    first = await service.create_authored(VALIDATION_SCOPE, draft)
+    revised_draft = SkillDraft(
+        name="revisable-skill", description="Second version.", instructions="V2 body."
+    )
+
+    with pytest.raises(RevisionConflict):
+        await service.revise(VALIDATION_SCOPE, first.asset_id, "not-the-real-base", revised_draft)
+
+    second = await service.revise(
+        VALIDATION_SCOPE, first.asset_id, first.revision_id, revised_draft
+    )
+    assert second.adopted_from_revision_id == first.revision_id
+
+
+@pytest.mark.asyncio
+async def test_open_file_rejects_unknown_path() -> None:
+    service, _, _, _ = _service()
+    draft = SkillDraft(name="file-skill", description="Has one file.", instructions="Body text.")
+    revision = await service.create_authored(VALIDATION_SCOPE, draft)
+
+    opened = await service.open_file(VALIDATION_SCOPE, revision.revision_id, "SKILL.md")
+    assert b"Body text." in opened.data
+
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        await service.open_file(VALIDATION_SCOPE, revision.revision_id, "unknown.txt")
+    assert excinfo.value.code == "skill_path_rejected"
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_imports_deletes_staging() -> None:
+    service, catalog, objects, box = _service()
+    await service.stage_import(
+        VALIDATION_SCOPE, upload=FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode()})
+    )
+    assert objects.staged
+
+    box[0] = box[0] + timedelta(hours=25)
+    purged = await service.purge_expired_imports(VALIDATION_SCOPE, now=box[0])
+
+    assert purged == 1
+    assert not objects.staged
+    assert catalog._imports == {}
+
+
+@pytest.mark.asyncio
+async def test_set_enabled_disables_latest_revision() -> None:
+    service, catalog, _, _ = _service()
+    draft = SkillDraft(name="toggle-skill", description="Toggle me.", instructions="Body.")
+    revision = await service.create_authored(VALIDATION_SCOPE, draft)
+
+    await service.set_enabled(VALIDATION_SCOPE, revision.asset_id, False)
+
+    latest = (await catalog.list_revisions("skill", revision.asset_id))[-1]
+    assert latest.status == AssetRevisionStatus.DISABLED

@@ -34,6 +34,7 @@ from tap.modules.ai.adapters.litellm import (
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, ModelRoles
 from tap.modules.ai.adapters.mysql_model_calls import MysqlModelCallRecorder
 from tap.modules.ai.application.catalog import ModelCatalog
+from tap.modules.ai.application.skill_authoring import SkillAuthoringService
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.milvus.audit import (
@@ -875,6 +876,7 @@ class TapperApiRuntime:
     quality_models: KnowledgeModelGateway
     _resources: OwnedResources
     failure_controller: TapperFailureController | None = None
+    skill_authoring: SkillAuthoringService | None = None
 
     async def aclose(self) -> None:
         await self._resources.aclose()
@@ -927,6 +929,13 @@ async def create_api_runtime(
         )
         scope_provider, authorization_policy = _create_validation_authority(engine)
         asset_catalog = await _create_asset_catalog(engine, repository.scope)
+        skill_objects = _create_skill_objects(settings)
+        resources.push(skill_objects)
+        skill_authoring = SkillAuthoringService(
+            asset_catalog,  # type: ignore[arg-type]
+            skill_objects,  # type: ignore[arg-type]
+            scope=repository.scope,
+        )
         from tap.modules.knowledge.adapters.managed_chunk_search import ManagedChunkSearch
 
         chunk_index = await _create_document_index(settings, engine)
@@ -1009,6 +1018,7 @@ async def create_api_runtime(
             quality_models=embeddings,
             _resources=resources,
             failure_controller=failure_controller,
+            skill_authoring=skill_authoring,
         )
     except BaseException as error:
         await resources.aclose(error)
@@ -1459,6 +1469,32 @@ def _create_blob(settings: TapperSettings) -> KnowledgeArtifactStore:
             ),
             scope=VALIDATION_SCOPE,
         )
+    )
+
+
+def _create_skill_objects(settings: TapperSettings) -> object:
+    """A dedicated object store connection for Skill package bytes.
+
+    Deliberately independent of ``_create_blob``'s Knowledge artifact store
+    (rather than reaching into its ``.objects`` attribute) so unit tests that
+    stub ``_create_blob`` with a narrow double are unaffected.
+    """
+
+    from pydantic import SecretStr
+
+    from tap.platform.storage.s3 import S3ObjectConfig, S3ObjectStore
+
+    return S3ObjectStore(
+        S3ObjectConfig(
+            endpoint=settings.s3_endpoint,
+            bucket=settings.s3_bucket,
+            region=settings.s3_region,
+            access_key=SecretStr(settings.s3_access_key),
+            secret_key=SecretStr(settings.s3_secret_key),
+            store_id=settings.s3_store_id,
+            timeout_seconds=settings.blob_timeout_seconds,
+        ),
+        scope=VALIDATION_SCOPE,
     )
 
 
