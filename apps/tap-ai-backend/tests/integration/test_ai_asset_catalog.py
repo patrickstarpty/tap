@@ -599,3 +599,58 @@ async def test_concurrent_insert_agent_revision_on_the_same_base_conflicts_clean
         ]
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_authored_agent_is_resolvable_for_a_conversation_turn(owned_project_mysql) -> None:
+    # Reproduces the `make demo-e2e` defect through the exact real-wiring
+    # path the API uses: `AgentAuthoringService.create` (the UI's "New
+    # agent"/"Copy as custom" flow) writes to the real `MysqlAssetCatalog`,
+    # then `routes/conversations.py`'s `_input()` calls
+    # `asset_catalog.resolve_agent(..., tools=..., output_schema_digest=...)`
+    # on exactly this revision before accepting a Turn that names it. Before
+    # the fix, every authored Agent had `output_schema_json=None` and a
+    # digest that could never match, so this always raised
+    # `AssetRevisionRejected` (surfaced as the 404
+    # `asset-revision-unavailable`) — see agent_authoring.py.
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.agent_authoring import AgentAuthoringService, AgentDraft
+    from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
+    from tap.modules.ai.domain.models import schema_digest
+
+    class _NoSelectableModels:
+        async def list_models(self, scope):
+            return ()
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        catalog = MysqlAssetCatalog(
+            async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+        )
+        service = AgentAuthoringService(catalog, _NoSelectableModels(), scope=VALIDATION_SCOPE)
+
+        # The real `AgentForm` never sends `toolIds` either (see round 3).
+        created = await service.create(
+            VALIDATION_SCOPE,
+            AgentDraft(
+                name="demo-authored-agent",
+                description="An authored agent for integration tests.",
+                system_instruction="Answer using only approved knowledge.",
+            ),
+        )
+
+        resolved = await catalog.resolve_agent(
+            VALIDATION_SCOPE,
+            created.revision_id,
+            tools=frozenset({"knowledge.answer"}),
+            output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
+        )
+
+        assert resolved.revision_id == created.revision_id
+        assert resolved.output_schema_json is not None
+        assert resolved.output_schema_digest == schema_digest(VALIDATION_OUTPUT_SCHEMA)
+    finally:
+        await engine.dispose()

@@ -10,22 +10,36 @@ port (Task 2's ``MysqlAssetCatalog``).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Literal, Protocol
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
 from tap.modules.ai.domain.assets import (
     AiAgentRevision,
     AssetRevisionRejected,
     SkillRevision,
     text_digest,
 )
-from tap.modules.ai.domain.models import ModelCapability, ModelDescriptor
+from tap.modules.ai.domain.models import ModelCapability, ModelDescriptor, schema_digest
 from tap.modules.ai.domain.tools import known_tool_ids, required_tool_ids
 
 _AGENT_TASK = "knowledge.answer"
-_NO_OUTPUT_SCHEMA_DIGEST = text_digest("")
+# Authoring (Task 6) has no per-Agent custom output-schema field — every
+# knowledge.answer turn (built-in or authored Agent alike) is governed by
+# this one fixed answer+claims JSON schema (see
+# `knowledge_service.py::_generation_governance` and
+# `resolve_agent_selection`, which both require a *matching*
+# non-null `output_schema_json`/`_digest`, not merely a present one).
+# Leaving these `None`/empty here — Task 6's original placeholder — is
+# exactly why authored/imported Agents 404 as `asset-revision-unavailable`
+# the moment anyone tries to use one in a conversation.
+_AGENT_OUTPUT_SCHEMA_JSON = json.dumps(
+    VALIDATION_OUTPUT_SCHEMA, sort_keys=True, separators=(",", ":")
+)
+_AGENT_OUTPUT_SCHEMA_DIGEST = schema_digest(VALIDATION_OUTPUT_SCHEMA)
 
 
 class AgentAuthoringRejected(Exception):
@@ -221,9 +235,9 @@ class AgentAuthoringService:
             content_digest=text_digest(f"{draft.name}\0{draft.description}"),
             system_instruction_digest=text_digest(draft.system_instruction),
             tool_allowlist=tool_ids,
-            output_schema_digest=_NO_OUTPUT_SCHEMA_DIGEST,
+            output_schema_digest=_AGENT_OUTPUT_SCHEMA_DIGEST,
             system_instruction=draft.system_instruction,
-            output_schema_json=None,
+            output_schema_json=_AGENT_OUTPUT_SCHEMA_JSON,
             description=draft.description,
             source_kind="authored",
             skill_revision_ids=tuple(draft.skill_revision_ids),
