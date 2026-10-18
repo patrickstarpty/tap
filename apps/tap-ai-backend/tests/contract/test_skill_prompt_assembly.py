@@ -211,3 +211,49 @@ def test_skill_blocks_neutralize_quotes_in_names_and_close_tags_in_bodies() -> N
     # function itself appends, not the one forged inside the hostile body.
     assert block.count("</skill") == 1
     assert block.endswith("</skill>")
+
+
+@pytest.mark.asyncio
+async def test_skill_marker_folded_into_a_cited_claim_survives_inline_parsing() -> None:
+    """E2E regression (`tests/e2e/skills-agents.spec.ts`): a Skill's own body
+    text (here standing in for `[e2e-skill:claim-intake]`, see
+    `tests/e2e/fixtures/skills/claim-intake-checklist/SKILL.md`) must reach
+    the rendered answer. `KnowledgeModelGateway.answer` feeds the raw model
+    text through `parse_inline_answer` (PR 3's claim-driven inline-citation
+    parser), which only keeps text that is part of a cited claim -- an
+    uncited trailing fragment is not guaranteed to survive. This runs the
+    real assembly path end to end: `GenerationGovernance` -> `_skill_blocks`
+    -> prompt -> `DeterministicModelGateway` (the real fake E2E provider,
+    not `_CapturingGateway`) -> `parse_inline_answer`, proving the marker
+    text is preserved when it is folded into a cited claim's own sentence."""
+
+    from tap.modules.ai.adapters.litellm import LiteLLMModelGatewayConfig
+    from tap.modules.ai.adapters.litellm_catalog import ModelRoles
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    marker = "[e2e-skill:claim-intake]"
+    governance = _governance(
+        skill_instruction=f"Follow this checklist.\n{marker}",
+        skill_name="Claim intake checklist",
+    )
+    config = LiteLLMModelGatewayConfig(
+        base_url="https://litellm.example",
+        api_key="x" * 20,
+        roles=ModelRoles("qwen-plus", "text-embedding-v4", None),
+        embedding_dimension=2,
+    )
+    provider = DeterministicModelGateway(
+        config, scope=VALIDATION_SCOPE, redact=redact, answer_delay_seconds=0
+    )
+    models = _gateway(provider)
+
+    result = await models.answer(
+        "query", (_claim_resolution_evidence(),), "quick-hybrid-v1", governance=governance
+    )
+
+    assert marker in result.text
+    assert len(result.claims) == 1
+    # The marker lives inside the cited claim's own text, not as a separate
+    # ungrounded fragment that `parse_inline_answer` would have dropped.
+    assert marker in result.claims[0].text
+    assert result.claims[0].evidence_labels == ("S1",)

@@ -301,6 +301,10 @@ class DeterministicModelGateway(LiteLLMModelGateway):
             # it now runs in `chat_stream`, after the first chunk is yielded, so a
             # partial draft is visible before the delay (Task 9).
             content = "Grounded"
+            # Resolved once; the grounded-answer branch below may fold it
+            # into a cited claim instead and reset this to `None` so the
+            # trailing-echo check further down does not double it.
+            skill_marker = _skill_marker_in_prompt(request.prompt)
             if (
                 request.operation is ModelOperation.STRUCTURED
                 and isinstance(request.schema, dict)
@@ -346,6 +350,25 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                     if _abstention_requested(request.context)
                     else _grounded_claims_from_context(request.context)
                 )
+                if skill_marker is not None and claims:
+                    # Fold the marker into the *last* claim's own cited
+                    # sentence (before its closing punctuation) instead of
+                    # appending it as a separate, uncited trailing fragment.
+                    # `parse_inline_answer`'s rendering is claim-driven --
+                    # PR 3's inline-citation UI is built from `claims`, not
+                    # the raw joined text -- so a marker outside every
+                    # claim's span is not reliably guaranteed to reach the
+                    # rendered answer across every sentence shape, while a
+                    # marker inside a real, cited claim always does.
+                    last = dict(claims[-1])
+                    text = last["text"]
+                    last["text"] = (
+                        f"{text[:-1]} {skill_marker}{text[-1]}"
+                        if text and text[-1] in ".!?。！？"
+                        else f"{text} {skill_marker}"
+                    )
+                    claims = [*claims[:-1], last]
+                    skill_marker = None
                 content = (
                     " ".join(
                         item["text"] + "".join(f"[{label}]" for label in item["evidenceLabels"])
@@ -358,8 +381,12 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 # Structured content is a closed JSON document (PromptSuggestions,
                 # `{answer: ...}`, ...); appending plain text would corrupt it, and
                 # a Skill is only ever governed into the Markdown/CHAT answer path
-                # (`_skill_blocks` in `modules/knowledge/adapters/litellm.py`).
-                skill_marker = _skill_marker_in_prompt(request.prompt)
+                # (`_skill_blocks` in `modules/knowledge/adapters/litellm.py`). The
+                # grounded branch above already folded the marker into a cited
+                # claim when one existed, resetting `skill_marker` to `None` so
+                # it is not echoed twice; every other content shape (plain
+                # "Grounded", `INSUFFICIENT_EVIDENCE`, a claims-less grounded
+                # context) still gets the plain trailing echo.
                 if skill_marker is not None:
                     content = f"{content} {skill_marker}"
             body = {

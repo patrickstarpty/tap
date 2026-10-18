@@ -78,12 +78,16 @@ async def test_deterministic_chat_stream_yields_deltas_then_the_full_result():
 
 
 @pytest.mark.asyncio
-async def test_deterministic_gateway_echoes_skill_marker() -> None:
+async def test_deterministic_gateway_folds_skill_marker_into_the_cited_claim() -> None:
     """A Skill's instruction text (wrapped in `_skill_blocks`, see
     `modules/knowledge/adapters/litellm.py`) lands in the model *prompt*, not the
     *context* the `[e2e-cancel]`/`[e2e-abstain]` markers use -- so an isolated
     E2E journey asserting a selected Skill reached the model needs its own
-    prompt-side marker, echoed back as plain, uncited text."""
+    prompt-side marker. It is folded into the *cited* claim's own sentence
+    (before its closing punctuation) rather than appended as a separate,
+    uncited trailing fragment: `parse_inline_answer`'s rendering is
+    claim-driven (PR 3), so only text inside a validated claim is guaranteed
+    to reach the rendered answer -- an orphaned trailing fragment is not."""
 
     import json
 
@@ -117,5 +121,8 @@ async def test_deterministic_gateway_echoes_skill_marker() -> None:
 
     result = await gateway.chat(request)
 
-    assert result.output.endswith("[e2e-skill:demo-token]")
+    assert "[e2e-skill:demo-token]" in result.output
     assert "[S1]" in result.output
+    # The marker sits inside the cited sentence, immediately before its own
+    # citation marker -- not after it as a separate, uncited fragment.
+    assert result.output.endswith("[e2e-skill:demo-token].[S1]")
