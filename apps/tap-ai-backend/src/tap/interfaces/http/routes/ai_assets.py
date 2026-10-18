@@ -1,34 +1,20 @@
-"""Read-only public projection of approved Agent and Skill revisions."""
+"""Read-only public projection of the closed built-in tool registry.
+
+Agent and Skill revision routes live in ``ai_agents.py``/``ai_skills.py``.
+"""
 
 from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 
-from tap.contracts.http import (
-    AiAgentRevisionPage,
-    AiAgentRevisionSummary,
-    ToolDescriptor,
-    ToolPage,
-)
-from tap.interfaces.http.dependencies import asset_catalog_service
+from tap.contracts.http import ToolDescriptor, ToolPage
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.modules.ai.domain.tools import TOOL_REGISTRY
 
 router = APIRouter(prefix="/ai", tags=["ai"])
-
-
-def _agent(value) -> AiAgentRevisionSummary:
-    return AiAgentRevisionSummary(
-        revision_id=value.revision_id,
-        asset_id=value.asset_id,
-        display_name=value.display_name,
-        content_digest=value.content_digest,
-        tool_allowlist=sorted(value.tool_allowlist),
-        output_schema_digest=value.output_schema_digest,
-    )
 
 
 @router.get(
@@ -54,42 +40,4 @@ async def list_tools(locale: Literal["en", "zh"] | None = Query(default=None)) -
             )
             for definition in TOOL_REGISTRY.values()
         ]
-    )
-
-
-@router.get(
-    "/agents",
-    operation_id="ai_list_agent_revisions",
-    response_model=AiAgentRevisionPage,
-    dependencies=[Depends(project_authorization("ai.agents.read"))],
-    responses={
-        422: problem_response_metadata("Request validation failed"),
-        503: problem_response_metadata("Knowledge runtime unavailable"),
-    },
-)
-async def list_agents(request: Request) -> AiAgentRevisionPage:
-    return AiAgentRevisionPage(
-        items=[
-            _agent(item)
-            for item in await asset_catalog_service(request).list_agents(
-                request.state.project_scope
-            )
-        ]
-    )
-
-
-@router.get(
-    "/agents/{revision_id}",
-    operation_id="ai_get_agent_revision",
-    response_model=AiAgentRevisionSummary,
-    dependencies=[Depends(project_authorization("ai.agents.read"))],
-    responses={
-        404: problem_response_metadata("Agent revision unavailable"),
-        422: problem_response_metadata("Request validation failed"),
-        503: problem_response_metadata("Knowledge runtime unavailable"),
-    },
-)
-async def get_agent(request: Request, revision_id: str) -> AiAgentRevisionSummary:
-    return _agent(
-        await asset_catalog_service(request).get_agent(request.state.project_scope, revision_id)
     )

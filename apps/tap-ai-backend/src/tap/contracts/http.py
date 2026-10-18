@@ -56,17 +56,56 @@ class ModelCatalogPage(ContractModel):
 class AiAgentRevisionSummary(ContractModel):
     revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    agent_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)] | None = None
     content_digest: CanonicalSha256
     tool_allowlist: Annotated[
         list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
         Field(max_length=32),
     ]
     output_schema_digest: CanonicalSha256
+    source_kind: Literal["imported", "authored", "built_in"]
+    built_in: StrictBool
+    status: Literal["enabled", "disabled"]
+    is_latest: StrictBool
+    skill_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]],
+        Field(max_length=64),
+    ] = Field(default_factory=list)
+    default_model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = (
+        None
+    )
+    has_skill_updates: StrictBool = False
+
+
+class AiAgentRevisionDetail(AiAgentRevisionSummary):
+    system_instruction: Annotated[str, Field(strict=True, min_length=1, max_length=40_000)]
 
 
 class AiAgentRevisionPage(ContractModel):
     items: Annotated[list[AiAgentRevisionSummary], Field(max_length=64)]
+
+
+class AgentDraftRequest(ContractModel):
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+    system_instruction: Annotated[str, Field(strict=True, min_length=1, max_length=40_000)]
+    skill_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]],
+        Field(max_length=64),
+    ] = Field(default_factory=list)
+    tool_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=32),
+    ] = Field(default_factory=list)
+    default_model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = (
+        None
+    )
+
+
+class AgentReviseRequest(AgentDraftRequest):
+    base_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
 
 
 class ToolDescriptor(ContractModel):

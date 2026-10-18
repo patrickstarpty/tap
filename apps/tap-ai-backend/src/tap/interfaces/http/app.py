@@ -16,6 +16,7 @@ from tap.interfaces.http.problems import (
     problem_response_metadata,
     register_problem_handlers,
 )
+from tap.interfaces.http.routes.ai_agents import router as ai_agents_router
 from tap.interfaces.http.routes.ai_assets import router as ai_assets_router
 from tap.interfaces.http.routes.ai_skills import router as ai_skills_router
 from tap.interfaces.http.routes.citations import router as citations_router
@@ -111,6 +112,7 @@ def create_app(
         citations_router,
         model_catalog_router,
         ai_assets_router,
+        ai_agents_router,
         ai_skills_router,
         conversations_router,
         model_calls_router,

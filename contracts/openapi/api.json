@@ -11,6 +11,280 @@
         "title": "AbstentionReason",
         "type": "string"
       },
+      "AgentDraftRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "defaultModelAlias": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultmodelalias"
+          },
+          "description": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "skillRevisionIds": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Skillrevisionids",
+            "type": "array"
+          },
+          "systemInstruction": {
+            "maxLength": 40000,
+            "minLength": 1,
+            "title": "Systeminstruction",
+            "type": "string"
+          },
+          "toolIds": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Toolids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "systemInstruction"
+        ],
+        "title": "AgentDraftRequest",
+        "type": "object"
+      },
+      "AgentReviseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "baseRevisionId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Baserevisionid",
+            "type": "string"
+          },
+          "defaultModelAlias": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultmodelalias"
+          },
+          "description": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "skillRevisionIds": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Skillrevisionids",
+            "type": "array"
+          },
+          "systemInstruction": {
+            "maxLength": 40000,
+            "minLength": 1,
+            "title": "Systeminstruction",
+            "type": "string"
+          },
+          "toolIds": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Toolids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "systemInstruction",
+          "baseRevisionId"
+        ],
+        "title": "AgentReviseRequest",
+        "type": "object"
+      },
+      "AiAgentRevisionDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Agentid",
+            "type": "string"
+          },
+          "assetId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Assetid",
+            "type": "string"
+          },
+          "builtIn": {
+            "title": "Builtin",
+            "type": "boolean"
+          },
+          "contentDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Contentdigest",
+            "type": "string"
+          },
+          "defaultModelAlias": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultmodelalias"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "displayName": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Displayname",
+            "type": "string"
+          },
+          "hasSkillUpdates": {
+            "default": false,
+            "title": "Hasskillupdates",
+            "type": "boolean"
+          },
+          "isLatest": {
+            "title": "Islatest",
+            "type": "boolean"
+          },
+          "outputSchemaDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Outputschemadigest",
+            "type": "string"
+          },
+          "revisionId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "skillRevisionIds": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Skillrevisionids",
+            "type": "array"
+          },
+          "sourceKind": {
+            "enum": [
+              "imported",
+              "authored",
+              "built_in"
+            ],
+            "title": "Sourcekind",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "enabled",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "systemInstruction": {
+            "maxLength": 40000,
+            "minLength": 1,
+            "title": "Systeminstruction",
+            "type": "string"
+          },
+          "toolAllowlist": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Toolallowlist",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revisionId",
+          "assetId",
+          "agentId",
+          "displayName",
+          "contentDigest",
+          "toolAllowlist",
+          "outputSchemaDigest",
+          "sourceKind",
+          "builtIn",
+          "status",
+          "isLatest",
+          "systemInstruction"
+        ],
+        "title": "AiAgentRevisionDetail",
+        "type": "object"
+      },
       "AiAgentRevisionPage": {
         "additionalProperties": false,
         "properties": {
@@ -32,11 +306,21 @@
       "AiAgentRevisionSummary": {
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Agentid",
+            "type": "string"
+          },
           "assetId": {
             "maxLength": 64,
             "minLength": 1,
             "title": "Assetid",
             "type": "string"
+          },
+          "builtIn": {
+            "title": "Builtin",
+            "type": "boolean"
           },
           "contentDigest": {
             "maxLength": 71,
@@ -45,11 +329,48 @@
             "title": "Contentdigest",
             "type": "string"
           },
+          "defaultModelAlias": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Defaultmodelalias"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
           "displayName": {
             "maxLength": 128,
             "minLength": 1,
             "title": "Displayname",
             "type": "string"
+          },
+          "hasSkillUpdates": {
+            "default": false,
+            "title": "Hasskillupdates",
+            "type": "boolean"
+          },
+          "isLatest": {
+            "title": "Islatest",
+            "type": "boolean"
           },
           "outputSchemaDigest": {
             "maxLength": 71,
@@ -62,6 +383,33 @@
             "maxLength": 64,
             "minLength": 1,
             "title": "Revisionid",
+            "type": "string"
+          },
+          "skillRevisionIds": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Skillrevisionids",
+            "type": "array"
+          },
+          "sourceKind": {
+            "enum": [
+              "imported",
+              "authored",
+              "built_in"
+            ],
+            "title": "Sourcekind",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "enabled",
+              "disabled"
+            ],
+            "title": "Status",
             "type": "string"
           },
           "toolAllowlist": {
@@ -78,10 +426,15 @@
         "required": [
           "revisionId",
           "assetId",
+          "agentId",
           "displayName",
           "contentDigest",
           "toolAllowlist",
-          "outputSchemaDigest"
+          "outputSchemaDigest",
+          "sourceKind",
+          "builtIn",
+          "status",
+          "isLatest"
         ],
         "title": "AiAgentRevisionSummary",
         "type": "object"
@@ -12452,6 +12805,458 @@
           }
         },
         "summary": "List Agents",
+        "tags": [
+          "ai"
+        ]
+      },
+      "post": {
+        "operationId": "ai_create_agent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentDraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAgentRevisionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent draft rejected"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent name conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Create Agent",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/disable": {
+      "post": {
+        "operationId": "ai_disable_agent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAgentRevisionSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Agent unavailable"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Disable Agent",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/enable": {
+      "post": {
+        "operationId": "ai_enable_agent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAgentRevisionSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Agent unavailable"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Enable Agent",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/revisions": {
+      "get": {
+        "operationId": "ai_list_agent_revision_history",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAgentRevisionPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Agent unavailable"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "List Agent Revision History",
+        "tags": [
+          "ai"
+        ]
+      },
+      "post": {
+        "operationId": "ai_revise_agent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentReviseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAgentRevisionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent draft rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in agent is immutable"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Agent unavailable"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Revision conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Revise Agent",
         "tags": [
           "ai"
         ]

@@ -14,8 +14,9 @@ class _Authority:
     async def authorize(self, _scope, action, _resource):
         from tap.modules.access.domain.authorization import AuthorizationDecision
 
-        assert action in {"ai.agents.read", "ai.skills.read"}
-        return AuthorizationDecision(True, "validation-allowed")
+        allowed = {"ai.agents.read", "ai.skills.read"}
+        assert action in allowed | {"ai.agents.write"}
+        return AuthorizationDecision(action in allowed, "validation-allowed")
 
 
 class _Assets:
@@ -52,6 +53,11 @@ class _Assets:
     async def get_skill(self, scope, revision_id):
         raise LookupError(revision_id)
 
+    async def list_revisions(self, kind, asset_id):
+        if kind == "agent" and asset_id == "knowledge-agent":
+            return (await self.get_agent(VALIDATION_SCOPE, "agent-revision"),)
+        return ()
+
 
 def test_agent_and_skill_catalog_is_project_scoped_read_only_and_omits_content() -> None:
     from tap.modules.ai.domain.assets import text_digest
@@ -77,10 +83,19 @@ def test_agent_and_skill_catalog_is_project_scoped_read_only_and_omits_content()
             {
                 "revisionId": "agent-revision",
                 "assetId": "knowledge-agent",
+                "agentId": "knowledge-agent",
                 "displayName": "Knowledge agent",
+                "description": None,
                 "contentDigest": text_digest("agent-v1"),
                 "toolAllowlist": ["knowledge.search"],
                 "outputSchemaDigest": text_digest("output-schema"),
+                "sourceKind": "built_in",
+                "builtIn": True,
+                "status": "enabled",
+                "isLatest": True,
+                "skillRevisionIds": [],
+                "defaultModelAlias": None,
+                "hasSkillUpdates": False,
             }
         ]
     }

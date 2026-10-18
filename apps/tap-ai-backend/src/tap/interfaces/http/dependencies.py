@@ -42,6 +42,7 @@ from tap.interfaces.http.trace_service import TraceHttpService
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.ai.application.agent_authoring import AgentAuthoringService
 from tap.modules.ai.application.skill_authoring import SkillAuthoringService
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
@@ -251,6 +252,7 @@ class HttpServices:
     insights_knowledge_search: object | None = None
     insights_publication_authority: object | None = None
     skill_authoring: SkillAuthoringService | None = None
+    agent_authoring: AgentAuthoringService | None = None
     # The shared, per-process Redis draft/wake-up stream adapter, composed once
     # in `tapper_runtime` from the same Redis client the API and generation
     # worker (which shares this composition via `create_api_runtime`) both use.
@@ -368,6 +370,14 @@ def asset_catalog_service(request: Request) -> AssetCatalogHttpService:
 def skill_authoring_service(request: Request) -> SkillAuthoringService:
     services = getattr(request.app.state, "http_services", None)
     service = services.skill_authoring if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def agent_authoring_service(request: Request) -> AgentAuthoringService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.agent_authoring if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service

@@ -34,6 +34,7 @@ _VALIDATION_ACTIONS = frozenset(
         ("knowledge.publish", "knowledge-publication"),
         ("knowledge.original.read", "knowledge-original"),
         ("ai.agents.read", "ai"),
+        ("ai.agents.write", "ai"),
         ("ai.models.read", "ai"),
         ("ai.skills.read", "ai"),
         ("ai.skills.write", "ai"),

@@ -19,6 +19,7 @@ from tap.interfaces.http.dependencies import (
     KnowledgeRuntimeUnavailable,
 )
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+from tap.modules.ai.application.agent_authoring import AgentAuthoringRejected
 from tap.modules.ai.application.skill_package import SkillPackageRejected
 from tap.modules.ai.domain.assets import AssetRevisionRejected
 from tap.modules.ai.domain.assets import RevisionConflict as SkillRevisionConflict
@@ -130,6 +131,13 @@ _SKILL_PROBLEM_STATUS: dict[str, int] = {
     "revision_conflict": 409,
     "import_expired": 410,
     "skill_budget_exceeded": 400,
+    "agent_name_conflict": 409,
+    "agent_system_instruction_too_large": 400,
+    "agent_tool_allowlist_invalid": 400,
+    "agent_skill_unavailable": 400,
+    "agent_model_not_selectable": 400,
+    "agent_built_in_immutable": 403,
+    "agent_frontmatter_invalid": 400,
 }
 
 
@@ -425,6 +433,12 @@ def register_problem_handlers(app: FastAPI) -> None:
     @app.exception_handler(SkillPackageRejected)
     async def skill_package_rejected_problem(
         _request: Request, error: SkillPackageRejected
+    ) -> JSONResponse:
+        return skill_problem_response(error.code, error.detail)
+
+    @app.exception_handler(AgentAuthoringRejected)
+    async def agent_authoring_rejected_problem(
+        _request: Request, error: AgentAuthoringRejected
     ) -> JSONResponse:
         return skill_problem_response(error.code, error.detail)
 
