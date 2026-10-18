@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 import posixpath
 import re
 import stat
@@ -48,6 +49,7 @@ _UNREADABLE_ZIP_ENTRY_ERRORS = (
     zlib.error,
     EOFError,
 )
+_SUPPORTED_ZIP_COMPRESSION_METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
 
 
 class SkillPackageRejected(Exception):
@@ -109,13 +111,13 @@ def parse_skill_markdown(raw: bytes) -> SkillManifest:
                     "skill_frontmatter_invalid",
                     "frontmatter must not use YAML anchors or aliases",
                 )
-    except yaml.YAMLError as error:
+    except (yaml.YAMLError, RecursionError) as error:
         raise SkillPackageRejected(
             "skill_frontmatter_invalid", "SKILL.md frontmatter must be valid YAML"
         ) from error
     try:
         frontmatter = yaml.safe_load(frontmatter_text)
-    except yaml.YAMLError as error:
+    except (yaml.YAMLError, RecursionError) as error:
         raise SkillPackageRejected(
             "skill_frontmatter_invalid", "SKILL.md frontmatter must be valid YAML"
         ) from error
@@ -141,7 +143,13 @@ def parse_skill_markdown(raw: bytes) -> SkillManifest:
 
 
 def _check_json_compatible(value: object) -> None:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, int, bool)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise SkillPackageRejected(
+                "skill_frontmatter_invalid", "frontmatter must not contain non-finite numbers"
+            )
         return
     if isinstance(value, list):
         for item in value:
@@ -285,7 +293,8 @@ def scan_files(files: Mapping[str, bytes]) -> PackageScan:
         attached_relative_paths: set[str] = set()
         warnings: list[str] = []
         budget_used = 0
-        for reference in referenced:
+        for raw_reference in referenced:
+            reference = unicodedata.normalize("NFC", raw_reference)
             if not reference.endswith((".md", ".txt")):
                 continue
             full_path = prefix + reference if prefix else reference
@@ -359,6 +368,10 @@ def scan_zip(data: bytes) -> PackageScan:
         raise SkillPackageRejected(
             "skill_path_rejected", "the package is not a valid zip archive"
         ) from error
+    except (UnicodeDecodeError, ValueError) as error:
+        raise SkillPackageRejected(
+            "skill_path_rejected", "the package contains an unreadable entry name"
+        ) from error
 
     with archive:
         file_infos = [info for info in archive.infolist() if not info.is_dir()]
@@ -376,6 +389,11 @@ def scan_zip(data: bytes) -> PackageScan:
                 raise SkillPackageRejected(
                     "skill_path_rejected",
                     f"unsupported file type in package entry: {normalized_name}",
+                )
+            if info.compress_type not in _SUPPORTED_ZIP_COMPRESSION_METHODS:
+                raise SkillPackageRejected(
+                    "skill_path_rejected",
+                    f"unsupported compression method in package entry: {normalized_name}",
                 )
             names.append(normalized_name)
 

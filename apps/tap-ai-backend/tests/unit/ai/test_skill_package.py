@@ -350,3 +350,77 @@ def test_frontmatter_closing_delimiter_must_be_on_own_line() -> None:
     with pytest.raises(SkillPackageRejected) as excinfo:
         parse_skill_markdown(raw)
     assert excinfo.value.code == "skill_frontmatter_invalid"
+
+
+# --- Fix round 2: security review follow-up -------------------------------------
+
+
+def test_unsupported_compression_method_rejected() -> None:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_BZIP2) as archive:
+        archive.writestr("SKILL.md", _skill_md())
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        scan_zip(buffer.getvalue())
+    assert excinfo.value.code == "skill_path_rejected"
+
+
+def test_invalid_utf8_flagged_entry_name_rejected() -> None:
+    # Set the UTF-8 general-purpose flag (bit 0x800) on both the local file
+    # header and central directory record, then corrupt the first filename
+    # byte to an invalid UTF-8 start byte, reproducing a zip that makes
+    # zipfile.ZipFile(...) itself raise UnicodeDecodeError while reading the
+    # central directory.
+    name_bytes = b"SKILL.md"
+    data = bytearray(_zip_bytes({"SKILL.md": _skill_md()}))
+    local_offset = data.find(b"PK\x03\x04")
+    central_offset = data.find(b"PK\x01\x02")
+    assert local_offset != -1 and central_offset != -1
+    local_flags = int.from_bytes(data[local_offset + 6 : local_offset + 8], "little")
+    central_flags = int.from_bytes(data[central_offset + 8 : central_offset + 10], "little")
+    data[local_offset + 6 : local_offset + 8] = (local_flags | 0x800).to_bytes(2, "little")
+    data[central_offset + 8 : central_offset + 10] = (central_flags | 0x800).to_bytes(2, "little")
+    local_name_offset = local_offset + 30
+    central_name_offset = central_offset + 46
+    assert data[local_name_offset : local_name_offset + len(name_bytes)] == name_bytes
+    assert data[central_name_offset : central_name_offset + len(name_bytes)] == name_bytes
+    data[local_name_offset] = 0xFF
+    data[central_name_offset] = 0xFF
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        scan_zip(bytes(data))
+    assert excinfo.value.code == "skill_path_rejected"
+
+
+def test_reference_paths_are_nfc_normalized_before_lookup() -> None:
+    nfc_path = "references/café.md"  # "é" as one composed code point
+    nfd_reference_in_body = "references/café.md"  # "e" + combining acute accent
+    scan = scan_files(
+        {
+            "SKILL.md": _skill_md(body=f"see [notes]({nfd_reference_in_body})."),
+            nfc_path: b"content",
+        }
+    )
+    skill = scan.skills[0]
+    assert skill.attached_reference_text == "content"
+    attached = {file.relative_path: file.attached for file in skill.files}
+    assert attached[nfc_path] is True
+
+
+def test_non_finite_float_rejected() -> None:
+    for literal in (".nan", ".inf", "-.inf"):
+        raw = (
+            f"---\nname: my-skill\ndescription: Does the thing.\nscore: {literal}\n---\nbody\n"
+        ).encode("utf-8")
+        with pytest.raises(SkillPackageRejected) as excinfo:
+            parse_skill_markdown(raw)
+        assert excinfo.value.code == "skill_frontmatter_invalid", literal
+
+
+def test_yaml_recursion_error_rejected() -> None:
+    depth = 3000
+    nested = "[" * depth + "]" * depth
+    raw = (
+        f"---\nname: my-skill\ndescription: Does the thing.\nnested: {nested}\n---\nbody\n"
+    ).encode("utf-8")
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        parse_skill_markdown(raw)
+    assert excinfo.value.code == "skill_frontmatter_invalid"
