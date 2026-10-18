@@ -541,6 +541,71 @@ async def test_commit_import_converges_with_a_concurrent_writer_via_deterministi
 
 
 @pytest.mark.asyncio
+async def test_commit_import_preserves_winner_file_on_generic_error_after_winner_exists() -> None:
+    """Fix round 3: a non-RevisionConflict failure on the loser's own
+    insert attempt (lock-wait timeout, dropped connection, ...) must not
+    delete a winner's already-persisted, shared, content-addressed file
+    just because the error wasn't a RevisionConflict."""
+    service, catalog, objects, _ = _service()
+    preview = await service.stage_import(
+        VALIDATION_SCOPE, upload=FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode()})
+    )
+    asset_id = _deterministic_id("skill", preview.import_id, "demo-skill")
+    revision_id = _deterministic_id("skill-rev", preview.import_id, "demo-skill")
+    skill_md_bytes = _SKILL_MD.encode()
+
+    # The winner already independently staged, promoted and committed this
+    # exact deterministic revision.
+    winner_staged = await _stage_bytes_for_test(objects, skill_md_bytes)
+    winner_ref = await objects.promote(
+        winner_staged,
+        winner_staged.sha256,
+        identity=_file_identity(asset_id, revision_id, "SKILL.md"),
+        attributes={"revision": revision_id, "kind": "skill", "relativePath": "SKILL.md"},
+    )
+    concurrent_revision = SkillRevision(
+        revision_id=revision_id,
+        asset_id=asset_id,
+        display_name="demo-skill",
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest("x"),
+        instruction_template_digest=text_digest("y"),
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        instruction_template="y",
+        description="Demo skill used in authoring tests.",
+        source_kind="imported",
+        files=(
+            SkillFile(
+                relative_path="SKILL.md",
+                size_bytes=len(skill_md_bytes),
+                sha256=hashlib.sha256(skill_md_bytes).hexdigest(),
+                category="skill",
+                attached=False,
+            ),
+        ),
+    )
+    await catalog.insert_skill_revision(
+        concurrent_revision,
+        base_revision_id=None,
+        file_object_refs={"SKILL.md": str(winner_ref)},
+    )
+
+    # This caller's own insert attempt fails for an unrelated reason (not a
+    # RevisionConflict) after the winner has already landed its row.
+    catalog._fail_inserts = 1
+
+    with pytest.raises(RuntimeError):
+        await service.commit_import(
+            VALIDATION_SCOPE, preview.import_id, (ImportSelection(root="demo-skill"),)
+        )
+
+    # The winner's file must still be intact and readable.
+    opened = await service.open_file(VALIDATION_SCOPE, revision_id, "SKILL.md")
+    assert opened.data == skill_md_bytes
+    assert ObjectRef(str(winner_ref)) in objects.objects
+
+
+@pytest.mark.asyncio
 async def test_commit_import_cleans_up_promoted_objects_on_insert_failure() -> None:
     """M-5: when the catalog write fails for a reason other than a
     recoverable deterministic-id collision, newly promoted objects are

@@ -514,8 +514,27 @@ class SkillAuthoringService:
             await self._cleanup_promoted(file_refs)
             raise
         except BaseException:
-            await self._cleanup_promoted(file_refs)
+            # A non-RevisionConflict failure here (lock-wait timeout,
+            # dropped connection, ...) does not by itself mean nobody else
+            # committed this exact deterministic (asset, revision): a
+            # winner may have already landed the row before this error
+            # surfaced. Check before cleaning up, and treat an inconclusive
+            # check the same as "a winner exists" — an orphaned object is
+            # recoverable; deleting a winner's shared, content-addressed
+            # file is not.
+            if not await self._skip_cleanup_for_existing_revision(plan.asset_id, plan.revision_id):
+                await self._cleanup_promoted(file_refs)
             raise
+
+    async def _skip_cleanup_for_existing_revision(self, asset_id: str, revision_id: str) -> bool:
+        try:
+            existing = await self._find_revision(asset_id, revision_id)
+        except Exception:
+            # Prefer leaking orphaned objects over risking deletion of a
+            # winner's live, shared files when we cannot tell which case
+            # this is.
+            return True
+        return existing is not None
 
     async def _find_revision(self, asset_id: str, revision_id: str) -> SkillRevision | None:
         for revision in await self._catalog.list_revisions("skill", asset_id):
