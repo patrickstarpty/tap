@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from fastapi import Header, Request
 from fastapi.exceptions import RequestValidationError
@@ -42,6 +42,7 @@ from tap.interfaces.http.trace_service import TraceHttpService
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.ai.application.skill_authoring import SkillAuthoringService
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
@@ -197,6 +198,9 @@ class AssetCatalogHttpService(Protocol):
     async def get_agent(self, scope: ProjectScopeContext, revision_id: str) -> AiAgentRevision: ...
     async def list_skills(self, scope: ProjectScopeContext) -> tuple[SkillRevision, ...]: ...
     async def get_skill(self, scope: ProjectScopeContext, revision_id: str) -> SkillRevision: ...
+    async def list_revisions(
+        self, kind: Literal["agent", "skill"], asset_id: str
+    ) -> tuple[AiAgentRevision, ...] | tuple[SkillRevision, ...]: ...
 
 
 class _UnconfiguredReadiness:
@@ -246,6 +250,7 @@ class HttpServices:
     insights_explanation: object | None = None
     insights_knowledge_search: object | None = None
     insights_publication_authority: object | None = None
+    skill_authoring: SkillAuthoringService | None = None
     # The shared, per-process Redis draft/wake-up stream adapter, composed once
     # in `tapper_runtime` from the same Redis client the API and generation
     # worker (which shares this composition via `create_api_runtime`) both use.
@@ -355,6 +360,14 @@ def model_catalog_service(request: Request) -> ModelCatalogHttpService:
 def asset_catalog_service(request: Request) -> AssetCatalogHttpService:
     services = getattr(request.app.state, "http_services", None)
     service = services.asset_catalog if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def skill_authoring_service(request: Request) -> SkillAuthoringService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.skill_authoring if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service

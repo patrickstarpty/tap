@@ -976,7 +976,7 @@ async def create_api_runtime(
             event_wakeups=_create_event_wakeups(redis),
             draft_stream=_create_draft_stream(redis, redis_stream_block, settings),
         )
-        services = replace(services, chunk_manager=chunk_manager)
+        services = replace(services, chunk_manager=chunk_manager, skill_authoring=skill_authoring)
         if settings.insights_base_url:
             if services.insights_knowledge_search is None:
                 raise ValueError("Insights knowledge evidence authority is unavailable")

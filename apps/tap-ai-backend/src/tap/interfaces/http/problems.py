@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from tap.contracts.http import SkillProblem
 from tap.contracts.problems import ProblemDetails, build_problem
 from tap.interfaces.http.dependencies import (
     GraphUnavailable,
@@ -18,7 +19,9 @@ from tap.interfaces.http.dependencies import (
     KnowledgeRuntimeUnavailable,
 )
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+from tap.modules.ai.application.skill_package import SkillPackageRejected
 from tap.modules.ai.domain.assets import AssetRevisionRejected
+from tap.modules.ai.domain.assets import RevisionConflict as SkillRevisionConflict
 from tap.modules.ai.domain.models import (
     ModelGatewayRejected,
     ModelGatewayUnavailable,
@@ -114,6 +117,34 @@ def problem_response_metadata(description: str) -> dict[str, object]:
     }
 
 
+# Skill authoring errors use a deliberately simpler `{"code", "detail"}` body
+# (Global Constraints), distinct from the registered RFC 9457 ProblemDetails
+# shape above -- these codes are the service's own closed vocabulary, not
+# entries in the shared problem registry.
+_SKILL_PROBLEM_STATUS: dict[str, int] = {
+    "skill_package_too_large": 413,
+    "skill_path_rejected": 400,
+    "skill_frontmatter_invalid": 400,
+    "skill_not_found_in_package": 400,
+    "skill_name_conflict": 409,
+    "revision_conflict": 409,
+    "import_expired": 410,
+    "skill_budget_exceeded": 400,
+}
+
+
+def skill_problem_response(code: str, detail: str) -> JSONResponse:
+    status_code = _SKILL_PROBLEM_STATUS.get(code, 400)
+    return JSONResponse(status_code=status_code, content={"code": code, "detail": detail})
+
+
+def skill_problem_response_metadata(description: str) -> dict[str, object]:
+    return {
+        "description": description,
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SkillProblem"}}},
+    }
+
+
 class RequestCorrelationMiddleware:
     """Capture request identity without task groups that alter cancellation propagation."""
 
@@ -148,6 +179,11 @@ def register_problem_handlers(app: FastAPI) -> None:
         )
         components.update(problem_schema.pop("$defs", {}))
         components["ProblemDetails"] = problem_schema
+        skill_problem_schema = SkillProblem.model_json_schema(
+            by_alias=True, ref_template="#/components/schemas/{model}"
+        )
+        components.update(skill_problem_schema.pop("$defs", {}))
+        components["SkillProblem"] = skill_problem_schema
         return schema
 
     app.openapi = openapi_with_problems  # type: ignore[method-assign]
@@ -385,6 +421,21 @@ def register_problem_handlers(app: FastAPI) -> None:
         request: Request, _error: AssetRevisionRejected
     ) -> JSONResponse:
         return problem_response("asset-revision-unavailable", request)
+
+    @app.exception_handler(SkillPackageRejected)
+    async def skill_package_rejected_problem(
+        _request: Request, error: SkillPackageRejected
+    ) -> JSONResponse:
+        return skill_problem_response(error.code, error.detail)
+
+    @app.exception_handler(SkillRevisionConflict)
+    async def skill_revision_conflict_problem(
+        _request: Request, _error: SkillRevisionConflict
+    ) -> JSONResponse:
+        return skill_problem_response(
+            "revision_conflict",
+            "the requested skill revision conflicts with the current revision",
+        )
 
     @app.exception_handler(ModelUnavailable)
     async def embedding_unavailable_problem(
