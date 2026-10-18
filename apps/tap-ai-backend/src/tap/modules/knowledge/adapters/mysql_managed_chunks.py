@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -65,6 +65,7 @@ from tap.modules.knowledge.ports.documents import (
     ArtifactStore,
     DocumentEmbeddingPort,
     DocumentIndexPort,
+    IndexReceipt,
     IngestionWork,
     JobKind,
     JobStage,
@@ -103,6 +104,31 @@ class ChunkConflict(ValueError):
 
 class ChunkNotFound(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class _PreparedGeneration:
+    """Result of an unlocked prepare pass: artifacts written, index upserted.
+
+    Carries everything `_publish_generation` needs to write its MySQL rows.
+    It is only a proposal -- the publish step decides, under a freshly
+    locked row, whether this attempt is still current before using any of
+    it. `_prepare_generation` returns `None` instead of this for the
+    "no enabled chunks" case, which needs no prepared artifacts at all.
+    """
+
+    revision_id: str
+    source_hash: str
+    parser_version: str
+    drafts: tuple[ChunkDraft, ...]
+    inventory: tuple[ParseInventoryItem, ...]
+    manifest: tuple[ManifestChunk, ...]
+    normalized: NormalizedArtifact
+    normalized_locator: ArtifactLocator
+    chunks_locator: ArtifactLocator
+    embeddings_locator: ArtifactLocator
+    work: IngestionWork
+    receipt: IndexReceipt
 
 
 class MysqlManagedChunks:
@@ -158,7 +184,10 @@ class MysqlManagedChunks:
         return dict(row)
 
     async def _ensure(self, document_id: str) -> dict[str, Any]:
-        # Reads must remain available while the worker holds its generation lock.
+        # Reads stay available even while a publish holds the document/managed
+        # row locks: process_document only takes those locks briefly, around
+        # the short snapshot and publish transactions, never while it is
+        # doing the slow object-storage/embedding/index work in between.
         async with self.sessions() as session:
             document = await self._document(session, document_id)
             if document["media_type"] in {"image/png", "image/jpeg"}:
@@ -944,17 +973,23 @@ class MysqlManagedChunks:
         return len(ids)
 
     async def process_document(self, document_id: str) -> None:
-        # The durable pending record is the queue. Locking serializes processes and the
-        # generation check prevents an older projection from becoming current.
-        pending_purge: tuple[str, str] | None = None
-        async with self.sessions() as session, session.begin():
-            document = await self._document(session, document_id, lock=True)
+        # Snapshot: a short, lock-free read of the document, the managed row
+        # and the original revision needed to regenerate. `captured_version`
+        # is the optimistic generation token -- knowledge_managed_document's
+        # `version`, bumped by every `_save` (edit, configure, initializing
+        # processing). The publish step below only applies this attempt's
+        # work if a freshly locked row's version still equals the one read
+        # here, so this (possibly slow) attempt never holds chunk edits or
+        # `delete_source` waiting on it, and never clobbers a newer edit with
+        # a stale result.
+        async with self.sessions() as session:
+            document = await self._document(session, document_id)
             state = dict(
                 (
                     await session.execute(
-                        select(managed_documents)
-                        .where(*self._where(managed_documents, document_id))
-                        .with_for_update()
+                        select(managed_documents).where(
+                            *self._where(managed_documents, document_id)
+                        )
                     )
                 )
                 .mappings()
@@ -962,24 +997,79 @@ class MysqlManagedChunks:
             )
             if state["index_status"] == "ready":
                 return
-            try:
-                async with session.begin_nested():
-                    pending_purge = await self._index_generation(session, document, state)
-            except Exception as error:
-                # Safe public failure; pending immutable artifacts can be retried.
-                cause: BaseException = error
-                while cause.__cause__ is not None:
-                    cause = cause.__cause__
-                logging.getLogger(__name__).error(
-                    "knowledge.managed_index_failed exception=%s cause=%s",
-                    type(error).__name__,
-                    type(cause).__name__,
-                    extra={
-                        "document_id": document_id,
-                        "exception_type": type(error).__name__,
-                        "cause_type": type(cause).__name__,
-                    },
+            original = dict(
+                (
+                    await session.execute(
+                        select(revisions).where(
+                            *scope_predicates(revisions, self.scope),
+                            revisions.c.revision_id == state["original_revision_id"],
+                        )
+                    )
                 )
+                .mappings()
+                .one()
+            )
+        captured_version = state["version"]
+        # Prepare: object-storage writes, the embedding call and the Milvus
+        # upsert all happen here with no database session open and no row
+        # lock held, so they can take as long as they need without blocking
+        # `_save`/`_lock_mode` or `delete_source`, which lock the same
+        # document/managed rows. A duplicate worker racing on the same
+        # document computes the same deterministic revision_id and performs
+        # the same idempotent prepare; the publish step's locked
+        # compare-then-publish below lets only one of them actually write.
+        try:
+            prepared = await self._prepare_generation(document, state, original)
+        except Exception as error:
+            # Safe public failure; pending immutable artifacts can be retried.
+            cause: BaseException = error
+            while cause.__cause__ is not None:
+                cause = cause.__cause__
+            logging.getLogger(__name__).error(
+                "knowledge.managed_index_failed exception=%s cause=%s",
+                type(error).__name__,
+                type(cause).__name__,
+                extra={
+                    "document_id": document_id,
+                    "exception_type": type(error).__name__,
+                    "cause_type": type(cause).__name__,
+                },
+            )
+            async with self.sessions() as session, session.begin():
+                # Compare-then-write: a concurrent edit may have moved this
+                # document on while prepare was running. A newer version must
+                # not be overwritten with this attempt's stale failure, so
+                # this only writes the error if the locked row is still the
+                # one this attempt was indexing.
+                try:
+                    await self._document(session, document_id, lock=True)
+                except ChunkNotFound:
+                    logging.getLogger(__name__).info(
+                        "knowledge.managed_index_error_abandoned document_id=%s "
+                        "reason=document-unavailable",
+                        document_id,
+                        extra={"document_id": document_id},
+                    )
+                    return
+                state_now = (
+                    (
+                        await session.execute(
+                            select(managed_documents)
+                            .where(*self._where(managed_documents, document_id))
+                            .with_for_update()
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if state_now is None or state_now["version"] != captured_version:
+                    logging.getLogger(__name__).info(
+                        "knowledge.managed_index_error_abandoned document_id=%s "
+                        "reason=version-moved",
+                        document_id,
+                        extra={"document_id": document_id},
+                    )
+                    return
                 await session.execute(
                     update(managed_documents)
                     .where(*self._where(managed_documents, document_id))
@@ -996,7 +1086,15 @@ class MysqlManagedChunks:
                         error_summary="Index update failed. Retry processing.",
                     )
                 )
-                return
+            return
+        # Publish: a short transaction re-locks the document then the
+        # managed row -- the same lock order used throughout this module --
+        # and compares the locked row's version against `captured_version`
+        # before writing anything.
+        async with self.sessions() as session, session.begin():
+            pending_purge = await self._publish_generation(
+                session, document_id, captured_version, prepared
+            )
         if pending_purge is None:
             return
         # The publish already committed and released its row locks; the purge's
@@ -1036,29 +1134,22 @@ class MysqlManagedChunks:
                 .values(purge_revision_id=None)
             )
 
-    async def _index_generation(
-        self, session: AsyncSession, document: dict[str, Any], state: dict[str, Any]
-    ) -> tuple[str, str] | None:
-        """Publish the managed revision; return (superseded, current) if a purge is owed."""
-        from tap.modules.knowledge.ports.documents import (
-            StageResult,
-            StageState,
-            serialize_stage_results,
-        )
+    async def _prepare_generation(
+        self, document: dict[str, Any], state: dict[str, Any], original: dict[str, Any]
+    ) -> _PreparedGeneration | None:
+        """Compute the next managed revision's artifacts and index rows.
 
+        Pure computation plus I/O against object storage, the embedding
+        provider and the vector index -- no database session is open and no
+        row lock is held anywhere in this method, so it can run for as long
+        as embeddings or the index need without blocking a concurrent
+        `_save` or `delete_source`. The result is only a proposal:
+        `_publish_generation` decides, under a freshly locked row, whether
+        this attempt's work is still current before writing any of it.
+        Returns `None` for the "no enabled chunks" case, which needs no
+        prepared artifacts or index writes at all.
+        """
         document_id = document["document_id"]
-        original = (
-            (
-                await session.execute(
-                    select(revisions).where(
-                        *scope_predicates(revisions, self.scope),
-                        revisions.c.revision_id == state["original_revision_id"],
-                    )
-                )
-            )
-            .mappings()
-            .one()
-        )
         settings = ChunkSettings(**state["settings_json"])
         active: list[tuple[dict[str, Any], dict[str, Any]]] = []
         for parent in state["chunks_json"]:
@@ -1070,23 +1161,8 @@ class MysqlManagedChunks:
                 else:
                     active.append((parent, parent))
         if not active:
-            await session.execute(
-                update(managed_documents)
-                .where(*self._where(managed_documents, document_id))
-                .values(index_status="ready", index_error=None)
-            )
-            # Keep an empty selection unavailable; old index rows are unreachable.
-            await session.execute(
-                update(documents)
-                .where(*self._where(documents, document_id))
-                .values(
-                    status="ready",
-                    stage="ready",
-                    chunk_count=0,
-                    error_code=None,
-                    error_summary=None,
-                )
-            )
+            # Keep an empty selection unavailable; old index rows are
+            # unreachable. No artifacts or index writes are needed.
             return None
         identity = json.dumps(
             {
@@ -1239,17 +1315,110 @@ class MysqlManagedChunks:
             )
         ):
             raise ValueError("index reconciliation failed")
-        now = datetime.now(UTC).replace(tzinfo=None)
-        values = dict(
+        return _PreparedGeneration(
             revision_id=str(revision_id),
+            source_hash=source_hash,
+            parser_version=parser_version,
+            drafts=tuple(drafts),
+            inventory=tuple(inventory),
+            manifest=manifest,
+            normalized=normalized,
+            normalized_locator=normalized_locator,
+            chunks_locator=chunks_locator,
+            embeddings_locator=embeddings_locator,
+            work=work,
+            receipt=receipt,
+        )
+
+    async def _publish_generation(
+        self,
+        session: AsyncSession,
+        document_id: str,
+        captured_version: int,
+        prepared: _PreparedGeneration | None,
+    ) -> tuple[str, str] | None:
+        """Compare-then-publish `prepared`; return (superseded, current) if a purge is owed.
+
+        Re-locks the document row, then the managed row -- the same order
+        used everywhere else in this module -- and publishes only if the
+        document is still live and the managed row's `version` still equals
+        `captured_version`, the token captured before the unlocked prepare
+        step ran. Otherwise a concurrent edit, configure, delete or
+        duplicate worker has already made `prepared` stale: this abandons,
+        writing nothing, and returns `None` without raising.
+        """
+        try:
+            document = await self._document(session, document_id, lock=True)
+        except ChunkNotFound:
+            logging.getLogger(__name__).info(
+                "knowledge.managed_index_abandoned document_id=%s reason=document-unavailable",
+                document_id,
+                extra={"document_id": document_id},
+            )
+            return None
+        state = (
+            (
+                await session.execute(
+                    select(managed_documents)
+                    .where(*self._where(managed_documents, document_id))
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if (
+            state is None
+            or state["version"] != captured_version
+            or state["index_status"] == "ready"
+        ):
+            logging.getLogger(__name__).info(
+                "knowledge.managed_index_abandoned document_id=%s reason=version-moved",
+                document_id,
+                extra={"document_id": document_id},
+            )
+            return None
+        if prepared is None:
+            await session.execute(
+                update(managed_documents)
+                .where(*self._where(managed_documents, document_id))
+                .values(index_status="ready", index_error=None)
+            )
+            # Keep an empty selection unavailable; old index rows are unreachable.
+            await session.execute(
+                update(documents)
+                .where(*self._where(documents, document_id))
+                .values(
+                    status="ready",
+                    stage="ready",
+                    chunk_count=0,
+                    error_code=None,
+                    error_summary=None,
+                )
+            )
+            return None
+        from tap.modules.knowledge.ports.documents import (
+            StageResult,
+            StageState,
+            serialize_stage_results,
+        )
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+        normalized = prepared.normalized
+        revision_id = prepared.revision_id
+        manifest = prepared.manifest
+        work = prepared.work
+        receipt = prepared.receipt
+        values = dict(
+            revision_id=revision_id,
             source_id=document["source_id"],
             document_id=document_id,
-            source_content_hash=source_hash,
+            source_content_hash=prepared.source_hash,
             original_blob_locator=str(work.original_locator),
-            normalized_blob_locator=str(normalized_locator),
-            chunks_blob_locator=str(chunks_locator),
-            embeddings_blob_locator=str(embeddings_locator),
-            parser_version=parser_version,
+            normalized_blob_locator=str(prepared.normalized_locator),
+            chunks_blob_locator=str(prepared.chunks_locator),
+            embeddings_blob_locator=str(prepared.embeddings_locator),
+            parser_version=prepared.parser_version,
             chunker_version="managed-chunks-v1",
             pipeline_version="managed-chunks-v1",
             created_at=now,
@@ -1261,11 +1430,11 @@ class MysqlManagedChunks:
             **scope_values(self.scope),
         )
         await session.execute(insert(revisions).values(**values))
-        for ordinal, inventory_row in enumerate(inventory):
+        for ordinal, inventory_row in enumerate(prepared.inventory):
             await session.execute(
                 insert(inventories).values(
                     inventory_row_id="inv_" + uuid4().hex,
-                    source_revision_id=str(revision_id),
+                    source_revision_id=revision_id,
                     attempt=1,
                     item_id=inventory_row.item_id,
                     ordinal=ordinal,
@@ -1289,7 +1458,7 @@ class MysqlManagedChunks:
                 insert(manifests).values(
                     chunk_id=item.chunk_id,
                     logical_chunk_id=item.logical_chunk_id,
-                    revision_id=str(revision_id),
+                    revision_id=revision_id,
                     ordinal=item.ordinal,
                     root_id=item.root_id,
                     parent_id=item.parent_id,
@@ -1305,7 +1474,7 @@ class MysqlManagedChunks:
         await session.execute(
             insert(jobs).values(
                 job_id=work.job_id,
-                revision_id=str(revision_id),
+                revision_id=revision_id,
                 kind="ingestion",
                 attempt=1,
                 status="completed",
@@ -1322,29 +1491,34 @@ class MysqlManagedChunks:
             update(documents)
             .where(*self._where(documents, document_id))
             .values(
-                current_revision_id=str(revision_id),
-                source_content_hash=source_hash,
+                current_revision_id=revision_id,
+                source_content_hash=prepared.source_hash,
                 status="ready",
                 stage="ready",
-                chunk_count=len(drafts),
+                chunk_count=len(prepared.drafts),
                 error_code=None,
                 error_summary=None,
                 updated_at=now,
             )
         )
-        # The index is a rebuildable projection: once the new revision's rows are
-        # live, the superseded revision must not keep the document's deleted
-        # content searchable. Record the purge obligation atomically with the
-        # publish so a crash or a purge failure after this transaction commits
-        # never loses track of the superseded revision's Milvus rows; run_pending
-        # retries the purge from this durable marker until it clears. A prior
-        # unresolved obligation is superseded by this one rather than lost: the
-        # purge always keeps only the current revision, so it removes every
-        # earlier revision's rows regardless of which one is recorded here.
+        # The index is a rebuildable projection: once the new revision's rows
+        # are live, the superseded revision must not keep the document's
+        # deleted content searchable. The "previous" revision is read off
+        # THIS freshly locked document row -- not the snapshot taken before
+        # prepare ran -- so a concurrent publish that already advanced
+        # current_revision_id is never clobbered or double-counted. Record
+        # the purge obligation atomically with the publish so a crash or a
+        # purge failure after this transaction commits never loses track of
+        # the superseded revision's Milvus rows; run_pending retries the
+        # purge from this durable marker until it clears. A prior unresolved
+        # obligation is superseded by this one rather than lost: the purge
+        # always keeps only the current revision, so it removes every
+        # earlier revision's rows (including any abandoned, never-published
+        # revision's rows) regardless of which one is recorded here.
         previous_revision_id = document["current_revision_id"]
         purge_owed = (
             previous_revision_id
-            if previous_revision_id and previous_revision_id != str(revision_id)
+            if previous_revision_id and previous_revision_id != revision_id
             else None
         )
         managed_values: dict[str, Any] = dict(index_status="ready", index_error=None)
@@ -1360,8 +1534,8 @@ class MysqlManagedChunks:
         # document/managed-chunk row locks other requests (chunk edits, deletes)
         # need to proceed.
         await self.repository.record_revision_ready(
-            session, str(revision_id), now=now, job_id=work.job_id
+            session, revision_id, now=now, job_id=work.job_id
         )
         if purge_owed is not None:
-            return purge_owed, str(revision_id)
+            return purge_owed, revision_id
         return None

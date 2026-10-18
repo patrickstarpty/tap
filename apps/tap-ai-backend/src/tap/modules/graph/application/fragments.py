@@ -7,8 +7,11 @@ import logging
 from dataclasses import replace
 from typing import Sequence
 
+from opentelemetry.trace import get_current_span
+
 from tap.modules.graph.domain.models import (
-    MAX_GRAPH_NODES,
+    MAX_FRAGMENT_EDGES,
+    MAX_FRAGMENT_NODES,
     Evidence,
     GraphEdge,
     GraphNode,
@@ -21,10 +24,6 @@ from tap.modules.graph.domain.vocabulary import NODE_ALIAS_MAX, normalize_key
 from tap.modules.knowledge.domain.documents import ChunkDraft
 
 logger = logging.getLogger(__name__)
-
-# Mirrors GraphSnapshotDraft's own internal edge bound (domain/models.py), which a merge
-# across batches -- each individually within bounds -- can otherwise exceed.
-_MAX_GRAPH_EDGES = 2_000
 
 
 def split_batches(
@@ -98,11 +97,14 @@ def assemble_fragment(
     Each batch draft is individually within ``GraphSnapshotDraft``'s node/edge bounds,
     but the merge can still exceed them. Rather than let that raise and crash the
     worker, the merge truncates deterministically: nodes are kept in first-seen order
-    up to ``MAX_GRAPH_NODES``; edges whose endpoint was dropped are dropped too; the
-    remaining edges are kept in first-seen order up to the same 2000-edge bound
-    ``GraphSnapshotDraft`` enforces. When either cap bites, a warning records the
-    snapshot id and how many nodes and edges were dropped. Provenance for a dropped edge
-    is dropped with it, and -- because an ``INFERRED`` edge requires its own provenance,
+    up to ``MAX_FRAGMENT_NODES``; edges whose endpoint was dropped are dropped too; the
+    remaining edges are kept in first-seen order up to the same ``MAX_FRAGMENT_EDGES``
+    bound ``GraphSnapshotDraft`` enforces. When either cap bites, a warning records the
+    snapshot id and how many nodes and edges were dropped (also as structured fields,
+    and as attributes on the current span) and how many facts the document actually
+    had, so a document that outgrows these caps again is visible from logs/traces
+    alone. Provenance for a dropped edge is dropped with it, and -- because an
+    ``INFERRED`` edge requires its own provenance,
     and a provenance's ``input_fact_ids`` can themselves name other (node or edge) facts
     -- dropping one inferred edge can orphan another provenance that cites it as an
     input fact. This cascades: any ``INFERRED`` edge whose provenance's input facts are
@@ -289,7 +291,7 @@ def assemble_fragment(
     provenance_by_id = finalized_provenance_by_id
     provenance_order = finalized_provenance_order
 
-    kept_node_order = node_order[:MAX_GRAPH_NODES]
+    kept_node_order = node_order[:MAX_FRAGMENT_NODES]
     kept_node_id_set = set(kept_node_order)
 
     endpoint_filtered_edge_order = [
@@ -298,7 +300,7 @@ def assemble_fragment(
         if edges_by_id[edge_id].source_node_id in kept_node_id_set
         and edges_by_id[edge_id].target_node_id in kept_node_id_set
     ]
-    kept_edge_order = endpoint_filtered_edge_order[:_MAX_GRAPH_EDGES]
+    kept_edge_order = endpoint_filtered_edge_order[:MAX_FRAGMENT_EDGES]
 
     # An INFERRED edge requires its own provenance, and a provenance's input_fact_ids
     # can themselves name other node or edge facts. Dropping one inferred edge (for
@@ -331,19 +333,37 @@ def assemble_fragment(
     kept_edge_id_set = set(kept_edge_order)
 
     dropped_node_count = len(node_order) - len(kept_node_order)
-    if dropped_node_count or len(endpoint_filtered_edge_order) > _MAX_GRAPH_EDGES:
+    dropped_edge_count = len(edge_order) - len(kept_edge_order)
+    if dropped_node_count or len(endpoint_filtered_edge_order) > MAX_FRAGMENT_EDGES:
         # Record what the caps discarded rather than drop it silently: the nodes cut
-        # by MAX_GRAPH_NODES and every edge lost with them, past the edge cap, or in
-        # the provenance cascade that follows.
+        # by MAX_FRAGMENT_NODES and every edge lost with them, past the edge cap, or
+        # in the provenance cascade that follows. Structured fields (not just the
+        # message) and span attributes so a document that outgrows these caps again
+        # is queryable from logs/traces, not just readable in one line.
         logger.warning(
             "graph fragment merge truncated to draft caps: "
-            "snapshot_id=%s dropped_nodes=%d dropped_edges=%d max_nodes=%d max_edges=%d",
+            "snapshot_id=%s dropped_nodes=%d dropped_edges=%d max_nodes=%d max_edges=%d "
+            "total_nodes=%d total_edges=%d",
             snapshot.snapshot_id,
             dropped_node_count,
-            len(edge_order) - len(kept_edge_order),
-            MAX_GRAPH_NODES,
-            _MAX_GRAPH_EDGES,
+            dropped_edge_count,
+            MAX_FRAGMENT_NODES,
+            MAX_FRAGMENT_EDGES,
+            len(node_order),
+            len(edge_order),
+            extra={
+                "tap.graph_fragment.snapshot_id": snapshot.snapshot_id,
+                "tap.graph_fragment.dropped_nodes": dropped_node_count,
+                "tap.graph_fragment.dropped_edges": dropped_edge_count,
+                "tap.graph_fragment.max_nodes": MAX_FRAGMENT_NODES,
+                "tap.graph_fragment.max_edges": MAX_FRAGMENT_EDGES,
+                "tap.graph_fragment.total_nodes": len(node_order),
+                "tap.graph_fragment.total_edges": len(edge_order),
+            },
         )
+        current_span = get_current_span()
+        current_span.set_attribute("tap.graph_fragment.dropped_nodes", dropped_node_count)
+        current_span.set_attribute("tap.graph_fragment.dropped_edges", dropped_edge_count)
 
     kept_provenance_order = [
         provenance_id

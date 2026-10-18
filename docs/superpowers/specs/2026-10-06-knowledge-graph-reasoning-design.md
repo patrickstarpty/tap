@@ -35,11 +35,11 @@
 ### 1.1 抽取（按文档修订）
 
 - graph job 仍由 `MysqlGraphReadyProjection` 在文档 READY 事务内创建，每个修订一个 job。
-- worker 把修订的切片按顺序切成批次，每批以字符预算 `TAPPER_GRAPH_BATCH_CHARS`（默认 3000 字，超长的单个切片单独成批）为主、块数上限 `TAPPER_GRAPH_BATCH_SIZE`（默认 100）为辅，每批一次 `generate_structured` 调用。每批输出有界：schema 与提示词限定至多 40 个节点、60 条边（按每个节点约 35–60、每条边约 45–60 输出 token 估算，约 6000 token，在 8192 token 预算内），只输出本批原文中出现的实体与关系。解析阶段丢弃重复节点与重复边并计数；响应被截断（`finish_reason=length`、JSON 不完整或顶层 nodes/edges/provenance 超出数组上限；别名超过 5 个由服务端截取前 5 个，不触发拆批）时，对本批做一次二分重试（拆成两半各自抽取），某一半仍失败则保留另一半、该批计入 PARTIAL，两半都失败才记失败，截断不原样重试。调用上下文包含：文档标题、本批切片、**本修订此前批次已抽出、且在本批原文中字面出现的实体清单**（id、label、type、canonicalKey；按出现次数取前 50 个），要求模型的边直接引用已知实体 id，不得在 nodes 中重复输出已知实体；服务端丢弃模型重抄的已知实体（按 id 或 canonical key 识别）并计数，按请求中的已知实体回填被边引用的节点，保证同一文档内 canonical key 稳定。
-- 批次幂等键为（修订 id、批次号、抽取档案摘要）。批次失败按退避重试，`TAPPER_GRAPH_BATCH_RETRIES`（默认 3）次后标记该批失败并继续后续批次。全部批次成功时片段状态 READY；有失败批次时 PARTIAL，仍可合并；全部失败时 FAILED。
+- worker 把修订的切片按顺序切成批次，每批以字符预算 `TAPPER_GRAPH_BATCH_CHARS`（默认 3000 字，超长的单个切片单独成批）为主、块数上限 `TAPPER_GRAPH_BATCH_SIZE`（默认 100）为辅，每批一次 `generate_structured` 调用。每批输出有界：schema 与提示词限定至多 40 个节点、60 条边（按每个节点约 35–60、每条边约 45–60 输出 token 估算，约 6000 token，在 8192 token 预算内），只输出本批原文中出现的实体与关系。解析阶段丢弃重复节点与重复边并计数；模型引用本批之外的 chunk ref（越界引用）时只丢弃该 ref，不使整批失败，节点或边去掉越界 ref 后没有剩余证据的则丢弃该节点或边（悬空的边随其端点节点一并丢弃），计数计入批次诊断；响应被截断（`finish_reason=length`、JSON 不完整或顶层 nodes/edges/provenance 超出数组上限；别名超过 5 个由服务端截取前 5 个，不触发拆批）时，对本批做一次二分重试（拆成两半各自抽取），某一半仍失败则保留另一半、该批计入 PARTIAL，两半都失败才记失败，截断不原样重试。调用上下文包含：文档标题、本批切片、**本修订此前批次已抽出、且在本批原文中字面出现的实体清单**（id、label、type、canonicalKey；按出现次数取前 50 个），要求模型的边直接引用已知实体 id，不得在 nodes 中重复输出已知实体；服务端丢弃模型重抄的已知实体（按 id 或 canonical key 识别）并计数，按请求中的已知实体回填被边引用的节点，保证同一文档内 canonical key 稳定。
+- 批次幂等键为（修订 id、批次号、抽取档案摘要）。批次失败按退避重试，`TAPPER_GRAPH_BATCH_RETRIES`（默认 3）次后标记该批失败并继续后续批次。全部批次成功时片段状态 READY；有失败批次时 PARTIAL，仍可合并；全部失败时 FAILED。批次 `failure_code` 仍是异常类名；worker 额外用 `logger.warning` 记录异常消息与堆栈（不含原文与凭据），抽取 span 的 status 描述带异常消息摘要（`ClassName: message`，截断到 200 字符），用于区分同一异常类名下的不同原因。
 - 批次结果合入同一修订的片段图（现有单文档快照表继续承载，称为**片段图**）；片段图的 `snapshot_id` 不变，批次表记录每批的状态、失败码、重试次数。
 - 节点类型：现有 ACTOR、SYSTEM、REQUIREMENT、CONCEPT、ENTITY 之外增加 PROCESS（流程、步骤、环节）。
-- 关系类型受控词表：REQUIRES、APPLIES_TO、PART_OF、EXCEPTION_OF、SUPERSEDES、TRIGGERS、PRECEDES、VALIDATED_BY、RESPONSIBLE_FOR、USES、DEFINES、CONFLICTS_WITH，兜底 RELATED_TO。模型同时输出自由文本 `relationLabel`（原文表述，≤64 字）供展示；`relation_type` 不在词表内的输出整条边作废并计入批次诊断。
+- 关系类型受控词表：REQUIRES、APPLIES_TO、PART_OF、EXCEPTION_OF、SUPERSEDES、TRIGGERS、PRECEDES、VALIDATED_BY、RESPONSIBLE_FOR、USES、DEFINES、CONFLICTS_WITH，兜底 RELATED_TO。schema 与提示词为每种类型给出简明定义、方向约定与中文保险条款正反例（如“包括/含”对应 PART_OF 而非 EXCEPTION_OF，分级或子项指向父项，“N 项中满足 M 项”不用 REQUIRES，RELATED_TO 仅用于确实只有关联的情形），实体类型同样明确保险公司/机构属于 ACTOR、SYSTEM 仅限软件系统或信息服务。模型同时输出自由文本 `relationLabel`（原文表述，≤64 字）供展示；`relation_type` 不在词表内的输出整条边作废并计入批次诊断。服务端对每条 EXTRACTED 边做两次确定性校验（端点是指代词、本批已知实体、或以“公司/保险人/保险/机构/协会/学会/委员会”结尾的机构名时豁免两者——不是整个 ACTOR/SYSTEM 类型都豁免，否则一个被误分类为 ACTOR/SYSTEM 的疾病/诊断方法也会被豁免；指代词豁免是因为保险公司/合同条款常只用“本公司/本合同”自称，不会把指代词写入别名；INFERRED 边不受两者校验）：（1）字符重合率——边两端的 label 或别名（规范化后，按字符多重集比较，不要求连续或顺序）必须至少 60% 的字符出现在该边自身引用的证据切片原文中，不足则丢弃并计入批次诊断 `dropped_ungrounded_edges`；（2）同列表条目标题匹配——仅当证据来自单个切片、两端都不是 REQUIREMENT 类型、且该切片含至少两个裸编号条目（“37）”“38）”……，不含“（N）”子条号，且编号必须严格递增，否则视为嵌套子条件）时才生效：若边两端分别与某两个不同条目的标题行（最长公共子串比例 ≥70%）相符，且任一端的名字都不是另一条目正文里确实出现过的字面词串，则判定为跨条目误连并丢弃，计入 `dropped_cross_item_edges`（REQUIREMENT 端点与跨切片证据不受此项校验，因为模型改写的判定标准常常颠倒措辞或替换比较符号，与自身条目的字面匹配得分本就不可靠）。提示词或 schema 文案变化会改变 `GRAPH_EXTRACTION_PROFILE_DIGEST`，使已发布片段视为过期并按第 5 节重新排队。
 - 抽取 schema 在现有基础上增加 `relationLabel`、节点 `aliases`（模型从本批文本中识别的别名，≤5 个、每个 ≤32 字）。指代词与结构词（本合同、本公司、该产品、上述、前款、第X条/章/节、附表X、释义X 等，以及 this contract、the policy、Article 5 等英文对应词）、纯数字或编号、规范化后不足 2 字的文本不得作别名或实体名：抽取时丢弃这类别名；实体名是这类文本时改用其第一个有效别名，没有则丢弃该节点及其边。规则集中在 `graph/domain/naming.py`，抽取与对齐共用。推理边（INFERRED）与推理来源机制保留，不扩展。
 - 抽取提示词与 schema 摘要更新后，`GRAPH_EXTRACTION_PROFILE_DIGEST` 随之变化，旧片段视为过期（见第 5 节重建）。规则式假抽取使用独立的确定性档案摘要；进程按 `TAPPER_GRAPH_EXTRACTION_MODE` 选用摘要，另一模式的片段同样视为过期。
 
@@ -49,7 +49,7 @@
 
 | 表 | 主要列 | 说明 |
 | --- | --- | --- |
-| `graph_project_version` | project_id、version、status（MERGING/READY/FAILED）、fragment_digest、node_count、edge_count、merged_at | 每次合并产生一个版本；`fragment_digest` 为参与合并的片段集合摘要 |
+| `graph_project_version` | project_id、version、status（MERGING/READY/FAILED）、fragment_digest、node_count、edge_count、merged_at | 每次合并产生一个版本；`fragment_digest` 为参与合并的片段集合摘要与 `MERGE_RULES_VERSION`（对齐/合并规则版本号，规则变更时手动递增）折算的摘要——同一片段集合在规则变更前后得到不同摘要，使只改规则、不重新抽取的发布也能在下次合并时生效 |
 | `graph_project_node` | project_id、version、node_id、label、node_type、canonical_key、degree、community_id | 主键（project_id、version、node_id）；索引（project_id、version、canonical_key）、（project_id、version、community_id） |
 | `graph_project_edge` | project_id、version、edge_id、source_node_id、target_node_id、relation_type、relation_label、origin、confidence | 索引（project_id、version、source_node_id）、（project_id、version、target_node_id） |
 | `graph_project_node_source` | project_id、version、node_id、source_revision_id、document_revision_id、chunk_id、anchor_json、fragment_node_id | 节点在每个来源中的证据，用于授权过滤与"打开原件" |
@@ -65,10 +65,10 @@
 - 触发：片段 READY/PARTIAL、来源删除或撤销发布、`graph rebuild` 命令。合并 job 按项目租约串行，复用 `MysqlGraphJobStore` 的租约与幂等模式（新增 job 种类 `project_merge`）。graph worker 在抽取进行期间按 `TAPPER_POLL_SECONDS` 轮询合并队列，有片段就绪即合并，不等全部抽取结束（片段就绪与回填请求去抖 5 秒，窗口内多次请求合为一次）；合并失败记录带堆栈的错误日志，合并 job 的 `failure_code` 记为“阶段:异常类型”摘要并按退避重试。
 - 合并是**全量重放**：取项目内当前已发布修订的全部 READY/PARTIAL 且档案摘要为当前值的片段，重新计算一个新版本；删除来源即重放时排除。片段集合摘要与上一版本相同则跳过。节点、边、来源、证据与别名写入前按各表主键去重（模型常在同一批里重复输出同一条边或同一实体，对齐后共用一个主键），同一组片段重复合并结果一致。版本就绪后原子切换 `graph_project_version.status=READY`，旧版本保留一个用于查询过渡，更早版本清理。
 - 实体对齐三级，依次尝试：
-  1. 规范化 canonical key 精确匹配。规范化：casefold、全角转半角、去标点与空白、去尾部修饰词（"规则""条款""流程""policy""rule" 等有限列表）。
-  2. 别名表匹配：任一规范化别名（label、模型给出的 aliases、历史合并产生的别名）相同且节点类型相同；指代词、结构词与编号不参与匹配，也不进入合并后的别名。模型给出的别名只在同一来源修订（同一文档、即同一产品）内生效：跨来源修订只按名称（label 与 label）相同合并，仅凭别名命中的不跨来源合并；精确 key 合并不受影响。
+  1. 规范化 canonical key 精确匹配，且节点类型相同——但 ACTOR/SYSTEM/ENTITY（组织/参与方，模型对同一机构常给出不一致的类型）三者间互认，不要求字面相同；其余类型仍要求字面相同。规范化：casefold、全角转半角、去标点与空白、去尾部修饰词（"规则""条款""流程""policy""rule" 等有限列表），ACTOR/SYSTEM/ENTITY 节点再去一个尾部公司实体后缀（"保险股份有限公司""保险有限公司""股份有限公司""有限公司"，取最长匹配），使同一公司的全称与简称（"友邦人寿保险有限公司"与"友邦人寿"）落在同一 key；泛称（"保险公司"）不以此与具体公司名合并。纯分级词的 canonical key（如"Ⅳ级"，normalize_key 规范化后 fullmatch 罗马数字/中文数字+"级"）永不参与精确匹配，即便两个节点字面 canonical key 完全相同——不同分级体系（NYHA 心功能分级、类风湿关节炎功能分类……）常用同一个级别编号，字面相同不代表同一实体；该节点仍可正常发布，只是永远独立成节点，不与任何同形节点合并。
+  2. 别名表匹配：任一规范化别名（label、模型给出的 aliases、历史合并产生的别名）相同且节点类型相同；指代词、结构词、编号、纯分级/期限词、示例人名与过泛单词不参与匹配，也不进入合并后的别名；带条号/释义号前后缀的别名先去前后缀再参与匹配与展示。模型给出的别名只在同一来源修订（同一文档、即同一产品）内生效：跨来源修订只按名称（label 与 label）相同合并，仅凭别名命中的不跨来源合并；精确 key 合并不受影响。同一来源修订内，一个别名最多只允许一个其他规范化实体依附到以之为自己 label 的锚点实体上；锚点是否存在不改变这一点——被两个以上不同规范化实体共同当作别名使用的别名词始终不参与匹配，哪怕其中恰好有一个真的就叫这个名字（例如同一份文件把三种心肌病都写成"心肌病"，即使文件里还另有一个泛称"心肌病"节点，三者也都不与它合并）。
   3. embedding 相似度 ≥ `TAPPER_GRAPH_ALIGN_THRESHOLD`（默认 0.92）且节点类型相同；由 `TAPPER_GRAPH_ALIGN_EMBEDDING` 控制，第一版默认关闭。
-  合并后的节点 label 取出现次数最多的片段 label，其余进别名表；每次合并写 `graph_merge_log`。
+  合并后的节点 label 取出现次数最多的片段 label；类型互认跨 ACTOR/SYSTEM/ENTITY 合并时，节点类型取证据数最多的一方；其余进别名表；每次合并写 `graph_merge_log`。
 - 边合并：两端节点合并后、`relation_type` 相同的边合并为一条，置信度取最大值，证据取并集，`relation_label` 取出现次数最多者。
 - 社区：标签传播算法，迭代上限 20 轮，社区数上限 50，小于 3 个节点的社区并入"其他"；节点度数同时写入。
 
@@ -112,7 +112,7 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 2. **问题种子**：对规范化后的问题做别名最长匹配（别名索引在内存，按长度降序，匹配后遮蔽已匹配区间），不依赖分词器。
 3. **扩展**：全部种子 1 跳；种子少于 3 个时 2 跳。节点与边必须至少有一条证据落在授权来源修订内，且通过现有发布授权校验（`PublishedKnowledgeAuthority`）。节点上限 60、边上限 200。
 4. **路径**：问题种子两两之间、问题种子与证据种子之间求不超过 3 跳的有界路径，路径数上限 10。
-5. **排序与截断**：路径上的边优先，其次按 `confidence × 种子邻接度`，截断为最多 20 条，编号 R1..R20。
+5. **排序与截断**：路径上的边优先；同一路径状态内先按边自身文本（`relationLabel` 与两端节点标签）与问题文本的字符双字组重合度排序，再按 `confidence × 种子邻接度`，截断为最多 20 条，编号 R1..R20。
 6. **组装**：每条关系证据 `{label, subject, relationType, relationLabel, object, origin, confidence, evidence}`；`evidence` 指向支撑切片，已在 S 列表中的用 S 标签引用，否则附切片片段（≤300 字）与锚点。
 
 ### 2.4 模型回答
@@ -123,7 +123,7 @@ class AgentSubgraph(Protocol[InputT, OutputT]):
 ### 2.5 引用模型与校验
 
 - `Citation` 增加 `kind`：`chunk`（现状）或 `edge`。边引用字段：`edge_id`、`graph_version`、`subject`（node_id、label）、`object`（node_id、label）、`relation_type`、`relation_label`、`evidence`（支撑切片的 chunk id、来源修订、内容摘要、锚点）。边引用最终仍锚定到原文。
-- `ports/answers.py` 校验：S 标签保持 `S1..S20` 位置规则；R 标签 `R1..R20`，必须对应本次 `RelationContext` 中的边；含 R 引用的 claim 文本须包含该边两端节点的 label 或任一别名；边引用的 `graph_version` 必须等于本次使用的版本。
+- `ports/answers.py` 校验：S 标签保持 `S1..S20` 位置规则；R 标签 `R1..R20`，必须对应本次 `RelationContext` 中的边；含 R 引用的 claim 文本须包含该边两端节点的 label 或任一别名（规范化匹配：接受括注限定语省略、全半角差异，并排除"保险人/被保险人/投保人"一类短标签被长标签字面包含导致的误配）；边引用的 `graph_version` 必须等于本次使用的版本。`application/relation_claims.py` 另外校验该边自身的支持证据（已引 S 切片的原文内容，或增强补入的新鲜切片文本）是否也同时提及两端节点，但这只是必要而非充分条件——支持证据可能字面同时提及两端却另有所指（如定义条款的举例列表）。决定性校验按该条 claim 是否自带 S 引用分支：claim 已引用 S 时，该边的支撑切片须是其中之一，或与其中之一同来源修订且同小节（最近标题）——不看该 claim 之外、答案里其他 claim 引用的 S 切片；共享的最近标题若本身是释义/定义类小节（标题以"释义""定义""名词解释"结尾，或标题路径上有这样的祖先标题）则不算同小节命中，只认精确命中同一 chunk（这类小节常见多个无关词条共用一个小节标题，真实 q-14 的"第二十七条 释义"即是此形）。claim 未引用任何 S 时，该边的支撑须本身是本轮已检索的切片（即其 `evidence_label` 已被标记为检索命中的 S 标签，不论这条 claim 是否引用它），仅凭前述端点与支持文字校验、支撑却是从未检索过的新鲜 snippet 不足以自证，直接剥离。无法确定支持证据原文时不因此剥离。
 - 校验失败处理：某个 claim 的 R 引用不合法时，去掉该 claim 的 R 标签后按 S 标签重新校验；仍有 S 标签则保留该 claim 并计入诊断 `invalid-relation-citation`，没有任何合法标签则丢弃该 claim；全部 claim 被丢弃才弃答。S 侧同理：文本无法与回答对齐、重复或引用未知标签的 claim 逐条丢弃，回答由剩余 claim 重建；全部丢弃时以 `insufficient_evidence` 弃答，不报服务不可用。多来源归属：S 证据带来源文档名与标题路径进入提示词；claim 文本点名某份证据文档（文件名或文档标题，多份文档共用的名称不算）而引用的 S 证据全部来自其他文档时丢弃该 claim。
 - 持久化：`citation_snapshot` 增加可空列 `citation_kind`、`graph_version`、`edge_id`、`subject_node_id`、`object_node_id`、`relation_type`、`relation_label`；历史行 `citation_kind` 默认 `chunk`。
 - 推荐问题的依据校验复用对话回答链路，自动支持 R 引用；刷新输入在"主要实体"之外加入"主要关系"（按度数与置信度取前 20 条）。

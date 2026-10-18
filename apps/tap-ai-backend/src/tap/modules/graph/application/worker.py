@@ -319,6 +319,16 @@ class GraphWorker:
             raise
         except Exception as error:
             failure_code = type(error).__name__[:64]
+            # failure_code stays the bounded class name (jobs are queried and
+            # alerted on it), but the log line keeps the message and stack trace --
+            # without them, "RuntimeError" alone cannot be diagnosed later.
+            logger.warning(
+                "graph job failed: job_id=%s failure_code=%s error=%s",
+                claim.job_id,
+                failure_code,
+                error,
+                exc_info=True,
+            )
             try:
                 await self._jobs.fail(
                     self._scope, claim, failure_code=failure_code, now=self._now()
@@ -458,6 +468,20 @@ class GraphWorker:
                     )
             except Exception as error:
                 failure_code = type(error).__name__[:64]
+                # failure_code stays the bounded class name recorded on the batch,
+                # but the log line keeps the message and stack trace -- without
+                # them, a batch recorded as "ValueError" cannot be told apart from
+                # any other ValueError the extractor can raise.
+                logger.warning(
+                    "graph extraction batch failed: job_id=%s batch_index=%s attempt=%s "
+                    "failure_code=%s error=%s",
+                    claim.job_id,
+                    index,
+                    attempt,
+                    failure_code,
+                    error,
+                    exc_info=True,
+                )
                 # A truncated output repeats on the same input, so a batch still
                 # truncated after its one split fails now instead of retrying.
                 if attempt >= self._batch_retries or isinstance(error, GraphExtractionTruncated):

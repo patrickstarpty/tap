@@ -655,6 +655,133 @@ def test_rank_edges_merges_extra_edges_deduped_by_edge_id() -> None:
     assert len(ranked) == 2
 
 
+def test_rank_edges_breaks_ties_by_query_text_overlap() -> None:
+    """Among edges with the same on-path status, one whose own text (its
+    `relation_label` plus endpoint labels) overlaps the question's wording
+    must outrank one that only wins on confidence x seed adjacency, so a
+    genuinely on-topic edge is not crowded out of the top of the list by an
+    unrelated but higher-scoring one."""
+    on_topic = ProjectEdge(
+        edge_id="e-on-topic",
+        source_node_id="A",
+        target_node_id="B",
+        relation_type="REQUIRES",
+        relation_label="核保审核须提交健康告知",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.5,
+    )
+    off_topic = ProjectEdge(
+        edge_id="e-off-topic",
+        source_node_id="A",
+        target_node_id="C",
+        relation_type="RELATED_TO",
+        relation_label="理赔流程说明",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    subgraph = ProjectSubgraph(
+        version=1,
+        nodes=(_NODE_A, _NODE_B, _NODE_C),
+        edges=(on_topic, off_topic),
+    )
+    seed_ids = frozenset({"A"})
+
+    # Without a query, the higher confidence x adjacency edge wins, as before.
+    ranked_without_query = rank_edges(subgraph, (), seed_ids)
+    assert [edge.edge_id for edge, _on_path in ranked_without_query] == [
+        "e-off-topic",
+        "e-on-topic",
+    ]
+
+    # With a query that echoes the on-topic edge's own wording, it outranks
+    # the off-topic edge despite its lower confidence x adjacency score.
+    ranked_with_query = rank_edges(
+        subgraph, (), seed_ids, query="核保审核需要提交哪些健康告知材料？"
+    )
+    assert [edge.edge_id for edge, _on_path in ranked_with_query] == [
+        "e-on-topic",
+        "e-off-topic",
+    ]
+
+
+def test_rank_edges_ignores_overlap_on_only_generic_domain_vocabulary() -> None:
+    """Overlap limited to high-frequency domain terms (保险/合同/责任/条款/...)
+    must not count as relevance -- almost every edge and every question
+    shares this vocabulary, so it carries no signal about whether the edge
+    is actually on-topic, and must not let it outrank a higher confidence x
+    adjacency edge the way genuine topical overlap does."""
+    generic_only = ProjectEdge(
+        edge_id="e-generic-only",
+        source_node_id="A",
+        target_node_id="B",
+        relation_type="REQUIRES",
+        relation_label="本合同责任条款",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.5,
+    )
+    higher_scored = ProjectEdge(
+        edge_id="e-higher-scored",
+        source_node_id="A",
+        target_node_id="C",
+        relation_type="RELATED_TO",
+        relation_label="理赔流程说明",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    subgraph = ProjectSubgraph(
+        version=1,
+        nodes=(_NODE_A, _NODE_B, _NODE_C),
+        edges=(generic_only, higher_scored),
+    )
+    seed_ids = frozenset({"A"})
+
+    # The query's only overlap with `generic_only`'s label is the shared
+    # generic vocabulary ("合同"/"责任"/"条款"); the higher confidence x
+    # adjacency edge must still win, exactly as it would without a query.
+    ranked = rank_edges(subgraph, (), seed_ids, query="本合同的责任条款规定了什么？")
+    assert [edge.edge_id for edge, _on_path in ranked] == [
+        "e-higher-scored",
+        "e-generic-only",
+    ]
+
+
+def test_rank_edges_never_lets_overlap_promote_a_non_adjacent_edge_over_an_adjacent_one() -> None:
+    """A textually on-topic edge whose endpoints are not seed-adjacent must
+    never outrank a seed-adjacent edge, even one with no text overlap at
+    all and lower confidence -- adjacency to the seed is checked before
+    the text-overlap tie-breaker, not after."""
+    adjacent_but_off_topic = ProjectEdge(
+        edge_id="e-adjacent",
+        source_node_id="A",
+        target_node_id="B",
+        relation_type="RELATED_TO",
+        relation_label="理赔流程说明",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.2,
+    )
+    non_adjacent_but_on_topic = ProjectEdge(
+        edge_id="e-non-adjacent",
+        source_node_id="C",
+        target_node_id="D",
+        relation_type="REQUIRES",
+        relation_label="核保审核须提交健康告知",
+        origin=RelationOrigin.EXTRACTED,
+        confidence=0.9,
+    )
+    subgraph = ProjectSubgraph(
+        version=1,
+        nodes=(_NODE_A, _NODE_B, _NODE_C, _NODE_D),
+        edges=(adjacent_but_off_topic, non_adjacent_but_on_topic),
+    )
+    # Only A is a seed: `e-adjacent` touches it (adjacency 1), `e-non-adjacent`
+    # does not (adjacency 0), despite scoring far higher on both confidence
+    # and query-text overlap.
+    seed_ids = frozenset({"A"})
+
+    ranked = rank_edges(subgraph, (), seed_ids, query="核保审核需要提交哪些健康告知材料？")
+    assert [edge.edge_id for edge, _on_path in ranked] == ["e-adjacent", "e-non-adjacent"]
+
+
 def test_assemble_reuses_s_label_without_snippet() -> None:
     nodes_by_id = {"A": _NODE_A, "B": _NODE_B, "C": _NODE_C}
     ranked = (

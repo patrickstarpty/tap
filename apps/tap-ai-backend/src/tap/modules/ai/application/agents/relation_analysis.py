@@ -248,7 +248,7 @@ class RelationAnalysisAgent:
                     flowchart_binding = await self._flowchart_gate.current(scope.project_id)
 
                 ranked_pairs = rank_edges(
-                    subgraph, paths, seed_ids, extra_edges=path_expansion.edges
+                    subgraph, paths, seed_ids, extra_edges=path_expansion.edges, query=value.query
                 )
                 evidence_by_edge: dict[str, list[EdgeEvidence]] = {}
                 for item in (*subgraph.evidence, *path_expansion.evidence):

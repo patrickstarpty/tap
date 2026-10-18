@@ -11,7 +11,7 @@ import numpy as np
 import numpy.typing as npt
 
 from tap.modules.graph.domain.models import GraphEdge, GraphSnapshotDraft, RelationOrigin
-from tap.modules.graph.domain.naming import is_reference_name
+from tap.modules.graph.domain.naming import clean_alias, is_bare_grade
 from tap.modules.graph.domain.project import ProjectEdge, project_edge_id, project_node_id
 from tap.modules.graph.domain.vocabulary import normalize_key
 
@@ -28,29 +28,98 @@ ALIGNMENT_SUFFIXES: tuple[str, ...] = (
     "clause",
 )
 
+# The model's overlapping categories for an organization or participant: the
+# real-model run split one insurer into a "保险公司" ACTOR node and a "保险公司"
+# SYSTEM node under the identical canonical key. An EXACT match on that key
+# merges across these three regardless of which the batch that minted it
+# picked; every other node type still requires a literal match.
+ORG_PARTICIPANT_TYPES: frozenset[str] = frozenset({"ACTOR", "SYSTEM", "ENTITY"})
 
-def alias_keys(names: Sequence[str]) -> set[str]:
+# One trailing corporate-entity suffix, longest first, dropped only for an
+# organization/participant node so a company's full registered name and its
+# short name key the same ("<Insurer>人寿保险有限公司" and "<Insurer>人寿" both
+# key to "<Insurer>人寿"). A generic role noun such as "保险公司" never ends in
+# one of these (it is shorter than even the shortest suffix below), so it is
+# left alone -- whether a generic term should merge with a specific company is
+# a separate, harder problem this does not attempt (see the report).
+_ORG_NAME_SUFFIXES: tuple[str, ...] = (
+    "保险股份有限公司",
+    "保险有限公司",
+    "股份有限公司",
+    "有限公司",
+)
+
+# A suffix strip is only trusted when what is left is itself distinctive --
+# at least two characters and not, on its own, a generic word for the
+# industry. Without this, "人寿保险有限公司" (a company literally named "Life
+# Insurance Co., Ltd.", no distinguishing brand) would strip to "人寿" or
+# "保险", either of which is shared by many unrelated insurers' names and
+# would merge them all together under one specific-looking key.
+_GENERIC_INDUSTRY_WORDS = frozenset(
+    {"保险", "人寿", "财险", "产险", "寿险", "人寿保险", "财产保险"}
+)
+# "股份" ("joint-stock") is corporate-structure filler, the same kind of thing the
+# suffixes above already strip -- it just happens to recur as a leftover *within*
+# the remainder after a shorter suffix match ("保险股份有限公司" minus "有限公司" is
+# "保险股份", not "保险", but is exactly as generic). Checked by stripping it from
+# the remainder before the genericity check, not by adding every "<word>股份"
+# combination to the generic-word set above.
+_CORPORATE_FILLER_SUFFIX = "股份"
+
+
+def _merge_type_bucket(node_type: str) -> str:
+    """EXACT-level type bucket for the same canonical key."""
+    return "ORG_PARTICIPANT" if node_type in ORG_PARTICIPANT_TYPES else node_type
+
+
+def _is_generic_remainder(core: str) -> bool:
+    if core in _GENERIC_INDUSTRY_WORDS:
+        return True
+    if core.endswith(_CORPORATE_FILLER_SUFFIX):
+        without_filler = core[: -len(_CORPORATE_FILLER_SUFFIX)]
+        return len(without_filler) < 2 or without_filler in _GENERIC_INDUSTRY_WORDS
+    return False
+
+
+def _strip_org_suffix(key: str) -> str:
+    for suffix in sorted(_ORG_NAME_SUFFIXES, key=len, reverse=True):
+        if len(key) > len(suffix) and key.endswith(suffix):
+            core = key[: -len(suffix)]
+            if len(core) >= 2 and not _is_generic_remainder(core):
+                return core
+    return key
+
+
+def alias_keys(names: Sequence[str], node_type: str | None = None) -> set[str]:
     """Level-2 (ALIAS) keys of a node's label and aliases.
 
     A reference word or number ("本合同", "第十九条", "this Policy") means a
     different thing in every document, so it is never an alignment key, before or
-    after the trailing modifier is stripped.
+    after the trailing modifier is stripped; a clause- or interpretation-numbered
+    alias ("第二十五条 明确说明与如实告知") keys on the real term underneath instead
+    (see ``clean_alias``).
     """
 
     keys: set[str] = set()
     for name in names:
-        key = alignment_key(name)
-        if not is_reference_name(name) and not is_reference_name(key):
-            keys.add(key)
+        cleaned = clean_alias(name)
+        if cleaned is not None:
+            keys.add(alignment_key(cleaned, node_type))
     return keys
 
 
-def alignment_key(text: str) -> str:
-    """Normalize text to a comparison key, stripping one trailing modifier word."""
+def alignment_key(text: str, node_type: str | None = None) -> str:
+    """Normalize text to a comparison key, stripping one trailing modifier word
+    and, for an organization/participant node (``node_type`` in
+    ``ORG_PARTICIPANT_TYPES``), one trailing corporate-entity suffix.
+    """
     key = normalize_key(text)
     for suffix in ALIGNMENT_SUFFIXES:
         if len(key) > len(suffix) and key.endswith(suffix):
-            return key[: -len(suffix)]
+            key = key[: -len(suffix)]
+            break
+    if node_type in ORG_PARTICIPANT_TYPES:
+        key = _strip_org_suffix(key)
     return key
 
 
@@ -76,6 +145,10 @@ class _Cluster:
     labels: list[str] = field(default_factory=list)
     model_aliases: list[str] = field(default_factory=list)
     rule: Literal["EXACT", "ALIAS", "EMBEDDING"] = "EXACT"
+    # Each member's own node type and evidence count: the published type an EXACT
+    # merge across ORG_PARTICIPANT_TYPES settles on is whichever type the most
+    # evidence actually supports, not merely the first batch's guess.
+    type_votes: list[tuple[str, int]] = field(default_factory=list)
 
 
 def _cosine_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> float:
@@ -256,6 +329,78 @@ def _majority(values: Sequence[str]) -> str:
     raise AssertionError("unreachable: values is nonempty")
 
 
+def _majority_type(weighted: Sequence[tuple[str, int]]) -> str:
+    """Pick a cluster's published node type: the type with the most evidence
+    across its merged members, ties broken by first occurrence. An EXACT merge
+    across ``ORG_PARTICIPANT_TYPES`` publishes whichever type's members
+    actually carry the most grounding, not merely the first batch's guess.
+    """
+    totals: dict[str, int] = {}
+    order: list[str] = []
+    for node_type, weight in weighted:
+        if node_type not in totals:
+            order.append(node_type)
+            totals[node_type] = 0
+        totals[node_type] += weight
+    best = max(totals.values())
+    for node_type in order:
+        if totals[node_type] == best:
+            return node_type
+    raise AssertionError("unreachable: weighted is nonempty")
+
+
+def _ambiguous_alias_keys(
+    ordered_fragments: Sequence[GraphSnapshotDraft],
+) -> frozenset[tuple[str, tuple[str, ...], str]]:
+    """Level-2 keys that may not merge within their own source revisions.
+
+    A model alias names an entity only inside its own document, so the ALIAS
+    level only ever matches a key against the same source revisions. That
+    scoping is not enough on its own: a real-model run glossed three distinct
+    cardiomyopathies "心肌病" in the same filing, and separately glossed an
+    unrelated rheumatoid-arthritis functional grade "IV 级" the same as a heart-
+    function grade in that filing -- both would merge unrelated entities
+    together under the first one's cluster, because nothing distinguishes that
+    case from the ordinary, wanted one where one entity's alias names another
+    entity that really is called that (e.g. "Underwriting" aliased "核保",
+    merging into the entity actually labelled "核保").
+
+    The distinction is who *owns* the key: at most one distinct canonical
+    entity may hold it as its own (normalized) label -- the key's "real" name,
+    if any -- with at most one *other* distinct canonical entity free to alias
+    to that one owner (the ordinary, wanted case: "Underwriting" aliased "核
+    保", merging into the entity actually labelled "核保"). A key more than
+    one distinct canonical entity owns as its own label is ambiguous; so is a
+    key more than one distinct canonical entity glosses as an alias, whether
+    or not one of them also owns it outright -- an owner does not make a key
+    shared by several unrelated entities safe to merge on, it just means one
+    of the several happens to be named that (e.g. a generic "心肌病" node
+    would not rescue three distinct cardiomyopathies that all alias it: none
+    of them may attach, the owner's own cluster included).
+    """
+
+    owners: dict[tuple[str, tuple[str, ...], str], set[str]] = {}
+    aliasers: dict[tuple[str, tuple[str, ...], str], set[str]] = {}
+    for fragment in ordered_fragments:
+        source = fragment.snapshot.source_revision_ids
+        for node in fragment.nodes:
+            canonical = alignment_key(node.canonical_key, node.node_type)
+            label_keys = alias_keys((node.label,), node.node_type)
+            for key in label_keys:
+                owners.setdefault((node.node_type, source, key), set()).add(canonical)
+            for key in alias_keys(node.aliases, node.node_type) - label_keys:
+                aliasers.setdefault((node.node_type, source, key), set()).add(canonical)
+
+    ambiguous: set[tuple[str, tuple[str, ...], str]] = set()
+    for owner_key, canonicals in owners.items():
+        if len(canonicals) > 1:
+            ambiguous.add(owner_key)
+    for aliaser_key, canonicals in aliasers.items():
+        if len(canonicals) > 1:
+            ambiguous.add(aliaser_key)
+    return frozenset(ambiguous)
+
+
 def resolve_entities(
     fragments: Sequence[GraphSnapshotDraft],
     *,
@@ -264,6 +409,7 @@ def resolve_entities(
 ) -> tuple[ResolvedEntity, ...]:
     """Merge Fragment nodes into Project entities across EXACT/ALIAS/EMBEDDING levels."""
     ordered_fragments = sorted(fragments, key=lambda fragment: fragment.snapshot.snapshot_id)
+    ambiguous_alias_keys = _ambiguous_alias_keys(ordered_fragments)
     clusters: list[_Cluster] = []
     # A level-1 key joins a cluster only when no same-type cluster already holds it
     # (otherwise the EXACT match below would have picked that cluster), so each
@@ -289,14 +435,29 @@ def resolve_entities(
         snapshot_id = fragment.snapshot.snapshot_id
         source = fragment.snapshot.source_revision_ids
         for node in fragment.nodes:
-            key1 = alignment_key(node.canonical_key)
-            label_keys = alias_keys((node.label,))
-            keys2 = alias_keys((node.label, *node.aliases))
+            key1 = alignment_key(node.canonical_key, node.node_type)
+            # A bare grade ("Ⅳ级") is kept as a node's own name (see naming.
+            # is_bare_grade) but is exactly the ambiguous shape ALIAS matching
+            # already refuses as a key: an unrelated classification system a
+            # different document happens to grade the same number. EXACT
+            # matching compares canonical_key text literally and does not go
+            # through naming's alias filtering at all, so without this a real-
+            # model run's "NYHA Ⅳ级" and "RA Ⅳ级" nodes -- same literal
+            # canonical_key text, unrelated entities -- would EXACT-merge.
+            # Skip both the lookup and the registration below; each such node
+            # always starts (or stays) its own cluster by this key.
+            key1_is_bare_grade = is_bare_grade(key1)
+            label_keys = alias_keys((node.label,), node.node_type)
+            keys2 = alias_keys((node.label, *node.aliases), node.node_type)
 
             target: _Cluster | None = None
             rule_used: Literal["EXACT", "ALIAS", "EMBEDDING"] | None = None
 
-            exact_match = exact_index.get((node.node_type, key1))
+            exact_match = (
+                None
+                if key1_is_bare_grade
+                else exact_index.get((_merge_type_bucket(node.node_type), key1))
+            )
             if exact_match is not None:
                 target, rule_used = exact_match, "EXACT"
 
@@ -308,7 +469,8 @@ def resolve_entities(
                 ] + [
                     position
                     for key in keys2
-                    if (position := alias_index.get((node.node_type, source, key))) is not None
+                    if (node.node_type, source, key) not in ambiguous_alias_keys
+                    and (position := alias_index.get((node.node_type, source, key))) is not None
                 ]
                 if alias_positions:
                     target, rule_used = clusters[min(alias_positions)], "ALIAS"
@@ -331,16 +493,20 @@ def resolve_entities(
                 rule_used = "EXACT"
 
             target.members.append(node_key)
+            target.type_votes.append((node.node_type, len(node.evidence_ids)))
             if aligner is not None:
                 aligner.place(node.node_type, node_key, target)
             target.level1_keys.add(key1)
-            exact_index.setdefault((node.node_type, key1), target)
+            if not key1_is_bare_grade:
+                exact_index.setdefault((_merge_type_bucket(node.node_type), key1), target)
             target.level2_keys |= keys2
             for key in label_keys:
                 known_position = label_index.get((node.node_type, key))
                 if known_position is None or target.position < known_position:
                     label_index[(node.node_type, key)] = target.position
             for key in keys2:
+                if (node.node_type, source, key) in ambiguous_alias_keys:
+                    continue
                 known_position = alias_index.get((node.node_type, source, key))
                 if known_position is None or target.position < known_position:
                     alias_index[(node.node_type, source, key)] = target.position
@@ -351,19 +517,36 @@ def resolve_entities(
     resolved: list[ResolvedEntity] = []
     for cluster in clusters:
         label = _majority(cluster.labels)
+        node_type = _majority_type(cluster.type_votes)
         seen: set[str] = set()
         aliases: list[str] = []
         for text in (*cluster.labels, *cluster.model_aliases):
-            if text == label or text in seen or is_reference_name(text):
+            cleaned = clean_alias(text)
+            if cleaned is None or cleaned == label or cleaned in seen:
                 continue
-            seen.add(text)
-            aliases.append(text)
-        node_id = project_node_id(cluster.node_type, alignment_key(cluster.canonical_key))
+            seen.add(cleaned)
+            aliases.append(cleaned)
+        node_id_key = alignment_key(cluster.canonical_key, node_type)
+        if is_bare_grade(node_id_key):
+            # A bare grade never joins another cluster by name (see the EXACT
+            # guard above), so there can be many singleton (or embedding-
+            # merged) clusters sharing the identical normalized key ("Ⅳ级")
+            # across sources -- without this, they would all compute the same
+            # project_node_id and collide (ProjectGraphDraft's own alias
+            # uniqueness check raises, and even without that,
+            # dedupe_on_primary_keys would silently drop every cluster but the
+            # first under one shared node row). The cluster's earliest member
+            # (snapshot id, fragment node id) is unique system-wide and stable
+            # for a given fragment set, so folding it into the id input keeps
+            # distinct clusters distinct without making the id random.
+            earliest_snapshot_id, earliest_node_id = cluster.members[0]
+            node_id_key = f"{node_id_key}|{earliest_snapshot_id}|{earliest_node_id}"
+        node_id = project_node_id(node_type, node_id_key)
         resolved.append(
             ResolvedEntity(
                 node_id=node_id,
                 label=label,
-                node_type=cluster.node_type,
+                node_type=node_type,
                 canonical_key=cluster.canonical_key,
                 aliases=tuple(aliases),
                 members=tuple(cluster.members),

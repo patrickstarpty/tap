@@ -6,7 +6,13 @@ import random
 import time
 from typing import Sequence
 
-from tap.modules.graph.application.alignment import alignment_key, merge_edges, resolve_entities
+from tap.modules.graph.application.alignment import (
+    _ambiguous_alias_keys,
+    _merge_type_bucket,
+    alignment_key,
+    merge_edges,
+    resolve_entities,
+)
 from tap.modules.graph.domain.models import (
     Evidence,
     GraphEdge,
@@ -15,7 +21,7 @@ from tap.modules.graph.domain.models import (
     GraphSnapshotDraft,
     RelationOrigin,
 )
-from tap.modules.graph.domain.naming import is_reference_name
+from tap.modules.graph.domain.naming import clean_alias, is_bare_grade, is_reference_name
 
 
 def _digest(seed: str) -> str:
@@ -67,6 +73,120 @@ def test_exact_key_merges_across_fragments_and_keeps_majority_label():
     assert "健康告知书" in entity.aliases
     assert entity.rule == "EXACT"
     assert len(entity.members) == 3
+
+
+def _evidenced_node(
+    node_id: str,
+    snapshot_id: str,
+    label: str,
+    node_type: str,
+    canonical_key: str,
+    evidence_count: int,
+) -> tuple[GraphNode, tuple[Evidence, ...]]:
+    evidence = tuple(
+        Evidence(
+            evidence_id=f"ev-{node_id}-{i}",
+            snapshot_id=snapshot_id,
+            source_revision_id=f"{snapshot_id}-source",
+            document_revision_id=f"{snapshot_id}-document",
+            chunk_id=f"chunk-{node_id}-{i}",
+            anchor={"kind": "text", "start": 0, "end": 4},
+            content_digest=_digest(f"ev-{node_id}-{i}"),
+        )
+        for i in range(evidence_count)
+    )
+    node = GraphNode(
+        node_id,
+        snapshot_id,
+        label,
+        node_type,
+        canonical_key,
+        tuple(e.evidence_id for e in evidence),
+    )
+    return node, evidence
+
+
+def test_actor_system_and_entity_merge_on_the_same_canonical_key():
+    # Real-model run: the same insurer, same canonical key, split into a
+    # "保险公司" ACTOR node (degree 144) and a "保险公司" SYSTEM node across batches.
+    actor_node, actor_evidence = _evidenced_node("n1", "frag-a", "保险公司", "ACTOR", "保险公司", 1)
+    system_node, system_evidence = _evidenced_node(
+        "n2", "frag-a", "保险公司", "SYSTEM", "保险公司", 3
+    )
+    fragment = GraphSnapshotDraft(
+        _snapshot("frag-a"),
+        (actor_node, system_node),
+        (),
+        actor_evidence + system_evidence,
+        (),
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert len(entities) == 1
+    entity = entities[0]
+    assert entity.rule == "EXACT"
+    assert len(entity.members) == 2
+    # The SYSTEM copy carries the most evidence, so the merge publishes SYSTEM.
+    assert entity.node_type == "SYSTEM"
+
+
+def test_a_concept_and_a_requirement_still_require_the_same_type_to_merge():
+    # ORG_PARTICIPANT_TYPES only covers ACTOR/SYSTEM/ENTITY; every other type
+    # still requires a literal match -- unchanged from before this feature.
+    a = _fragment("frag-a", [("n1", "免责条款", "CONCEPT", "免责条款")])
+    b = _fragment("frag-b", [("n1", "免责条款", "REQUIREMENT", "免责条款")])
+    assert len(resolve_entities([a, b])) == 2
+
+
+def test_a_company_full_name_and_short_name_merge_by_org_suffix():
+    full_name = _fragment(
+        "frag-a", [("n1", "友邦人寿保险有限公司", "ACTOR", "友邦人寿保险有限公司")]
+    )
+    short_name = _fragment("frag-b", [("n1", "友邦人寿", "ACTOR", "友邦人寿")])
+
+    entities = resolve_entities([full_name, short_name])
+
+    assert len(entities) == 1
+    assert entities[0].rule == "EXACT"
+    assert len(entities[0].members) == 2
+
+
+def test_a_generic_role_noun_does_not_merge_with_a_specific_company_name():
+    # "保险公司" is a role noun, not a specific company -- it must not merge with
+    # a real insurer's name just because both are ACTOR-typed.
+    generic = _fragment("frag-a", [("n1", "保险公司", "ACTOR", "保险公司")])
+    specific = _fragment("frag-b", [("n1", "友邦人寿", "ACTOR", "友邦人寿")])
+
+    assert len(resolve_entities([generic, specific])) == 2
+
+
+def test_a_fully_generic_company_name_is_not_stripped_to_an_industry_word():
+    # "人寿保险有限公司" ("Life Insurance Co., Ltd.") has no distinguishing brand;
+    # stripping its suffix would otherwise reduce it to "人寿" or "保险", either
+    # of which many unrelated insurers' names also contain, merging them all.
+    generic_company = _fragment("frag-a", [("n1", "人寿保险有限公司", "ACTOR", "人寿保险有限公司")])
+    another_insurer = _fragment(
+        "frag-b", [("n1", "太平人寿保险有限公司", "ACTOR", "太平人寿保险有限公司")]
+    )
+    bare_generic_word = _fragment("frag-c", [("n1", "人寿", "ACTOR", "人寿")])
+
+    entities = resolve_entities([generic_company, another_insurer, bare_generic_word])
+
+    assert len(entities) == 3
+
+
+def test_a_corporate_filler_leftover_is_not_treated_as_distinctive_either():
+    # "保险股份有限公司" ("Insurance Co., Ltd.") has no distinguishing brand either;
+    # the shortest suffix match ("有限公司" alone) would otherwise leave "保险股份"
+    # -- not itself in the generic-word list, but exactly as generic once "股份"
+    # (corporate-structure filler) is recognized as part of what the word means.
+    generic_company = _fragment("frag-a", [("n1", "保险股份有限公司", "ACTOR", "保险股份有限公司")])
+    bare_generic_word = _fragment("frag-b", [("n1", "保险", "ACTOR", "保险")])
+
+    entities = resolve_entities([generic_company, bare_generic_word])
+
+    assert len(entities) == 2
 
 
 def test_same_key_different_type_stays_separate():
@@ -284,44 +404,95 @@ def _linear_scan_clusters(
     the node's own document, any of its level-2 keys, else the best embedding match)
     so the indexed resolver can be checked against it.
     """
+    ordered = sorted(fragments, key=lambda item: item.snapshot.snapshot_id)
+    ambiguous = _ambiguous_alias_keys(ordered)
+
+    # Independent restatement of "a (bucket, key1) names at most one cluster,
+    # system-wide, whoever used it first": precompute, in a separate pass
+    # before any cluster exists, which node (by identity) is the first to use
+    # each key1 as its EXACT key. A later node with the same key1 then simply
+    # looks up *that node's* cluster once it exists -- rather than mutating a
+    # key-to-cluster dict as clusters are built (which is what the indexed
+    # resolver itself does), this is a plain precomputed fact about the input,
+    # checked against a node-to-cluster map filled in as nodes are placed. A
+    # bare grade (naming.is_bare_grade) may not establish or claim ownership:
+    # it is kept as a node's own name, but never merges with another node of
+    # the same literal canonical-key text (see alignment.py's own EXACT guard).
+    first_exact_owner: dict[tuple[str, str], tuple[str, str]] = {}
+    for fragment in ordered:
+        for node in fragment.nodes:
+            key1 = alignment_key(node.canonical_key, node.node_type)
+            if is_bare_grade(key1):
+                continue
+            bucket = _merge_type_bucket(node.node_type)
+            first_exact_owner.setdefault(
+                (bucket, key1), (fragment.snapshot.snapshot_id, node.node_id)
+            )
+
+    def names(texts, node_type):
+        keys = set()
+        for text in texts:
+            cleaned = clean_alias(text)
+            if cleaned is not None:
+                keys.add(alignment_key(cleaned, node_type))
+        return keys
+
     clusters: list[dict[str, object]] = []
+    node_cluster: dict[tuple[str, str], dict[str, object]] = {}
 
-    def names(texts):
-        return {
-            alignment_key(name)
-            for name in texts
-            if not is_reference_name(name) and not is_reference_name(alignment_key(name))
-        }
-
-    for fragment in sorted(fragments, key=lambda item: item.snapshot.snapshot_id):
+    for fragment in ordered:
         snapshot_id = fragment.snapshot.snapshot_id
         source = fragment.snapshot.source_revision_ids
         for node in fragment.nodes:
-            key1 = alignment_key(node.canonical_key)
-            label_keys = names((node.label,))
-            keys2 = names((node.label, *node.aliases))
+            node_identity = (snapshot_id, node.node_id)
+            key1 = alignment_key(node.canonical_key, node.node_type)
+            label_keys = names((node.label,), node.node_type)
+            keys2 = {
+                key
+                for key in names((node.label, *node.aliases), node.node_type)
+                if (node.node_type, source, key) not in ambiguous
+            }
             target = None
             rule = None
-            for cluster in clusters:
-                if cluster["type"] == node.node_type and key1 in cluster["l1"]:
-                    target, rule = cluster, "EXACT"
-                    break
+
+            if not is_bare_grade(key1):
+                bucket = _merge_type_bucket(node.node_type)
+                owner = first_exact_owner.get((bucket, key1))
+                if owner is not None and owner != node_identity:
+                    target, rule = node_cluster[owner], "EXACT"
+
             if target is None:
-                # Names match across documents; aliases only within one document.
+                # Names match across documents; aliases only within one
+                # document. Scans every existing cluster (independent of the
+                # indexed resolver's own label_index/alias_index dicts), but
+                # each cluster tracks its label/alias keys *per contributing
+                # node type* (not pooled into one cluster-wide set): once
+                # EXACT can place members of different literal types in one
+                # cluster (ORG_PARTICIPANT_TYPES), a key contributed by one
+                # member's type must not satisfy a lookup under another
+                # member's type.
                 for cluster in clusters:
-                    if cluster["type"] == node.node_type and (
-                        cluster["labels"] & label_keys or cluster["l2"].get(source, set()) & keys2
-                    ):
+                    cluster_labels = cluster["labels_by_type"].get(node.node_type, set())
+                    cluster_aliases = cluster["aliases_by_type_source"].get(
+                        (node.node_type, source), set()
+                    )
+                    if cluster_labels & label_keys or cluster_aliases & keys2:
                         target, rule = cluster, "ALIAS"
                         break
+
             if target is None and embeddings:
-                vector = embeddings.get((snapshot_id, node.node_id))
+                vector = embeddings.get(node_identity)
                 if vector is not None:
                     best, best_score = None, -1.0
                     for cluster in clusters:
-                        if cluster["type"] != node.node_type:
-                            continue
-                        for member in cluster["members"]:
+                        # Matches a same-type *member*, not a same-type cluster: a
+                        # member joining later via the ORG_PARTICIPANT_TYPES EXACT
+                        # bucket can be a different literal type than the one
+                        # that created the cluster, and still be the right
+                        # embedding match for a query of that member's own type.
+                        for member, member_type in zip(cluster["members"], cluster["member_types"]):
+                            if member_type != node.node_type:
+                                continue
                             other = embeddings.get(member)
                             if other is None:
                                 continue
@@ -337,18 +508,21 @@ def _linear_scan_clusters(
             if target is None:
                 target = {
                     "type": node.node_type,
-                    "l1": set(),
-                    "labels": set(),
-                    "l2": {},
                     "members": [],
+                    "member_types": [],
+                    "labels_by_type": {},
+                    "aliases_by_type_source": {},
                     "rule": "EXACT",
                 }
                 clusters.append(target)
                 rule = "EXACT"
-            target["members"].append((snapshot_id, node.node_id))
-            target["l1"].add(key1)
-            target["labels"] |= label_keys
-            target["l2"].setdefault(source, set()).update(keys2)
+            node_cluster[node_identity] = target
+            target["members"].append(node_identity)
+            target["member_types"].append(node.node_type)
+            target["labels_by_type"].setdefault(node.node_type, set()).update(label_keys)
+            target["aliases_by_type_source"].setdefault((node.node_type, source), set()).update(
+                keys2
+            )
             target["rule"] = rule
     return [
         (str(cluster["type"]), tuple(cluster["members"]), str(cluster["rule"]))
@@ -359,9 +533,32 @@ def _linear_scan_clusters(
 def test_indexed_alignment_matches_a_full_cluster_scan_on_overlapping_fragments():
     import random
 
-    words = ["核保", "理赔", "保单", "退保", "refund", "claim", "policy holder", "agent"]
-    suffixes = ["", "", "规则", "流程", " policy", " rule"]
-    node_types = ["CONCEPT", "ENTITY", "PROCESS"]
+    words = [
+        "核保",
+        "理赔",
+        "保单",
+        "退保",
+        "refund",
+        "claim",
+        "policy holder",
+        "agent",
+        # Org/participant-shaped words: exercise the ACTOR/SYSTEM/ENTITY EXACT
+        # type bucket and the corporate-suffix normalization together.
+        "友邦人寿",
+        "太平人寿",
+        "人寿保险",
+        # Clause-prefixed terms: exercise clean_alias's leading-article strip
+        # (and, combined with a corporate suffix below, both affixes at once).
+        "第十九条核保",
+        "第一部分理赔",
+        # Bare classification grades: exercise is_bare_grade's EXACT-matching
+        # guard (combined with a non-empty suffix below, a *qualified* grade,
+        # which is not a bare grade and merges normally).
+        "Ⅳ级",
+        "三级",
+    ]
+    suffixes = ["", "", "规则", "流程", " policy", " rule", "有限公司", "保险有限公司"]
+    node_types = ["CONCEPT", "ENTITY", "PROCESS", "ACTOR", "SYSTEM"]
     directions = [(1.0, 0.0), (0.0, 1.0), (0.96, 0.28), (0.7, 0.7)]
 
     for seed in range(40):
@@ -589,3 +786,139 @@ def test_reference_aliases_from_the_real_run_no_longer_merge_entities():
         frozenset({"明确说明与如实告知"}),
     }
     assert not any(is_reference_name(alias) for entity in entities for alias in entity.aliases)
+
+
+def test_an_alias_shared_by_three_distinct_entities_in_one_document_does_not_merge_them():
+    # Real-model run: three distinct cardiomyopathies in the same filing were all
+    # glossed "心肌病", and the shared alias merged them into one node.
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("n1", "扩张型心肌病", "CONCEPT", "扩张型心肌病", ("心肌病",)),
+            ("n2", "肥厚型心肌病", "CONCEPT", "肥厚型心肌病", ("心肌病",)),
+            ("n3", "限制型心肌病", "CONCEPT", "限制型心肌病", ("心肌病",)),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert {entity.label for entity in entities} == {"扩张型心肌病", "肥厚型心肌病", "限制型心肌病"}
+    assert all(len(entity.members) == 1 for entity in entities)
+
+
+def test_an_owned_alias_still_does_not_absorb_two_or_more_distinct_aliasers():
+    # A generic "心肌病" node (the key's own owner) does not rescue the shared
+    # alias either: three distinct cardiomyopathies all glossing "心肌病" is
+    # exactly as ambiguous whether or not something else really is named that.
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("n0", "心肌病", "CONCEPT", "心肌病"),
+            ("n1", "扩张型心肌病", "CONCEPT", "扩张型心肌病", ("心肌病",)),
+            ("n2", "肥厚型心肌病", "CONCEPT", "肥厚型心肌病", ("心肌病",)),
+            ("n3", "限制型心肌病", "CONCEPT", "限制型心肌病", ("心肌病",)),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert {entity.label for entity in entities} == {
+        "心肌病",
+        "扩张型心肌病",
+        "肥厚型心肌病",
+        "限制型心肌病",
+    }
+    assert all(len(entity.members) == 1 for entity in entities)
+
+
+def test_an_owned_alias_still_merges_its_one_legitimate_aliaser():
+    # Exactly one distinct aliaser attaching to the key's owner is the ordinary,
+    # wanted case and must keep working regardless of this guard.
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("a1", "Underwriting", "CONCEPT", "underwriting", ("核保",)),
+            ("a2", "核保", "CONCEPT", "核保"),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert len(entities) == 1
+    assert entities[0].rule == "ALIAS"
+    assert len(entities[0].members) == 2
+
+
+def test_an_alias_shared_by_two_grades_in_one_document_does_not_merge_them():
+    # Real-model run: an NYHA heart-function grade and an unrelated rheumatoid-
+    # arthritis functional grade were both glossed "IV 级"/"Ⅳ级" in the same filing.
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("n1", "心功能分级Ⅳ级", "CONCEPT", "心功能分级Ⅳ级", ("Ⅳ级",)),
+            (
+                "n2",
+                "类风湿性关节炎功能分类IV级",
+                "CONCEPT",
+                "类风湿性关节炎功能分类IV级",
+                ("IV 级",),
+            ),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert {entity.label for entity in entities} == {
+        "心功能分级Ⅳ级",
+        "类风湿性关节炎功能分类IV级",
+    }
+    assert all(len(entity.members) == 1 for entity in entities)
+
+
+def test_a_bare_grade_canonical_key_never_exact_merges_across_documents():
+    # A bare grade is kept as a node's own name (naming.is_bare_grade), but an
+    # EXACT match compares canonical_key text literally and does not go through
+    # naming's alias filtering -- without a dedicated guard, an NYHA "Ⅳ级" node
+    # and an unrelated RA "Ⅳ级" node, same literal canonical_key text across two
+    # documents, would EXACT-merge into one.
+    a = _fragment("frag-a", [("n1", "Ⅳ级", "CONCEPT", "Ⅳ级")])
+    b = _fragment("frag-b", [("n1", "Ⅳ级", "CONCEPT", "Ⅳ级")])
+
+    entities = resolve_entities([a, b])
+
+    assert len(entities) == 2
+    assert all(len(entity.members) == 1 for entity in entities)
+
+
+def test_a_bare_grade_canonical_key_never_exact_merges_within_one_document():
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("n1", "Ⅳ级", "CONCEPT", "Ⅳ级"),
+            ("n2", "Ⅳ级", "CONCEPT", "Ⅳ级"),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    assert len(entities) == 2
+    assert all(len(entity.members) == 1 for entity in entities)
+
+
+def test_an_ambiguous_alias_does_not_block_a_different_entitys_safe_merge():
+    # The ambiguity guard only disqualifies the ambiguous key itself; an unrelated
+    # pair sharing a different, unambiguous alias in the same document still merges.
+    fragment = _fragment(
+        "frag-a",
+        [
+            ("n1", "扩张型心肌病", "CONCEPT", "扩张型心肌病", ("心肌病",)),
+            ("n2", "肥厚型心肌病", "CONCEPT", "肥厚型心肌病", ("心肌病",)),
+            ("n3", "安心重疾保险", "SYSTEM", "安心重疾保险", ("重疾险",)),
+            ("n4", "重疾险", "SYSTEM", "重疾险"),
+        ],
+    )
+
+    entities = resolve_entities([fragment])
+
+    merged = {entity.label: entity for entity in entities if len(entity.members) > 1}
+    assert set(merged) == {"安心重疾保险"}

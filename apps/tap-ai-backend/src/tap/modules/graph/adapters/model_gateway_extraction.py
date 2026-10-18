@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import cast
@@ -71,10 +72,14 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                         "type": "string",
                         "enum": sorted(NODE_TYPES),
                         "description": (
-                            "Use ACTOR for people or roles, SYSTEM for named software or "
-                            "services, REQUIREMENT for requirements or controls, CONCEPT "
-                            "for abstract ideas, and ENTITY only when none of the specific "
-                            "types applies."
+                            "Use ACTOR for people, roles, or organizations -- including an "
+                            "insurance company or institution (保险公司, 某保险股份有限公司) -- "
+                            "SYSTEM only for a named software application or information "
+                            "service, never an organization or an insurance product, "
+                            "REQUIREMENT for requirements or controls, CONCEPT for abstract "
+                            "ideas including an insurance product or contract (重大疾病保险, "
+                            "保险合同), and ENTITY only when none of the specific types "
+                            "applies."
                         ),
                     },
                     "canonicalKey": {"type": "string"},
@@ -114,7 +119,55 @@ GRAPH_EXTRACTION_SCHEMA: dict[str, object] = {
                     "id": {"type": "string"},
                     "sourceNodeId": {"type": "string"},
                     "targetNodeId": {"type": "string"},
-                    "relationType": {"type": "string", "enum": sorted(RELATION_TYPES)},
+                    "relationType": {
+                        "type": "string",
+                        "enum": sorted(RELATION_TYPES),
+                        "description": (
+                            "REQUIRES: the target is jointly necessary for the source (all "
+                            "stated REQUIRES conditions must hold), e.g. 重度黄疸 REQUIRES "
+                            "亚急性重症肝炎诊断; never use it for a from-N-choose-M threshold "
+                            "(下列N项中满足M项) -- use APPLIES_TO for that instead, with the "
+                            "threshold as the source and the entity or diagnosis it qualifies "
+                            "as the target (the reverse of how REQUIRES would have been "
+                            "written, since REQUIRES puts the entity first). "
+                            "PART_OF: the source is a sub-clause, sub-item, or finer grade "
+                            "of the target, its parent or whole; direction is always the "
+                            "more specific thing to the more general one, e.g. Ⅱ级 PART_OF "
+                            "心功能状态分级 (not the reverse). Use PART_OF, not EXCEPTION_OF, "
+                            "when the text lists what is 包括/含 (included), e.g. 肥厚型心肌病 "
+                            "PART_OF 心肌病. "
+                            "EXCEPTION_OF: the source is excluded from, or an exception "
+                            "carved out of, the target's coverage or rule, e.g. 责任免除事项 "
+                            "EXCEPTION_OF 保险责任; never use it for an inclusion (包括/含) -- "
+                            "that is PART_OF. "
+                            "APPLIES_TO: direction is always the rule, condition, or "
+                            "threshold (including an N-choose-M threshold) as the source, "
+                            "and the entity or population it applies to as the target, never "
+                            "the reverse, e.g. 犹豫期 APPLIES_TO 新单客户, or 六项基本日常生活"
+                            "活动中两项 APPLIES_TO 永久性神经系统功能中度障碍 for a threshold "
+                            "that qualifies a diagnosis. "
+                            "DEFINES: the source (an insurer, contract, or clause) gives the "
+                            "target its defined meaning, e.g. 重大疾病保险合同条款 DEFINES "
+                            "重度疾病. "
+                            "TRIGGERS: the source event, diagnosis, or condition brings "
+                            "about the target consequence or payout, e.g. 确诊重度疾病 "
+                            "TRIGGERS 豁免保险费. "
+                            "RESPONSIBLE_FOR: the source actor bears the target duty or "
+                            "action, e.g. 保险公司 RESPONSIBLE_FOR 合同内容的变更. "
+                            "CONFLICTS_WITH: the source and target are stated as mutually "
+                            "exclusive alternatives (e.g. a documented three-way choice); "
+                            "connect the alternatives to each other, not to the coverage or "
+                            "outcome they lead to. "
+                            "SUPERSEDES: the source provision replaces the target earlier "
+                            "provision. PRECEDES: the source step or stage happens before "
+                            "the target in a process. USES: the source actor or process "
+                            "uses the target system or resource. VALIDATED_BY: the target "
+                            "validates or confirms the source fact. "
+                            "RELATED_TO: use only when the text states an association that "
+                            "fits none of the above; when unsure, prefer a more specific "
+                            "type over RELATED_TO."
+                        ),
+                    },
                     "relationLabel": {"type": "string"},
                     "origin": {
                         "type": "string",
@@ -157,9 +210,12 @@ GRAPH_EXTRACTION_PROMPT = (
     "cite a ref that is not in this input and never copy chunk text, hashes, or anchors. Use "
     "short stable IDs: n1, n2, ... for new nodes, e1, e2, ... for edges, and p1, p2, ... for "
     "provenance. Every node must list at least one chunk ref. "
-    "Classify every person or role as ACTOR, every named software application or service "
-    "as SYSTEM, and every stated requirement or control as REQUIREMENT. Use ENTITY only "
-    "if none of ACTOR, SYSTEM, REQUIREMENT, or CONCEPT applies. Every "
+    "Classify every person, role, or organization -- including an insurance company or "
+    "institution -- as ACTOR; classify a named software application or information "
+    "service, never an organization or an insurance product, as SYSTEM; classify every "
+    "stated requirement or control as REQUIREMENT; classify an insurance product or "
+    "contract as CONCEPT. Use ENTITY only if none of ACTOR, SYSTEM, REQUIREMENT, or "
+    "CONCEPT applies. Every "
     "EXTRACTED edge must list at least one chunk ref. An INFERRED edge must have an empty "
     "chunks array and exactly one provenance item whose edgeId matches it and whose "
     "inputFactIds are nonempty existing node or edge IDs. Never emit a self-edge; "
@@ -173,8 +229,18 @@ GRAPH_EXTRACTION_PROMPT = (
     "a known entity in nodes, and never emit a new node for the same real-world thing; an "
     "edge refers to a known entity by putting its id in sourceNodeId or targetNodeId. "
     "Classify processes, steps, or workflow stages as PROCESS. "
-    "Use relationType only from the provided enum; put the document's own wording for the "
-    "relation in relationLabel (at most 64 characters). List up to five aliases for a node "
+    "Use relationType only from the provided enum, choosing the most specific type the "
+    "text supports; use RELATED_TO only for a stated association that fits none of the "
+    "other types. PART_OF points from a sub-clause, sub-item, or finer grade to its "
+    "parent or whole (the more specific thing to the more general one); use PART_OF, not "
+    "EXCEPTION_OF, when the text lists what is 包括/含 (included) rather than carving out "
+    "an exception. Use APPLIES_TO, not REQUIRES, for a from-N-choose-M threshold (下列N项"
+    "中满足M项); REQUIRES means every condition listed is jointly necessary. APPLIES_TO "
+    "always puts the rule, condition, or threshold as the source and the entity or "
+    "population it applies to as the target -- for a threshold, this is the reverse of "
+    "how REQUIRES would have put the entity first. Put the "
+    "document's own wording for the relation in relationLabel (at most 64 characters). "
+    "List up to five aliases for a node "
     "when the text names it differently. A label or alias names the entity itself, never a "
     "pronoun or a reference whose meaning depends on the document (本合同, 本公司, 该产品, "
     "this contract, the company), never a clause, section or schedule number (第十九条, 附表1, "
@@ -265,6 +331,9 @@ class ModelGatewayGraphExtraction:
                 nodes_raw = _objects(output["nodes"], "nodes")
                 edges_raw = _objects(output["edges"], "edges")
                 provenance_raw = _objects(output["provenance"], "provenance")
+                nodes_raw, node_dangling = _strip_dangling_refs(nodes_raw, refs)
+                edges_raw, edge_dangling = _strip_dangling_refs(edges_raw, refs)
+                dangling_refs = node_dangling + edge_dangling
                 snapshot_id = request.snapshot.snapshot_id
                 known = _known_entities(request)
                 known_id_by_key = {
@@ -278,6 +347,7 @@ class ModelGatewayGraphExtraction:
                 repeated_known = 0
                 duplicate_nodes = 0
                 rejected_names = 0
+                dropped_no_evidence = 0
                 for item in nodes_raw:
                     label = _string(item, "label")
                     canonical_key = _string(item, "canonicalKey")
@@ -307,7 +377,10 @@ class ModelGatewayGraphExtraction:
                     )
                     if known_id is not None:
                         # A known entity repeated in nodes: drop the copy, keep its
-                        # citations, and point its edges at the known id.
+                        # citations, and point its edges at the known id. This
+                        # remap must happen before the no-evidence check below, or
+                        # an edge in this batch that cites the copy's local id would
+                        # wrongly lose its endpoint instead of following the remap.
                         repeated_known += 1
                         node_id_remap[node.node_id] = known_id
                         known_refs.setdefault(known_id, []).extend(node.evidence_ids)
@@ -318,7 +391,8 @@ class ModelGatewayGraphExtraction:
                     )
                     if survivor_id is not None:
                         # The same node twice (same id, or same canonical key under
-                        # another id): keep the first, union citations and aliases.
+                        # another id): keep the first, union citations and aliases
+                        # (same ordering reason as the known-entity remap above).
                         duplicate_nodes += 1
                         if node.node_id != survivor_id:
                             node_id_remap[node.node_id] = survivor_id
@@ -331,6 +405,16 @@ class ModelGatewayGraphExtraction:
                             aliases=_sanitize_aliases((*survivor.aliases, *node.aliases)),
                         )
                         continue
+                    if not node.evidence_ids and item.get(_HAD_REFS_BEFORE_STRIP):
+                        # A genuinely new node: every ref it cited was outside the
+                        # batch and was stripped above, so no evidence survives for
+                        # this fact. Drop it rather than fail the whole batch; its
+                        # edges follow once this id disappears from ``node_ids``
+                        # below. A node the model emitted with an already-empty
+                        # ``chunks`` (the flag unset) keeps its previous behavior
+                        # instead -- kept, with no evidence.
+                        dropped_no_evidence += 1
+                        continue
                     new_nodes[node.node_id] = node
                     new_id_by_key.setdefault(key, node.node_id)
                 edges_raw = tuple(_remap_endpoints(item, node_id_remap) for item in edges_raw)
@@ -341,9 +425,22 @@ class ModelGatewayGraphExtraction:
                     edges_raw, provenance_raw
                 )
                 node_ids = set(new_nodes) | set(known)
-                kept_edges_raw, kept_provenance_raw, dropped = _keep_edges(
-                    edges_raw, provenance_raw, node_ids
+                kept_edges_raw, kept_provenance_raw, dropped, dropped_no_evidence_edges = (
+                    _keep_edges(edges_raw, provenance_raw, node_ids)
                 )
+                label_lookup = {
+                    node_id: (node.label, node.aliases, node.node_type)
+                    for node_id, node in new_nodes.items()
+                } | {
+                    entity_id: (entity["label"], (), entity["type"])
+                    for entity_id, entity in known.items()
+                }
+                (
+                    kept_edges_raw,
+                    kept_provenance_raw,
+                    dropped_ungrounded_edges,
+                    dropped_cross_item_edges,
+                ) = _drop_unsupported_edges(kept_edges_raw, kept_provenance_raw, label_lookup, refs)
                 edges = tuple(
                     GraphEdge(
                         _string(item, "id"),
@@ -380,6 +477,17 @@ class ModelGatewayGraphExtraction:
             current_span.set_attribute("tap.graph.duplicate_nodes", duplicate_nodes)
             current_span.set_attribute("tap.graph.duplicate_edges", duplicate_edges)
             current_span.set_attribute("tap.graph.rejected_names", rejected_names)
+            current_span.set_attribute("tap.graph.dangling_refs", dangling_refs)
+            current_span.set_attribute("tap.graph.dropped_no_evidence_nodes", dropped_no_evidence)
+            current_span.set_attribute(
+                "tap.graph.dropped_no_evidence_edges", dropped_no_evidence_edges
+            )
+            current_span.set_attribute(
+                "tap.graph.dropped_ungrounded_edges", dropped_ungrounded_edges
+            )
+            current_span.set_attribute(
+                "tap.graph.dropped_cross_item_edges", dropped_cross_item_edges
+            )
         if not nodes:
             # The model grounded nothing in this batch (boilerplate chunks, no
             # facts to extract): a successful batch with nothing to contribute,
@@ -457,13 +565,54 @@ def _chunk_refs(request: GraphExtractionRequest) -> dict[str, Mapping[str, objec
     return {f"c{index}": chunk for index, chunk in enumerate(request.chunks, start=1)}
 
 
+_HAD_REFS_BEFORE_STRIP = "_hadRefsBeforeStrip"
+
+
+def _strip_dangling_refs(
+    items: tuple[dict[str, object], ...], refs: Mapping[str, Mapping[str, object]]
+) -> tuple[tuple[dict[str, object], ...], int]:
+    """Drop chunk refs outside this batch from each item's ``chunks`` field.
+
+    The model occasionally cites a ref from outside the current batch (for example a
+    stale ``c12`` when only ``c1``-``c9`` were sent this batch); retrying the same
+    input reproduces it, so failing the whole batch wastes the retry budget. A
+    dangling ref is dropped instead, here, before any fact is built from ``items``.
+
+    Each cleaned item also carries a transient ``_hadRefsBeforeStrip`` flag -- not a
+    schema field, and ignored by every downstream lookup that reads a specific key --
+    recording whether its original ``chunks`` was nonempty. A caller that finds a
+    node or edge left with no evidence after this must drop it only when that flag
+    is set: a fact that became evidence-less *because* a dangling ref was stripped
+    here is dropped silently (see the node loop and ``_keep_edges`` in ``extract``),
+    but a fact the model emitted with an already-empty ``chunks`` keeps its previous
+    behavior (a node is still kept with no evidence; an EXTRACTED edge still fails
+    the batch closed when ``GraphEdge`` rejects it for having no evidence). The flag
+    survives ``_remap_endpoints`` (a plain dict union keeps extra keys) and is OR-ed
+    together by ``_dedupe_edges`` when two raw edges under the same id/shape merge.
+    Returns the cleaned items and how many refs were dropped in total.
+    """
+
+    cleaned: list[dict[str, object]] = []
+    dangling = 0
+    for item in items:
+        chunks = _strings(item, "chunks")
+        kept = tuple(dict.fromkeys(ref for ref in chunks if ref in refs))
+        dangling += len(chunks) - len(kept)
+        patch: dict[str, object] = {_HAD_REFS_BEFORE_STRIP: bool(chunks)}
+        if len(kept) != len(chunks):
+            patch["chunks"] = list(kept)
+        cleaned.append(item | patch)
+    return tuple(cleaned), dangling
+
+
 def _cited_refs(
     value: dict[str, object], refs: Mapping[str, Mapping[str, object]]
 ) -> tuple[str, ...]:
     """The chunk refs a fact cites, deduplicated in first-cited order.
 
-    A ref outside this batch fails the whole batch closed: the model may only ground
-    facts in chunks it was actually given.
+    Callers run this only after ``_strip_dangling_refs`` has removed any ref outside
+    this batch, so the ``ValueError`` below is a defensive invariant, not the normal
+    path for a dangling ref.
     """
 
     cited: list[str] = []
@@ -523,20 +672,37 @@ def _keep_edges(
     edges_raw: tuple[dict[str, object], ...],
     provenance_raw: tuple[dict[str, object], ...],
     node_ids: set[str],
-) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int]:
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int, int]:
     """Drop edges outside the vocabulary or batch, then cascade to their provenance.
 
     An edge is dropped when its relationType is outside RELATION_TYPES, either endpoint
-    is not among this batch's node ids, or both endpoints are the same node (e.g. after
-    a duplicate node was merged into the other endpoint). Dropping an edge also drops
-    the provenance record that cites it (by edgeId), and any INFERRED edge whose
-    provenance lists a dropped edge id as an input fact is dropped in turn, repeating
-    until no further edge is dropped.
+    is not among this batch's node ids, both endpoints are the same node (e.g. after a
+    duplicate node was merged into the other endpoint), or it is EXTRACTED, left with no
+    chunk refs, and ``_HAD_REFS_BEFORE_STRIP`` is set -- meaning every ref it cited was
+    outside the batch and was stripped by ``_strip_dangling_refs`` upstream, so no
+    evidence survives for the fact and the edge is dropped rather than failing the whole
+    batch. An EXTRACTED edge the model emitted with an already-empty ``chunks`` (the flag
+    unset) is *not* dropped here: it keeps its previous behavior of failing the batch
+    closed when ``GraphEdge`` rejects it for having no evidence. An INFERRED edge's
+    chunks are legitimately empty by design and is never dropped on either basis.
+    Dropping an edge also drops the provenance record that cites it (by edgeId), and any
+    INFERRED edge whose provenance lists a dropped edge id as an input fact is dropped in
+    turn, repeating until no further edge is dropped. Returns the kept edges, the kept
+    provenance, the total number of edges dropped, and how many of those were dropped
+    specifically for the EXTRACTED-with-stripped-evidence reason above (counted
+    separately so it is distinguishable from the other drop reasons on the span).
     """
     provenance_by_edge: dict[object, dict[str, object]] = {
         item.get("edgeId"): item for item in provenance_raw
     }
-    dropped_ids: set[object] = {
+    no_evidence_ids: set[object] = {
+        item.get("id")
+        for item in edges_raw
+        if item.get("origin") == "EXTRACTED"
+        and not item.get("chunks")
+        and item.get(_HAD_REFS_BEFORE_STRIP)
+    }
+    dropped_ids: set[object] = no_evidence_ids | {
         item.get("id")
         for item in edges_raw
         if item.get("relationType") not in RELATION_TYPES
@@ -560,7 +726,361 @@ def _keep_edges(
     kept_provenance = tuple(
         item for item in provenance_raw if item.get("edgeId") not in dropped_ids
     )
-    return kept_edges, kept_provenance, len(dropped_ids)
+    return kept_edges, kept_provenance, len(dropped_ids), len(no_evidence_ids)
+
+
+_ORGANIZATION_REFERENCE_TYPES = frozenset({"ACTOR", "SYSTEM"})
+_ORGANIZATION_LABEL_SUFFIXES = (
+    "公司",
+    "保险人",
+    "保险",
+    "机构",
+    "协会",
+    "学会",
+    "委员会",
+    "人寿",
+    "财险",
+    "寿险",
+    "养老",
+    "健康",
+)
+# A real, grounded-but-paraphrased endpoint keeps at least this fraction of its
+# characters in the cited text (measured empirically: the lowest-scoring genuine
+# paraphrase found in a production replay audit was 0.93; every true adjacent-entry
+# mislink in that same audit scored 0.0-0.33). 0.6 keeps a wide margin above the
+# former and well above the latter.
+_UNSUPPORTED_EDGE_OVERLAP_MIN = 0.6
+
+
+def _is_organization_reference(label: str, node_type: str) -> bool:
+    """Whether this endpoint is the insurer or the contract referring to itself,
+    rather than some other real-world entity the model happened to type ACTOR or
+    SYSTEM.
+
+    Exempting *every* ACTOR/SYSTEM node let two real rv3 production mislinks slip
+    through uncaught: a SYSTEM-typed diagnostic standard (中国新九分法) and a
+    SYSTEM-typed diagnostic procedure (骨髓穿刺检查), each wrongly linked to an
+    unrelated disease in a dense list -- type is not evidence that the text
+    cannot be checked, it is just a classification the model got wrong. The
+    actual reason an exemption exists at all is the insurer and the contract
+    being referred to in their own clause only by a document-relative pronoun
+    (本公司, 本合同, 本附加合同), which ``usable_alias`` deliberately keeps out of
+    every node's aliases -- so this is narrowed to only that case: a reference
+    pronoun (``naming.is_reference_name``), or a label that is itself an
+    organization/party name (ends with 公司, 保险人, 保险, 机构, 协会, 学会,
+    委员会, or an insurer brand's short-name suffix -- 人寿, 财险, 寿险, 养老,
+    健康). A SYSTEM/ACTOR node that is really a disease, procedure, or standard
+    matches none of these and is checked like any other endpoint.
+
+    This applies identically whether the node is new in this batch or already
+    an established known entity from an earlier one: being *known* only means
+    an earlier batch minted it once, not that it was itself ever checked
+    against evidence text, so a known entity that is really a misclassified
+    SYSTEM/ACTOR disease is exactly as able to seed a cross-item mislink in a
+    later batch as a freshly-minted one, and must be checked the same way.
+    """
+    if node_type not in _ORGANIZATION_REFERENCE_TYPES:
+        return False
+    if is_reference_name(label):
+        return True
+    return label.endswith(_ORGANIZATION_LABEL_SUFFIXES)
+
+
+def _char_overlap_ratio(label: str, text: str) -> float:
+    """The fraction of ``label``'s normalized characters that also occur in ``text``.
+
+    A multiset comparison (via ``collections.Counter``), not a substring check: order
+    and contiguity do not matter, only how many of the label's characters the text
+    also contains (each text character usable once per matching label character).
+    An empty, already-normalized label (e.g. punctuation-only) trivially scores 1.0
+    rather than dividing by zero -- there is nothing for the text to be missing.
+    """
+
+    from collections import Counter
+
+    label_chars = list(label)
+    if not label_chars:
+        return 1.0
+    text_counts = Counter(text)
+    label_counts = Counter(label_chars)
+    matched = sum(min(count, text_counts.get(char, 0)) for char, count in label_counts.items())
+    return matched / len(label_chars)
+
+
+_NUMBERED_ITEM_MARKER = re.compile(r"(?:^|\n)[ \t]*(?:(\d{1,3})[）).]|[一二三四五六七八九十百]+、)")
+_ITEM_TITLE_MATCH_MIN = 0.7
+
+
+def _numbered_items(text: str) -> list[str]:
+    """Split ``text`` on its own bare top-level item markers (37）, 38）, 一、, ...).
+
+    Insurance clause lists in this corpus number each top-level entry (a disease
+    definition, a responsibility, a termination condition) as ``NN）``, ``NN)``,
+    ``NN.``, or a Chinese-numeral ``一、`` at the start of a line, then number that
+    entry's own sub-criteria as ``（N）`` -- a leading full-width or half-width
+    paren the marker above requires *absent*, so a disease's own criteria stay in
+    its item rather than becoming separate items. A bare numeral marker is only
+    accepted as a new top-level boundary when its number is strictly greater than
+    the previous one accepted: a list restarting from ``1）`` without parens right
+    after a top-level item (rather than continuing the top-level count) is a
+    nested sub-condition, not a new item, and is left inside the item it follows.
+    A chunk with fewer than two accepted markers returns the whole text as one
+    item (the whole-text overlap check already covers that ungrouped case).
+    """
+    bounds: list[int] = []
+    last_number = 0
+    for match in _NUMBERED_ITEM_MARKER.finditer(text):
+        digits = match.group(1)
+        if digits is not None:
+            number = int(digits)
+            if number <= last_number:
+                continue
+            last_number = number
+        bounds.append(match.start())
+    if len(bounds) < 2:
+        return [text]
+    edges = sorted({0, *bounds, len(text)})
+    return [
+        text[edges[index] : edges[index + 1]]
+        for index in range(len(edges) - 1)
+        if text[edges[index] : edges[index + 1]].strip()
+    ]
+
+
+def _item_title(item_text: str) -> str:
+    """The item's own heading line: everything up to its first newline.
+
+    Every item but the first carries the newline that preceded its own marker
+    (the segment boundary in ``_numbered_items`` falls right before it, not
+    after), so leading whitespace is stripped first -- otherwise that blank
+    leading line, not the heading, would be what ``partition`` returns.
+    """
+    first_line, _, _ = item_text.strip().partition("\n")
+    return first_line
+
+
+def _longest_common_substring_len(first: str, second: str) -> int:
+    """The length of the longest contiguous run shared by ``first`` and ``second``.
+
+    Unlike ``_char_overlap_ratio``'s multiset comparison, contiguity matters here:
+    two disease names built from the same common morphemes (严重, 性, 炎, ...) but
+    naming different diseases share many characters in any order, which is exactly
+    what lets a cross-item mislink slip past a per-character check scoped to one
+    item's text. A long shared *run* is far more specific, since it requires the
+    label's words to appear together, in order, not just individually.
+    """
+    if not first or not second:
+        return 0
+    previous_row = [0] * (len(second) + 1)
+    longest = 0
+    for first_char in first:
+        current_row = [0] * (len(second) + 1)
+        for column, second_char in enumerate(second, start=1):
+            if first_char == second_char:
+                current_row[column] = previous_row[column - 1] + 1
+                longest = max(longest, current_row[column])
+        previous_row = current_row
+    return longest
+
+
+def _matches_title(names: tuple[str, ...], title: str) -> bool:
+    """Whether some name in ``names`` is (close to) this item's own heading.
+
+    A title line is short and, when the model names a node after it, copied close
+    to verbatim -- unlike a REQUIREMENT-style criterion, which commonly gets
+    reworded or reordered (120% vs. ≥120%, operators swapped) and would score
+    unreliably low here even for its own item. ``_ITEM_TITLE_MATCH_MIN`` is tuned
+    for a short, mostly-literal title match, not for prose.
+    """
+    normalized_title = normalize_key(title)
+    return any(
+        name
+        and normalize_key(name)
+        and (
+            _longest_common_substring_len(normalize_key(name), normalized_title)
+            / len(normalize_key(name))
+        )
+        >= _ITEM_TITLE_MATCH_MIN
+        for name in names
+    )
+
+
+def _mentioned_in(names: tuple[str, ...], text: str) -> bool:
+    """Whether some name in ``names`` literally occurs as a run in ``text``.
+
+    A literal substring, not the multiset overlap ``_drop_unsupported_edges``'s
+    primary check uses: every disease title in this corpus happens to share a
+    generic prefix/suffix (严重..., ...性, ...炎), so a multiset check here would
+    find "enough" of almost any one disease's characters inside almost any other
+    item's title and block nearly every real cross-item drop. A literal run is
+    this safety net's actual job -- did the other item's text, title included,
+    genuinely name this endpoint, e.g. an exclusion clause naming a different
+    disease by its full name -- not a loose, generic-character echo of it.
+    """
+    normalized_text = normalize_key(text)
+    return any(name and normalize_key(name) in normalized_text for name in names)
+
+
+def _cross_item_mislink(
+    source_names: tuple[str, ...], target_names: tuple[str, ...], text: str
+) -> bool:
+    """Whether the source and target each name a *different* list item's own
+    heading, with neither named anywhere in the other's item body.
+
+    Scoped by the caller to text with at least two top-level numbered items
+    (``_numbered_items`` already returns a single, whole-text item otherwise), to
+    REQUIREMENT-free endpoint pairs, and to single-chunk evidence -- a criterion
+    endpoint (120% 正常值上限, 心室率<50次/分钟, ...) essentially never equals an
+    item's own heading verbatim, so requiring a title match on *both* sides, not
+    just a best-matching item, keeps every such criterion out of this check
+    entirely rather than risking a low, unreliable paraphrase score against it.
+    Only a genuine pair of distinct disease/clause headings, unconnected in
+    either item's own text, is flagged as a mislink.
+    """
+    items = _numbered_items(text)
+    if len(items) < 2:
+        return False
+    titles = [_item_title(item) for item in items]
+    source_item = next(
+        (index for index, title in enumerate(titles) if _matches_title(source_names, title)), None
+    )
+    target_item = next(
+        (index for index, title in enumerate(titles) if _matches_title(target_names, title)), None
+    )
+    if source_item is None or target_item is None or source_item == target_item:
+        return False
+    if _mentioned_in(target_names, items[source_item]) or _mentioned_in(
+        source_names, items[target_item]
+    ):
+        return False
+    return True
+
+
+def _drop_unsupported_edges(
+    edges_raw: tuple[dict[str, object], ...],
+    provenance_raw: tuple[dict[str, object], ...],
+    label_lookup: Mapping[str, tuple[str, tuple[str, ...], str]],
+    refs: Mapping[str, Mapping[str, object]],
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...], int, int]:
+    """Drop an EXTRACTED edge whose endpoints are not both named in its own evidence.
+
+    Two independent checks, in order:
+
+    1. Ungrounded: the model cites which chunks state each fact; a genuinely
+       grounded edge's endpoint name shares nearly all of its characters with
+       that text, even when the model paraphrases a multi-clause bullet
+       (dropping a middle clause, rewording "少于1%" as "<1%", or dropping a
+       trailing "术"/"的" the clause itself omits). An edge whose endpoint
+       shares *none* of its characters with the cited text is dropped: the
+       fraction of the label's (or its best-matching alias's) characters --
+       normalized the same way ``canonical_key`` is -- that also occur in the
+       cited text (as a multiset, not requiring contiguity or order) is below
+       ``_UNSUPPORTED_EDGE_OVERLAP_MIN`` for either endpoint.
+    2. Cross-item: within a dense numbered list (see ``_cross_item_mislink``),
+       the source and target each name a *different* item's own heading, with
+       neither named in the other's item body -- the real rv3 failure mode of
+       two adjacent disease definitions connected to each other instead of
+       what the cited text actually relates. Scoped away from REQUIREMENT
+       endpoints (a criterion restated with reordered wording or swapped
+       comparison operators scores unreliably low against even its own item)
+       and from multi-chunk evidence (no cross-chunk item boundary is tracked).
+
+    An endpoint that is itself a reference to the insurer or the contract (see
+    ``_is_organization_reference``) is never checked by either: it is
+    routinely referred to in its own clause only by a document-relative
+    pronoun (本公司, 本合同, 本附加合同) -- which ``usable_alias`` deliberately
+    keeps out of every node's aliases (see the prompt's alias rule) -- so
+    requiring its real name to appear literally would drop a large share of
+    genuinely grounded facts about the insurer or the contract itself, not
+    just the mislinks these checks target. This is narrower than "every ACTOR
+    or SYSTEM node": a disease, procedure, or standard the model happened to
+    type ACTOR or SYSTEM is still checked like any other endpoint. An INFERRED
+    edge has no chunks by design (its grounding is its provenance's
+    input facts, not text) and is never checked. An edge whose endpoint id is
+    not in ``label_lookup``, or whose own ``chunks`` is empty, is left to
+    ``_keep_edges`` and ``GraphEdge`` to judge instead of being dropped here.
+    Dropping an edge cascades to its own provenance record and to any INFERRED
+    edge whose provenance names it as an input fact, the same cascade
+    ``_keep_edges`` uses. Returns the kept edges, kept provenance, and how many
+    edges were dropped by each of the two checks.
+    """
+
+    def reason(item: dict[str, object]) -> str | None:
+        if item.get("origin") != "EXTRACTED":
+            return None
+        chunks = item.get("chunks")
+        if not isinstance(chunks, list) or not chunks:
+            return None
+        raw_text = "".join(
+            str(refs[ref]["content"]) for ref in chunks if isinstance(ref, str) and ref in refs
+        )
+        text = normalize_key(raw_text)
+        endpoint_names: dict[str, tuple[str, ...]] = {}
+        requirement_endpoint = False
+        for endpoint_key in ("sourceNodeId", "targetNodeId"):
+            endpoint = item.get(endpoint_key)
+            names = label_lookup.get(endpoint) if isinstance(endpoint, str) else None
+            if names is None:
+                endpoint_names[endpoint_key] = ()
+                continue
+            label, aliases, node_type = names
+            if node_type == "REQUIREMENT":
+                requirement_endpoint = True
+            if _is_organization_reference(label, node_type):
+                endpoint_names[endpoint_key] = ()
+                continue
+            endpoint_names[endpoint_key] = (label, *aliases)
+            best = max(
+                (
+                    _char_overlap_ratio(normalize_key(name), text)
+                    for name in (label, *aliases)
+                    if name
+                ),
+                default=1.0,
+            )
+            if best < _UNSUPPORTED_EDGE_OVERLAP_MIN:
+                return "ungrounded"
+        # Both endpoints pass the whole-text check above; single-chunk,
+        # REQUIREMENT-free evidence additionally requires some single item to
+        # name both -- the whole-text check alone cannot tell "both diseases
+        # are somewhere in this list" from "this is the one disease both facts
+        # are actually about".
+        if (
+            not requirement_endpoint
+            and len(chunks) == 1
+            and endpoint_names["sourceNodeId"]
+            and endpoint_names["targetNodeId"]
+            and _cross_item_mislink(
+                endpoint_names["sourceNodeId"], endpoint_names["targetNodeId"], raw_text
+            )
+        ):
+            return "cross_item"
+        return None
+
+    provenance_by_edge: dict[object, dict[str, object]] = {
+        item.get("edgeId"): item for item in provenance_raw
+    }
+    reasons = {item.get("id"): reason(item) for item in edges_raw}
+    dropped_ids: set[object] = {edge_id for edge_id, why in reasons.items() if why is not None}
+    changed = True
+    while changed:
+        changed = False
+        for item in edges_raw:
+            edge_id = item.get("id")
+            if edge_id in dropped_ids or item.get("origin") != "INFERRED":
+                continue
+            provenance_item = provenance_by_edge.get(edge_id)
+            input_facts = provenance_item.get("inputFactIds") if provenance_item else None
+            if isinstance(input_facts, list) and dropped_ids.intersection(input_facts):
+                dropped_ids.add(edge_id)
+                changed = True
+    kept_edges = tuple(item for item in edges_raw if item.get("id") not in dropped_ids)
+    kept_provenance = tuple(
+        item for item in provenance_raw if item.get("edgeId") not in dropped_ids
+    )
+    dropped_ungrounded = sum(1 for why in reasons.values() if why == "ungrounded")
+    dropped_cross_item = sum(1 for why in reasons.values() if why == "cross_item")
+    return kept_edges, kept_provenance, dropped_ungrounded, dropped_cross_item
 
 
 def _dedupe_edges(
@@ -605,6 +1125,13 @@ def _dedupe_edges(
             merged["chunks"] = list(dict.fromkeys([*chunks, *extra]))
         if type(confidence) in {int, float} and type(other) in {int, float}:
             merged["confidence"] = max(cast(float, confidence), cast(float, other))
+        # Union the "had refs before stripping" flag too: if either raw edge under
+        # this id/shape originally cited a ref, the merged edge did -- relevant only
+        # when the union above still leaves ``chunks`` empty (see
+        # ``_HAD_REFS_BEFORE_STRIP`` in ``_strip_dangling_refs``).
+        merged[_HAD_REFS_BEFORE_STRIP] = bool(survivor.get(_HAD_REFS_BEFORE_STRIP)) or bool(
+            item.get(_HAD_REFS_BEFORE_STRIP)
+        )
         kept[survivor_id] = merged
     provenance: list[dict[str, object]] = []
     claimed: set[object] = set()
