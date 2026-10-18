@@ -295,6 +295,10 @@ class AnswerDraftPayload(StreamContractModel):
     attempt: int = Field(ge=1)
     seq: int = Field(ge=0)
     text: str
+    # Set by `DraftBatcher` when a redaction-driven rewrite changes an
+    # already-sent prefix: `text` is empty and the client must discard every
+    # earlier chunk for this attempt before accumulating what follows (I-2).
+    reset: bool = False
 
 
 class AnswerDraftEvent(StreamContractModel):

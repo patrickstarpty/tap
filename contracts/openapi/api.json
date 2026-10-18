@@ -157,6 +157,11 @@
             "title": "Attempt",
             "type": "integer"
           },
+          "reset": {
+            "default": false,
+            "title": "Reset",
+            "type": "boolean"
+          },
           "seq": {
             "minimum": 0.0,
             "title": "Seq",

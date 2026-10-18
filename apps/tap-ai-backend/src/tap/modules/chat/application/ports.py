@@ -53,6 +53,22 @@ class StreamEntry:
     fields: Mapping[str, str]
 
 
+def draft_stream_key(turn_id: str) -> str:
+    """The Redis Stream key for one Turn's draft chunks.
+
+    The single source of truth for this key format: adapters (`RedisDraftStream`)
+    and consumers (the `/stream` SSE route) must both import this rather than
+    each reconstructing `tap:turn:{turnId}:draft` themselves (M-5)."""
+
+    return f"tap:turn:{turn_id}:draft"
+
+
+def wake_stream_key(conversation_id: str) -> str:
+    """The Redis Stream key for one Conversation's wake-up hints; see `draft_stream_key`."""
+
+    return f"tap:conv:{conversation_id}:events"
+
+
 class DraftStream(Protocol):
     """Redis Stream adapter for one Turn's model-answer draft and the
     conversation-level wake-up stream that announces new authoritative events.
@@ -62,9 +78,16 @@ class DraftStream(Protocol):
         self, turn_id: str, *, attempt: int, seq: int, text: str, reset: bool = False
     ) -> None: ...
 
-    async def replay(self, turn_id: str, *, attempt: int) -> tuple[DraftChunk, ...]:
-        """Chunks for `attempt` ordered by `seq`, with every chunk before the
-        last `reset: true` chunk (if any) discarded."""
+    async def replay(self, turn_id: str, *, attempt: int) -> tuple[tuple[DraftChunk, ...], str]:
+        """Chunks for `attempt` ordered by `seq` (with every chunk before the
+        last `reset: true` chunk, if any, discarded), paired with the raw id
+        of the last entry seen anywhere in this Turn's draft stream (any
+        attempt), or `"0-0"` if the stream is empty or missing.
+
+        Callers must continue their live `read()` draft-key cursor from this
+        id, never from `"$"`: `"$"` is resolved by Redis at the moment `read`
+        is actually called, so an entry written between this call and the
+        first `read()` would otherwise be silently lost (I-4)."""
         ...
 
     async def read(self, keys: Mapping[str, str], *, block_ms: int) -> tuple[StreamEntry, ...]:

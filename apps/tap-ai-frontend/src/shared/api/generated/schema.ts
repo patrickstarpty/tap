@@ -1440,6 +1440,11 @@ export interface components {
         AnswerDraftPayload: {
             /** Attempt */
             attempt: number;
+            /**
+             * Reset
+             * @default false
+             */
+            reset?: boolean;
             /** Seq */
             seq: number;
             /** Text */

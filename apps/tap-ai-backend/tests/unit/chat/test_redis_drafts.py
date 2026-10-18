@@ -150,12 +150,15 @@ async def test_replay_filters_attempt_and_orders_by_seq() -> None:
     await drafts.append("turn-1", attempt=2, seq=1, text="x")
     await drafts.append("turn-1", attempt=1, seq=1, text="a")
 
-    chunks = await drafts.replay("turn-1", attempt=1)
+    chunks, last_id = await drafts.replay("turn-1", attempt=1)
 
     assert [(chunk.attempt, chunk.seq, chunk.text) for chunk in chunks] == [
         (1, 1, "a"),
         (1, 2, "b"),
     ]
+    # The last entry id spans every attempt in the stream, not just the one
+    # replayed: the "a"/attempt=1 chunk was appended last, after "x"/attempt=2.
+    assert last_id == redis.streams["tap:turn:turn-1:draft"][-1][0]
 
 
 @pytest.mark.asyncio
@@ -167,9 +170,10 @@ async def test_replay_drops_chunks_before_the_last_reset() -> None:
     await drafts.append("turn-1", attempt=1, seq=2, text="", reset=True)
     await drafts.append("turn-1", attempt=1, seq=3, text="fresh")
 
-    chunks = await drafts.replay("turn-1", attempt=1)
+    chunks, last_id = await drafts.replay("turn-1", attempt=1)
 
     assert [(chunk.seq, chunk.text, chunk.reset) for chunk in chunks] == [(3, "fresh", False)]
+    assert last_id == redis.streams["tap:turn:turn-1:draft"][-1][0]
 
 
 @pytest.mark.asyncio
@@ -205,6 +209,19 @@ async def test_partial_text_returns_none_when_no_drafts_exist() -> None:
     drafts = RedisDraftStream(redis=_FakeAsyncRedis())
 
     assert await drafts.partial_text("turn-missing") is None
+
+
+@pytest.mark.asyncio
+async def test_replay_returns_0_0_for_a_missing_turn() -> None:
+    """I-4: the live loop's draft cursor must never start from `"$"`; an
+    empty/missing stream hands back the sentinel `"0-0"` instead, so the
+    first live `read()` still sees every entry ever written for this Turn."""
+    drafts = RedisDraftStream(redis=_FakeAsyncRedis())
+
+    chunks, last_id = await drafts.replay("turn-missing", attempt=1)
+
+    assert chunks == ()
+    assert last_id == "0-0"
 
 
 @pytest.mark.asyncio

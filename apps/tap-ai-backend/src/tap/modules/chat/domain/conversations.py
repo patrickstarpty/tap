@@ -408,6 +408,12 @@ class ConversationEvent:
             "retrieval.hits_ready",
             "graph.context_ready",
             "rerank.completed",
+            # C-1: no code writes this anymore (PR 3 moved the model's answer
+            # to Redis drafts), but older `develop`/`main` builds persisted it
+            # as a real MySQL `chat_event` row. Loading a Conversation with
+            # such a row must not raise -- the HTTP/SSE layer is responsible
+            # for filtering it back out before it reaches a client.
+            "answer.delta",
             "citation.resolved",
             "turn.completed",
             "turn.abstained",

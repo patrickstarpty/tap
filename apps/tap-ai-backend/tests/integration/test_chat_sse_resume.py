@@ -17,6 +17,7 @@ from tap.contracts.http import DocumentAnchor, RetrievalAnswerResponse, Retrieva
 from tap.entrypoints import tapper_runtime
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.dependencies import HttpServices
+from tap.interfaces.http.routes.conversations import events as events_route
 from tap.interfaces.http.routes.conversations import stream as stream_route
 from tap.interfaces.http.sse import encode_sse
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
@@ -25,7 +26,7 @@ from tap.modules.chat.application.conversations import (
     ConversationService,
     InMemoryConversationRepository,
 )
-from tap.modules.chat.application.ports import DraftStreamUnavailable
+from tap.modules.chat.application.ports import DraftStreamUnavailable, StreamEntry
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     ConversationEvent,
@@ -578,7 +579,7 @@ class _SlowBlockingDraftStream:
     needs to wait, simulating an in-progress Redis `XREAD BLOCK`."""
 
     async def replay(self, *args, **kwargs):
-        return ()
+        return (), "0-0"
 
     async def read(self, *args, **kwargs):
         await asyncio.sleep(5.0)
@@ -620,3 +621,265 @@ def test_stream_does_not_poll_when_idle() -> None:
 async def _drain(body_iterator) -> None:
     async for _ in body_iterator:
         pass
+
+
+def test_legacy_answer_delta_row_loads_and_is_filtered_from_events_and_stream() -> None:
+    """C-1: a kept demo volume may still hold `answer.delta` `chat_event`
+    rows written by an older build (`develop`'s `tapper_chat_turn.py` or
+    `main`'s generation worker). Loading such a Conversation must not raise,
+    and the retired event type must never reach a client via `/events` or
+    `/stream`."""
+
+    async def scenario() -> None:
+        service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+        await service.create("chat-legacy", "turn-legacy", "request-1", _validation_input())
+        # Simulates a pre-PR-3 row: `ConversationEvent` must accept it.
+        await service.emit("chat-legacy", "turn-legacy", "answer.delta", {"text": "legacy chunk"})
+        await service.complete_evidence(
+            "chat-legacy",
+            "turn-legacy",
+            AnswerEvidence(
+                "legacy chunk",
+                "completed",
+                RetrievalSummary("completed"),
+                GraphContextStatus.NOT_REQUESTED,
+            ),
+            terminal_event=("turn.completed", {"state": "completed"}),
+        )
+
+        # `load` must not raise, and the legacy row really is there.
+        loaded = await service.load("chat-legacy")
+        assert any(e.event_type == "answer.delta" for e in loaded.events)
+
+        events_page = await events_route("chat-legacy", service=service)
+        assert all(item.event_type != "answer.delta" for item in events_page.items)
+
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    http_services=HttpServices(conversations=service, draft_stream=None)
+                )
+            )
+        )
+        response = await stream_route("chat-legacy", request, last_event_id=None, service=service)
+        frames: list[str] = []
+        async for chunk in response.body_iterator:
+            frames.append(chunk)
+        joined = "".join(frames)
+        assert "answer.delta" not in joined
+        assert "turn.completed" in joined
+
+    asyncio.run(scenario())
+
+
+class _DraftThenBlockDraftStream:
+    """Returns one draft-only batch on the first `read`, then blocks far
+    longer than a test needs to wait -- so a test can assert the loop goes
+    straight back to `read()` without reloading MySQL in between (I-3)."""
+
+    def __init__(self) -> None:
+        self.read_calls = 0
+
+    async def replay(self, *args, **kwargs):
+        return (), "0-0"
+
+    async def read(self, keys, *, block_ms):
+        self.read_calls += 1
+        if self.read_calls == 1:
+            draft_key = next(key for key in keys if key.endswith(":draft"))
+            return (
+                StreamEntry(
+                    key=draft_key, id="1-0", fields={"attempt": "1", "seq": "0", "text": "hi"}
+                ),
+            )
+        await asyncio.sleep(5.0)
+        return ()
+
+
+def test_stream_does_not_reload_mysql_for_draft_only_entries() -> None:
+    """I-3: a `read()` batch containing only draft entries (no wake entry)
+    must not trigger another MySQL `load` -- only a wake entry or a block
+    timeout does. Without this, a fast-streaming generation would cost one
+    MySQL read per draft chunk (observed ~20/s)."""
+
+    async def scenario() -> None:
+        inner = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+        await inner.create("chat-draftonly", "turn-draftonly", "request-1", _validation_input())
+        counting = _CountingConversationService(inner)
+        drafts = _DraftThenBlockDraftStream()
+
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    http_services=HttpServices(conversations=inner, draft_stream=drafts)
+                )
+            )
+        )
+        response = await stream_route(
+            "chat-draftonly", request, last_event_id=None, service=counting
+        )
+
+        task = asyncio.ensure_future(_drain(response.body_iterator))
+        await asyncio.sleep(0.5)
+        # The route's own pre-check, plus the one reload before the loop's
+        # first `read()`. The draft-only batch that `read()` returned on its
+        # first call must not have caused a second reload.
+        assert counting.load_calls == 2
+        assert drafts.read_calls >= 2  # the loop did go straight back to read()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+
+async def _read_until(body_iterator, *, marker: str, timeout: float = 5.0) -> list[str]:
+    frames: list[str] = []
+
+    async def _collect() -> None:
+        async for chunk in body_iterator:
+            frames.append(chunk)
+            if marker in chunk:
+                return
+
+    await asyncio.wait_for(_collect(), timeout=timeout)
+    return frames
+
+
+def test_live_draft_after_connect_is_delivered_via_read(
+    owned_redis_url, owned_project_mysql
+) -> None:
+    """Missing test (a): a draft appended *after* the client connected (so
+    `replay()` already ran and found nothing) must still arrive, via the
+    live blocking `read()` path."""
+
+    async def scenario() -> None:
+        settings = _redis_settings(owned_redis_url)
+        redis = tapper_runtime._create_redis(settings)
+        block_redis = tapper_runtime._create_redis_stream_block_client(settings)
+        drafts = tapper_runtime._create_draft_stream(redis, block_redis, settings)
+        engine = create_async_engine(
+            owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
+        )
+        turn_id = f"turn-{uuid4().hex}"
+        try:
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            service = ConversationService(repository, scope=VALIDATION_SCOPE)
+            conversation_id = f"chat-{uuid4().hex}"
+            await service.create(conversation_id, turn_id, "request-1", _validation_input())
+            claimed = (await repository.claim_queued(limit=1))[0][1]
+            assert claimed.attempt == 1
+
+            request = SimpleNamespace(
+                app=SimpleNamespace(
+                    state=SimpleNamespace(
+                        http_services=HttpServices(conversations=service, draft_stream=drafts)
+                    )
+                )
+            )
+            response = await stream_route(
+                conversation_id, request, last_event_id=None, service=service
+            )
+
+            # Drive the generator through its empty `replay()` and into the
+            # blocking `read()`, then append -- same ordering guarantee as
+            # `test_redis_drafts_integration.test_read_blocks_until_draft_or_wakeup_arrives`.
+            read_task = asyncio.ensure_future(
+                _read_until(response.body_iterator, marker="live-after-connect", timeout=10.0)
+            )
+            await asyncio.sleep(0.3)
+            await drafts.append(turn_id, attempt=1, seq=0, text="live-after-connect")
+
+            frames = await read_task
+            joined = "".join(frames)
+            assert "live-after-connect" in joined
+            assert "event: answer.draft" in joined
+            await response.body_iterator.aclose()
+        finally:
+            await redis.delete(f"tap:turn:{turn_id}:draft")
+            await redis.aclose()
+            await block_redis.aclose()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_wake_entry_triggers_mysql_reread_and_closes_stream(
+    owned_redis_url, owned_project_mysql
+) -> None:
+    """Missing test (b): on the healthy Redis path, a real wake-up entry
+    (written by `RedisEventWakeups.notify`, as `complete_evidence` triggers)
+    must be the thing that makes the live loop re-read MySQL, deliver the
+    terminal event, and close the stream -- no fixed idle timeout."""
+
+    async def scenario() -> None:
+        settings = _redis_settings(owned_redis_url)
+        redis = tapper_runtime._create_redis(settings)
+        block_redis = tapper_runtime._create_redis_stream_block_client(settings)
+        drafts = tapper_runtime._create_draft_stream(redis, block_redis, settings)
+        wakeups = tapper_runtime._create_event_wakeups(redis)
+        engine = create_async_engine(
+            owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
+        )
+        turn_id = f"turn-{uuid4().hex}"
+        conversation_id = f"chat-{uuid4().hex}"
+        try:
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            service = ConversationService(repository, scope=VALIDATION_SCOPE, wakeups=wakeups)
+            await service.create(conversation_id, turn_id, "request-1", _validation_input())
+            claimed = (await repository.claim_queued(limit=1))[0][1]
+            assert claimed.attempt == 1
+
+            request = SimpleNamespace(
+                app=SimpleNamespace(
+                    state=SimpleNamespace(
+                        http_services=HttpServices(conversations=service, draft_stream=drafts)
+                    )
+                )
+            )
+            response = await stream_route(
+                conversation_id, request, last_event_id=None, service=service
+            )
+
+            read_task = asyncio.ensure_future(
+                _read_until(
+                    response.body_iterator, marker="conversation.turn.completed", timeout=10.0
+                )
+            )
+            await asyncio.sleep(0.3)
+            started = monotonic()
+            await service.complete_evidence(
+                conversation_id,
+                turn_id,
+                AnswerEvidence(
+                    "done",
+                    "completed",
+                    RetrievalSummary("completed"),
+                    GraphContextStatus.NOT_REQUESTED,
+                ),
+                terminal_event=("turn.completed", {"state": "completed"}),
+                lease_token=claimed.lease_token,
+            )
+
+            frames = await read_task
+            elapsed = monotonic() - started
+            joined = "".join(frames)
+            assert "event: turn.completed" in joined
+            assert "event: conversation.turn.completed" in joined
+            # The wake entry should arrive well inside the 15s block window,
+            # not after it times out.
+            assert elapsed < 5.0
+
+            # Both fresh events were yielded in the same reload; the stream
+            # must now be closed with nothing left to resume into.
+            with pytest.raises(StopAsyncIteration):
+                await asyncio.wait_for(response.body_iterator.__anext__(), timeout=2.0)
+        finally:
+            await redis.delete(f"tap:turn:{turn_id}:draft", f"tap:conv:{conversation_id}:events")
+            await redis.aclose()
+            await block_redis.aclose()
+            await engine.dispose()
+
+    asyncio.run(scenario())

@@ -27,7 +27,13 @@ from typing import Protocol
 
 from redis.exceptions import RedisError
 
-from tap.modules.chat.application.ports import DraftChunk, DraftStreamUnavailable, StreamEntry
+from tap.modules.chat.application.ports import (
+    DraftChunk,
+    DraftStreamUnavailable,
+    StreamEntry,
+    draft_stream_key,
+    wake_stream_key,
+)
 
 _DRAFT_MAXLEN = 4096
 _WAKEUP_MAXLEN = 1024
@@ -78,12 +84,10 @@ class AsyncRedisStreams(Protocol):
     ) -> object: ...
 
 
-def _draft_key(turn_id: str) -> str:
-    return f"tap:turn:{turn_id}:draft"
-
-
-def _wakeup_key(conversation_id: str) -> str:
-    return f"tap:conv:{conversation_id}:events"
+# Key formats live on the port (`draft_stream_key`/`wake_stream_key`), the
+# single source of truth both this adapter and the `/stream` route use (M-5).
+_draft_key = draft_stream_key
+_wakeup_key = wake_stream_key
 
 
 def _decode_draft_chunk(fields: Mapping[str, object]) -> DraftChunk | None:
@@ -188,13 +192,14 @@ class RedisDraftStream:
         except _REDIS_FAILURES as error:
             raise DraftStreamUnavailable(str(error)) from error
 
-    async def replay(self, turn_id: str, *, attempt: int) -> tuple[DraftChunk, ...]:
-        chunks = [chunk for chunk in await self._all_chunks(turn_id) if chunk.attempt == attempt]
+    async def replay(self, turn_id: str, *, attempt: int) -> tuple[tuple[DraftChunk, ...], str]:
+        all_chunks, last_id = await self._all_chunks(turn_id)
+        chunks = [chunk for chunk in all_chunks if chunk.attempt == attempt]
         chunks.sort(key=lambda chunk: chunk.seq)
-        return tuple(_drop_before_last_reset(chunks))
+        return tuple(_drop_before_last_reset(chunks)), last_id
 
     async def partial_text(self, turn_id: str) -> tuple[int, str] | None:
-        chunks = await self._all_chunks(turn_id)
+        chunks, _last_id = await self._all_chunks(turn_id)
         if not chunks:
             return None
         latest_attempt = max(chunk.attempt for chunk in chunks)
@@ -218,25 +223,33 @@ class RedisDraftStream:
             raise DraftStreamUnavailable(str(error)) from error
         return _decode_stream_entries(response)
 
-    async def _all_chunks(self, turn_id: str) -> list[DraftChunk]:
+    async def _all_chunks(self, turn_id: str) -> tuple[list[DraftChunk], str]:
+        """Every decodable chunk in `turn_id`'s draft stream, plus the raw id
+        of the last entry seen there (any attempt), or `"0-0"` if the stream
+        is empty/missing -- the id a caller's live `read()` cursor must
+        continue from (I-4)."""
+
         key = _draft_key(turn_id)
         try:
             entries = await self._redis.xrange(key, "-", "+")
         except _REDIS_FAILURES as error:
             raise DraftStreamUnavailable(str(error)) from error
         if not isinstance(entries, list):
-            return []
+            return [], "0-0"
         chunks: list[DraftChunk] = []
+        last_id = "0-0"
         for entry in entries:
             if not isinstance(entry, (list, tuple)) or len(entry) != 2:
                 continue
-            _entry_id, fields = entry
+            entry_id, fields = entry
+            if isinstance(entry_id, str):
+                last_id = entry_id
             if not isinstance(fields, dict):
                 continue
             chunk = _decode_draft_chunk(fields)
             if chunk is not None:
                 chunks.append(chunk)
-        return chunks
+        return chunks, last_id
 
 
 class RedisEventWakeups:

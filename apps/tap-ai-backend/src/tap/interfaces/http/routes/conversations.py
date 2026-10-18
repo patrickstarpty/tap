@@ -56,7 +56,12 @@ from tap.modules.chat.application.conversations import (
     ConversationService,
 )
 from tap.modules.chat.application.feedback import FeedbackService
-from tap.modules.chat.application.ports import DraftStream, DraftStreamUnavailable
+from tap.modules.chat.application.ports import (
+    DraftStream,
+    DraftStreamUnavailable,
+    draft_stream_key,
+    wake_stream_key,
+)
 from tap.modules.chat.domain.conversations import TurnInput
 from tap.modules.chat.domain.feedback import AnswerFeedback
 from tap.modules.knowledge.application.answers import DocumentStateChanged
@@ -490,6 +495,10 @@ async def events(
                 occurred_at=e.occurred_at.isoformat(),
             )
             for e in value.events
+            # C-1: a kept demo volume may still hold legacy `answer.delta`
+            # rows from before PR 3; the public contract no longer knows
+            # that event type, so it must never be surfaced here.
+            if e.event_type != "answer.delta"
         ]
     )
 
@@ -497,18 +506,24 @@ async def events(
 _TERMINAL_TURN_STATES = frozenset({"completed", "abstained", "failed", "canceled"})
 _DRAFT_BLOCK_MS = 15_000
 _DEGRADED_POLL_SECONDS = 1.0
-
-
-def _draft_key(turn_id: str) -> str:
-    return f"tap:turn:{turn_id}:draft"
-
-
-def _wake_key(conversation_id: str) -> str:
-    return f"tap:conv:{conversation_id}:events"
+# I-4: the live loop's wake-key cursor starts from the beginning of that
+# bounded (`MAXLEN ~ 1024`), TTL'd stream rather than from `"$"` -- "$" is
+# resolved by Redis only when `read` is actually called, so starting there
+# would lose any wake-up that lands between the MySQL catch-up and the first
+# blocking read. Replaying a few stale wake hints is harmless (they just
+# trigger one extra, idempotent MySQL reload); losing one is not.
+_WAKE_CURSOR_START = "0"
 
 
 def _encode_draft_frame(
-    *, conversation_id: str, turn_id: str, sequence: int, attempt: int, seq: int, text: str
+    *,
+    conversation_id: str,
+    turn_id: str,
+    sequence: int,
+    attempt: int,
+    seq: int,
+    text: str,
+    reset: bool = False,
 ) -> str:
     """An `answer.draft` SSE frame: still a `ChatEventEnvelope`, but never
     carries an `id:` line -- drafts are not persisted MySQL events, and the
@@ -524,7 +539,7 @@ def _encode_draft_frame(
             "schemaVersion": 1,
             "event": {
                 "type": "answer.draft",
-                "payload": {"attempt": attempt, "seq": seq, "text": text},
+                "payload": {"attempt": attempt, "seq": seq, "text": text, "reset": reset},
             },
         }
     ).model_dump(mode="json", by_alias=True)
@@ -563,82 +578,105 @@ async def stream(
         nonlocal resume
         degraded = draft_stream is None
         replayed_for: tuple[str, int] | None = None
-        last_draft_id = "$"
-        last_wake_id = "$"
+        last_draft_id = "0-0"
+        last_wake_id = _WAKE_CURSOR_START
+        current_turn = None
+        # I-3: only re-read MySQL when there is a concrete reason to --
+        # right away, after a wake-up hint, or after a block timeout. A
+        # batch of draft-only entries loops straight back into `read()`
+        # instead, so a fast-streaming generation does not cost a MySQL
+        # read per draft chunk.
+        need_reload = True
 
         with span("conversation.stream", {"tap.conversation_id": conversation_id}) as current_span:
             if degraded:
                 current_span.set_attribute("tap.stream.degraded", True)
             while True:
-                try:
-                    value = await service.load(conversation_id)
-                except ConversationNotFound:
-                    # Deleted while streaming: close the stream instead of failing mid-body.
-                    return
-                fresh = [event for event in value.events if event.sequence > resume]
-                for event in fresh:
-                    turn_id = event.turn_id or str(event.payload.get("turnId") or "")
-                    if not turn_id:
-                        raise ValueError("persisted event is missing its Turn binding")
-                    envelope = ChatEventEnvelope.model_validate(
-                        {
-                            "eventId": event.event_id,
-                            "sequence": event.sequence,
-                            "chatId": conversation_id,
-                            "turnId": turn_id,
-                            "occurredAt": event.occurred_at.isoformat(),
-                            "schemaVersion": 1,
-                            "event": {"type": event.event_type, "payload": dict(event.payload)},
-                        }
-                    ).model_dump(mode="json", by_alias=True)
-                    yield encode_sse((envelope,), last_event_id=str(resume))
-                    resume = event.sequence
+                if need_reload:
+                    try:
+                        value = await service.load(conversation_id)
+                    except ConversationNotFound:
+                        # Deleted while streaming: close instead of failing mid-body.
+                        return
+                    fresh = [event for event in value.events if event.sequence > resume]
+                    for event in fresh:
+                        turn_id = event.turn_id or str(event.payload.get("turnId") or "")
+                        if not turn_id:
+                            raise ValueError("persisted event is missing its Turn binding")
+                        # C-1: a kept demo volume may still hold legacy
+                        # `answer.delta` rows (PR 3 moved the answer to Redis
+                        # drafts); accepted when loading, never re-surfaced.
+                        if event.event_type != "answer.delta":
+                            envelope = ChatEventEnvelope.model_validate(
+                                {
+                                    "eventId": event.event_id,
+                                    "sequence": event.sequence,
+                                    "chatId": conversation_id,
+                                    "turnId": turn_id,
+                                    "occurredAt": event.occurred_at.isoformat(),
+                                    "schemaVersion": 1,
+                                    "event": {
+                                        "type": event.event_type,
+                                        "payload": dict(event.payload),
+                                    },
+                                }
+                            ).model_dump(mode="json", by_alias=True)
+                            yield encode_sse((envelope,), last_event_id=str(resume))
+                        resume = event.sequence
 
-                current_turn = next(
-                    (
-                        turn
-                        for turn in reversed(value.turns)
-                        if turn.state not in _TERMINAL_TURN_STATES
-                    ),
-                    None,
-                )
-                if current_turn is None:
-                    # Every Turn is terminal and every authoritative event has
-                    # been sent: close the stream (the client's reconnect
-                    # semantics are unaffected -- there is nothing left to
-                    # resume into).
-                    return
+                    current_turn = next(
+                        (
+                            turn
+                            for turn in reversed(value.turns)
+                            if turn.state not in _TERMINAL_TURN_STATES
+                        ),
+                        None,
+                    )
+                    if current_turn is None:
+                        # Every Turn is terminal and every authoritative event
+                        # has been sent: close the stream (the client's
+                        # reconnect semantics are unaffected -- there is
+                        # nothing left to resume into).
+                        return
+                    need_reload = False
+
+                assert current_turn is not None  # set whenever need_reload just ran
+                if not degraded:
+                    assert draft_stream is not None  # degraded is False only when set
+                    replay_key = (current_turn.turn_id, current_turn.attempt)
+                    if replayed_for != replay_key:
+                        try:
+                            chunks, draft_cursor = await draft_stream.replay(
+                                current_turn.turn_id, attempt=current_turn.attempt
+                            )
+                        except DraftStreamUnavailable:
+                            degraded = True
+                            current_span.set_attribute("tap.stream.degraded", True)
+                        else:
+                            for chunk in chunks:
+                                yield _encode_draft_frame(
+                                    conversation_id=conversation_id,
+                                    turn_id=current_turn.turn_id,
+                                    sequence=resume,
+                                    attempt=chunk.attempt,
+                                    seq=chunk.seq,
+                                    text=chunk.text,
+                                    reset=chunk.reset,
+                                )
+                            replayed_for = replay_key
+                            # I-4: continue the draft cursor from `replay`'s
+                            # own last-seen id -- never `"$"`, which Redis
+                            # only resolves once `read` actually runs and so
+                            # could skip an entry written in between.
+                            last_draft_id = draft_cursor
 
                 if degraded:
                     await asyncio.sleep(_DEGRADED_POLL_SECONDS)
+                    need_reload = True
                     continue
 
-                assert draft_stream is not None  # degraded is False only when set
-                replay_key = (current_turn.turn_id, current_turn.attempt)
-                if replayed_for != replay_key:
-                    try:
-                        chunks = await draft_stream.replay(
-                            current_turn.turn_id, attempt=current_turn.attempt
-                        )
-                    except DraftStreamUnavailable:
-                        degraded = True
-                        current_span.set_attribute("tap.stream.degraded", True)
-                        continue
-                    for chunk in chunks:
-                        yield _encode_draft_frame(
-                            conversation_id=conversation_id,
-                            turn_id=current_turn.turn_id,
-                            sequence=resume,
-                            attempt=chunk.attempt,
-                            seq=chunk.seq,
-                            text=chunk.text,
-                        )
-                    replayed_for = replay_key
-                    last_draft_id = "$"
-                    last_wake_id = "$"
-
-                draft_key = _draft_key(current_turn.turn_id)
-                wake_key = _wake_key(conversation_id)
+                draft_key = draft_stream_key(current_turn.turn_id)
+                wake_key = wake_stream_key(conversation_id)
                 try:
                     entries = await draft_stream.read(
                         {draft_key: last_draft_id, wake_key: last_wake_id},
@@ -653,7 +691,9 @@ async def stream(
                     # alive and let the top of the loop re-check MySQL once,
                     # without busy-polling Redis or MySQL in between.
                     yield ": keepalive\n\n"
+                    need_reload = True
                     continue
+                wake_seen = False
                 for entry in entries:
                     if entry.key == draft_key:
                         last_draft_id = entry.id
@@ -670,11 +710,18 @@ async def stream(
                                 attempt=int(attempt),
                                 seq=int(seq),
                                 text=text,
+                                reset=entry.fields.get("reset") == "1",
                             )
                         except (TypeError, ValueError):
                             continue
                     elif entry.key == wake_key:
                         last_wake_id = entry.id
+                        wake_seen = True
+                # I-3: a wake hint means a new authoritative event (possibly
+                # the terminal one) committed, so MySQL is worth re-reading;
+                # a batch of draft-only entries is not a reason to.
+                if wake_seen:
+                    need_reload = True
 
     return StreamingResponse(
         generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
