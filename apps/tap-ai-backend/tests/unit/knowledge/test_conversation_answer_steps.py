@@ -546,6 +546,106 @@ async def test_output_redaction_keeps_claims_locatable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_output_redaction_relocates_sentence_claim_after_prior_hit() -> None:
+    """I-1 regression: a PR 3 claim is a cited *sentence* inside a paragraph,
+    not a whole paragraph, so re-finding it with `_paragraph_offsets` (whole-
+    paragraph match) fails once an earlier redaction hit in the same
+    paragraph shifts the text -- the claim then kept its stale pre-redaction
+    offset and `save_frozen`'s `_validate_gateway_response` rejected it.
+    `_redact_answer_response` must instead locate the claim's own redacted
+    text directly in the redacted answer."""
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.platform.serialization.dataclass_json import to_json
+
+    frozen, plan = await _retrieve_route()
+    base = answer_response()
+    citation_id = base.citations[0].citation_id
+    answer_text = "Email claims@example.com for help. The waiting period is 30 days."
+    cited_sentence = "The waiting period is 30 days."
+    claim_start = answer_text.index(cited_sentence)
+    response = replace(
+        base,
+        answer=answer_text,
+        claims=(
+            Claim(
+                claim_id="claim-a",
+                text=cited_sentence,
+                answer_start=claim_start,
+                answer_end=claim_start + len(cited_sentence),
+                citation_ids=(citation_id,),
+            ),
+        ),
+    )
+    step = {"kind": "verified", "response": to_json(response)}
+
+    answers = PhaseAnswers()
+    service = _service(answers, redactor=PatternEgressRedactor(personal_data=True))
+
+    result = await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert result.abstained is False
+    assert "claims@example.com" not in result.answer
+    assert "[REDACTED_EMAIL]" in result.answer
+    assert len(result.claims) == 1
+    claim = result.claims[0]
+    assert claim.text == cited_sentence
+    assert result.answer[claim.answer_start : claim.answer_end] == claim.text
+
+    saved = answers.save_calls[0]
+    assert saved.answer == result.answer
+    assert [c.text for c in saved.claims] == [c.text for c in result.claims]
+
+
+@pytest.mark.asyncio
+async def test_output_redaction_relocates_sentence_claim_containing_hit() -> None:
+    """I-1 regression, second shape: the redaction hit is *inside* the cited
+    sentence itself (not just before it), so the claim's redacted text
+    differs from its pre-redaction text -- `_redact_answer_response` must
+    still find the (now-redacted) claim text in the redacted answer and
+    keep it unique and ordered after the previous claim."""
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.platform.serialization.dataclass_json import to_json
+
+    frozen, plan = await _retrieve_route()
+    base = answer_response()
+    citation_id = base.citations[0].citation_id
+    answer_text = "See the notice first. Email claims@example.com before the deadline."
+    cited_sentence = "Email claims@example.com before the deadline."
+    claim_start = answer_text.index(cited_sentence)
+    response = replace(
+        base,
+        answer=answer_text,
+        claims=(
+            Claim(
+                claim_id="claim-a",
+                text=cited_sentence,
+                answer_start=claim_start,
+                answer_end=claim_start + len(cited_sentence),
+                citation_ids=(citation_id,),
+            ),
+        ),
+    )
+    step = {"kind": "verified", "response": to_json(response)}
+
+    answers = PhaseAnswers()
+    service = _service(answers, redactor=PatternEgressRedactor(personal_data=True))
+
+    result = await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert result.abstained is False
+    assert "claims@example.com" not in result.answer
+    assert "[REDACTED_EMAIL]" in result.answer
+    assert len(result.claims) == 1
+    claim = result.claims[0]
+    assert "[REDACTED_EMAIL]" in claim.text
+    assert result.answer[claim.answer_start : claim.answer_end] == claim.text
+
+    saved = answers.save_calls[0]
+    assert saved.answer == result.answer
+    assert [c.text for c in saved.claims] == [c.text for c in result.claims]
+
+
+@pytest.mark.asyncio
 async def test_output_redaction_hits_land_on_current_span(monkeypatch) -> None:
     """Only the answer-body hit counts land on `tap.guard.redaction.output_hits`
     -- a claim is always a verbatim paragraph of the answer, so counting its
@@ -659,21 +759,19 @@ async def test_final_route_answer_is_redacted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_final_route_redaction_result_is_validated_before_returning() -> None:
-    """M5: `_redact_final_response` built the redacted response with
-    `model_copy`, which skips validators. If per-claim redaction cannot
-    locate its paragraph in the redacted answer (the `match_index is None`
-    fallback keeps the claim's stale pre-redaction span), the response
-    must fail validation here -- fail closed -- rather than reach the
-    caller with a claim whose span no longer matches its text."""
-    from pydantic import ValidationError
-
+async def test_final_route_redaction_drops_unlocatable_claim() -> None:
+    """I-1 (updates former M5 test): `_redact_final_response` no longer
+    keeps a claim's stale pre-redaction span when its redacted text cannot
+    be relocated in the redacted answer -- it drops the claim instead, so
+    `model_validate`'s fail-closed check at the end has nothing stale left
+    to reject. The answer itself is kept unredacted-shape-wise (still the
+    redacted text), just without that claim."""
     from tap.modules.knowledge.api import answer_response_to_http
 
     class InconsistentRedactor:
         """Redacts the answer unchanged but always returns an unmatched
-        value for a claim, forcing `_redact_final_response`'s defensive
-        `match_index is None` fallback (a stale span) every time."""
+        value for a claim, so the claim is never locatable in the redacted
+        answer."""
 
         def __init__(self) -> None:
             self.calls = 0
@@ -687,8 +785,90 @@ async def test_final_route_redaction_result_is_validated_before_returning() -> N
     response = answer_response_to_http(answer_response())
     service = _service(redactor=InconsistentRedactor())
 
-    with pytest.raises(ValidationError):
-        await service._redact_final_response(response)
+    result = await service._redact_final_response(response)
+
+    assert result.answer == response.answer
+    assert result.claims == []
+
+
+@pytest.mark.asyncio
+async def test_redact_final_response_relocates_sentence_claim_after_prior_hit() -> None:
+    """I-1 regression for the `"final"` route's shared helper: a sentence
+    claim inside a paragraph, with a redaction hit earlier in that
+    paragraph, must still be relocated in the redacted answer rather than
+    keeping its stale pre-redaction offset."""
+    from tap.contracts.http import RetrievalClaim
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.modules.knowledge.api import answer_response_to_http
+
+    base = answer_response_to_http(answer_response())
+    citation_id = base.citations[0].citation_id
+    answer_text = "Email claims@example.com for help. The waiting period is 30 days."
+    cited_sentence = "The waiting period is 30 days."
+    claim_start = answer_text.index(cited_sentence)
+    response = base.model_copy(
+        update={
+            "answer": answer_text,
+            "claims": [
+                RetrievalClaim(
+                    claim_id="claim-a",
+                    text=cited_sentence,
+                    answer_start=claim_start,
+                    answer_end=claim_start + len(cited_sentence),
+                    citation_ids=[citation_id],
+                )
+            ],
+        }
+    )
+    service = _service(redactor=PatternEgressRedactor(personal_data=True))
+
+    result = await service._redact_final_response(response)
+
+    assert "claims@example.com" not in result.answer
+    assert "[REDACTED_EMAIL]" in result.answer
+    assert len(result.claims) == 1
+    claim = result.claims[0]
+    assert claim.text == cited_sentence
+    assert result.answer[claim.answer_start : claim.answer_end] == claim.text
+
+
+@pytest.mark.asyncio
+async def test_redact_final_response_relocates_sentence_claim_containing_hit() -> None:
+    """I-1 regression, second shape, for the `"final"` route's shared
+    helper: the redaction hit is inside the cited sentence itself."""
+    from tap.contracts.http import RetrievalClaim
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.modules.knowledge.api import answer_response_to_http
+
+    base = answer_response_to_http(answer_response())
+    citation_id = base.citations[0].citation_id
+    answer_text = "See the notice first. Email claims@example.com before the deadline."
+    cited_sentence = "Email claims@example.com before the deadline."
+    claim_start = answer_text.index(cited_sentence)
+    response = base.model_copy(
+        update={
+            "answer": answer_text,
+            "claims": [
+                RetrievalClaim(
+                    claim_id="claim-a",
+                    text=cited_sentence,
+                    answer_start=claim_start,
+                    answer_end=claim_start + len(cited_sentence),
+                    citation_ids=[citation_id],
+                )
+            ],
+        }
+    )
+    service = _service(redactor=PatternEgressRedactor(personal_data=True))
+
+    result = await service._redact_final_response(response)
+
+    assert "claims@example.com" not in result.answer
+    assert "[REDACTED_EMAIL]" in result.answer
+    assert len(result.claims) == 1
+    claim = result.claims[0]
+    assert "[REDACTED_EMAIL]" in claim.text
+    assert result.answer[claim.answer_start : claim.answer_end] == claim.text
 
 
 @pytest.mark.asyncio

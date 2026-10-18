@@ -566,45 +566,55 @@ class KnowledgeHttpService:
             return answer_response_to_http(response)
 
     @staticmethod
-    def _paragraph_offsets(text: str) -> list[tuple[str, int, int]]:
-        """Split `text` on `"\\n\\n"`, returning each paragraph with its
-        `(start, end)` offset into `text` -- the same boundary a claim's
-        text is validated against when claims are first generated
-        (`retrieve.py`'s `_resolve_generated_claims`)."""
-        paragraphs: list[tuple[str, int, int]] = []
-        start = 0
-        for paragraph in text.split("\n\n"):
-            end = start + len(paragraph)
-            paragraphs.append((paragraph, start, end))
-            start = end + 2
-        return paragraphs
+    def _locate_redacted_claim(
+        redacted_answer: str, redacted_claim_text: str, search_from: int
+    ) -> tuple[int, int] | None:
+        """Find `redacted_claim_text` in `redacted_answer[search_from:]`.
+
+        PR 3 claims are cited sentences inside paragraphs, not whole
+        paragraphs, so a paragraph-boundary split (the old
+        `_paragraph_offsets` approach) cannot relocate them once redaction
+        changes the answer's length -- a stale offset then fails
+        `_validate_gateway_response` downstream. Search forward from the
+        previous claim's end (claims are already ordered and non-
+        overlapping, enforced by that same validator) and require the match
+        to be unique in the remaining answer; a missing or ambiguous match
+        means the offset cannot be trusted, so the caller must drop the
+        claim rather than keep a stale one."""
+        if not redacted_claim_text:
+            return None
+        remainder = redacted_answer[search_from:]
+        first = remainder.find(redacted_claim_text)
+        if first == -1:
+            return None
+        if remainder.find(redacted_claim_text, first + 1) != -1:
+            return None
+        start = search_from + first
+        return start, start + len(redacted_claim_text)
 
     async def _redact_answer_response(self, response: AnswerResponse) -> AnswerResponse:
         """Redact `response.answer` and every claim's text with the same
         egress redactor before the frozen snapshot is built/saved, so a
-        claim's text stays an exact (now-redacted) paragraph of the (now-
+        claim's text stays an exact (now-redacted) substring of the (now-
         redacted) answer. The abstained path has an empty answer, so there
         is nothing to redact. Only the answer-body hit counts land on the
-        current span -- a claim is always a verbatim paragraph of the
-        answer, so counting its hits too would double-count the same match;
-        no hits means nothing is written."""
+        current span -- a claim is always a verbatim slice of the answer,
+        so counting its hits too would double-count the same match; no
+        hits means nothing is written."""
         report = getattr(self._redactor, "redact_with_report", None)
         if report is None or not response.answer:
             return response
         redacted_answer, hits = await report(response.answer)
-        available = self._paragraph_offsets(redacted_answer)
 
         new_claims = []
+        search_from = 0
         for claim in response.claims:
             redacted_text, _claim_hits = await report(claim.text)
-            match_index = next(
-                (index for index, (text, _s, _e) in enumerate(available) if text == redacted_text),
-                None,
-            )
-            if match_index is None:
-                new_claims.append(dataclasses.replace(claim, text=redacted_text))
+            located = self._locate_redacted_claim(redacted_answer, redacted_text, search_from)
+            if located is None:
                 continue
-            _text, claim_start, claim_end = available.pop(match_index)
+            claim_start, claim_end = located
+            search_from = claim_end
             new_claims.append(
                 dataclasses.replace(
                     claim, text=redacted_text, answer_start=claim_start, answer_end=claim_end
@@ -626,19 +636,16 @@ class KnowledgeHttpService:
         if report is None or not response.answer:
             return response
         redacted_answer, hits = await report(response.answer)
-        available = self._paragraph_offsets(redacted_answer)
 
         new_claims = []
+        search_from = 0
         for claim in response.claims:
             redacted_text, _claim_hits = await report(claim.text)
-            match_index = next(
-                (index for index, (text, _s, _e) in enumerate(available) if text == redacted_text),
-                None,
-            )
-            if match_index is None:
-                new_claims.append(claim.model_copy(update={"text": redacted_text}))
+            located = self._locate_redacted_claim(redacted_answer, redacted_text, search_from)
+            if located is None:
                 continue
-            _text, claim_start, claim_end = available.pop(match_index)
+            claim_start, claim_end = located
+            search_from = claim_end
             new_claims.append(
                 claim.model_copy(
                     update={
