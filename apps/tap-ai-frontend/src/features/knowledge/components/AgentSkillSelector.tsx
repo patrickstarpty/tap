@@ -6,6 +6,15 @@ export interface ApprovedAiAsset {
   readonly displayName: string;
 }
 
+export interface SkillBudgetSummary {
+  /** UTF-8 bytes the currently-selected Skills would add to this turn. */
+  usedBytes: number;
+  /** Server-enforced per-turn Skill text budget (96 KB). */
+  limitBytes: number;
+  /** Display names of the largest selected Skills, biggest first. */
+  largest: readonly string[];
+}
+
 export function AgentSkillSelector({
   agents,
   skills,
@@ -16,6 +25,11 @@ export function AgentSkillSelector({
   loading = false,
   error = null,
   onRetry,
+  // Skills the selected Agent bundles in: shown with a "From Agent" tag and
+  // not individually removable from here — deselecting the Agent is what
+  // drops them, matching the composer's own agent-bundled-skill behavior.
+  lockedSkillRevisionIds = [],
+  skillBudget,
 }: {
   agents: readonly ApprovedAiAsset[];
   skills: readonly ApprovedAiAsset[];
@@ -26,6 +40,8 @@ export function AgentSkillSelector({
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
+  lockedSkillRevisionIds?: readonly string[];
+  skillBudget?: SkillBudgetSummary;
 }) {
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [retiredSkillsRemoved, setRetiredSkillsRemoved] = useState(false);
@@ -98,12 +114,13 @@ export function AgentSkillSelector({
         <fieldset aria-label="Skills">
           {skills.map((item) => {
             const checked = activeSkills.includes(item.revisionId);
+            const locked = lockedSkillRevisionIds.includes(item.revisionId);
             return (
               <label key={item.revisionId}>
                 <input
                   type="checkbox"
-                  checked={checked}
-                  disabled={loading}
+                  checked={checked || locked}
+                  disabled={loading || locked}
                   onChange={() =>
                     onSkillsChange(
                       checked
@@ -113,11 +130,21 @@ export function AgentSkillSelector({
                   }
                 />
                 {item.displayName}
+                {locked && <span>From Agent</span>}
               </label>
             );
           })}
         </fieldset>
       )}
+      {skillBudget && skillBudget.usedBytes > skillBudget.limitBytes ? (
+        <div role="alert">
+          <p>Selected skills exceed the per-turn budget.</p>
+          <p>Largest skills: {skillBudget.largest.join(", ")}</p>
+        </div>
+      ) : skillBudget &&
+        skillBudget.usedBytes >= skillBudget.limitBytes * 0.9 ? (
+        <p role="status">Selected skills are near the per-turn budget.</p>
+      ) : null}
     </div>
   );
 }

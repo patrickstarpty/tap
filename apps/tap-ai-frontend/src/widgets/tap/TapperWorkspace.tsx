@@ -13,7 +13,8 @@ import {
 import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
 import { TapperChat, type ChatAttachment } from "./workspace/TapperChat";
-import { CatalogWorkspace } from "./workspace/CatalogWorkspace";
+import { AgentsWorkspace } from "./workspace/agents/AgentsWorkspace";
+import { LocalDraftMigrationBanner } from "./workspace/agents/LocalDraftMigrationBanner";
 import { SkillsWorkspace } from "./workspace/skills/SkillsWorkspace";
 import { WORKSPACE_COPY, type WorkspaceCopy } from "./workspace/copy";
 import { KnowledgeSourcesPanel } from "./workspace/KnowledgeSourcesPanel";
@@ -900,9 +901,9 @@ function toggleSelection(values: readonly string[], id: string): string[] {
 }
 
 const TAPPER_MODULE_FOCUS_TARGETS: Partial<Record<ProductModule, string>> = {
-  agents: "#agent-heading",
+  agents: "#agents-heading",
   library: "#library-heading",
-  skills: "#skill-heading",
+  skills: "#skills-heading",
 };
 
 type PendingFocusTarget = { kind: "selector"; selector: string };
@@ -1360,6 +1361,18 @@ export function TapperWorkspace() {
   );
   const resetCancelTurn = cancelTurnMutation.reset;
   const aiAssets = useAiAssetCatalog(projectId);
+  // Keyed by the composer's `agents` CatalogItem ids (= each agent's
+  // approved revisionId), so a composer selection can look up the agent's
+  // own `defaultModelAlias`/`skillRevisionIds` — fields the presentation
+  // layer below strips off `agents` (the CatalogItem[] `aiAssetPresentation`
+  // builds for the chip UI) to just name/description/instructions.
+  const agentById = useMemo(
+    () =>
+      new Map(
+        (aiAssets.agents.data ?? []).map((item) => [item.revisionId, item]),
+      ),
+    [aiAssets.agents.data],
+  );
   const initialDurableSelection = useRef(false);
   const [selectedDurablePlan, setSelectedDurablePlan] = useState<{
     planId: string;
@@ -2077,6 +2090,41 @@ export function TapperWorkspace() {
     );
   };
 
+  // Selecting an Agent prefills the composer with its own default model
+  // (falling back to the global default when that alias is no longer in
+  // the model catalog) and brings its bundled Skills along, without
+  // overriding a model the person already picked for this turn on a later
+  // toggle. Returns `conversation` unchanged when the Agent was already
+  // selected — only the first selection prefills.
+  const selectComposerAgent = (
+    conversation: Conversation,
+    agentId: string,
+  ): Conversation => {
+    if (conversation.selectedAgentIds.includes(agentId)) return conversation;
+    const agent = agentById.get(agentId);
+    const bundledSkillIds = agent?.skillRevisionIds ?? [];
+    const nextSkillIds = [
+      ...conversation.selectedSkillIds,
+      ...bundledSkillIds.filter(
+        (id) => !conversation.selectedSkillIds.includes(id),
+      ),
+    ];
+    const defaultAlias = agent?.defaultModelAlias ?? null;
+    const resolvedAlias =
+      defaultAlias === null
+        ? conversation.modelId
+        : selectableModelAliases === null ||
+            selectableModelAliases.has(defaultAlias)
+          ? defaultAlias
+          : (modelCatalog.data?.defaultAlias ?? conversation.modelId);
+    return {
+      ...conversation,
+      selectedAgentIds: [...conversation.selectedAgentIds, agentId],
+      selectedSkillIds: nextSkillIds,
+      modelId: resolvedAlias,
+    };
+  };
+
   // `GraphOverview` already resolves published-source revision ids to real
   // source ids (via the `publishedSources` it is given), so `sourceIds`
   // here are real source ids — no reverse mapping needed.
@@ -2452,14 +2500,20 @@ export function TapperWorkspace() {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
-    updateActiveConversation((conversation) => {
-      const selectedKey =
-        kind === "agent" ? "selectedAgentIds" : "selectedSkillIds";
-      const selectedIds = conversation[selectedKey];
-      return selectedIds.includes(itemId)
-        ? conversation
-        : { ...conversation, [selectedKey]: [...selectedIds, itemId] };
-    });
+    if (kind === "agent") {
+      updateActiveConversation((conversation) =>
+        selectComposerAgent(conversation, itemId),
+      );
+    } else {
+      updateActiveConversation((conversation) =>
+        conversation.selectedSkillIds.includes(itemId)
+          ? conversation
+          : {
+              ...conversation,
+              selectedSkillIds: [...conversation.selectedSkillIds, itemId],
+            },
+      );
+    }
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
@@ -2588,13 +2642,17 @@ export function TapperWorkspace() {
                   cancelTurnMutation.mutate(turnId);
               }}
               onToggleAgent={(agentId) =>
-                updateActiveConversation((conversation) => ({
-                  ...conversation,
-                  selectedAgentIds: toggleSelection(
-                    conversation.selectedAgentIds,
-                    agentId,
-                  ),
-                }))
+                updateActiveConversation((conversation) =>
+                  conversation.selectedAgentIds.includes(agentId)
+                    ? {
+                        ...conversation,
+                        selectedAgentIds: toggleSelection(
+                          conversation.selectedAgentIds,
+                          agentId,
+                        ),
+                      }
+                    : selectComposerAgent(conversation, agentId),
+                )
               }
               onToggleSkill={(skillId) =>
                 updateActiveConversation((conversation) => ({
@@ -2774,30 +2832,51 @@ export function TapperWorkspace() {
           </div>
         </div>
         {activeModule === "agents" ? (
-          <CatalogWorkspace
-            kind="agent"
-            copy={copy}
-            items={agents}
-            onUse={(itemId) => useCatalogItem("agent", itemId)}
-            projectId={projectId ?? undefined}
-          />
+          projectId !== null ? (
+            <>
+              <LocalDraftMigrationBanner
+                key={`agent-drafts-${projectId}`}
+                projectId={projectId}
+                kind="agent"
+                copy={copy}
+              />
+              <AgentsWorkspace
+                key={projectId}
+                projectId={projectId}
+                copy={copy}
+                onUse={(revisionId) => useCatalogItem("agent", revisionId)}
+              />
+            </>
+          ) : (
+            <p role="status">
+              {copy.agentsWorkspace.heading === "Agents"
+                ? "Agents are available when the TAP AI API is ready."
+                : "Agent 功能需要 TAP AI API 就绪后才可用。"}
+            </p>
+          )
         ) : null}
         {activeModule === "skills" ? (
           projectId !== null ? (
-            <SkillsWorkspace
-              key={projectId}
-              projectId={projectId}
-              copy={copy}
-              onUse={(revisionId) => useCatalogItem("skill", revisionId)}
-            />
+            <>
+              <LocalDraftMigrationBanner
+                key={`skill-drafts-${projectId}`}
+                projectId={projectId}
+                kind="skill"
+                copy={copy}
+              />
+              <SkillsWorkspace
+                key={projectId}
+                projectId={projectId}
+                copy={copy}
+                onUse={(revisionId) => useCatalogItem("skill", revisionId)}
+              />
+            </>
           ) : (
-            <CatalogWorkspace
-              kind="skill"
-              copy={copy}
-              items={skills}
-              onUse={(itemId) => useCatalogItem("skill", itemId)}
-              projectId={projectId ?? undefined}
-            />
+            <p role="status">
+              {copy.skillsWorkspace.heading === "Skills"
+                ? "Skills are available when the TAP AI API is ready."
+                : "Skill 功能需要 TAP AI API 就绪后才可用。"}
+            </p>
           )
         ) : null}
         {activeModule === "library" ? (

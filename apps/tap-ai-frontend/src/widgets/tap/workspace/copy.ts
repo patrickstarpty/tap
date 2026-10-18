@@ -217,6 +217,67 @@ export interface WorkspaceCopy {
       saveFailed: string;
     };
   };
+  agentsWorkspace: {
+    heading: string;
+    description: string;
+    createAgent: string;
+    filterAll: string;
+    filterBuiltIn: string;
+    filterCustom: string;
+    filterDisabled: string;
+    noResults: string;
+    useInChat: string;
+    edit: string;
+    enable: string;
+    disable: string;
+    upgrade: string;
+    close: string;
+    revision: string;
+    defaultModel: string;
+    defaultModelGlobal: string;
+    skills: string;
+    toolsLabel: string;
+    toolsBuiltIn: string;
+    hasSkillUpdates: string;
+    tabs: {
+      overview: string;
+      skills: string;
+      revisions: string;
+    };
+    form: {
+      createTitle: string;
+      editTitle: string;
+      name: string;
+      description: string;
+      systemInstruction: string;
+      defaultModel: string;
+      defaultModelGlobal: string;
+      skills: string;
+      noSkills: string;
+      toolsLabel: string;
+      toolsBuiltIn: string;
+      save: string;
+      cancel: string;
+      nameInvalid: string;
+      descriptionRequired: string;
+      systemInstructionRequired: string;
+      budgetWarning: string;
+      budgetExceeded: string;
+      largestSkills: string;
+      nameConflict: string;
+      revisionConflict: string;
+      saveFailed: string;
+    };
+  };
+  migrationBanner: {
+    heading: string;
+    descriptionAgent: string;
+    descriptionSkill: string;
+    import: string;
+    dismiss: string;
+    importing: string;
+    importFailed: string;
+  };
   library: {
     listView: string;
     cardView: string;
@@ -556,6 +617,72 @@ export const WORKSPACE_COPY = {
         saveFailed: "This skill could not be saved.",
       },
     },
+    agentsWorkspace: {
+      heading: "Agents",
+      description:
+        "Focused collaborators with a system prompt, a default model and bundled skills.",
+      createAgent: "New agent",
+      filterAll: "All",
+      filterBuiltIn: "Built-in",
+      filterCustom: "Custom",
+      filterDisabled: "Disabled",
+      noResults: "No agents match this filter.",
+      useInChat: "Use in chat",
+      edit: "Edit",
+      enable: "Enable",
+      disable: "Disable",
+      upgrade: "Upgrade",
+      close: "Close",
+      revision: "Revision",
+      defaultModel: "Default model",
+      defaultModelGlobal: "Use the global default model",
+      skills: "Skills",
+      toolsLabel: "Built-in tools",
+      toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
+      hasSkillUpdates: "A bundled skill has a newer revision.",
+      tabs: {
+        overview: "Overview",
+        skills: "Skills",
+        revisions: "Revision history",
+      },
+      form: {
+        createTitle: "New agent",
+        editTitle: "Edit agent",
+        name: "Name",
+        description: "Description",
+        systemInstruction: "System instruction",
+        defaultModel: "Default model",
+        defaultModelGlobal: "Use the global default model",
+        skills: "Skills",
+        noSkills: "No enabled skills available.",
+        toolsLabel: "Built-in tools",
+        toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
+        save: "Save",
+        cancel: "Cancel",
+        nameInvalid: "Enter a name up to 128 characters.",
+        descriptionRequired: "Enter a description.",
+        systemInstructionRequired: "Enter a system instruction.",
+        budgetWarning:
+          "Selected skills are near the per-turn budget. Remove some before they are needed together.",
+        budgetExceeded:
+          "Selected skills exceed the per-turn budget. Remove some before saving.",
+        largestSkills: "Largest skills",
+        nameConflict: "An agent with this name already exists.",
+        revisionConflict: "This content was updated elsewhere. Please refresh.",
+        saveFailed: "This agent could not be saved.",
+      },
+    },
+    migrationBanner: {
+      heading: "Local drafts found",
+      descriptionAgent:
+        "Markdown agent drafts saved on this device can be imported as real agents.",
+      descriptionSkill:
+        "Markdown skill drafts saved on this device can be imported as real skills.",
+      import: "Import",
+      dismiss: "Dismiss",
+      importing: "Importing…",
+      importFailed: "This draft could not be imported.",
+    },
     library: {
       listView: "List view",
       cardView: "Card view",
@@ -893,6 +1020,70 @@ export const WORKSPACE_COPY = {
         revisionConflict: "内容已被他人更新，请刷新。",
         saveFailed: "无法保存该 Skill。",
       },
+    },
+    agentsWorkspace: {
+      heading: "智能体",
+      description: "带有系统提示词、默认模型与已绑定 Skill 的专注协作者。",
+      createAgent: "新建 Agent",
+      filterAll: "全部",
+      filterBuiltIn: "内置",
+      filterCustom: "自定义",
+      filterDisabled: "已停用",
+      noResults: "没有符合筛选条件的 Agent。",
+      useInChat: "在对话中使用",
+      edit: "编辑",
+      enable: "启用",
+      disable: "停用",
+      upgrade: "升级",
+      close: "关闭",
+      revision: "修订",
+      defaultModel: "默认模型",
+      defaultModelGlobal: "使用全局默认模型",
+      skills: "Skill",
+      toolsLabel: "内置工具",
+      toolsBuiltIn: "知识检索、知识回答（始终启用）",
+      hasSkillUpdates: "已绑定的 Skill 有新修订。",
+      tabs: {
+        overview: "概览",
+        skills: "Skill",
+        revisions: "修订历史",
+      },
+      form: {
+        createTitle: "新建 Agent",
+        editTitle: "编辑 Agent",
+        name: "名称",
+        description: "描述",
+        systemInstruction: "系统提示词",
+        defaultModel: "默认模型",
+        defaultModelGlobal: "使用全局默认模型",
+        skills: "Skill",
+        noSkills: "暂无可用的已启用 Skill。",
+        toolsLabel: "内置工具",
+        toolsBuiltIn: "知识检索、知识回答（始终启用）",
+        save: "保存",
+        cancel: "取消",
+        nameInvalid: "请输入不超过 128 个字符的名称。",
+        descriptionRequired: "请填写描述。",
+        systemInstructionRequired: "请填写系统提示词。",
+        budgetWarning: "所选 Skill 已接近单轮预算上限，请考虑精简组合。",
+        budgetExceeded:
+          "所选 Skill 已超出单轮预算上限，请先移除部分 Skill 再保存。",
+        largestSkills: "占用最大的 Skill",
+        nameConflict: "已存在同名 Agent。",
+        revisionConflict: "内容已被他人更新，请刷新。",
+        saveFailed: "无法保存该 Agent。",
+      },
+    },
+    migrationBanner: {
+      heading: "发现本地草稿",
+      descriptionAgent:
+        "此设备上保存的 Markdown Agent 草稿，可导入为正式 Agent。",
+      descriptionSkill:
+        "此设备上保存的 Markdown Skill 草稿，可导入为正式 Skill。",
+      import: "导入",
+      dismiss: "忽略",
+      importing: "正在导入…",
+      importFailed: "无法导入该草稿。",
     },
     library: {
       listView: "列表视图",
