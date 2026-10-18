@@ -33,6 +33,7 @@ from tap.modules.ai.adapters.litellm import (
 )
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, ModelRoles
 from tap.modules.ai.adapters.mysql_model_calls import MysqlModelCallRecorder
+from tap.modules.ai.application.agent_authoring import AgentAuthoringService
 from tap.modules.ai.application.catalog import ModelCatalog
 from tap.modules.ai.application.skill_authoring import SkillAuthoringService
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
@@ -976,7 +977,17 @@ async def create_api_runtime(
             event_wakeups=_create_event_wakeups(redis),
             draft_stream=_create_draft_stream(redis, redis_stream_block, settings),
         )
-        services = replace(services, chunk_manager=chunk_manager, skill_authoring=skill_authoring)
+        agent_authoring = AgentAuthoringService(
+            asset_catalog,
+            services.model_catalog,
+            scope=repository.scope,
+        )
+        services = replace(
+            services,
+            chunk_manager=chunk_manager,
+            skill_authoring=skill_authoring,
+            agent_authoring=agent_authoring,
+        )
         if settings.insights_base_url:
             if services.insights_knowledge_search is None:
                 raise ValueError("Insights knowledge evidence authority is unavailable")

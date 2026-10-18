@@ -1572,6 +1572,12 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     assert runtime.http_services.readiness is readiness
     assert runtime.http_services.knowledge._documents._repository is repository
     assert runtime.failure_controller is None
+    # Agent authoring composes the same asset catalog and the runtime's
+    # ModelCatalog, the same way skill authoring composes the asset catalog
+    # and the object store (otherwise every Agent write route 503s).
+    assert runtime.http_services.skill_authoring is not None
+    assert runtime.http_services.agent_authoring is not None
+    assert runtime.http_services.agent_authoring._models is runtime.http_services.model_catalog
     await runtime.aclose()
     await runtime.aclose()
     assert runtime.http_services.chunk_manager.index is chunk_index
