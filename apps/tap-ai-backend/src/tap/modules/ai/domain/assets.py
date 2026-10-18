@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from tap.modules.access.domain.context import ProjectScopeContext, require_identifier
+from tap.modules.ai.domain.tools import known_tool_ids
 
-_DOMAIN_TOOLS = frozenset({"knowledge.search", "knowledge.answer"})
 _TASKS = frozenset({"knowledge.answer", "test-plan.generate", "automation.generate"})
 
 
@@ -79,7 +79,10 @@ class AiAgentRevision:
             self.output_schema_digest,
         ):
             _digest(value)
-        if type(self.tool_allowlist) is not frozenset or not self.tool_allowlist <= _DOMAIN_TOOLS:
+        if (
+            type(self.tool_allowlist) is not frozenset
+            or not self.tool_allowlist <= known_tool_ids()
+        ):
             raise AssetRevisionRejected()
         if self.adopted_from_revision_id == self.revision_id:
             raise AssetRevisionRejected()

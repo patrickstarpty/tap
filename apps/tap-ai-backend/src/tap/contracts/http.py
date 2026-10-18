@@ -59,13 +59,25 @@ class AiAgentRevisionSummary(ContractModel):
     display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     content_digest: CanonicalSha256
     tool_allowlist: Annotated[
-        list[Literal["knowledge.search", "knowledge.answer"]], Field(max_length=2)
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=32),
     ]
     output_schema_digest: CanonicalSha256
 
 
 class AiAgentRevisionPage(ContractModel):
     items: Annotated[list[AiAgentRevisionSummary], Field(max_length=64)]
+
+
+class ToolDescriptor(ContractModel):
+    tool_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+    required: StrictBool
+
+
+class ToolPage(ContractModel):
+    items: Annotated[list[ToolDescriptor], Field(max_length=32)]
 
 
 class SkillRevisionSummary(ContractModel):

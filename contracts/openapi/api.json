@@ -66,13 +66,11 @@
           },
           "toolAllowlist": {
             "items": {
-              "enum": [
-                "knowledge.search",
-                "knowledge.answer"
-              ],
+              "maxLength": 128,
+              "minLength": 1,
               "type": "string"
             },
-            "maxItems": 2,
+            "maxItems": 32,
             "title": "Toolallowlist",
             "type": "array"
           }
@@ -10336,6 +10334,59 @@
         "title": "TestPlanTextFactView",
         "type": "object"
       },
+      "ToolDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "toolId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Toolid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "toolId",
+          "name",
+          "description",
+          "required"
+        ],
+        "title": "ToolDescriptor",
+        "type": "object"
+      },
+      "ToolPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ToolDescriptor"
+            },
+            "maxItems": 32,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ToolPage",
+        "type": "object"
+      },
       "TraceSpanView": {
         "additionalProperties": false,
         "properties": {
@@ -12153,6 +12204,80 @@
           }
         },
         "summary": "Get Skill",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/tools": {
+      "get": {
+        "operationId": "ai_list_tools",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "locale",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "en",
+                    "zh"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Locale"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "List Tools",
         "tags": [
           "ai"
         ]

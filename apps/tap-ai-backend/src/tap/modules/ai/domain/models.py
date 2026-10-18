@@ -9,6 +9,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.tools import known_tool_ids
 
 
 class ModelCapability(StrEnum):
@@ -81,7 +82,7 @@ class GenerationGovernance:
                     self.skill_instructions, self.skill_instruction_digests, strict=True
                 )
             )
-            or not self.tool_allowlist <= {"knowledge.search", "knowledge.answer"}
+            or not self.tool_allowlist <= known_tool_ids()
             or self.output_schema_digest != schema_digest(self.output_schema)
             or not self.revision_digests
         ):

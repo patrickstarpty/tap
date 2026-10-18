@@ -11,6 +11,8 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Mapping
 
+from tap.modules.ai.domain.tools import known_tool_ids
+
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
@@ -219,7 +221,7 @@ class TurnInput:
                 != self.agent_output_schema_digest
             ):
                 raise ValueError("agent output schema digest differs from frozen content")
-        if set(self.agent_tool_allowlist) - {"knowledge.search", "knowledge.answer"}:
+        if set(self.agent_tool_allowlist) - known_tool_ids():
             raise ValueError("agent tool authority is outside the closed allowlist")
         if self.insights_query_id is None and self.insights_report_refs:
             raise ValueError("Insights report refs require a historical query")

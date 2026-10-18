@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query, Request
 
 from tap.contracts.http import (
     AiAgentRevisionPage,
     AiAgentRevisionSummary,
     SkillRevisionPage,
     SkillRevisionSummary,
+    ToolDescriptor,
+    ToolPage,
 )
 from tap.interfaces.http.dependencies import asset_catalog_service
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
+from tap.modules.ai.domain.tools import TOOL_REGISTRY
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -35,6 +40,32 @@ def _skill(value) -> SkillRevisionSummary:
         display_name=value.display_name,
         content_digest=value.content_digest,
         applicable_tasks=sorted(value.applicable_tasks),
+    )
+
+
+@router.get(
+    "/tools",
+    operation_id="ai_list_tools",
+    response_model=ToolPage,
+    dependencies=[Depends(project_authorization("ai.agents.read"))],
+    responses={
+        422: problem_response_metadata("Request validation failed"),
+    },
+)
+async def list_tools(locale: Literal["en", "zh"] | None = Query(default=None)) -> ToolPage:
+    resolved_locale = locale or "en"
+    return ToolPage(
+        items=[
+            ToolDescriptor(
+                tool_id=definition.tool_id,
+                name=definition.names.get(resolved_locale, definition.names["en"]),
+                description=definition.descriptions.get(
+                    resolved_locale, definition.descriptions["en"]
+                ),
+                required=definition.required,
+            )
+            for definition in TOOL_REGISTRY.values()
+        ]
     )
 
 

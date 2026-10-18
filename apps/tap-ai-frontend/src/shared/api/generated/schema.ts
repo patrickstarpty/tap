@@ -84,6 +84,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/ai/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tools */
+        get: operations["ai_list_tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/conversations": {
         parameters: {
             query?: never;
@@ -1405,7 +1422,7 @@ export interface components {
             /** Revisionid */
             revisionId: string;
             /** Toolallowlist */
-            toolAllowlist: ("knowledge.search" | "knowledge.answer")[];
+            toolAllowlist: string[];
         };
         /** AnswerClaim */
         AnswerClaim: {
@@ -4987,6 +5004,22 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** ToolDescriptor */
+        ToolDescriptor: {
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+            /** Required */
+            required: boolean;
+            /** Toolid */
+            toolId: string;
+        };
+        /** ToolPage */
+        ToolPage: {
+            /** Items */
+            items: components["schemas"]["ToolDescriptor"][];
+        };
         /** TraceSpanView */
         TraceSpanView: {
             /** Attempt */
@@ -5698,6 +5731,48 @@ export interface operations {
             };
             /** @description Knowledge runtime unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_list_tools: {
+        parameters: {
+            query?: {
+                locale?: ("en" | "zh") | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

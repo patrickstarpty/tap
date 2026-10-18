@@ -28,6 +28,8 @@ from tap.contracts.http import (
     RetrievalSearchResponse,
     RetrievalSourceRevision,
     StructuralAnchor,
+    ToolDescriptor,
+    ToolPage,
 )
 
 SOURCE_HASH = "sha256:" + "a" * 64
@@ -215,6 +217,11 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "hits",
         },
     ),
+    (
+        ToolDescriptor,
+        {"toolId", "name", "description", "required"},
+    ),
+    (ToolPage, {"items"}),
     (
         RetrievalAnswerResponse,
         {

@@ -106,3 +106,44 @@ def test_unknown_agent_revision_uses_a_safe_problem_response() -> None:
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.json()["type"] == "https://tap.example/problems/asset-revision-unavailable"
+
+
+def test_tool_catalog_defaults_to_english_and_supports_zh_locale() -> None:
+    from tap.modules.ai.domain.tools import TOOL_REGISTRY
+
+    authority = _Authority()
+    app = create_app(
+        HttpServices(
+            asset_catalog=_Assets(),
+            scope=VALIDATION_SCOPE,
+            scope_provider=authority,
+            authorization_policy=authority,
+        )
+    )
+    client = TestClient(app)
+
+    default = client.get("/api/v1/projects/tapper-demo/ai/tools")
+    english = client.get("/api/v1/projects/tapper-demo/ai/tools?locale=en")
+    chinese = client.get("/api/v1/projects/tapper-demo/ai/tools?locale=zh")
+    denied = client.get("/api/v1/projects/other/ai/tools")
+
+    assert default.status_code == english.status_code == chinese.status_code == 200
+    assert default.json() == english.json()
+
+    expected_tool_ids = sorted(TOOL_REGISTRY)
+    english_body = english.json()
+    assert sorted(item["toolId"] for item in english_body["items"]) == expected_tool_ids
+    for item in english_body["items"]:
+        definition = TOOL_REGISTRY[item["toolId"]]
+        assert item["name"] == definition.names["en"]
+        assert item["description"] == definition.descriptions["en"]
+        assert item["required"] is True
+
+    chinese_body = chinese.json()
+    assert sorted(item["toolId"] for item in chinese_body["items"]) == expected_tool_ids
+    for item in chinese_body["items"]:
+        definition = TOOL_REGISTRY[item["toolId"]]
+        assert item["name"] == definition.names["zh"]
+        assert item["description"] == definition.descriptions["zh"]
+
+    assert denied.status_code == 403
