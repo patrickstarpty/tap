@@ -473,3 +473,129 @@ async def test_seed_marks_built_in_and_persists_text(owned_project_mysql) -> Non
         assert resolved_skill.source_kind == "built_in"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_insert_skill_revision_on_the_same_base_conflicts_cleanly(
+    owned_project_mysql,
+) -> None:
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.assets import RevisionConflict, SkillRevision, text_digest
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+        def _revision(revision_id: str, body: str) -> SkillRevision:
+            return SkillRevision(
+                revision_id=revision_id,
+                asset_id="race-skill",
+                display_name="Race skill",
+                scope=VALIDATION_SCOPE,
+                content_digest=text_digest(revision_id),
+                instruction_template_digest=text_digest(body),
+                applicable_tasks=frozenset({"knowledge.answer"}),
+                instruction_template=body,
+                source_kind="authored",
+            )
+
+        v1 = _revision("race-skill-v1", "v1 body")
+        await MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).insert_skill_revision(
+            v1, base_revision_id=None
+        )
+
+        results = await asyncio.gather(
+            MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).insert_skill_revision(
+                _revision("race-skill-v2a", "v2a body"), base_revision_id=v1.revision_id
+            ),
+            MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).insert_skill_revision(
+                _revision("race-skill-v2b", "v2b body"), base_revision_id=v1.revision_id
+            ),
+            return_exceptions=True,
+        )
+
+        successes = [item for item in results if isinstance(item, SkillRevision)]
+        conflicts = [item for item in results if isinstance(item, RevisionConflict)]
+        other_errors = [
+            item for item in results if not isinstance(item, (SkillRevision, RevisionConflict))
+        ]
+        assert other_errors == []
+        assert len(successes) == 1
+        assert len(conflicts) == 1
+
+        catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
+        revisions = await catalog.list_revisions("skill", "race-skill")
+        assert [item.revision_id for item in revisions] == [
+            v1.revision_id,
+            successes[0].revision_id,
+        ]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_insert_agent_revision_on_the_same_base_conflicts_cleanly(
+    owned_project_mysql,
+) -> None:
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.assets import AiAgentRevision, RevisionConflict, text_digest
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+        def _revision(revision_id: str, instruction: str) -> AiAgentRevision:
+            return AiAgentRevision(
+                revision_id=revision_id,
+                asset_id="race-agent",
+                display_name="Race agent",
+                scope=VALIDATION_SCOPE,
+                content_digest=text_digest(revision_id),
+                system_instruction_digest=text_digest(instruction),
+                tool_allowlist=frozenset({"knowledge.search"}),
+                output_schema_digest=text_digest("schema"),
+                source_kind="authored",
+            )
+
+        v1 = _revision("race-agent-v1", "v1 instruction")
+        await MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).insert_agent_revision(
+            v1, base_revision_id=None
+        )
+
+        results = await asyncio.gather(
+            MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).insert_agent_revision(
+                _revision("race-agent-v2a", "v2a instruction"), base_revision_id=v1.revision_id
+            ),
+            MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).insert_agent_revision(
+                _revision("race-agent-v2b", "v2b instruction"), base_revision_id=v1.revision_id
+            ),
+            return_exceptions=True,
+        )
+
+        successes = [item for item in results if isinstance(item, AiAgentRevision)]
+        conflicts = [item for item in results if isinstance(item, RevisionConflict)]
+        other_errors = [
+            item for item in results if not isinstance(item, (AiAgentRevision, RevisionConflict))
+        ]
+        assert other_errors == []
+        assert len(successes) == 1
+        assert len(conflicts) == 1
+
+        catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
+        revisions = await catalog.list_revisions("agent", "race-agent")
+        assert [item.revision_id for item in revisions] == [
+            v1.revision_id,
+            successes[0].revision_id,
+        ]
+    finally:
+        await engine.dispose()

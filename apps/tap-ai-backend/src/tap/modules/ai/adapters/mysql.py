@@ -20,6 +20,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.mysql import CHAR, DATETIME, JSON, MEDIUMTEXT
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
@@ -784,58 +785,72 @@ class MysqlAssetCatalog:
         if not isinstance(revision, SkillRevision):
             raise AssetRevisionRejected()
         self._assert_scope(revision.scope)
-        async with self._sessions.begin() as session:
-            latest = await self._latest_revision_id(
-                session, skill_revision, "skill_id", revision.asset_id
-            )
-            if latest != base_revision_id:
-                raise RevisionConflict()
-            now = datetime.now(timezone.utc)
-            parent = (
-                await session.execute(
-                    select(skill.c.skill_id).where(
-                        *scope_predicates(skill, self._scope),
-                        skill.c.skill_id == revision.asset_id,
+        try:
+            async with self._sessions.begin() as session:
+                now = datetime.now(timezone.utc)
+                # Lock the asset's parent row first so a concurrent writer on
+                # the same asset blocks here (rather than racing the latest
+                # revision_id read and the revision_number insert below).
+                parent = (
+                    await session.execute(
+                        select(skill.c.skill_id)
+                        .where(
+                            *scope_predicates(skill, self._scope),
+                            skill.c.skill_id == revision.asset_id,
+                        )
+                        .with_for_update()
                     )
+                ).one_or_none()
+                if parent is None:
+                    await session.execute(
+                        skill.insert().values(
+                            skill_id=revision.asset_id,
+                            display_name=revision.display_name,
+                            created_at=now,
+                            **scope_values(self._scope),
+                        )
+                    )
+                latest = await self._latest_revision_id(
+                    session, skill_revision, "skill_id", revision.asset_id
                 )
-            ).one_or_none()
-            if parent is None:
+                if latest != base_revision_id:
+                    raise RevisionConflict()
+                await self._assert_adoption(
+                    session, skill_revision, revision.adopted_from_revision_id
+                )
+                revision_number = await self._next_number(
+                    session, skill_revision, "skill_id", revision.asset_id
+                )
                 await session.execute(
-                    skill.insert().values(
+                    skill_revision.insert().values(
+                        revision_id=revision.revision_id,
                         skill_id=revision.asset_id,
+                        revision_number=revision_number,
                         display_name=revision.display_name,
+                        description=revision.description,
+                        source_kind=revision.source_kind,
+                        content_digest=revision.content_digest,
+                        instruction_template_digest=revision.instruction_template_digest,
+                        instruction_body=revision.instruction_template,
+                        attached_reference_text=revision.attached_references,
+                        frontmatter_json=(
+                            dict(revision.frontmatter) if revision.frontmatter is not None else None
+                        ),
+                        package_digest=revision.package_digest,
+                        applicable_tasks=sorted(revision.applicable_tasks),
+                        status=revision.status.value,
+                        adopted_from_revision_id=revision.adopted_from_revision_id,
                         created_at=now,
                         **scope_values(self._scope),
                     )
                 )
-            await self._assert_adoption(session, skill_revision, revision.adopted_from_revision_id)
-            revision_number = await self._next_number(
-                session, skill_revision, "skill_id", revision.asset_id
-            )
-            await session.execute(
-                skill_revision.insert().values(
-                    revision_id=revision.revision_id,
-                    skill_id=revision.asset_id,
-                    revision_number=revision_number,
-                    display_name=revision.display_name,
-                    description=revision.description,
-                    source_kind=revision.source_kind,
-                    content_digest=revision.content_digest,
-                    instruction_template_digest=revision.instruction_template_digest,
-                    instruction_body=revision.instruction_template,
-                    attached_reference_text=revision.attached_references,
-                    frontmatter_json=(
-                        dict(revision.frontmatter) if revision.frontmatter is not None else None
-                    ),
-                    package_digest=revision.package_digest,
-                    applicable_tasks=sorted(revision.applicable_tasks),
-                    status=revision.status.value,
-                    adopted_from_revision_id=revision.adopted_from_revision_id,
-                    created_at=now,
-                    **scope_values(self._scope),
-                )
-            )
-            await self._insert_skill_files(session, revision)
+                await self._insert_skill_files(session, revision)
+        except IntegrityError as error:
+            # A residual race (e.g. two first-time creates of the same new
+            # asset_id racing the parent-row insert itself, before either
+            # side has a row to lock) surfaces as a unique-constraint
+            # violation rather than the clean conflict detected above.
+            raise RevisionConflict() from error
         return revision
 
     async def insert_agent_revision(
@@ -844,58 +859,66 @@ class MysqlAssetCatalog:
         if not isinstance(revision, AiAgentRevision):
             raise AssetRevisionRejected()
         self._assert_scope(revision.scope)
-        async with self._sessions.begin() as session:
-            latest = await self._latest_revision_id(
-                session, ai_agent_revision, "agent_id", revision.asset_id
-            )
-            if latest != base_revision_id:
-                raise RevisionConflict()
-            now = datetime.now(timezone.utc)
-            parent = (
-                await session.execute(
-                    select(ai_agent.c.agent_id).where(
-                        *scope_predicates(ai_agent, self._scope),
-                        ai_agent.c.agent_id == revision.asset_id,
+        try:
+            async with self._sessions.begin() as session:
+                now = datetime.now(timezone.utc)
+                # See insert_skill_revision: lock the parent row first so a
+                # concurrent writer on the same asset blocks here instead of
+                # racing the latest revision_id read and the insert below.
+                parent = (
+                    await session.execute(
+                        select(ai_agent.c.agent_id)
+                        .where(
+                            *scope_predicates(ai_agent, self._scope),
+                            ai_agent.c.agent_id == revision.asset_id,
+                        )
+                        .with_for_update()
                     )
+                ).one_or_none()
+                if parent is None:
+                    await session.execute(
+                        ai_agent.insert().values(
+                            agent_id=revision.asset_id,
+                            display_name=revision.display_name,
+                            created_at=now,
+                            **scope_values(self._scope),
+                        )
+                    )
+                latest = await self._latest_revision_id(
+                    session, ai_agent_revision, "agent_id", revision.asset_id
                 )
-            ).one_or_none()
-            if parent is None:
+                if latest != base_revision_id:
+                    raise RevisionConflict()
+                await self._assert_adoption(
+                    session, ai_agent_revision, revision.adopted_from_revision_id
+                )
+                revision_number = await self._next_number(
+                    session, ai_agent_revision, "agent_id", revision.asset_id
+                )
                 await session.execute(
-                    ai_agent.insert().values(
+                    ai_agent_revision.insert().values(
+                        revision_id=revision.revision_id,
                         agent_id=revision.asset_id,
+                        revision_number=revision_number,
                         display_name=revision.display_name,
+                        description=revision.description,
+                        source_kind=revision.source_kind,
+                        content_digest=revision.content_digest,
+                        system_instruction_digest=revision.system_instruction_digest,
+                        system_instruction=revision.system_instruction,
+                        tool_allowlist=sorted(revision.tool_allowlist),
+                        output_schema_digest=revision.output_schema_digest,
+                        output_schema_json=revision.output_schema_json,
+                        skill_revision_ids=list(revision.skill_revision_ids),
+                        default_model_alias=revision.default_model_alias,
+                        status=revision.status.value,
+                        adopted_from_revision_id=revision.adopted_from_revision_id,
                         created_at=now,
                         **scope_values(self._scope),
                     )
                 )
-            await self._assert_adoption(
-                session, ai_agent_revision, revision.adopted_from_revision_id
-            )
-            revision_number = await self._next_number(
-                session, ai_agent_revision, "agent_id", revision.asset_id
-            )
-            await session.execute(
-                ai_agent_revision.insert().values(
-                    revision_id=revision.revision_id,
-                    agent_id=revision.asset_id,
-                    revision_number=revision_number,
-                    display_name=revision.display_name,
-                    description=revision.description,
-                    source_kind=revision.source_kind,
-                    content_digest=revision.content_digest,
-                    system_instruction_digest=revision.system_instruction_digest,
-                    system_instruction=revision.system_instruction,
-                    tool_allowlist=sorted(revision.tool_allowlist),
-                    output_schema_digest=revision.output_schema_digest,
-                    output_schema_json=revision.output_schema_json,
-                    skill_revision_ids=list(revision.skill_revision_ids),
-                    default_model_alias=revision.default_model_alias,
-                    status=revision.status.value,
-                    adopted_from_revision_id=revision.adopted_from_revision_id,
-                    created_at=now,
-                    **scope_values(self._scope),
-                )
-            )
+        except IntegrityError as error:
+            raise RevisionConflict() from error
         return revision
 
     async def set_asset_enabled(

@@ -129,8 +129,13 @@ def downgrade() -> None:
         ("skill_revision", "frontmatter_json"),
         ("skill_revision", "package_digest"),
     ):
-        existing = bind.execute(sa.text(f"SELECT {column} FROM {table} LIMIT 1")).first()
-        if existing is not None and existing[0] is not None:
+        has_data = (
+            bind.execute(
+                sa.text(f"SELECT 1 FROM {table} WHERE {column} IS NOT NULL LIMIT 1")
+            ).first()
+            is not None
+        )
+        if has_data:
             raise RuntimeError("Approved AI asset revisions require retention; downgrade refused")
 
     op.drop_table("skill_import")
