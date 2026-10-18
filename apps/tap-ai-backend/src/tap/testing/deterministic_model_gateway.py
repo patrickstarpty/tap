@@ -37,6 +37,9 @@ from tap.testing.deterministic_model import (
 # wired up for the explicitly isolated fake E2E profile only.
 _ABSTENTION_QUERY_SUFFIX = " [e2e-abstain]"
 
+# Longer than `DraftBatcher`'s default `max_delay_s` (0.05s); see `chat_stream`.
+_PRE_HOLD_FLUSH_PAUSE_SECONDS = 0.2
+
 BUILT_IN_ROUTES = LiteLLMRoutes(
     {
         "qwen-plus": LiteLLMModel("qwen-plus", "Qwen Plus", "chat", True, True, False),
@@ -244,8 +247,17 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         )
         last_index = len(pieces) - 1
         for index, piece in enumerate(pieces):
-            if index == last_index and cancellation_delay is not None:
-                await asyncio.sleep(cancellation_delay)
+            if cancellation_delay is not None:
+                if index == last_index - 1:
+                    # `DraftBatcher` only flushes on a push, once `max_delay_s`
+                    # has elapsed since its last flush; event-loop jitter can
+                    # make it flush one piece early and then skip the last
+                    # pre-hold piece, leaving the pre-hold text unflushed until
+                    # after the hold. Pausing past that window guarantees this
+                    # push flushes, so a draft is visible before Stop is clicked.
+                    await asyncio.sleep(_PRE_HOLD_FLUSH_PAUSE_SECONDS)
+                elif index == last_index:
+                    await asyncio.sleep(cancellation_delay)
             yield ModelTextDelta(piece)
             await asyncio.sleep(0.02)
         yield result

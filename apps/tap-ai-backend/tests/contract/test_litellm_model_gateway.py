@@ -601,9 +601,83 @@ async def test_deterministic_gateway_delays_chat_answer_with_cancel_marker(
     async for _ in gateway.chat_stream(_chat_answer_request(context)):
         pass
 
-    assert delays[-2] == 5.0
-    assert delays[-1] == 0.02
-    assert delays[:-2] == [0.02] * (len(delays) - 2)
+    assert delays[-4:] == [0.2, 0.02, 5.0, 0.02]
+    assert delays[:-4] == [0.02] * (len(delays) - 4)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stalled_piece", range(1, 8))
+async def test_deterministic_gateway_cancel_marker_flushes_a_draft_before_the_delay(
+    monkeypatch: pytest.MonkeyPatch, stalled_piece: int
+) -> None:
+    """The browser E2E waits for a visible draft and only then clicks Stop, so
+    a non-empty `DraftBatcher` chunk must reach the draft stream before the
+    5.0s cancellation delay starts, whatever the event-loop jitter. The
+    batcher only flushes on a push (after `max_chars` or `max_delay_s`), so a
+    single scheduling stall can make it flush one piece early and then skip
+    the last pre-delay piece; the text past the holdback margin would then
+    stay unflushed for the whole hold, the draft would first appear after it,
+    and Stop would race turn completion (demo-e2e saw the canceled turn reach
+    `completed`). Each case stalls one pacing sleep by an extra 0.06s."""
+
+    from tap.entrypoints import tapper_draft_batcher
+    from tap.entrypoints.tapper_draft_batcher import DraftBatcher
+    from tap.testing import deterministic_model_gateway
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    clock = [1000.0]
+    monkeypatch.setattr(tapper_draft_batcher.time, "monotonic", lambda: clock[0])
+
+    class RecordingDrafts:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def append(self, turn_id, *, attempt, seq, text, reset=False) -> None:
+            self.sent.append(text)
+
+    drafts = RecordingDrafts()
+    sent_when_hold_started: list[str] = []
+    pacing_sleeps = [0]
+
+    async def jittered_sleep(seconds: float) -> None:
+        if seconds == 5.0:
+            sent_when_hold_started.append("".join(drafts.sent))
+        else:
+            pacing_sleeps[0] += 1
+            if pacing_sleeps[0] == stalled_piece:
+                clock[0] += 0.06
+        clock[0] += seconds
+
+    monkeypatch.setattr(deterministic_model_gateway.asyncio, "sleep", jittered_sleep)
+
+    async def identity(text: str) -> str:
+        return text
+
+    batcher = DraftBatcher(turn_id="turn-1", attempt=1, drafts=drafts, redact=identity)
+    gateway = DeterministicModelGateway(
+        configured_gateway(success)._config, scope=VALIDATION_SCOPE, redact=redact
+    )
+    context = json.dumps(
+        {
+            "query": "Durable conversation 1 [e2e-cancel]",
+            "untrusted": {
+                "evidence": [
+                    {
+                        "label": "S1",
+                        "content": "A policy application requires verified identity evidence.",
+                    }
+                ]
+            },
+        }
+    )
+
+    async for event in gateway.chat_stream(_chat_answer_request(context)):
+        if isinstance(event, ModelTextDelta):
+            await batcher.push(event.text)
+    await batcher.close()
+
+    assert len(sent_when_hold_started) == 1
+    assert sent_when_hold_started[0] != ""
 
 
 @pytest.mark.asyncio

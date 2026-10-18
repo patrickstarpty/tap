@@ -110,6 +110,19 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     .getByRole("menuitemradio", { name: defaultModel!.displayName })
     .click();
   await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
+  // The deterministic turn can finish within a few hundred milliseconds, so
+  // the draft may be on screen for less than one Playwright polling interval.
+  // Record every DOM commit instead of polling for the transient state.
+  await page.evaluate(() => {
+    const seen = { draft: false, citation: false };
+    (window as unknown as { tapperDraftSeen: typeof seen }).tapperDraftSeen =
+      seen;
+    new MutationObserver(() => {
+      if (document.querySelector(".tapper-draft-answer")) seen.draft = true;
+      if (document.querySelector(".tapper-draft-citation"))
+        seen.citation = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
   const acceptedResponsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -124,15 +137,23 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   };
 
   // The generating draft (`answer.draft` frames assembled into `DraftAnswer`)
-  // must be visible, with at least one inline citation badge resolved from
+  // must be rendered, with at least one inline citation badge resolved from
   // `retrieval.hits_ready`, before the turn reaches a terminal state and the
   // final `GroundedAnswer` replaces it.
-  await expect(page.locator(".tapper-draft-answer").first()).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(page.locator(".tapper-draft-citation").first()).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                tapperDraftSeen: { draft: boolean; citation: boolean };
+              }
+            ).tapperDraftSeen,
+        ),
+      { timeout: 15_000 },
+    )
+    .toEqual({ draft: true, citation: true });
 
   await expect
     .poll(
