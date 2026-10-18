@@ -756,6 +756,88 @@ def test_turn_view_lists_frozen_revisions_and_skill_notices():
     assert view["skillNotices"] == ["skill_disabled:skill-disabled-bound"]
 
 
+def test_idempotency_replay_with_a_different_skill_request_is_a_conflict():
+    """I-2 (fix round 1): the frozen Turn's `skillRevisionIds` is the merged/
+    applied set, not a 1:1 echo of the request -- comparing it against a
+    replay's raw `skillRevisionIds` would let two different requests share an
+    Idempotency-Key whenever their merged results happened to collide. This
+    checks the fast `_matches_replay` pre-check catches a genuine mismatch,
+    including when the *merged* result would otherwise be identical: the
+    Agent here binds "skill-bound", so an implicit (`[]`) and an explicit
+    (`["skill-bound"]`) request apply the exact same Skill, but are still two
+    different requests."""
+
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Models:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            return [STRUCTURED_CHAT_MODEL]
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_conversation_selection(self, _revision_ids):
+            return (), SimpleNamespace(
+                acl_digest="sha256:" + "0" * 64,
+                decision_id="decision-1",
+                policy_version="policy-1",
+                active_corpus_version="tapper-demo-v1",
+            )
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        asset_catalog=_asset_catalog_for_merge_tests(),
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+    headers = {"Idempotency-Key": "replay-skill-mismatch"}
+    base_body = {
+        "message": "question",
+        "modelAlias": "qwen-plus",
+        "agentRevisionId": "agent-1",
+    }
+
+    first = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={**base_body, "skillRevisionIds": []},
+        headers=headers,
+    )
+    assert first.status_code == 202, first.text
+
+    same_applied_different_request = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={**base_body, "skillRevisionIds": ["skill-bound"]},
+        headers=headers,
+    )
+    assert same_applied_different_request.status_code == 409, same_applied_different_request.text
+    assert same_applied_different_request.json()["type"].endswith("/idempotency-conflict")
+
+    genuinely_different = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={**base_body, "skillRevisionIds": ["skill-requested"]},
+        headers=headers,
+    )
+    assert genuinely_different.status_code == 409, genuinely_different.text
+
+    exact_replay = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={**base_body, "skillRevisionIds": []},
+        headers=headers,
+    )
+    assert exact_replay.status_code == 202, exact_replay.text
+    assert exact_replay.json() == first.json()
+
+
 def test_skill_budget_exceeded_over_96kb_returns_skill_problem():
     from tap.modules.ai.application.assets import ApprovedAssetCatalog
     from tap.modules.ai.domain.assets import SkillRevision, text_digest

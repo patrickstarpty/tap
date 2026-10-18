@@ -230,6 +230,8 @@ def _input_json(value):
         "agent_tool_allowlist": list(value.agent_tool_allowlist),
         "skill_instruction_templates": list(value.skill_instruction_templates),
         "skill_instruction_template_digests": list(value.skill_instruction_template_digests),
+        "skill_notices": list(value.skill_notices),
+        "requested_skill_revision_ids": list(value.requested_skill_revision_ids),
     }
 
 
@@ -518,6 +520,8 @@ class MysqlConversationRepository:
             skill_revision_ids=tuple(raw["skill_revision_ids"]),
             skill_revision_digests=tuple(raw["skill_revision_digests"]),
             skill_labels=tuple(raw.get("skill_labels", [])),
+            skill_notices=tuple(raw.get("skill_notices", [])),
+            requested_skill_revision_ids=tuple(raw.get("requested_skill_revision_ids", [])),
             agent_system_instruction=raw.get("agent_system_instruction"),
             agent_system_instruction_digest=raw.get("agent_system_instruction_digest"),
             agent_tool_allowlist=tuple(raw.get("agent_tool_allowlist", [])),

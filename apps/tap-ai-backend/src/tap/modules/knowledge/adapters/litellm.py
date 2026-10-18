@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from uuid import uuid4
 
@@ -82,6 +83,31 @@ _TAPPER_CUSTOMIZATION_BOUNDARY = (
 )
 
 
+_SKILL_CLOSE_MARKER = re.compile(r"</skill", re.IGNORECASE)
+
+
+def _escape_skill_name(name: str) -> str:
+    """Neutralize a free-text Skill display name (no charset restriction, unlike
+    the identifier-shaped `revision_id`) so it cannot break out of the
+    `name="..."` attribute it is interpolated into (fix round 1, M-4)."""
+
+    return (
+        name.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+
+
+def _neutralize_skill_body(instruction: str) -> str:
+    """Break up a literal `</skill` inside a Skill's own instruction text (fix
+    round 1, M-4) so the Skill cannot forge a premature close tag and make
+    attacker-chosen text that follows look like it sits outside this Skill's
+    block -- a zero-width space is invisible to a model/transcript reader but
+    defeats a literal-substring match."""
+
+    return _SKILL_CLOSE_MARKER.sub(
+        lambda match: match.group(0)[0] + "​" + match.group(0)[1:], instruction
+    )
+
+
 def _skill_blocks(governance: GenerationGovernance) -> tuple[str, ...]:
     """Wrap each applied Skill's instruction text in a `<skill name=... revision=...>`
     block so the model (and a transcript reader) can see which Skill a given
@@ -97,7 +123,8 @@ def _skill_blocks(governance: GenerationGovernance) -> tuple[str, ...]:
     ) != len(governance.skill_instructions):
         return governance.skill_instructions
     return tuple(
-        f'<skill name="{name}" revision="{revision_id}">\n{instruction}\n</skill>'
+        f'<skill name="{_escape_skill_name(name)}" revision="{revision_id}">\n'
+        f"{_neutralize_skill_body(instruction)}\n</skill>"
         for name, revision_id, instruction in zip(
             governance.skill_names,
             governance.skill_revision_ids,

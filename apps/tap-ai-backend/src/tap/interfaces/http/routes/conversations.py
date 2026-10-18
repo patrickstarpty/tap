@@ -80,11 +80,13 @@ router = APIRouter(
 def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
     """A cheap pre-check for the obvious-mismatch case, so an unmistakably different
     replay body fails fast without the asset/knowledge lookups `_input` would do.
-    `skill_revision_ids` is deliberately not compared here: the frozen Turn stores
-    `merge_skill_selection`'s *applied* set (Agent-bound ids first, deduped, with
-    disabled/inapplicable ids skipped), not `body.skill_revision_ids` verbatim, so
-    the two are not directly comparable. `_validate_replay`'s full recomputation
-    and dataclass equality below still catches a genuine Skill-selection mismatch.
+    The frozen Turn's `skill_revision_ids` is `merge_skill_selection`'s *applied*
+    set (Agent-bound ids first, deduped, with disabled/inapplicable ids skipped),
+    not `body.skill_revision_ids` verbatim, so it is compared against
+    `requested_skill_revision_ids` (the caller's raw request, frozen alongside it
+    for exactly this check) instead -- fix round 1, I-2. `_validate_replay`'s full
+    recomputation and dataclass equality below still catches a genuine mismatch
+    this quick check would miss.
     """
 
     value = turn.input_snapshot.value
@@ -94,6 +96,7 @@ def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
         and value.source_revision_ids == tuple(body.source_revision_ids)
         and value.document_revision_ids == tuple(body.document_revision_ids)
         and value.agent_revision_id == body.agent_revision_id
+        and value.requested_skill_revision_ids == tuple(body.skill_revision_ids)
     )
 
 
@@ -181,6 +184,7 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         skill_revision_digests=tuple(item.content_digest for item in skills),
         skill_labels=tuple(getattr(item, "display_name", item.revision_id) for item in skills),
         skill_notices=selection.notices,
+        requested_skill_revision_ids=tuple(body.skill_revision_ids),
         agent_system_instruction=(
             None if body.agent_revision_id is None else agent.system_instruction
         ),

@@ -136,6 +136,13 @@ class TurnInput:
     # bound Skill, task-inapplicable Skill); frozen into the Turn so a checkpoint
     # resume/retry sees the same notices rather than recomputing them.
     skill_notices: tuple[str, ...] = ()
+    # The caller's raw request (fix round 1, I-2): `skill_revision_ids` above is
+    # `merge_skill_selection`'s *applied* set (Agent-bound ids first, deduped,
+    # disabled/inapplicable ids skipped) -- not a 1:1 echo of what the caller
+    # asked for, so it cannot detect an idempotency replay that requests a
+    # different set of Skills than the one already frozen. This field is that
+    # 1:1 echo, kept only so `_matches_replay` can tell the two requests apart.
+    requested_skill_revision_ids: tuple[str, ...] = ()
     acl_digest: str = "sha256:" + "0" * 64
     retrieval_policy_digest: str = "sha256:" + "0" * 64
     insights_query_id: str | None = None
@@ -245,6 +252,8 @@ class TurnInput:
             value.pop("skill_labels")
         if not self.skill_notices:
             value.pop("skill_notices")
+        if not self.requested_skill_revision_ids:
+            value.pop("requested_skill_revision_ids")
         resources = []
         for item in value["resolved_resources"]:
             resources.append({key: fact for key, fact in item.items() if fact is not None})

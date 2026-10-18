@@ -245,6 +245,64 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
     asyncio.run(scenario())
 
 
+def test_turn_with_skill_notices_round_trips_through_mysql(owned_project_mysql):
+    """C-1 regression: a Turn whose merged Skill selection skipped a disabled or
+    inapplicable Skill carries non-empty `skill_notices`, which is part of the
+    frozen `TurnInput`'s digest material -- the loader must reconstruct it, or
+    the reloaded snapshot's recomputed digest silently diverges from the one
+    persisted at write time."""
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            turn_input = TurnInput(
+                message="Persist a notice",
+                actor_id=VALIDATION_SCOPE.actor_id,
+                identity_mode="validation",
+                model_alias="qwen-plus",
+                agent_revision_id="validation-knowledge-agent-v1",
+                agent_revision_digest="sha256:" + "a" * 64,
+                skill_revision_ids=("validation-citation-skill-v1",),
+                skill_revision_digests=("sha256:" + "b" * 64,),
+                skill_notices=("skill_disabled:validation-skipped-skill-v1",),
+                requested_skill_revision_ids=(
+                    "validation-citation-skill-v1",
+                    "validation-skipped-skill-v1",
+                ),
+                retrieval_policy_digest="sha256:" + "c" * 64,
+            )
+            repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            service = ConversationService(repository, scope=VALIDATION_SCOPE)
+            accepted = await service.create(
+                "notices-conversation", "notices-turn", "notices-request", turn_input
+            )
+            original_digest = accepted.input_snapshot.digest
+
+            reloaded_service = ConversationService(
+                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+                scope=VALIDATION_SCOPE,
+            )
+            loaded = await reloaded_service.load("notices-conversation")
+
+            loaded_snapshot = loaded.turns[0].input_snapshot
+            assert loaded_snapshot.value.skill_notices == (
+                "skill_disabled:validation-skipped-skill-v1",
+            )
+            assert loaded_snapshot.value.requested_skill_revision_ids == (
+                "validation-citation-skill-v1",
+                "validation-skipped-skill-v1",
+            )
+            assert loaded_snapshot.digest == original_digest
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
     async def scenario():
         url = owned_project_database_url(owned_project_mysql).replace(
