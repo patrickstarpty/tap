@@ -149,7 +149,11 @@ export function SkillsWorkspace({
                       ? text.filterBuiltIn
                       : text.filterCustom}
                   </span>
-                  <span data-status={item.status}>{item.status}</span>
+                  <span data-status={item.status}>
+                    {item.status === "enabled"
+                      ? text.statusEnabled
+                      : text.statusDisabled}
+                  </span>
                 </div>
                 {item.description ? <p>{item.description}</p> : null}
               </article>

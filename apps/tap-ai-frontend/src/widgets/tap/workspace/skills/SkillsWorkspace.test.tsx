@@ -192,7 +192,6 @@ describe("SkillsWorkspace actions", () => {
     const onUse = vi.fn();
     renderWorkspace({ onUse });
     const row = screen.getByText("Custom policy helper").closest("li")!;
-    await userEvent.setup();
     await user.click(
       screen
         .getAllByRole("button", { name: "Use in chat" })

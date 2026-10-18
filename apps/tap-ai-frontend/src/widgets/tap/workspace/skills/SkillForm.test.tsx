@@ -148,6 +148,49 @@ describe("SkillForm revision conflict", () => {
   });
 });
 
+describe("SkillForm edit keeps the authored name", () => {
+  it("seeds the name field from frontmatter.name, not the opaque skillId, and sends it back on revise", async () => {
+    const user = userEvent.setup();
+    const reviseMutateAsync = vi
+      .fn()
+      .mockResolvedValue({ revisionId: "rev_2" });
+    renderForm({
+      mode: "edit",
+      skill: {
+        revisionId: "rev_1",
+        skillId: "skill_7f3a9c2e",
+        assetId: "skill_7f3a9c2e",
+        displayName: "Policy lookup",
+        contentDigest: "digest",
+        applicableTasks: ["knowledge.answer"],
+        sourceKind: "authored",
+        builtIn: false,
+        status: "enabled",
+        isLatest: true,
+        description: "Look up policy terms",
+        instructions: "Search the index.",
+        frontmatter: { name: "policy-lookup" },
+      } as never,
+      reviseMutateAsync,
+    });
+
+    const nameField = screen.getByRole("textbox", { name: "Name" });
+    expect(nameField).toHaveValue("policy-lookup");
+    const preview = screen.getByText(/SKILL\.md preview/i).closest("div");
+    expect(preview).toHaveTextContent("name: policy-lookup");
+    expect(preview).not.toHaveTextContent("skill_7f3a9c2e");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(reviseMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillId: "skill_7f3a9c2e",
+        request: expect.objectContaining({ name: "policy-lookup" }),
+      }),
+    );
+  });
+});
+
 describe("SkillForm create", () => {
   it("submits a new skill with the entered fields", async () => {
     const user = userEvent.setup();

@@ -36,6 +36,19 @@ export interface SkillFormProps {
 
 const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/**
+ * The frontmatter `name` is the skill's real identity (what the backend
+ * sets `display_name` from on revise/create) — `skillId`/`assetId` are
+ * server-generated opaque ids, never the authored name. Falling back to
+ * `skillId` here previously renamed every edited skill to its id.
+ */
+function skillFrontmatterName(
+  skill: SkillRevisionDetail | undefined,
+): string | null {
+  const value = skill?.frontmatter?.name;
+  return typeof value === "string" ? value : null;
+}
+
 export function SkillForm({
   projectId,
   copy,
@@ -47,7 +60,9 @@ export function SkillForm({
 }: SkillFormProps) {
   const form = copy.skillsWorkspace.form;
   const [name, setName] = useState(
-    mode === "copy" ? "" : (skill?.skillId ?? skill?.displayName ?? ""),
+    mode === "copy"
+      ? ""
+      : (skillFrontmatterName(skill) ?? skill?.displayName ?? ""),
   );
   const [description, setDescription] = useState(skill?.description ?? "");
   const [instructions, setInstructions] = useState(skill?.instructions ?? "");

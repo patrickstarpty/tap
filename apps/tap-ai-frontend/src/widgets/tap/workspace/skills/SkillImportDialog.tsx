@@ -62,8 +62,13 @@ export function SkillImportDialog({
         if (archiveFile.name.toLowerCase().endsWith(".zip")) {
           result = await stageImport.mutateAsync({ archive: archiveFile });
         } else {
+          // A single non-archive upload is always *the* SKILL.md, whatever
+          // the browser's picked filename happens to be (e.g.
+          // "policy-lookup.md") — the backend only recognizes the exact
+          // basename "SKILL.md" inside a staged package and otherwise
+          // 400s with skill_not_found_in_package.
           result = await stageImport.mutateAsync({
-            files: [{ file: archiveFile, relativePath: archiveFile.name }],
+            files: [{ file: archiveFile, relativePath: "SKILL.md" }],
           });
         }
       } else if (folderFiles !== null && folderFiles.length > 0) {

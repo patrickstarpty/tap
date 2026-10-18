@@ -157,6 +157,8 @@ export interface WorkspaceCopy {
     edit: string;
     enable: string;
     disable: string;
+    statusEnabled: string;
+    statusDisabled: string;
     copyAsCustom: string;
     cancel: string;
     close: string;
@@ -556,6 +558,8 @@ export const WORKSPACE_COPY = {
       edit: "Edit",
       enable: "Enable",
       disable: "Disable",
+      statusEnabled: "Enabled",
+      statusDisabled: "Disabled",
       copyAsCustom: "Copy as custom",
       cancel: "Cancel",
       close: "Close",
@@ -960,6 +964,8 @@ export const WORKSPACE_COPY = {
       edit: "编辑",
       enable: "启用",
       disable: "停用",
+      statusEnabled: "已启用",
+      statusDisabled: "已停用",
       copyAsCustom: "复制为自定义",
       cancel: "取消",
       close: "关闭",

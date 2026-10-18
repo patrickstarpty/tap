@@ -122,7 +122,85 @@ const PREVIEW_NO_CONFLICT = {
   ],
 };
 
+function fileWithRelativePath(
+  contents: string,
+  name: string,
+  relativePath: string,
+): File {
+  const file = new File([contents], name, { type: "text/markdown" });
+  Object.defineProperty(file, "webkitRelativePath", {
+    value: relativePath,
+  });
+  return file;
+}
+
 describe("SkillImportDialog step 1", () => {
+  it("stages a single .md file as the package's SKILL.md, regardless of its picked filename", async () => {
+    const user = userEvent.setup();
+    const stageMutateAsync = vi.fn().mockResolvedValue(PREVIEW_NO_CONFLICT);
+    renderDialog({ stageMutateAsync });
+
+    const file = new File(
+      ["---\nname: policy-lookup\n---\nBody"],
+      "policy-lookup.md",
+      {
+        type: "text/markdown",
+      },
+    );
+    await user.upload(screen.getByLabelText("Browse files"), file);
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    expect(stageMutateAsync).toHaveBeenCalledWith({
+      files: [{ file, relativePath: "SKILL.md" }],
+    });
+  });
+
+  it("stages a .zip file as an archive", async () => {
+    const user = userEvent.setup();
+    const stageMutateAsync = vi.fn().mockResolvedValue(PREVIEW_NO_CONFLICT);
+    renderDialog({ stageMutateAsync });
+
+    const archive = new File(["zip-bytes"], "skill-package.zip", {
+      type: "application/zip",
+    });
+    await user.upload(screen.getByLabelText("Browse files"), archive);
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    expect(stageMutateAsync).toHaveBeenCalledWith({ archive });
+  });
+
+  it("stages a selected folder's files with their webkitRelativePath", async () => {
+    const user = userEvent.setup();
+    const stageMutateAsync = vi.fn().mockResolvedValue(PREVIEW_NO_CONFLICT);
+    renderDialog({ stageMutateAsync });
+
+    const skillFile = fileWithRelativePath(
+      "---\nname: policy-lookup\n---\nBody",
+      "SKILL.md",
+      "policy-lookup/SKILL.md",
+    );
+    const referenceFile = fileWithRelativePath(
+      "Reference body",
+      "guide.md",
+      "policy-lookup/references/guide.md",
+    );
+    await user.upload(screen.getByLabelText("Browse folder"), [
+      skillFile,
+      referenceFile,
+    ]);
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    expect(stageMutateAsync).toHaveBeenCalledWith({
+      files: [
+        { file: skillFile, relativePath: "policy-lookup/SKILL.md" },
+        {
+          file: referenceFile,
+          relativePath: "policy-lookup/references/guide.md",
+        },
+      ],
+    });
+  });
+
   it("stages a pasted SKILL.md text and moves to the review step", async () => {
     const user = userEvent.setup();
     const stageMutateAsync = vi.fn().mockResolvedValue(PREVIEW_NO_CONFLICT);
