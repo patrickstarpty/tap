@@ -58,6 +58,8 @@ EXPECTED_TABLES = {
     "ai_agent_revision",
     "skill",
     "skill_revision",
+    "skill_revision_file",
+    "skill_import",
     "enterprise",
     "project",
     "actor_principal",

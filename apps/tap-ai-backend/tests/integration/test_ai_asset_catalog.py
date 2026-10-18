@@ -295,3 +295,181 @@ def test_0011_migration_is_exercised_by_the_owned_upgrade_gate(
     assert result["source_backfill"] == "passed"
     assert result["scope_backfill"] == "passed"
     assert result["ai_asset_nonempty_downgrade"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_insert_skill_revision_round_trips_files(owned_project_mysql) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.assets import SkillFile, SkillRevision, text_digest
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        catalog = MysqlAssetCatalog(
+            async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+        )
+        body = "Follow the governed answer flow and cite the attached excerpt."
+        attached = "Attached reference excerpt."
+        files = (
+            SkillFile(
+                relative_path="SKILL.md",
+                size_bytes=len(body.encode("utf-8")),
+                sha256="a" * 64,
+                category="skill",
+                attached=False,
+            ),
+            SkillFile(
+                relative_path="references/notes.md",
+                size_bytes=len(attached.encode("utf-8")),
+                sha256="b" * 64,
+                category="reference",
+                attached=True,
+            ),
+        )
+        revision = SkillRevision(
+            revision_id="authored-skill-v1",
+            asset_id="authored-skill",
+            display_name="Authored skill",
+            scope=VALIDATION_SCOPE,
+            content_digest=text_digest("authored-skill-v1"),
+            instruction_template_digest=text_digest(body + attached),
+            applicable_tasks=frozenset({"knowledge.answer"}),
+            instruction_template=body,
+            attached_references=attached,
+            description="An authored skill with attached reference text.",
+            source_kind="authored",
+            frontmatter={"name": "authored-skill", "description": "Authored skill"},
+            package_digest=text_digest("authored-skill-package"),
+            files=files,
+        )
+        persisted = await catalog.insert_skill_revision(revision, base_revision_id=None)
+        assert persisted == revision
+
+        fetched = await catalog.get_skill(VALIDATION_SCOPE, revision.revision_id)
+        assert fetched.instruction_template == body
+        assert fetched.attached_references == attached
+        assert fetched.description == revision.description
+        assert fetched.source_kind == "authored"
+        assert dict(fetched.frontmatter or {}) == dict(revision.frontmatter or {})
+        assert fetched.package_digest == revision.package_digest
+        assert set(fetched.files) == set(files)
+
+        revisions = await catalog.list_revisions("skill", revision.asset_id)
+        assert [item.revision_id for item in revisions] == [revision.revision_id]
+        assert set(revisions[0].files) == set(files)
+
+        found = await catalog.find_skill_by_name(VALIDATION_SCOPE, revision.display_name)
+        assert found is not None
+        assert found.revision_id == revision.revision_id
+        assert await catalog.find_skill_by_name(VALIDATION_SCOPE, "no-such-skill") is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_stale_base_revision_conflicts(owned_project_mysql) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.assets import RevisionConflict, SkillRevision, text_digest
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        catalog = MysqlAssetCatalog(
+            async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+        )
+
+        def _revision(revision_id: str, body: str) -> SkillRevision:
+            return SkillRevision(
+                revision_id=revision_id,
+                asset_id="conflicting-skill",
+                display_name="Conflicting skill",
+                scope=VALIDATION_SCOPE,
+                content_digest=text_digest(revision_id),
+                instruction_template_digest=text_digest(body),
+                applicable_tasks=frozenset({"knowledge.answer"}),
+                instruction_template=body,
+                source_kind="authored",
+            )
+
+        v1 = _revision("conflicting-skill-v1", "v1 body")
+        await catalog.insert_skill_revision(v1, base_revision_id=None)
+
+        # A second create attempt with no base also conflicts: the asset already
+        # has a latest revision.
+        with pytest.raises(RevisionConflict):
+            await catalog.insert_skill_revision(
+                _revision("conflicting-skill-v1-retry", "retry body"), base_revision_id=None
+            )
+
+        # A stale base_revision_id (not the current latest) conflicts.
+        with pytest.raises(RevisionConflict):
+            await catalog.insert_skill_revision(
+                _revision("conflicting-skill-v2-stale", "stale body"),
+                base_revision_id="does-not-exist",
+            )
+
+        # The correct latest base_revision_id succeeds.
+        v2 = _revision("conflicting-skill-v2", "v2 body")
+        await catalog.insert_skill_revision(v2, base_revision_id=v1.revision_id)
+        revisions = await catalog.list_revisions("skill", "conflicting-skill")
+        assert [item.revision_id for item in revisions] == [v1.revision_id, v2.revision_id]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_seed_marks_built_in_and_persists_text(owned_project_mysql) -> None:
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog, ai_agent_revision, skill_revision
+    from tap.modules.ai.application.assets import validation_asset_seed
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
+        seed = validation_asset_seed(VALIDATION_SCOPE)
+        await catalog.seed(seed)
+
+        async with sessions() as session:
+            agent_row = (
+                (
+                    await session.execute(
+                        select(
+                            ai_agent_revision.c.source_kind,
+                            ai_agent_revision.c.system_instruction,
+                        ).where(ai_agent_revision.c.revision_id == seed.agents[0].revision_id)
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            skill_row = (
+                (
+                    await session.execute(
+                        select(
+                            skill_revision.c.source_kind,
+                            skill_revision.c.instruction_body,
+                        ).where(skill_revision.c.revision_id == seed.skills[0].revision_id)
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert agent_row["source_kind"] == "built_in"
+        assert agent_row["system_instruction"] == seed.agents[0].system_instruction
+        assert skill_row["source_kind"] == "built_in"
+        assert skill_row["instruction_body"] == seed.skills[0].instruction_template
+
+        resolved_agent = await catalog.get_agent(VALIDATION_SCOPE, seed.agents[0].revision_id)
+        resolved_skill = await catalog.get_skill(VALIDATION_SCOPE, seed.skills[0].revision_id)
+        assert resolved_agent.source_kind == "built_in"
+        assert resolved_skill.source_kind == "built_in"
+    finally:
+        await engine.dispose()

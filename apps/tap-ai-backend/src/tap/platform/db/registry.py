@@ -3,7 +3,14 @@
 from sqlalchemy import MetaData
 
 from tap.modules.access.adapters.mysql import actor_principal, enterprise, project
-from tap.modules.ai.adapters.mysql import ai_agent, ai_agent_revision, skill, skill_revision
+from tap.modules.ai.adapters.mysql import (
+    ai_agent,
+    ai_agent_revision,
+    skill,
+    skill_import,
+    skill_revision,
+    skill_revision_file,
+)
 from tap.modules.ai.adapters.mysql_checkpointer import AI_GRAPH_TABLES
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn, turn_snapshot
 from tap.modules.chat.adapters.mysql_conversations import (
@@ -97,6 +104,8 @@ BUSINESS_TABLES = (
     ai_agent_revision,
     skill,
     skill_revision,
+    skill_revision_file,
+    skill_import,
     *AI_GRAPH_TABLES,
     *GRAPH_TABLES,
     *PROJECT_GRAPH_TABLES,
