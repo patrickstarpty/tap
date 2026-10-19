@@ -882,6 +882,7 @@ class AuthorizedRetrieval:
             or persona is not CURRENT_PERSONA
             or bool(tools)
             or bool(transcript)
+            or bool(bundle.insights_records)
         )
         generation = (
             await cast(Any, self._answers).answer(
@@ -900,6 +901,11 @@ class AuthorizedRetrieval:
                 **({"on_text": on_text} if on_text is not None else {}),
                 **({"tools": tools} if tools else {}),
                 **({"transcript": transcript} if transcript else {}),
+                **(
+                    {"insights_records": bundle.insights_records}
+                    if bundle.insights_records
+                    else {}
+                ),
             )
             if use_extended_answer
             else await self._answers.answer(

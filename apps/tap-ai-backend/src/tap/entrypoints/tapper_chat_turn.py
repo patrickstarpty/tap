@@ -313,6 +313,14 @@ class SingleShotAnswerSteps:
         # `knowledge.search`/`graph.relations` call in the first place.
         raise ValueError("single-shot answer boundary does not support conversation tool calls")
 
+    async def add_insights_records(self, step, records):
+        # Same reasoning as `run_conversation_tool`: a single-shot `answer()`
+        # double never checkpoints an `EvidenceBundle` and its generation
+        # never produces `tool_calls`, so this is unreachable in practice.
+        raise NotImplementedError(
+            "single-shot answer boundary does not support insights.query records"
+        )
+
 
 class ChatTurnNodes:
     """Binds one claimed chat Turn's resumable answer phases, Insights

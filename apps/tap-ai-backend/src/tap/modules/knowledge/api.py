@@ -27,6 +27,9 @@ from tap.contracts.http import (
     GraphContextSummaryView as HttpGraphContextSummaryView,
 )
 from tap.contracts.http import (
+    InsightsFactView as HttpInsightsFactView,
+)
+from tap.contracts.http import (
     GraphEndpointView as HttpGraphEndpointView,
 )
 from tap.contracts.http import (
@@ -417,6 +420,19 @@ def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
         graph_context_status=graph_context_status,
         graph_snapshot_id=graph_snapshot_id,
         graph_context=graph_context,
+        insights_facts=(
+            [
+                HttpInsightsFactView(
+                    label=item.label,
+                    query_id=item.query_id,
+                    metric_id=item.metric_id,
+                    value=item.value,
+                    as_of=item.as_of,
+                )
+                for item in response.insights_facts
+            ]
+            or None
+        ),
     )
 
 

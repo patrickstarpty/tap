@@ -6,7 +6,7 @@ import asyncio
 import dataclasses
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any, Protocol
 from uuid import uuid4
@@ -1054,6 +1054,47 @@ class KnowledgeHttpService:
                 "added_labels": added_labels,
                 "retrieval_hits": retrieval_hits,
             }
+
+    async def add_insights_records(
+        self, step, records: Sequence[Mapping[str, object]]
+    ) -> tuple[Any, list[str]]:
+        """Grow a `"prepared"` step's evidence pool with `insights.query`
+        metric records (Task 8): dedupe by `(queryId, metricId)` against
+        what the pool already has, then continue the `I<n>` label sequence
+        -- same discipline as `knowledge.search`/`graph.relations`, never
+        relabeling an existing record. Capped at 20 records, same as S/R."""
+        from tap.modules.knowledge.application.evidence_bundle import decode_bundle, encode_bundle
+
+        bundle = decode_bundle(step["bundle"])
+        existing_records = list(bundle.insights_records)
+        existing_keys = {
+            (str(item.get("queryId")), str(item.get("metricId"))) for item in existing_records
+        }
+        max_label = 0
+        for item in existing_records:
+            label = str(item.get("label", ""))
+            if label.startswith("I") and label[1:].isdigit():
+                max_label = max(max_label, int(label[1:]))
+
+        added_labels: list[str] = []
+        for record in records:
+            key = (str(record.get("queryId")), str(record.get("metricId")))
+            if key in existing_keys or len(existing_records) >= 20:
+                continue
+            max_label += 1
+            label = f"I{max_label}"
+            labeled = {**dict(record), "label": label}
+            existing_records.append(labeled)
+            existing_keys.add(key)
+            added_labels.append(label)
+
+        new_bundle = dataclasses.replace(bundle, insights_records=tuple(existing_records))
+        new_step = {
+            "kind": step["kind"],
+            "bundle": encode_bundle(new_bundle),
+            "transcript": step.get("transcript", []),
+        }
+        return new_step, added_labels
 
     @staticmethod
     def _generation_governance(frozen_input):

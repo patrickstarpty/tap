@@ -1061,6 +1061,19 @@ class GraphContextSummaryView(ContractModel):
     relation_count: int = Field(ge=0)
 
 
+class InsightsFactView(ContractModel):
+    """One `I<n>`-labeled Insights metric record a claim actually cited
+    (LangGraph PR 5, Task 8). No knowledge citation is ever generated for an
+    Insights label -- a cited record surfaces here instead, in citation
+    order."""
+
+    label: str = Field(min_length=1)
+    query_id: str = Field(min_length=1)
+    metric_id: str = Field(min_length=1)
+    value: float | int | None = None
+    as_of: str = Field(min_length=1)
+
+
 class RetrievalAnswerResponse(ContractModel):
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
@@ -1080,6 +1093,7 @@ class RetrievalAnswerResponse(ContractModel):
     ] = "NOT_SELECTED"
     graph_snapshot_id: str | None = None
     graph_context: GraphContextSummaryView | None = None
+    insights_facts: list[InsightsFactView] | None = None
 
     @model_validator(mode="after")
     def validate_graph_context(self) -> Self:
@@ -1218,6 +1232,12 @@ class ConversationCreateRequest(ContractModel):
     document_revision_ids: Annotated[list[str], Field(max_length=50)] = []
     agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
     skill_revision_ids: Annotated[list[str], Field(max_length=16)] = []
+    # Task 8: a plain conversation Turn may freeze `insightsReportRefs` alone
+    # (no historical `insights_query_id` -- that field has no HTTP entry
+    # point yet, joint analysis is covered by integration tests only, user
+    # decision B). Still bounded/unique/nonblank the same as
+    # `TurnInput.insights_report_refs`.
+    insights_report_refs: Annotated[list[str], Field(max_length=20)] = []
 
     @field_validator("message")
     @classmethod

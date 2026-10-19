@@ -319,3 +319,9 @@ class ConversationAnswerSteps(Protocol):
         answer_plan=None,
         authorize=None,
     ) -> ConversationToolResult: ...
+
+    async def add_insights_records(
+        self,
+        step: ConversationAnswerStep,
+        records: Sequence[Mapping[str, object]],
+    ) -> tuple[ConversationAnswerStep, list[str]]: ...

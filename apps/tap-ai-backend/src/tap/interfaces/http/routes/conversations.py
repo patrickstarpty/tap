@@ -98,6 +98,7 @@ def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
         and value.document_revision_ids == tuple(body.document_revision_ids)
         and value.agent_revision_id == body.agent_revision_id
         and value.requested_skill_revision_ids == tuple(body.skill_revision_ids)
+        and value.insights_report_refs == tuple(body.insights_report_refs)
     )
 
 
@@ -161,6 +162,8 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
     skills = selection.applied
     if services.knowledge is None:
         raise KnowledgeRuntimeUnavailable
+    if body.insights_report_refs and services.insights_explanation is None:
+        raise KnowledgeRuntimeUnavailable
     selection_facts = await freeze_conversation_selection(
         services.knowledge,
         source_revision_ids=tuple(body.source_revision_ids),
@@ -212,6 +215,7 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         acl_digest=selection_facts.acl_digest,
         retrieval_policy_digest=selection_facts.retrieval_policy_digest,
         persona_version=CURRENT_PERSONA.version,
+        insights_report_refs=tuple(body.insights_report_refs),
     )
 
 

@@ -2032,6 +2032,11 @@ export interface components {
              * @default []
              */
             documentRevisionIds?: string[];
+            /**
+             * Insightsreportrefs
+             * @default []
+             */
+            insightsReportRefs?: string[];
             /** Message */
             message: string;
             /** Modelalias */
@@ -2806,6 +2811,28 @@ export interface components {
              * @enum {string}
              */
             stopReason: "completed" | "budget-exhausted" | "insights-unavailable";
+        };
+        /**
+         * InsightsFactView
+         * @description One `I<n>`-labeled Insights metric record a claim actually cited
+         *     (LangGraph PR 5, Task 8). No knowledge citation is ever generated for an
+         *     Insights label -- a cited record surfaces here instead, in citation
+         *     order.
+         */
+        InsightsFactView: {
+            /** Asof */
+            asOf: string;
+            /** Label */
+            label: string;
+            /** Metricid */
+            metricId: string;
+            /** Queryid */
+            queryId: string;
+            /**
+             * Value
+             * @default null
+             */
+            value?: number | null;
         };
         JsonValue: unknown;
         /** KnowledgeChunk */
@@ -4411,6 +4438,11 @@ export interface components {
              * @default null
              */
             graphSnapshotId?: string | null;
+            /**
+             * Insightsfacts
+             * @default null
+             */
+            insightsFacts?: components["schemas"]["InsightsFactView"][] | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */
@@ -5902,6 +5934,8 @@ export interface components {
             graphContextStatus?: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY";
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
+            /** Insightsfacts */
+            insightsFacts?: components["schemas"]["InsightsFactView"][] | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */

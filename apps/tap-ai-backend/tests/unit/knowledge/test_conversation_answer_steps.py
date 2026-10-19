@@ -1267,6 +1267,59 @@ async def test_run_conversation_tool_relations_unavailable_fails_softly() -> Non
     assert result["step"]["bundle"] == step["bundle"]
 
 
+@pytest.mark.asyncio
+async def test_add_insights_records_dedupes_and_continues_label_sequence() -> None:
+    """Task 8: `insights.query` results grow the evidence pool through the
+    real `KnowledgeHttpService.add_insights_records` -- labels continue
+    `I<n>` without ever relabeling an existing record, and a repeated
+    `(queryId, metricId)` is deduped rather than appended again."""
+    from tap.modules.knowledge.application.evidence_bundle import decode_bundle, encode_bundle
+
+    frozen, _plan = await _retrieve_route()
+    bundle = _bundle(query=frozen.message)
+    bundle = replace(
+        bundle,
+        insights_records=(
+            {
+                "label": "I1",
+                "queryId": "query-a",
+                "metricVersion": "insights-metrics-v1",
+                "metricId": "first_pass_rate",
+                "value": 0.5,
+                "asOf": "2026-09-25T08:00:00+00:00",
+            },
+        ),
+    )
+    step = {"kind": "prepared", "bundle": encode_bundle(bundle), "transcript": []}
+    service = _service()
+
+    new_step, added_labels = await service.add_insights_records(
+        step,
+        (
+            {
+                "queryId": "query-a",
+                "metricVersion": "insights-metrics-v1",
+                "metricId": "first_pass_rate",
+                "value": 0.5,
+                "asOf": "2026-09-25T08:00:00+00:00",
+            },
+            {
+                "queryId": "query-a",
+                "metricVersion": "insights-metrics-v1",
+                "metricId": "p95_duration_seconds",
+                "value": 3.2,
+                "asOf": "2026-09-25T08:00:00+00:00",
+            },
+        ),
+    )
+
+    assert added_labels == ["I2"]
+    new_bundle = decode_bundle(new_step["bundle"])
+    assert [item["label"] for item in new_bundle.insights_records] == ["I1", "I2"]
+    assert new_bundle.insights_records[0]["metricId"] == "first_pass_rate"
+    assert new_bundle.insights_records[1]["metricId"] == "p95_duration_seconds"
+
+
 class ToolCallPhaseAnswers(PhaseAnswers):
     """A `PhaseAnswers` double whose `generate_frozen` plays the model asking
     to call a tool (Task 7): accepts and records the `tools`/`transcript`

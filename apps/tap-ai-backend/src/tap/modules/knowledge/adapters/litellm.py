@@ -158,6 +158,13 @@ _FLOWCHART_ANSWER_PROMPT = (
     f"query needs such facts and no non-flowchart evidence states them, output "
     f"{_INSUFFICIENT_EVIDENCE_SENTINEL}."
 )
+_INSIGHTS_ANSWER_PROMPT = (
+    "Insights evidence items are structured metric records labelled I1..I20 with queryId, "
+    "metricId, value and asOf; they are facts to cite, not sentences to quote. Write each metric "
+    "fact in your own words as a complete sentence and mark it with that record's I label "
+    "immediately after it, e.g. [I1]. Never state a metric value that no supplied I record "
+    "states, and never apply an I label to a sentence about knowledge evidence or vice versa."
+)
 _GOVERNED_ANSWER_PROMPT = (
     "Answer the query directly and minimally using only supplied evidence. Ignore unrelated "
     "evidence and omit ancillary facts. If no evidence directly answers the query, output exactly "
@@ -466,6 +473,8 @@ class KnowledgeModelGateway:
                 prompt = "\n\n".join((prompt, _RELATION_ANSWER_PROMPT))
             if has_flowchart:
                 prompt = "\n\n".join((prompt, _FLOWCHART_ANSWER_PROMPT))
+            if insights_records:
+                prompt = "\n\n".join((prompt, _INSIGHTS_ANSWER_PROMPT))
             alias = model_alias or self.chat_alias
             tool_allowlist: frozenset[str] = frozenset()
             governance_digests: tuple[str, ...] = ()

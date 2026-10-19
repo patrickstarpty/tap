@@ -898,3 +898,70 @@ def test_skill_budget_exceeded_over_96kb_returns_skill_problem():
     assert response.status_code == 400, response.text
     assert response.json()["code"] == "skill_budget_exceeded"
     assert conversations.repository.values == {}
+
+
+def test_create_turn_freezes_insights_report_refs_without_query():
+    """Task 8, user decision B: a plain conversation Turn may freeze
+    `insightsReportRefs` alone (no historical `insights_query_id` -- that
+    has no HTTP entry point). When the Insights runtime is configured, the
+    frozen Turn input carries exactly the requested refs; when it is not
+    configured, the request fails with the same `KnowledgeRuntimeUnavailable`
+    503 an unconfigured knowledge runtime already uses."""
+
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Models:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            return [STRUCTURED_CHAT_MODEL]
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_conversation_selection(self, _revision_ids):
+            raise AssertionError("Model-only chat must not enter Knowledge selection")
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+
+    unconfigured = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={
+            "message": "Hello",
+            "modelAlias": "qwen-plus",
+            "insightsReportRefs": ["report-1"],
+        },
+        headers={"Idempotency-Key": "insights-unconfigured"},
+    )
+
+    assert unconfigured.status_code == 503, unconfigured.text
+    assert conversations.repository.values == {}
+
+    client.app.state.http_services = replace(services, insights_explanation=object())
+
+    configured = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={
+            "message": "Hello",
+            "modelAlias": "qwen-plus",
+            "insightsReportRefs": ["report-1"],
+        },
+        headers={"Idempotency-Key": "insights-configured"},
+    )
+
+    assert configured.status_code == 202, configured.text
+    frozen = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
+    assert frozen.insights_report_refs == ("report-1",)
+    assert frozen.insights_query_id is None

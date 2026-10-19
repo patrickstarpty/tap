@@ -16,6 +16,7 @@ from tap.contracts.http import (
     FailureAnchor,
     GraphContextSummaryView,
     GraphEndpointView,
+    InsightsFactView,
     OpenApiAnchor,
     ResourceRef,
     RetrievalAnswerRequest,
@@ -205,6 +206,10 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
         {"status", "graphVersion", "seedCount", "querySeedCount", "paths", "relationCount"},
     ),
     (
+        InsightsFactView,
+        {"label", "queryId", "metricId", "value", "asOf"},
+    ),
+    (
         RetrievalSearchResponse,
         {
             "traceId",
@@ -241,6 +246,7 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "graphContextStatus",
             "graphSnapshotId",
             "graphContext",
+            "insightsFacts",
         },
     ),
 )
