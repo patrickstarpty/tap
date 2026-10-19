@@ -73,8 +73,16 @@ def _pool_hit(
     chunk_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
     return SearchHit(
         family=SourceFamily.DOC,
-        chunk_id=f"chunk-{source_id}-{revision}-{index}",
-        logical_chunk_id=f"logical-{source_id}-{revision}-{index}",
+        # Zero-padded so the ranking tie-break below (ascending `chunk_id`,
+        # the fallback once `local_rank`/`preferred_resource_boost` tie --
+        # every pool hit here shares `local_rank=1` and the one preferred
+        # resource) sorts by numeric `index`, not lexical string order
+        # (unpadded, "100" < "3"). Fix round 1 I-3's test relies on this to
+        # make a low-index duplicate of an existing pool entry rank ahead of
+        # higher-index new hits, the same way a real index ranks an
+        # already-indexed/frequently-matched chunk first.
+        chunk_id=f"chunk-{source_id}-{revision}-{index:04d}",
+        logical_chunk_id=f"logical-{source_id}-{revision}-{index:04d}",
         title="pool.md",
         content=content,
         source=SourceRevisionRef(

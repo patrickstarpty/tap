@@ -124,6 +124,7 @@ class PhaseAnswers:
         self.verify_calls = 0
         self.save_calls: list[object] = []
         self.generate_personas: list[object] = []
+        self.prepare_include_relations: list[bool] = []
 
     async def prepare_frozen(
         self,
@@ -135,8 +136,10 @@ class PhaseAnswers:
         graph_context=(),
         answer_execution=None,
         authorize=None,
+        include_relations: bool = True,
     ):
         self.prepare_calls += 1
+        self.prepare_include_relations.append(include_relations)
         if authorize is not None:
             await authorize()
         return _bundle(query=request.query)
@@ -316,6 +319,37 @@ async def test_steps_compose_to_answer_conversation() -> None:
     assert stepped.model_dump(mode="json", by_alias=True) == composed.model_dump(
         mode="json", by_alias=True
     )
+
+
+@pytest.mark.asyncio
+async def test_prepare_conversation_answer_threads_include_relations_false() -> None:
+    """I-1 (Task 6 fix round 1): `include_relations=False` must reach
+    `AuthorizedRetrieval.prepare_answer` through `prepare_conversation_answer`
+    -> `AnswerService.prepare_frozen` -> `KnowledgeAPI.prepare_frozen` --
+    Task 9's `seed_search` graph node call -- not silently default to `True`
+    at any hop."""
+    frozen, plan = await _retrieve_route()
+    request = RetrievalAnswerRequest(query=frozen.message)
+    answers = PhaseAnswers()
+    service = _service(answers)
+
+    await service.prepare_conversation_answer(
+        request, frozen, answer_plan=plan, include_relations=False
+    )
+
+    assert answers.prepare_include_relations == [False]
+
+
+@pytest.mark.asyncio
+async def test_prepare_conversation_answer_defaults_include_relations_true() -> None:
+    frozen, plan = await _retrieve_route()
+    request = RetrievalAnswerRequest(query=frozen.message)
+    answers = PhaseAnswers()
+    service = _service(answers)
+
+    await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+
+    assert answers.prepare_include_relations == [True]
 
 
 @pytest.mark.asyncio

@@ -200,6 +200,7 @@ class KnowledgeAPI:
         graph_context=(),
         answer_execution=None,
         authorize=None,
+        include_relations: bool = True,
     ):
         import asyncio
 
@@ -214,6 +215,7 @@ class KnowledgeAPI:
                 graph_context=graph_context,
                 answer_execution=answer_execution,
                 authorize=authorize,
+                include_relations=include_relations,
             )
 
     async def generate_frozen(

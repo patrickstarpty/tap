@@ -592,6 +592,55 @@ def api(search: FakeSearchPort, model: FakeModelPort) -> KnowledgeAPI:
     )
 
 
+class _CountingRelationAnalysis:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def analyse(self, query, evidence, source_revision_ids, *, turn_id=None):
+        self.calls += 1
+        from tap.modules.knowledge.application.relation_analysis import (
+            RelationContext,
+            RelationContextStatus,
+        )
+
+        return RelationContext(status=RelationContextStatus.EMPTY, graph_version="1")
+
+
+@pytest.mark.asyncio
+async def test_prepare_frozen_threads_include_relations_to_prepare_answer() -> None:
+    """I-1 (Task 6 fix round 1): `KnowledgeAPI.prepare_frozen` must forward
+    `include_relations` unchanged to `AuthorizedRetrieval.prepare_answer` --
+    `False` must skip relation analysis entirely."""
+    relation = _CountingRelationAnalysis()
+    ids = iter(
+        (
+            "operation-1",
+            "query-plan-1",
+            "context-snapshot-1",
+            "trace-1",
+            "citation-1",
+            "claim-1",
+            *(f"generated-{index}" for index in range(100)),
+        )
+    )
+    model = FakeModelPort()
+    knowledge = KnowledgeAPI(
+        search=FakeSearchPort((search_hit(),)),
+        embeddings=model,
+        answers=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=lambda: next(ids),
+        relation_analysis=relation,
+    )
+    request = AnswerRequest(query="Where is policy verified?")
+    policy = policy_context()
+
+    await knowledge.prepare_frozen(request, policy, include_relations=False)
+
+    assert relation.calls == 0
+
+
 @pytest.mark.asyncio
 async def test_knowledge_search_rejects_environment_and_resource_anchor_before_search() -> None:
     """Removing either pre-search authorization check must call the fake Search port."""

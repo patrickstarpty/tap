@@ -429,13 +429,21 @@ class KnowledgeHttpService:
         )
 
     async def prepare_conversation_answer(
-        self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None
+        self,
+        request: RetrievalAnswerRequest,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        include_relations: bool = True,
     ):
         """Resumable prepare phase: retrieval (or a non-retrieval route's
         complete answer) only, re-deriving and re-checking authority from
         `frozen_input`, bounded by the plan's persisted deadline from the
         start -- including the non-retrieval model call, which otherwise has
-        no time limit of its own."""
+        no time limit of its own. `include_relations=False` (Task 9's
+        `seed_search` graph node call) skips relation analysis inline --
+        `graph.relations` runs it later, as a tool call."""
         async with self._plan_deadline(answer_plan):
             context = await self._authorized_frozen_context(
                 original_question=request.query,
@@ -461,6 +469,7 @@ class KnowledgeHttpService:
                 governance=governance,
                 answer_execution=answer_execution,
                 authorize=authorize,
+                include_relations=include_relations,
             )
             if isinstance(prepared, AnswerResponse):
                 return {"kind": "verified", "response": to_json(prepared)}

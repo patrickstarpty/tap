@@ -667,11 +667,17 @@ class AuthorizedRetrieval:
         against `bundle.request`'s resource selection (replacing only its
         `query`), restricted to the intersection of `source_ids` and the
         bundle's already-selected sources (`source_ids == ()` means every
-        already-selected source). New hits are deduped against the pool by
-        `(source_id, revision, chunk_id)` and appended continuing from
-        `S{len(pool) + 1}`; existing labels are never reassigned. Returns the
-        unchanged bundle and `()` once the pool is already at `_MAX_EVIDENCE`
-        or nothing new was found."""
+        already-selected source). Searches at the retrieval profile's own
+        candidate limit (not just the pool's remaining capacity, fix round 1
+        I-3): a real search index ranks already-seen chunks first, so
+        bounding the request itself to `capacity` (e.g. 2 once the pool holds
+        18) can starve a near-full pool of genuinely new hits even though
+        plenty exist further down the ranking -- the merge loop below is what
+        enforces `_MAX_EVIDENCE`, not the request size. New hits are deduped
+        against the pool by `(source_id, revision, chunk_id)` and appended
+        continuing from `S{len(pool) + 1}`; existing labels are never
+        reassigned. Returns the unchanged bundle and `()` once the pool is
+        already at `_MAX_EVIDENCE` or nothing new was found."""
         capacity = _MAX_EVIDENCE - len(bundle.response.evidence)
         if capacity <= 0:
             return bundle, ()
@@ -691,7 +697,7 @@ class AuthorizedRetrieval:
                 bundle.request.as_search_request(),
                 query=query,
                 resource_refs=resource_refs,
-                top_k=capacity,
+                top_k=None,
             ),
             policy,
             frozen_policy=frozen_policy,
@@ -700,6 +706,8 @@ class AuthorizedRetrieval:
         )
         if self._publication_authority is not None and bundle.publication is not None:
             await self._publication_authority.revalidate(bundle.publication)
+        if self._publication_authority is not None and run.publication is not None:
+            await self._publication_authority.revalidate(run.publication)
         existing = {
             (item.source.source_id, item.source.revision, item.chunk_id)
             for item in bundle.response.evidence
@@ -724,10 +732,19 @@ class AuthorizedRetrieval:
                 policy.project_id,
                 tuple(sorted({item.source.revision for item in merged})),
             )
+        merged_tuple = tuple(merged)
+        relation = bundle.relation
+        if relation is not None:
+            # Same discipline as `_augment_from_relations`: a relation
+            # support that was snippet-only (never cited as S) may now match
+            # one of the newly added S labels -- rebind it so the model sees
+            # one citation, not a duplicate snippet plus a separate S entry.
+            relation = relation.rebind(tuple(_evidence_ref(item) for item in merged_tuple))
         new_bundle = replace(
             bundle,
-            response=replace(bundle.response, evidence=tuple(merged)),
+            response=replace(bundle.response, evidence=merged_tuple),
             publication=publication,
+            relation=relation,
         )
         return new_bundle, tuple(added)
 

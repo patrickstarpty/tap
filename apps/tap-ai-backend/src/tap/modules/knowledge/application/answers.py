@@ -216,6 +216,7 @@ class AnswerService:
         graph_context=(),
         answer_execution=None,
         authorize=None,
+        include_relations: bool = True,
     ):
         publication = await self._authorize_frozen_selection(revisions, policy)
         trusted = AnswerRequest(
@@ -237,6 +238,7 @@ class AnswerService:
                 graph_context=graph_context,
                 answer_execution=answer_execution,
                 authorize=self._reauthorize(publication, authorize),
+                include_relations=include_relations,
             )
         await self._revalidate_publication(publication)
         return result
