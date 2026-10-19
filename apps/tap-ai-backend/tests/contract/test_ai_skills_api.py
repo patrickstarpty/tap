@@ -14,7 +14,12 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
 from tap.modules.ai.application.skill_authoring import SkillAuthoringService
 from tap.modules.ai.application.skill_package import SkillPackageRejected
-from tap.modules.ai.domain.assets import AssetRevisionStatus, RevisionConflict, SkillRevision
+from tap.modules.ai.domain.assets import (
+    AssetRevisionStatus,
+    RevisionConflict,
+    SkillRevision,
+    text_digest,
+)
 from tap.platform.storage.objects import (
     ObjectMissingError,
     ObjectRef,
@@ -254,6 +259,30 @@ def _create_skill(client: TestClient, name: str = "demo-skill") -> dict:
     return response.json()
 
 
+def _seed_built_in_skill(
+    catalog: "_FakeCatalog", *, skill_id: str = "builtin-skill", name: str = "Built-in skill"
+) -> SkillRevision:
+    # I-4: built-in Skills are seeded server-side (validation_asset_seed),
+    # never created through the authoring HTTP surface -- write directly
+    # into the fake catalog's store to set up a built-in asset the way the
+    # real seeded catalog would exist.
+    body = "Built-in instructions."
+    revision_id = f"{skill_id}-v1"
+    revision = SkillRevision(
+        revision_id=revision_id,
+        asset_id=skill_id,
+        display_name=name,
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest(revision_id),
+        instruction_template_digest=text_digest(body),
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        instruction_template=body,
+        source_kind="built_in",
+    )
+    catalog._skills[skill_id] = [revision]
+    return revision
+
+
 # -- POST /skills (create) -----------------------------------------------
 
 
@@ -339,6 +368,69 @@ def test_disable_then_enable_toggles_status() -> None:
     enabled = client.post(f"{BASE}/skills/{skill_id}/enable")
     assert enabled.status_code == 200
     assert enabled.json()["status"] == "enabled"
+
+
+# -- I-4: built-in Skills are read-only -----------------------------------
+
+
+def test_revise_built_in_skill_is_rejected() -> None:
+    client, catalog = _app()
+    builtin = _seed_built_in_skill(catalog)
+
+    response = client.post(
+        f"{BASE}/skills/{builtin.asset_id}/revisions",
+        json={
+            "name": "built-in-skill",
+            "description": "v2",
+            "instructions": "v2 body",
+            "baseRevisionId": builtin.revision_id,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "skill_built_in_immutable"
+
+
+def test_disable_built_in_skill_is_rejected() -> None:
+    client, catalog = _app()
+    builtin = _seed_built_in_skill(catalog)
+
+    response = client.post(f"{BASE}/skills/{builtin.asset_id}/disable")
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "skill_built_in_immutable"
+
+
+def test_enable_built_in_skill_is_rejected() -> None:
+    client, catalog = _app()
+    builtin = _seed_built_in_skill(catalog)
+
+    response = client.post(f"{BASE}/skills/{builtin.asset_id}/enable")
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "skill_built_in_immutable"
+
+
+def test_commit_import_as_new_revision_of_a_built_in_skill_is_rejected() -> None:
+    client, catalog = _app()
+    builtin = _seed_built_in_skill(catalog)
+    text = "---\nname: imported-over-builtin\ndescription: d.\n---\n\nbody\n"
+    preview = client.post(f"{BASE}/skills/imports", json={"text": text}).json()
+
+    response = client.post(
+        f"{BASE}/skills/imports/{preview['importId']}/commit",
+        json={
+            "selections": [
+                {
+                    "root": preview["skills"][0]["root"],
+                    "asNewRevisionOf": builtin.asset_id,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "skill_built_in_immutable"
 
 
 # -- GET /skills, /skills/{revisionId}, /skills/{skillId}/revisions -----

@@ -634,6 +634,49 @@ async def test_revise_requires_existing_skill() -> None:
 
 
 @pytest.mark.asyncio
+async def test_revise_rejects_renaming_to_a_name_owned_by_a_different_skill() -> None:
+    """I-9: `revise` never checked `find_skill_by_name` for a rename, so an
+    authored Skill could be renamed onto another Skill's name."""
+    service, _, _, _ = _service()
+    alpha = await service.create_authored(
+        VALIDATION_SCOPE,
+        SkillDraft(name="alpha-skill", description="First skill.", instructions="Alpha body."),
+    )
+    beta = await service.create_authored(
+        VALIDATION_SCOPE,
+        SkillDraft(name="beta-skill", description="Second skill.", instructions="Beta body."),
+    )
+
+    with pytest.raises(SkillPackageRejected) as excinfo:
+        await service.revise(
+            VALIDATION_SCOPE,
+            beta.asset_id,
+            beta.revision_id,
+            SkillDraft(
+                name="alpha-skill",
+                description="Renamed onto alpha's name.",
+                instructions="Beta body, renamed.",
+            ),
+        )
+    assert excinfo.value.code == "skill_name_conflict"
+
+    # Revising without changing the name (collides only with itself) still
+    # succeeds -- the check only rejects a *different* asset's name.
+    unchanged = await service.revise(
+        VALIDATION_SCOPE,
+        alpha.asset_id,
+        alpha.revision_id,
+        SkillDraft(
+            name="alpha-skill",
+            description="Same name, new description.",
+            instructions="Alpha body v2.",
+        ),
+    )
+    assert unchanged.asset_id == alpha.asset_id
+    assert unchanged.revision_id != alpha.revision_id
+
+
+@pytest.mark.asyncio
 async def test_empty_file_is_recorded_without_touching_the_object_store() -> None:
     """I-4: the real object store rejects empty uploads, so a zero-byte file
     must never be staged or promoted; open_file still returns empty bytes."""

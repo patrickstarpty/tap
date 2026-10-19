@@ -386,6 +386,33 @@ def test_disable_then_enable_toggles_status() -> None:
     assert enabled.json()["status"] == "enabled"
 
 
+def test_disable_built_in_agent_is_rejected() -> None:
+    # I-4: built-in Agents are read-only.
+    client, catalog = _app()
+    created = _create_agent(client, name="built-in-agent")
+    catalog._agents[created["assetId"]][-1] = replace(
+        catalog._agents[created["assetId"]][-1], source_kind="built_in"
+    )
+
+    response = client.post(f"{BASE}/agents/{created['agentId']}/disable")
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "agent_built_in_immutable"
+
+
+def test_enable_built_in_agent_is_rejected() -> None:
+    client, catalog = _app()
+    created = _create_agent(client, name="built-in-agent")
+    catalog._agents[created["assetId"]][-1] = replace(
+        catalog._agents[created["assetId"]][-1], source_kind="built_in"
+    )
+
+    response = client.post(f"{BASE}/agents/{created['agentId']}/enable")
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "agent_built_in_immutable"
+
+
 # -- GET /agents, /agents/{revisionId}, /agents/{agentId}/revisions -------
 
 
