@@ -261,10 +261,19 @@ class SingleShotAnswerSteps:
         return cast(ConversationAnswerStep, {"kind": "final", "response": answer})
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
+        self,
+        step,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_text=None,
+        tools: tuple[str, ...] = (),
     ) -> ConversationAnswerStep:
         # `prepare` already produced the complete answer; there is nothing
         # left to stream, so `on_text` (if given) is simply never called.
+        # `tools` is likewise accepted and ignored: a single-shot `answer()`
+        # double has no tool-calling round to offer them to.
         return step
 
     async def verify_conversation_answer(

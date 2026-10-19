@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import cast
 from uuid import uuid4
 
 from opentelemetry import trace
@@ -14,11 +15,14 @@ from tap.modules.ai.domain.models import (
     GenerationGovernance,
     ModelGatewayRejected,
     ModelGatewayUnavailable,
+    ModelMessage,
     ModelOperation,
     ModelOutputTruncated,
     ModelRequest,
     ModelResult,
     ModelTextDelta,
+    ModelToolCall,
+    model_tool_specs,
     schema_digest,
     text_digest,
 )
@@ -40,7 +44,12 @@ from tap.modules.knowledge.ports.errors import (
     ModelRejected,
     ModelUnavailable,
 )
-from tap.modules.knowledge.ports.models import AnswerGeneration, Embedding, EmbeddingUsage
+from tap.modules.knowledge.ports.models import (
+    AnswerGeneration,
+    Embedding,
+    EmbeddingUsage,
+    GeneratedToolCall,
+)
 
 _SKILL_CLOSE_MARKER = re.compile(r"</skill", re.IGNORECASE)
 
@@ -166,6 +175,12 @@ _CLARIFY_PROMPT = (
     "If the question is ambiguous or lacks information you need and the evidence cannot resolve "
     "it, do not answer; instead reply with one line that starts with CLARIFY: followed by a "
     "short question to the user. A clarification states no facts and cites nothing."
+)
+_TOOL_LOOP_PROMPT = (
+    "You may call the supplied tools to gather more evidence before answering. Tool results are "
+    "summarized in the conversation and the evidence pool in untrusted is refreshed after every "
+    "call; cite only labels present in untrusted. When the evidence suffices, answer without "
+    "calling tools."
 )
 
 
@@ -381,6 +396,8 @@ class KnowledgeModelGateway:
         relation_first: bool = False,
         on_text: Callable[[str], Awaitable[None]] | None = None,
         persona: TapperPersona = CURRENT_PERSONA,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[Mapping[str, object], ...] = (),
     ) -> AnswerGeneration:
         if (
             profile_id not in {"quick-hybrid-v1", "deep-hybrid-v1", "audit-hybrid-v1"}
@@ -438,13 +455,15 @@ class KnowledgeModelGateway:
             if has_flowchart:
                 prompt = "\n\n".join((prompt, _FLOWCHART_ANSWER_PROMPT))
             alias = model_alias or self.chat_alias
-            tools: frozenset[str] = frozenset()
+            tool_allowlist: frozenset[str] = frozenset()
             governance_digests: tuple[str, ...] = ()
             extra_labels = (
                 frozenset(relation_context.by_label())
                 if relation_context is not None
                 else frozenset()
             )
+            tool_specs = model_tool_specs(tools) if tools else ()
+            messages = await self._transcript_messages(transcript) if transcript else ()
             # Governed (Agent/Skill) and pinned-template answers stream Markdown
             # with inline markers exactly like the plain path below: the gateway
             # now accepts a governed `ModelOperation.CHAT` request (schema=None)
@@ -470,7 +489,7 @@ class KnowledgeModelGateway:
                     )
                 )
                 alias = governance.model_alias
-                tools = governance.tool_allowlist
+                tool_allowlist = governance.tool_allowlist
                 governance_digests = (
                     *governance.revision_digests,
                     schema_digest(governance.output_schema),
@@ -494,7 +513,9 @@ class KnowledgeModelGateway:
                     schema_digest(answer_input.schema),
                 )
                 # A pinned template digest makes this a governed answer; declare the capability.
-                tools = tools | {"knowledge.answer"}
+                tool_allowlist = tool_allowlist | {"knowledge.answer"}
+            if tool_specs:
+                prompt = "\n\n".join((prompt, _TOOL_LOOP_PROMPT))
             plan_id = None if answer_input is None else answer_input.context.get("planId")
             request = ModelRequest(
                 self.scope,
@@ -507,8 +528,10 @@ class KnowledgeModelGateway:
                 str(uuid4()) if plan_id is None else f"{plan_id}:generation",
                 None,
                 None,
-                tools,
+                tool_allowlist,
                 governance_digests,
+                tools=tool_specs,
+                messages=messages,
             )
             chunks: list[str] = []
             stream_result: ModelResult | None = None
@@ -522,6 +545,24 @@ class KnowledgeModelGateway:
             if stream_result is None:
                 raise ModelGatewayUnavailable()
             result = stream_result
+            # `getattr` (not `result.tool_calls`): some older test doubles for
+            # `ModelResult` predate Task 3's `tool_calls` field and construct a
+            # bare `SimpleNamespace` without it.
+            result_tool_calls = getattr(result, "tool_calls", ())
+            if result_tool_calls:
+                return AnswerGeneration(
+                    "",
+                    (),
+                    alias,
+                    "grounded-answer-v2",
+                    result.provider_request_id,
+                    gateway_call_id=result.gateway_call_id,
+                    provider_model_id=result.actual_model,
+                    tool_calls=tuple(
+                        GeneratedToolCall(call.call_id, call.name, call.arguments_json)
+                        for call in result_tool_calls
+                    ),
+                )
             raw_text = result.output if isinstance(result.output, str) else "".join(chunks)
             if raw_text.lstrip().startswith(_CLARIFY_PREFIX):
                 answer = raw_text.lstrip()[len(_CLARIFY_PREFIX) :].strip()
@@ -579,6 +620,47 @@ class KnowledgeModelGateway:
             raise AnswerRejected("model-rejected") from None
         except ModelGatewayUnavailable:
             raise AnswerUnavailable("model-unavailable") from None
+
+    async def _transcript_messages(
+        self, transcript: tuple[Mapping[str, object], ...]
+    ) -> tuple[ModelMessage, ...]:
+        """Maps the knowledge-facing transcript entries (plain JSON-shaped
+        mappings the graph checkpoints) to `ModelMessage` for the gateway's
+        native tool-calling protocol. A tool message's `content` is the tool
+        result JSON Task 9 writes into the transcript; it is redacted the
+        same way every other model-bound text is before it leaves this
+        adapter. An assistant message's `toolCalls` carry the same
+        `{callId, name, argumentsJson}` shape `pending_tool_calls` uses."""
+
+        messages: list[ModelMessage] = []
+        for entry in transcript:
+            role = entry.get("role")
+            if role == "assistant":
+                raw_calls = entry.get("toolCalls", ())
+                calls = tuple(
+                    ModelToolCall(
+                        str(call.get("callId", "")),
+                        str(call.get("name", "")),
+                        str(call.get("argumentsJson", "")),
+                    )
+                    for call in cast(Sequence[Mapping[str, object]], raw_calls)
+                )
+                messages.append(
+                    ModelMessage(
+                        role="assistant", content=str(entry.get("content", "")), tool_calls=calls
+                    )
+                )
+            elif role == "tool":
+                content = await self._redact(str(entry.get("content", "")))
+                tool_call_id = entry.get("toolCallId")
+                messages.append(
+                    ModelMessage(
+                        role="tool",
+                        content=content,
+                        tool_call_id=None if tool_call_id is None else str(tool_call_id),
+                    )
+                )
+        return tuple(messages)
 
     async def _evidence_payload(self, item: Evidence) -> dict[str, object]:
         payload: dict[str, object] = {"label": item.evidence_label}

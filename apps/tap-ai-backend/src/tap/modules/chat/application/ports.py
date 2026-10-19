@@ -285,6 +285,7 @@ class ConversationAnswerSteps(Protocol):
         answer_plan=None,
         authorize=None,
         on_text: Callable[[str], Awaitable[None]] | None = None,
+        tools: tuple[str, ...] = (),
     ) -> ConversationAnswerStep: ...
 
     async def verify_conversation_answer(

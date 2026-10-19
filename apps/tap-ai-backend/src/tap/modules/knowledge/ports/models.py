@@ -124,6 +124,17 @@ class GeneratedClaim:
 
 
 @dataclass(frozen=True, slots=True)
+class GeneratedToolCall:
+    """A model-requested tool call (Task 7), kept provider-neutral: the
+    knowledge port must not depend on `tap.modules.ai.domain` types (the
+    `ModelToolCall` this is mapped from), so architecture tests pass."""
+
+    call_id: str
+    name: str
+    arguments_json: str
+
+
+@dataclass(frozen=True, slots=True)
 class AnswerGeneration:
     text: str
     claims: tuple[GeneratedClaim, ...]
@@ -135,3 +146,4 @@ class AnswerGeneration:
     provider_model_id: str | None = None
     completion_id: str | None = None
     answer_kind: Literal["answer", "clarification"] = "answer"
+    tool_calls: tuple[GeneratedToolCall, ...] = ()

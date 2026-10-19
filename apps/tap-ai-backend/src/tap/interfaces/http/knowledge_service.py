@@ -475,7 +475,14 @@ class KnowledgeHttpService:
             }
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
+        self,
+        step,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_text=None,
+        tools: tuple[str, ...] = (),
     ):
         """Resumable generate phase: only acts on a `"prepared"` step,
         re-authorizing from `frozen_input` before the model call, bounded by
@@ -483,7 +490,12 @@ class KnowledgeHttpService:
         returned unchanged. `on_text` (PR 3) is the `model` graph node's
         draft-streaming callback, passed through to the knowledge gateway's
         streaming model call; omitted entirely when `None` so a
-        `generate_frozen` double that does not know about it is unaffected."""
+        `generate_frozen` double that does not know about it is unaffected.
+        `tools` (PR 5 Task 7) are the tool IDs offered this round; when the
+        model asks to call one, this returns a `"tool_calls"` step carrying
+        `pending_tool_calls` and the extended `transcript` instead of a
+        `"generated"` step -- the model's draft is discarded unparsed
+        (`AnswerGeneration.text` stays `""`)."""
         async with self._plan_deadline(answer_plan):
             if step.get("kind") != "prepared":
                 return step
@@ -502,6 +514,7 @@ class KnowledgeHttpService:
                 raise ValueError("resumed step no longer matches a retrieval route")
             revisions, policy, governance = context
             bundle = decode_bundle(step["bundle"])
+            transcript = step.get("transcript", [])
             generation = await self._answers.generate_frozen(
                 bundle,
                 revisions,
@@ -512,7 +525,27 @@ class KnowledgeHttpService:
                 authorize=authorize,
                 persona=persona_for(frozen_input.persona_version),
                 **({"on_text": on_text} if on_text is not None else {}),
+                **({"tools": tools} if tools else {}),
+                **({"transcript": tuple(transcript)} if transcript else {}),
             )
+            if generation.tool_calls:
+                pending_tool_calls = [
+                    {
+                        "callId": call.call_id,
+                        "name": call.name,
+                        "argumentsJson": call.arguments_json,
+                    }
+                    for call in generation.tool_calls
+                ]
+                return {
+                    "kind": "tool_calls",
+                    "bundle": step["bundle"],
+                    "transcript": [
+                        *transcript,
+                        {"role": "assistant", "toolCalls": pending_tool_calls},
+                    ],
+                    "pending_tool_calls": pending_tool_calls,
+                }
             return {
                 "kind": "generated",
                 "bundle": step["bundle"],

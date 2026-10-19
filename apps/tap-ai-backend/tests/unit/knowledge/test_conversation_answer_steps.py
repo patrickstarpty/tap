@@ -39,7 +39,7 @@ from tap.modules.knowledge.domain.models import (
     SearchResponse,
     SourceFamily,
 )
-from tap.modules.knowledge.ports.models import AnswerGeneration, GeneratedClaim
+from tap.modules.knowledge.ports.models import AnswerGeneration, GeneratedClaim, GeneratedToolCall
 
 
 def _bundle(*, query: str) -> EvidenceBundle:
@@ -1215,3 +1215,76 @@ async def test_run_conversation_tool_relations_unavailable_fails_softly() -> Non
 
     assert result["status"] == "failed"
     assert result["step"]["bundle"] == step["bundle"]
+
+
+class ToolCallPhaseAnswers(PhaseAnswers):
+    """A `PhaseAnswers` double whose `generate_frozen` plays the model asking
+    to call a tool (Task 7): accepts and records the `tools`/`transcript`
+    kwargs `generate_conversation_answer` forwards, and returns an
+    `AnswerGeneration` carrying `tool_calls` whenever `tools` is non-empty."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.generate_tools: list[tuple[str, ...]] = []
+        self.generate_transcripts: list[tuple[object, ...]] = []
+
+    async def generate_frozen(
+        self,
+        bundle,
+        revisions,
+        policy,
+        *,
+        governance,
+        model_alias=None,
+        answer_execution=None,
+        authorize=None,
+        persona=None,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[object, ...] = (),
+    ):
+        self.generate_calls += 1
+        self.generate_tools.append(tools)
+        self.generate_transcripts.append(transcript)
+        if authorize is not None:
+            await authorize()
+        if tools:
+            return AnswerGeneration(
+                "",
+                (),
+                "qwen-plus",
+                "quick-hybrid-v1",
+                "provider-request-a",
+                tool_calls=(GeneratedToolCall("c1", "knowledge_search", '{"query":"q"}'),),
+            )
+        return AnswerGeneration(
+            "The rule is grounded.",
+            (GeneratedClaim("The rule is grounded.", ("S1",)),),
+            "qwen-plus",
+            "quick-hybrid-v1",
+            "provider-request-a",
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_with_tools_yields_tool_calls_step() -> None:
+    """Task 7: when `generate_conversation_answer` is called with `tools` and
+    the model answers with tool calls, it returns a `"tool_calls"` step
+    carrying `pending_tool_calls` and the extended `transcript` -- not a
+    `"generated"` step."""
+    frozen, plan = await _retrieve_route()
+    request = RetrievalAnswerRequest(query=frozen.message)
+
+    answers = ToolCallPhaseAnswers()
+    service = _service(answers)
+    step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    step = await service.generate_conversation_answer(
+        step, frozen, answer_plan=plan, tools=("knowledge.search",)
+    )
+
+    assert step["kind"] == "tool_calls"
+    assert step["pending_tool_calls"] == [
+        {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
+    ]
+    assert step["transcript"][-1]["role"] == "assistant"
+    assert step["transcript"][-1]["toolCalls"] == step["pending_tool_calls"]
+    assert answers.generate_tools[-1] == ("knowledge.search",)

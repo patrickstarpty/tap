@@ -813,6 +813,8 @@ class AuthorizedRetrieval:
         authorize=None,
         on_text: Callable[[str], Awaitable[None]] | None = None,
         persona: TapperPersona = CURRENT_PERSONA,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[Mapping[str, object], ...] = (),
     ) -> AnswerGeneration:
         """Rechecks current revision/policy and authorizes before generating.
 
@@ -837,6 +839,8 @@ class AuthorizedRetrieval:
             model_alias=model_alias,
             on_text=on_text,
             persona=persona,
+            tools=tools,
+            transcript=transcript,
         )
 
     async def _generate_from_bundle(
@@ -847,6 +851,8 @@ class AuthorizedRetrieval:
         model_alias: str | None = None,
         on_text: Callable[[str], Awaitable[None]] | None = None,
         persona: TapperPersona = CURRENT_PERSONA,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[Mapping[str, object], ...] = (),
     ) -> AnswerGeneration:
         use_extended_answer = (
             governance is not None
@@ -856,6 +862,8 @@ class AuthorizedRetrieval:
             or bundle.relation is not None
             or on_text is not None
             or persona is not CURRENT_PERSONA
+            or bool(tools)
+            or bool(transcript)
         )
         generation = (
             await cast(Any, self._answers).answer(
@@ -872,6 +880,8 @@ class AuthorizedRetrieval:
                     {"answer_input": bundle.answer_input} if bundle.answer_input is not None else {}
                 ),
                 **({"on_text": on_text} if on_text is not None else {}),
+                **({"tools": tools} if tools else {}),
+                **({"transcript": transcript} if transcript else {}),
             )
             if use_extended_answer
             else await self._answers.answer(

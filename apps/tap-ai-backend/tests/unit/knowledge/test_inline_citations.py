@@ -21,7 +21,7 @@ from tap.modules.ai.domain.models import (
     text_digest,
 )
 from tap.modules.knowledge.adapters.grounded_output import parse_inline_answer
-from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+from tap.modules.knowledge.adapters.litellm import _TOOL_LOOP_PROMPT, KnowledgeModelGateway
 from tap.modules.knowledge.domain.models import (
     CodeAnchor,
     ContentRole,
@@ -193,12 +193,13 @@ def _answer_gateway(stream_gateway) -> KnowledgeModelGateway:
     )
 
 
-def _result(output: str) -> ModelResult:
+def _result(output: str, *, tool_calls: tuple[object, ...] = ()) -> ModelResult:
     return ModelResult(
         output=output,
         actual_model="qwen-plus",
         usage=ModelUsage(),
         actual_provider="dashscope",
+        tool_calls=tool_calls,
         audit=ModelCallAudit(
             VALIDATION_SCOPE,
             "qwen-plus",
@@ -399,3 +400,106 @@ async def test_clarify_prefix_with_no_question_abstains_instead_of_an_empty_clar
     assert generation.answer_kind == "answer"
     assert generation.text == ""
     assert generation.claims == ()
+
+
+@pytest.mark.asyncio
+async def test_answer_with_tools_returns_tool_calls_without_parsing() -> None:
+    """PR 5 Task 7: when the model asks to call a tool, `answer` returns the
+    tool calls verbatim and never attempts to parse the (discarded) draft
+    text as a grounded answer."""
+    from tap.modules.ai.domain.models import ModelToolCall
+
+    captured: dict[str, object] = {}
+
+    class ToolCallGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            captured["request"] = request
+            yield ModelTextDelta("let me check")
+            yield _result(
+                "let me check",
+                tool_calls=(ModelToolCall("c1", "knowledge_search", '{"query":"q"}'),),
+            )
+
+    generation = await _answer_gateway(ToolCallGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1", tools=("knowledge.search",)
+    )
+
+    assert generation.text == ""
+    assert generation.claims == ()
+    assert len(generation.tool_calls) == 1
+    assert generation.tool_calls[0].name == "knowledge_search"
+    assert generation.tool_calls[0].arguments_json == '{"query":"q"}'
+    request = captured["request"]
+    assert request.tools[0].tool_id == "knowledge.search"
+    assert _TOOL_LOOP_PROMPT in request.prompt
+
+
+@pytest.mark.asyncio
+async def test_answer_without_tools_omits_tool_loop_prompt() -> None:
+    """PR 5 Task 7: with no tools offered, the request carries no tool specs
+    and the prompt is not padded with the tool-loop instructions."""
+    captured: dict[str, object] = {}
+
+    class PlainGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            captured["request"] = request
+            yield ModelTextDelta("结论成立[S1]。")
+            yield _result("结论成立[S1]。")
+
+    await _answer_gateway(PlainGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    request = captured["request"]
+    assert request.tools == ()
+    assert _TOOL_LOOP_PROMPT not in request.prompt
+
+
+@pytest.mark.asyncio
+async def test_transcript_reaches_model_messages_redacted() -> None:
+    """PR 5 Task 7: a tool message's `content` in the transcript is redacted
+    the same way every other model-bound text is before it reaches the
+    gateway's native `ModelMessage` transcript."""
+    from tap.modules.ai.domain.models import ModelMessage
+
+    captured: dict[str, object] = {}
+
+    async def redact(text: str) -> str:
+        return text.replace("user@example.com", "[REDACTED_EMAIL]")
+
+    class CapturingGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            captured["request"] = request
+            yield ModelTextDelta("结论成立[S1]。")
+            yield _result("结论成立[S1]。")
+
+    gateway = KnowledgeModelGateway(
+        CapturingGateway(),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+    await gateway.answer(
+        "query",
+        (evidence(label="S1"),),
+        "quick-hybrid-v1",
+        tools=("knowledge.search",),
+        transcript=(
+            {
+                "role": "assistant",
+                "toolCalls": [
+                    {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
+                ],
+            },
+            {"role": "tool", "toolCallId": "c1", "content": "contact user@example.com"},
+        ),
+    )
+
+    request = captured["request"]
+    assert isinstance(request.messages[-1], ModelMessage)
+    assert request.messages[-1].role == "tool"
+    assert "[REDACTED_EMAIL]" in request.messages[-1].content
