@@ -50,7 +50,7 @@ from tap.modules.knowledge.domain.models import (
     SourceRevisionRef,
 )
 from tap.modules.knowledge.ports.answers import DocumentStateChanged
-from tap.modules.knowledge.ports.models import AnswerGeneration, SearchHit
+from tap.modules.knowledge.ports.models import AnswerGeneration, GeneratedClaim, SearchHit
 from tests.contract.test_knowledge_api import (
     FakeModelPort,
     FakeSearchPort,
@@ -150,6 +150,7 @@ def _pool_bundle(
     resource_refs: tuple[ResourceRef, ...],
     query: str = "原始问题",
     relation: RelationContext | None = None,
+    insights_records: tuple = (),
 ) -> EvidenceBundle:
     plan = QueryPlan(
         query_plan_id="pool-plan-1",
@@ -212,6 +213,7 @@ def _pool_bundle(
         flow_context={},
         missing=False,
         relation_first=False,
+        insights_records=insights_records,
     )
 
 
@@ -684,3 +686,143 @@ async def test_analyse_relations_merges_and_continues_r_labels() -> None:
     assert new_bundle.relation.relations[0] == existing_relation.relations[0]
     assert new_bundle.relation.relations[1] == existing_relation.relations[1]
     assert [relation.label for relation in added] == ["R3", "R4"]
+
+
+@pytest.mark.asyncio
+async def test_insights_labels_become_facts_not_citations() -> None:
+    """Task 8: an Insights (`I<n>`) label never generates a knowledge
+    citation. A claim that cites only an Insights label is dropped as a
+    claim (its sentence stays in the answer text); a claim that cites an
+    Insights label alongside a knowledge label keeps only the knowledge
+    label. The cited Insights record surfaces through `insights_facts`
+    instead, and the turn still completes (`abstained is False`)."""
+    model = FakeModelPort()
+    evidence = (_pool_evidence(1, label="S1"),)
+    resources = (_resolved_resource(),)
+    resource_refs = (
+        ResourceRef(family=SourceFamily.DOC, source_id="src-a", mode=ResourceMode.PREFERRED),
+    )
+    bundle = _pool_bundle(
+        evidence,
+        resources=resources,
+        resource_refs=resource_refs,
+        insights_records=(
+            {
+                "label": "I1",
+                "queryId": "query-a",
+                "metricVersion": "insights-metrics-v1",
+                "metricId": "first_pass_rate",
+                "value": 92,
+                "asOf": "2026-09-25T08:00:00+00:00",
+            },
+        ),
+    )
+    _query_hash = AuthorizedRetrieval._text_hash(bundle.plan.sanitized_query)
+    bundle = dataclasses.replace(
+        bundle,
+        plan=dataclasses.replace(bundle.plan, sanitized_query_hash=_query_hash),
+        context_snapshot=dataclasses.replace(
+            bundle.context_snapshot,
+            layers=tuple(
+                dataclasses.replace(layer, content_hash=_query_hash)
+                if layer.kind is ContextLayerKind.CURRENT_TURN
+                else layer
+                for layer in bundle.context_snapshot.layers
+            ),
+        ),
+    )
+    retrieval = AuthorizedRetrieval(
+        search=FakeSearchPort(()),
+        embeddings=model,
+        answers=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=_id_factory(),
+    )
+    generation = AnswerGeneration(
+        text="首次通过率为92%。理赔时限为10个工作日。",
+        claims=(
+            GeneratedClaim(text="首次通过率为92%。", evidence_labels=("I1",)),
+            GeneratedClaim(text="理赔时限为10个工作日。", evidence_labels=("S1",)),
+        ),
+        model_id="tap-answer-v1",
+        profile_id="grounded-answer-v1",
+        provider_request_id="answer-request-1",
+    )
+
+    response = await retrieval.verify_answer(bundle, generation, _single_source_policy())
+
+    assert response.abstained is False
+    assert [claim.text for claim in response.claims] == ["理赔时限为10个工作日。"]
+    assert {citation.evidence_label for citation in response.citations} == {"S1"}
+    assert "[I1]" not in response.answer
+    assert len(response.insights_facts) == 1
+    assert response.insights_facts[0].label == "I1"
+    assert response.insights_facts[0].metric_id == "first_pass_rate"
+    assert response.insights_facts[0].value == 92
+
+
+@pytest.mark.asyncio
+async def test_insights_only_claim_completes_without_knowledge_citations() -> None:
+    """Task 8 ruling: when every surviving claim cited only an Insights
+    label, the knowledge-citation claim set is empty after stripping, but the
+    turn must still complete (not abstain) as long as the text is nonblank
+    and at least one Insights record was cited."""
+    model = FakeModelPort()
+    evidence = (_pool_evidence(1, label="S1"),)
+    resources = (_resolved_resource(),)
+    resource_refs = (
+        ResourceRef(family=SourceFamily.DOC, source_id="src-a", mode=ResourceMode.PREFERRED),
+    )
+    bundle = _pool_bundle(
+        evidence,
+        resources=resources,
+        resource_refs=resource_refs,
+        insights_records=(
+            {
+                "label": "I1",
+                "queryId": "query-a",
+                "metricVersion": "insights-metrics-v1",
+                "metricId": "first_pass_rate",
+                "value": 92,
+                "asOf": "2026-09-25T08:00:00+00:00",
+            },
+        ),
+    )
+    _query_hash = AuthorizedRetrieval._text_hash(bundle.plan.sanitized_query)
+    bundle = dataclasses.replace(
+        bundle,
+        plan=dataclasses.replace(bundle.plan, sanitized_query_hash=_query_hash),
+        context_snapshot=dataclasses.replace(
+            bundle.context_snapshot,
+            layers=tuple(
+                dataclasses.replace(layer, content_hash=_query_hash)
+                if layer.kind is ContextLayerKind.CURRENT_TURN
+                else layer
+                for layer in bundle.context_snapshot.layers
+            ),
+        ),
+    )
+    retrieval = AuthorizedRetrieval(
+        search=FakeSearchPort(()),
+        embeddings=model,
+        answers=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=_id_factory(),
+    )
+    generation = AnswerGeneration(
+        text="首次通过率为92%。",
+        claims=(GeneratedClaim(text="首次通过率为92%。", evidence_labels=("I1",)),),
+        model_id="tap-answer-v1",
+        profile_id="grounded-answer-v1",
+        provider_request_id="answer-request-1",
+    )
+
+    response = await retrieval.verify_answer(bundle, generation, _single_source_policy())
+
+    assert response.abstained is False
+    assert response.claims == ()
+    assert response.citations == ()
+    assert response.answer == "首次通过率为92%。"
+    assert [fact.label for fact in response.insights_facts] == ["I1"]

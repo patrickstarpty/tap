@@ -75,6 +75,7 @@ from tap.modules.knowledge.domain.models import (
     Evidence,
     FailureAnchor,
     FilterableSubtree,
+    InsightsFact,
     ModelCallProvenance,
     OpenApiAnchor,
     QueryPlan,
@@ -964,6 +965,69 @@ class AuthorizedRetrieval:
                 relation=self._baseline_relation_outcome(bundle.relation),
             )
 
+        # Task 8: Insights (`I<n>`) labels never generate a knowledge citation
+        # -- strip them from `generation.claims` before relation reconciliation
+        # (which resolves every remaining label against S/R citations and
+        # would otherwise abstain the whole answer over an unresolvable `I`
+        # label). A claim that cited only an Insights label is dropped as a
+        # claim entirely; its sentence stays in `generation.text` verbatim
+        # (parsing already removed the `[I<n>]` marker itself), and the cited
+        # record is surfaced through `insights_facts` instead.
+        insights_by_label = {
+            str(record["label"]): record
+            for record in bundle.insights_records
+            if "label" in record
+        }
+        insights_facts: tuple[InsightsFact, ...] = ()
+        if insights_by_label:
+            referenced_labels: list[str] = []
+            kept_claims: list[GeneratedClaim] = []
+            for claim in generation.claims:
+                other_labels = tuple(
+                    label for label in claim.evidence_labels if label not in insights_by_label
+                )
+                for label in claim.evidence_labels:
+                    if label in insights_by_label and label not in referenced_labels:
+                        referenced_labels.append(label)
+                if other_labels:
+                    kept_claims.append(
+                        claim
+                        if other_labels == claim.evidence_labels
+                        else replace(claim, evidence_labels=other_labels)
+                    )
+            generation = replace(generation, claims=tuple(kept_claims))
+            insights_facts = tuple(
+                InsightsFact(
+                    label=label,
+                    query_id=str(insights_by_label[label]["queryId"]),
+                    metric_id=str(insights_by_label[label]["metricId"]),
+                    value=cast(Any, insights_by_label[label]["value"]),
+                    as_of=str(insights_by_label[label]["asOf"]),
+                )
+                for label in referenced_labels
+            )
+            if not generation.claims and generation.text.strip() and insights_facts:
+                # No S/R claim survived stripping, but the text still carries
+                # at least one cited Insights fact -- an insights-only answer,
+                # not an abstention (ruling, Task 8).
+                return AnswerResponse(
+                    trace_id=bundle.response.trace_id,
+                    query_plan_id=bundle.response.query_plan_id,
+                    context_snapshot_id=bundle.response.context_snapshot_id,
+                    corpus_version=bundle.response.corpus_version,
+                    retrieval_profile_id=bundle.response.retrieval_profile_id,
+                    answer=generation.text,
+                    abstained=False,
+                    claims=(),
+                    citations=(),
+                    embedding_provenance=bundle.response.embedding_provenance,
+                    answer_provenance=self._generation_provenance(generation),
+                    degraded_mode=bundle.response.degraded_mode,
+                    degradation_reasons=bundle.response.degradation_reasons,
+                    answer_kind=generation.answer_kind,
+                    insights_facts=insights_facts,
+                )
+
         relation_outcome: RelationOutcome | None = None
         stripped = 0
         unresolvable_cited = 0
@@ -1179,6 +1243,7 @@ class AuthorizedRetrieval:
             degraded_mode=bundle.missing or stripped > 0 or unresolvable_cited > 0,
             degradation_reasons=degradation_reasons,
             relation=relation_outcome,
+            insights_facts=insights_facts,
         )
 
     async def _augment_from_relations(

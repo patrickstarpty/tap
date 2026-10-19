@@ -242,13 +242,16 @@ class TurnInput:
                 raise ValueError("agent output schema digest differs from frozen content")
         if set(self.agent_tool_allowlist) - known_tool_ids():
             raise ValueError("agent tool authority is outside the closed allowlist")
-        if self.insights_query_id is None and self.insights_report_refs:
-            raise ValueError("Insights report refs require a historical query")
-        if self.insights_query_id is not None and (
-            not self.insights_query_id.strip()
-            or not self.insights_report_refs
-            or len(self.insights_report_refs) > 20
+        if self.insights_report_refs and (
+            len(self.insights_report_refs) > 20
             or len(set(self.insights_report_refs)) != len(self.insights_report_refs)
+            or any(
+                not isinstance(ref, str) or not ref.strip() for ref in self.insights_report_refs
+            )
+        ):
+            raise ValueError("Insights report refs must be bounded, unique and nonblank")
+        if self.insights_query_id is not None and (
+            not self.insights_query_id.strip() or not self.insights_report_refs
         ):
             raise ValueError("Insights query and report refs must be bounded")
 
@@ -266,7 +269,7 @@ class TurnInput:
         for item in value["resolved_resources"]:
             resources.append({key: fact for key, fact in item.items() if fact is not None})
         value["resolved_resources"] = resources
-        if self.insights_query_id is None:
+        if self.insights_query_id is None and not self.insights_report_refs:
             value.pop("insights_query_id")
             value.pop("insights_report_refs")
         if self.persona_version is None:

@@ -636,6 +636,20 @@ class RelationOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class InsightsFact:
+    """One `I<n>`-labeled Insights metric record a claim actually cited
+    (LangGraph PR 5, Task 8): no knowledge citation is ever generated for an
+    Insights label, so a cited record is surfaced to the caller through this
+    instead, in citation order."""
+
+    label: str
+    query_id: str
+    metric_id: str
+    value: float | int | None
+    as_of: str
+
+
+@dataclass(frozen=True, slots=True)
 class AnswerResponse:
     trace_id: str
     query_plan_id: str
@@ -653,6 +667,7 @@ class AnswerResponse:
     degradation_reasons: tuple[str, ...] = ()
     relation: RelationOutcome | None = None
     answer_kind: Literal["answer", "clarification"] = "answer"
+    insights_facts: tuple[InsightsFact, ...] = ()
 
 
 def _validate_retrieval_intent(

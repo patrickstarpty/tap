@@ -29,6 +29,7 @@ from tap.modules.ai.ports.insights import (
     InsightsAuthorizationChanged,
     InsightsBudgetExceeded,
     InsightsQueryUnavailable,
+    StructuredInsightsTool,
 )
 from tap.modules.chat.domain.conversations import FrozenResource
 
@@ -171,6 +172,59 @@ class ConfiguredInsightsExplanation:
             raise InsightsBudgetExceeded(
                 "Insights explanation exceeded its total time budget"
             ) from exc
+
+    async def query_metrics(
+        self,
+        context: ProjectScopeContext,
+        report_refs: tuple[str, ...],
+        arguments: Mapping[str, object],
+    ) -> tuple[dict[str, object], ...]:
+        """The `insights.query` tool (LangGraph PR 5, Task 8): execute one
+        closed-contract `StructuredInsightsTool` call authorized to exactly
+        the Turn's frozen `insights_report_refs` -- never the project at
+        large -- and return one record per returned fact for the evidence
+        pool to label `I<n>`. A fact whose own `evidence_refs` reach outside
+        `report_refs` is an authorization change, not a usable result."""
+        try:
+            async with asyncio.timeout(30):
+                return await self._query_metrics(context, report_refs, arguments)
+        except TimeoutError as exc:
+            raise InsightsBudgetExceeded(
+                "Insights metrics query exceeded its total time budget"
+            ) from exc
+
+    async def _query_metrics(
+        self,
+        context: ProjectScopeContext,
+        report_refs: tuple[str, ...],
+        arguments: Mapping[str, object],
+    ) -> tuple[dict[str, object], ...]:
+        if context.project_id != self._project_id:
+            raise InsightsAuthorizationChanged("Insights project scope changed")
+        scope = AuthorizedInsightsScope(
+            context=context,
+            user_authorization=self._user_token,
+            authorization_version=self._authorization_version,
+            authorized_resource_refs=report_refs,
+        )
+        result = await StructuredInsightsTool(self._insights).invoke(scope, arguments)
+        allowed_refs = set(report_refs)
+        for fact in result.metrics:
+            if not set(fact.evidence_refs) <= allowed_refs:
+                raise InsightsAuthorizationChanged(
+                    "Insights metric evidence is outside the Turn's frozen report refs"
+                )
+        as_of = result.query.as_of.isoformat()
+        return tuple(
+            {
+                "queryId": result.query_id,
+                "metricVersion": result.metric_version,
+                "metricId": fact.metric_id,
+                "value": fact.value,
+                "asOf": as_of,
+            }
+            for fact in result.metrics
+        )
 
     async def reauthorize_result(
         self,

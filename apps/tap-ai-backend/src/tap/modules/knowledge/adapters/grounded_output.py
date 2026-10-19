@@ -70,11 +70,12 @@ def parse_grounded_answer_payload(
 
 
 _CODE_SPAN = re.compile(r"```.*?```|`[^`\n]*`", re.DOTALL)
-# Label grammar only (`S1`..`S999`, `R1`..`R999`; the real allow-list below bounds
-# this further to the evidence/relation labels actually in play) so a Markdown
+# Label grammar only (`S1`..`S999`, `R1`..`R999`, `I1`..`I999` -- PR 5 Task 8
+# adds Insights metric labels; the real allow-list below bounds this further
+# to the evidence/relation/insights labels actually in play) so a Markdown
 # link (`[docs](url)`), a literal `[x]`, or an unrelated `a[0]` index is never
 # mistaken for a citation marker.
-_MARKER = re.compile(r"\[([SR][1-9][0-9]{0,2})\]")
+_MARKER = re.compile(r"\[([SRI][1-9][0-9]{0,2})\]")
 # CJK terminators always end a sentence; a newline always does (so a Markdown
 # list item/heading line is its own sentence). An ASCII `.!?` only ends a
 # sentence when whitespace, end of text, or a citation marker follows --

@@ -398,6 +398,7 @@ class KnowledgeModelGateway:
         persona: TapperPersona = CURRENT_PERSONA,
         tools: tuple[str, ...] = (),
         transcript: tuple[Mapping[str, object], ...] = (),
+        insights_records: tuple[Mapping[str, object], ...] = (),
     ) -> AnswerGeneration:
         if (
             profile_id not in {"quick-hybrid-v1", "deep-hybrid-v1", "audit-hybrid-v1"}
@@ -433,6 +434,17 @@ class KnowledgeModelGateway:
                     json.dumps([dict(item) for item in graph_context], ensure_ascii=False)
                 )
             )
+        if insights_records:
+            # Task 8: `insights.query` metric records accumulate in the
+            # evidence pool exactly like S/R evidence -- untrusted data the
+            # model may only quote with an `[I<n>]` marker, never an
+            # instruction. Verified/authorized by `query_metrics` before this
+            # point; redacted here the same as every other untrusted section.
+            untrusted_sections["insights"] = json.loads(
+                await self._redact(
+                    json.dumps([dict(record) for record in insights_records], ensure_ascii=False)
+                )
+            )
         context_value, flagged_labels = untrusted_context(trusted_value, untrusted_sections)
         if flagged_labels:
             current_span = trace.get_current_span()
@@ -461,6 +473,8 @@ class KnowledgeModelGateway:
                 frozenset(relation_context.by_label())
                 if relation_context is not None
                 else frozenset()
+            ) | frozenset(
+                str(record["label"]) for record in insights_records if "label" in record
             )
             tool_specs = model_tool_specs(tools) if tools else ()
             # I-3 (Task 7 fix round 1): the gateway's native tool-calling protocol
