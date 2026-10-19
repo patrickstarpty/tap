@@ -65,6 +65,25 @@ export function AccessibleDialog({
     };
   }, [initialFocusSelector]);
 
+  // A multi-step dialog (e.g. `SkillImportDialog`'s two-step import) swaps
+  // its `children` in place rather than unmounting/remounting this
+  // component, so the effect above (which only runs on mount/unmount and
+  // when `initialFocusSelector` changes) never re-runs to refocus it. If
+  // the element that held focus in the old step isn't in the new step
+  // (e.g. a "Preview" button replaced by "Back"/"Import selected"), the
+  // browser drops focus to `<body>` -- outside `dialogRef`, so
+  // `handleKeyDown`'s containment guard below ignores every subsequent key,
+  // including Escape. Running on every `children` change (not just mount)
+  // catches that and brings focus back inside the dialog; it's a no-op
+  // whenever focus is already inside (the common case, e.g. typing).
+  useLayoutEffect(() => {
+    if (!dialogRef.current) return;
+    if (dialogRef.current.contains(document.activeElement)) return;
+    dialogRef.current
+      .querySelector<HTMLElement>(initialFocusSelector ?? FOCUSABLE_SELECTOR)
+      ?.focus();
+  }, [children, initialFocusSelector]);
+
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     // Nested editor portals own their keyboard and focus lifecycle.
     if (

@@ -488,12 +488,29 @@ test("captures the Skill import preview, Skill detail and Agent creation form", 
       await route.fulfill({ json: { items: [], nextCursor: null } });
       return;
     }
+    if (path.endsWith("/knowledge/published-sources")) {
+      // `TapperWorkspace` fetches published sources unconditionally (for
+      // the composer's Library context, regardless of which module tab is
+      // active), so this reroute needs it even though this test never
+      // visits the Library tab itself.
+      await route.fulfill({ json: { items: [] } });
+      return;
+    }
     if (path.endsWith("/ai/skills/imports") && method === "POST") {
       await route.fulfill({ json: importPreview });
       return;
     }
     if (path.endsWith(`/ai/skills/${skillRevisionId}`) && method === "GET") {
       await route.fulfill({ json: skillDetail });
+      return;
+    }
+    if (
+      path.endsWith(`/ai/skills/${skillSummary.skillId}/revisions`) &&
+      method === "GET"
+    ) {
+      // `SkillDetailDrawer` fetches revision history unconditionally (not
+      // only when the "Revision history" tab is selected).
+      await route.fulfill({ json: { items: [skillSummary] } });
       return;
     }
     if (path.endsWith("/ai/skills") && method === "GET") {
