@@ -437,6 +437,10 @@ class ChatTurnNodes:
             else tuple(item.input_snapshot for item in (await load(self._conversation_id)).turns)
         )
         plan = await self._planner.plan(planning_input(self._turn.input_snapshot, history=history))
+        audit_span.set_attribute("tap.plan.intent", plan.agent_intent)
+        if plan.intent_reason:
+            audit_span.set_attribute("tap.plan.intent_reason", plan.intent_reason)
+        audit_span.set_attribute("tap.plan.answer_intent", plan.intent)
         route = "out_of_scope" if plan.intent == "out_of_scope" else "chat"
         result: dict[str, object] = {
             "route": route,

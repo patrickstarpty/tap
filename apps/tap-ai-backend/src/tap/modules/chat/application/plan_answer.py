@@ -11,6 +11,7 @@ from tap.modules.chat.domain.answer_plan import (
     AnswerPlan,
     PlannedQuery,
     PlanningInput,
+    derive_agent_intent,
     protected_constraints,
 )
 from tap.modules.chat.domain.conversations import TurnInputSnapshot
@@ -221,10 +222,24 @@ class AnswerPlanner:
                 elif re.search(r"为什么|解释|why|explain", original, re.I):
                     intent = "explanation"
 
-            def build(queries=None):
+            def build(queries=None, agent_intent=None, intent_reason=""):
                 template_id = _TEMPLATE[intent]
                 template = _get_template(template_id, _latest_template_version(template_id))
                 current_span.set_attribute("tap.plan.kind", route)
+                resolved_queries = (
+                    tuple(queries)
+                    if queries is not None
+                    else (
+                        (PlannedQuery("q1", standalone, (), standalone, value.source_ids),)
+                        if route in {"retrieve", "graph"}
+                        else ()
+                    )
+                )
+                resolved_agent_intent = (
+                    agent_intent
+                    if agent_intent is not None
+                    else derive_agent_intent(intent, route, len(resolved_queries))
+                )
                 return AnswerPlan(
                     plan_id=uuid4().hex,
                     project_id=value.project_id,
@@ -240,13 +255,7 @@ class AnswerPlanner:
                     standalone_query=standalone,
                     constraints=protected_constraints(original),
                     missing=tuple(missing),
-                    queries=tuple(queries)
-                    if queries is not None
-                    else (
-                        (PlannedQuery("q1", standalone, (), standalone, value.source_ids),)
-                        if route in {"retrieve", "graph"}
-                        else ()
-                    ),
+                    queries=resolved_queries,
                     source_ids=value.source_ids,
                     template_id=template.id,
                     template_version=template.version,
@@ -259,9 +268,11 @@ class AnswerPlanner:
                     previous_plan_id=previous_plan_id,
                     degradation_reason=reason,
                     context_digests=value.context_digests,
+                    agent_intent=resolved_agent_intent,
+                    intent_reason=intent_reason,
                 )
 
-            if route != "retrieve" or not complex_query or self._model is None or ambiguous:
+            if route not in {"retrieve", "graph"} or self._model is None or ambiguous:
                 return build()
             timeout = min(3.0, value.remaining_seconds)
             if timeout <= 0:
@@ -276,6 +287,8 @@ class AnswerPlanner:
                     "standalone_query",
                     "missing",
                     "queries",
+                    "agent_intent",
+                    "intent_reason",
                 }:
                     raise ValueError("invalid planning schema")
                 if raw["route"] not in {"retrieve", "graph", "clarify", "direct"}:
@@ -329,9 +342,11 @@ class AnswerPlanner:
                     )
                     for query in raw["queries"]
                 )
+                if not isinstance(raw["intent_reason"], str):
+                    raise ValueError("invalid intent reason type")
                 intent, route, confidence = raw["intent"], raw["route"], raw["confidence"]
                 standalone, missing = raw["standalone_query"], tuple(raw["missing"])
-                return build(queries)
+                return build(queries, raw["agent_intent"], raw["intent_reason"])
             except TimeoutError:
                 reason = "planner-timeout"
             except (ValueError, TypeError, KeyError):

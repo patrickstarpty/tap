@@ -149,6 +149,8 @@ async def _planned_three_queries():
                     "source_ids": source_ids,
                 },
             ],
+            "agent_intent": "multi_step_qa",
+            "intent_reason": "compares three chapters",
         }
 
     return await AnswerPlanner(model).plan(planning_value("比较章节 A、B 和 C"))

@@ -33,13 +33,15 @@ def context(message, **changes):
     [
         ("你好", "direct", 0),
         ("改写以下段落：系统现在可以使用。", "direct", 0),
-        ("错误码 E104 如何处理？", "retrieve", 1),
         ("它和上一版有什么不同？", "clarify", 0),
         ("最近 30 天失败率", "insights", 0),
         ("完整表格汇总", "file_analysis", 0),
     ],
 )
 async def test_explicit_routes_do_not_spend_planning_calls(message, route, count):
+    """Deterministic shortcuts (greeting/rewrite `direct`, `clarify`, and the
+    capability-unavailable `insights`/`file_analysis` routes) never consult
+    the model -- only `retrieve`/`graph` do, every turn, as of this task."""
     module = planning()
 
     async def forbidden(_input, _timeout):
@@ -48,8 +50,6 @@ async def test_explicit_routes_do_not_spend_planning_calls(message, route, count
     plan = await module.AnswerPlanner(forbidden).plan(context(message))
     assert plan.route == route
     assert len(plan.queries) == count
-    if count:
-        assert plan.queries[0].text == "错误码 E104 如何处理？"
 
 
 @pytest.mark.asyncio
@@ -60,10 +60,7 @@ async def test_new_plans_pin_the_latest_answer_template_version(message):
         latest_template_version,
     )
 
-    async def forbidden(_input, _timeout):
-        pytest.fail("explicit input must not call the planning model")
-
-    plan = await planning().AnswerPlanner(forbidden).plan(context(message))
+    plan = await planning().AnswerPlanner(None).plan(context(message))
     assert plan.template_version == latest_template_version(plan.template_id)
     assert plan.template_digest == get_template(plan.template_id, plan.template_version).digest
 
@@ -81,10 +78,7 @@ async def test_new_plans_pin_the_latest_answer_template_version(message):
     ],
 )
 async def test_english_it_is_ambiguous_only_as_an_unresolved_version_referent(message, route):
-    async def forbidden(_input, _timeout):
-        pytest.fail("explicit input must not call the planning model")
-
-    plan = await planning().AnswerPlanner(forbidden).plan(context(message))
+    plan = await planning().AnswerPlanner(None).plan(context(message))
     assert plan.route == route
 
 
@@ -110,7 +104,7 @@ async def test_unique_lineage_resolves_reference_without_using_history_as_eviden
 
 
 def suggestion(**changes):
-    return {
+    base = {
         "intent": "comparison",
         "route": "retrieve",
         "confidence": 0.9,
@@ -132,8 +126,13 @@ def suggestion(**changes):
                 "source_ids": ["source-a"],
             },
         ],
-        **changes,
     }
+    merged = {**base, **changes}
+    merged.setdefault(
+        "agent_intent", "out_of_scope" if merged["intent"] == "out_of_scope" else "multi_step_qa"
+    )
+    merged.setdefault("intent_reason", "")
+    return merged
 
 
 @pytest.mark.asyncio
@@ -506,10 +505,7 @@ async def test_recent_user_context_requires_matching_authorized_source_lineage()
 async def test_relation_questions_route_to_graph_with_queries(message):
     module = planning()
 
-    async def forbidden(_input, _timeout):
-        pytest.fail("relation heuristic must not call the planning model")
-
-    plan = await module.AnswerPlanner(forbidden).plan(context(message))
+    plan = await module.AnswerPlanner(None).plan(context(message))
     assert plan.intent == "relation"
     assert plan.route == "graph"
     assert len(plan.queries) == 1
@@ -718,3 +714,56 @@ async def test_relation_heuristic_precision_and_recall_table(message, should_rou
     else:
         assert plan.intent != "relation", message
         assert plan.route != "graph", message
+
+
+@pytest.mark.asyncio
+async def test_model_plan_carries_agent_intent_and_reason():
+    async def model(_input, _timeout):
+        return suggestion(agent_intent="multi_step_qa", intent_reason="needs two lookups")
+
+    plan = await planning().AnswerPlanner(model).plan(context("比较章节 A 和 B"))
+    assert plan.agent_intent == "multi_step_qa"
+    assert plan.intent_reason == "needs two lookups"
+
+
+@pytest.mark.asyncio
+async def test_simple_question_now_consults_the_model_planner():
+    """Only deterministic shortcuts skip the model: a non-comparison
+    question with sources selected must still reach the planner model on the
+    `retrieve` route, every turn -- not only for `complex_query` intents."""
+    calls = []
+
+    async def model(_input, _timeout):
+        calls.append(1)
+        return suggestion()
+
+    plan = await planning().AnswerPlanner(model).plan(context("出险后几天内报案？"))
+    assert len(calls) == 1
+    assert plan.route == "retrieve"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_shortcuts_skip_model_and_derive_intent():
+    async def forbidden(_input, _timeout):
+        pytest.fail("deterministic shortcut must not call the planning model")
+
+    module = planning()
+    greeting = await module.AnswerPlanner(forbidden).plan(context("你好"))
+    assert greeting.route == "direct"
+    assert greeting.agent_intent == "knowledge_qa"
+
+    missing_sources = await module.AnswerPlanner(forbidden).plan(
+        replace(context("我们公司的报销政策是什么？"), source_ids=())
+    )
+    assert missing_sources.route == "clarify"
+    assert missing_sources.agent_intent == "clarify"
+
+
+@pytest.mark.asyncio
+async def test_agent_intent_out_of_scope_must_pair_with_legacy_intent():
+    async def model(_input, _timeout):
+        return suggestion(intent="factual_lookup", route="retrieve", agent_intent="out_of_scope")
+
+    plan = await planning().AnswerPlanner(model).plan(context("比较章节 A 和 B"))
+    assert plan.degradation_reason == "invalid-plan"
+    assert plan.agent_intent != "out_of_scope"

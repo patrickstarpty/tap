@@ -283,6 +283,7 @@ def _out_of_scope_plan() -> AnswerPlan:
         template_digest=digest,
         deadline_at=time.time() + 30,
         remaining_seconds=30,
+        agent_intent="out_of_scope",
     )
 
 

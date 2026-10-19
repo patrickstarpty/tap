@@ -25,6 +25,8 @@ from tap.modules.ai.domain.models import (
     ModelTextDelta,
 )
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
+from tap.modules.chat.application.plan_answer import _is_relation_question
+from tap.modules.chat.domain.answer_plan import derive_agent_intent
 from tap.testing.deterministic_model import (
     _ANSWER_DELAY_SECONDS,
     _CANCELLATION_QUERY_SUFFIX,
@@ -329,6 +331,64 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                     for source in data.get("sources", [])[:8]
                 ]
                 content = json.dumps({"suggestions": suggestions})
+            elif (
+                request.operation is ModelOperation.STRUCTURED
+                and isinstance(request.schema, dict)
+                and request.schema.get("title") == "AnswerPlan"
+            ):
+                # The planner (`ModelGatewayPlanner`) now consults the model
+                # on every `retrieve`/`graph` turn, not only `complex_query`
+                # ones (Task 4); echo back a schema-conformant suggestion
+                # that keeps the planner's own deterministic route/intent
+                # (never overriding it) with a bounded, non-authoritative
+                # observability classification, instead of falling through
+                # to the generic `{"answer": "Grounded"}` stub below, which
+                # would always degrade this plan to `invalid-plan`.
+                try:
+                    data = json.loads(request.context)
+                    if not isinstance(data, dict):
+                        data = {}
+                except ValueError:
+                    data = {}
+                raw_question = data.get("question")
+                question: str = raw_question if isinstance(raw_question, str) else ""
+                source_ids = [item for item in data.get("sourceIds", []) if isinstance(item, str)]
+                # Mirror the planner's own relation heuristic instead of
+                # hard-coding `retrieve`: a fake suggestion that silently
+                # overrode a relation question's `graph` route to `retrieve`
+                # would change which seam (relation extraction vs. plain
+                # retrieval) the turn exercises, purely because the model
+                # got consulted -- not because any answer actually changed.
+                intent, route = (
+                    ("relation", "graph")
+                    if _is_relation_question(question)
+                    else ("factual_lookup", "retrieve")
+                )
+                queries = (
+                    [
+                        {
+                            "id": "q1",
+                            "text": question,
+                            "depends_on": [],
+                            "evidence_goal": question,
+                            "source_ids": source_ids,
+                        }
+                    ]
+                    if source_ids
+                    else []
+                )
+                content = json.dumps(
+                    {
+                        "intent": intent,
+                        "route": route,
+                        "confidence": 0.9,
+                        "standalone_query": question,
+                        "missing": [],
+                        "queries": queries,
+                        "agent_intent": derive_agent_intent(intent, route, len(queries)),
+                        "intent_reason": "",
+                    }
+                )
             elif request.operation is ModelOperation.STRUCTURED:
                 # Baseline conformance for any other structured schema (test
                 # design, graph extraction, chat planning, ...): a minimal,

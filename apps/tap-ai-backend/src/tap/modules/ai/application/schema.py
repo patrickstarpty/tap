@@ -58,6 +58,12 @@ def check_schema(schema: object, depth: int = 0) -> None:
                 type(schema[bound]) not in {int, float} or not math.isfinite(schema[bound])
             ):
                 raise ValueError("invalid numeric bound")
+    elif kind == "string":
+        allowed |= {"maxLength"}
+        if "maxLength" in schema and (
+            type(schema["maxLength"]) is not int or not 0 <= schema["maxLength"] <= 100_000
+        ):
+            raise ValueError("invalid string bound")
     if set(schema) - allowed:
         raise ValueError("unsupported locked schema keyword")
     if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
@@ -120,3 +126,8 @@ def validate_output(schema: dict[str, object], value: object, *, _depth: int = 0
                 (value > limit) if exceeds else (value < limit)
             ):
                 raise ValueError("structured output exceeds numeric bound")
+    if kind == "string":
+        assert isinstance(value, str)
+        limit = schema.get("maxLength")
+        if isinstance(limit, int) and len(value) > limit:
+            raise ValueError("structured output exceeds string bound")

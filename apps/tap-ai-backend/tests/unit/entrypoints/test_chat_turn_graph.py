@@ -702,6 +702,7 @@ def _out_of_scope_plan() -> AnswerPlan:
         template_digest=_digest("4"),
         deadline_at=time.time() + 30,
         remaining_seconds=30,
+        agent_intent="out_of_scope",
     )
 
 
@@ -773,6 +774,78 @@ async def test_insights_route_never_out_of_scope() -> None:
 
     assert result == {"route": "insights", "reasoning_mode": "workflow"}
     assert planner.calls == 0
+
+
+def _multi_step_plan() -> AnswerPlan:
+    from tap.modules.chat.domain.answer_plan import PlannedQuery
+
+    return AnswerPlan(
+        plan_id="plan-multi",
+        project_id="project-a",
+        turn_id="turn-oos",
+        input_digest=_digest("1"),
+        acl_digest=_digest("2"),
+        policy_digest=_digest("3"),
+        model_alias="qwen-plus",
+        original_question="What's the weather today?",
+        intent="comparison",
+        route="retrieve",
+        confidence=0.9,
+        standalone_query="What's the weather today?",
+        constraints=(),
+        missing=(),
+        queries=(
+            PlannedQuery(
+                "q1",
+                "What's the weather today?",
+                (),
+                "What's the weather today?",
+                ("source-a",),
+            ),
+        ),
+        source_ids=("source-a",),
+        template_id="template-1",
+        template_version="v1",
+        template_digest=_digest("4"),
+        deadline_at=time.time() + 30,
+        remaining_seconds=30,
+        agent_intent="multi_step_qa",
+        intent_reason="needs two lookups",
+    )
+
+
+class _MultiStepPlanner:
+    async def plan(self, _value, *, previous_plan_id=None):
+        return _multi_step_plan()
+
+
+@pytest.mark.asyncio
+async def test_guard_in_records_plan_intent_on_turn_span() -> None:
+    turn = _frozen_turn_for_planning()
+    conversations = _Conversations(turn)
+    span = _RecordingSpan()
+
+    async def require_authorized() -> None:
+        return None
+
+    nodes = ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations,
+        steps=_StepsKnowledge(),
+        planner=_MultiStepPlanner(),
+        knowledge=object(),
+        insights_explanation=None,
+        require_authorized=require_authorized,
+        turn_span=span,
+    )
+
+    result = await nodes.guard_in({})
+
+    assert result["route"] == "chat"
+    assert span.attributes["tap.plan.intent"] == "multi_step_qa"
+    assert span.attributes["tap.plan.intent_reason"] == "needs two lookups"
+    assert span.attributes["tap.plan.answer_intent"] == "comparison"
 
 
 class _HitsReadyKnowledge(_StepsKnowledge):

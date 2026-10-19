@@ -69,6 +69,8 @@ async def planned():
                     "source_ids": list(value().source_ids),
                 },
             ],
+            "agent_intent": "multi_step_qa",
+            "intent_reason": "compares two chapters",
         }
 
     return await AnswerPlanner(model).plan(value())
