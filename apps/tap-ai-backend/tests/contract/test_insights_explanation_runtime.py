@@ -410,9 +410,7 @@ async def test_query_metrics_scopes_to_turn_report_refs() -> None:
         delegated_user_token="delegated-user-token-0001",
         authorization_version="authz-1",
     )
-    records = await runtime.query_metrics(
-        VALIDATION_SCOPE, ("report-1",), _METRICS_QUERY_ARGUMENTS
-    )
+    records = await runtime.query_metrics(VALIDATION_SCOPE, ("report-1",), _METRICS_QUERY_ARGUMENTS)
 
     assert len(records) == 1
     assert records[0]["metricId"] == "first_pass_rate"

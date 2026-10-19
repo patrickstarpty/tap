@@ -902,9 +902,7 @@ class AuthorizedRetrieval:
                 **({"tools": tools} if tools else {}),
                 **({"transcript": transcript} if transcript else {}),
                 **(
-                    {"insights_records": bundle.insights_records}
-                    if bundle.insights_records
-                    else {}
+                    {"insights_records": bundle.insights_records} if bundle.insights_records else {}
                 ),
             )
             if use_extended_answer
@@ -980,9 +978,7 @@ class AuthorizedRetrieval:
         # (parsing already removed the `[I<n>]` marker itself), and the cited
         # record is surfaced through `insights_facts` instead.
         insights_by_label = {
-            str(record["label"]): record
-            for record in bundle.insights_records
-            if "label" in record
+            str(record["label"]): record for record in bundle.insights_records if "label" in record
         }
         insights_facts: tuple[InsightsFact, ...] = ()
         if insights_by_label:

@@ -245,9 +245,7 @@ class TurnInput:
         if self.insights_report_refs and (
             len(self.insights_report_refs) > 20
             or len(set(self.insights_report_refs)) != len(self.insights_report_refs)
-            or any(
-                not isinstance(ref, str) or not ref.strip() for ref in self.insights_report_refs
-            )
+            or any(not isinstance(ref, str) or not ref.strip() for ref in self.insights_report_refs)
         ):
             raise ValueError("Insights report refs must be bounded, unique and nonblank")
         if self.insights_query_id is not None and (

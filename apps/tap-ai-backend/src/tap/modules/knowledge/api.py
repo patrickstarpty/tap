@@ -27,10 +27,10 @@ from tap.contracts.http import (
     GraphContextSummaryView as HttpGraphContextSummaryView,
 )
 from tap.contracts.http import (
-    InsightsFactView as HttpInsightsFactView,
+    GraphEndpointView as HttpGraphEndpointView,
 )
 from tap.contracts.http import (
-    GraphEndpointView as HttpGraphEndpointView,
+    InsightsFactView as HttpInsightsFactView,
 )
 from tap.contracts.http import (
     OpenApiAnchor as HttpOpenApiAnchor,

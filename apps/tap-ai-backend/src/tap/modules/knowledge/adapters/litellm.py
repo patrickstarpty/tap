@@ -482,9 +482,7 @@ class KnowledgeModelGateway:
                 frozenset(relation_context.by_label())
                 if relation_context is not None
                 else frozenset()
-            ) | frozenset(
-                str(record["label"]) for record in insights_records if "label" in record
-            )
+            ) | frozenset(str(record["label"]) for record in insights_records if "label" in record)
             tool_specs = model_tool_specs(tools) if tools else ()
             # I-3 (Task 7 fix round 1): the gateway's native tool-calling protocol
             # rejects `messages` offered without `tools` (`_validate` in
