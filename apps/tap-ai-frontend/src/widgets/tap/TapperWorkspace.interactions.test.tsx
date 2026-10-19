@@ -2969,6 +2969,163 @@ describe("Tap product workspace interactions", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("never shows the raw skill_disabled:<id> wire code, even when the id names an older revision not in the latest-only skill list (N-2)", async () => {
+    // `skillById` (built from `GET /ai/skills`, latest-per-asset only) has
+    // no entry for "citation-skill-rev-OLD" -- the Agent is pinned to a
+    // revision superseded since, the ordinary case a disabled-skill
+    // notice can still name. The notice must fall back to a generic
+    // sentence, never the raw code.
+    const AGENT_SUMMARY = {
+      revisionId: "underwriting-reviewer",
+      agentId: "underwriting-reviewer",
+      assetId: "underwriting-reviewer",
+      displayName: "Underwriting reviewer",
+      description: "Reviews underwriting evidence.",
+      contentDigest: `sha256:${"7".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+      hasSkillUpdates: false,
+      defaultModelAlias: null,
+      skillRevisionIds: ["citation-skill-rev-NEW"],
+    };
+    const SKILL_SUMMARY = {
+      revisionId: "citation-skill-rev-NEW",
+      assetId: "citation-skill",
+      skillId: "citation-skill",
+      displayName: "Citation skill",
+      description: "Cites evidence labels.",
+      contentDigest: `sha256:${"9".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "built_in",
+      builtIn: true,
+      status: "enabled",
+      isLatest: true,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const rawUrl =
+          input instanceof Request
+            ? input.url
+            : input instanceof URL
+              ? input.toString()
+              : input;
+        const method = (
+          input instanceof Request ? input.method : (init?.method ?? "GET")
+        ).toUpperCase();
+        const path = new URL(rawUrl, window.location.origin).pathname;
+        if (path.endsWith("/ai/agents"))
+          return Response.json({ items: [AGENT_SUMMARY] });
+        if (path.endsWith("/ai/skills"))
+          return Response.json({ items: [SKILL_SUMMARY] });
+        if (path.endsWith("/ai/skills/citation-skill-rev-NEW"))
+          return Response.json({
+            ...SKILL_SUMMARY,
+            instructions: "Cite every claim.",
+            attachedReferences: null,
+          });
+        if (path.endsWith("/conversations") && method === "GET")
+          return Response.json({ items: [], nextCursor: null });
+        if (path.endsWith("/conversations") && method === "POST") {
+          return Response.json(
+            {
+              conversationId: "conversation-old-rev-notice",
+              turnId: "conversation-old-rev-notice-turn-1",
+              state: "queued",
+            },
+            { status: 202 },
+          );
+        }
+        if (path.endsWith("/conversation-old-rev-notice")) {
+          return Response.json({
+            conversationId: "conversation-old-rev-notice",
+            title: "What evidence is needed?",
+            createdAt: CONVERSATION_NOW,
+            updatedAt: CONVERSATION_NOW,
+            turns: [
+              {
+                turnId: "conversation-old-rev-notice-turn-1",
+                state: "completed",
+                attempt: 1,
+                inputSnapshotDigest: INPUT_DIGEST,
+                answerEvidenceSnapshotDigest: EVIDENCE_DIGEST,
+                input: {
+                  message: "What evidence is needed?",
+                  modelAlias: "qwen-plus",
+                  sourceRevisionIds: [],
+                  documentRevisionIds: [],
+                  resolvedResources: [],
+                  agentRevisionId: "underwriting-reviewer",
+                  agentLabel: "Underwriting reviewer",
+                  skillRevisionIds: [],
+                  skillLabels: [],
+                  skillNotices: ["skill_disabled:citation-skill-rev-OLD"],
+                },
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/events"))
+          return Response.json({
+            items: [
+              {
+                eventId: "conversation-old-rev-notice-turn-1-event",
+                sequence: 1,
+                turnId: "conversation-old-rev-notice-turn-1",
+                occurredAt: CONVERSATION_NOW,
+                eventType: "turn.completed",
+                payload: { answer: NO_CONTEXT_ANSWER },
+              },
+            ],
+          });
+        if (path.endsWith("/stream"))
+          return new Response("", {
+            headers: { "content-type": "text/event-stream" },
+          });
+        return Response.json({ items: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Use Agents" }),
+      ).toHaveTextContent("Underwriting reviewer"),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText(
+        "A selected skill is disabled and was skipped for this answer.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/skill_disabled:citation-skill-rev-OLD/),
+    ).toBeNull();
+  });
+
   it("supports keyboard navigation and Escape focus restoration in the add menu", async () => {
     const user = userEvent.setup();
     renderWorkspace();

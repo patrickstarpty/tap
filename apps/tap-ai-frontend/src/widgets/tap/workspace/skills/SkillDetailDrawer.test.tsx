@@ -238,6 +238,59 @@ describe("SkillDetailDrawer", () => {
     expect(useSkill).toHaveBeenLastCalledWith("project-1", "rev_0");
   });
 
+  it("hides Use in chat and Edit while viewing an older revision, since they must act on the viewed revision, not silently on the latest one (minor)", async () => {
+    // A real `useSkill(projectId, activeRevisionId)` call re-fetches per
+    // revision id -- unlike `renderDrawer`'s static mock, this needs a
+    // dynamic one so switching revisions actually changes `detail`
+    // (including `isLatest`).
+    const user = userEvent.setup();
+    const latest = {
+      ...BUILT_IN_DETAIL,
+      sourceKind: "authored",
+      builtIn: false,
+    };
+    const older = { ...latest, revisionId: "rev_0", isLatest: false };
+    vi.mocked(useSkill).mockImplementation(
+      (_projectId: string, revisionId: string | null) =>
+        ({
+          data: revisionId === "rev_0" ? older : latest,
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    vi.mocked(useSkillRevisions).mockReturnValue({
+      data: [older, latest],
+      isPending: false,
+      isError: false,
+    } as never);
+    render(
+      createElement(SkillDetailDrawer, {
+        projectId: "project-1",
+        copy: WORKSPACE_COPY.en,
+        revisionId: "rev_1",
+        onClose: vi.fn(),
+        onUse: vi.fn(),
+        onEdit: vi.fn(),
+        onCopyAsCustom: vi.fn(),
+        opener: document.body,
+      }),
+      { wrapper },
+    );
+
+    expect(screen.getByRole("button", { name: "Use in chat" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeVisible();
+
+    await user.click(screen.getByRole("tab", { name: "Revision history" }));
+    await user.click(screen.getByRole("button", { name: "rev_0" }));
+
+    expect(
+      screen.queryByRole("button", { name: "Use in chat" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows a retry-able error instead of a blank drawer when the detail fails to load", async () => {
     const user = userEvent.setup();
     const refetch = vi.fn();

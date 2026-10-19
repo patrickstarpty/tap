@@ -65,6 +65,7 @@ const NOT_APPLICABLE_SKILL: SkillRevision = {
 function skillDetailFor(
   revisionId: string,
   instructionsLength: number,
+  status: "enabled" | "disabled" = "enabled",
 ): SkillRevisionDetail {
   return {
     revisionId,
@@ -76,23 +77,28 @@ function skillDetailFor(
     applicableTasks: ["knowledge.answer"],
     sourceKind: "authored",
     builtIn: false,
-    status: "enabled",
+    status,
     isLatest: true,
     contentDigest: "digest",
     files: [],
   } as unknown as SkillRevisionDetail;
 }
 
-function mockFetchSkillDetail(bySize: Record<string, number>) {
+function mockFetchSkillDetail(
+  bySize: Record<string, number>,
+  byStatus: Record<string, "enabled" | "disabled"> = {},
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string) => {
       const match = /\/skills\/([^/]+)$/.exec(input);
       const revisionId = match?.[1] ?? "";
       const size = bySize[revisionId] ?? 0;
-      return new Response(JSON.stringify(skillDetailFor(revisionId, size)), {
-        status: 200,
-      });
+      const status = byStatus[revisionId] ?? "enabled";
+      return new Response(
+        JSON.stringify(skillDetailFor(revisionId, size, status)),
+        { status: 200 },
+      );
     }),
   );
 }
@@ -340,7 +346,10 @@ describe("AgentForm save", () => {
     // `skills` picker list, but its detail still resolves (the server now
     // resolves `GET /ai/skills/{revisionId}` regardless of status) so the
     // form can show its name rather than a bare id.
-    mockFetchSkillDetail({ "skill-rev-disabled": 10 });
+    mockFetchSkillDetail(
+      { "skill-rev-disabled": 10 },
+      { "skill-rev-disabled": "disabled" },
+    );
     const reviseMutateAsync = vi
       .fn()
       .mockResolvedValue({ revisionId: "agent-rev-2" });
@@ -392,5 +401,53 @@ describe("AgentForm save", () => {
         "This bound Skill has been disabled and will be skipped when the Agent answers.",
       ),
     ).toBeNull();
+  });
+
+  it("shows a bound Skill pinned to an older (still enabled) revision as outdated, not disabled (N-1)", async () => {
+    // The picker (`skills`) is latest-*and*-enabled only, so a bound
+    // older revision of a Skill that is still enabled also falls outside
+    // it -- the ordinary "Skill was revised since binding" case. This
+    // must not be mislabeled as disabled.
+    mockFetchSkillDetail(
+      { "skill-rev-old": 10 },
+      { "skill-rev-old": "enabled" },
+    );
+    renderForm({
+      mode: "edit",
+      // The picker only lists the *latest* revision of the Skill
+      // ("skill-rev-latest"), not the older bound one.
+      skills: [{ ...APPLICABLE_SKILL, revisionId: "skill-rev-latest" }],
+      agent: {
+        revisionId: "agent-rev-1",
+        assetId: "agent-1",
+        agentId: "agent-1",
+        displayName: "Underwriting helper",
+        description: "Helps with underwriting.",
+        contentDigest: "digest-agent",
+        toolAllowlist: ["knowledge.search", "knowledge.answer"],
+        outputSchemaDigest: "digest-schema",
+        sourceKind: "authored",
+        builtIn: false,
+        status: "enabled",
+        isLatest: true,
+        hasSkillUpdates: false,
+        defaultModelAlias: null,
+        skillRevisionIds: ["skill-rev-old"],
+        systemInstruction: "Review the evidence.",
+      } as Parameters<typeof AgentForm>[0]["agent"],
+    });
+
+    expect(
+      await screen.findByText(
+        "This bound Skill has a newer revision; the Agent still uses the revision it was bound to.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(
+        "This bound Skill has been disabled and will be skipped when the Agent answers.",
+      ),
+    ).toBeNull();
+    // Still removable, same as a disabled bound Skill.
+    expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
   });
 });

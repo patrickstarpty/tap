@@ -187,7 +187,14 @@ export function SkillDetailDrawer({
             </div>
           ) : null}
           <div className="tap-dialog-actions">
-            {detail.status === "enabled" ? (
+            {/* The revision switcher (above) can point this drawer at an
+             * older revision; "Use in chat" and Edit must act on that
+             * revision specifically, not silently on the latest one, so
+             * both are only offered while viewing the latest revision --
+             * otherwise Edit would submit a stale baseRevisionId (409
+             * revision_conflict) and "Use in chat" would apply the wrong
+             * instructions. */}
+            {detail.status === "enabled" && detail.isLatest ? (
               <Button
                 type="primary"
                 ghost
@@ -208,9 +215,9 @@ export function SkillDetailDrawer({
               <p className="tap-skill-edit-unavailable">
                 {text.editUnavailableImported}
               </p>
-            ) : (
+            ) : detail.isLatest ? (
               <Button onClick={() => onEdit(detail)}>{text.edit}</Button>
-            )}
+            ) : null}
           </div>
         </>
       )}

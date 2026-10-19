@@ -124,6 +124,13 @@ export interface WorkspaceCopy {
     agentModelFallback(agentName: string): string;
     skillDisabledNotice(skillName: string): string;
     skillInapplicableNotice(skillName: string): string;
+    /** N-2: `skillById` only ever carries the latest revision of each
+     * Skill (C-1), so a `skill_disabled:<id>`/`skill_inapplicable:<id>`
+     * notice naming an older bound revision can't be resolved to a name
+     * -- these generic (nameless) sentences are the fallback so the raw
+     * wire code is never shown to begin with. */
+    skillDisabledNoticeGeneric: string;
+    skillInapplicableNoticeGeneric: string;
     /** Label/tooltip shown on a greyed-out, unselectable Skill option in
      * the composer picker (spec §4.4) when it doesn't apply to knowledge
      * Q&A. */
@@ -304,6 +311,11 @@ export interface WorkspaceCopy {
       searchSkills: string;
       noSkills: string;
       boundSkillDisabled: string;
+      /** N-1: shown for a bound Skill whose revision is no longer latest
+       * but is still enabled (the ordinary "Skill was revised since
+       * binding" case) -- distinct from `boundSkillDisabled` so an
+       * outdated-but-enabled binding is never mislabeled as disabled. */
+      boundSkillOutdated: string;
       removeSkill: string;
       toolsLabel: string;
       toolsBuiltIn: string;
@@ -581,6 +593,10 @@ export const WORKSPACE_COPY = {
         `Skill "${skillName}" is disabled and was skipped for this answer.`,
       skillInapplicableNotice: (skillName: string) =>
         `Skill "${skillName}" does not apply to knowledge Q&A and was skipped for this answer.`,
+      skillDisabledNoticeGeneric:
+        "A selected skill is disabled and was skipped for this answer.",
+      skillInapplicableNoticeGeneric:
+        "A selected skill does not apply to knowledge Q&A and was skipped for this answer.",
       skillNotApplicable: "Doesn't apply to knowledge Q&A",
     },
     catalog: {
@@ -767,6 +783,8 @@ export const WORKSPACE_COPY = {
         noSkills: "No enabled skills available.",
         boundSkillDisabled:
           "This bound Skill has been disabled and will be skipped when the Agent answers.",
+        boundSkillOutdated:
+          "This bound Skill has a newer revision; the Agent still uses the revision it was bound to.",
         removeSkill: "Remove",
         toolsLabel: "Built-in tools",
         toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
@@ -1050,6 +1068,9 @@ export const WORKSPACE_COPY = {
         `Skill「${skillName}」已停用，本次回答未使用。`,
       skillInapplicableNotice: (skillName: string) =>
         `Skill「${skillName}」不适用于知识问答，本次回答未使用。`,
+      skillDisabledNoticeGeneric: "有一个选用的 Skill 已停用，本次回答未使用。",
+      skillInapplicableNoticeGeneric:
+        "有一个选用的 Skill 不适用于知识问答，本次回答未使用。",
       skillNotApplicable: "不适用于知识问答",
     },
     catalog: {
@@ -1227,6 +1248,8 @@ export const WORKSPACE_COPY = {
         searchSkills: "搜索 Skill",
         noSkills: "暂无可用的已启用 Skill。",
         boundSkillDisabled: "此绑定的 Skill 已停用，回答时将跳过。",
+        boundSkillOutdated:
+          "此绑定的 Skill 有新修订，Agent 仍使用绑定时的修订。",
         removeSkill: "移除",
         toolsLabel: "内置工具",
         toolsBuiltIn: "知识检索、知识回答（始终启用）",

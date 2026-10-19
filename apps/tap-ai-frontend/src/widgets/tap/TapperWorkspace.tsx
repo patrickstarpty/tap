@@ -229,9 +229,13 @@ type ActivityEvent = {
 /**
  * The server emits skill selection notices as closed codes
  * (`skill_disabled:<revisionId>`, `skill_inapplicable:<revisionId>`) rather
- * than prose (I-2) -- map each to localized copy naming the Skill, falling
- * back to the raw code only if the revision can no longer be resolved at
- * all (e.g. cross-project data cleaned up under the composer).
+ * than prose (I-2) -- map each to localized copy naming the Skill. The raw
+ * code is never shown (N-2): `skillById` only ever carries each Skill's
+ * *latest* revision (C-1), so a notice naming an older bound revision
+ * (e.g. an Agent pinned to a Skill revision superseded since) can't be
+ * resolved to a name there -- a generic (nameless) sentence is used
+ * instead for that case, and for any code whose kind isn't recognized at
+ * all.
  */
 function formatSkillNotice(
   code: string,
@@ -243,12 +247,17 @@ function formatSkillNotice(
     revisionId !== undefined
       ? skillById.get(revisionId)?.displayName
       : undefined;
-  if (skillName === undefined) return code;
-  if (kind === "skill_disabled")
-    return copy.composer.skillDisabledNotice(skillName);
-  if (kind === "skill_inapplicable")
-    return copy.composer.skillInapplicableNotice(skillName);
-  return code;
+  if (kind === "skill_disabled") {
+    return skillName !== undefined
+      ? copy.composer.skillDisabledNotice(skillName)
+      : copy.composer.skillDisabledNoticeGeneric;
+  }
+  if (kind === "skill_inapplicable") {
+    return skillName !== undefined
+      ? copy.composer.skillInapplicableNotice(skillName)
+      : copy.composer.skillInapplicableNoticeGeneric;
+  }
+  return copy.composer.skillDisabledNoticeGeneric;
 }
 
 /**

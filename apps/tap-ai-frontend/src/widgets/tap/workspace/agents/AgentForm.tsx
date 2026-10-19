@@ -163,27 +163,37 @@ export function AgentForm({
   }, [skillQuery, skills]);
 
   // I-6: a bound Skill revision that was disabled since the Agent picked
-  // it up is not in the (enabled-only) `skills` picker list, so it would
-  // otherwise be an invisible, unremovable binding. Resolve its name from
-  // the already-fetched detail (now resolved regardless of status by
-  // `GET /ai/skills/{revisionId}`) so it can be shown with a warning and
-  // a way to remove it, rather than silently carried forward or blocking
-  // Save entirely.
+  // it up is not in the (latest + enabled-only) `skills` picker list, so
+  // it would otherwise be an invisible, unremovable binding. Resolve its
+  // name from the already-fetched detail (now resolved regardless of
+  // status by `GET /ai/skills/{revisionId}`) so it can be shown with a
+  // warning and a way to remove it, rather than silently carried forward
+  // or blocking Save entirely.
+  //
+  // N-1: "not in the picker" is NOT the same as "disabled" -- the picker
+  // is latest-*and*-enabled, so an Agent bound to an older revision of a
+  // Skill that is still enabled (the ordinary "Skill was revised since
+  // binding" case) also falls outside it. Only the fetched detail's own
+  // `status` can tell the two apart; label and remove-affordance both
+  // still apply to both, but the wording must not falsely claim an
+  // enabled older revision is disabled.
   const pickerSkillIds = useMemo(
     () => new Set(skills.map((skill) => skill.revisionId)),
     [skills],
   );
   const unavailableBoundSkills = skillRevisionIds
     .filter((revisionId) => !pickerSkillIds.has(revisionId))
-    .map((revisionId, index) => ({
-      revisionId,
-      detail: skillDetailQueries[skillRevisionIds.indexOf(revisionId)]?.data,
-      errored:
-        skillDetailQueries[skillRevisionIds.indexOf(revisionId)]?.isError ??
-        false,
-      // Keep a stable key even while the detail is still loading.
-      key: `${revisionId}-${index}`,
-    }));
+    .map((revisionId, index) => {
+      const query = skillDetailQueries[skillRevisionIds.indexOf(revisionId)];
+      return {
+        revisionId,
+        detail: query?.data,
+        errored: query?.isError ?? false,
+        disabled: query?.data?.status === "disabled",
+        // Keep a stable key even while the detail is still loading.
+        key: `${revisionId}-${index}`,
+      };
+    });
 
   const title =
     mode === "create"
@@ -350,12 +360,20 @@ export function AgentForm({
           {unavailableBoundSkills.length > 0 ? (
             <div className="tap-agent-skills-unavailable">
               {unavailableBoundSkills.map((item) => (
-                <div key={item.key} role="alert" aria-disabled>
+                <div
+                  key={item.key}
+                  role={item.disabled ? "alert" : "status"}
+                  aria-disabled
+                >
                   <span>{item.detail?.displayName ?? item.revisionId}</span>
                   <span className="tap-agent-skill-revision">
                     {item.revisionId}
                   </span>
-                  <p>{form.boundSkillDisabled}</p>
+                  {item.disabled ? (
+                    <p>{form.boundSkillDisabled}</p>
+                  ) : item.detail !== undefined ? (
+                    <p>{form.boundSkillOutdated}</p>
+                  ) : null}
                   <Button
                     size="small"
                     onClick={() =>
