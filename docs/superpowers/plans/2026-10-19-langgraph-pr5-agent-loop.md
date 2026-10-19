@@ -16,7 +16,7 @@
 - 不在 PR 5 范围：`document.read_section` / `document.analyse`、durable 子图、`interrupt` / `resume`、`task.progress`、`turn.awaiting_input`（PR 7）；依据支撑校验、诱导胡编子集（PR 6）；MCP、执行 Skill 包内代码、多 Agent。
 - 图版本 `tapper-chat-v2` 不变；`CHAT_STATE_SCHEMA_VERSION` 由 `2` 升为 `3`（旧 checkpoint 沿用既有逻辑丢弃后从头重跑）。LangGraph `recursion_limit` 显式设为 `2 * maxToolRounds + 12`（`maxToolRounds` 上限 20 时为 52）。
 - 预算沿用 PR 4：`TAPPER_TURN_MAX_TOOL_ROUNDS=6`、`TAPPER_TURN_MAX_SECONDS=180`、`TAPPER_TURN_MAX_MODEL_CALLS=10`、`TAPPER_TURN_MAX_COST_MICROS=0`。一“轮”= 一次返回 `tool_calls` 的模型响应及其全部调用；`toolRounds` 在 `tools` 节点结束时加 1。`toolRounds >= maxToolRounds` 时 `model` 以空工具集调用（不失败）。单轮最多执行 `3` 个工具调用（`MAX_TOOL_CALLS_PER_ROUND = 3`），多余的按 `too-many-calls` 拒绝。模型调用、墙钟、费用耗尽仍按 PR 4 落 `turn.failed`（`budget-exhausted`）。
-- 工具 ID 与线上函数名（OpenAI 函数名不允许 `.`）：`knowledge.search` ↔ `knowledge_search`、`graph.relations` ↔ `graph_relations`、`insights.query` ↔ `insights_query`；`knowledge.answer` 不是可调用工具（`model_callable=False`）。`knowledge.search`、`knowledge.answer` 保持 `required=True`（Agent 表单勾选且禁用）；`graph.relations`、`insights.query` 为 `required=False`、`default_enabled=True`（新建 Agent 默认勾选）。已存 Agent 修订不可变，其白名单不含新工具即不可见（不迁移）。
+- 工具 ID 与线上函数名（OpenAI 函数名不允许 `.`）：`knowledge.search` ↔ `knowledge_search`、`graph.relations` ↔ `graph_relations`、`insights.query` ↔ `insights_query`；`knowledge.answer` 不是可调用工具（`model_callable=False`）。`knowledge.search`、`knowledge.answer` 保持 `required=True`（Agent 表单勾选且禁用）；`graph.relations`、`insights.query` 为 `required=False`、`default_enabled=True`（新建 Agent 默认勾选）。用户创作的已存 Agent 修订不可变、不迁移，其白名单不含新工具即不可见；内置 Agent 经种子新增修订 `validation-knowledge-agent-v3` 获得新工具（Task 2）。
 - 证据池上限：S 证据 20 条（沿用 `_MAX_EVIDENCE`）、R 关系 20 条、I（Insights 指标记录）20 条；编码后 ≤ `EVIDENCE_BUNDLE_MAX_BYTES = 524_288`，超限为确定性错误。新条目标签接续最大序号，已有标签永不重排；按 `(source_id, revision, chunk_id)` / 边 ID / `(queryId, metricId)` 去重。
 - 工具参数硬约束（spec 4.4）：`knowledge.search {query: string 1..500, sourceIds?: string[] ⊆ Turn 冻结 resolved_resources 的 source_id}`；`graph.relations {query: string 1..500}`（范围固定为冻结选择的修订）；`insights.query` 沿用 `StructuredInsightsTool` 的闭合输入契约，授权范围固定为 Turn 冻结的 `insights_report_refs`。片段或工具结果里的 ID、项目、URL 不扩大范围。被拒调用不执行，以 `{"status": "rejected", "reason": <code>}` 回灌模型并发 `task.step status=rejected`。拒绝原因码：`unknown-tool`、`tool-not-visible`、`invalid-arguments`、`source-out-of-scope`、`too-many-calls`。
 - `task.step` 载荷：`{stepId, tool, status, summary, durationMs, toolRound}`，`status ∈ {"running", "completed", "rejected", "failed"}`，`stepId = f"{turnId}:r{round}:c{index}"`，`summary` 经 v2 对话出口脱敏且 ≤ 200 字符。每个调用先发 `running`，结束发终态；去重键 `task.step:{stepId}:{status}`。
@@ -32,6 +32,15 @@
 - 子代理**不得**运行 `make test`（会写到项目外的 `127.0.0.1:3306`），改跑后端 `tests/unit tests/contract tests/architecture` 与上面的单文件集成测试、前端 vitest；`make demo-e2e` 只由主会话运行；任何人不得运行 `make demo-up` / `demo-down` / `demo-reset`；不得使用 `git stash`。
 - 确定性假网关（`apps/tap-ai-backend/src/tap/testing/deterministic_model_gateway.py`）必须支持 E2E 需要的全部 tool calling 行为（Task 12）；真实模型检查一律 opt-in，由用户执行。
 - 提交信息为简短小写祈使句 Conventional Commit，正文结尾附 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`；不在仓库文档或代码中写入客户公司名。
+
+### Decisions（用户 2026-10-19 审阅确认）
+
+- A：spec 的 `intent` 落为 `AnswerPlan.agent_intent` + `intent_reason`，现有 9 值 `intent` 不改名。
+- B：普通对话 Turn 可只冻结 `insightsReportRefs`（不带历史查询 ID），`ConversationCreateRequest` 增加该字段；无前端入口，联合分析以集成测试覆盖。
+- C：Insights 指标以 `I<n>` 标签进入证据池，被引用的记录进入 `insightsFacts`，正文与 claim 中的 `[I<n>]` 移除，不生成知识引用。
+- D：用户创作的已存 Agent 修订不迁移；内置 Agent 经现有种子机制新增修订 `validation-knowledge-agent-v3`，白名单含 `graph.relations` 与 `insights.query`（Task 2），并有测试证明使用内置 Agent 的 Turn 能调用 `graph.relations`（Task 9）。
+- E：意图真实门禁阈值：总准确率 ≥ 0.8、每类召回 ≥ 0.6。
+- spec 缺口裁定：澄清标记为前导 `CLARIFY:`；单轮最多 3 个工具调用；工具 ID 以下划线线上函数名映射（`knowledge_search` 等）。
 
 ## Review Focus
 
@@ -84,7 +93,9 @@
 - Modify: `apps/tap-ai-backend/src/tap/modules/ai/domain/tools.py`
 - Create: `apps/tap-ai-backend/src/tap/modules/ai/domain/tool_calls.py`
 - Modify: `apps/tap-ai-backend/src/tap/contracts/http.py`（`ToolDescriptor.default_enabled`）、`apps/tap-ai-backend/src/tap/interfaces/http/routes/ai_assets.py`
-- Test: `apps/tap-ai-backend/tests/unit/ai/test_tool_registry.py`（追加）、`apps/tap-ai-backend/tests/unit/ai/test_tool_calls.py`
+- Modify: `apps/tap-ai-backend/src/tap/modules/ai/application/assets.py`（`validation_asset_seed` 新增内置 Agent 修订 v3）
+- Modify: `scripts/disable-tapper-e2e-assets.py`（E2E 停用的内置 Agent 修订改为 `validation-knowledge-agent-v3`）
+- Test: `apps/tap-ai-backend/tests/unit/ai/test_tool_registry.py`（追加）、`apps/tap-ai-backend/tests/unit/ai/test_tool_calls.py`、`apps/tap-ai-backend/tests/integration/test_ai_asset_catalog.py`（追加）
 
 **Interfaces:**
 - Produces（`tools.py`）：`ToolDefinition` 新增 `wire_name: str`、`input_schema: Mapping[str, object]`、`model_callable: bool`、`default_enabled: bool`；注册表顺序 `knowledge.search`、`knowledge.answer`、`graph.relations`、`insights.query`（取值见 Global Constraints；`knowledge.answer` 的 `input_schema = {}`）。`known_tool_ids()`、`required_tool_ids(task)` 语义不变（`required_tool_ids("knowledge.answer") == {"knowledge.search", "knowledge.answer"}`）。新增：
@@ -99,6 +110,11 @@
   - `def admit_tool_calls(calls: Sequence[RequestedToolCall], *, visible: tuple[str, ...], selected_source_ids: frozenset[str]) -> tuple[AdmittedToolCall | RejectedToolCall, ...]`：顺序保持；第 4 个起 `too-many-calls`；JSON 解析失败或不满足 `input_schema`（用 `tap.modules.ai.application.schema.validate_output` 等价的纯校验——若该函数在 application 层，则把其纯校验部分移到 domain 或在 domain 内实现同等的最小校验，不引入依赖）为 `invalid-arguments`；`sourceIds` 不 ⊆ `selected_source_ids` 为 `source-out-of-scope`。
   - `def step_id(turn_id: str, round_number: int, index: int) -> str` → `f"{turn_id}:r{round_number}:c{index}"`。
 - Produces（HTTP）：`ToolDescriptor.default_enabled: StrictBool`，`GET /ai/tools` 按注册表返回四项。
+- Produces（内置 Agent 种子，沿用 `MysqlAssetCatalog.seed` 在同一 `asset_id` 下追加修订、`revision_number` 自增、最新修订即 `is_latest` 的机制；启动时种子写入，不需要数据库迁移）：`validation_asset_seed` 的 `version` 改为 `"validation-ai-assets-v3"`；`agents` 改为 `validation-knowledge-agent-v2`（原样保留，内容逐字不变，供历史 Turn 回放与 `test_management` 既有引用）与新增 `AiAgentRevision(revision_id="validation-knowledge-agent-v3", asset_id="validation-knowledge-agent", display_name="Knowledge agent", content_digest=text_digest("validation-ai-agent-v3"), tool_allowlist=frozenset({"knowledge.search", "knowledge.answer", "graph.relations", "insights.query"}), source_kind="built_in", 其余字段同 v2)`，顺序 v2 在前、v3 在后，使 v3 成为最新修订。v2 不停用（`_disable` 只用于用户/E2E 停用，与 v1→v2 的先例一致）；`skills` 不变。`seed` 对已存在修订做逐字内容比对，所以 v2 必须保持字节一致。
+
+- [ ] **Step 0: 内置 Agent 种子失败测试**（与 Step 1 同批写）
+  - `test_tool_registry.py::test_built_in_agent_v3_allowlist_includes_new_tools`：`[a.revision_id for a in validation_asset_seed(scope).agents] == ["validation-knowledge-agent-v2", "validation-knowledge-agent-v3"]`；v3 的 `tool_allowlist == {"knowledge.search", "knowledge.answer", "graph.relations", "insights.query"}`；v2 的 `tool_allowlist` 与 `content_digest` 不变。
+  - `test_ai_asset_catalog.py::test_seed_v3_appends_latest_built_in_agent_revision`（`TAP_RUN_MYSQL_INTEGRATION=1`）：先以只含 v2 的旧种子 `seed`，再以新种子 `seed` → `list_revisions("agent", "validation-knowledge-agent")` 最后一项为 v3、v2 仍 `enabled`；第二次重复 `seed` 幂等不报错。
 
 - [ ] **Step 1: 写失败测试**
   - `test_tool_registry.py::test_registry_has_four_tools_with_wire_names`：`list(TOOL_REGISTRY) == ["knowledge.search", "knowledge.answer", "graph.relations", "insights.query"]`；wire 名如上；`TOOL_REGISTRY["knowledge.answer"].model_callable is False`；`required_tool_ids("knowledge.answer") == {"knowledge.search", "knowledge.answer"}`。
@@ -113,7 +129,7 @@
 
 - [ ] **Step 3: 实现**；确认 `agent_authoring.py` 的 `required <= tool_ids <= known_tool_ids()` 校验无需改动即接受新工具；在仓库根目录运行 `make contracts`（`ToolDescriptor.defaultEnabled`）。
 
-- [ ] **Step 4: 运行通过**（同 Step 2，另跑 `apps/tap-ai-backend/tests/unit/ai apps/tap-ai-backend/tests/architecture -q`）。
+- [ ] **Step 4: 运行通过**（同 Step 2，另跑 `apps/tap-ai-backend/tests/unit/ai apps/tap-ai-backend/tests/architecture -q` 与 `TAP_RUN_MYSQL_INTEGRATION=1 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_ai_asset_catalog.py -q`）。前端 `TapperWorkspace.interactions.test.tsx` 中内置 Agent 替身若断言最新修订 ID，同步改为 v3。
 
 - [ ] **Step 5: Commit**：`git commit -m "feat: register relation and insights tools with argument admission"`
 
@@ -380,6 +396,7 @@
     - `test_final_round_offers_no_tools_after_max_rounds`：`maxToolRounds=1`、`toolRounds=1` → `generate_conversation_answer` 收到 `tools=()`。
     - `test_resume_after_tools_node_does_not_repeat_tool_calls_or_steps`：`tools` 完成后 `model` 抛可重试异常，`resume` 后 `run_conversation_tool` 总调用次数 1、`task.step` 事件各 1 条。
     - `test_tool_round_preamble_is_discarded_from_draft`：替身生成在 tool 轮推送 60 字符文本后返回 tool_calls，第二轮推送最终回答 → Redis 草稿替身先见 `reset=True`，最终拼接只含第二轮文本。
+    - `test_built_in_agent_turn_can_call_graph_relations`：Turn 冻结 `agent_revision_id="validation-knowledge-agent-v3"` 与 `validation_asset_seed(scope)` 中 v3 的 `tool_allowlist`、`relations_available=True` → `state["tools"] == ["knowledge.search", "graph.relations"]`；替身生成返回 `graph_relations` 调用 → `run_conversation_tool` 收到 `tool_id == "graph.relations"`，`task.step` 终态 `completed`。对照：冻结 v2 白名单时同一调用为 `rejected`（`tool-not-visible`），不执行。
     - `test_insights_tool_failure_is_soft`：`query_metrics` 抛 `InsightsAuthorizationChanged` → `task.step` 终态 `failed`，Turn 继续到 `verify`。
   - `test_draft_batcher.py::test_discard_resets_sent_text`：发送后 `discard()` → 追加 `reset=True`；再 `push("新")`、`close()` 返回 `"新"`。
 
@@ -474,7 +491,7 @@
 - [ ] **Step 1: 写失败测试**：`test_deterministic_tool_calls.py::test_markers_are_consumed_in_order_then_answer`（两个标记 → 两轮各一个调用，第三次请求为最终回答）、`::test_relation_question_calls_graph_relations_once`、`::test_clarify_marker_produces_clarification`；以及上面的集成与 E2E 用例。
 - [ ] **Step 2: 运行确认失败**：`uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/testing/test_deterministic_tool_calls.py -q` 与 `TAP_RUN_MYSQL_INTEGRATION=1 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_agent_loop_mysql.py -q` → FAIL。
 - [ ] **Step 3: 实现假网关与测试组装**。
-- [ ] **Step 4: 运行通过**（同 Step 2）；E2E 由**主会话**运行 `make demo-e2e`，全部用例（含既有 `knowledge-graph.spec.ts` 关系引用旅程与 `skills-agents.spec.ts`）通过。
+- [ ] **Step 4: 运行通过**（同 Step 2）；E2E 由**主会话**运行 `make demo-e2e`，全部用例（含既有 `knowledge-graph.spec.ts` 关系引用旅程与 `skills-agents.spec.ts`；后者及 `scripts/disable-tapper-e2e-assets.py` 针对的内置 Agent 修订为 v3）通过。
 - [ ] **Step 5: Commit**：`git commit -m "test: cover the agent loop with fake tool calling end to end"`
 
 ---
