@@ -3198,6 +3198,7 @@ async def test_chat_stream_non_stop_finish_reason_raises_unavailable():
             pass
 
     assert len(recorder.records) == 1
+    assert recorder.records[0].status == "error"
 
 
 def _tool_request(**changes):
@@ -3271,6 +3272,116 @@ async def test_chat_stream_accumulates_tool_call_fragments():
     assert result is not None
     assert result.tool_calls == (ModelToolCall("c1", "knowledge_search", '{"query":"理赔"}'),)
     assert result.usage.input_tokens == 11
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_ignores_empty_id_and_name_fragments():
+    """DashScope/Qwen's OpenAI-compatible stream may repeat the tool-call fragment's
+    `id`/`function.name` as empty strings on later chunks (only `function.arguments`
+    actually grows); an empty-string overwrite must not clobber the real first-chunk
+    value, since an empty `call_id`/`name` would otherwise reach `ModelToolCall` and
+    break the next round's tool message lookup."""
+    from tap.modules.ai.domain.models import ModelToolCall
+
+    events = [
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "id": "c1", "function": {"name": "knowledge_search"}}
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "",
+                                "function": {"name": "", "arguments": '{"query":"理赔"}'},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        },
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 9},
+        },
+    ]
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=_sse_body(events)
+        )
+
+    gateway = configured_gateway(respond)
+
+    result = None
+    async for event in gateway.chat_stream(_tool_request()):
+        if isinstance(event, ModelResult):
+            result = event
+    assert result is not None
+    assert result.tool_calls == (ModelToolCall("c1", "knowledge_search", '{"query":"理赔"}'),)
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_drops_tool_fragments_on_stop_is_rejected():
+    """Tool-call fragments accumulated under `finish_reason == "stop"` (instead of
+    "tool_calls") must not be silently discarded -- mirrors `_normalize`'s rejection
+    of a non-streaming `message.tool_calls` paired with a "stop" finish reason."""
+
+    events = [
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "id": "c1", "function": {"name": "knowledge_search"}}
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [{"index": 0, "delta": {"content": "Grounded"}, "finish_reason": "stop"}],
+        },
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 9},
+        },
+    ]
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=_sse_body(events)
+        )
+
+    gateway = configured_gateway(respond)
+
+    with pytest.raises(ModelGatewayUnavailable):
+        async for _ in gateway.chat_stream(_tool_request()):
+            pass
 
 
 @pytest.mark.asyncio

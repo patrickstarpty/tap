@@ -988,12 +988,14 @@ class LiteLLMModelGateway:
                                             entry = tool_call_fragments.setdefault(
                                                 index, {"id": None, "name": None, "arguments": ""}
                                             )
-                                            if isinstance(fragment.get("id"), str):
-                                                entry["id"] = fragment["id"]
+                                            fragment_id = fragment.get("id")
+                                            if isinstance(fragment_id, str) and fragment_id:
+                                                entry["id"] = fragment_id
                                             function = fragment.get("function")
                                             if isinstance(function, dict):
-                                                if isinstance(function.get("name"), str):
-                                                    entry["name"] = function["name"]
+                                                fragment_name = function.get("name")
+                                                if isinstance(fragment_name, str) and fragment_name:
+                                                    entry["name"] = fragment_name
                                                 arguments_fragment = function.get("arguments")
                                                 if isinstance(arguments_fragment, str):
                                                     entry["arguments"] = (
@@ -1018,13 +1020,19 @@ class LiteLLMModelGateway:
                         for entry in ordered:
                             entry_id = entry["id"]
                             entry_name = entry["name"]
-                            if entry_id is None or entry_name is None:
+                            if not entry_id or not entry_name:
                                 raise ModelGatewayUnavailable()
                             built_calls.append(
                                 ModelToolCall(entry_id, entry_name, entry["arguments"] or "")
                             )
                         tool_calls = tuple(built_calls)
                     else:
+                        # A tool-call round must end with `finish_reason == "tool_calls"`;
+                        # accumulated fragments under any other finish reason (notably
+                        # "stop") mirror `_normalize`'s `message.tool_calls` + "stop"
+                        # rejection rather than silently discarding the calls.
+                        if tool_call_fragments:
+                            raise ModelGatewayUnavailable()
                         if finish_reason == "length":
                             raise ModelOutputTruncated()
                         if finish_reason is not None and finish_reason != "stop":
