@@ -73,12 +73,24 @@ export function AccessibleDialog({
   // (e.g. a "Preview" button replaced by "Back"/"Import selected"), the
   // browser drops focus to `<body>` -- outside `dialogRef`, so
   // `handleKeyDown`'s containment guard below ignores every subsequent key,
-  // including Escape. Running on every `children` change (not just mount)
-  // catches that and brings focus back inside the dialog; it's a no-op
-  // whenever focus is already inside (the common case, e.g. typing).
+  // including Escape. Running on every `children` change catches that and
+  // brings focus back inside the dialog.
+  //
+  // `children` is a new value on every parent render (not just step
+  // changes), so this must not refocus whenever the active element is
+  // merely outside `dialogRef` -- that also describes a nested portal
+  // (antd Modal/Popconfirm rendered elsewhere in the DOM) a user is
+  // legitimately interacting with, e.g. during polling/streaming
+  // re-renders (I-1). Only reclaim focus when the browser actually
+  // dropped it: `document.body`, `null`, or an element no longer attached
+  // to the document (removed by the very re-render that swapped children).
   useLayoutEffect(() => {
     if (!dialogRef.current) return;
     if (dialogRef.current.contains(document.activeElement)) return;
+    const active = document.activeElement;
+    const focusWasDropped =
+      active === null || active === document.body || !active.isConnected;
+    if (!focusWasDropped) return;
     dialogRef.current
       .querySelector<HTMLElement>(initialFocusSelector ?? FOCUSABLE_SELECTOR)
       ?.focus();

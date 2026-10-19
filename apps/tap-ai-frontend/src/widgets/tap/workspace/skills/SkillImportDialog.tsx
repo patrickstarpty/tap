@@ -2,6 +2,7 @@ import { Button, Input } from "antd";
 import { useRef, useState } from "react";
 
 import {
+  AiAssetError,
   useCommitSkillImport,
   useStageSkillImport,
   type SkillImportCommitResult,
@@ -9,6 +10,22 @@ import {
 } from "../../../../features/knowledge/api/aiAssets";
 import { AccessibleDialog } from "../AccessibleDialog";
 import type { WorkspaceCopy } from "../copy";
+
+// I-8: map the server's closed error-code vocabulary to prose instead of a
+// single generic message, so e.g. a 413 package-too-large and a 409
+// name-conflict don't read identically.
+function importErrorMessage(
+  text: WorkspaceCopy["skillsWorkspace"]["import"],
+  cause: unknown,
+  fallback: string,
+): string {
+  if (cause instanceof AiAssetError) {
+    const known = text.errors as Record<string, string | undefined>;
+    const message = known[cause.code];
+    if (message !== undefined) return message;
+  }
+  return fallback;
+}
 
 export interface SkillImportDialogProps {
   projectId: string;
@@ -91,8 +108,8 @@ export function SkillImportDialog({
       }
       setDecisions(initialDecisions);
       setStep(2);
-    } catch {
-      setError(text.stageFailed);
+    } catch (cause) {
+      setError(importErrorMessage(text, cause, text.stageFailed));
     }
   };
 
@@ -112,8 +129,15 @@ export function SkillImportDialog({
       });
       onImported?.(result);
       onClose();
-    } catch {
-      setError(text.commitFailed);
+    } catch (cause) {
+      setError(importErrorMessage(text, cause, text.commitFailed));
+      // import_expired (I-8): the staged import no longer exists server
+      // side, so there is nothing left to review -- send the person back
+      // to step 1 to start a fresh import rather than leaving them on a
+      // step 2 preview that can never successfully commit.
+      if (cause instanceof AiAssetError && cause.code === "import_expired") {
+        setStep(1);
+      }
     }
   };
 

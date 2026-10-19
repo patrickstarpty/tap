@@ -2740,6 +2740,19 @@ describe("Tap product workspace interactions", () => {
       defaultModelAlias: null,
       skillRevisionIds: [],
     };
+    const SKILL_SUMMARY = {
+      revisionId: "citation-skill-rev-1",
+      assetId: "citation-skill",
+      skillId: "citation-skill",
+      displayName: "Citation skill",
+      description: "Cites evidence labels.",
+      contentDigest: `sha256:${"9".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "built_in",
+      builtIn: true,
+      status: "disabled",
+      isLatest: true,
+    };
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2766,7 +2779,8 @@ describe("Tap product workspace interactions", () => {
             ...AGENT_SUMMARY,
             systemInstruction: "Review the evidence.",
           });
-        if (path.endsWith("/ai/skills")) return Response.json({ items: [] });
+        if (path.endsWith("/ai/skills"))
+          return Response.json({ items: [SKILL_SUMMARY] });
         if (path.endsWith("/conversations") && method === "GET")
           return Response.json({ items: [], nextCursor: null });
         if (path.endsWith("/conversations") && method === "POST") {
@@ -2802,7 +2816,7 @@ describe("Tap product workspace interactions", () => {
                   agentLabel: "Underwriting reviewer",
                   skillRevisionIds: [],
                   skillLabels: [],
-                  skillNotices: ["A bundled skill was updated for this turn."],
+                  skillNotices: ["skill_disabled:citation-skill-rev-1"],
                 },
               },
             ],
@@ -2856,7 +2870,9 @@ describe("Tap product workspace interactions", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(
-      await screen.findByText("A bundled skill was updated for this turn."),
+      await screen.findByText(
+        'Skill "Citation skill" is disabled and was skipped for this answer.',
+      ),
     ).toBeVisible();
 
     await user.click(screen.getByText(/Sources and settings used/));

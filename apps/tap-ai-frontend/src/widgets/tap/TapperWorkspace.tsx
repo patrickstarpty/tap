@@ -227,6 +227,26 @@ type ActivityEvent = {
 };
 
 /**
+ * The server emits skill selection notices as closed codes
+ * (`skill_disabled:<revisionId>`, `skill_inapplicable:<revisionId>`) rather
+ * than prose (I-2) -- map each to localized copy naming the Skill, falling
+ * back to the raw code only if the revision can no longer be resolved at
+ * all (e.g. cross-project data cleaned up under the composer).
+ */
+function formatSkillNotice(
+  code: string,
+  skillById: ReadonlyMap<string, { displayName: string }>,
+  copy: WorkspaceCopy,
+): string {
+  const [kind, revisionId] = code.split(":", 2);
+  const skillName = revisionId !== undefined ? skillById.get(revisionId)?.displayName : undefined;
+  if (skillName === undefined) return code;
+  if (kind === "skill_disabled") return copy.composer.skillDisabledNotice(skillName);
+  if (kind === "skill_inapplicable") return copy.composer.skillInapplicableNotice(skillName);
+  return code;
+}
+
+/**
  * Shared by `AnswerActivity` (no trace yet) and `AnswerGraphSummary` (trace
  * panel already covers the event log) so the answer summary line and the
  * graph seeds/paths rows render identically regardless of which of the two
@@ -1426,6 +1446,17 @@ export function TapperWorkspace() {
       ),
     [aiAssets.agents.data],
   );
+  // Keyed the same way, but kept unfiltered (unlike the composer's
+  // selectable `skills` list above) so a `skill_disabled:<id>`/
+  // `skill_inapplicable:<id>` notice (I-2) can still name a Skill that is
+  // no longer selectable.
+  const skillById = useMemo(
+    () =>
+      new Map(
+        (aiAssets.skills.data ?? []).map((item) => [item.revisionId, item]),
+      ),
+    [aiAssets.skills.data],
+  );
   const initialDurableSelection = useRef(false);
   const [selectedDurablePlan, setSelectedDurablePlan] = useState<{
     planId: string;
@@ -1532,40 +1563,50 @@ export function TapperWorkspace() {
     if (aiAssets.skills.isError) setSkills([]);
     if (aiAssets.agents.data !== undefined) {
       setAgents(
-        aiAssets.agents.data.map((item) => {
-          const presentation = aiAssetPresentation(
-            "agent",
-            locale,
-            item.toolAllowlist,
-          );
-          return {
-            id: item.revisionId,
-            kind: "agent",
-            origin: "built-in",
-            name: item.displayName,
-            description: presentation.description,
-            instructions: presentation.instructions,
-          };
-        }),
+        aiAssets.agents.data
+          // `GET /ai/agents` returns one row per asset (its latest
+          // revision) regardless of enabled/disabled status (C-1/C-2), so
+          // the Skills/Agents workspace pages can show a "Disabled"
+          // filter. The composer must only ever offer selectable (latest
+          // + enabled) Agents.
+          .filter((item) => item.isLatest && item.status === "enabled")
+          .map((item) => {
+            const presentation = aiAssetPresentation(
+              "agent",
+              locale,
+              item.toolAllowlist,
+            );
+            return {
+              id: item.revisionId,
+              kind: "agent",
+              origin: "built-in",
+              name: item.displayName,
+              description: presentation.description,
+              instructions: presentation.instructions,
+            };
+          }),
       );
     }
     if (aiAssets.skills.data !== undefined) {
       setSkills(
-        aiAssets.skills.data.map((item) => {
-          const presentation = aiAssetPresentation(
-            "skill",
-            locale,
-            item.applicableTasks,
-          );
-          return {
-            id: item.revisionId,
-            kind: "skill",
-            origin: "built-in",
-            name: item.displayName,
-            description: presentation.description,
-            instructions: presentation.instructions,
-          };
-        }),
+        aiAssets.skills.data
+          // See the Agents filter above (C-1/C-2).
+          .filter((item) => item.isLatest && item.status === "enabled")
+          .map((item) => {
+            const presentation = aiAssetPresentation(
+              "skill",
+              locale,
+              item.applicableTasks,
+            );
+            return {
+              id: item.revisionId,
+              kind: "skill",
+              origin: "built-in",
+              name: item.displayName,
+              description: presentation.description,
+              instructions: presentation.instructions,
+            };
+          }),
       );
     }
     if (
@@ -2112,8 +2153,12 @@ export function TapperWorkspace() {
     )
       return;
     shownSkillNoticeTurnId.current = lastTurn.id;
-    setComposerNotice(lastTurn.skillNotices.join(" "));
-  }, [activeConversation.turns]);
+    setComposerNotice(
+      lastTurn.skillNotices
+        .map((code) => formatSkillNotice(code, skillById, copy))
+        .join(" "),
+    );
+  }, [activeConversation.turns, skillById, copy]);
   const generateTestPlan = (
     conversation: Conversation,
     turn: AssistantTurn,

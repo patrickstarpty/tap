@@ -333,4 +333,66 @@ describe("AgentForm save", () => {
       await screen.findByText("An agent with this name already exists."),
     ).toBeVisible();
   });
+
+  it("shows a bound Skill that was disabled with a warning and a remove action, instead of blocking Save (I-6)", async () => {
+    const user = userEvent.setup();
+    // The bound revision ("skill-rev-disabled") is not in the enabled-only
+    // `skills` picker list, but its detail still resolves (the server now
+    // resolves `GET /ai/skills/{revisionId}` regardless of status) so the
+    // form can show its name rather than a bare id.
+    mockFetchSkillDetail({ "skill-rev-disabled": 10 });
+    const reviseMutateAsync = vi
+      .fn()
+      .mockResolvedValue({ revisionId: "agent-rev-2" });
+    renderForm({
+      mode: "edit",
+      skills: [APPLICABLE_SKILL],
+      reviseMutateAsync,
+      agent: {
+        revisionId: "agent-rev-1",
+        assetId: "agent-1",
+        agentId: "agent-1",
+        displayName: "Underwriting helper",
+        description: "Helps with underwriting.",
+        contentDigest: "digest-agent",
+        toolAllowlist: ["knowledge.search", "knowledge.answer"],
+        outputSchemaDigest: "digest-schema",
+        sourceKind: "authored",
+        builtIn: false,
+        status: "enabled",
+        isLatest: true,
+        hasSkillUpdates: false,
+        defaultModelAlias: null,
+        skillRevisionIds: ["skill-rev-disabled"],
+        systemInstruction: "Review the evidence.",
+      } as Parameters<typeof AgentForm>[0]["agent"],
+    });
+
+    expect(
+      await screen.findByText(
+        "This bound Skill has been disabled and will be skipped when the Agent answers.",
+      ),
+    ).toBeVisible();
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+
+    await user.click(save);
+    expect(reviseMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agent-1",
+        request: expect.objectContaining({
+          skillRevisionIds: ["skill-rev-disabled"],
+        }),
+      }),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Remove" }),
+    );
+    expect(
+      screen.queryByText(
+        "This bound Skill has been disabled and will be skipped when the Agent answers.",
+      ),
+    ).toBeNull();
+  });
 });

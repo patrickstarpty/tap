@@ -1,13 +1,18 @@
 import { Button } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
+  skillFileUrl,
   useSkill,
   useSkillRevisions,
   type SkillRevisionDetail,
 } from "../../../../features/knowledge/api/aiAssets";
 import { AccessibleDialog } from "../AccessibleDialog";
 import type { WorkspaceCopy } from "../copy";
+
+// Files in these categories never enter a prompt (spec §1.3) -- they are
+// archived verbatim and only ever downloaded, never executed.
+const NOT_EXECUTED_CATEGORIES = new Set(["script", "asset", "other"]);
 
 type DetailTab = "instructions" | "files" | "metadata" | "revisions";
 
@@ -34,7 +39,14 @@ export function SkillDetailDrawer({
 }: SkillDetailDrawerProps) {
   const text = copy.skillsWorkspace;
   const [tab, setTab] = useState<DetailTab>("instructions");
-  const detailQuery = useSkill(projectId, revisionId);
+  // I-7: a revision switcher on the Revision history tab -- clicking an
+  // older/newer revision re-points the drawer at it in place, rather than
+  // only ever showing the revision the caller opened it with.
+  const [activeRevisionId, setActiveRevisionId] = useState(revisionId);
+  useEffect(() => {
+    setActiveRevisionId(revisionId);
+  }, [revisionId]);
+  const detailQuery = useSkill(projectId, activeRevisionId);
   const detail = detailQuery.data;
   const revisionsQuery = useSkillRevisions(projectId, detail?.skillId ?? null);
 
@@ -56,7 +68,17 @@ export function SkillDetailDrawer({
         <h2>{detail?.displayName ?? text.heading}</h2>
         <Button onClick={onClose}>{text.close}</Button>
       </header>
-      {detailQuery.isPending ? null : detail === undefined ? null : (
+      {detailQuery.isPending ? (
+        <p role="status">{text.loading}</p>
+      ) : detailQuery.isError || detail === undefined ? (
+        // I-7: an error no longer leaves a blank drawer body.
+        <div role="alert">
+          <p>{text.loadFailed}</p>
+          <Button onClick={() => void detailQuery.refetch()}>
+            {text.retry}
+          </Button>
+        </div>
+      ) : (
         <>
           <div role="tablist">
             {tabs.map((item) => (
@@ -74,14 +96,59 @@ export function SkillDetailDrawer({
           {tab === "instructions" ? (
             <div role="tabpanel">
               <pre>{detail.instructions ?? ""}</pre>
+              <h3>{text.attachedReferences}</h3>
+              {detail.attachedReferences !== null &&
+              detail.attachedReferences !== undefined &&
+              detail.attachedReferences.length > 0 ? (
+                <pre>{detail.attachedReferences}</pre>
+              ) : (
+                <p>{text.noAttachedReferences}</p>
+              )}
             </div>
           ) : null}
           {tab === "files" ? (
             <div role="tabpanel">
               <ul>
-                {(detail.files ?? []).map((file) => (
-                  <li key={file.relativePath}>{file.relativePath}</li>
-                ))}
+                {(detail.files ?? []).map((file) => {
+                  const categoryLabel =
+                    file.category === "reference"
+                      ? file.attached
+                        ? text.import.category.referenceAttached
+                        : text.import.category.referenceUnattached
+                      : file.category === "skill"
+                        ? text.import.category.skill
+                        : file.category === "script"
+                          ? text.import.category.script
+                          : file.category === "asset"
+                            ? text.import.category.asset
+                            : file.category;
+                  const notExecuted =
+                    NOT_EXECUTED_CATEGORIES.has(file.category) ||
+                    (file.category === "reference" && !file.attached);
+                  return (
+                    <li key={file.relativePath}>
+                      <span>{file.relativePath}</span>
+                      <span className="tap-skill-file-category">
+                        {categoryLabel}
+                      </span>
+                      {notExecuted ? (
+                        <span className="tap-skill-file-not-executed">
+                          {text.savedNotExecuted}
+                        </span>
+                      ) : null}
+                      <a
+                        href={skillFileUrl(
+                          projectId,
+                          detail.revisionId,
+                          file.relativePath,
+                        )}
+                        download
+                      >
+                        {text.download}
+                      </a>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ) : null}
@@ -103,7 +170,20 @@ export function SkillDetailDrawer({
             <div role="tabpanel">
               <ul>
                 {(revisionsQuery.data ?? []).map((revision) => (
-                  <li key={revision.revisionId}>{revision.revisionId}</li>
+                  <li key={revision.revisionId}>
+                    {revision.revisionId === activeRevisionId ? (
+                      <strong>{revision.revisionId}</strong>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveRevisionId(revision.revisionId)
+                        }
+                      >
+                        {revision.revisionId}
+                      </button>
+                    )}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -122,6 +202,14 @@ export function SkillDetailDrawer({
               <Button onClick={() => onCopyAsCustom(detail)}>
                 {text.copyAsCustom}
               </Button>
+            ) : detail.sourceKind === "imported" ? (
+              // I-3: editing an imported Skill in place would rebuild a
+              // SKILL.md-only package and silently drop the original
+              // package's references/scripts/assets/unknown frontmatter --
+              // point at re-importing instead of offering Edit.
+              <p className="tap-skill-edit-unavailable">
+                {text.editUnavailableImported}
+              </p>
             ) : (
               <Button onClick={() => onEdit(detail)}>{text.edit}</Button>
             )}

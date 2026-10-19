@@ -72,12 +72,23 @@ export function AgentDetailDrawer({
   const attachedSkillsErrored = attachedSkillQueries.some(
     (query) => query.isError,
   );
-  const attachedSkillNames = useMemo(
+  const attachedSkillDetails = useMemo(
     () =>
       attachedSkillQueries
-        .map((query) => query.data?.displayName)
-        .filter((name): name is string => name !== undefined),
+        .map((query) => query.data)
+        .filter((value): value is SkillRevisionDetail => value !== undefined),
     [attachedSkillQueries],
+  );
+  // I-6: a bundled Skill disabled since the Agent was saved is still
+  // resolvable (the detail GET resolves any status) -- surface it as a
+  // warning on the drawer rather than only the unrelated "has a newer
+  // revision" notice.
+  const disabledAttachedSkillNames = useMemo(
+    () =>
+      attachedSkillDetails
+        .filter((item) => item.status === "disabled")
+        .map((item) => item.displayName),
+    [attachedSkillDetails],
   );
 
   const latestBySkillId = useMemo(() => {
@@ -167,6 +178,12 @@ export function AgentDetailDrawer({
         </div>
       ) : (
         <>
+          {disabledAttachedSkillNames.length > 0 ? (
+            <div role="alert" className="tap-agent-skill-disabled-warning">
+              <p>{text.boundSkillDisabledWarning}</p>
+              <p>{disabledAttachedSkillNames.join(", ")}</p>
+            </div>
+          ) : null}
           {detail.hasSkillUpdates ? (
             <div role="status" className="tap-agent-skill-updates">
               <p>{text.hasSkillUpdates}</p>
@@ -224,8 +241,13 @@ export function AgentDetailDrawer({
                 <p role="alert">{text.loadFailed}</p>
               ) : (
                 <ul>
-                  {attachedSkillNames.map((name) => (
-                    <li key={name}>{name}</li>
+                  {attachedSkillDetails.map((item) => (
+                    <li key={item.revisionId}>
+                      {item.displayName}
+                      {item.status === "disabled"
+                        ? ` (${text.statusDisabled})`
+                        : null}
+                    </li>
                   ))}
                 </ul>
               )}

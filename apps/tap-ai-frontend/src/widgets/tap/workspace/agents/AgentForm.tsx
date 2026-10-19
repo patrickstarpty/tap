@@ -15,11 +15,7 @@ import {
 import type { ModelCatalogItem } from "../../../../features/knowledge/api/modelCatalog";
 import { AccessibleDialog } from "../AccessibleDialog";
 import type { WorkspaceCopy } from "../copy";
-import {
-  buildSkillMarkdown,
-  SKILL_TURN_BUDGET_BYTES,
-  utf8ByteLength,
-} from "../skills/skillMarkdown";
+import { SKILL_TURN_BUDGET_BYTES, utf8ByteLength } from "../skills/skillMarkdown";
 
 // Selecting skills for an agent commits the project to bundling that much
 // Skill text into every turn that uses it, so the authoring form warns at
@@ -92,17 +88,18 @@ export function AgentForm({
   const skillSizesErrored = skillDetailQueries.some((query) => query.isError);
 
   const { totalBytes, largestSkills } = useMemo(() => {
+    // Match the server's per-turn budget accounting exactly (I-5,
+    // `skill_selection.py::_skill_text_bytes`): instructions plus attached
+    // reference text, not a re-derived SKILL.md (which would also count
+    // frontmatter/name/description bytes the server never bills this
+    // budget for).
     const sized = skillDetailQueries
       .map((query) => query.data)
       .filter((detail): detail is SkillRevisionDetail => detail !== undefined)
       .map((detail) => ({
         displayName: detail.displayName,
         bytes: utf8ByteLength(
-          buildSkillMarkdown({
-            name: detail.displayName,
-            description: detail.description ?? "",
-            instructions: detail.instructions ?? "",
-          }),
+          (detail.instructions ?? "") + (detail.attachedReferences ?? ""),
         ),
       }));
     const total = sized.reduce((sum, item) => sum + item.bytes, 0);
@@ -134,13 +131,17 @@ export function AgentForm({
   const systemInstructionValid =
     systemInstruction.trim().length > 0 &&
     systemInstructionBytes <= SYSTEM_INSTRUCTION_MAX_BYTES;
+  // I-6: a bound Skill becoming disabled must not be a permanent save
+  // dead-end -- it is surfaced above with a warning and a way to remove
+  // it, not treated as a blocking error. A genuinely unresolvable bound
+  // Skill id still fails server-side validation on submit (surfaced via
+  // `form.saveFailed`).
   const canSave =
     (mode === "edit" || nameValid) &&
     descriptionValid &&
     systemInstructionValid &&
     !overBudget &&
-    !budgetUnknown &&
-    !skillSizesErrored;
+    !budgetUnknown;
 
   const toggleSkill = (revisionId: string) => {
     setSkillRevisionIds((current) =>
@@ -157,6 +158,27 @@ export function AgentForm({
       skill.displayName.toLocaleLowerCase().includes(normalized),
     );
   }, [skillQuery, skills]);
+
+  // I-6: a bound Skill revision that was disabled since the Agent picked
+  // it up is not in the (enabled-only) `skills` picker list, so it would
+  // otherwise be an invisible, unremovable binding. Resolve its name from
+  // the already-fetched detail (now resolved regardless of status by
+  // `GET /ai/skills/{revisionId}`) so it can be shown with a warning and
+  // a way to remove it, rather than silently carried forward or blocking
+  // Save entirely.
+  const pickerSkillIds = useMemo(
+    () => new Set(skills.map((skill) => skill.revisionId)),
+    [skills],
+  );
+  const unavailableBoundSkills = skillRevisionIds
+    .filter((revisionId) => !pickerSkillIds.has(revisionId))
+    .map((revisionId, index) => ({
+      revisionId,
+      detail: skillDetailQueries[skillRevisionIds.indexOf(revisionId)]?.data,
+      errored: skillDetailQueries[skillRevisionIds.indexOf(revisionId)]?.isError ?? false,
+      // Keep a stable key even while the detail is still loading.
+      key: `${revisionId}-${index}`,
+    }));
 
   const title =
     mode === "create"
@@ -320,6 +342,29 @@ export function AgentForm({
               );
             })
           )}
+          {unavailableBoundSkills.length > 0 ? (
+            <div className="tap-agent-skills-unavailable">
+              {unavailableBoundSkills.map((item) => (
+                <div key={item.key} role="alert" aria-disabled>
+                  <span>{item.detail?.displayName ?? item.revisionId}</span>
+                  <span className="tap-agent-skill-revision">
+                    {item.revisionId}
+                  </span>
+                  <p>{form.boundSkillDisabled}</p>
+                  <Button
+                    size="small"
+                    onClick={() =>
+                      setSkillRevisionIds((current) =>
+                        current.filter((id) => id !== item.revisionId),
+                      )
+                    }
+                  >
+                    {form.removeSkill}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </fieldset>
         <div className="tap-agent-tools-readonly">
           <strong>{form.toolsLabel}</strong>

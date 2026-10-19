@@ -69,7 +69,10 @@ export function AgentsWorkspace({
   const setEnabled = useSetAgentEnabled(projectId);
 
   const enabledSkills = useMemo(
-    () => (skillsQuery.data ?? []).filter((item) => item.status === "enabled"),
+    () =>
+      (skillsQuery.data ?? []).filter(
+        (item) => item.isLatest && item.status === "enabled",
+      ),
     [skillsQuery.data],
   );
   const chatModels = useMemo(

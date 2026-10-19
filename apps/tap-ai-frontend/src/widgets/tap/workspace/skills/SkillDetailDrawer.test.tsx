@@ -46,6 +46,7 @@ const BUILT_IN_DETAIL = {
   isLatest: true,
   description: "Looks up policy terms",
   instructions: "Search the index.",
+  attachedReferences: null as string | null,
   files: [
     {
       relativePath: "SKILL.md",
@@ -149,5 +150,123 @@ describe("SkillDetailDrawer", () => {
     expect(
       screen.queryByRole("button", { name: "Copy as custom" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("does not offer Edit for an imported skill, and points at re-importing instead (I-3)", () => {
+    const importedDetail = {
+      ...BUILT_IN_DETAIL,
+      sourceKind: "imported",
+      builtIn: false,
+    };
+    renderDrawer({ detail: importedDetail });
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Copy as custom" }),
+    ).toBeNull();
+    expect(
+      screen.getByText(
+        "Imported skills can't be edited in place — import the updated package as a new revision instead.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("shows attached reference text and a fallback when none was attached (I-7)", async () => {
+    const user = userEvent.setup();
+    renderDrawer({
+      detail: { ...BUILT_IN_DETAIL, attachedReferences: "Cited excerpt." },
+    });
+    expect(screen.getByText("Cited excerpt.")).toBeVisible();
+
+    renderDrawer({ detail: { ...BUILT_IN_DETAIL, attachedReferences: null } });
+    expect(
+      screen.getAllByText("No reference text was attached.").length,
+    ).toBeGreaterThan(0);
+    await user.click;
+  });
+
+  it("labels each file by category, marks non-prompt files 'Saved, not executed', and links a download (I-7)", async () => {
+    const user = userEvent.setup();
+    renderDrawer({
+      detail: {
+        ...BUILT_IN_DETAIL,
+        files: [
+          { relativePath: "SKILL.md", category: "skill", attached: true, sizeBytes: 1, sha256: "a" },
+          {
+            relativePath: "scripts/run.py",
+            category: "script",
+            attached: false,
+            sizeBytes: 1,
+            sha256: "b",
+          },
+          {
+            relativePath: "references/notes.md",
+            category: "reference",
+            attached: true,
+            sizeBytes: 1,
+            sha256: "c",
+          },
+        ],
+      },
+    });
+    await user.click(screen.getByRole("tab", { name: "Files" }));
+
+    expect(screen.getByText("Script · saved, not executed")).toBeVisible();
+    expect(screen.getByText("Reference · attached")).toBeVisible();
+    expect(screen.getByText("Saved, not executed")).toBeVisible();
+    const downloadLinks = screen.getAllByRole("link", { name: "Download" });
+    expect(downloadLinks.length).toBe(3);
+    expect(downloadLinks[1]!.getAttribute("href")).toBe(
+      "/api/v1/projects/project-1/ai/skills/rev_1/files/scripts/run.py",
+    );
+  });
+
+  it("lets a revision history entry switch the drawer to that revision (I-7)", async () => {
+    const user = userEvent.setup();
+    const olderRevision = { ...BUILT_IN_DETAIL, revisionId: "rev_0" };
+    renderDrawer({
+      revisions: [olderRevision, BUILT_IN_DETAIL],
+    });
+    await user.click(screen.getByRole("tab", { name: "Revision history" }));
+
+    const switchButton = screen.getByRole("button", { name: "rev_0" });
+    await user.click(switchButton);
+
+    expect(useSkill).toHaveBeenLastCalledWith("project-1", "rev_0");
+  });
+
+  it("shows a retry-able error instead of a blank drawer when the detail fails to load", async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    vi.mocked(useSkill).mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      refetch,
+    } as never);
+    vi.mocked(useSkillRevisions).mockReturnValue({
+      data: [],
+      isPending: false,
+      isError: false,
+    } as never);
+
+    render(
+      createElement(SkillDetailDrawer, {
+        projectId: "project-1",
+        copy: WORKSPACE_COPY.en,
+        revisionId: "rev_1",
+        onClose: vi.fn(),
+        onUse: vi.fn(),
+        onEdit: vi.fn(),
+        onCopyAsCustom: vi.fn(),
+        opener: document.body,
+      }),
+      { wrapper },
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This skill could not be loaded.",
+    );
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalled();
   });
 });

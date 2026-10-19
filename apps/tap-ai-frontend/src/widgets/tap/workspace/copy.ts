@@ -122,6 +122,8 @@ export interface WorkspaceCopy {
     skillBudgetExceeded: string;
     largestSkills: string;
     agentModelFallback(agentName: string): string;
+    skillDisabledNotice(skillName: string): string;
+    skillInapplicableNotice(skillName: string): string;
   };
   catalog: {
     agents: string;
@@ -160,6 +162,10 @@ export interface WorkspaceCopy {
     revision: string;
     useInChat: string;
     edit: string;
+    /** Imported skills aren't offered Edit (I-3): editing would rebuild a
+     * SKILL.md-only package and silently drop the original package's
+     * references/scripts/assets. This points at re-importing instead. */
+    editUnavailableImported: string;
     enable: string;
     disable: string;
     statusEnabled: string;
@@ -168,6 +174,13 @@ export interface WorkspaceCopy {
     unavailable: string;
     cancel: string;
     close: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+    download: string;
+    savedNotExecuted: string;
+    attachedReferences: string;
+    noAttachedReferences: string;
     tabs: {
       instructions: string;
       files: string;
@@ -205,6 +218,18 @@ export interface WorkspaceCopy {
       skip: string;
       stageFailed: string;
       commitFailed: string;
+      /** Maps the server's closed error-code vocabulary (I-8) to prose;
+       * an unlisted code falls back to `stageFailed`/`commitFailed`. */
+      errors: {
+        skill_package_too_large: string;
+        skill_path_rejected: string;
+        skill_frontmatter_invalid: string;
+        skill_not_found_in_package: string;
+        skill_name_conflict: string;
+        revision_conflict: string;
+        import_expired: string;
+        skill_built_in_immutable: string;
+      };
     };
     form: {
       createTitle: string;
@@ -247,6 +272,7 @@ export interface WorkspaceCopy {
     toolsLabel: string;
     toolsBuiltIn: string;
     hasSkillUpdates: string;
+    boundSkillDisabledWarning: string;
     statusEnabled: string;
     statusDisabled: string;
     copyAsCustom: string;
@@ -273,6 +299,8 @@ export interface WorkspaceCopy {
       skills: string;
       searchSkills: string;
       noSkills: string;
+      boundSkillDisabled: string;
+      removeSkill: string;
       toolsLabel: string;
       toolsBuiltIn: string;
       save: string;
@@ -545,6 +573,10 @@ export const WORKSPACE_COPY = {
       largestSkills: "Largest skills",
       agentModelFallback: (agentName: string) =>
         `${agentName}'s default model is no longer available; using the global default instead.`,
+      skillDisabledNotice: (skillName: string) =>
+        `Skill "${skillName}" is disabled and was skipped for this answer.`,
+      skillInapplicableNotice: (skillName: string) =>
+        `Skill "${skillName}" does not apply to knowledge Q&A and was skipped for this answer.`,
     },
     catalog: {
       agents: "Agents",
@@ -585,6 +617,8 @@ export const WORKSPACE_COPY = {
       revision: "Revision",
       useInChat: "Use in chat",
       edit: "Edit",
+      editUnavailableImported:
+        "Imported skills can't be edited in place — import the updated package as a new revision instead.",
       enable: "Enable",
       disable: "Disable",
       statusEnabled: "Enabled",
@@ -593,6 +627,13 @@ export const WORKSPACE_COPY = {
       unavailable: "Skills are not available for this chat yet.",
       cancel: "Cancel",
       close: "Close",
+      loading: "Loading…",
+      loadFailed: "This skill could not be loaded.",
+      retry: "Retry",
+      download: "Download",
+      savedNotExecuted: "Saved, not executed",
+      attachedReferences: "Attached reference text",
+      noAttachedReferences: "No reference text was attached.",
       tabs: {
         instructions: "Instructions",
         files: "Files",
@@ -631,6 +672,23 @@ export const WORKSPACE_COPY = {
         skip: "Skip",
         stageFailed: "This import could not be read.",
         commitFailed: "The selected skills could not be imported.",
+        errors: {
+          skill_package_too_large: "This package is over the 20 MB limit.",
+          skill_path_rejected:
+            "This package contains an unsafe path (absolute path, \"..\", or a symlink).",
+          skill_frontmatter_invalid:
+            "SKILL.md's frontmatter is missing a required field or is invalid.",
+          skill_not_found_in_package:
+            "No SKILL.md was found at the selected location in this package.",
+          skill_name_conflict:
+            "A skill with this name already exists. Choose \"Import as a new revision\" or skip it.",
+          revision_conflict:
+            "This skill was updated elsewhere. Go back and import again.",
+          import_expired:
+            "This staged import has expired. Start the import again.",
+          skill_built_in_immutable:
+            "Built-in skills cannot receive an imported revision.",
+        },
       },
       form: {
         createTitle: "New skill",
@@ -674,6 +732,8 @@ export const WORKSPACE_COPY = {
       toolsLabel: "Built-in tools",
       toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
       hasSkillUpdates: "A bundled skill has a newer revision.",
+      boundSkillDisabledWarning:
+        "A bundled skill has been disabled and will be skipped when this agent answers.",
       statusEnabled: "Enabled",
       statusDisabled: "Disabled",
       copyAsCustom: "Copy as custom",
@@ -700,6 +760,9 @@ export const WORKSPACE_COPY = {
         skills: "Skills",
         searchSkills: "Search skills",
         noSkills: "No enabled skills available.",
+        boundSkillDisabled:
+          "This bound Skill has been disabled and will be skipped when the Agent answers.",
+        removeSkill: "Remove",
         toolsLabel: "Built-in tools",
         toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
         save: "Save",
@@ -978,6 +1041,10 @@ export const WORKSPACE_COPY = {
       largestSkills: "占用最大的 Skill",
       agentModelFallback: (agentName: string) =>
         `${agentName} 的默认模型已不可用，已改用全局默认模型。`,
+      skillDisabledNotice: (skillName: string) =>
+        `Skill「${skillName}」已停用，本次回答未使用。`,
+      skillInapplicableNotice: (skillName: string) =>
+        `Skill「${skillName}」不适用于知识问答，本次回答未使用。`,
     },
     catalog: {
       agents: "智能体",
@@ -1016,6 +1083,7 @@ export const WORKSPACE_COPY = {
       revision: "修订",
       useInChat: "在对话中使用",
       edit: "编辑",
+      editUnavailableImported: "导入的 Skill 不能直接编辑，请将更新后的包作为新修订重新导入。",
       enable: "启用",
       disable: "停用",
       statusEnabled: "已启用",
@@ -1024,6 +1092,13 @@ export const WORKSPACE_COPY = {
       unavailable: "本次对话暂不支持使用 Skill。",
       cancel: "取消",
       close: "关闭",
+      loading: "加载中…",
+      loadFailed: "无法加载该 Skill。",
+      retry: "重试",
+      download: "下载",
+      savedNotExecuted: "已保存，不执行",
+      attachedReferences: "已附加的参考文本",
+      noAttachedReferences: "未附加参考文本。",
       tabs: {
         instructions: "指令",
         files: "文件",
@@ -1062,6 +1137,18 @@ export const WORKSPACE_COPY = {
         skip: "跳过",
         stageFailed: "无法读取此次导入。",
         commitFailed: "无法导入所选 Skill。",
+        errors: {
+          skill_package_too_large: "压缩包超过 20 MB 上限。",
+          skill_path_rejected:
+            "压缩包内含不安全路径（绝对路径、“..” 或符号链接）。",
+          skill_frontmatter_invalid: "SKILL.md 的 frontmatter 缺少必需字段或不合法。",
+          skill_not_found_in_package: "在该位置未找到 SKILL.md。",
+          skill_name_conflict:
+            "已存在同名 Skill，请选择“作为新修订导入”或跳过。",
+          revision_conflict: "该 Skill 已在别处更新，请返回重新导入。",
+          import_expired: "此次暂存的导入已过期，请重新导入。",
+          skill_built_in_immutable: "内置 Skill 不能接收导入的修订。",
+        },
       },
       form: {
         createTitle: "新建 Skill",
@@ -1104,6 +1191,7 @@ export const WORKSPACE_COPY = {
       toolsLabel: "内置工具",
       toolsBuiltIn: "知识检索、知识回答（始终启用）",
       hasSkillUpdates: "已绑定的 Skill 有新修订。",
+      boundSkillDisabledWarning: "已绑定的 Skill 已停用，回答时将跳过。",
       statusEnabled: "已启用",
       statusDisabled: "已停用",
       copyAsCustom: "复制为自定义",
@@ -1130,6 +1218,8 @@ export const WORKSPACE_COPY = {
         skills: "Skill",
         searchSkills: "搜索 Skill",
         noSkills: "暂无可用的已启用 Skill。",
+        boundSkillDisabled: "此绑定的 Skill 已停用，回答时将跳过。",
+        removeSkill: "移除",
         toolsLabel: "内置工具",
         toolsBuiltIn: "知识检索、知识回答（始终启用）",
         save: "保存",

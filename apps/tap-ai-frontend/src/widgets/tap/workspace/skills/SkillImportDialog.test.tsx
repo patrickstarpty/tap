@@ -5,6 +5,7 @@ import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  AiAssetError,
   useCommitSkillImport,
   useStageSkillImport,
 } from "../../../../features/knowledge/api/aiAssets";
@@ -333,6 +334,60 @@ describe("SkillImportDialog step 2", () => {
 
     await user.click(screen.getByRole("button", { name: "Back" }));
 
+    expect(screen.getByText("Import a skill")).toBeVisible();
+  });
+
+  it("maps a server error code to prose instead of a generic message (I-8)", async () => {
+    const user = userEvent.setup();
+    const stageMutateAsync = vi.fn().mockResolvedValue(PREVIEW_NO_CONFLICT);
+    const commitMutateAsync = vi
+      .fn()
+      .mockRejectedValue(
+        new AiAssetError({
+          code: "skill_package_too_large",
+          detail: "too big",
+        }),
+      );
+    renderDialog({ stageMutateAsync, commitMutateAsync });
+    await user.type(
+      screen.getByRole("textbox", { name: "Paste SKILL.md content" }),
+      "text",
+    );
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await screen.findByText("policy-lookup");
+
+    await user.click(screen.getByRole("button", { name: "Import selected" }));
+
+    expect(
+      await screen.findByText("This package is over the 20 MB limit."),
+    ).toBeVisible();
+    // Stays on step 2 -- only `import_expired` sends the person back.
+    expect(screen.getByText("Review before import")).toBeVisible();
+  });
+
+  it("returns to step 1 on import_expired, since the staged import is gone (I-8)", async () => {
+    const user = userEvent.setup();
+    const stageMutateAsync = vi.fn().mockResolvedValue(PREVIEW_NO_CONFLICT);
+    const commitMutateAsync = vi
+      .fn()
+      .mockRejectedValue(
+        new AiAssetError({ code: "import_expired", detail: "expired" }),
+      );
+    renderDialog({ stageMutateAsync, commitMutateAsync });
+    await user.type(
+      screen.getByRole("textbox", { name: "Paste SKILL.md content" }),
+      "text",
+    );
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await screen.findByText("policy-lookup");
+
+    await user.click(screen.getByRole("button", { name: "Import selected" }));
+
+    expect(
+      await screen.findByText(
+        "This staged import has expired. Start the import again.",
+      ),
+    ).toBeVisible();
     expect(screen.getByText("Import a skill")).toBeVisible();
   });
 });

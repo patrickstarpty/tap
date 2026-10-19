@@ -71,7 +71,9 @@ const LATEST_SKILL: SkillRevision = {
   isLatest: true,
 } as SkillRevision;
 
-function mockFetchSkillDetail(options: { pending?: boolean } = {}) {
+function mockFetchSkillDetail(
+  options: { pending?: boolean; status?: "enabled" | "disabled" } = {},
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string) => {
@@ -92,7 +94,7 @@ function mockFetchSkillDetail(options: { pending?: boolean } = {}) {
           applicableTasks: ["knowledge.answer"],
           sourceKind: "authored",
           builtIn: false,
-          status: "enabled",
+          status: options.status ?? "enabled",
           isLatest: false,
         }),
         { status: 200 },
@@ -311,6 +313,25 @@ describe("AgentDetailDrawer", () => {
 
     expect(
       await screen.findByText("This agent could not be upgraded."),
+    ).toBeVisible();
+  });
+
+  it("warns when a bound skill has been disabled, instead of only showing the unrelated newer-revision notice (I-6)", async () => {
+    mockFetchSkillDetail({ status: "disabled" });
+    renderDrawer({ detail: { ...DETAIL, hasSkillUpdates: false } });
+
+    expect(
+      await screen.findByText(
+        "A bundled skill has been disabled and will be skipped when this agent answers.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Citation skill (old)")).toBeVisible();
+
+    await userEvent.setup().click(
+      screen.getByRole("tab", { name: "Skills" }),
+    );
+    expect(
+      screen.getByText("Citation skill (old) (Disabled)"),
     ).toBeVisible();
   });
 });
