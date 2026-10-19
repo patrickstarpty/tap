@@ -91,6 +91,12 @@ export interface CatalogItem {
   name: string;
   description: string;
   instructions: string;
+  /** True for a Skill whose `applicableTasks` doesn't include
+   * `knowledge.answer` (spec §4.4) -- the composer's Skill picker greys
+   * it out and blocks selection instead of letting it be picked and
+   * silently ignored by every knowledge-answer turn. Always false/absent
+   * for Agents. */
+  notApplicable?: boolean;
 }
 
 export interface LibrarySource {

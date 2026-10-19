@@ -124,6 +124,10 @@ export interface WorkspaceCopy {
     agentModelFallback(agentName: string): string;
     skillDisabledNotice(skillName: string): string;
     skillInapplicableNotice(skillName: string): string;
+    /** Label/tooltip shown on a greyed-out, unselectable Skill option in
+     * the composer picker (spec §4.4) when it doesn't apply to knowledge
+     * Q&A. */
+    skillNotApplicable: string;
   };
   catalog: {
     agents: string;
@@ -577,6 +581,7 @@ export const WORKSPACE_COPY = {
         `Skill "${skillName}" is disabled and was skipped for this answer.`,
       skillInapplicableNotice: (skillName: string) =>
         `Skill "${skillName}" does not apply to knowledge Q&A and was skipped for this answer.`,
+      skillNotApplicable: "Doesn't apply to knowledge Q&A",
     },
     catalog: {
       agents: "Agents",
@@ -1045,6 +1050,7 @@ export const WORKSPACE_COPY = {
         `Skill「${skillName}」已停用，本次回答未使用。`,
       skillInapplicableNotice: (skillName: string) =>
         `Skill「${skillName}」不适用于知识问答，本次回答未使用。`,
+      skillNotApplicable: "不适用于知识问答",
     },
     catalog: {
       agents: "智能体",

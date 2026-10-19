@@ -447,7 +447,11 @@ export function TapperChat({
       return {
         title: copy.composer.useSkills,
         search: copy.composer.searchSkills,
-        items: skills.map((skill) => ({ id: skill.id, name: skill.name })),
+        items: skills.map((skill) => ({
+          id: skill.id,
+          name: skill.name,
+          notApplicable: skill.notApplicable === true,
+        })),
         onSelect: onToggleSkill,
         selectedIds: conversation.selectedSkillIds,
       };
@@ -1246,24 +1250,41 @@ export function TapperChat({
             aria-multiselectable="true"
           >
             {visiblePickerItems.length > 0 ? (
-              visiblePickerItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="option"
-                  aria-label={item.name}
-                  aria-selected={pickerConfig.selectedIds.includes(item.id)}
-                  onClick={() => {
-                    pickerConfig.onSelect(item.id);
-                    setPicker(null);
-                  }}
-                >
-                  {picker === "library" ? (
-                    <FileTypeIcon type={item.name.split(".").pop() ?? "FILE"} />
-                  ) : null}
-                  {item.name}
-                </button>
-              ))
+              visiblePickerItems.map((item) => {
+                const notApplicable =
+                  "notApplicable" in item && item.notApplicable === true;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="option"
+                    aria-label={
+                      notApplicable
+                        ? `${item.name} (${copy.composer.skillNotApplicable})`
+                        : item.name
+                    }
+                    aria-selected={pickerConfig.selectedIds.includes(item.id)}
+                    aria-disabled={notApplicable}
+                    title={notApplicable ? copy.composer.skillNotApplicable : undefined}
+                    disabled={notApplicable}
+                    onClick={() => {
+                      if (notApplicable) return;
+                      pickerConfig.onSelect(item.id);
+                      setPicker(null);
+                    }}
+                  >
+                    {picker === "library" ? (
+                      <FileTypeIcon type={item.name.split(".").pop() ?? "FILE"} />
+                    ) : null}
+                    {item.name}
+                    {notApplicable ? (
+                      <span className="tap-picker-option-note">
+                        {copy.composer.skillNotApplicable}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })
             ) : (
               <p>{copy.catalog.noResults}</p>
             )}

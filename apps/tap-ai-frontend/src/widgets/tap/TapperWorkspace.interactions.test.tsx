@@ -2513,6 +2513,62 @@ describe("Tap product workspace interactions", () => {
     ).toBeVisible();
   });
 
+  it("greys out and blocks selecting a Skill that doesn't apply to knowledge Q&A (I-2, spec §4.4)", async () => {
+    const api = defaultKnowledgeClient();
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["ai-agent-catalog", api.projectId], []);
+    queryClient.setQueryData(
+      ["skill-catalog", api.projectId],
+      [
+        {
+          revisionId: "bdd-scenario-design",
+          assetId: "bdd-scenario-design",
+          displayName: "BDD Scenario Design",
+          contentDigest: `sha256:${"5".repeat(64)}`,
+          applicableTasks: ["knowledge.answer"],
+          status: "enabled",
+          isLatest: true,
+        },
+        {
+          revisionId: "test-plan-outline",
+          assetId: "test-plan-outline",
+          displayName: "Test Plan Outline",
+          contentDigest: `sha256:${"a".repeat(64)}`,
+          applicableTasks: ["test-plan.generate"],
+          status: "enabled",
+          isLatest: true,
+        },
+      ],
+    );
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Skills" },
+      ),
+    );
+    const picker = screen.getByRole("dialog", { name: "Use Skills" });
+
+    const applicable = within(picker).getByRole("option", {
+      name: "BDD Scenario Design",
+    });
+    expect(applicable).toBeEnabled();
+
+    const notApplicable = within(picker).getByRole("option", {
+      name: "Test Plan Outline (Doesn't apply to knowledge Q&A)",
+    });
+    expect(notApplicable).toBeDisabled();
+    expect(notApplicable).toHaveAttribute("aria-disabled", "true");
+
+    await user.click(notApplicable);
+    expect(screen.getByRole("dialog", { name: "Use Skills" })).toBeVisible();
+    expect(notApplicable).toHaveAttribute("aria-selected", "false");
+  });
+
   // `renderWorkspace()`'s `seedAgentSkillCatalog` doesn't carry
   // `defaultModelAlias`/`skillRevisionIds` (its Agents never prefill or
   // bundle anything), so these cases seed the composer's own catalog keys

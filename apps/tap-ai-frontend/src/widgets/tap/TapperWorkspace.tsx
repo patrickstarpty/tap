@@ -1610,6 +1610,11 @@ export function TapperWorkspace() {
               name: item.displayName,
               description: presentation.description,
               instructions: presentation.instructions,
+              // I-2 / spec §4.4: a Skill not scoped to knowledge.answer
+              // can't do anything on a knowledge-answer turn -- grey it
+              // out in the composer picker instead of letting it be
+              // picked and silently ignored.
+              notApplicable: !item.applicableTasks.includes("knowledge.answer"),
             };
           }),
       );
