@@ -64,3 +64,50 @@ def test_validate_tool_call_caps_calls_per_round() -> None:
 
 def test_step_id_format() -> None:
     assert step_id("t1", 2, 0) == "t1:r2:c0"
+
+
+def test_insights_query_admits_partial_filters_and_rejects_unknown_filter_key() -> None:
+    # I-2: `filters` sub-keys are optional, mirroring `StructuredInsightsTool.invoke`
+    # (which reads each with `filters.get(key, ())`), not all-required.
+    partial = RequestedToolCall(
+        call_id="c0",
+        name="insights_query",
+        arguments_json=(
+            '{"metricIds": ["first_pass_rate"], "filters": {"sourceIds": ["src-a"]}, '
+            '"from": "2026-01-01", "to": "2026-02-01", "timezone": "UTC", '
+            '"asOf": "2026-02-01T00:00:00Z"}'
+        ),
+    )
+    result = admit_tool_calls(
+        [partial], visible=("insights.query",), selected_source_ids=frozenset({"src-a"})
+    )
+    assert result == (
+        AdmittedToolCall(
+            call_id="c0",
+            tool_id="insights.query",
+            arguments={
+                "metricIds": ["first_pass_rate"],
+                "filters": {"sourceIds": ["src-a"]},
+                "from": "2026-01-01",
+                "to": "2026-02-01",
+                "timezone": "UTC",
+                "asOf": "2026-02-01T00:00:00Z",
+            },
+        ),
+    )
+
+    unknown_filter_key = RequestedToolCall(
+        call_id="c1",
+        name="insights_query",
+        arguments_json=(
+            '{"metricIds": ["first_pass_rate"], "filters": {"projects": ["p-1"]}, '
+            '"from": "2026-01-01", "to": "2026-02-01", "timezone": "UTC", '
+            '"asOf": "2026-02-01T00:00:00Z"}'
+        ),
+    )
+    rejected = admit_tool_calls(
+        [unknown_filter_key], visible=("insights.query",), selected_source_ids=frozenset()
+    )
+    assert rejected == (
+        RejectedToolCall(call_id="c1", name="insights_query", reason="invalid-arguments"),
+    )

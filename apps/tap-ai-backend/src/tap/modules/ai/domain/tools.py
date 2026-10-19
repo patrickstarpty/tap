@@ -78,14 +78,9 @@ _INSIGHTS_QUERY_SCHEMA: Mapping[str, object] = {
         "filters": {
             "type": "object",
             "additionalProperties": False,
-            "required": [
-                "sourceIds",
-                "runIds",
-                "buildIds",
-                "branches",
-                "environments",
-                "configurations",
-            ],
+            # Optional, mirroring `StructuredInsightsTool.invoke`, which reads each
+            # of these with `filters.get(key, ())` rather than requiring them.
+            "required": [],
             "properties": {
                 "sourceIds": {
                     "type": "array",

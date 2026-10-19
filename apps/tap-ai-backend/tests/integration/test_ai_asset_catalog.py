@@ -106,38 +106,41 @@ async def test_mysql_concurrent_seed_serializes_creator_and_revision_numbers(
             MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(seed),
             MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(seed),
         )
-        v2_schema = {"type": "object"}
-        v2 = AiAgentRevision(
-            revision_id="validation-knowledge-agent-v3",
+        # A revision id distinct from any built-in id (`validation-knowledge-agent-v2`,
+        # `-v3`, ...) so this locally-constructed "adopted" revision cannot alias a
+        # built-in seed revision with different content.
+        adopted_schema = {"type": "object"}
+        adopted = AiAgentRevision(
+            revision_id="validation-knowledge-agent-adopted-test-v1",
             asset_id=seed.agents[0].asset_id,
-            display_name="Knowledge agent v2",
+            display_name="Knowledge agent adopted test",
             scope=VALIDATION_SCOPE,
-            content_digest=text_digest("validation-ai-agent-v3"),
-            system_instruction_digest=text_digest("knowledge-agent-system-instruction-v3"),
+            content_digest=text_digest("validation-ai-agent-adopted-test-v1"),
+            system_instruction_digest=text_digest("knowledge-agent-system-instruction-adopted-v1"),
             tool_allowlist=frozenset({"knowledge.search"}),
-            output_schema_digest=schema_digest(v2_schema),
+            output_schema_digest=schema_digest(adopted_schema),
             adopted_from_revision_id=seed.agents[0].revision_id,
-            system_instruction="knowledge-agent-system-instruction-v3",
+            system_instruction="knowledge-agent-system-instruction-adopted-v1",
             output_schema_json='{"type":"object"}',
         )
         await asyncio.gather(
             MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(
-                ValidationAssetSeed(version="v2", agents=(v2,), skills=())
+                ValidationAssetSeed(version="adopted-test-v1", agents=(adopted,), skills=())
             ),
             MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(
-                ValidationAssetSeed(version="v2", agents=(v2,), skills=())
+                ValidationAssetSeed(version="adopted-test-v1", agents=(adopted,), skills=())
             ),
         )
         # C-1: `list_agents` returns one row per asset -- its latest
-        # revision -- not every enabled revision; `v2` is a second revision
-        # of the *same* asset (`seed.agents[0].asset_id`), so only it
-        # should be listed now, not both.
+        # revision -- not every enabled revision; `adopted` is a further
+        # revision of the *same* asset (`seed.agents[0].asset_id`), so only
+        # it should be listed now, not the built-in v2/v3 revisions too.
         assert [
             item.revision_id
             for item in await MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).list_agents(
                 VALIDATION_SCOPE
             )
-        ] == [v2.revision_id]
+        ] == [adopted.revision_id]
         async with sessions() as session:
             persisted_numbers = list(
                 (
@@ -149,9 +152,13 @@ async def test_mysql_concurrent_seed_serializes_creator_and_revision_numbers(
                     )
                 ).all()
             )
+        # The initial `seed(seed)` call persists both built-in revisions
+        # (v2, v3) of this asset before the locally adopted revision is
+        # seeded, so the adopted revision is the third revision number.
         assert persisted_numbers == [
             (seed.agents[0].revision_id, 1),
-            (v2.revision_id, 2),
+            (seed.agents[1].revision_id, 2),
+            (adopted.revision_id, 3),
         ]
     finally:
         await engine.dispose()
