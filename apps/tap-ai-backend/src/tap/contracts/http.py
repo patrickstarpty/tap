@@ -91,7 +91,10 @@ class AiAgentRevisionDetail(AiAgentRevisionSummary):
 
 
 class AiAgentRevisionPage(ContractModel):
-    items: Annotated[list[AiAgentRevisionSummary], Field(max_length=64)]
+    # Also backs the revision-history endpoint (`GET /ai/agents/{agentId}/revisions`),
+    # whose item count is a revision count, not an asset count -- bounded well above
+    # the asset-list cap so a long-lived Agent's full history still fits (C-1).
+    items: Annotated[list[AiAgentRevisionSummary], Field(max_length=1000)]
 
 
 class AgentDraftRequest(ContractModel):
@@ -144,7 +147,9 @@ class SkillRevisionSummary(ContractModel):
 
 
 class SkillRevisionPage(ContractModel):
-    items: Annotated[list[SkillRevisionSummary], Field(max_length=64)]
+    # Also backs the revision-history endpoint (`GET /ai/skills/{skillId}/revisions`);
+    # see `AiAgentRevisionPage` (C-1).
+    items: Annotated[list[SkillRevisionSummary], Field(max_length=1000)]
 
 
 class SkillFileView(ContractModel):

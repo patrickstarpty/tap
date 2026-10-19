@@ -235,7 +235,12 @@ async def list_skills(request: Request) -> SkillRevisionPage:
     },
 )
 async def get_skill(request: Request, revision_id: str) -> SkillRevisionDetail:
-    value = await asset_catalog_service(request).get_skill(request.state.project_scope, revision_id)
+    # Resolve any status (C-2, spec §4.3): a link opened from a past Turn
+    # must still open even if the Skill was disabled since, and the Skill
+    # detail drawer needs to show a disabled revision too.
+    value = await asset_catalog_service(request).resolve_historical_skill(
+        request.state.project_scope, revision_id
+    )
     latest = await _latest_revision_ids(request, {value.asset_id})
     return _detail(value, is_latest=latest.get(value.asset_id) == value.revision_id)
 

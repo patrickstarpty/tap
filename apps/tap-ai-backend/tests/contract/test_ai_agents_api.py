@@ -27,12 +27,8 @@ class _FakeCatalog:
     # -- read: AssetCatalogHttpService ----------------------------------
 
     async def list_agents(self, scope):
-        return tuple(
-            revision
-            for history in self._agents.values()
-            for revision in history
-            if revision.status == AssetRevisionStatus.ENABLED
-        )
+        # One row per asset -- its latest revision, any status (C-1/C-2).
+        return tuple(history[-1] for history in self._agents.values() if history)
 
     async def get_agent(self, scope, revision_id):
         for history in self._agents.values():
@@ -43,8 +39,15 @@ class _FakeCatalog:
                     return revision
         raise AssetRevisionRejected()
 
+    async def resolve_historical_agent(self, scope, revision_id):
+        for history in self._agents.values():
+            for revision in history:
+                if revision.revision_id == revision_id:
+                    return revision
+        raise AssetRevisionRejected()
+
     async def list_skills(self, scope):
-        return ()
+        return tuple(history[-1] for history in self._skills.values() if history)
 
     async def get_skill(self, scope, revision_id):
         for history in self._skills.values():
@@ -52,6 +55,13 @@ class _FakeCatalog:
                 if revision.revision_id == revision_id and (
                     revision.status == AssetRevisionStatus.ENABLED
                 ):
+                    return revision
+        raise AssetRevisionRejected()
+
+    async def resolve_historical_skill(self, scope, revision_id):
+        for history in self._skills.values():
+            for revision in history:
+                if revision.revision_id == revision_id:
                     return revision
         raise AssetRevisionRejected()
 
@@ -77,7 +87,7 @@ class _FakeCatalog:
         if not history:
             raise AssetRevisionRejected()
         status = AssetRevisionStatus.ENABLED if enabled else AssetRevisionStatus.DISABLED
-        history[-1] = replace(history[-1], status=status)
+        store[asset_id] = [replace(revision, status=status) for revision in history]
 
     async def find_agent_by_name(self, scope, name):
         for history in self._agents.values():

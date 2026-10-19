@@ -191,6 +191,7 @@ class _CommitPlan:
     asset_id: str
     base_revision_id: str | None
     revision_id: str
+    status: AssetRevisionStatus = AssetRevisionStatus.ENABLED
 
 
 Clock = Callable[[], datetime]
@@ -435,13 +436,24 @@ class SkillAuthoringService:
                 )
             asset_id = selection.as_new_revision_of
             base_revision_id: str | None = None
+            status = AssetRevisionStatus.ENABLED
             if asset_id is not None:
                 existing_revisions = await self._catalog.list_revisions("skill", asset_id)
                 if not existing_revisions:
                     raise SkillPackageRejected(
                         "skill_not_found_in_package", f"unknown skill asset {asset_id!r}"
                     )
-                base_revision_id = existing_revisions[-1].revision_id
+                base = cast(SkillRevision, existing_revisions[-1])
+                if base.source_kind == "built_in":
+                    raise SkillPackageRejected(
+                        "skill_built_in_immutable",
+                        "built-in skills cannot receive an imported revision",
+                    )
+                base_revision_id = base.revision_id
+                # Decide revise-of-disabled explicitly (C-2): keep the
+                # asset disabled across an import commit rather than
+                # silently re-enabling it.
+                status = base.status
             else:
                 asset_id = deterministic_asset_id
             assert asset_id is not None
@@ -452,6 +464,7 @@ class SkillAuthoringService:
                     asset_id=asset_id,
                     base_revision_id=base_revision_id,
                     revision_id=revision_id,
+                    status=status,
                 )
             )
         return plans
@@ -490,6 +503,7 @@ class SkillAuthoringService:
             frontmatter=cast("Mapping[str, object]", entry["frontmatter"]),
             package_digest=text_digest(combined),
             files=files,
+            status=plan.status,
         )
         file_refs = await self._promote_staged_files(plan.asset_id, plan.revision_id, file_entries)
         try:
@@ -644,6 +658,11 @@ class SkillAuthoringService:
 
     async def create_authored(self, scope: ProjectScopeContext, draft: SkillDraft) -> SkillRevision:
         self._assert_scope(scope)
+        existing = await self._catalog.find_skill_by_name(scope, draft.name)
+        if existing is not None:
+            raise SkillPackageRejected(
+                "skill_name_conflict", f"a skill named {draft.name!r} already exists"
+            )
         asset_id = f"skill-{uuid4().hex[:16]}"
         revision, scan = self._build_authored_revision(scope, draft, asset_id=asset_id)
         file_refs = await self._promote_authored_files(asset_id, revision.revision_id, scan)
@@ -663,10 +682,28 @@ class SkillAuthoringService:
         draft: SkillDraft,
     ) -> SkillRevision:
         self._assert_scope(scope)
-        if not await self._catalog.list_revisions("skill", skill_id):
+        history = await self._catalog.list_revisions("skill", skill_id)
+        if not history:
             raise AssetRevisionRejected()
+        latest = cast(SkillRevision, history[-1])
+        if latest.source_kind == "built_in":
+            raise SkillPackageRejected(
+                "skill_built_in_immutable",
+                "built-in skills cannot be revised; import or create a new skill instead",
+            )
+        existing = await self._catalog.find_skill_by_name(scope, draft.name)
+        if existing is not None and existing.asset_id != skill_id:
+            raise SkillPackageRejected(
+                "skill_name_conflict", f"a skill named {draft.name!r} already exists"
+            )
         revision, scan = self._build_authored_revision(
-            scope, draft, asset_id=skill_id, adopted_from_revision_id=base_revision_id
+            scope,
+            draft,
+            asset_id=skill_id,
+            adopted_from_revision_id=base_revision_id,
+            # Decide revise-of-disabled explicitly (C-2): keep the asset
+            # disabled across a revise rather than silently re-enabling it.
+            status=latest.status,
         )
         file_refs = await self._promote_authored_files(skill_id, revision.revision_id, scan)
         try:
@@ -684,6 +721,7 @@ class SkillAuthoringService:
         *,
         asset_id: str,
         adopted_from_revision_id: str | None = None,
+        status: AssetRevisionStatus = AssetRevisionStatus.ENABLED,
     ) -> tuple[SkillRevision, PackageScan]:
         if not isinstance(draft, SkillDraft):
             raise SkillPackageRejected("skill_frontmatter_invalid", "draft must be a SkillDraft")
@@ -713,6 +751,7 @@ class SkillAuthoringService:
             package_digest=text_digest(skill_md_text),
             adopted_from_revision_id=adopted_from_revision_id,
             files=scanned.files,
+            status=status,
         )
         return revision, scan
 
@@ -740,6 +779,13 @@ class SkillAuthoringService:
 
     async def set_enabled(self, scope: ProjectScopeContext, skill_id: str, enabled: bool) -> None:
         self._assert_scope(scope)
+        history = await self._catalog.list_revisions("skill", skill_id)
+        if not history:
+            raise AssetRevisionRejected()
+        if cast(SkillRevision, history[-1]).source_kind == "built_in":
+            raise SkillPackageRejected(
+                "skill_built_in_immutable", "built-in skills cannot be disabled or enabled"
+            )
         await self._catalog.set_asset_enabled("skill", skill_id, enabled)
 
     async def open_file(

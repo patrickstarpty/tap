@@ -20,6 +20,7 @@ from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
 from tap.modules.ai.domain.assets import (
     AiAgentRevision,
     AssetRevisionRejected,
+    AssetRevisionStatus,
     SkillRevision,
     text_digest,
 )
@@ -67,6 +68,10 @@ class SkillLookup(Protocol):
     detect when a bound revision has been superseded."""
 
     async def get_skill(self, scope: ProjectScopeContext, revision_id: str) -> SkillRevision: ...
+
+    async def resolve_historical_skill(
+        self, scope: ProjectScopeContext, revision_id: str
+    ) -> SkillRevision: ...
 
     async def list_revisions(
         self, kind: Literal["agent", "skill"], asset_id: str
@@ -160,8 +165,24 @@ class AgentAuthoringService:
                 "agent_built_in_immutable",
                 "built-in agents cannot be revised; create a new agent instead",
             )
+        existing = await self._catalog.find_agent_by_name(scope, draft.name)
+        if existing is not None and existing.asset_id != agent_id:
+            raise AgentAuthoringRejected(
+                "agent_name_conflict", f"an agent named {draft.name!r} already exists"
+            )
         revision = await self._build_revision(
-            scope, draft, asset_id=agent_id, adopted_from_revision_id=base_revision_id
+            scope,
+            draft,
+            asset_id=agent_id,
+            adopted_from_revision_id=base_revision_id,
+            # Decide revise-of-disabled explicitly (C-2): keep the asset
+            # disabled across a revise rather than silently re-enabling it.
+            status=latest.status,
+            # Skills the Agent already had bound tolerate becoming disabled
+            # in the meantime (I-6): revise must not be a permanent save
+            # dead-end for them. A newly-added skill id still has to be
+            # enabled, same as `create`.
+            tolerate_disabled_ids=frozenset(latest.skill_revision_ids),
         )
         return await self._catalog.insert_agent_revision(
             revision, base_revision_id=base_revision_id
@@ -169,6 +190,14 @@ class AgentAuthoringService:
 
     async def set_enabled(self, scope: ProjectScopeContext, agent_id: str, enabled: bool) -> None:
         self._assert_scope(scope)
+        history = await self._catalog.list_revisions("agent", agent_id)
+        if not history:
+            raise AssetRevisionRejected()
+        if history[-1].source_kind == "built_in":
+            raise AgentAuthoringRejected(
+                "agent_built_in_immutable",
+                "built-in agents cannot be disabled or enabled",
+            )
         await self._catalog.set_asset_enabled("agent", agent_id, enabled)
 
     async def outdated_skill_ids(
@@ -184,6 +213,8 @@ class AgentAuthoringService:
         *,
         asset_id: str,
         adopted_from_revision_id: str | None = None,
+        status: AssetRevisionStatus = AssetRevisionStatus.ENABLED,
+        tolerate_disabled_ids: frozenset[str] = frozenset(),
     ) -> AiAgentRevision:
         if not isinstance(draft, AgentDraft):
             raise AgentAuthoringRejected("agent_frontmatter_invalid", "draft must be an AgentDraft")
@@ -211,7 +242,13 @@ class AgentAuthoringService:
             )
         for revision_id in draft.skill_revision_ids:
             try:
-                await self._catalog.get_skill(scope, revision_id)
+                if revision_id in tolerate_disabled_ids:
+                    # I-6: a Skill the Agent already had bound tolerates
+                    # becoming disabled since -- resolve any status so a
+                    # revise is never blocked by it.
+                    await self._catalog.resolve_historical_skill(scope, revision_id)
+                else:
+                    await self._catalog.get_skill(scope, revision_id)
             except AssetRevisionRejected as error:
                 raise AgentAuthoringRejected(
                     "agent_skill_unavailable",
@@ -243,4 +280,5 @@ class AgentAuthoringService:
             skill_revision_ids=tuple(draft.skill_revision_ids),
             default_model_alias=draft.default_model_alias,
             adopted_from_revision_id=adopted_from_revision_id,
+            status=status,
         )

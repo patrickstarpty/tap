@@ -49,7 +49,7 @@ class _FakeCatalog:
         if not history:
             raise AssetRevisionRejected()
         status = AssetRevisionStatus.ENABLED if enabled else AssetRevisionStatus.DISABLED
-        history[-1] = replace(history[-1], status=status)
+        store[asset_id] = [replace(revision, status=status) for revision in history]
 
     async def list_revisions(self, kind, asset_id):
         store = self._agents if kind == "agent" else self._skills
@@ -69,6 +69,13 @@ class _FakeCatalog:
                 if revision.revision_id == revision_id and (
                     revision.status == AssetRevisionStatus.ENABLED
                 ):
+                    return revision
+        raise AssetRevisionRejected()
+
+    async def resolve_historical_skill(self, scope, revision_id):
+        for history in self._skills.values():
+            for revision in history:
+                if revision.revision_id == revision_id:
                     return revision
         raise AssetRevisionRejected()
 

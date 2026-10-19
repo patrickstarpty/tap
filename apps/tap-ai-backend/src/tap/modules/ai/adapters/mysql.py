@@ -458,32 +458,63 @@ class MysqlAssetCatalog:
         await self._insert_skill_files(session, revision, file_object_refs=None)
 
     async def list_agents(self, scope: ProjectScopeContext) -> tuple[AiAgentRevision, ...]:
+        """One row per Agent asset -- its latest revision, regardless of
+        enabled/disabled status (C-1/C-2): callers that must only see
+        selectable Agents (e.g. the composer) filter on ``status`` and
+        ``is_latest`` themselves; a disabled Agent must still be visible to
+        an "all/disabled" catalog filter rather than disappearing outright."""
         self._assert_scope(scope)
         async with self._sessions() as session:
+            latest_numbers = (
+                select(
+                    ai_agent_revision.c.agent_id,
+                    func.max(ai_agent_revision.c.revision_number).label("revision_number"),
+                )
+                .where(
+                    *scope_predicates(ai_agent_revision, self._scope),
+                    ai_agent_revision.c.system_instruction.is_not(None),
+                    ai_agent_revision.c.output_schema_json.is_not(None),
+                )
+                .group_by(ai_agent_revision.c.agent_id)
+                .subquery()
+            )
             rows = (
                 await session.execute(
                     select(ai_agent_revision)
-                    .where(
-                        *scope_predicates(ai_agent_revision, self._scope),
-                        ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
-                        ai_agent_revision.c.system_instruction.is_not(None),
-                        ai_agent_revision.c.output_schema_json.is_not(None),
+                    .join(
+                        latest_numbers,
+                        (ai_agent_revision.c.agent_id == latest_numbers.c.agent_id)
+                        & (ai_agent_revision.c.revision_number == latest_numbers.c.revision_number),
                     )
+                    .where(*scope_predicates(ai_agent_revision, self._scope))
                     .order_by(ai_agent_revision.c.revision_id)
                 )
             ).mappings()
             return tuple(self._agent(row) for row in rows)
 
     async def list_skills(self, scope: ProjectScopeContext) -> tuple[SkillRevision, ...]:
+        """One row per Skill asset -- its latest revision, regardless of
+        enabled/disabled status (C-1/C-2); see `list_agents`."""
         self._assert_scope(scope)
         async with self._sessions() as session:
+            latest_numbers = (
+                select(
+                    skill_revision.c.skill_id,
+                    func.max(skill_revision.c.revision_number).label("revision_number"),
+                )
+                .where(*scope_predicates(skill_revision, self._scope))
+                .group_by(skill_revision.c.skill_id)
+                .subquery()
+            )
             rows = (
                 await session.execute(
                     select(skill_revision)
-                    .where(
-                        *scope_predicates(skill_revision, self._scope),
-                        skill_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                    .join(
+                        latest_numbers,
+                        (skill_revision.c.skill_id == latest_numbers.c.skill_id)
+                        & (skill_revision.c.revision_number == latest_numbers.c.revision_number),
                     )
+                    .where(*scope_predicates(skill_revision, self._scope))
                     .order_by(skill_revision.c.revision_id)
                 )
             ).mappings()
@@ -945,6 +976,12 @@ class MysqlAssetCatalog:
     async def set_asset_enabled(
         self, kind: Literal["agent", "skill"], asset_id: str, enabled: bool
     ) -> None:
+        """Enable/disable is asset-level state (C-2): apply the target status
+        to every revision of the asset, not just the latest. Otherwise an
+        older revision an Agent is still bound to (not the latest) would
+        keep reading as enabled after the asset was disabled, and a
+        disabled asset could never be found again by a "disabled" filter
+        that reads per-revision status from anything but the latest row."""
         if kind not in ("agent", "skill"):
             raise AssetRevisionRejected()
         table, id_column = (
@@ -957,10 +994,10 @@ class MysqlAssetCatalog:
                 raise AssetRevisionRejected()
             result = await session.execute(
                 update(table)
-                .where(*scope_predicates(table, self._scope), table.c.revision_id == latest)
+                .where(*scope_predicates(table, self._scope), table.c[id_column] == asset_id)
                 .values(status=target.value)
             )
-        if result.rowcount != 1:
+        if result.rowcount < 1:
             raise AssetRevisionRejected()
 
     async def list_revisions(

@@ -54,6 +54,12 @@ class _Assets:
     async def get_skill(self, scope, revision_id):
         raise LookupError(revision_id)
 
+    async def resolve_historical_agent(self, scope, revision_id):
+        return await self.get_agent(scope, revision_id)
+
+    async def resolve_historical_skill(self, scope, revision_id):
+        return await self.get_skill(scope, revision_id)
+
     async def list_revisions(self, kind, asset_id):
         if kind == "agent" and asset_id == "knowledge-agent":
             return (await self.get_agent(VALIDATION_SCOPE, "agent-revision"),)
@@ -191,6 +197,9 @@ class _AssetsWithoutSystemInstruction:
             tool_allowlist=frozenset({"knowledge.search"}),
             output_schema_digest=text_digest("output-schema"),
         )
+
+    async def resolve_historical_agent(self, scope, revision_id):
+        return await self.get_agent(scope, revision_id)
 
     async def list_revisions(self, kind, asset_id):
         return (await self.get_agent(VALIDATION_SCOPE, "bare-agent-revision"),)

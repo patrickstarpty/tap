@@ -298,7 +298,7 @@
             "items": {
               "$ref": "#/components/schemas/AiAgentRevisionSummary"
             },
-            "maxItems": 64,
+            "maxItems": 1000,
             "title": "Items",
             "type": "array"
           }
@@ -9361,7 +9361,7 @@
             "items": {
               "$ref": "#/components/schemas/SkillRevisionSummary"
             },
-            "maxItems": 64,
+            "maxItems": 1000,
             "title": "Items",
             "type": "array"
           }

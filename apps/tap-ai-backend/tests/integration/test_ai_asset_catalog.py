@@ -26,7 +26,13 @@ async def test_mysql_seed_is_idempotent_and_retired_revisions_remain_historicall
         agents = await repository.list_agents(VALIDATION_SCOPE)
         assert len(agents) == 1
         await repository.disable_agent(agents[0].revision_id)
-        assert await repository.list_agents(VALIDATION_SCOPE) == ()
+        # C-1/C-2: `list_agents` returns one row per asset -- its latest
+        # revision -- regardless of enabled/disabled status, so a disabled
+        # asset is still visible to an "all/disabled" catalog filter
+        # instead of disappearing outright.
+        after_disable = await repository.list_agents(VALIDATION_SCOPE)
+        assert [item.revision_id for item in after_disable] == [agents[0].revision_id]
+        assert after_disable[0].status.value == "disabled"
         historical = await repository.get_historical_agent(VALIDATION_SCOPE, agents[0].revision_id)
         assert historical.revision_id == agents[0].revision_id
         assert historical.content_digest == agents[0].content_digest
@@ -122,12 +128,16 @@ async def test_mysql_concurrent_seed_serializes_creator_and_revision_numbers(
                 ValidationAssetSeed(version="v2", agents=(v2,), skills=())
             ),
         )
+        # C-1: `list_agents` returns one row per asset -- its latest
+        # revision -- not every enabled revision; `v2` is a second revision
+        # of the *same* asset (`seed.agents[0].asset_id`), so only it
+        # should be listed now, not both.
         assert [
             item.revision_id
             for item in await MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).list_agents(
                 VALIDATION_SCOPE
             )
-        ] == [seed.agents[0].revision_id, v2.revision_id]
+        ] == [v2.revision_id]
         async with sessions() as session:
             persisted_numbers = list(
                 (
@@ -364,6 +374,122 @@ async def test_insert_skill_revision_round_trips_files(owned_project_mysql) -> N
         assert found is not None
         assert found.revision_id == revision.revision_id
         assert await catalog.find_skill_by_name(VALIDATION_SCOPE, "no-such-skill") is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_set_asset_enabled_is_asset_level_across_every_revision(
+    owned_project_mysql,
+) -> None:
+    """C-2: disabling a Skill must flip *every* revision's status, not just
+    the latest, so an Agent bound to an older (non-latest) revision of the
+    Skill can be told it's disabled too -- and disabling/re-enabling must be
+    reversible rather than the one-way flip the bug produced."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.assets import SkillRevision, text_digest
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        catalog = MysqlAssetCatalog(
+            async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+        )
+
+        def _revision(revision_id: str, body: str, *, adopted: str | None) -> SkillRevision:
+            return SkillRevision(
+                revision_id=revision_id,
+                asset_id="multi-rev-skill",
+                display_name="Multi revision skill",
+                scope=VALIDATION_SCOPE,
+                content_digest=text_digest(revision_id),
+                instruction_template_digest=text_digest(body),
+                applicable_tasks=frozenset({"knowledge.answer"}),
+                instruction_template=body,
+                adopted_from_revision_id=adopted,
+            )
+
+        v1 = _revision("multi-rev-skill-v1", "v1 instructions", adopted=None)
+        await catalog.insert_skill_revision(v1, base_revision_id=None)
+        v2 = _revision("multi-rev-skill-v2", "v2 instructions", adopted=v1.revision_id)
+        await catalog.insert_skill_revision(v2, base_revision_id=v1.revision_id)
+
+        await catalog.set_asset_enabled("skill", v1.asset_id, False)
+
+        # Both the older (v1, still what some Agent might be bound to) and
+        # the latest (v2) revision read as disabled now.
+        v1_disabled = await catalog.resolve_historical_skill(VALIDATION_SCOPE, v1.revision_id)
+        v2_disabled = await catalog.resolve_historical_skill(VALIDATION_SCOPE, v2.revision_id)
+        assert v1_disabled.status.value == "disabled"
+        assert v2_disabled.status.value == "disabled"
+
+        # `list_skills` still surfaces the asset (latest revision, any
+        # status) so a "Disabled" catalog filter can find it.
+        listed = await catalog.list_skills(VALIDATION_SCOPE)
+        matching = [item for item in listed if item.asset_id == v1.asset_id]
+        assert [item.revision_id for item in matching] == [v2.revision_id]
+        assert matching[0].status.value == "disabled"
+
+        # Re-enabling is reversible (not a one-way flip) and also applies
+        # to every revision.
+        await catalog.set_asset_enabled("skill", v1.asset_id, True)
+        v1_enabled = await catalog.resolve_historical_skill(VALIDATION_SCOPE, v1.revision_id)
+        v2_enabled = await catalog.resolve_historical_skill(VALIDATION_SCOPE, v2.revision_id)
+        assert v1_enabled.status.value == "enabled"
+        assert v2_enabled.status.value == "enabled"
+        assert (await catalog.get_skill(VALIDATION_SCOPE, v2.revision_id)).revision_id == (
+            v2.revision_id
+        )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_list_skills_returns_latest_revision_per_asset_beyond_the_old_page_cap(
+    owned_project_mysql,
+) -> None:
+    """C-1: a Skill with many revisions must not multiply its entries in
+    `list_skills` -- only its latest revision is listed, however many
+    revisions the asset has accumulated (here, more than the old 64-item
+    response cap would have tolerated if every revision were listed)."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.assets import SkillRevision, text_digest
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        catalog = MysqlAssetCatalog(
+            async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+        )
+        base_id: str | None = None
+        latest_id = ""
+        for index in range(70):
+            revision_id = f"many-rev-skill-v{index}"
+            revision = SkillRevision(
+                revision_id=revision_id,
+                asset_id="many-rev-skill",
+                display_name="Many revision skill",
+                scope=VALIDATION_SCOPE,
+                content_digest=text_digest(revision_id),
+                instruction_template_digest=text_digest(f"instructions {index}"),
+                applicable_tasks=frozenset({"knowledge.answer"}),
+                instruction_template=f"instructions {index}",
+                adopted_from_revision_id=base_id,
+            )
+            await catalog.insert_skill_revision(revision, base_revision_id=base_id)
+            base_id = revision_id
+            latest_id = revision_id
+
+        listed = await catalog.list_skills(VALIDATION_SCOPE)
+        matching = [item for item in listed if item.asset_id == "many-rev-skill"]
+        assert [item.revision_id for item in matching] == [latest_id]
+
+        history = await catalog.list_revisions("skill", "many-rev-skill")
+        assert len(history) == 70
     finally:
         await engine.dispose()
 

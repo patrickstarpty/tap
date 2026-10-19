@@ -139,6 +139,7 @@ _SKILL_PROBLEM_STATUS: dict[str, int] = {
     "agent_model_not_selectable": 400,
     "agent_built_in_immutable": 403,
     "agent_frontmatter_invalid": 400,
+    "skill_built_in_immutable": 403,
 }
 
 

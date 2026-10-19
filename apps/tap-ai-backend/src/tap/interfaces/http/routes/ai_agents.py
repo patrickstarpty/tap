@@ -125,7 +125,11 @@ async def list_agents(request: Request) -> AiAgentRevisionPage:
     },
 )
 async def get_agent(request: Request, revision_id: str) -> AiAgentRevisionDetail:
-    value = await asset_catalog_service(request).get_agent(request.state.project_scope, revision_id)
+    # Resolve any status (C-2, spec §4.3): a link opened from a past Turn
+    # must still open even if the Agent was disabled since.
+    value = await asset_catalog_service(request).resolve_historical_agent(
+        request.state.project_scope, revision_id
+    )
     latest = await _latest_revision_ids(request, {value.asset_id})
     return await _detail(request, value, is_latest=latest.get(value.asset_id) == value.revision_id)
 

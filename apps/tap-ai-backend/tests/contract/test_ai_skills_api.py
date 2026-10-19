@@ -42,12 +42,8 @@ class _FakeCatalog:
         raise LookupError(revision_id)
 
     async def list_skills(self, scope):
-        return tuple(
-            revision
-            for history in self._skills.values()
-            for revision in history
-            if revision.status == AssetRevisionStatus.ENABLED
-        )
+        # One row per asset -- its latest revision, any status (C-1/C-2).
+        return tuple(history[-1] for history in self._skills.values() if history)
 
     async def get_skill(self, scope, revision_id):
         from tap.modules.ai.domain.assets import AssetRevisionRejected
@@ -57,6 +53,15 @@ class _FakeCatalog:
                 if revision.revision_id == revision_id and revision.status == (
                     AssetRevisionStatus.ENABLED
                 ):
+                    return revision
+        raise AssetRevisionRejected()
+
+    async def resolve_historical_skill(self, scope, revision_id):
+        from tap.modules.ai.domain.assets import AssetRevisionRejected
+
+        for history in self._skills.values():
+            for revision in history:
+                if revision.revision_id == revision_id:
                     return revision
         raise AssetRevisionRejected()
 
@@ -88,7 +93,7 @@ class _FakeCatalog:
         if not history:
             raise AssetRevisionRejected()
         status = AssetRevisionStatus.ENABLED if enabled else AssetRevisionStatus.DISABLED
-        history[-1] = replace(history[-1], status=status)
+        self._skills[asset_id] = [replace(revision, status=status) for revision in history]
 
     async def find_skill_by_name(self, scope, name):
         for history in self._skills.values():
