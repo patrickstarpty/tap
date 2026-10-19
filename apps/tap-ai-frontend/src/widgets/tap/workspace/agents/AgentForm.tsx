@@ -15,7 +15,10 @@ import {
 import type { ModelCatalogItem } from "../../../../features/knowledge/api/modelCatalog";
 import { AccessibleDialog } from "../AccessibleDialog";
 import type { WorkspaceCopy } from "../copy";
-import { SKILL_TURN_BUDGET_BYTES, utf8ByteLength } from "../skills/skillMarkdown";
+import {
+  SKILL_TURN_BUDGET_BYTES,
+  utf8ByteLength,
+} from "../skills/skillMarkdown";
 
 // Selecting skills for an agent commits the project to bundling that much
 // Skill text into every turn that uses it, so the authoring form warns at
@@ -175,7 +178,9 @@ export function AgentForm({
     .map((revisionId, index) => ({
       revisionId,
       detail: skillDetailQueries[skillRevisionIds.indexOf(revisionId)]?.data,
-      errored: skillDetailQueries[skillRevisionIds.indexOf(revisionId)]?.isError ?? false,
+      errored:
+        skillDetailQueries[skillRevisionIds.indexOf(revisionId)]?.isError ??
+        false,
       // Keep a stable key even while the detail is still loading.
       key: `${revisionId}-${index}`,
     }));

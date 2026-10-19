@@ -160,9 +160,7 @@ describe("SkillDetailDrawer", () => {
     };
     renderDrawer({ detail: importedDetail });
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Copy as custom" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy as custom" })).toBeNull();
     expect(
       screen.getByText(
         "Imported skills can't be edited in place — import the updated package as a new revision instead.",
@@ -190,7 +188,13 @@ describe("SkillDetailDrawer", () => {
       detail: {
         ...BUILT_IN_DETAIL,
         files: [
-          { relativePath: "SKILL.md", category: "skill", attached: true, sizeBytes: 1, sha256: "a" },
+          {
+            relativePath: "SKILL.md",
+            category: "skill",
+            attached: true,
+            sizeBytes: 1,
+            sha256: "a",
+          },
           {
             relativePath: "scripts/run.py",
             category: "script",

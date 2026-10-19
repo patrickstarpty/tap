@@ -675,13 +675,13 @@ export const WORKSPACE_COPY = {
         errors: {
           skill_package_too_large: "This package is over the 20 MB limit.",
           skill_path_rejected:
-            "This package contains an unsafe path (absolute path, \"..\", or a symlink).",
+            'This package contains an unsafe path (absolute path, "..", or a symlink).',
           skill_frontmatter_invalid:
             "SKILL.md's frontmatter is missing a required field or is invalid.",
           skill_not_found_in_package:
             "No SKILL.md was found at the selected location in this package.",
           skill_name_conflict:
-            "A skill with this name already exists. Choose \"Import as a new revision\" or skip it.",
+            'A skill with this name already exists. Choose "Import as a new revision" or skip it.',
           revision_conflict:
             "This skill was updated elsewhere. Go back and import again.",
           import_expired:
@@ -1083,7 +1083,8 @@ export const WORKSPACE_COPY = {
       revision: "修订",
       useInChat: "在对话中使用",
       edit: "编辑",
-      editUnavailableImported: "导入的 Skill 不能直接编辑，请将更新后的包作为新修订重新导入。",
+      editUnavailableImported:
+        "导入的 Skill 不能直接编辑，请将更新后的包作为新修订重新导入。",
       enable: "启用",
       disable: "停用",
       statusEnabled: "已启用",
@@ -1141,7 +1142,8 @@ export const WORKSPACE_COPY = {
           skill_package_too_large: "压缩包超过 20 MB 上限。",
           skill_path_rejected:
             "压缩包内含不安全路径（绝对路径、“..” 或符号链接）。",
-          skill_frontmatter_invalid: "SKILL.md 的 frontmatter 缺少必需字段或不合法。",
+          skill_frontmatter_invalid:
+            "SKILL.md 的 frontmatter 缺少必需字段或不合法。",
           skill_not_found_in_package: "在该位置未找到 SKILL.md。",
           skill_name_conflict:
             "已存在同名 Skill，请选择“作为新修订导入”或跳过。",

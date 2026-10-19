@@ -176,9 +176,7 @@ export function SkillDetailDrawer({
                     ) : (
                       <button
                         type="button"
-                        onClick={() =>
-                          setActiveRevisionId(revision.revisionId)
-                        }
+                        onClick={() => setActiveRevisionId(revision.revisionId)}
                       >
                         {revision.revisionId}
                       </button>

@@ -239,10 +239,15 @@ function formatSkillNotice(
   copy: WorkspaceCopy,
 ): string {
   const [kind, revisionId] = code.split(":", 2);
-  const skillName = revisionId !== undefined ? skillById.get(revisionId)?.displayName : undefined;
+  const skillName =
+    revisionId !== undefined
+      ? skillById.get(revisionId)?.displayName
+      : undefined;
   if (skillName === undefined) return code;
-  if (kind === "skill_disabled") return copy.composer.skillDisabledNotice(skillName);
-  if (kind === "skill_inapplicable") return copy.composer.skillInapplicableNotice(skillName);
+  if (kind === "skill_disabled")
+    return copy.composer.skillDisabledNotice(skillName);
+  if (kind === "skill_inapplicable")
+    return copy.composer.skillInapplicableNotice(skillName);
   return code;
 }
 
@@ -1833,15 +1838,12 @@ export function TapperWorkspace() {
                     // (minor finding). Only the ids *not* bundled by the
                     // restored Agent go into `selectedSkillIds`; the rest
                     // reappear as locked chips via `bundledSkillIdsFor`.
-                    selectedSkillIds:
-                      conversationDetail.data.turns
-                        .at(-1)!
-                        .input.skillRevisionIds.filter(
-                          (id) =>
-                            !bundledSkillIdsFor(restoredAgentIds).includes(
-                              id,
-                            ),
-                        ),
+                    selectedSkillIds: conversationDetail.data.turns
+                      .at(-1)!
+                      .input.skillRevisionIds.filter(
+                        (id) =>
+                          !bundledSkillIdsFor(restoredAgentIds).includes(id),
+                      ),
                   }),
             }
           : conversation,

@@ -386,9 +386,7 @@ describe("AgentForm save", () => {
       }),
     );
 
-    await user.click(
-      screen.getByRole("button", { name: "Remove" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Remove" }));
     expect(
       screen.queryByText(
         "This bound Skill has been disabled and will be skipped when the Agent answers.",

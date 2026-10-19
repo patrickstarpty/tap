@@ -340,14 +340,12 @@ describe("SkillImportDialog step 2", () => {
   it("maps a server error code to prose instead of a generic message (I-8)", async () => {
     const user = userEvent.setup();
     const stageMutateAsync = vi.fn().mockResolvedValue(PREVIEW_NO_CONFLICT);
-    const commitMutateAsync = vi
-      .fn()
-      .mockRejectedValue(
-        new AiAssetError({
-          code: "skill_package_too_large",
-          detail: "too big",
-        }),
-      );
+    const commitMutateAsync = vi.fn().mockRejectedValue(
+      new AiAssetError({
+        code: "skill_package_too_large",
+        detail: "too big",
+      }),
+    );
     renderDialog({ stageMutateAsync, commitMutateAsync });
     await user.type(
       screen.getByRole("textbox", { name: "Paste SKILL.md content" }),

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -159,7 +159,7 @@ class AgentAuthoringService:
         history = await self._catalog.list_revisions("agent", agent_id)
         if not history:
             raise AssetRevisionRejected()
-        latest = history[-1]
+        latest = cast(AiAgentRevision, history[-1])
         if latest.source_kind == "built_in":
             raise AgentAuthoringRejected(
                 "agent_built_in_immutable",

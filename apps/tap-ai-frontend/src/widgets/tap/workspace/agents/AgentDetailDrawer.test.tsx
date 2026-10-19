@@ -327,11 +327,7 @@ describe("AgentDetailDrawer", () => {
     ).toBeVisible();
     expect(screen.getByText("Citation skill (old)")).toBeVisible();
 
-    await userEvent.setup().click(
-      screen.getByRole("tab", { name: "Skills" }),
-    );
-    expect(
-      screen.getByText("Citation skill (old) (Disabled)"),
-    ).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Skills" }));
+    expect(screen.getByText("Citation skill (old) (Disabled)")).toBeVisible();
   });
 });
