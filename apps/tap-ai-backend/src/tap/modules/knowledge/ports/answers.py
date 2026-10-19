@@ -256,7 +256,12 @@ class AnswerSnapshot:
                 )
             )
         citation_ids = {item.citation_id for item in citations}
-        if not response.abstained:
+        # A clarification (LangGraph PR 5 Task 5) is a non-abstained answer that
+        # deliberately states no facts and cites nothing -- `claims`/`citations`
+        # are always empty by construction (`AuthorizedRetrieval.verify_answer`),
+        # so the ordinary "every non-abstained answer must carry a grounded
+        # claim" invariant below does not apply to it.
+        if not response.abstained and response.answer_kind != "clarification":
             if not response.claims or any(
                 not claim.citation_ids or not set(claim.citation_ids) <= citation_ids
                 for claim in response.claims
@@ -394,6 +399,19 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
             or response.answer_provenance is not None
         ):
             raise ValueError("gateway abstention shape is inconsistent")
+        return
+    if response.answer_kind == "clarification":
+        # A clarification (LangGraph PR 5 Task 5) is a non-abstained answer
+        # that states no facts and cites nothing by construction -- it never
+        # carries claims or citations, unlike an ordinary grounded answer.
+        if (
+            not response.answer
+            or response.claims
+            or response.citations
+            or response.abstention_reason is not None
+            or not isinstance(response.answer_provenance, ModelCallProvenance)
+        ):
+            raise ValueError("gateway clarification shape is inconsistent")
         return
     if (
         not response.answer

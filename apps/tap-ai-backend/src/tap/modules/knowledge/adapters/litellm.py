@@ -525,15 +525,31 @@ class KnowledgeModelGateway:
             raw_text = result.output if isinstance(result.output, str) else "".join(chunks)
             if raw_text.lstrip().startswith(_CLARIFY_PREFIX):
                 answer = raw_text.lstrip()[len(_CLARIFY_PREFIX) :].strip()
+                if answer:
+                    return AnswerGeneration(
+                        answer,
+                        (),
+                        alias,
+                        "grounded-answer-v2",
+                        result.provider_request_id,
+                        gateway_call_id=result.gateway_call_id,
+                        provider_model_id=result.actual_model,
+                        answer_kind="clarification",
+                    )
+                # A `CLARIFY:` prefix with nothing after it carries no question
+                # to show the user -- not a usable clarification. Fall through
+                # to the same no-grounded-content shape the sentinel abstain
+                # path returns (`answer_kind` stays the "answer" default), so
+                # `verify_answer`'s empty-text-and-claims check abstains the
+                # turn instead of completing it with a blank clarification.
                 return AnswerGeneration(
-                    answer,
+                    "",
                     (),
                     alias,
                     "grounded-answer-v2",
                     result.provider_request_id,
                     gateway_call_id=result.gateway_call_id,
                     provider_model_id=result.actual_model,
-                    answer_kind="clarification",
                 )
             try:
                 answer, claims = parse_inline_answer(

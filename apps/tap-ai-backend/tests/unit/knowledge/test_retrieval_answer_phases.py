@@ -6,6 +6,7 @@ including after an `EvidenceBundle` round trip through its JSON codec."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
@@ -194,3 +195,72 @@ async def test_verify_passes_clarification_without_claims() -> None:
     assert response.citations == ()
     assert response.answer_kind == "clarification"
     assert response.answer == "你指的是哪个产品版本？"
+
+
+@pytest.mark.asyncio
+async def test_verify_forwards_degraded_mode_for_a_clarification() -> None:
+    """I-1 (task reviewer, fix round 1): the clarification short-circuit must
+    forward `bundle.response.degraded_mode`/`degradation_reasons` the same way
+    the success (~L979) and abstain (`_abstain`) paths do, not silently default
+    them to `False`/`()`."""
+    model = FakeModelPort()
+    retrieval = _retrieval(FakeSearchPort((search_hit(),)), model)
+    request = AnswerRequest(query="Where is policy verified?")
+    policy = policy_context()
+
+    prepared = await retrieval.prepare_answer(request, policy)
+    assert isinstance(prepared, EvidenceBundle)
+    degraded = dataclasses.replace(
+        prepared,
+        response=dataclasses.replace(
+            prepared.response,
+            degraded_mode=True,
+            degradation_reasons=("partial-evidence",),
+        ),
+    )
+
+    generation = AnswerGeneration(
+        text="你指的是哪个产品版本？",
+        claims=(),
+        model_id="tap-answer-v1",
+        profile_id="grounded-answer-v1",
+        provider_request_id="answer-request-1",
+        answer_kind="clarification",
+    )
+
+    response = await retrieval.verify_answer(degraded, generation, policy)
+
+    assert response.answer_kind == "clarification"
+    assert response.degraded_mode is True
+    assert response.degradation_reasons == ("partial-evidence",)
+
+
+@pytest.mark.asyncio
+async def test_verify_abstains_instead_of_completing_an_empty_clarification() -> None:
+    """Ruling (task reviewer, fix round 1): a `CLARIFY:` prefix with no
+    question carries nothing to show the user -- the turn must abstain, not
+    complete, even if `generation.answer_kind == "clarification"` reaches
+    `verify_answer` with blank text (defense in depth; the gateway itself no
+    longer produces this shape)."""
+    model = FakeModelPort()
+    retrieval = _retrieval(FakeSearchPort((search_hit(),)), model)
+    request = AnswerRequest(query="Where is policy verified?")
+    policy = policy_context()
+
+    prepared = await retrieval.prepare_answer(request, policy)
+    assert isinstance(prepared, EvidenceBundle)
+
+    generation = AnswerGeneration(
+        text="",
+        claims=(),
+        model_id="tap-answer-v1",
+        profile_id="grounded-answer-v1",
+        provider_request_id="answer-request-1",
+        answer_kind="clarification",
+    )
+
+    response = await retrieval.verify_answer(prepared, generation, policy)
+
+    assert response.abstained is True
+    assert response.answer_kind == "answer"
+    assert response.abstention_reason is AbstentionReason.INSUFFICIENT_EVIDENCE

@@ -376,3 +376,26 @@ async def test_clarify_marker_mid_text_is_ordinary_text() -> None:
     )
 
     assert generation.answer_kind == "answer"
+
+
+@pytest.mark.asyncio
+async def test_clarify_prefix_with_no_question_abstains_instead_of_an_empty_clarification() -> None:
+    """Ruling (task reviewer, fix round 1): a `CLARIFY:` prefix with nothing
+    after it carries no question to show the user -- per the plan ("正文为空
+    时按无依据处理"), this is the no-evidence/abstain outcome, not an empty
+    clarification, so `answer_kind` must stay `"answer"` (the turn then
+    abstains downstream in `verify_answer`, never completes with a blank
+    clarification)."""
+
+    class EmptyClarifyGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta("CLARIFY:")
+            yield _result("CLARIFY:")
+
+    generation = await _answer_gateway(EmptyClarifyGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.answer_kind == "answer"
+    assert generation.text == ""
+    assert generation.claims == ()

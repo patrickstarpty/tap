@@ -735,6 +735,17 @@ class AuthorizedRetrieval:
         self._validate_binding(current, bundle.plan, bundle.context_snapshot)
         if self._publication_authority is not None and bundle.publication is not None:
             await self._publication_authority.revalidate(bundle.publication)
+        if generation.answer_kind == "clarification" and not generation.text.strip():
+            # Defense in depth: a clarification with no question to show the
+            # user is the no-evidence/abstain outcome (ruling, fix round 1),
+            # never a completed turn -- even if some future caller reaches
+            # here with `answer_kind == "clarification"` and blank text,
+            # `KnowledgeModelGateway.answer` no longer produces this shape.
+            return self._abstain(
+                bundle.response,
+                AbstentionReason.INSUFFICIENT_EVIDENCE,
+                relation=self._baseline_relation_outcome(bundle.relation),
+            )
         if generation.answer_kind == "clarification":
             return AnswerResponse(
                 trace_id=bundle.response.trace_id,
@@ -748,6 +759,8 @@ class AuthorizedRetrieval:
                 citations=(),
                 embedding_provenance=bundle.response.embedding_provenance,
                 answer_provenance=self._generation_provenance(generation),
+                degraded_mode=bundle.response.degraded_mode,
+                degradation_reasons=bundle.response.degradation_reasons,
                 answer_kind="clarification",
             )
         if bundle.flow_context and any(

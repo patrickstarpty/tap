@@ -309,6 +309,51 @@ async def test_frozen_conversation_answer_never_reloads_current_document_state()
 
 
 @pytest.mark.asyncio
+async def test_frozen_clarification_persists_without_claims_or_citations():
+    """Fix round 1 (task reviewer): the `tapper-chat-v2` graph's persisted
+    path (`generate -> verify -> finalize/save_frozen`, exercised here via
+    `answer_frozen` -> `save_frozen` -> `AnswerSnapshot.from_response`) must
+    not reject a model-emitted clarification -- the "every non-abstained
+    answer needs a grounded claim" invariant must not apply when
+    `answer_kind == "clarification"`."""
+    clarification = replace(
+        answer_response(),
+        answer="你指的是哪个产品版本？",
+        claims=(),
+        citations=(),
+        answer_kind="clarification",
+    )
+    answer_service, repository, _gateway = service(response=clarification)
+    frozen = (ready(),)
+    from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+
+    response = await answer_service.answer_frozen(
+        request_for("doc_a"), frozen, build_demo_policy_context(frozen), governance=None
+    )
+
+    assert response.answer_kind == "clarification"
+    assert response.abstained is False
+    assert len(repository.snapshots) == 1
+
+
+def test_snapshot_still_rejects_an_ordinary_non_abstained_answer_without_claims() -> None:
+    """The invariant fix round 1 narrowed (clarification only) must still
+    hold for every ordinary (`answer_kind == "answer"`) non-abstained
+    answer."""
+
+    async def scenario() -> None:
+        broken = replace(answer_response(), claims=())
+        answer_service, repository, _gateway = service(response=broken)
+
+        with pytest.raises(AnswerSnapshotUnavailable):
+            await answer_service.answer(request_for("doc_a"))
+
+        assert repository.snapshots == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("corpus", ["tapper-demo-v1", "tapper-demo-v2"])
 @pytest.mark.parametrize("abstained", [False, True])
 async def test_answer_uses_the_selected_runtime_projection_corpus(corpus, abstained):
