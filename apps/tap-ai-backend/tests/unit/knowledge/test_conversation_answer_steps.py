@@ -15,6 +15,7 @@ from test_answer_service import answer_response, ready
 from tap.contracts.http import AbstentionReason, RetrievalAnswerRequest
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.domain.persona import TAPPER_PERSONA_V1, UnknownPersonaVersion
 from tap.modules.chat.application.plan_answer import AnswerPlanner, PlanningInput, planning_input
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import (
@@ -122,6 +123,7 @@ class PhaseAnswers:
         self.generate_calls = 0
         self.verify_calls = 0
         self.save_calls: list[object] = []
+        self.generate_personas: list[object] = []
 
     async def prepare_frozen(
         self,
@@ -149,8 +151,10 @@ class PhaseAnswers:
         model_alias=None,
         answer_execution=None,
         authorize=None,
+        persona=None,
     ):
         self.generate_calls += 1
+        self.generate_personas.append(persona)
         if authorize is not None:
             await authorize()
         return AnswerGeneration(
@@ -180,7 +184,7 @@ class PhaseAnswers:
         self.save_calls.append(response)
 
 
-async def _retrieve_route() -> tuple[TurnInput, object]:
+async def _retrieve_route(*, persona_version: str | None = None) -> tuple[TurnInput, object]:
     """A frozen turn input and admitted `retrieve`-route plan selecting the one
     revision `ready()`/`PhaseAnswers` are built around."""
 
@@ -207,6 +211,7 @@ async def _retrieve_route() -> tuple[TurnInput, object]:
                 "corpusVersion": authority.active_corpus_version,
             }
         ),
+        persona_version=persona_version,
     )
     plan = await AnswerPlanner().plan(
         PlanningInput(
@@ -381,6 +386,61 @@ async def test_generate_rechecks_authority_before_model_call() -> None:
         await composed_service.answer_conversation(request, changed_frozen, answer_plan=plan)
     assert composed_answers.prepare_calls == 0
     assert composed_answers.generate_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_conversation_answer_resolves_and_forwards_the_frozen_persona() -> None:
+    """Task 1 fix round 1 (Important): the grounded conversation-turn path
+    (`generate_conversation_answer`) must resolve `frozen_input.persona_version`
+    via `persona_for` and pass that `TapperPersona` down to the generation
+    port -- a Turn frozen under a different persona version must not silently
+    answer under `CURRENT_PERSONA` once it reaches the grounded `model` node.
+    `persona_version=None` (every Turn frozen before this field existed, and
+    the default for a fresh one) must still resolve to `TAPPER_PERSONA_V1`."""
+
+    frozen, plan = await _retrieve_route(persona_version="tapper-persona-v1")
+    request = RetrievalAnswerRequest(query=frozen.message)
+    answers = PhaseAnswers()
+    service = _service(answers)
+
+    step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    await service.generate_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert answers.generate_personas == [TAPPER_PERSONA_V1]
+
+    legacy_frozen, legacy_plan = await _retrieve_route(persona_version=None)
+    legacy_answers = PhaseAnswers()
+    legacy_service = _service(legacy_answers)
+    legacy_request = RetrievalAnswerRequest(query=legacy_frozen.message)
+
+    legacy_step = await legacy_service.prepare_conversation_answer(
+        legacy_request, legacy_frozen, answer_plan=legacy_plan
+    )
+    await legacy_service.generate_conversation_answer(
+        legacy_step, legacy_frozen, answer_plan=legacy_plan
+    )
+
+    assert legacy_answers.generate_personas == [TAPPER_PERSONA_V1]
+
+
+@pytest.mark.asyncio
+async def test_generate_conversation_answer_fails_deterministically_on_unknown_persona() -> None:
+    """A Turn frozen with a persona version this build does not carry must
+    fail closed (`UnknownPersonaVersion`, a `ValueError`) before ever
+    entering the generation port -- never a silent fallback to the current
+    persona. `_authorized_frozen_context` resolves the persona on every
+    phase (both `prepare` and `generate`), so an unknown version is already
+    caught at `prepare`, before any retrieval or model call."""
+
+    frozen, plan = await _retrieve_route(persona_version="no-such-persona")
+    request = RetrievalAnswerRequest(query=frozen.message)
+    answers = PhaseAnswers()
+    service = _service(answers)
+
+    with pytest.raises(UnknownPersonaVersion):
+        await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    assert answers.prepare_calls == 0
+    assert answers.generate_calls == 0
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from test_answer_service import (
 )
 
 from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
 from tap.modules.knowledge.application.answers import AnswerService, AnswerSnapshotUnavailable
 
 
@@ -31,6 +32,7 @@ class PhaseKnowledge:
         self.delay = delay
         self.calls: list[tuple[str, object]] = []
         self.authorize_calls = 0
+        self.generate_personas: list[TapperPersona] = []
 
     async def prepare_frozen(
         self,
@@ -59,10 +61,12 @@ class PhaseKnowledge:
         model_alias=None,
         answer_execution=None,
         authorize=None,
+        persona: TapperPersona = CURRENT_PERSONA,
     ):
         if self.delay:
             await asyncio.sleep(self.delay)
         self.calls.append(("generate", bundle))
+        self.generate_personas.append(persona)
         if authorize is not None:
             await authorize()
             self.authorize_calls += 1
@@ -137,6 +141,29 @@ async def test_save_frozen_persists_snapshot_once():
     assert len(repository.snapshots) == 1
     assert len(composed_repository.snapshots) == 1
     assert repository.snapshots[0].citations == composed_repository.snapshots[0].citations
+
+
+@pytest.mark.asyncio
+async def test_generate_frozen_forwards_a_non_default_persona_to_the_knowledge_boundary():
+    """Task 1 fix round 1: `AnswerService.generate_frozen`'s `persona` kwarg
+    must reach `self._knowledge.generate_frozen` (here, `PhaseKnowledge` --
+    standing in for the real `KnowledgeAPI`) rather than being dropped, since
+    `KnowledgeHttpService.generate_conversation_answer` (the grounded
+    conversation-turn path) now resolves the frozen Turn's own persona and
+    passes it down to this call."""
+
+    answer_service, _repository, knowledge = _service()
+    revisions = (ready(),)
+    policy = _frozen_policy()
+    request = request_for("doc_a")
+    other_persona = TapperPersona("tapper-persona-test", "Alternate platform voice.", "Boundary.")
+
+    prepared = await answer_service.prepare_frozen(request, revisions, policy, governance=None)
+    await answer_service.generate_frozen(
+        prepared, revisions, policy, governance=None, persona=other_persona
+    )
+
+    assert knowledge.generate_personas[-1] is other_persona
 
 
 @pytest.mark.asyncio

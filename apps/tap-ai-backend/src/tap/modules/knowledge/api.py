@@ -63,6 +63,7 @@ from tap.contracts.http import (
 from tap.contracts.http import SourceFamily as HttpSourceFamily
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
 from tap.modules.knowledge.application.answer_templates import (
     get_template,
     latest_template_version,
@@ -225,6 +226,7 @@ class KnowledgeAPI:
         answer_execution=None,
         authorize=None,
         on_text=None,
+        persona: TapperPersona = CURRENT_PERSONA,
     ):
         import asyncio
 
@@ -239,6 +241,7 @@ class KnowledgeAPI:
                 model_alias=model_alias,
                 authorize=authorize,
                 on_text=on_text,
+                persona=persona,
             )
 
     async def verify_frozen(

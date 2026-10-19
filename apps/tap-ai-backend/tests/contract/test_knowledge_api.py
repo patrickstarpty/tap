@@ -526,6 +526,11 @@ class FakeModelPort:
     def __init__(self) -> None:
         self.embedding_queries: list[str] = []
         self.answer_evidence: list[tuple[Evidence, ...]] = []
+        # Task 1 fix round 1: every extended `.answer()` kwarg this fake was
+        # called with (e.g. `persona`), one dict per call -- lets a caller
+        # assert the frozen persona reached this boundary without needing a
+        # stricter, call-shape-specific double.
+        self.answer_kwargs: list[dict[str, object]] = []
 
     async def embed(self, query: str) -> Embedding:
         self.embedding_queries.append(query)
@@ -536,10 +541,11 @@ class FakeModelPort:
         )
 
     async def answer(
-        self, query: str, evidence: tuple[Evidence, ...], profile_id: str
+        self, query: str, evidence: tuple[Evidence, ...], profile_id: str, **kwargs: object
     ) -> AnswerGeneration:
         del query, profile_id
         self.answer_evidence.append(evidence)
+        self.answer_kwargs.append(kwargs)
         return AnswerGeneration(
             text="Policy facts are verified server-side.",
             claims=(

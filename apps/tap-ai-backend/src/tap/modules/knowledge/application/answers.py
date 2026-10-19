@@ -9,6 +9,7 @@ from typing import Protocol
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import PolicyUnavailable, RetrievalPolicyContext
 from tap.modules.ai.domain.models import GenerationGovernance
+from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 from tap.modules.knowledge.application.publication import (
     FlowchartPublicationGate,
@@ -251,6 +252,7 @@ class AnswerService:
         answer_execution=None,
         authorize=None,
         on_text=None,
+        persona: TapperPersona = CURRENT_PERSONA,
     ):
         publication = await self._authorize_frozen_selection(revisions, policy)
         knowledge_generate = getattr(self._knowledge, "generate_frozen", None)
@@ -263,6 +265,7 @@ class AnswerService:
             model_alias=model_alias,
             answer_execution=answer_execution,
             authorize=self._reauthorize(publication, authorize),
+            persona=persona,
             **({"on_text": on_text} if on_text is not None else {}),
         )
         await self._revalidate_publication(publication)

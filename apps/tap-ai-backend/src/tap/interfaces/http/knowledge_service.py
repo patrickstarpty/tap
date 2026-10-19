@@ -464,6 +464,7 @@ class KnowledgeHttpService:
             if step.get("kind") != "prepared":
                 return step
             answer_execution = self._execution(answer_plan) if answer_plan is not None else None
+            from tap.modules.ai.domain.persona import persona_for
             from tap.modules.knowledge.application.evidence_bundle import decode_bundle
             from tap.platform.serialization.dataclass_json import to_json
 
@@ -485,6 +486,7 @@ class KnowledgeHttpService:
                 model_alias=frozen_input.model_alias,
                 answer_execution=answer_execution,
                 authorize=authorize,
+                persona=persona_for(frozen_input.persona_version),
                 **({"on_text": on_text} if on_text is not None else {}),
             )
             return {

@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from tap.modules.ai.domain.persona import TapperPersona
 from tap.modules.knowledge.application.evidence_bundle import (
     EvidenceBundle,
     decode_bundle,
@@ -140,3 +141,26 @@ async def test_generate_rechecks_current_revision_before_model_call() -> None:
         await retrieval.generate_answer(prepared, policy)
 
     assert model.answer_evidence == []
+
+
+@pytest.mark.asyncio
+async def test_generate_answer_forwards_a_non_default_persona_to_the_model_gateway() -> None:
+    """Task 1 fix round 1: `generate_answer`'s `persona` kwarg (threaded down
+    from `KnowledgeAPI.generate_frozen` -> `AnswerService.generate_frozen` ->
+    `KnowledgeHttpService.generate_conversation_answer`, the grounded
+    conversation-turn path) must reach the model gateway's `.answer()` call --
+    not silently default to `CURRENT_PERSONA` once a Turn names a different
+    one."""
+
+    model = FakeModelPort()
+    retrieval = _retrieval(FakeSearchPort((search_hit(),)), model)
+    request = AnswerRequest(query="Where is policy verified?")
+    policy = policy_context()
+    other_persona = TapperPersona("tapper-persona-test", "Alternate platform voice.", "Boundary.")
+
+    prepared = await retrieval.prepare_answer(request, policy)
+    assert isinstance(prepared, EvidenceBundle)
+
+    await retrieval.generate_answer(prepared, policy, persona=other_persona)
+
+    assert model.answer_kwargs[-1]["persona"] is other_persona
