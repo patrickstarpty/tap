@@ -274,7 +274,7 @@ class ConversationAnswerSteps(Protocol):
     these four, and a LangGraph node may instead call each on its own."""
 
     async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None
+        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
     ) -> ConversationAnswerStep: ...
 
     async def generate_conversation_answer(

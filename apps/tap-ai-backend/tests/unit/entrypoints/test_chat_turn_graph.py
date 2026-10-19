@@ -16,16 +16,18 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from tap.entrypoints.tapper_chat_turn import ChatTurnNodes
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
+from tap.modules.ai.ports.insights import InsightsAuthorizationChanged
 from tap.modules.chat.application.conversations import ClaimBatch
 from tap.modules.chat.domain.answer_plan import AnswerPlan
-from tap.modules.chat.domain.conversations import TurnInput, TurnInputSnapshot
+from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, TurnInputSnapshot
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
 from tap.modules.knowledge.ports.answers import AnswerSnapshotUnavailable
 from tap.modules.knowledge.ports.redaction import RedactionUnavailable
-from tap.platform.budget import TurnBudget, current_meter
+from tap.platform.budget import TurnBudget, TurnBudgetExhausted, current_meter
 
 
 def _turn(*, turn_id: str = "turn-1", lease_token: str = "lease-1", attempt: int = 1):
@@ -53,6 +55,13 @@ class _Conversations:
         self.repository = _Repository(turn)
         self.completed: list[tuple] = []
         self.emitted: list[tuple] = []
+        # PR 5 (Task 9): `ChatTurnNodes.tools` reads `self._conversations.scope`
+        # to authorize an `insights.query` call; a real `ProjectScopeContext`
+        # is required here -- the tracing span processor validates every
+        # bound scope (`bind_trace`/`require_project_scope`), so an opaque
+        # `SimpleNamespace` would fail span creation for *every* test that
+        # runs a Turn through `GenerationWorker`, not just the Insights ones.
+        self.scope = VALIDATION_SCOPE
 
     async def complete_evidence(self, conversation_id, turn_id, evidence, **kwargs):
         self.completed.append((conversation_id, turn_id, evidence, kwargs))
@@ -82,7 +91,7 @@ class _StepsKnowledge:
         self._prepare_error: Exception | None = None
 
     async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None
+        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
     ):
         self.prepare_calls += 1
         if self._prepare_error is not None:
@@ -90,7 +99,7 @@ class _StepsKnowledge:
         return {"kind": "prepared", "bundle": {}}
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
+        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
     ):
         self.generate_calls += 1
         if not self._generate_failed_once:
@@ -591,7 +600,7 @@ class _BudgetSpendingKnowledge(_StepsKnowledge):
     own body runs."""
 
     async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None
+        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
     ):
         meter = current_meter()
         assert meter is not None
@@ -631,7 +640,7 @@ class _PlanDeadlineExpiredKnowledge(_StepsKnowledge):
     found at the very start of a phase, not a mid-phase timeout."""
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
+        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
     ):
         from tap.interfaces.http.knowledge_service import AnswerBudgetExhausted
 
@@ -860,7 +869,7 @@ class _HitsReadyKnowledge(_StepsKnowledge):
         self.hits_ready_committed_before_generate = False
 
     async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None
+        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
     ):
         self.prepare_calls += 1
         return {
@@ -874,7 +883,7 @@ class _HitsReadyKnowledge(_StepsKnowledge):
         }
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
+        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
     ):
         self.generate_calls += 1
         self.hits_ready_committed_before_generate = any(
@@ -922,7 +931,7 @@ async def test_retrieval_hits_ready_labels_are_redacted_before_emit() -> None:
 
     class _LabeledKnowledge(_StepsKnowledge):
         async def prepare_conversation_answer(
-            self, request, frozen_input, *, answer_plan=None, authorize=None
+            self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
         ):
             self.prepare_calls += 1
             return {
@@ -973,7 +982,7 @@ async def test_retrieval_hits_ready_drops_a_label_whose_title_redaction_is_unava
 
     class _LabeledKnowledge(_StepsKnowledge):
         async def prepare_conversation_answer(
-            self, request, frozen_input, *, answer_plan=None, authorize=None
+            self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
         ):
             self.prepare_calls += 1
             return {
@@ -1093,7 +1102,7 @@ async def test_model_node_streams_through_draft_batcher() -> None:
 
     class _StreamingKnowledge(_StepsKnowledge):
         async def generate_conversation_answer(
-            self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
+            self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
         ):
             self.generate_calls += 1
             assert on_text is not None
@@ -1146,3 +1155,609 @@ def test_drafts_without_redact_fails_closed_at_construction() -> None:
             drafts=object(),
             redact=None,
         )
+
+
+def _resource(source_id: str, *, hash_label: str = "1") -> FrozenResource:
+    return FrozenResource(
+        source_id=source_id,
+        document_id=f"doc-{source_id}",
+        revision_id=f"rev-{source_id}",
+        source_content_hash=_digest(hash_label),
+    )
+
+
+class _ToolLoopSteps(_StepsKnowledge):
+    """A `ConversationAnswerSteps` fake exercising the `tools` node: scripted
+    `run_conversation_tool`/`add_insights_records` results, with every call
+    counted so tests can assert execution happened exactly once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.run_tool_calls: list = []
+        self.add_insights_calls: list = []
+        self.run_tool_result: dict | None = None
+        self.insights_error: Exception | None = None
+        self.insights_added_labels: list[str] = []
+        self.tools_seen: tuple[str, ...] = ()
+        self.include_relations_seen: bool | None = None
+
+    async def prepare_conversation_answer(
+        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
+    ):
+        self.include_relations_seen = include_relations
+        return await super().prepare_conversation_answer(
+            request,
+            frozen_input,
+            answer_plan=answer_plan,
+            authorize=authorize,
+            include_relations=include_relations,
+        )
+
+    async def generate_conversation_answer(
+        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+    ):
+        self.tools_seen = tools
+        return await super().generate_conversation_answer(
+            step,
+            frozen_input,
+            answer_plan=answer_plan,
+            authorize=authorize,
+            on_text=on_text,
+            tools=tools,
+        )
+
+    async def run_conversation_tool(
+        self, step, frozen_input, call, *, answer_plan=None, authorize=None
+    ):
+        self.run_tool_calls.append(call)
+        if self.run_tool_result is not None:
+            return self.run_tool_result
+        return {
+            "step": {**step, "kind": "prepared", "bundle": step.get("bundle", {})},
+            "status": "completed",
+            "summary": f'{call.tool_id} "{call.arguments.get("query", "")}" → +1 条证据（S1）',
+            "added_labels": ["S1"],
+            "retrieval_hits": {
+                "traceId": "trace-tool-1",
+                "authorizedHitCount": 1,
+                "labels": [{"label": "S1", "title": "doc", "location": None}],
+            },
+        }
+
+    async def add_insights_records(self, step, records):
+        self.add_insights_calls.append(records)
+        if self.insights_error is not None:
+            raise self.insights_error
+        return (
+            {**step, "kind": step.get("kind", "prepared"), "bundle": step.get("bundle", {})},
+            self.insights_added_labels,
+        )
+
+
+async def _require_authorized_noop() -> None:
+    return None
+
+
+def _tool_loop_nodes(
+    *,
+    turn,
+    steps: _ToolLoopSteps,
+    conversations: _Conversations,
+    knowledge: object = object(),
+    insights_explanation: object | None = None,
+) -> ChatTurnNodes:
+    return ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations,
+        steps=steps,
+        planner=None,
+        knowledge=knowledge,
+        insights_explanation=insights_explanation,
+        require_authorized=_require_authorized_noop,
+    )
+
+
+@pytest.mark.asyncio
+async def test_ingress_loads_persona_agent_and_visible_tools() -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-ingress",
+        agent_revision_id="agent-rev-1",
+        agent_revision_digest=_digest("a"),
+        agent_tool_allowlist=("knowledge.search", "knowledge.answer"),
+    )
+    span = _RecordingSpan()
+    conversations = _Conversations(turn)
+
+    class _RelationsKnowledge:
+        relations_available = True
+
+    nodes = ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations,
+        steps=_StepsKnowledge(),
+        planner=None,
+        knowledge=_RelationsKnowledge(),
+        insights_explanation=None,
+        require_authorized=_require_authorized_noop,
+        turn_span=span,
+    )
+
+    result = await nodes.ingress({})
+
+    assert result["tools"] == ["knowledge.search"]
+    assert result["persona_version"] == "tapper-persona-v1"
+    assert result["agent"] == {
+        "revisionId": "agent-rev-1",
+        "toolAllowlist": ["knowledge.search", "knowledge.answer"],
+    }
+    assert span.attributes["tap.agent.tools"] == "knowledge.search"
+    assert span.attributes["tap.agent.revision_id"] == "agent-rev-1"
+    assert span.attributes["tap.persona.version"] == "tapper-persona-v1"
+
+
+@pytest.mark.asyncio
+async def test_seed_search_does_not_run_relation_analysis() -> None:
+    turn = _frozen_turn_for_planning(turn_id="turn-seed-search")
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    nodes = _tool_loop_nodes(turn=turn, steps=steps, conversations=conversations)
+
+    await nodes.seed_search({"tools": []})
+
+    assert steps.include_relations_seen is False
+
+
+@pytest.mark.asyncio
+async def test_tools_node_emits_running_and_completed_task_steps() -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-tools-happy", resolved_resources=(_resource("s1"),)
+    )
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    nodes = _tool_loop_nodes(turn=turn, steps=steps, conversations=conversations)
+
+    state = {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": [
+                {"callId": "call-1", "name": "knowledge_search", "argumentsJson": '{"query": "x"}'}
+            ],
+        },
+    }
+
+    result = await nodes.tools(state)
+
+    emitted_types_statuses = [
+        (event_type, payload.get("status"))
+        for _c, _t, event_type, payload, _lease in conversations.emitted
+    ]
+    assert emitted_types_statuses == [
+        ("task.step", "running"),
+        ("task.step", "completed"),
+        ("retrieval.hits_ready", None),
+    ]
+    hits_payload = conversations.emitted[2][3]
+    assert hits_payload["stepId"] == "turn-tools-happy:r1:c0"
+    assert result["tool_rounds_delta"] == 1
+    assert result["step"]["kind"] == "prepared"
+    assert "pending_tool_calls" not in result["step"]
+    assert len(steps.run_tool_calls) == 1
+    transcript = result["step"]["transcript"]
+    assert transcript[-1]["role"] == "tool"
+    content = json.loads(transcript[-1]["content"])
+    assert content["status"] == "completed"
+    assert content["addedLabels"] == ["S1"]
+
+
+@pytest.mark.asyncio
+async def test_disallowed_tool_call_is_rejected_without_execution() -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-tools-rejected", resolved_resources=(_resource("s1"),)
+    )
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    nodes = _tool_loop_nodes(turn=turn, steps=steps, conversations=conversations)
+
+    state = {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": [
+                {
+                    "callId": "call-1",
+                    "name": "knowledge_search",
+                    "argumentsJson": json.dumps({"query": "x", "sourceIds": ["out-of-scope"]}),
+                }
+            ],
+        },
+    }
+
+    result = await nodes.tools(state)
+
+    assert steps.run_tool_calls == []
+    task_step_events = [
+        (payload["status"], payload)
+        for _c, _t, event_type, payload, _lease in conversations.emitted
+        if event_type == "task.step"
+    ]
+    assert len(task_step_events) == 1
+    assert task_step_events[0][0] == "rejected"
+    transcript = result["step"]["transcript"]
+    content = json.loads(transcript[-1]["content"])
+    assert content == {"status": "rejected", "reason": "source-out-of-scope"}
+
+
+@pytest.mark.asyncio
+async def test_final_round_offers_no_tools_after_max_rounds() -> None:
+    turn = _frozen_turn_for_planning(turn_id="turn-final-round")
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    nodes = _tool_loop_nodes(turn=turn, steps=steps, conversations=conversations)
+
+    state = {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 1},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 1},
+        "step": {"kind": "prepared", "bundle": {}, "transcript": []},
+    }
+
+    await nodes.model(state)
+
+    assert steps.tools_seen == ()
+
+
+@pytest.mark.asyncio
+async def test_tools_round_exceeding_budget_fails_the_round() -> None:
+    turn = _frozen_turn_for_planning(turn_id="turn-tools-exhausted")
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    nodes = _tool_loop_nodes(turn=turn, steps=steps, conversations=conversations)
+
+    state = {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 1},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 1},
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": [],
+        },
+    }
+
+    with pytest.raises(TurnBudgetExhausted) as excinfo:
+        await nodes.tools(state)
+    assert excinfo.value.reason == "tool-rounds"
+
+
+class _ScriptedToolCallKnowledge(_StepsKnowledge):
+    """One real tool-calling round through the production chain
+    (`ChatTurnNodes` + `GenerationWorker` + `ChatGraph`): `generate_
+    conversation_answer` scripts the model's turns, while `run_
+    conversation_tool`/`add_insights_records` are fakes so no real
+    `KnowledgeHttpService`/gateway is needed."""
+
+    def __init__(self, *, rounds: list[dict]) -> None:
+        super().__init__()
+        self._rounds = rounds
+        self.tools_seen_per_call: list[tuple[str, ...]] = []
+        self.run_tool_calls: list = []
+        self.add_insights_calls: list = []
+
+    async def generate_conversation_answer(
+        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+    ):
+        self.generate_calls += 1
+        self.tools_seen_per_call.append(tools)
+        round_spec = self._rounds[min(self.generate_calls - 1, len(self._rounds) - 1)]
+        if on_text is not None and round_spec.get("text"):
+            await on_text(round_spec["text"])
+        if round_spec.get("tool_call") is not None:
+            pending = [round_spec["tool_call"]]
+            return {
+                "kind": "tool_calls",
+                "bundle": step.get("bundle", {}),
+                "transcript": [*step.get("transcript", []), {"role": "assistant"}],
+                "pending_tool_calls": pending,
+            }
+        return {"kind": "generated", "bundle": step.get("bundle", {}), "generation": {}}
+
+    async def run_conversation_tool(
+        self, step, frozen_input, call, *, answer_plan=None, authorize=None
+    ):
+        self.run_tool_calls.append(call)
+        return {
+            "step": {**step, "kind": "prepared"},
+            "status": "completed",
+            "summary": "knowledge.search → +1 条证据（S1）",
+            "added_labels": ["S1"],
+            "retrieval_hits": None,
+        }
+
+    async def add_insights_records(self, step, records):
+        self.add_insights_calls.append(records)
+        return {**step, "kind": step.get("kind", "prepared")}, []
+
+
+@pytest.mark.asyncio
+async def test_resume_after_tools_node_does_not_repeat_tool_calls_or_steps() -> None:
+    turn = _turn(turn_id="turn-resume-tools")
+    conversations = _Conversations(turn)
+    knowledge = _ScriptedToolCallKnowledge(
+        rounds=[
+            {
+                "tool_call": {
+                    "callId": "call-1",
+                    "name": "knowledge_search",
+                    "argumentsJson": json.dumps({"query": "x"}),
+                }
+            },
+            {"retryable": True},
+            {},
+        ]
+    )
+    checkpointer = InMemorySaver()
+    worker = GenerationWorker(conversations, knowledge, checkpointer=checkpointer)
+
+    # Monkeypatch so the *second* `generate_conversation_answer` call (the
+    # one immediately following `tools`) raises a retryable error once,
+    # without otherwise changing the scripted round behavior above.
+    calls_seen = {"n": 0}
+    real_generate = knowledge.generate_conversation_answer
+
+    async def _flaky_generate(
+        step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+    ):
+        calls_seen["n"] += 1
+        if calls_seen["n"] == 2:
+            raise GraphCheckpointRetryable("connection lost after durable task write")
+        return await real_generate(
+            step,
+            frozen_input,
+            answer_plan=answer_plan,
+            authorize=authorize,
+            on_text=on_text,
+            tools=tools,
+        )
+
+    knowledge.generate_conversation_answer = _flaky_generate  # type: ignore[method-assign]
+
+    assert await worker.run_once(limit=1) == 1
+    assert conversations.completed == []
+    assert len(knowledge.run_tool_calls) == 1
+    task_steps_round_1 = [
+        payload
+        for _c, _t, event_type, payload, _lease in conversations.emitted
+        if event_type == "task.step"
+    ]
+    assert [p["status"] for p in task_steps_round_1] == ["running", "completed"]
+
+    assert await worker.run_once(limit=1) == 1
+    assert len(conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, _kwargs = conversations.completed[0]
+    assert evidence.outcome == "completed"
+    assert len(knowledge.run_tool_calls) == 1
+    task_steps_total = [
+        payload
+        for _c, _t, event_type, payload, _lease in conversations.emitted
+        if event_type == "task.step"
+    ]
+    assert [p["status"] for p in task_steps_total] == ["running", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_tool_round_preamble_is_discarded_from_draft() -> None:
+    from tap.modules.chat.application.ports import DraftChunk
+
+    class _FakeDrafts:
+        def __init__(self) -> None:
+            self.appended: list[DraftChunk] = []
+
+        async def append(self, turn_id, *, attempt, seq, text, reset=False):
+            self.appended.append(DraftChunk(attempt, seq, text, reset))
+
+        async def replay(self, turn_id, *, attempt):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        async def read(self, keys, *, block_ms):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        async def partial_text(self, turn_id):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        async def request_cancel(self, turn_id):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        async def cancel_requested(self, turn_id):
+            return False
+
+    turn = _turn(turn_id="turn-preamble")
+    conversations = _Conversations(turn)
+    knowledge = _ScriptedToolCallKnowledge(
+        rounds=[
+            {
+                "text": "draft preamble before the tool call happens right now in this round. ",
+                "tool_call": {
+                    "callId": "call-1",
+                    "name": "knowledge_search",
+                    "argumentsJson": json.dumps({"query": "x"}),
+                },
+            },
+            {"text": "final answer"},
+        ]
+    )
+    drafts = _FakeDrafts()
+    worker = GenerationWorker(
+        conversations,
+        knowledge,
+        checkpointer=InMemorySaver(),
+        drafts=drafts,
+        redact=lambda text: _identity(text),
+    )
+
+    assert await worker.run_once(limit=1) == 1
+    assert len(conversations.completed) == 1
+
+    reset_indices = [i for i, chunk in enumerate(drafts.appended) if chunk.reset]
+    assert reset_indices, "a reset chunk must discard the tool-round preamble"
+    after_reset = drafts.appended[reset_indices[-1] + 1 :]
+    final_text = "".join(chunk.text for chunk in after_reset)
+    assert final_text == "final answer"
+    assert "preamble" not in final_text
+
+
+async def _identity(text: str) -> str:
+    return text
+
+
+@pytest.mark.asyncio
+async def test_built_in_agent_turn_can_call_graph_relations() -> None:
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.application.assets import validation_asset_seed
+
+    seed = validation_asset_seed(VALIDATION_SCOPE)
+    _v2, v3 = seed.agents
+
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-v3-agent",
+        agent_revision_id=v3.revision_id,
+        agent_revision_digest=_digest("30"),
+        agent_tool_allowlist=tuple(v3.tool_allowlist),
+    )
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+
+    class _RelationsKnowledge:
+        relations_available = True
+
+    nodes = _tool_loop_nodes(
+        turn=turn, steps=steps, conversations=conversations, knowledge=_RelationsKnowledge()
+    )
+    ingress_result = await nodes.ingress({})
+    assert ingress_result["tools"] == ["knowledge.search", "graph.relations"]
+
+    state = {
+        "tools": ingress_result["tools"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": [
+                {
+                    "callId": "call-1",
+                    "name": "graph_relations",
+                    "argumentsJson": json.dumps({"query": "x"}),
+                }
+            ],
+        },
+    }
+
+    await nodes.tools(state)
+
+    assert len(steps.run_tool_calls) == 1
+    assert steps.run_tool_calls[0].tool_id == "graph.relations"
+    task_steps = [
+        payload
+        for _c, _t, event_type, payload, _lease in conversations.emitted
+        if event_type == "task.step"
+    ]
+    assert task_steps[-1]["status"] == "completed"
+
+    # Control: an Agent frozen with the v2 allowlist cannot see `graph.relations`.
+    conversations_v2 = _Conversations(turn)
+    steps_v2 = _ToolLoopSteps()
+    nodes_v2 = _tool_loop_nodes(
+        turn=turn,
+        steps=steps_v2,
+        conversations=conversations_v2,
+        knowledge=_RelationsKnowledge(),
+    )
+    state_v2 = {**state, "tools": ["knowledge.search", "knowledge.answer"]}
+    result_v2 = await nodes_v2.tools(state_v2)
+    assert steps_v2.run_tool_calls == []
+    task_steps_v2 = [
+        payload
+        for _c, _t, event_type, payload, _lease in conversations_v2.emitted
+        if event_type == "task.step"
+    ]
+    assert task_steps_v2[-1]["status"] == "rejected"
+    transcript_v2 = result_v2["step"]["transcript"]
+    assert json.loads(transcript_v2[-1]["content"])["reason"] == "tool-not-visible"
+
+
+class _QueryMetricsInsights:
+    def __init__(self, *, error: Exception | None = None, records=()) -> None:
+        self._error = error
+        self._records = records
+        self.scope = None
+
+    async def query_metrics(self, scope, report_refs, arguments):
+        self.scope = scope
+        if self._error is not None:
+            raise self._error
+        return self._records
+
+
+@pytest.mark.asyncio
+async def test_insights_tool_failure_is_soft() -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-insights-soft", insights_report_refs=("report-1",)
+    )
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    insights = _QueryMetricsInsights(error=InsightsAuthorizationChanged("Insights result changed"))
+    nodes = _tool_loop_nodes(
+        turn=turn, steps=steps, conversations=conversations, insights_explanation=insights
+    )
+
+    state = {
+        "tools": ["knowledge.search", "insights.query"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": [
+                {
+                    "callId": "call-1",
+                    "name": "insights_query",
+                    "argumentsJson": json.dumps(
+                        {
+                            "metricIds": ["first_pass_rate"],
+                            "filters": {},
+                            "from": "2026-01-01",
+                            "to": "2026-01-02",
+                            "timezone": "UTC",
+                            "asOf": "2026-01-02T00:00:00Z",
+                        }
+                    ),
+                }
+            ],
+        },
+    }
+
+    result = await nodes.tools(state)
+
+    task_steps = [
+        payload
+        for _c, _t, event_type, payload, _lease in conversations.emitted
+        if event_type == "task.step"
+    ]
+    assert task_steps[-1]["status"] == "failed"
+    assert result["step"]["kind"] == "prepared"
+    transcript = result["step"]["transcript"]
+    assert json.loads(transcript[-1]["content"])["status"] == "failed"

@@ -43,7 +43,7 @@ class CallBudgetExhausted(Exception):
 class TurnBudgetExhausted(Exception):
     """A turn-level guardrail limit was reached."""
 
-    def __init__(self, reason: Literal["model-calls", "cost", "wall-clock"]) -> None:
+    def __init__(self, reason: Literal["model-calls", "cost", "wall-clock", "tool-rounds"]) -> None:
         super().__init__(reason)
         self.reason = reason
 

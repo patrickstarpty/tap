@@ -114,6 +114,21 @@ class DraftBatcher:
         ):
             await self._flush(final=False)
 
+    async def discard(self) -> None:
+        """PR 5 (Task 9): a tool-calling round whose model response ends in
+        `tool_calls` may have streamed a preamble (prose before the tool
+        call) to Redis -- that preamble must never survive into the next
+        round's draft nor leak into the final answer (Review Focus 2). If
+        anything was ever sent for this attempt, append one `reset=True`
+        chunk so every reader discards it, then reset accumulation so the
+        next `push`/`close` call on this instance starts from zero."""
+        if self._sent_text:
+            await self._append(text="", reset=True)
+        self._raw = ""
+        self._unflushed_chars = 0
+        self._sent_text = ""
+        self._last_redacted = ""
+
     async def close(self) -> str:
         await self._flush(final=True)
         if self._redaction_unavailable:

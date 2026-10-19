@@ -1,6 +1,7 @@
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from typing import cast
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
@@ -14,6 +15,12 @@ from tap.modules.ai.application.chat_graph import (
 from tap.modules.ai.application.interaction_graph import GraphVersionConflict
 from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
 from tap.platform.budget import TurnBudget, current_meter
+
+
+async def _unreachable_tools(_state: ChatGraphState) -> dict[str, object]:
+    """Default `tools` double for tests that never route `model -> tools`
+    (their stub `model` never returns a `"tool_calls"` step)."""
+    raise AssertionError("tools must not run unless model returns a tool_calls step")
 
 
 def _always_authorized() -> Callable[[], Awaitable[bool]]:
@@ -53,6 +60,7 @@ def _recording_nodes(calls: list[str]) -> ChatGraphNodes:
         insights_explain=insights_explain,
         seed_search=seed_search,
         model=model,
+        tools=_unreachable_tools,
         verify=verify,
         finalize=finalize,
     )
@@ -117,6 +125,7 @@ async def test_out_of_scope_route_goes_straight_to_finalize() -> None:
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -166,6 +175,7 @@ async def test_guard_in_failure_on_insights_route_skips_insights_explain() -> No
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -215,6 +225,7 @@ async def test_node_failure_routes_to_finalize_with_failure() -> None:
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -266,6 +277,7 @@ async def test_failed_model_node_resumes_without_repeating_seed_search() -> None
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -322,6 +334,7 @@ async def test_retryable_node_error_propagates_and_resume_skips_completed_nodes(
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -375,6 +388,7 @@ async def test_non_retryable_node_error_still_routes_to_finalize() -> None:
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -489,6 +503,7 @@ async def test_failed_node_span_has_error_status(span_recorder) -> None:
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -547,6 +562,7 @@ async def test_authorization_loss_raises_permission_error() -> None:
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -597,6 +613,7 @@ async def test_ingress_writes_budget_before_guard_in() -> None:
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -653,6 +670,7 @@ async def test_model_call_budget_exhaustion_fails_turn_without_calling_node() ->
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -719,6 +737,7 @@ async def test_in_node_call_budget_exhaustion_maps_to_model_calls_reason() -> No
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -785,6 +804,7 @@ async def test_in_node_call_budget_exhaustion_maps_to_cost_reason() -> None:
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -842,6 +862,7 @@ async def test_wall_clock_expiry_mid_node_fails_with_budget_exhausted() -> None:
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -917,6 +938,7 @@ async def test_budget_usage_survives_resume() -> None:
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -986,6 +1008,7 @@ async def test_canceled_check_raises_permission_error() -> None:
             insights_explain=insights_explain,
             seed_search=seed_search,
             model=model,
+            tools=_unreachable_tools,
             verify=verify,
             finalize=finalize,
         ),
@@ -997,3 +1020,173 @@ async def test_canceled_check_raises_permission_error() -> None:
         await graph.start(run_id="run-canceled", payload={}, route="chat")
 
     assert calls == ["guard_in", "seed_search"]
+
+
+@pytest.mark.asyncio
+async def test_model_tool_calls_route_through_tools_and_back() -> None:
+    """Task 9: a `model` response carrying a `"tool_calls"` step routes to
+    `tools`, which hands control back to `model`; a later `"generated"`
+    step continues to `verify`/`finalize` as usual, and `tools` counts one
+    tool round into `budget_used`."""
+    calls: list[str] = []
+    model_calls = 0
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("guard_in")
+        return {}
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("seed_search")
+        return {"step": {"kind": "prepared"}}
+
+    async def model(_state: ChatGraphState) -> dict[str, object]:
+        nonlocal model_calls
+        calls.append("model")
+        model_calls += 1
+        if model_calls == 1:
+            return {"step": {"kind": "tool_calls", "pending_tool_calls": []}}
+        return {"step": {"kind": "generated"}}
+
+    async def tools(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("tools")
+        return {"step": {"kind": "prepared"}, "tool_rounds_delta": 1}
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("verify")
+        return {"step": {"kind": "verified"}}
+
+    async def finalize(state: ChatGraphState) -> dict[str, object]:
+        calls.append("finalize")
+        return {"result": {"budgetUsed": state.get("budget_used")}}
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run on the chat route")
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            tools=tools,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=_always_authorized(),
+    )
+
+    final_state = await graph.start(run_id="run-tool-loop", payload={}, route="chat")
+
+    assert calls == ["guard_in", "seed_search", "model", "tools", "model", "verify", "finalize"]
+    assert final_state["budget_used"]["toolRounds"] == 1
+    assert cast(dict, final_state["result"])["budgetUsed"]["toolRounds"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tools_failure_short_circuits_to_finalize() -> None:
+    calls: list[str] = []
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("guard_in")
+        return {}
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("seed_search")
+        return {"step": {"kind": "prepared"}}
+
+    async def model(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("model")
+        return {"step": {"kind": "tool_calls", "pending_tool_calls": []}}
+
+    async def tools(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("tools")
+        raise ValueError("tools exploded")
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("verify must not run after a tools failure")
+
+    async def finalize(_state: ChatGraphState) -> dict[str, object]:
+        calls.append("finalize")
+        return {"result": {"answer": "degraded"}}
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run on the chat route")
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            tools=tools,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=_always_authorized(),
+    )
+
+    final_state = await graph.start(run_id="run-tools-failure", payload={}, route="chat")
+
+    assert calls == ["guard_in", "seed_search", "model", "tools", "finalize"]
+    assert final_state["failure"]["node"] == "tools"
+
+
+@pytest.mark.asyncio
+async def test_ten_rounds_fit_recursion_limit() -> None:
+    """Task 9: `recursion_limit = 2 * maxToolRounds + 12` must be enough
+    for a full budget's worth of tool rounds to complete without
+    LangGraph's `GraphRecursionError`."""
+    rounds_done = 0
+
+    async def guard_in(_state: ChatGraphState) -> dict[str, object]:
+        return {}
+
+    async def seed_search(_state: ChatGraphState) -> dict[str, object]:
+        return {"step": {"kind": "prepared"}}
+
+    async def model(state: ChatGraphState) -> dict[str, object]:
+        used = state.get("budget_used") or {}
+        if int(used.get("toolRounds", 0)) < 10:
+            return {"step": {"kind": "tool_calls", "pending_tool_calls": []}}
+        return {"step": {"kind": "generated"}}
+
+    async def tools(_state: ChatGraphState) -> dict[str, object]:
+        nonlocal rounds_done
+        rounds_done += 1
+        return {"step": {"kind": "prepared"}, "tool_rounds_delta": 1}
+
+    async def verify(_state: ChatGraphState) -> dict[str, object]:
+        return {"step": {"kind": "verified"}}
+
+    async def finalize(_state: ChatGraphState) -> dict[str, object]:
+        return {"result": {"answer": "ok"}}
+
+    async def insights_explain(_state: ChatGraphState) -> dict[str, object]:
+        raise AssertionError("insights_explain must not run on the chat route")
+
+    graph = ChatGraph(
+        checkpointer=InMemorySaver(),
+        nodes=ChatGraphNodes(
+            guard_in=guard_in,
+            insights_explain=insights_explain,
+            seed_search=seed_search,
+            model=model,
+            tools=tools,
+            verify=verify,
+            finalize=finalize,
+        ),
+        authorize=_always_authorized(),
+    )
+
+    final_state = await graph.start(
+        run_id="run-ten-rounds",
+        payload={},
+        route="chat",
+        budget=TurnBudget(max_tool_rounds=10, max_model_calls=50),
+    )
+
+    assert rounds_done == 10
+    assert final_state["budget_used"]["toolRounds"] == 10
+    assert final_state["result"]["answer"] == "ok"

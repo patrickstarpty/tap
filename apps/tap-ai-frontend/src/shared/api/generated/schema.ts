@@ -1833,7 +1833,7 @@ export interface components {
             /** Chatid */
             chatId: string;
             /** Event */
-            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["GraphContextReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDraftEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
+            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["TaskStepEvent"] | components["schemas"]["GraphContextReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDraftEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
             /** Eventid */
             eventId: string;
             /** Occurredat */
@@ -4581,6 +4581,8 @@ export interface components {
             authorizedHitCount: number;
             /** Labels */
             labels?: components["schemas"]["RetrievalHitsLabelView"][] | null;
+            /** Stepid */
+            stepId?: string | null;
             /** Traceid */
             traceId: string;
         };
@@ -5033,6 +5035,38 @@ export interface components {
          * @description A closed, structural location inside one authorized source family.
          */
         "StructuralAnchor-Input": components["schemas"]["DocumentAnchor-Input"] | components["schemas"]["CodeAnchor-Input"] | components["schemas"]["BddAnchor-Input"] | components["schemas"]["OpenApiAnchor-Input"] | components["schemas"]["FailureAnchor-Input"];
+        /** TaskStepEvent */
+        TaskStepEvent: {
+            payload: components["schemas"]["TaskStepPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.step";
+        };
+        /**
+         * TaskStepPayload
+         * @description One bounded tool-calling round's per-call progress (PR 5 Task 9):
+         *     `status` moves `running` -> a terminal state (`completed`/`rejected`/
+         *     `failed`); `step_id` is `f"{turnId}:r{round}:c{index}"`, unique per call.
+         */
+        TaskStepPayload: {
+            /** Durationms */
+            durationMs: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "completed" | "rejected" | "failed";
+            /** Stepid */
+            stepId: string;
+            /** Summary */
+            summary: string;
+            /** Tool */
+            tool: string;
+            /** Toolround */
+            toolRound: number;
+        };
         /** TestPlanCaseView */
         "TestPlanCaseView-Input": {
             /** Caseid */

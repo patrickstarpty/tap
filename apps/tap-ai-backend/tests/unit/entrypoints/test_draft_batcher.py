@@ -521,3 +521,31 @@ async def test_close_records_nothing_when_no_redaction_hits(span_recorder):
 
     finished = next(s for s in span_recorder.get_finished_spans() if s.context.span_id == span_id)
     assert "tap.guard.redaction.draft_hits" not in finished.attributes
+
+
+@pytest.mark.asyncio
+async def test_discard_resets_sent_text():
+    """PR 5 (Task 9): the `model` node calls `discard()` when a round ends
+    in a `tool_calls` step -- any preamble already streamed must be
+    discarded (a `reset=True` chunk), and the instance must behave as if
+    nothing had been sent yet for every subsequent `push`/`close`."""
+    drafts = _FakeDrafts()
+    batcher = DraftBatcher(turn_id="turn-1", attempt=1, drafts=drafts, redact=_identity_redact)
+
+    await batcher.push("draft preamble before the tool call happens right now. ")
+    assert drafts.calls, "the preamble must have been sent before discard"
+
+    await batcher.discard()
+    assert drafts.calls[-1][3] == ""
+    assert drafts.calls[-1][4] is True
+
+    sent_before_discard = len(drafts.calls)
+    result = await batcher.close()
+    await batcher.push("final answer")
+    final = await batcher.close()
+
+    assert result == ""
+    assert final == "final answer"
+    assert len(drafts.calls) > sent_before_discard
+    new_calls = drafts.calls[sent_before_discard:]
+    assert "preamble" not in "".join(_texts(new_calls))

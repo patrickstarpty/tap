@@ -2351,6 +2351,18 @@
           "default": null,
           "title": "Labels"
         },
+        "stepId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stepid"
+        },
         "traceId": {
           "minLength": 1,
           "title": "Traceid",
@@ -2528,6 +2540,76 @@
         }
       ],
       "title": "StructuralAnchor"
+    },
+    "TaskStepEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TaskStepPayload"
+        },
+        "type": {
+          "const": "task.step",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TaskStepEvent",
+      "type": "object"
+    },
+    "TaskStepPayload": {
+      "additionalProperties": false,
+      "description": "One bounded tool-calling round's per-call progress (PR 5 Task 9):\n`status` moves `running` -> a terminal state (`completed`/`rejected`/\n`failed`); `step_id` is `f\"{turnId}:r{round}:c{index}\"`, unique per call.",
+      "properties": {
+        "durationMs": {
+          "minimum": 0,
+          "title": "Durationms",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "completed",
+            "rejected",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "stepId": {
+          "minLength": 1,
+          "title": "Stepid",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 200,
+          "title": "Summary",
+          "type": "string"
+        },
+        "tool": {
+          "minLength": 1,
+          "title": "Tool",
+          "type": "string"
+        },
+        "toolRound": {
+          "minimum": 1,
+          "title": "Toolround",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stepId",
+        "tool",
+        "status",
+        "summary",
+        "durationMs",
+        "toolRound"
+      ],
+      "title": "TaskStepPayload",
+      "type": "object"
     },
     "TestPlanGenerationCanceledEvent": {
       "additionalProperties": false,
@@ -2960,6 +3042,7 @@
           "retrieval.hits_ready": "#/$defs/RetrievalHitsReadyEvent",
           "stage.completed": "#/$defs/StageCompletedEvent",
           "stage.started": "#/$defs/StageStartedEvent",
+          "task.step": "#/$defs/TaskStepEvent",
           "test-plan.generation.canceled": "#/$defs/TestPlanGenerationCanceledEvent",
           "test-plan.generation.failed": "#/$defs/TestPlanGenerationFailedEvent",
           "test-plan.generation.result_ready": "#/$defs/TestPlanGenerationResultEvent",
@@ -2991,6 +3074,9 @@
         },
         {
           "$ref": "#/$defs/RetrievalHitsReadyEvent"
+        },
+        {
+          "$ref": "#/$defs/TaskStepEvent"
         },
         {
           "$ref": "#/$defs/GraphContextReadyEvent"

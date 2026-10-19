@@ -231,7 +231,7 @@ class GenerationWorker:
                 if stored is not None and stored != (CHAT_GRAPH_VERSION, CHAT_STATE_SCHEMA_VERSION):
                     await graph.discard(run_id=turn.turn_id)
                 elif await graph.has_checkpoint(run_id=turn.turn_id):
-                    return await graph.resume(run_id=turn.turn_id)
+                    return await graph.resume(run_id=turn.turn_id, budget=self.turn_budget)
                 return await graph.start(
                     run_id=turn.turn_id,
                     payload={"conversationId": conversation_id, "turnId": turn.turn_id},
