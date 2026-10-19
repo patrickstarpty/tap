@@ -11246,6 +11246,10 @@
       "ToolDescriptor": {
         "additionalProperties": false,
         "properties": {
+          "defaultEnabled": {
+            "title": "Defaultenabled",
+            "type": "boolean"
+          },
           "description": {
             "maxLength": 1024,
             "minLength": 1,
@@ -11273,7 +11277,8 @@
           "toolId",
           "name",
           "description",
-          "required"
+          "required",
+          "defaultEnabled"
         ],
         "title": "ToolDescriptor",
         "type": "object"

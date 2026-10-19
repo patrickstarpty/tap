@@ -219,7 +219,7 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
     ),
     (
         ToolDescriptor,
-        {"toolId", "name", "description", "required"},
+        {"toolId", "name", "description", "required", "defaultEnabled"},
     ),
     (ToolPage, {"items"}),
     (

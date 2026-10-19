@@ -37,6 +37,7 @@ async def list_tools(locale: Literal["en", "zh"] | None = Query(default=None)) -
                     resolved_locale, definition.descriptions["en"]
                 ),
                 required=definition.required,
+                default_enabled=definition.default_enabled,
             )
             for definition in TOOL_REGISTRY.values()
         ]

@@ -780,3 +780,49 @@ async def test_authored_agent_is_resolvable_for_a_conversation_turn(owned_projec
         assert resolved.output_schema_digest == schema_digest(VALIDATION_OUTPUT_SCHEMA)
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_seed_v3_appends_latest_built_in_agent_revision(owned_project_mysql) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.assets import ValidationAssetSeed, validation_asset_seed
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        catalog = MysqlAssetCatalog(
+            async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+        )
+        full_seed = validation_asset_seed(VALIDATION_SCOPE)
+        v2_only = ValidationAssetSeed(
+            version="validation-ai-assets-v2",
+            agents=(full_seed.agents[0],),
+            skills=full_seed.skills,
+        )
+
+        await catalog.seed(v2_only)
+        revisions_after_v2 = await catalog.list_revisions("agent", "validation-knowledge-agent")
+        assert [item.revision_id for item in revisions_after_v2] == [
+            "validation-knowledge-agent-v2"
+        ]
+
+        await catalog.seed(full_seed)
+        revisions_after_v3 = await catalog.list_revisions("agent", "validation-knowledge-agent")
+        assert [item.revision_id for item in revisions_after_v3] == [
+            "validation-knowledge-agent-v2",
+            "validation-knowledge-agent-v3",
+        ]
+        assert revisions_after_v3[0].status.value == "enabled"
+        assert revisions_after_v3[1].status.value == "enabled"
+
+        # Repeating the full seed is idempotent and does not error.
+        await catalog.seed(full_seed)
+        revisions_repeat = await catalog.list_revisions("agent", "validation-knowledge-agent")
+        assert [item.revision_id for item in revisions_repeat] == [
+            "validation-knowledge-agent-v2",
+            "validation-knowledge-agent-v3",
+        ]
+    finally:
+        await engine.dispose()

@@ -123,6 +123,7 @@ class ToolDescriptor(ContractModel):
     name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
     required: StrictBool
+    default_enabled: StrictBool
 
 
 class ToolPage(ContractModel):

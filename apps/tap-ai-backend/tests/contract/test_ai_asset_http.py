@@ -163,7 +163,8 @@ def test_tool_catalog_defaults_to_english_and_supports_zh_locale() -> None:
         definition = TOOL_REGISTRY[item["toolId"]]
         assert item["name"] == definition.names["en"]
         assert item["description"] == definition.descriptions["en"]
-        assert item["required"] is True
+        assert item["required"] is definition.required
+        assert item["defaultEnabled"] is definition.default_enabled
 
     chinese_body = chinese.json()
     assert sorted(item["toolId"] for item in chinese_body["items"]) == expected_tool_ids
@@ -173,6 +174,27 @@ def test_tool_catalog_defaults_to_english_and_supports_zh_locale() -> None:
         assert item["description"] == definition.descriptions["zh"]
 
     assert denied.status_code == 403
+
+
+def test_tool_catalog_returns_relation_and_insights_tools() -> None:
+    authority = _Authority()
+    app = create_app(
+        HttpServices(
+            asset_catalog=_Assets(),
+            scope=VALIDATION_SCOPE,
+            scope_provider=authority,
+            authorization_policy=authority,
+        )
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/projects/tapper-demo/ai/tools")
+    body = response.json()
+    by_id = {item["toolId"]: item for item in body["items"]}
+
+    assert len(body["items"]) == 4
+    assert by_id["graph.relations"]["required"] is False
+    assert by_id["graph.relations"]["defaultEnabled"] is True
 
 
 class _AssetsWithoutSystemInstruction:

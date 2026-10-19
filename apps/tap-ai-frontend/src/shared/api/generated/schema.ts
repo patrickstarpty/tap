@@ -5434,6 +5434,8 @@ export interface components {
         };
         /** ToolDescriptor */
         ToolDescriptor: {
+            /** Defaultenabled */
+            defaultEnabled: boolean;
             /** Description */
             description: string;
             /** Name */
