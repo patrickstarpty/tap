@@ -24,6 +24,7 @@ from tap.modules.access.domain.policy import (
 )
 from tap.modules.ai.application.agents.protocol import AgentContext
 from tap.modules.ai.application.agents.registry import AgentRegistry
+from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
 from tap.modules.knowledge.application.answer_templates import assemble_answer
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundle
 from tap.modules.knowledge.application.planned_answer import AuthorizedAnswerExecution
@@ -391,6 +392,7 @@ class AuthorizedRetrieval:
         model_alias: str | None = None,
         answer_execution: AuthorizedAnswerExecution | None = None,
         authorize=None,
+        persona: TapperPersona = CURRENT_PERSONA,
     ) -> AnswerResponse:
         prepared = await self.prepare_answer(
             request,
@@ -414,6 +416,7 @@ class AuthorizedRetrieval:
             prepared,
             governance=governance,
             model_alias=model_alias,
+            persona=persona,
         )
         return await self.verify_answer(
             prepared, generation, policy, frozen_policy=frozen_policy, authorize=authorize
@@ -647,6 +650,7 @@ class AuthorizedRetrieval:
         model_alias: str | None = None,
         authorize=None,
         on_text: Callable[[str], Awaitable[None]] | None = None,
+        persona: TapperPersona = CURRENT_PERSONA,
     ) -> AnswerGeneration:
         """Rechecks current revision/policy and authorizes before generating.
 
@@ -666,7 +670,11 @@ class AuthorizedRetrieval:
         if authorize is not None:
             await authorize()
         return await self._generate_from_bundle(
-            bundle, governance=governance, model_alias=model_alias, on_text=on_text
+            bundle,
+            governance=governance,
+            model_alias=model_alias,
+            on_text=on_text,
+            persona=persona,
         )
 
     async def _generate_from_bundle(
@@ -676,6 +684,7 @@ class AuthorizedRetrieval:
         governance=None,
         model_alias: str | None = None,
         on_text: Callable[[str], Awaitable[None]] | None = None,
+        persona: TapperPersona = CURRENT_PERSONA,
     ) -> AnswerGeneration:
         use_extended_answer = (
             governance is not None
@@ -684,6 +693,7 @@ class AuthorizedRetrieval:
             or bundle.answer_input is not None
             or bundle.relation is not None
             or on_text is not None
+            or persona is not CURRENT_PERSONA
         )
         generation = (
             await cast(Any, self._answers).answer(
@@ -695,6 +705,7 @@ class AuthorizedRetrieval:
                 model_alias=model_alias,
                 relation_context=bundle.relation,
                 relation_first=bundle.relation_first,
+                persona=persona,
                 **(
                     {"answer_input": bundle.answer_input} if bundle.answer_input is not None else {}
                 ),

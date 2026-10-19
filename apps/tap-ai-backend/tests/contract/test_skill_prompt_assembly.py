@@ -24,6 +24,7 @@ from tap.modules.ai.domain.models import (
     schema_digest,
     text_digest,
 )
+from tap.modules.ai.domain.persona import TAPPER_PERSONA_V1
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway, _skill_blocks
 
 
@@ -186,6 +187,37 @@ async def test_turn_answer_span_carries_agent_and_skill_trace_attributes() -> No
     assert answer_span.attributes["tap.agent.revision_id"] == "agent-revision-1"
     assert answer_span.attributes["tap.skill.revision_ids"] == "skill-revision-1"
     assert answer_span.attributes["tap.skill.prompt_chars"] > 0
+
+
+@pytest.mark.asyncio
+async def test_governed_prompt_keeps_persona_first_and_boundary_after_skills() -> None:
+    """Task 1: the persona's platform instruction opens the assembled prompt
+    and its customization boundary still lands after every Skill block --
+    the same ordering `test_prompt_order_and_precedence_sentence` already
+    locks in, now re-expressed in terms of the `TapperPersona` that owns
+    this text instead of the old module-private string constants."""
+
+    exporter = InMemorySpanExporter()
+    provider_trace = TracerProvider()
+    provider_trace.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider_trace.get_tracer("test-skill-prompt-assembly-persona")
+
+    governance = _governance(skill_instruction="Always answer in bullet points.")
+    provider = _CapturingGateway()
+    models = _gateway(provider)
+
+    with tracer.start_as_current_span("answer"):
+        await models.answer(
+            "query", (_claim_resolution_evidence(),), "quick-hybrid-v1", governance=governance
+        )
+
+    prompt = provider.requests[0].prompt
+    assert prompt.index(TAPPER_PERSONA_V1.platform_instruction) == 0
+    assert prompt.index(TAPPER_PERSONA_V1.customization_boundary) > prompt.index("<skill ")
+
+    spans = exporter.get_finished_spans()
+    answer_span = spans[-1]
+    assert answer_span.attributes["tap.persona.version"] == "tapper-persona-v1"
 
 
 def test_skill_blocks_neutralize_quotes_in_names_and_close_tags_in_bodies() -> None:

@@ -535,6 +535,7 @@ class MysqlConversationRepository:
             retrieval_policy_digest=raw["retrieval_policy_digest"],
             insights_query_id=raw.get("insights_query_id"),
             insights_report_refs=tuple(raw.get("insights_report_refs", [])),
+            persona_version=raw.get("persona_version"),
         )
         input_value = TurnInputSnapshot(
             snapshot["snapshot_id"],

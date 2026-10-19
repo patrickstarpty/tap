@@ -147,6 +147,14 @@ class TurnInput:
     retrieval_policy_digest: str = "sha256:" + "0" * 64
     insights_query_id: str | None = None
     insights_report_refs: tuple[str, ...] = ()
+    # The persona version this Turn is pinned to (`TapperPersona.version`).
+    # `None` means every Turn frozen before this field existed, and reads as
+    # `tapper-persona-v1` (`persona_for(None)`) -- the only persona that ever
+    # existed, so this is not a behavior change for them. Dropped from
+    # `material()` below (same pattern as `skill_notices` /
+    # `requested_skill_revision_ids`) so an old Turn's persisted digest does
+    # not retroactively change when this field is added.
+    persona_version: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.message, str) or not self.message.strip():
@@ -261,6 +269,8 @@ class TurnInput:
         if self.insights_query_id is None:
             value.pop("insights_query_id")
             value.pop("insights_report_refs")
+        if self.persona_version is None:
+            value.pop("persona_version")
         return {"projectId": project_id, "turnId": turn_id, **value}
 
 

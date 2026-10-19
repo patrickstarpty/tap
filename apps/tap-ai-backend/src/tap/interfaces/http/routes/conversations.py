@@ -50,6 +50,7 @@ from tap.modules.ai.domain.models import (
     ModelNotSelectable,
     schema_digest,
 )
+from tap.modules.ai.domain.persona import CURRENT_PERSONA
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
@@ -210,6 +211,7 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         ),
         acl_digest=selection_facts.acl_digest,
         retrieval_policy_digest=selection_facts.retrieval_policy_digest,
+        persona_version=CURRENT_PERSONA.version,
     )
 
 

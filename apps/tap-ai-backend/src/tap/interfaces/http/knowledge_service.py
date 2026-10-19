@@ -680,10 +680,12 @@ class KnowledgeHttpService:
         recheck on resume. Returns either `(revisions, policy, governance)`
         for a route that still requires retrieval, or a complete
         `RetrievalAnswerResponse` for a route that never reaches it."""
+        from tap.modules.ai.domain.persona import persona_for
         from tap.modules.chat.domain.conversations import content_digest
         from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
         from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 
+        persona = persona_for(frozen_input.persona_version)
         revisions = tuple(
             sorted(
                 (
@@ -752,6 +754,7 @@ class KnowledgeHttpService:
                 original_question,
                 model_alias=frozen_input.model_alias,
                 governance=governance,
+                persona=persona,
                 **(
                     {"answer_plan_id": answer_plan.plan_id, "answer_input": answer_input}
                     if answer_plan is not None
@@ -797,6 +800,7 @@ class KnowledgeHttpService:
                 governance=governance,
                 answer_plan_id=answer_plan.plan_id,
                 answer_input=answer_input,
+                persona=persona,
             )
             if authorize is not None:
                 await authorize()

@@ -61,7 +61,7 @@ async def test_model_only_conversation_returns_an_ungrounded_answer_without_cita
     class Models:
         scope = VALIDATION_SCOPE
 
-        async def chat(self, query, *, model_alias, governance):
+        async def chat(self, query, *, model_alias, governance, **kwargs):
             assert query == "Hello"
             assert model_alias == "qwen-plus"
             assert governance is None

@@ -95,3 +95,30 @@ def test_input_json_round_trips_without_skill_notices():
     assert raw["requested_skill_revision_ids"] == []
     reconstructed = _reconstruct(raw)
     assert reconstructed == turn_input
+
+
+def test_persona_version_is_frozen_and_legacy_digest_is_stable():
+    """Task 1: `persona_version` is a frozen Turn fact when a caller sets it,
+    but -- like `skill_notices`/`requested_skill_revision_ids` -- `material()`
+    drops it when it is `None` (every Turn frozen before this field existed,
+    and any new Turn that does not explicitly pin a persona) so an old Turn's
+    persisted digest is not retroactively changed by this field's addition."""
+
+    base_kwargs = dict(
+        message="Persona framing",
+        actor_id=VALIDATION_SCOPE.actor_id,
+        identity_mode="validation",
+        model_alias="qwen-plus",
+        retrieval_policy_digest="sha256:" + "c" * 64,
+    )
+
+    versioned = TurnInput(**base_kwargs, persona_version="tapper-persona-v1")
+    material = versioned.material(project_id="p", turn_id="t")
+    assert material["persona_version"] == "tapper-persona-v1"
+
+    legacy = TurnInput(**base_kwargs)
+    legacy_material = legacy.material(project_id="p", turn_id="t")
+    assert "persona_version" not in legacy_material
+    # Every other key is unaffected by this field's addition -- the digest
+    # over this dict is exactly what it was before `persona_version` existed.
+    assert set(legacy_material) == set(material) - {"persona_version"}
