@@ -216,7 +216,7 @@ export function AgentForm({
   return (
     <AccessibleDialog
       ariaLabel={title}
-      className="tap-agent-form-dialog"
+      className="tap-agent-form-dialog tap-catalog-dialog"
       onClose={onClose}
       opener={opener}
     >
@@ -313,7 +313,9 @@ export function AgentForm({
                     onChange={() => toggleSkill(skill.revisionId)}
                   />
                   <span>{skill.displayName}</span>
-                  <span>{skill.revisionId}</span>
+                  <span className="tap-agent-skill-revision">
+                    {skill.revisionId}
+                  </span>
                 </label>
               );
             })

@@ -48,7 +48,7 @@ export function SkillDetailDrawer({
   return (
     <AccessibleDialog
       ariaLabel={detail?.displayName ?? text.heading}
-      className="tap-skill-detail-drawer"
+      className="tap-skill-detail-drawer tap-catalog-dialog"
       onClose={onClose}
       opener={opener}
     >

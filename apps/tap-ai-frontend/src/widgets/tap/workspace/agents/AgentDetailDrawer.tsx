@@ -148,7 +148,7 @@ export function AgentDetailDrawer({
   return (
     <AccessibleDialog
       ariaLabel={detail?.displayName ?? text.heading}
-      className="tap-agent-detail-drawer"
+      className="tap-agent-detail-drawer tap-catalog-dialog"
       onClose={onClose}
       opener={opener}
     >

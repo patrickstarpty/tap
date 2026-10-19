@@ -150,7 +150,7 @@ export function SkillForm({
   return (
     <AccessibleDialog
       ariaLabel={title}
-      className="tap-skill-form-dialog"
+      className="tap-skill-form-dialog tap-catalog-dialog"
       onClose={onClose}
       opener={opener}
     >

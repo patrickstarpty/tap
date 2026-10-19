@@ -125,7 +125,7 @@ export function SkillImportDialog({
   return (
     <AccessibleDialog
       ariaLabel={step === 1 ? text.step1Title : text.step2Title}
-      className="tap-skill-import-dialog"
+      className="tap-skill-import-dialog tap-catalog-dialog"
       onClose={onClose}
       opener={opener}
     >
@@ -212,8 +212,10 @@ export function SkillImportDialog({
                     <ul>
                       {item.files.map((file) => (
                         <li key={file.relativePath}>
-                          <span>{file.relativePath}</span>
-                          <span>
+                          <span className="tap-skill-import-file-path">
+                            {file.relativePath}
+                          </span>
+                          <span className="tap-skill-import-file-category">
                             {categoryLabel(copy, file.category, file.attached)}
                           </span>
                         </li>
